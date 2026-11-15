@@ -2,7 +2,7 @@
 
 언어: [English](MODEL.md) | **한국어**
 
-에이전트는 모델 요청을 OpenAI 호환 API의 `/chat/completions`로 직접 보낸다. 사이에 라우터 프로세스나 플러그인 계층이 없고, 모델을 위해 포트를 열지 않는다. 엔드포인트는 `config.toml`의 `[providers.<name>]`에 적고, `[provider] default_provider`나 `--provider-profile`로 고른다.
+에이전트는 모델 요청을 프로파일이 쓰는 방식의 엔드포인트로 직접 보낸다. 프로파일은 Chat Completions, OpenAI Responses API, Anthropic Messages, Gemini generateContent 가운데 한 방식을 쓴다. 사이에 라우터 프로세스나 플러그인 계층이 없고, 모델을 위해 포트를 열지 않는다. 엔드포인트는 `config.toml`의 `[providers.<name>]`에 적고, `[provider] default_provider`나 `--provider-profile`로 고른다.
 
 ## 모델 경로
 
@@ -10,10 +10,61 @@
 
 1. `[provider] default_provider`가 시작 프로파일 이름을 고른다. `--provider-profile <name>`을 주면 그 실행에서만 `[providers.<name>]` 표를 고른다. `-p`/`--provider`는 `auto`(기본값으로 `[provider] default_provider`나 `--provider-profile`을 따른다), `openai-compatible`, 프로파일 id 하나를 받는다. 프로파일 id는 `openrouter` 같은 내장 id이거나 직접 쓴 `[providers.<name>]` 표의 이름이다.
 2. 모델은 `--model <id>`, 프로파일의 `default_model`, `[provider] default_model` 가운데 정해진 값으로 고른다. 셋 다 없으면 호출이 오류로 끝난다.
-3. 요청 URL은 `base_url` 뒤에 `/chat/completions`를 붙여 만든다. `base_url`에는 `/v1` 같은 API 접두사까지 적는다.
+3. 요청 URL은 `base_url` 뒤에 프로파일 `type`의 경로를 붙여 만든다. `openai-compatible`이면 `/chat/completions`이다. `base_url`에는 `/v1` 같은 API 접두사까지 적는다.
 4. 도구 정의는 같은 요청 본문의 `tools`로 실린다. 별도 모델 서버가 도구를 중계하지 않는다.
 
 프로파일을 정하지 않은 채 모델을 부르면 에이전트는 네트워크에 닿기 전에 멈추고, stderr에 `[providers.<name>]`에 `openai-compatible` 프로파일을 추가하라는 안내가 나온다.
+
+## 요청 방식
+
+프로파일의 `type` 키가 요청과 응답의 형태를 고른다. 값은 네 가지다.
+
+| `type` | 엔드포인트 | 기본 인증 헤더 | effort 필드 | `api_method` |
+| --- | --- | --- | --- | --- |
+| `openai-compatible`(기본) | `POST {base_url}/chat/completions` | `Authorization: Bearer <key>` | `reasoning_effort` | `chat_completions` |
+| `openai-responses` | `POST {base_url}/responses` | `Authorization: Bearer <key>` | `reasoning.effort` | `responses` |
+| `anthropic-compatible` | `POST {base_url}/messages` | `x-api-key: <key>` | 적응형 사고를 쓰는 `output_config.effort`, 또는 `thinking.budget_tokens` | `messages` |
+| `gemini-compatible` | `POST {base_url}/models/{model}:streamGenerateContent?alt=sse` | `x-goog-api-key: <key>` | `generationConfig.thinkingConfig` | `generate_content` |
+
+`base_url`이 이미 그 방식의 경로로 끝나면 그대로 쓴다. 전체 경로를 공개하는 게이트웨이를 고쳐 쓸 필요가 없다. `anthropic-compatible`은 프로파일 `headers`가 그 이름을 직접 정하지 않았을 때만 `anthropic-version: 2023-06-01`을 보낸다. `open-router`는 실행할 때 거부되고, 오류는 지원하는 네 값을 알린다.
+
+`type`이 자격 증명 헤더의 기본값을 정하고, 명시한 `auth`는 언제나 이긴다. `auth`를 비우면 OpenAI 계열 두 가지는 `Authorization: Bearer <key>`를, `anthropic-compatible`은 `x-api-key`를, `gemini-compatible`은 `x-goog-api-key`를 보낸다. `auth = "header"`에 `auth_header`가 없으면 OpenAI 계열은 `api-key`, Anthropic은 `x-api-key`, Gemini는 `x-goog-api-key`를 보낸다. `auth = "none"`은 키를 보내지 않는다. 이 방식들이 생기기 전에 쓴 프로파일은 그대로 동작한다. `openai-compatible`이 기본값이고 그 기본값은 바뀌지 않았다.
+
+effort는 방식마다 다르게 실린다. `openai-compatible`은 `reasoning_effort`를, `openai-responses`는 `reasoning.effort`를 보낸다. `anthropic-compatible`은 받는 모델에 적응형 사고를 쓰는 `output_config.effort`를, 직접 예산을 받는 모델에 `thinking.budget_tokens`를 보내며(low 4096, medium 10000, high·xhigh·max 32000), Claude가 아닌 모델에는 아무것도 보내지 않는다. `gemini-compatible`은 `generationConfig.thinkingConfig`에 `gemini-2.5*` 모델이면 `thinkingBudget`을(minimal 512, low 1024, medium 8192, high·xhigh 24576), 그 밖이면 `thinkingLevel`(`MINIMAL`부터 `XHIGH`까지)을 넣고 언제나 `includeThoughts: true`를 함께 넣는다.
+
+각 방식은 모델 라우트에 위 표의 `api_method` 값으로 나타난다. 런타임 정체성은 네 가지 모두 `openai-compatible` 또는 `openai-compatible:<profile>`로 남으므로, 저장된 세션과 하네스 API, SDK는 프로바이더 이름 하나를 본다.
+
+`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열에서 오고, 어떤 방식도 엔드포인트에 목록을 묻지 않는다.
+
+```toml
+# Chat Completions, 기본값
+[providers.my-chat]
+type = "openai-compatible"
+base_url = "https://llm.example.com/v1"
+api_key_env = "MY_CHAT_API_KEY"
+default_model = "my-model"
+
+# OpenAI Responses API
+[providers.my-responses]
+type = "openai-responses"
+base_url = "https://llm.example.com/v1"
+api_key_env = "MY_RESPONSES_API_KEY"
+default_model = "my-model"
+
+# Anthropic Messages. auth 줄이 없으므로 x-api-key가 키를 나른다
+[providers.my-anthropic]
+type = "anthropic-compatible"
+base_url = "https://api.anthropic.com/v1"
+api_key_env = "ANTHROPIC_API_KEY"
+default_model = "claude-sonnet-4-6"
+
+# Gemini generateContent. auth 줄이 없으므로 x-goog-api-key가 키를 나른다
+[providers.my-gemini]
+type = "gemini-compatible"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+api_key_env = "GEMINI_API_KEY"
+default_model = "gemini-2.5-pro"
+```
 
 ## 명시적 프로바이더 접두사
 
@@ -47,15 +98,15 @@ input = ["text", "image"]
 
 | 키 | 뜻 |
 | --- | --- |
-| `type` | `"openai-compatible"`. 이 빌드의 모델 경로가 쓰는 값이다. |
+| `type` | `"openai-compatible"`(기본), `"openai-responses"`, `"anthropic-compatible"`, `"gemini-compatible"` 가운데 하나다. [요청 방식](#요청-방식)에 적은 방식을 고른다. |
 | `base_url` | 필수. API 접두사까지 포함한 주소다. `http`는 로컬·사설 호스트에만 받는다. `localhost`, `*.local` 이름, 루프백·사설·링크 로컬·CGNAT 주소, IPv6 루프백·유니크 로컬·링크 로컬 주소가 그렇다. 그 밖의 호스트는 `https`여야 한다. |
 | `api_key_env` | 키가 든 환경 변수 이름이다. 프로세스 환경을 먼저 보고, 값이 없으면 `env_file`을 읽는다. |
 | `env_file` | 설정 디렉터리에 두는 키 파일 이름이다. `MY_GW_API_KEY=...`처럼 한 줄에 하나씩 적는다. |
-| `auth` | `bearer`(기본), `header`, `none` 가운데 하나다. `header`는 `auth_header`로 헤더 이름을 정하고, 비우면 `api-key`를 쓴다. |
+| `auth` | `bearer`, `header`, `none` 가운데 하나다. 비우면 `type` 기본값을 쓴다. OpenAI 계열 두 가지는 `bearer`이고, Anthropic과 Gemini는 그 방식의 헤더를 쓰는 `header`다. `header`는 `auth_header`로 헤더 이름을 정하고, 비우면 종류에 따라 `api-key`, `x-api-key`, `x-goog-api-key`를 쓴다. |
 | `default_model` | 프로파일의 기본 모델 id다. |
 | `models` | `[[providers.<name>.models]]` 배열이다. `id`가 필수이고 `context_window`, `input`, `reasoning`, `reasoning_effort`를 곁들일 수 있다. |
 | `headers` | 모든 요청에 붙는 추가 HTTP 헤더다. |
-| `extra_body` | 요청 본문에 합칠 최상위 JSON 객체다. 백엔드 전용 필드(`chat_template_kwargs` 등)를 넣을 때 쓴다. |
+| `extra_body` | 네 방식 모두에서 모든 요청 본문의 최상위에 합칠 JSON 객체다. 백엔드 전용 필드(`chat_template_kwargs` 등)를 넣을 때 쓴다. |
 | `requires_api_key` | 키가 필요한지 명시한다. 로컬 엔드포인트처럼 키가 없으면 `false`로 둔다. |
 | `prompt_cache_key` | 요청 본문에 계보 고정 `prompt_cache_key`를 실을지 정한다. `true`는 항상 싣고, `false`는 싣지 않으며, 비우면 `api.openai.com`과 `openrouter.ai` 호스트에만 싣는다. 엄격한 스키마의 게이트웨이가 모르는 필드로 400을 내면 `false`로 둔다. |
 
@@ -73,7 +124,7 @@ input = ["text", "image"]
 | `plan` | 계획 턴. 실행을 넘기기 전에 계획을 쓰는 모델이다(#70). | `plan` |
 | `aux` | 값싼 보조 작업. 압축 요약, 제목, 분류, 기억 추출이다. | `aux` |
 | `judge` | 타입이 있는 판단. 턴이 이미 낸 텍스트에 대해 `bool`, `choice`, `score` 질문 하나를 한 번의 제한된 호출로 답한다. 지금 유일한 호출자는 예상 밖 종료 복구다(`docs/runtime/TURNS.ko.md`). | `judge` |
-| `image` | 이미지 생성과 편집. Chat Completions를 말하지 않는 모델을 지정하는 유일한 역할이다. 유일한 호출자는 `generate_image` 도구이고, 같은 프로파일의 `/images/generations`와 `/images/edits`로 요청을 보낸다. 텍스트 모델은 이미지 요청에 답할 수 없으므로 상속 폴백이 없다. | `image` |
+| `image` | 이미지 생성과 편집. Chat Completions를 말하지 않는 모델을 지정하는 유일한 역할이다. 유일한 호출자는 `generate_image` 도구이고, 같은 프로파일의 `/images/generations`와 `/images/edits`로 요청을 보내며, `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이를 받는다. 텍스트 모델은 이미지 요청에 답할 수 없으므로 상속 폴백이 없다. | `image` |
 
 다른 역할은 없다. 새 역할은 그 역할을 부르는 작업과 함께 추가한다. 이유: 부르는 곳이 없는 역할은 `default`의 두 번째 표기에 지나지 않고, 쓰는 곳보다 먼저 생긴 역할은 어느 모델을 가리켜야 하는지 검토할 수 없다.
 
@@ -130,20 +181,21 @@ aux = "my-small-model"
 
 ### `image` 역할과 단일 모델 경로
 
-이 빌드의 규칙은 모델 경로가 하나라는 것이다. 턴은 `[provider] default_provider` 또는 `--provider-profile`이 가리키는 프로파일의 `/chat/completions`로 요청을 보낸다. `generate_image` 도구는 문서로 밝힌 유일한 예외이고, 그것도 구조가 아니라 경로다.
+이 빌드의 규칙은 모델 경로가 하나라는 것이다. 턴은 `[provider] default_provider` 또는 `--provider-profile`이 가리키는 프로파일에서 그 프로파일 `type`의 엔드포인트로 요청을 보낸다. `generate_image` 도구는 문서로 밝힌 유일한 예외이고, 그것도 구조가 아니라 경로다.
 
 - **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
+- `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이 경로를 받는다. Anthropic이나 Gemini 방식의 프로파일은 이미지 생성이 설정되지 않았다고 보고한다. 두 방식 모두 Images 엔드포인트를 두지 않기 때문이다.
 - 프로바이더 런타임은 여전히 하나이고 두 번째 라우터도 플러그인 호스트도 없다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에 놓인 요청 빌더이지 런타임이 아니다.
 - 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
 - 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
 - 모델은 이미지 바이트를 받지 않는다. 파일은 `~/.horon/generated-images/`에 놓이고 결과는 경로, 크기, MIME 타입을 알린다. 한 호출이 컨텍스트와 저장 이벤트 로그에 메가바이트를 넣지 않고 수백 토큰으로 끝나는 이유다.
-- 출력은 OpenAI Images 형태로 한정한다. 그 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다. Gemini 자체 형식과 Responses 내장 이미지 도구는 범위 밖이고, 이 경로가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
+- 출력은 OpenAI Images 형태로 한정한다. 그 형태를 말하는 게이트웨이는 그대로 동작하고 Horon AI Gateway도 포함된다. Gemini 자체 이미지 API와 Responses API의 `image_generation` 도구는 범위 밖이고, 이 경로가 다루지 못하는 것은 `docs/provider/INTEGRATIONS.md`의 MCP 레시피가 맡는다.
 
 ### 실제로 쓰이는 `judge` 역할
 
 `crates/provider-core/src/judge.rs`가 판단의 순수한 절반을 맡는다. 프롬프트(`JudgeRequest::prompt`), 응답 스키마(`response_schema`), 한도(질문 64개, 상태 48 KiB, 질문당 지시 4 KiB, 선택지 64개, 점수 단계 64개), 그리고 없는 라벨, 범위를 벗어난 확률, 빠지거나 중복된 id, 여분 필드를 거부하는 엄격한 파서다. `crates/base/src/judge.rs`가 설정이 필요한 절반을 맡는다. `resolve_judge_model`이 위 사슬을 걷고, `judge_with`가 호출자의 프로바이더를 포크해 해석한 모델을 고르고, 시도 예산 안에서 기다린 뒤, 파싱한 답과 프로바이더 사용량을 돌려준다.
 
-판단은 평범한 `/chat/completions` 호출이므로 이 역할은 엔드포인트도 자격 증명도 더하지 않는다. 빌드의 단일 모델 경로 규칙은 그대로다. 모델을 고를 수 없으면 오류로 끝나고 세션 모델을 조용히 물려받지 않는다. 판단의 요점이 두 번째 모델의 의견이기 때문이다. 시도 예산은 `[autojudge] attempt_timeout_ms`이고 기본 3000이며 `0`은 기한 없음이 아니라 기본값을 뜻하고, 30초를 넘는 값은 30초로 자른다. 예산은 모델 선택까지 포함한 시도 전체에 적용된다. 판단이 판정 대상 턴을 붙잡기 때문이다.
+판단은 세션 프로파일에서 도는 평범한 모델 호출이므로 이 역할은 엔드포인트도 자격 증명도 더하지 않는다. 빌드의 단일 모델 경로 규칙은 그대로다. 모델을 고를 수 없으면 오류로 끝나고 세션 모델을 조용히 물려받지 않는다. 판단의 요점이 두 번째 모델의 의견이기 때문이다. 시도 예산은 `[autojudge] attempt_timeout_ms`이고 기본 3000이며 `0`은 기한 없음이 아니라 기본값을 뜻하고, 30초를 넘는 값은 30초로 자른다. 예산은 모델 선택까지 포함한 시도 전체에 적용된다. 판단이 판정 대상 턴을 붙잡기 때문이다.
 
 역할 이름은 `judge`이고 `/judge` 명령은 다른 작업이다. `/judge`는 스웜 안에서 검토 워커를 띄우고 세션 에이전트 모델 덮어쓰기(`/model judge`, `/agents judge <model>`)로 모델을 고른다. 둘 다 `[autojudge] model`을 모델 덮어쓰기로 읽으므로 한 설정이 두 곳의 모델을 정하지만, 판단은 워커를 띄우지 않고 워커는 타입 있는 질문에 답하지 않는다.
 
@@ -184,7 +236,7 @@ from = "plan-model"
 
 `prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 28자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.
 
-세션 id가 없는 호출에는 키를 싣지 않는다. `prompt_cache_key = true`는 호스트를 가리지 않고 싣지만, 모르는 필드를 거부하는 엔드포인트에는 `false`를 쓴다.
+세션 id가 없는 호출에는 키를 싣지 않는다. `prompt_cache_key = true`는 호스트를 가리지 않고 싣지만, 모르는 필드를 거부하는 엔드포인트에는 `false`를 쓴다. 이 필드는 Chat Completions와 Responses API의 기능이므로 OpenAI 계열 두 방식만 싣고 Anthropic과 Gemini 방식은 싣지 않는다.
 
 `api.openai.com` 호스트에는 `prompt_cache_retention`도 함께 실린다. 값은 `HORON_AGENT_OPENAI_PROMPT_CACHE_RETENTION`(`in_memory` 또는 `24h`)이 있으면 그것이고, 없으면 모델이 확장 보존을 지원할 때만 `24h`다. 기본 30분 보존을 쓰는 모델에는 필드를 싣지 않는다. 다른 호스트에는 이 필드를 싣지 않는다. `extra_body`는 두 필드보다 나중에 합쳐지므로 프로파일에서 값을 덮어쓸 수 있다.
 
@@ -211,6 +263,7 @@ from = "plan-model"
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
+  --type openai-compatible \
   --base-url https://llm.example.com/v1 \
   --model my-model \
   --api-key-env MY_GW_API_KEY \
@@ -218,7 +271,9 @@ printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --set-default
 ```
 
-`--set-default`는 `[provider] default_provider = "my-gw"`와 `[provider] default_model`을 함께 쓴다. 기존 이름을 바꾸려면 `--overwrite`를 준다. 로컬 엔드포인트처럼 키가 필요 없으면 `--auth none`을 쓴다.
+`--type`은 `openai-compatible`, `openai-responses`, `anthropic-compatible`, `gemini-compatible` 가운데 하나를 받고 기본값은 `openai-compatible`이다. `--auth`가 없으면 명령은 `auth` 줄을 쓰지 않으므로 그 종류의 기본 자격 증명 헤더가 적용된다. `--set-default`는 `[provider] default_provider = "my-gw"`와 `[provider] default_model`을 함께 쓴다. 기존 이름을 바꾸려면 `--overwrite`를 준다. 로컬 엔드포인트처럼 키가 필요 없으면 `--auth none`을 쓴다.
+
+프로파일은 CLI와 설정 파일로 추가한다. headless 모드와 TUI 모드가 같은 프로파일을 읽고, 어느 모드에도 프로바이더 설정 화면은 없다.
 
 만든 프로파일은 다음처럼 바로 확인한다.
 
@@ -232,7 +287,7 @@ horon --provider-profile my-gw --model my-model run "hello"
 horon provider current --json
 ```
 
-출력 필드는 `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, 그리고 준비가 안 됐을 때의 `unavailable_reason`이다(`src/cli/commands/report_info.rs`). `ready`가 `true`면 지금 설정으로 `/chat/completions`를 부를 수 있다는 뜻이다.
+출력 필드는 `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, 그리고 준비가 안 됐을 때의 `unavailable_reason`이다(`src/cli/commands/report_info.rs`). `ready`가 `true`면 지금 설정으로 그 프로파일의 엔드포인트를 부를 수 있다는 뜻이다.
 
 ## 오류 해결
 
@@ -241,8 +296,8 @@ horon provider current --json
 | `Unknown provider profile '<name>'. Add [providers.<name>] to config.toml.` | `default_provider`나 `--provider-profile`이 가리키는 이름이 설정에 없다. 표 이름과 값을 맞춘다. |
 | `Provider profile '<name>' has invalid base_url ...` | `base_url`이 비었거나, 절대 URL이 아니거나, 로컬·사설이 아닌 호스트에 평문 `http`를 썼다. 메시지는 `https://... or http://localhost`라고만 적지만, `http` 허용 범위는 위 `base_url` 행의 로컬·사설 호스트 목록 전체다. 접두사까지 적는다. |
 | 키가 없다는 오류 | 오류에 채워야 할 환경 변수 이름이 나온다. 키 값은 오류에 나오지 않는다. 변수를 내보내거나 `env_file`에 적는다. |
-| 401 또는 403 | 키가 틀렸거나 `auth` 형식이 엔드포인트와 맞지 않는다. 대부분 `bearer`이고, `x-api-key` 계열은 `auth = "header"`와 `auth_header`를 쓴다. |
-| 404 | `base_url`에 `/v1` 같은 접두사가 빠졌을 수 있다. 에이전트는 `base_url` 뒤에 `/chat/completions`만 붙인다. |
+| 401 또는 403 | 키가 틀렸거나 `auth` 형식이 엔드포인트와 맞지 않는다. `type` 기본값은 OpenAI 계열 두 가지에 `bearer`, `anthropic-compatible`과 `gemini-compatible`에 그 방식의 헤더이며, `auth_header`를 준 `auth = "header"`가 둘을 덮는다. |
+| 404 | `base_url`에 `/v1` 같은 접두사가 빠졌거나, 이미 방식 경로를 담은 `base_url`에 `type`을 잘못 적었을 수 있다. 에이전트는 `base_url` 뒤에 프로파일 `type`의 경로만 붙인다. |
 | 모델을 찾지 못함 | `--model`, 프로파일 `default_model`, `[provider] default_model` 가운데 엔드포인트가 모르는 id가 있다. `[[providers.<name>.models]]`의 `id`와 맞춘다. |
 
 ## 내장 프로파일

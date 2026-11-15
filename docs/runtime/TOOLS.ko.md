@@ -6,7 +6,7 @@
 
 ## 도구 발견과 지연 로딩
 
-`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열여덟 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다.
+`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열여덟 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다. 목록 모드 `core` 세션에서 즉시 보내는 스키마 여덟 개(일곱 도구와 `toolbox`)는 직렬화하면 9,151바이트이고, 프롬프트 파일이 없는 세션의 정적 시스템 프롬프트는 1,322바이트입니다. 두 값은 구조 게이트의 `prefix`와 `prompt` 행이 잽니다([`../performance/BENCHMARK.ko.md`](../performance/BENCHMARK.ko.md)).
 
 ### 세 단계
 
@@ -52,12 +52,12 @@ memory = "essential"
 목록 모드 `core` 세션의 시스템 프롬프트 정적 부분에는 `# Additional tools` 절이 붙습니다. 짧은 안내 문장 하나와 `- <이름>: <한 줄 설명>` 행이 이름순으로 나옵니다 (`crates/base/src/prompt.rs:463` `build_additional_tools_section`). 안내 문장은 한 문장이고, 목록의 도구를 `toolbox`의 `run` 동작으로 부르는 방법만 알립니다. 행의 설명은 도구 설명의 첫 문장이거나 60자까지이므로, 매개변수는 모델이 `toolbox describe`로 따로 받습니다.
 
 - 프로바이더와 상관없이 같은 색인을 씁니다. 네이티브 지연 로딩이 있는 프로바이더도 지연 정의와 함께 이 색인을 받습니다. 없는 프로바이더는 지연 정의를 버리므로 이 색인이 이름을 알리는 유일한 경로입니다.
-- 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:856` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
+- 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
 - 색인은 첫 도구 목록이 확정될 때 한 번 굳습니다. MCP 서버 등록 전의 워밍업 요청은 색인을 굳히지 않고, 확정 시점에 한 번 다시 만든 뒤 고정합니다. 이후 도구 잠금 해제, 압축, MCP 연결, 프로바이더 전환, 설정 재로드로는 바뀌지 않습니다 (`turn_execution.rs:793` `ensure_listed_tools_index`).
-- 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1143` `reset_listed_tools_index`).
-- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:186`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
-- 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다.
-- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:254` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
+- 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1129` `reset_listed_tools_index`).
+- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:178`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
+- 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다. 목록에 오르는 코어 도구는 설명을 행에 들어가는 문장으로 시작하므로 단어 중간에서 끊기는 행이 없습니다. 아직 잘리는 행은 `todo` 하나이고, 모델에게 보이는 그 문구를 쓴 그대로 두기 때문입니다.
+- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:247` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
 
 ### toolbox
 
@@ -87,7 +87,7 @@ memory = "essential"
 
 #### 호스티드 검색
 
-모델 요청은 OpenAI 호환 `/chat/completions`로 직접 나가고 요청 본문에 호스티드 도구를 싣지 않으므로, 에이전트가 OpenAI 호스티드 `web_search`를 붙이는 경로는 없습니다. `websearch`는 로컬 도구로만 동작합니다.
+모델 요청은 프로파일 `type`이 고른 방식의 엔드포인트로 직접 나가고, 어느 방식도 요청 본문에 호스티드 도구를 싣지 않으므로 에이전트가 OpenAI 호스티드 `web_search`를 붙이는 경로는 없습니다. `websearch`는 로컬 도구로만 동작합니다.
 
 ### core가 닫혀 있는 이유
 
@@ -591,7 +591,7 @@ config 하위 디렉터리 규칙 본문
 - 두 기억의 주제가 같다는 판정은 본문 낱말을 두 개 이상 공유하면서 두 낱말 집합의 합집합 가운데 60% 이상을 공유하거나, 태그가 하나라도 겹칠 때입니다. 이 단계는 거의 같은 기억을 남기는 쪽보다 합치는 쪽을 택합니다. 잘못 합쳐도 잃는 것은 순위 자리 하나뿐이고, 합칠 때마다 대체된 id와 그 기억을 저장한 세션·도구를 로그에 남깁니다.
 - `correction`은 같은 주제에서 다른 범주를 모두 앞섭니다. 사용자가 참이라고 말한 기록이기 때문에, 나중에 추출된 `fact`가 이를 덮지 않습니다. 같은 범주 안에서는 최신 기억이 이깁니다.
 - 두 범위를 모두 통합합니다. 작업 폴더의 프로젝트 저장소와 사용자 수준 전역 저장소이고, 각각 자기 실행 표시와 요약을 가집니다(`crates/base/src/memory/consolidation.rs`).
-- 범위별 요약은 그 범위의 기억 파일 옆에 저장되고, 다음 새 사용자 턴에 그 턴의 관련 기억 주입과 같은 자리에서 기억 안내로 주입됩니다. 통합이 한 번이라도 돌기 전에는 아무것도 더하지 않습니다.
+- 범위별 요약은 그 범위의 기억 파일 옆에 저장되고, 다음 새 사용자 턴에 기억 안내로 주입됩니다. 턴이 스스로 싣는 기억 문구는 이것뿐입니다. 관련 기억은 배경에서 회상하지 않고 `memory` 회상을 명시적으로 부를 때만 나오므로, 통합이 한 번이라도 돌기 전에는 아무것도 더하지 않습니다.
 - `[agents] memory_consolidation_min_new`(Horon 기본값 `20`)는 지난 실행 뒤 이만큼 새 기억이 쌓여야 다음 실행을 한다는 뜻입니다. 한 번 실행할 때 그래프를 다시 읽고 합쳐서 다시 쓰므로, 세션마다 돌리지 않고 모아서 돌립니다.
 - `[agents] memory_consolidation_summary_bytes`(Horon 기본값 `4096`)는 주입하는 요약의 바이트 상한입니다. 넘으면 글자 경계에서 잘라내고 버리지 않습니다.
 
@@ -626,7 +626,53 @@ MCP 서버 정의는 `crates/base/src/mcp/sources.rs`의 순서대로 합칩니�
 
 - `resources`나 `prompts` 기능을 알리지 않은 서버에는 `MCP resources are not supported by '<server>' …`를 돌려주고 JSON-RPC 요청을 보내지 않습니다.
 - `notifications/resources/list_changed`와 `notifications/prompts/list_changed`는 캐시한 목록을 버리므로 다음 `resources`나 `prompts` 호출이 다시 받아 옵니다. 캐시는 연결에 속하고 재연결 뒤에는 빈 상태로 시작합니다.
-- 리소스 구독(`resources/subscribe`), 샘플링, 루트는 구현하지 않았습니다.
+
+### 서버가 보낸 요청
+
+서버는 클라이언트에 무언가를 물을 수 있습니다. 그런 프레임(`method`와 `id`를 함께 가진 프레임)은 stdio와 원격 전송 모두 같은 연결에서 답합니다. 서버가 오지 않을 답을 기다리는 일이 없어야 하기 때문입니다. 답은 다음 표로 고정됩니다.
+
+| 서버 메서드 | 답 |
+| --- | --- |
+| `ping` | `{"jsonrpc":"2.0","id":<id>,"result":{}}` |
+| `roots/list` | `[mcp] expose_roots = true`이면 세션 작업 디렉터리를 `file://` URI 하나로 돌려줍니다. 아니면 아래 `-32601` 오류입니다. |
+| 그 밖의 메서드(`sampling/createMessage`, `resources/subscribe`, `resources/unsubscribe`, `elicitation/create` 등) | `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32601,"message":"Method not found: <method>"}}` |
+
+- `initialize`에서 알리는 클라이언트 기능은 그 연결이 실제로 처리하는 것과 정확히 같습니다. `expose_roots`가 켜져 있으면 `{"roots": {"listChanged": false}}`이고, 아니면 `{}`입니다. 거절할 요청의 기능을 미리 알리지 않습니다.
+- `[mcp] expose_roots`의 기본값은 꺼짐입니다. 켜면 연결된 모든 서버에 그 세션이 작업하는 디렉터리를 알립니다.
+- 알림(`id` 없는 `method`)은 요청이 아니라 답을 받지 않습니다. 위의 `notifications/*/list_changed` 처리는 그대로입니다.
+- 답은 연결의 크기가 제한된 쓰기 채널로 씁니다. 읽기 작업 안에서 직접 기다리지 않으므로 느리거나 가득 찬 전송이 프레임 처리를 멈추지 않습니다. 채널이 닫혔으면 한 번만 로그를 남기고 읽기는 EOF까지 계속합니다. 전송 종료 신호는 그 EOF에서 나옵니다.
+- 원격(HTTP/SSE) 연결은 요청 등록부를 건드리지 않는 전용 POST로 답합니다. 답에는 `id`가 있고 `method`가 없으므로 요청 경로를 타면 안 됩니다. 서버가 거절한 답은 메서드마다 한 번만 로그를 남깁니다. 레거시 SSE는 서버가 알린 엔드포인트로 POST합니다.
+- 리소스 구독은 여전히 구현하지 않았습니다. 서버가 구독을 요청해도 `-32601`로 답하고 `notifications/resources/updated`는 전달하지 않습니다.
+
+## 스크래치 디렉터리와 정리
+
+`bash` 자식 프로세스는 `TMPDIR`과 `HORON_AGENT_SCRATCH_DIR`을 `~/.horon/scratch`로
+받는다. 큰 임시 파일이나 클론, `CARGO_TARGET_DIR`을 작업 폴더 옆이 아니라 그곳에 두라는
+뜻이다. 식지 않은 Rust `target/` 하나가 수십 기가바이트이므로, 필요 없어진 항목은
+지운다.
+
+데몬이 시작할 때, 안쪽 어느 파일도 보존 기간보다 새롭지 않은 최상위 항목을 지운다.
+보존 기간은 `HORON_AGENT_SCRATCH_RETENTION_DAYS`이고 기본값은 7일이며, `0`이면 이
+동작을 끈다(`crates/base/src/scratch_maintenance.rs`). 이 동작은 기기마다 하루에 한
+번만 돌고, 사용자가 지정한 `HORON_AGENT_SCRATCH_DIR`은 건드리지 않는다.
+
+살아 있는 프로세스의 작업 디렉터리가 항목 안에 있으면 나이와 관계없이 그 항목을
+남긴다. 스크래치 트리에서 놀고 있는 셸은 아무것도 쓰지 않으므로 나이 검사만으로는
+알 수 없기 때문이다. 이 보호는 "살아 있는 프로세스의 작업 디렉터리"에 대한 플랫폼의
+답만큼만 유효하다.
+
+| 플랫폼 | 출처 | 보호 |
+| --- | --- | --- |
+| Linux | `/proc/<pid>/cwd` | 실제로 동작 |
+| macOS | `libproc`의 `proc_pidinfo(PROC_PIDVNODEPATHINFO)` | 실제로 동작, 권한 불필요 |
+| Windows | 없음: 별도 권한 없이 작업 디렉터리를 알려 주는 프로세스 표가 없다 | **무력** |
+
+Windows에서는 나이 검사가 유일한 보호이므로, `target/`이 스크래치 디렉터리 아래에 있는
+오래 걸리는 빌드는 실행 중에 지워질 수 있다. 그 플랫폼에서는 긴 빌드를
+`~/.horon/scratch` 밖에 두거나 `HORON_AGENT_SCRATCH_RETENTION_DAYS`를 낮춘다.
+`crates/base/tests/scratch_live_working_dir.rs`는 나이 든 스크래치 항목 안에 살아 있는
+자식 프로세스를 두고, 플랫폼의 답이 비어 있으면 실패한다. macOS의 빈틈은 그렇게
+닫았다.
 
 ## 큰 도구 출력과 컨텍스트 절약
 

@@ -591,27 +591,6 @@ pub enum Request {
         mode: Option<String>,
     },
 
-    // === Agent communication ===
-    /// Share context with other agents
-    #[serde(rename = "comm_share")]
-    CommShare {
-        id: u64,
-        session_id: String,
-        key: String,
-        value: String,
-        #[serde(default)]
-        append: bool,
-    },
-
-    /// Read shared context from other agents
-    #[serde(rename = "comm_read")]
-    CommRead {
-        id: u64,
-        session_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        key: Option<String>,
-    },
-
     /// Send a message to other agents
     #[serde(rename = "comm_message")]
     CommMessage {
@@ -620,8 +599,6 @@ pub enum Request {
         message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to_session: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        channel: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delivery: Option<CommDeliveryMode>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -633,7 +610,7 @@ pub enum Request {
         /// Cross-swarm target: a swarm label or swarm id other than the
         /// sender's own. When set, the message is a cross-swarm DM delivered
         /// to `to_session` inside that swarm, or to its coordinator when
-        /// `to_session` is omitted. Channels and broadcasts never cross swarms.
+        /// `to_session` is omitted. Broadcasts never cross swarms.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to_swarm: Option<String>,
     },
@@ -651,18 +628,6 @@ pub enum Request {
     /// List agents and their activity
     #[serde(rename = "comm_list")]
     CommList { id: u64, session_id: String },
-
-    /// List swarm channels and subscriber counts
-    #[serde(rename = "comm_list_channels")]
-    CommListChannels { id: u64, session_id: String },
-
-    /// List members subscribed to a swarm channel
-    #[serde(rename = "comm_channel_members")]
-    CommChannelMembers {
-        id: u64,
-        session_id: String,
-        channel: String,
-    },
 
     /// Propose a swarm plan update
     #[serde(rename = "comm_propose_plan")]
@@ -917,22 +882,6 @@ pub enum Request {
         target_session: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
-    },
-
-    /// Subscribe to a named channel in the swarm
-    #[serde(rename = "comm_subscribe_channel")]
-    CommSubscribeChannel {
-        id: u64,
-        session_id: String,
-        channel: String,
-    },
-
-    /// Unsubscribe from a named channel in the swarm
-    #[serde(rename = "comm_unsubscribe_channel")]
-    CommUnsubscribeChannel {
-        id: u64,
-        session_id: String,
-        channel: String,
     },
 
     /// Wait until specified (or all) swarm members reach a target status

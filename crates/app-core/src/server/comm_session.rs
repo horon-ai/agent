@@ -8,9 +8,8 @@ use super::{
     SessionInterruptQueues, SwarmEvent, SwarmEventType, SwarmMember, SwarmState, VersionedPlan,
     append_swarm_completion_report_instructions, broadcast_swarm_plan, broadcast_swarm_status, create_headless_session,
     fanout_session_event, persist_swarm_state_for, record_swarm_event, record_swarm_event_for_session,
-    remove_background_tool_signal, remove_session_channel_subscriptions, remove_session_from_swarm,
-    remove_session_interrupt_queue, set_member_task_label, truncate_detail, update_member_status,
-    update_member_status_with_report,
+    remove_background_tool_signal, remove_session_from_swarm, remove_session_interrupt_queue, set_member_task_label,
+    truncate_detail, update_member_status, update_member_status_with_report,
 };
 use crate::agent::Agent;
 use crate::config::SwarmSpawnMode;
@@ -22,7 +21,6 @@ use std::sync::{Arc, Mutex as StdMutex, OnceLock, Weak};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
 /// Serialize spawn admission through member registration within one swarm.
 /// Without a reservation or lock, many recursive agents can all observe the same
@@ -609,8 +607,6 @@ pub(super) async fn handle_comm_spawn(
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
-    _channel_subscriptions: &ChannelSubscriptions,
-    _channel_subscriptions_by_session: &ChannelSubscriptions,
     event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: &Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
@@ -789,8 +785,6 @@ pub(super) async fn handle_comm_stop(
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
-    channel_subscriptions: &ChannelSubscriptions,
-    channel_subscriptions_by_session: &ChannelSubscriptions,
     event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: &Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
@@ -924,8 +918,6 @@ pub(super) async fn handle_comm_stop(
         )
         .await;
     }
-    remove_session_channel_subscriptions(&target_session, channel_subscriptions, channel_subscriptions_by_session)
-        .await;
 
     let response = if removed_live_agent || removed_swarm_id.is_some() {
         PersistedSwarmMutationResponse::Done
@@ -1181,7 +1173,6 @@ async fn ensure_spawn_coordinator_swarm(
                     from_name,
                     notification_type: NotificationType::Message {
                         scope: Some("swarm".to_string()),
-                        channel: None,
                         tldr: None,
                     },
                     message: "You are the coordinator for this swarm.".to_string(),

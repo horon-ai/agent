@@ -1,13 +1,12 @@
 //! Tests for the source-ordered snapshot boundary.
 //!
 //! The named filter is `snapshot_marker`: every test here proves one half of the
-//! plan's acceptance — an event emitted between the state capture and the reply is
-//! classified as live through the marker, and no record can fall between the tail
-//! and the marker.
+//! contract — a change recorded before the capture is inside the returned view,
+//! and a change recorded after it is strictly newer than the returned `seq`.
 
 use super::*;
 use std::sync::Barrier;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn message(role: &str, content: impl Into<String>) -> HistoryMessage {
     HistoryMessage {
@@ -22,74 +21,54 @@ fn message(role: &str, content: impl Into<String>) -> HistoryMessage {
     }
 }
 
-fn connection() -> (
-    mpsc::UnboundedSender<ConnectionRecord>,
-    mpsc::UnboundedReceiver<ConnectionRecord>,
-) {
-    mpsc::unbounded_channel()
-}
-
-fn marker_of(record: ConnectionRecord) -> SnapshotMarker {
-    match record {
-        ConnectionRecord::Marker(marker) => marker,
-    }
-}
-
 fn fresh(session_id: &str) -> Arc<SessionObservation> {
     forget_session(session_id);
     observation_for(session_id)
 }
 
 #[test]
-fn snapshot_marker_is_enqueued_before_the_reply_is_built() {
-    let session = "snapshot-marker-order";
+fn snapshot_marker_reply_carries_one_marker_and_one_view() {
+    let session = "snapshot-marker-identity";
     let observation = fresh(session);
     for index in 0..3 {
         observation.append_message(message("user", format!("m{index}")));
     }
-    let (tx, mut rx) = connection();
 
-    let view = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the connection accepts the marker");
+    let view = observation.take_snapshot(&SnapshotRequest::default());
 
-    let marker = marker_of(rx.try_recv().expect("the marker is already on the FIFO"));
-    assert_eq!(marker.session_id, session);
-    assert_eq!(marker.generation, view.generation);
-    assert_eq!(marker.seq, view.seq);
-    assert_eq!(marker.marker_id, view.marker_id);
+    assert_eq!(view.session_id, session);
+    assert_eq!(view.seq, 3, "the boundary is the sequence of the captured state");
+    assert_eq!(view.state.last_seq, view.seq, "the state reports the same boundary");
+    assert!(!view.marker_id.is_empty(), "the reply names the marker it carries");
     assert_eq!(view.messages.len(), 3);
     assert!(!view.truncated);
+
+    let second = observation.take_snapshot(&SnapshotRequest::default());
+    assert_ne!(
+        view.marker_id, second.marker_id,
+        "each request mints its own marker identity"
+    );
+    assert_eq!(second.seq, view.seq, "no change happened between the two captures");
 }
 
 #[test]
-fn snapshot_marker_an_event_emitted_between_capture_and_reply_is_live() {
+fn snapshot_marker_an_event_emitted_after_the_capture_is_outside_the_view() {
     let session = "snapshot-marker-live";
     let observation = fresh(session);
     observation.append_message(message("user", "before"));
-    let (tx, mut rx) = connection();
 
-    // The state is captured and the marker enqueued, exactly as a reply would be
-    // prepared. The publish then happens before the reply reaches the socket.
-    let view = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the connection accepts the marker");
+    let view = observation.take_snapshot(&SnapshotRequest::default());
     let after_capture = observation.append_message(message("assistant", "after"));
 
-    let marker = marker_of(rx.try_recv().expect("marker"));
     assert!(
-        after_capture > marker.seq,
-        "a change after the capture must be strictly newer than the marker: {after_capture} vs {}",
-        marker.seq
+        after_capture > view.seq,
+        "a change after the capture must be strictly newer than the boundary: {after_capture} vs {}",
+        view.seq
     );
     assert_eq!(
         view.messages.len(),
         1,
         "the snapshot must not contain the change that came after its capture"
-    );
-    assert_eq!(
-        view.state.last_seq, marker.seq,
-        "the reply's own seq is the marker's seq"
     );
 }
 
@@ -102,7 +81,6 @@ fn snapshot_marker_concurrent_append_never_loses_a_record() {
     let total = writers * per_writer;
 
     let barrier = Arc::new(Barrier::new(writers + 1));
-    let stop = Arc::new(AtomicBool::new(false));
     let appended = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
     for writer in 0..writers {
@@ -121,22 +99,13 @@ fn snapshot_marker_concurrent_append_never_loses_a_record() {
     barrier.wait();
     let mut snapshots = Vec::new();
     while appended.load(Ordering::SeqCst) < total {
-        let (tx, mut rx) = connection();
-        let view = observation
-            .take_snapshot(
-                &SnapshotRequest {
-                    tail: Some(MAX_TAIL),
-                    ..Default::default()
-                },
-                &tx,
-            )
-            .expect("the connection accepts the marker");
-        let marker = marker_of(rx.try_recv().expect("marker"));
-        assert_eq!(marker.seq, view.seq);
+        let view = observation.take_snapshot(&SnapshotRequest {
+            tail: Some(MAX_TAIL),
+            ..Default::default()
+        });
         snapshots.push((view.state.message_count, view.messages.len(), view.seq));
         std::thread::yield_now();
     }
-    stop.store(true, Ordering::SeqCst);
     for handle in handles {
         handle.join().expect("writer thread");
     }
@@ -146,21 +115,11 @@ fn snapshot_marker_concurrent_append_never_loses_a_record() {
     // the counter, then snapshots. One snapshot taken after the writers have
     // joined is what makes "the last snapshot sees everything" deterministic
     // instead of a race against the reader's own timing.
-    {
-        let (tx, mut rx) = connection();
-        let view = observation
-            .take_snapshot(
-                &SnapshotRequest {
-                    tail: Some(MAX_TAIL),
-                    ..Default::default()
-                },
-                &tx,
-            )
-            .expect("the connection accepts the marker");
-        let marker = marker_of(rx.try_recv().expect("marker"));
-        assert_eq!(marker.seq, view.seq);
-        snapshots.push((view.state.message_count, view.messages.len(), view.seq));
-    }
+    let last = observation.take_snapshot(&SnapshotRequest {
+        tail: Some(MAX_TAIL),
+        ..Default::default()
+    });
+    snapshots.push((last.state.message_count, last.messages.len(), last.seq));
 
     assert_eq!(appended.load(Ordering::SeqCst), total);
     assert!(!snapshots.is_empty(), "the reader must have taken snapshots");
@@ -194,53 +153,18 @@ fn snapshot_marker_attach_a_and_b_see_the_same_boundary() {
     for index in 0..5 {
         observation.append_message(message("user", format!("m{index}")));
     }
-    let (tx_a, mut rx_a) = connection();
-    let (tx_b, mut rx_b) = connection();
 
-    let view_a = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx_a)
-        .expect("A accepts the marker");
-    let view_b = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx_b)
-        .expect("B accepts the marker");
+    let view_a = observation.take_snapshot(&SnapshotRequest::default());
+    let view_b = observation.take_snapshot(&SnapshotRequest::default());
 
-    let marker_a = marker_of(rx_a.try_recv().expect("A marker"));
-    let marker_b = marker_of(rx_b.try_recv().expect("B marker"));
     assert_eq!(view_a.generation, view_b.generation, "one owner, one generation");
-    assert_eq!(
-        marker_a.seq, marker_b.seq,
-        "no change happened between the two attaches"
-    );
-    assert_ne!(
-        marker_a.marker_id, marker_b.marker_id,
-        "each request gets its own marker"
-    );
-    assert_eq!(marker_a.marker_id, view_a.marker_id);
-    assert_eq!(marker_b.marker_id, view_b.marker_id);
-    assert!(rx_a.try_recv().is_err(), "A's marker must not be delivered on B's FIFO");
+    assert_eq!(view_a.seq, view_b.seq, "no change happened between the two attaches");
+    assert_ne!(view_a.marker_id, view_b.marker_id, "each request gets its own marker");
+    assert_eq!(view_a.messages.len(), view_b.messages.len());
 }
 
 #[test]
-fn snapshot_marker_enqueue_failure_is_not_reported_as_success() {
-    let session = "snapshot-marker-closed";
-    let observation = fresh(session);
-    observation.append_message(message("user", "m0"));
-    let (tx, rx) = connection();
-    drop(rx);
-
-    let error = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect_err("a closed FIFO cannot take the boundary");
-    assert_eq!(error, SnapshotError::MarkerRejected);
-    assert_eq!(
-        observation.seq(),
-        1,
-        "a refused snapshot must not advance the observed sequence"
-    );
-}
-
-#[test]
-fn snapshot_marker_every_record_is_inside_the_tail_or_after_the_marker() {
+fn snapshot_marker_every_record_is_inside_the_tail_or_after_the_boundary() {
     let session = "snapshot-marker-never-lost";
     let observation = fresh(session);
     let writers = 3usize;
@@ -265,30 +189,19 @@ fn snapshot_marker_every_record_is_inside_the_tail_or_after_the_marker() {
     barrier.wait();
     let mut snapshots = 0usize;
     while appended.load(Ordering::SeqCst) < total {
-        let (tx, mut rx) = connection();
-        let view = observation
-            .take_snapshot(
-                &SnapshotRequest {
-                    tail: Some(MAX_TAIL),
-                    max_bytes: Some(MAX_MAX_BYTES),
-                    ..Default::default()
-                },
-                &tx,
-            )
-            .expect("the connection accepts the marker");
-        let marker = marker_of(rx.try_recv().expect("marker"));
+        let view = observation.take_snapshot(&SnapshotRequest {
+            tail: Some(MAX_TAIL),
+            max_bytes: Some(MAX_MAX_BYTES),
+            ..Default::default()
+        });
         // Every append advances the observed sequence by exactly one, so the
-        // marker's sequence *is* the number of records at or before it. Anything
-        // the reader has not recorded yet is therefore strictly after the marker,
-        // and nothing can fall between the two sets.
+        // boundary's sequence *is* the number of records at or before it.
+        // Anything the reader has not recorded yet is therefore strictly after
+        // the boundary, and nothing can fall between the two sets.
         assert_eq!(
             view.state.message_count,
-            usize::try_from(marker.seq).expect("a record count fits usize"),
-            "every record at or before the marker is inside the snapshot"
-        );
-        assert_eq!(
-            view.state.last_seq, marker.seq,
-            "the reply reports the marker's own sequence"
+            usize::try_from(view.seq).expect("a record count fits usize"),
+            "every record at or before the boundary is inside the snapshot"
         );
         assert_eq!(
             view.messages.len(),
@@ -303,17 +216,10 @@ fn snapshot_marker_every_record_is_inside_the_tail_or_after_the_marker() {
     }
 
     assert!(snapshots > 0, "at least one snapshot was taken while appends ran");
-    let (tx, mut rx) = connection();
-    let last = observation
-        .take_snapshot(
-            &SnapshotRequest {
-                tail: Some(MAX_TAIL),
-                ..Default::default()
-            },
-            &tx,
-        )
-        .expect("the connection accepts the marker");
-    let _ = rx.try_recv();
+    let last = observation.take_snapshot(&SnapshotRequest {
+        tail: Some(MAX_TAIL),
+        ..Default::default()
+    });
     assert_eq!(
         last.state.message_count, total,
         "the final snapshot contains every record exactly once"
@@ -325,24 +231,16 @@ fn snapshot_marker_every_record_is_inside_the_tail_or_after_the_marker() {
 fn snapshot_marker_reports_a_state_change_as_a_newer_sequence() {
     let session = "snapshot-marker-state";
     let observation = fresh(session);
-    let (tx, mut rx) = connection();
-    let idle = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the connection accepts the marker");
-    let idle_marker = marker_of(rx.try_recv().expect("marker"));
+    let idle = observation.take_snapshot(&SnapshotRequest::default());
     assert!(!idle.state.processing);
 
     let after = observation.set_processing(true);
-    let (tx, mut rx) = connection();
-    let busy = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the connection accepts the marker");
-    let busy_marker = marker_of(rx.try_recv().expect("marker"));
+    let busy = observation.take_snapshot(&SnapshotRequest::default());
 
     assert!(busy.state.processing, "a state change is part of the observation");
     assert_eq!(busy.state.last_change, "processing");
-    assert!(after > idle_marker.seq);
-    assert_eq!(busy_marker.seq, after);
+    assert!(after > idle.seq);
+    assert_eq!(busy.seq, after);
 }
 
 #[test]
@@ -350,29 +248,17 @@ fn snapshot_marker_restart_changes_the_generation() {
     let session = "snapshot-marker-restart";
     let observation = fresh(session);
     observation.append_message(message("user", "m0"));
-    let (tx, mut rx) = connection();
-    let before = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the connection accepts the marker");
-    let before_marker = marker_of(rx.try_recv().expect("marker"));
+    let before = observation.take_snapshot(&SnapshotRequest::default());
 
     forget_session(session);
     let restarted = observation_for(session);
-    let (tx, mut rx) = connection();
-    let after = restarted
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the connection accepts the marker");
-    let after_marker = marker_of(rx.try_recv().expect("marker"));
+    let after = restarted.take_snapshot(&SnapshotRequest::default());
 
     assert_ne!(
-        before_marker.generation, after_marker.generation,
+        before.generation, after.generation,
         "a restart must not report the previous generation"
     );
-    assert_eq!(after_marker.seq, 0, "the new generation starts from its own sequence");
-    assert!(
-        after.seq < before.seq || before.seq == 0,
-        "the new sequence is not a continuation of the old one"
-    );
+    assert_eq!(after.seq, 0, "the new generation starts from its own sequence");
     assert!(after.messages.is_empty(), "a restart does not replay the old tail");
 }
 
@@ -384,18 +270,11 @@ fn snapshot_marker_bounds_the_tail_and_the_byte_budget() {
         observation.append_message(message("user", format!("message-{index}")));
     }
 
-    let (tx, mut rx) = connection();
-    let oversized = observation
-        .take_snapshot(
-            &SnapshotRequest {
-                tail: Some(u32::MAX),
-                max_bytes: Some(u64::MAX),
-                ..Default::default()
-            },
-            &tx,
-        )
-        .expect("the connection accepts the marker");
-    let _ = rx.try_recv();
+    let oversized = observation.take_snapshot(&SnapshotRequest {
+        tail: Some(u32::MAX),
+        max_bytes: Some(u64::MAX),
+        ..Default::default()
+    });
     assert!(
         oversized.messages.len() <= MAX_TAIL as usize,
         "an oversized tail request is clamped to {MAX_TAIL}, got {}",
@@ -403,35 +282,21 @@ fn snapshot_marker_bounds_the_tail_and_the_byte_budget() {
     );
     assert!(oversized.truncated);
 
-    let (tx, mut rx) = connection();
-    let small = observation
-        .take_snapshot(
-            &SnapshotRequest {
-                tail: Some(MAX_TAIL),
-                max_bytes: Some(200),
-                ..Default::default()
-            },
-            &tx,
-        )
-        .expect("the connection accepts the marker");
-    let _ = rx.try_recv();
+    let small = observation.take_snapshot(&SnapshotRequest {
+        tail: Some(MAX_TAIL),
+        max_bytes: Some(200),
+        ..Default::default()
+    });
     assert!(small.truncated, "the byte budget cut the tail");
     let bytes: usize = small.messages.iter().map(|m| m.role.len() + m.content.len()).sum();
     assert!(bytes <= 200, "the byte budget must hold, got {bytes}");
     assert!(small.next_history_cursor.is_some(), "a cut tail names its continuation");
 
     let cursor = small.next_history_cursor.clone().expect("cursor");
-    let (tx, mut rx) = connection();
-    let older = observation
-        .take_snapshot(
-            &SnapshotRequest {
-                cursor: Some(cursor),
-                ..SnapshotRequest::default()
-            },
-            &tx,
-        )
-        .expect("the connection accepts the marker");
-    let _ = rx.try_recv();
+    let older = observation.take_snapshot(&SnapshotRequest {
+        cursor: Some(cursor),
+        ..SnapshotRequest::default()
+    });
     assert!(!older.messages.is_empty(), "the cursor reaches an older page");
     let newest = small.messages.last().map(|m| m.content.clone());
     assert_ne!(
@@ -448,18 +313,11 @@ fn snapshot_marker_cursor_before_the_retained_window_is_truncated() {
     for index in 0..(RETAINED_MESSAGES + 50) {
         observation.append_message(message("user", format!("m{index}")));
     }
-    let (tx, mut rx) = connection();
-    let view = observation
-        .take_snapshot(
-            &SnapshotRequest {
-                cursor: Some("before:1".to_string()),
-                tail: Some(MAX_TAIL),
-                ..Default::default()
-            },
-            &tx,
-        )
-        .expect("the connection accepts the marker");
-    let _ = rx.try_recv();
+    let view = observation.take_snapshot(&SnapshotRequest {
+        cursor: Some("before:1".to_string()),
+        tail: Some(MAX_TAIL),
+        ..Default::default()
+    });
     assert!(
         view.truncated,
         "an unreachable page is reported as truncated, not faked"
@@ -467,57 +325,6 @@ fn snapshot_marker_cursor_before_the_retained_window_is_truncated() {
     assert!(
         view.next_history_cursor.is_some(),
         "the reply names the oldest page it can still serve"
-    );
-}
-
-#[tokio::test]
-async fn snapshot_marker_handler_writes_the_reply_after_the_marker() {
-    let session = "snapshot-marker-handler";
-    let observation = fresh(session);
-    observation.append_message(message("user", "hello"));
-    let (tx, mut rx) = connection();
-    let mut out: Vec<u8> = Vec::new();
-
-    handle_get_snapshot(7, session, SnapshotRequest::default(), &tx, &mut out)
-        .await
-        .expect("the handler writes the reply");
-
-    let marker = marker_of(rx.try_recv().expect("the marker precedes the reply"));
-    let text = String::from_utf8(out).expect("utf8 frames");
-    let reply: serde_json::Value = serde_json::from_str(text.lines().next().expect("one frame")).expect("json reply");
-    assert_eq!(reply["type"], serde_json::json!("snapshot"));
-    assert_eq!(reply["id"], serde_json::json!(7));
-    assert_eq!(reply["session_id"], serde_json::json!(session));
-    assert_eq!(reply["marker_id"], serde_json::json!(marker.marker_id));
-    assert_eq!(reply["generation"], serde_json::json!(marker.generation));
-    assert_eq!(reply["seq"], serde_json::json!(marker.seq));
-    assert_eq!(reply["messages"].as_array().map(Vec::len), Some(1));
-}
-
-#[tokio::test]
-async fn snapshot_marker_handler_refuses_when_the_fifo_is_closed() {
-    let session = "snapshot-marker-handler-closed";
-    let observation = fresh(session);
-    observation.append_message(message("user", "hello"));
-    let (tx, rx) = connection();
-    drop(rx);
-    let mut out: Vec<u8> = Vec::new();
-
-    handle_get_snapshot(9, session, SnapshotRequest::default(), &tx, &mut out)
-        .await
-        .expect("the handler still answers, with a refusal");
-
-    let text = String::from_utf8(out).expect("utf8 frames");
-    let reply: serde_json::Value = serde_json::from_str(text.lines().next().expect("one frame")).expect("json reply");
-    assert_eq!(
-        reply["type"],
-        serde_json::json!("error"),
-        "a refused marker is not a snapshot"
-    );
-    assert_eq!(reply["id"], serde_json::json!(9));
-    assert!(
-        reply["message"].as_str().unwrap_or_default().contains("marker"),
-        "the refusal names the marker: {reply}"
     );
 }
 
@@ -536,7 +343,6 @@ fn snapshot_marker_delivery_sequence_strictly_increases_and_bounds_the_snapshot(
     let session = "snapshot-marker-delivery-sequence";
     let observation = fresh(session);
     observation.append_message(message("user", "hello"));
-    let (tx, _rx) = connection();
 
     let mut delivered = Vec::new();
     for _ in 0..5 {
@@ -547,9 +353,7 @@ fn snapshot_marker_delivery_sequence_strictly_increases_and_bounds_the_snapshot(
         "each delivery must be strictly newer than the last: {delivered:?}"
     );
 
-    let view = observation
-        .take_snapshot(&SnapshotRequest::default(), &tx)
-        .expect("the marker is accepted");
+    let view = observation.take_snapshot(&SnapshotRequest::default());
     let last_before = *delivered.last().expect("deliveries");
     assert!(
         view.seq >= last_before,

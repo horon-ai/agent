@@ -2077,6 +2077,72 @@ class HoronAgentClient:
         """Move the running tool call to the background."""
         await self.background_tool_result(session_id)
 
+    async def cancel_turn(self, session_id: str, run_id: str) -> dict[str, Any]:
+        """Cancel the run the caller saw start, and only that run.
+
+        Requires ``cancellable_work_v1``. ``accepted: false`` with
+        ``reason: "unknown"`` means the session is not running that run, so a
+        successor turn keeps going.
+        """
+        self._require_capability("cancellable_work_v1", "cancel_turn")
+        frame = await self._expect_reply(
+            {"req": "cancel_turn", "session_id": session_id, "run_id": run_id},
+            "cancel_turn_result",
+        )
+        result: dict[str, Any] = {"accepted": frame.get("accepted") is True}
+        if isinstance(frame.get("reason"), str):
+            result["reason"] = frame["reason"]
+        return result
+
+    async def cancel_tool_call(self, session_id: str, call_id: str) -> dict[str, Any]:
+        """Stop one tool call while its turn keeps running.
+
+        Requires ``cancellable_work_v1``. The cancelled call still reports a
+        ``tool_done``, whose result text the model sees.
+        """
+        self._require_capability("cancellable_work_v1", "cancel_tool_call")
+        frame = await self._expect_reply(
+            {"req": "cancel_tool_call", "session_id": session_id, "call_id": call_id},
+            "tool_call_cancel_result",
+        )
+        return self._cancel_outcome(frame)
+
+    async def cancel_background_terminal(self, session_id: str, call_id: str) -> dict[str, Any]:
+        """Stop one background terminal this session started.
+
+        Requires ``cancellable_work_v1``. The final ``background_work`` event
+        confirms the stop; this reply only says the cancellation was accepted.
+        """
+        self._require_capability("cancellable_work_v1", "cancel_background_terminal")
+        frame = await self._expect_reply(
+            {"req": "cancel_background_terminal", "session_id": session_id, "call_id": call_id},
+            "tool_call_cancel_result",
+        )
+        return self._cancel_outcome(frame)
+
+    async def list_background_work(self, session_id: str) -> list[dict[str, Any]]:
+        """The background work still running in this session.
+
+        Requires ``cancellable_work_v1``.
+        """
+        self._require_capability("cancellable_work_v1", "list_background_work")
+        frame = await self._expect_reply(
+            {"req": "list_background_work", "session_id": session_id},
+            "background_work_list",
+        )
+        items = frame.get("items")
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+    @staticmethod
+    def _cancel_outcome(frame: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "call_id": frame["call_id"] if isinstance(frame.get("call_id"), str) else "",
+            "accepted": frame.get("accepted") is True,
+        }
+        if isinstance(frame.get("reason"), str):
+            result["reason"] = frame["reason"]
+        return result
+
     async def background_tool_result(self, session_id: str) -> dict[str, Any]:
         """Move the running tool call to the background and report what moved.
 

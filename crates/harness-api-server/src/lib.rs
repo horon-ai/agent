@@ -109,6 +109,12 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     horon_agent_harness_api::CAPABILITY_MONITOR_V1,
     horon_agent_harness_api::CAPABILITY_SNAPSHOT_MARKER_V1,
     horon_agent_harness_api::CAPABILITY_ASK_RECEIPTS_V1,
+    // Cancellable work: the four requests the daemon has served its own clients
+    // all along. Advertised unconditionally so a client can check it before
+    // sending; a daemon that cannot serve them is refused with a structured
+    // `unsupported` reply naming the daemon capability instead of being
+    // forwarded a frame it would silently drop.
+    horon_agent_harness_api::CAPABILITY_CANCELLABLE_WORK_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -424,6 +430,7 @@ where
     let session_tools_supported = daemon_caps.iter().any(|cap| cap == "session_tools");
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
+    let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let hello_ok = ServerFrame::reply(
         reply_to,
         ApiEvent::HelloOk {
@@ -458,6 +465,7 @@ where
     state.runtime_commands_supported = runtime_commands_supported;
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;
+    state.cancellable_work_api_supported = cancellable_work_api_supported;
 
     // 3. Translate both directions in one loop so translation state stays
     //    single-threaded, and never await a write to the client from it: one

@@ -96,9 +96,6 @@ async fn handle_clear_session_keeps_identity_and_replaces_runtime_handles() -> R
         HashSet::from([old_session_id.to_string()]),
     )])));
     let file_touch = FileTouchService::new();
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::<String, HashMap<String, HashSet<String>>>::new()));
-    let channel_subscriptions_by_session =
-        Arc::new(RwLock::new(HashMap::<String, HashMap<String, HashSet<String>>>::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::from([(
         "swarm-test".to_string(),
         VersionedPlan {
@@ -130,8 +127,6 @@ async fn handle_clear_session_keeps_identity_and_replaces_runtime_handles() -> R
         &swarm_members,
         &swarms_by_id,
         &file_touch,
-        &channel_subscriptions,
-        &channel_subscriptions_by_session,
         &swarm_plans,
         &event_history,
         &event_counter,

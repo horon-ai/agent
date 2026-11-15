@@ -173,7 +173,7 @@ Non-urgent interrupts are never inserted between tools. All of them wait for poi
 
 ### Pairing tool calls with results
 
-Model calls in this build go out over a single OpenAI-compatible Responses path. That request assembler keeps calls and results in order itself. It first scans which message holds each tool result (`crates/provider-openai/src/request.rs:184-193`), defers output while the result is still ahead to preserve call order (`:390-420`), and inserts a synthetic `[Error] ...` output for a call that never gets a result (`:436-441`). A result that attaches to no call is emitted as a user message (`:449-464`).
+Model calls in this build go out over the wire the profile's `type` names, and each wire's request assembler keeps calls and results in order itself. On the OpenAI Chat Completions and Responses wires that assembler first scans which message holds each tool result (`crates/provider-openai/src/request.rs:184-193`), defers output while the result is still ahead to preserve call order (`:390-420`), and inserts a synthetic `[Error] ...` output for a call that never gets a result (`:436-441`). A result that attaches to no call is emitted as a user message (`:449-464`). The Anthropic Messages and Gemini generateContent builders work differently: both pass the history through one shared normalizer (`crates/provider-openai/src/wire/turns.rs:48`) before the body is built. It drops empty messages and merges consecutive messages of the same role so that turns alternate, answers every tool call in the user turn directly after it and in call order, moves a stored result there from wherever else in the history it was kept, gives a call with no stored result at all the stand-in error output `[Error] Tool output missing (session interrupted before tool execution completed)`, and drops a result that answers no call.
 
 So the injection rules cannot create an ordering violation. Point D comes after every result is already in history, and point C comes after the skipped calls have been filled.
 
@@ -252,8 +252,8 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 The harness API advertises this feature only when the connected daemon's safety-feature probe reports `runtime_commands`.
 Older daemons return an explicit unsupported error.
-This is an additive API (the current minor version is 20), available from both the Rust and TypeScript SDKs
-(`crates/harness-api/src/lib.rs:68-70`).
+This is an additive API (the current minor version is 22), available from both the Rust and TypeScript SDKs
+(`crates/harness-api/src/lib.rs:72-74`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -280,7 +280,7 @@ session's runtime host, including SSH and managed remote runtimes.
 - `skills`: loaded global and project overlay skills, descriptions, paths, active
   skills, shared approval recommendations. Refreshes the global registry.
 - `context`: the assembled static and dynamic system prompt, effective and current tools,
-  active conversation messages, context window metadata. It consumes no pending memory,
+  active conversation messages, context window metadata. It injects no memory guidance,
   prewarms no provider, and runs no inference.
 - `info`: the real provider and session identity plus token and cache counters.
   Cache expiry and content inspection are unavailable and say so.

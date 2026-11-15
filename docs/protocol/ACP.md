@@ -12,7 +12,7 @@ horon acp            # handle ACP v1 over standard input and output
 
 `acp` writes nothing but ACP messages to stdout (line-delimited UTF-8 JSON). Logs go to stderr, and the process exits as soon as stdin closes. A request still being handled never gets its response.
 
-Model calls go straight to the `/chat/completions` endpoint of the OpenAI-compatible endpoint configured in `[providers.<name>]`, so that profile has to be ready first. Configuration and API keys follow [MODEL.md](../provider/MODEL.md).
+Model calls go straight to the endpoint of the wire the active `[providers.<name>]` profile's `type` names (Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini generateContent), so that profile has to be ready first. Configuration and API keys follow [MODEL.md](../provider/MODEL.md).
 
 `acp` connects to the agent daemon. When no daemon is running, `acp` starts one itself and asks for the tool profile in `[acp] tool_profile` (default `acp`). A daemon that is already running keeps its own settings. A `--tool-profile` you pass directly wins over both.
 

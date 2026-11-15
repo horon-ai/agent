@@ -14,7 +14,9 @@ use crate::config::CORE_TOOL_PROFILE;
 /// `build_tools` is the function the provider request body uses, so this is the
 /// payload and not an estimate of it. The catalog size is checked against the
 /// eager definitions as well: a ceiling that holds only because the catalog
-/// lost a tool is a regression the gate must not read as a pass.
+/// lost a tool is a regression the gate must not read as a pass. `per_tool`
+/// is each entry serialized alone, in catalog order, so the entries plus the
+/// array's brackets and commas add up to `tools_bytes`.
 #[tokio::test]
 async fn core_profile_request_prefix_is_measured() {
     let _guard = crate::storage::lock_test_env();
@@ -32,10 +34,24 @@ async fn core_profile_request_prefix_is_measured() {
     assert_eq!(catalog.len(), eager, "the catalog is exactly the eager definitions");
     assert!(!bytes.is_empty(), "an empty catalog measures nothing");
 
+    let per_tool = catalog
+        .iter()
+        .map(|tool| {
+            let name = tool
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .expect("every catalog entry is named");
+            let size = serde_json::to_vec(tool).expect("a catalog entry serializes").len();
+            format!("{name}:{size}")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+
     println!(
-        "STRUCTURAL_PERF section=prefix tools_bytes={} tool_count={} eager_count={}",
+        "STRUCTURAL_PERF section=prefix tools_bytes={} tool_count={} eager_count={} per_tool={}",
         bytes.len(),
         catalog.len(),
         eager,
+        per_tool,
     );
 }

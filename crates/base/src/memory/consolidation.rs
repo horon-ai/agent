@@ -132,6 +132,62 @@ struct ConsolidationState {
     /// the digest actually speaks for.
     #[serde(default)]
     summary_entries: usize,
+    /// Size and modification time of the memory file this summary was built
+    /// from. The summary is a derived cache: when the store changes underneath
+    /// it (a forget, an update, a tag), the digest is rebuilt from the graph
+    /// instead of being injected stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    summary_source: Option<FileStamp>,
+}
+
+/// Cheap identity for the memory file a summary was derived from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct FileStamp {
+    len: u64,
+    /// Seconds and nanoseconds since the Unix epoch; `None` when the platform
+    /// does not report one, in which case only the length is compared.
+    modified_secs: Option<i64>,
+    modified_nanos: Option<u32>,
+}
+
+impl FileStamp {
+    fn read(path: &Path) -> Option<Self> {
+        let meta = match std::fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(err) => {
+                crate::logging::debug(&format!("Memory consolidation cannot stamp {}: {err}", path.display()));
+                return None;
+            }
+        };
+        // A file whose modification time is unreadable is still comparable by
+        // length alone; the pass rewrites the whole graph, so a length change is
+        // the common signal.
+        let since_epoch = match meta.modified() {
+            Ok(modified) => match modified.duration_since(std::time::UNIX_EPOCH) {
+                Ok(since) => Some(since),
+                Err(err) => {
+                    crate::logging::debug(&format!(
+                        "Memory consolidation mtime of {} predates the epoch: {err}",
+                        path.display()
+                    ));
+                    None
+                }
+            },
+            Err(err) => {
+                crate::logging::debug(&format!(
+                    "Memory consolidation cannot read the mtime of {}: {err}",
+                    path.display()
+                ));
+                None
+            }
+        };
+        Some(Self {
+            len: meta.len(),
+            modified_secs: since_epoch.map(|since| since.as_secs() as i64),
+            modified_nanos: since_epoch.map(|since| since.subsec_nanos()),
+        })
+    }
 }
 
 impl Default for ConsolidationState {
@@ -141,6 +197,7 @@ impl Default for ConsolidationState {
             last_pass: None,
             summary: String::new(),
             summary_entries: 0,
+            summary_source: None,
         }
     }
 }
@@ -204,14 +261,57 @@ impl MemoryManager {
 }
 
 fn summary_with_limits(manager: &MemoryManager, max_bytes: usize) -> Result<Option<(String, usize)>> {
+    let limits = ConsolidationLimits::from_config();
     let mut sections: Vec<ScopeSummary> = Vec::new();
     if let Some(path) = manager.project_memory_path()? {
-        sections.push(scope_summary(load_state(&state_path_for(&path))));
+        sections.push(current_scope_summary(
+            manager,
+            Scope::Project,
+            &path,
+            limits,
+            max_bytes,
+        )?);
     }
-    sections.push(scope_summary(load_state(&state_path_for(
-        &manager.global_memory_path()?,
-    ))));
+    let global_path = manager.global_memory_path()?;
+    sections.push(current_scope_summary(
+        manager,
+        Scope::Global,
+        &global_path,
+        limits,
+        max_bytes,
+    )?);
     Ok(compose_summaries(&sections, max_bytes))
+}
+
+/// The scope's summary as of now, rebuilding it if the store moved underneath.
+///
+/// A stored summary is a cache over the memory graph. `forget`, an update, a
+/// tag change or another writer can leave it describing memories that are no
+/// longer there, so a digest whose recorded file stamp no longer matches is
+/// rebuilt from the graph before injection. The rebuild does not merge
+/// anything: it only re-derives the text, so a plain read never rewrites the
+/// store.
+fn current_scope_summary(
+    manager: &MemoryManager,
+    scope: Scope,
+    memory_path: &Path,
+    limits: ConsolidationLimits,
+    max_bytes: usize,
+) -> Result<ScopeSummary> {
+    let state_path = state_path_for(memory_path);
+    let state = load_state(&state_path);
+    if state.summary.is_empty() || state.summary_source == FileStamp::read(memory_path) {
+        return Ok(scope_summary(state));
+    }
+    let graph = match scope {
+        Scope::Project => manager.load_project_graph()?,
+        Scope::Global => manager.load_global_graph()?,
+    };
+    // The rebuild keeps the pass marker untouched: this is a re-derivation of
+    // an existing summary, not a consolidation pass, so the threshold for the
+    // next real pass is unchanged.
+    let (summary, entries) = build_summary(&graph, max_bytes.min(limits.summary_bytes));
+    Ok(ScopeSummary { text: summary, entries })
 }
 
 fn scope_summary(state: ConsolidationState) -> ScopeSummary {
@@ -254,6 +354,7 @@ fn run_scope(
         let (summary, entries) = build_summary(&graph, limits.summary_bytes);
         state.summary = summary;
         state.summary_entries = entries;
+        state.summary_source = FileStamp::read(&memory_path);
         storage::write_json(&state_path, &state)?;
         match scope {
             Scope::Project => report.project_ran = true,
@@ -881,6 +982,39 @@ mod tests {
                 summary.len()
             );
             assert_eq!(entries, 1, "the merged subject leaves one active memory");
+        });
+    }
+
+    #[test]
+    fn a_forgotten_memory_leaves_the_injected_summary() {
+        with_project_home(|manager| {
+            // One stored memory is enough to run a pass; the shipped default is
+            // twenty, so the threshold is lowered for this fixture.
+            let config_path = crate::config::Config::path().expect("config path");
+            std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("config dir");
+            std::fs::write(&config_path, "[agents]\nmemory_consolidation_min_new = 1\n").expect("write config");
+            crate::config::Config::invalidate_cache();
+
+            let kept = remember(manager, MemoryCategory::Fact, "Deploys run from the dev branch", 2);
+            let dropped = remember(manager, MemoryCategory::Fact, "Staging mirrors production nightly", 1);
+            manager.run_consolidation();
+            let (before, _) = manager.consolidation_summary().expect("the pass stores a summary");
+            assert!(before.contains("Staging mirrors production"), "{before}");
+
+            assert!(manager.forget(&dropped).expect("forget the memory"));
+
+            let (after, _) = manager
+                .consolidation_summary()
+                .expect("a changed store still yields a summary");
+            assert!(
+                !after.contains("Staging mirrors production"),
+                "a forgotten memory must not survive in the injected digest: {after}"
+            );
+            assert!(
+                after.contains("dev branch"),
+                "the memories that remain still reach the digest: {after}"
+            );
+            assert!(manager.load_project_graph().expect("graph").get_memory(&kept).is_some());
         });
     }
 

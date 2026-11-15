@@ -73,8 +73,88 @@ pub struct InitializeParams {
     pub client_info: ClientInfo,
 }
 
+/// The client capabilities sent in `initialize`.
+///
+/// A capability is declared only when this client actually answers the requests
+/// that come with it: `roots` is present exactly when [`McpRoot`]s were resolved
+/// for the connection, and `roots/list` is refused otherwise.
 #[derive(Debug, Clone, Serialize, Default)]
-pub struct ClientCapabilities {}
+pub struct ClientCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roots: Option<RootsClientCapability>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RootsClientCapability {
+    /// The client's root list never changes after `initialize`, so a server is
+    /// told it will hear no `notifications/roots/list_changed`.
+    #[serde(rename = "listChanged")]
+    pub list_changed: bool,
+}
+
+impl ClientCapabilities {
+    /// Advertise `roots` only when the connection has a root list to serve.
+    pub fn for_roots(roots: Option<&[McpRoot]>) -> Self {
+        Self {
+            roots: roots.map(|_| RootsClientCapability { list_changed: false }),
+        }
+    }
+}
+
+/// One entry of a `roots/list` result: a `file://` URI the server may read.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpRoot {
+    pub uri: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+impl McpRoot {
+    /// The root for one directory, percent-encoded as a `file://` URI with a
+    /// trailing slash. A path that cannot be expressed as a file URL (a relative
+    /// one) yields no root rather than a malformed one.
+    pub fn directory(dir: &std::path::Path) -> Option<Self> {
+        let uri = match url::Url::from_directory_path(dir) {
+            Ok(uri) => uri.to_string(),
+            Err(()) => return None,
+        };
+        Some(Self { uri, name: None })
+    }
+}
+
+/// JSON-RPC "method not found", the answer for every server-initiated method
+/// this client does not serve.
+pub const METHOD_NOT_FOUND_CODE: i64 = -32601;
+
+fn method_not_found_reply(id: &Value, method: &str) -> Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": METHOD_NOT_FOUND_CODE, "message": format!("Method not found: {method}") },
+    })
+}
+
+/// The JSON-RPC 2.0 response to one server-initiated request.
+///
+/// Only two methods are served: `ping`, and `roots/list` when the connection
+/// declared `roots`. Everything else (`sampling/createMessage`,
+/// `resources/subscribe`, `resources/unsubscribe`, `elicitation/create`, …) is
+/// refused by name so the server gets an answer instead of a silent timeout.
+/// Both transports answer through this function, so they cannot diverge.
+pub fn server_request_reply(method: &str, id: &Value, roots: Option<&[McpRoot]>) -> Value {
+    match method {
+        "ping" => serde_json::json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
+        "roots/list" => match roots {
+            Some(roots) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": { "roots": roots },
+            }),
+            None => method_not_found_reply(id, method),
+        },
+        other => method_not_found_reply(id, other),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ClientInfo {

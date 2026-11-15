@@ -28,7 +28,6 @@ fn runtime_dir(label: &str) -> PathBuf {
 
 struct Residency {
     live_sessions: u64,
-    shared_context_entries: u64,
     debug_jobs: u64,
     swarm_members: u64,
     connected_clients: u64,
@@ -44,7 +43,6 @@ async fn residency(debug_socket_path: &Path) -> Result<Residency> {
     let number = |value: Option<&Value>| value.and_then(Value::as_u64).unwrap_or(0);
     Ok(Residency {
         live_sessions: number(memory.pointer("/sessions/live_count")),
-        shared_context_entries: number(memory.pointer("/swarm/shared_context_entry_count")),
         debug_jobs: number(memory.pointer("/debug/job_count")),
         swarm_members: number(memory.pointer("/swarm/member_count")),
         connected_clients: number(memory.pointer("/clients/connected_clients")),
@@ -58,7 +56,6 @@ fn describe(population: usize, sample: &Residency, create_ms: Option<u128>) -> V
     json!({
         "sessions_requested": population,
         "live_sessions": sample.live_sessions,
-        "shared_context_entries": sample.shared_context_entries,
         "debug_jobs": sample.debug_jobs,
         "swarm_members": sample.swarm_members,
         "connected_clients": sample.connected_clients,

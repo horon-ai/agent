@@ -15,7 +15,6 @@ pub struct MemoryGraphHealth {
     pub low_confidence: usize,
     pub contradictions: usize,
     pub missing_embeddings: usize,
-    pub duplicate_candidates: usize,
     pub last_consolidation: Option<DateTime<Utc>>,
 }
 
@@ -89,10 +88,6 @@ pub fn gather_memory_graph_health(memory_manager: &crate::memory::MemoryManager)
 
     // Contradicts edges are bidirectional, so divide by 2
     health.contradictions /= 2;
-
-    // Duplicate candidates would require embedding similarity scan;
-    // placeholder for now — ambient agent will discover them during its cycle.
-    health.duplicate_candidates = 0;
 
     health
 }
@@ -369,14 +364,6 @@ pub fn build_ambient_system_prompt(
         "- Memories without embeddings: {}\n",
         graph_health.missing_embeddings,
     ));
-    if graph_health.duplicate_candidates > 0 {
-        prompt.push_str(&format!(
-            "- Duplicate candidates (similarity > 0.95): {}\n",
-            graph_health.duplicate_candidates,
-        ));
-    } else {
-        prompt.push_str("- Duplicate candidates: run embedding scan to detect\n");
-    }
     if let Some(ts) = graph_health.last_consolidation {
         let ago = format_duration_rough(Utc::now() - ts);
         prompt.push_str(&format!("- Last consolidation: {} ago\n", ago));

@@ -100,9 +100,9 @@ struct Input {
 }
 
 const DESCRIPTION: &str = "\
-Call a tool whose schema is not loaded, including those listed under \"Additional tools\". \
-`list` names them, `describe` returns one schema, `run` calls one with its own arguments. \
-Policy, approval, and hooks apply to that tool, as for a direct call.";
+Use tools sent without a schema, e.g. under \"Additional tools\": \
+`list` names them, `describe` returns a schema, `run` calls one. \
+Policy, approval, and hooks apply as for direct calls.";
 
 #[async_trait]
 impl Tool for ToolboxTool {

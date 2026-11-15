@@ -170,7 +170,7 @@ omp와 다르다. `one-at-a-time`으로 두면 남은 메시지는 순서대로 
 
 ### 도구 호출과 결과의 짝
 
-이 빌드의 모델 호출은 OpenAI 호환 Responses 경로 하나로 나간다. 그 요청 조립기는 호출과 결과의 순서를 스스로 지킨다. 각 도구 결과가 어느 메시지에 있는지 먼저 훑고(`crates/provider-openai/src/request.rs:184-193`), 결과가 아직 뒤에 있으면 그 출력을 미뤄 호출 순서를 보존하며(`:390-420`), 끝까지 결과가 없는 호출에는 합성 출력 `[Error] ...`를 넣는다(`:436-441`). 결과가 어느 호출에도 붙지 않으면 사용자 메시지로 바꿔 내보낸다(`:449-464`).
+이 빌드의 모델 호출은 프로파일 `type`이 가리키는 방식으로 나가고, 각 방식의 요청 조립기가 호출과 결과의 순서를 스스로 지킨다. OpenAI Chat Completions와 Responses 방식에서는 그 조립기가 각 도구 결과가 어느 메시지에 있는지 먼저 훑고(`crates/provider-openai/src/request.rs:184-193`), 결과가 아직 뒤에 있으면 그 출력을 미뤄 호출 순서를 보존하며(`:390-420`), 끝까지 결과가 없는 호출에는 합성 출력 `[Error] ...`를 넣는다(`:436-441`). 결과가 어느 호출에도 붙지 않으면 사용자 메시지로 바꿔 내보낸다(`:449-464`). Anthropic Messages와 Gemini generateContent 조립기는 다르게 동작한다. 두 방식은 본문을 만들기 전에 이력을 공유 정규화기(`crates/provider-openai/src/wire/turns.rs:48`)에 통과시킨다. 정규화기는 빈 메시지를 버리고 같은 역할의 연속 메시지를 합쳐 턴이 번갈아 오게 하고, 모든 도구 호출을 호출 순서대로 바로 뒤 사용자 턴에서 답하며, 이력의 다른 곳에 저장된 결과도 그 자리로 옮긴다. 저장된 결과가 아예 없는 호출에는 대체 오류 출력 `[Error] Tool output missing (session interrupted before tool execution completed)`를 넣고, 어느 호출에도 붙지 않는 결과는 버린다.
 
 그래서 주입 규칙은 순서 위반을 만들지 않는다. 지점 D는 모든 결과가 이미 이력에 들어간 뒤이고, 지점 C는 건너뛴 호출의 결과를 먼저 채운 뒤다.
 
@@ -258,8 +258,8 @@ CancelSoftInterrupts {
 
 하네스 API는 연결된 데몬의 안전 기능 프로브가 `runtime_commands`를 알릴 때만 그 기능을 알린다.
 구형 데몬은 명시적인 미지원 오류를 돌려준다.
-이것은 추가형 API이며 현재 마이너 버전은 20이고 Rust와 TypeScript SDK 모두에서 쓸 수 있다
-(`crates/harness-api/src/lib.rs:68-70`).
+이것은 추가형 API이며 현재 마이너 버전은 22이고 Rust와 TypeScript SDK 모두에서 쓸 수 있다
+(`crates/harness-api/src/lib.rs:72-74`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -286,7 +286,7 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 - `skills`: 로드된 전역/프로젝트 오버레이 스킬, 설명, 경로, 활성
   스킬, 공유 승인 추천. 전역 레지스트리를 새로 고친다.
 - `context`: 조립된 정적/동적 시스템 프롬프트, 유효/현재 도구,
-  활성 대화 메시지, 컨텍스트 창 메타데이터. 대기 중인 메모리를 소비하거나 프로바이더를
+  활성 대화 메시지, 컨텍스트 창 메타데이터. 메모리 지침을 넣거나 프로바이더를
   미리 데우거나 추론을 실행하지 않는다.
 - `info`: 실제 프로바이더/세션 정체성과 토큰/캐시 카운터.
   캐시 만료/내용 검사는 쓸 수 없고 그렇게 명시한다.

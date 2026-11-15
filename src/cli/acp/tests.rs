@@ -285,7 +285,7 @@ fn notice_only_with_capability() {
     let stopped = json!({"type":"turn_stopped","reason":"limit_reached","message":"Context limit exceeded"});
     let failed = json!({"type":"turn_stopped","reason":"failure","message":""});
     let notification = json!({"type":"notification","from_session":"s2","from_name":"fox",
-        "notification_type":{"kind":"shared_context","key":"k","value":"v"},"message":"fox shared k"});
+        "notification_type":{"kind":"message"},"message":"fox shared k"});
 
     for capabilities in [
         json!({}),

@@ -152,7 +152,7 @@ jobs:
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/release-cargo-metadata.json"
           git diff --exit-code -- Cargo.lock
 
-      # Render a human-readable changelog for the release body (issue #435):
+      # Render a human-readable changelog for the release body:
       # commit subjects since the previous tag grouped by conventional-commit
       # prefix, always ending with the compare link.
       - name: Generate release notes
@@ -366,8 +366,8 @@ jobs:
             # (`horon-agent-<hash>`) as the code-signing identifier, so every release
             # looked like a different program. macOS Tahoe's "Allow in the Menu
             # Bar" keys unbundled executables on that identity, which added a new
-            # horon-agent toggle per update and reset the menu bar item's placement
-            # (#621). Re-sign ad-hoc with a stable identifier. The TUI is the
+            # horon-agent toggle per update and reset the menu bar item's placement.
+            # Re-sign ad-hoc with a stable identifier. The TUI is the
             # process the CLI execs, so it gets the same stable-identifier
             # treatment under its own identifier.
             codesign --force --sign - --identifier com.horon-agent.cli dist/${{ matrix.artifact }}
@@ -442,13 +442,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-        id: sccache
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-pc-windows-msvc
@@ -461,13 +454,14 @@ jobs:
       - name: Build release binary
         shell: pwsh
         run: |
-          if (Get-Command sccache -ErrorAction SilentlyContinue) {
-            sccache --start-server *> $null
-            if ($LASTEXITCODE -eq 0) {
-              $env:RUSTC_WRAPPER = "sccache"
-            }
-          }
-
+          # No sccache wrapper on this target. Measured on run 43499875943:
+          # crate `horon-agent-base` compiles with a rustc command line of
+          # 33,934 characters (34,203 for the ARM64 job), and 215 of the
+          # arguments are `-L dependency=D:\a\agent\agent\target\...` entries
+          # that alone account for 22,931 bytes. CreateProcess on Windows stops
+          # at 32,767, so the wrapper's spawn fails with `os error 206: The
+          # filename or extension is too long` while plain cargo, which spawns
+          # rustc itself, builds the same crate. The other targets keep it.
           $cargoArgs = @("build", "--local", "--locked", "--release", "--target", "x86_64-pc-windows-msvc")
 
           & justrust @cargoArgs
@@ -514,7 +508,7 @@ jobs:
       # These debug-harness tests provide extra signal, but they must not block
       # publishing a release binary that already built, launched, and passed the
       # installer verification. A transient server-test disconnect caused the
-      # Windows x64 asset to disappear from releases v0.44.0-v0.46.0 (#480).
+      # Windows x64 asset to disappear from those releases.
       - name: Run advisory Windows runtime smoke tests (x64)
         continue-on-error: true
         shell: pwsh
@@ -566,13 +560,6 @@ jobs:
         with:
           targets: aarch64-pc-windows-msvc
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-        id: sccache
-
       - uses: Swatinem/rust-cache@v2
         with:
           key: aarch64-pc-windows-msvc
@@ -581,13 +568,8 @@ jobs:
       - name: Build release binary
         shell: pwsh
         run: |
-          if (Get-Command sccache -ErrorAction SilentlyContinue) {
-            sccache --start-server *> $null
-            if ($LASTEXITCODE -eq 0) {
-              $env:RUSTC_WRAPPER = "sccache"
-            }
-          }
-
+          # No sccache wrapper here either; see the x64 job for the 32,767
+          # character CreateProcess limit that `horon-agent-base` now exceeds.
           & cargo build --locked --release --target aarch64-pc-windows-msvc --no-default-features --features pdf
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -862,8 +844,8 @@ jobs:
     needs: create-release
     if: ${{ !cancelled() && needs.create-release.result == 'success' }}
     # GitHub has no native FreeBSD runners, so build inside a FreeBSD VM
-    # (QEMU via vmactions), same approach as freebsd-smoke.yml (issues #416,
-    # #433). FreeBSD is a required platform: the final job refuses to publish a
+    # (QEMU via vmactions), the same approach as freebsd-smoke.yml. FreeBSD is a
+    # required platform: the final job refuses to publish a
     # partial asset set, so a failed VM build is reported as a failure here
     # rather than being marked "non-fatal" while still blocking publication.
     timeout-minutes: 300

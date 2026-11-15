@@ -34,7 +34,7 @@ Both turn loops call the same splitter. The non-streaming path uses
 `plan_tool_round_groups`
 (`crates/app-core/src/agent/turn_loops.rs:154` `plan_tool_round_groups`), and the
 streaming daemon path calls the same helper
-(`crates/app-core/src/agent/turn_streaming_mpsc.rs:1648` `plan_tool_round_groups`), so
+(`crates/app-core/src/agent/turn_streaming_mpsc.rs:1651` `plan_tool_round_groups`), so
 grouping rules, caps, and ordering cannot drift between the two.
 
 ## Which tools may overlap
@@ -87,19 +87,19 @@ request.
 
 Group members run at the same time and finish in completion order, but results are
 applied by their index within the round. `run_group` sorts the collected results by
-index before returning (`tool_round.rs:376` `results.sort_by_key`), and both loops
+index before returning (`tool_round.rs:378` `results.sort_by_key`), and both loops
 apply group members in request order, so terminal events, stored durations, and
 history messages follow the model's order (`turn_loops.rs:1969` `results.remove`,
-`turn_streaming_mpsc.rs:2563` `results.insert`). A provider pairs each `tool_use` with
+`turn_streaming_mpsc.rs:2567` `results.insert`). A provider pairs each `tool_use` with
 its `tool_result` by id, so a reordered round corrupts the transcript.
 
 Two failure rules hold inside a group.
 
 - Each member runs in its own task, so a panicking tool becomes the error result for
-  that call instead of losing the whole group (`tool_round.rs:281` `tokio::spawn`).
+  that call instead of losing the whole group (`tool_round.rs:288` `tokio::spawn`).
 - On cancellation the group keeps the results it already has and reports the indexes
   that produced no result. That way the caller writes a skipped result for each of
-  those indexes and keeps one `tool_result` per `tool_use` (`tool_round.rs:382`
+  those indexes and keeps one `tool_result` per `tool_use` (`tool_round.rs:384`
   `unstarted`).
 
 ## Context budget
@@ -117,7 +117,7 @@ for a new one, while `clone_sharing_compaction` shares the parent's manager
 `clone_sharing_compaction`). So the guard sees the real session budget and token count
 rather than the floor a fresh manager would report. Both loops pass the sharing clone
 into the round that executes tools (`turn_loops.rs:1818` `run_group`,
-`turn_streaming_mpsc.rs:1892` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2558`
+`turn_streaming_mpsc.rs:1895` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2562`
 `run_group`).
 
 The round also keeps a counter of its own, because the tool-layer guard cannot see the
@@ -137,7 +137,7 @@ it by the tokens of what goes back to the model. Admitted output, the refusal pu
 its place, and truncated text are all charged (`round_budget.rs:165`
 `RoundTokenBudget::admit`). Both loops build it once per round and pass it to every
 group, so later groups are charged for what earlier groups already spent
-(`turn_loops.rs:1635` `RoundTokenBudget::seed`, `turn_streaming_mpsc.rs:1657`
+(`turn_loops.rs:1635` `RoundTokenBudget::seed`, `turn_streaming_mpsc.rs:1660`
 `RoundTokenBudget::seed`). The round applies the tool layer's rules to its own running
 total (`round_budget.rs:181` `projected_tokens`). Output that fits is admitted, and
 output that does not is withheld when the caller did not ask to pay and truncated when
@@ -265,16 +265,16 @@ cycle containing a non-polling call can be refused as part of that cycle, which 
 ordinary ladder working.) The stopped call is not executed, and its tool result carries
 the stop notice. Every later call in the round is written as a
 `[Skipped: the loop guard ended the turn]` result marked as an error, so the transcript
-stays balanced (`turn_streaming_mpsc.rs:2352` `LOOP_GUARD_SKIP`). A non-polling call
+stays balanced (`turn_streaming_mpsc.rs:2356` `LOOP_GUARD_SKIP`). A non-polling call
 that actually ran finishes, and the turn boundary clears the count
 (`loop_guard.rs:301` `consecutive_polls`), so the next turn starts with the full
 allowance. Invalid calls and SDK-answered calls never reach the guard, because both
 loops remove them from the dispatch set before consulting it (`turn_loops.rs:1707`
-`RoundMember::Execute`, `turn_streaming_mpsc.rs:2465` `consult_loop_guard`), and
+`RoundMember::Execute`, `turn_streaming_mpsc.rs:2469` `consult_loop_guard`), and
 neither breaks the run.
 
 On the streaming daemon path the stop is reported as
-`TurnStopReason::LimitReached` (`turn_streaming_mpsc.rs:2356`
+`TurnStopReason::LimitReached` (`turn_streaming_mpsc.rs:2360`
 `TurnStopReason::LimitReached`). That is the reason the wire protocol already carries
 for "some limit ended this turn" (the non-streaming path records the same notice and
 returns without a stop reason). Nothing in the harness restarts that turn. The stop
@@ -285,9 +285,9 @@ which a loop guard stop does not emit (`crates/agent-sdk/src/turn_retry.rs:393`
 `observe_error`). The notice therefore says plainly that the client or daemon owning
 the session must start the next turn, and nothing inside a stopped turn can expect a
 resume. What a new turn gets is a new allowance, because the guard is initialized on
-every turn entry. The `/overnight` supervisor (`overnight.rs:355` `run_turn_monitored`)
+every turn entry. The `/overnight` supervisor (`overnight.rs:353` `run_turn_monitored`)
 treats a stopped turn as a completed turn and starts the next one from the continuation
-prompt (`overnight.rs:349` `build_continuation_prompt`); that turn reaches `run_turn`
+prompt (`overnight.rs:347` `build_continuation_prompt`); that turn reaches `run_turn`
 through `run_once_capture` (`turn_execution.rs:97` `run_turn`) and resets the guard on
 entry (`turn_loops.rs:527` `loop_guard.reset`). The cap therefore bounds turns, not the
 run. On an unattended daemon with no such supervisor, the wait is orphaned until an
@@ -320,14 +320,14 @@ returns one verdict per call. The `[features]` toggle is checked here too. With
 (`turn_loops.rs:190` `features.loop_guard`). The non-streaming loop produces one
 decision per group before dispatch (`turn_loops.rs:1720` `consult_loop_guard`). The
 streaming loop produces one decision before execution for a one-member group and before
-any member starts for a multi-member group (`turn_streaming_mpsc.rs:1813`
-`consult_loop_guard`, `turn_streaming_mpsc.rs:2465` `consult_loop_guard`).
+any member starts for a multi-member group (`turn_streaming_mpsc.rs:1816`
+`consult_loop_guard`, `turn_streaming_mpsc.rs:2469` `consult_loop_guard`).
 
 A refused call leaves the dispatch set but still leaves one terminal event and one tool
 result at its index (`turn_loops.rs:1736` `RoundMember::Blocked`,
-`turn_streaming_mpsc.rs:1818` `write_loop_guard_result`). A stop writes the remaining
+`turn_streaming_mpsc.rs:1821` `write_loop_guard_result`). A stop writes the remaining
 results, records the notice, and ends the turn (`turn_loops.rs:508`
-`record_loop_guard_stop`, `turn_streaming_mpsc.rs:2344` `finish_loop_guard_stop`).
+`record_loop_guard_stop`, `turn_streaming_mpsc.rs:2348` `finish_loop_guard_stop`).
 
 ### What the guard does not flag
 
@@ -381,7 +381,7 @@ does not move the two defaults, and a parsing test pins that
 With `parallel_tools = false` every group has exactly one member, so a round runs the
 same way it did before concurrency existed (`turn_loops.rs:154` `plan_tool_round_groups`).
 Both loops read the flag from the loaded config (`turn_loops.rs:1623`
-`features.parallel_tools`, `turn_streaming_mpsc.rs:1647` `features.parallel_tools`).
+`features.parallel_tools`, `turn_streaming_mpsc.rs:1650` `features.parallel_tools`).
 `loop_guard` is read in `consult_loop_guard`, which both loops call (`turn_loops.rs:190`
 `features.loop_guard`).
 
@@ -392,20 +392,20 @@ Both loops read the flag from the loaded config (`turn_loops.rs:1623`
 A background tool request (the signal is named Alt+B/Ctrl+B in its own comment,
 `crates/app-core/src/server/state.rs:15` `background-tool`) carries no target identity,
 and the running tool registry holds one entry per session, so it can point at only one
-waiting call. A multi-member group registers no entry (`turn_streaming_mpsc.rs:1912`
+waiting call. A multi-member group registers no entry (`turn_streaming_mpsc.rs:1913`
 `running_tool_registry`), so a request raised while the group runs reports
-`moved: false` instead of moving a call (`turn_streaming_mpsc.rs:2558` `run_group`).
+`moved: false` instead of moving a call (`turn_streaming_mpsc.rs:2562` `run_group`).
 The response is computed from the registry entry and the signal
-(`crates/app-core/src/server/client_lifecycle.rs:1510` `move_tool_to_background`), and
+(`crates/app-core/src/server/client_lifecycle.rs:1517` `move_tool_to_background`), and
 the event shape carries `moved` without `tool_call_id` or `tool_name`
 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 
 The signal is cleared behind the group, so a signal that arrives during a group cannot
-move the next one-member call (`turn_streaming_mpsc.rs:2575`
+move the next one-member call (`turn_streaming_mpsc.rs:2579`
 `background_tool_signal.reset`).
 
 A one-member group takes the inline path, and that path registers the waiting call, so
-it can still move to the background (`turn_streaming_mpsc.rs:1912`
+it can still move to the background (`turn_streaming_mpsc.rs:1913`
 `running_tool_registry::register`). That covers every `Ordered` call and every call
 while `parallel_tools` is off, as long as the call reaches a tool. Invalid calls and
 SDK-answered calls resolve without registering.
@@ -421,13 +421,13 @@ reads `parallel_tools` just above (`turn_loops.rs:1623` `features.parallel_tools
 stop that arrives while a group runs is applied after the group finishes, not during it.
 
 The streaming loop responds in two places inside a round. It reads the queue directly
-before each group after the first (`turn_streaming_mpsc.rs:1660`
+before each group after the first (`turn_streaming_mpsc.rs:1663`
 `has_urgent_interrupt`). While a multi-member group runs, it passes a cancel that
 watches both the shutdown signal and the interrupt queue to `run_group`
-(`turn_streaming_mpsc.rs:2554` `watching_interrupt`, `tool_round.rs:74`
+(`turn_streaming_mpsc.rs:2558` `watching_interrupt`, `tool_round.rs:74`
 `GroupCancel::new`). That watch is a predicate over the queue, and while members are
 executing the group re-reads it every `INTERRUPT_POLL_INTERVAL` (`tool_round.rs:68`
-`INTERRUPT_POLL_INTERVAL`, `tool_round.rs:422` `poll_for_interrupt`), so a stop aborts
+`INTERRUPT_POLL_INTERVAL`, `tool_round.rs:424` `poll_for_interrupt`), so a stop aborts
 unfinished members instead of running every paid request to completion. 25 ms is the
 polling interval, not a guaranteed delay: a stop is noticed on the next tick, and a
 member that finished inside that window reports its result as usual.
@@ -441,7 +441,7 @@ shares in `horon-agent-agent-runtime`, all for a wait only running tool groups n
 Polling leaves that shared type alone.
 
 Both entry points end the same way. The group boundary check and the mid-group interrupt
-both finish through `finish_streamed_round_interrupt` (`turn_streaming_mpsc.rs:1662`
+both finish through `finish_streamed_round_interrupt` (`turn_streaming_mpsc.rs:1665`
 `finish_streamed_round_interrupt`), so the transcript, client events, and stored session
 are the same whichever one noticed the stop.
 

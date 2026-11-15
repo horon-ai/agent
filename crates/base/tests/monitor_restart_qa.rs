@@ -13,20 +13,33 @@ use horon_agent_base::monitor::{
     SoftInterruptWakeSink, WakeSink,
 };
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use tempfile::TempDir;
 
 struct HomeGuard {
     previous: Option<std::ffi::OsString>,
+    /// Held for the whole test. `HORON_HOME` is process-global, so two tests in
+    /// this binary that point it at their own directory would otherwise read
+    /// each other's queue: the file monitor's second tick would look at the
+    /// other test's HOME, find nothing queued, and report "an unchanged file
+    /// wakes nobody a second time" against a wake that is still on disk
+    /// elsewhere. Observed on the macOS runner once per few hundred runs.
+    _lock: MutexGuard<'static, ()>,
 }
+
+/// Serializes tests that mutate `HORON_HOME`. This test binary has its own
+/// address space, so a file-local mutex is sufficient (and avoids depending on
+/// the `test-support`-gated `storage::lock_test_env`).
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 impl HomeGuard {
     fn new(home: &Path) -> Self {
+        let lock = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = std::env::var_os("HORON_HOME");
         unsafe {
             std::env::set_var("HORON_HOME", home);
         }
-        Self { previous }
+        Self { previous, _lock: lock }
     }
 }
 
@@ -180,6 +193,11 @@ fn a_delivered_wake_is_a_pending_input_in_the_journal() {
     use horon_agent_base::monitor::{MonitorRuntime, MonitorSpec};
 
     let dir = tempfile::tempdir().expect("temp dir");
+    // The mirror this wake writes lands under `HORON_HOME`, so the test that
+    // proves the journal path must own that variable too, not just the journal
+    // root it passes explicitly.
+    let home = TempDir::new().expect("home");
+    let _guard = HomeGuard::new(home.path());
     let session = "monitor-wake-reaches-the-journal";
     let target = dir.path().join("watched.txt");
     std::fs::write(&target, "one").expect("seed the watched file");

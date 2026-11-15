@@ -568,7 +568,7 @@ impl Tool for McpManagementTool {
     }
 
     fn description(&self) -> &str {
-        "Manage MCP (Model Context Protocol) servers, including HTTP/SSE connections and local OAuth status/logout. Lists servers' resources and prompts, reads one resource, and expands one prompt. Interactive login requires the explicit CLI command `horon-agent mcp login <configured-server>`."
+        "Manage MCP servers: connections, OAuth, resources, prompts. Covers Model Context Protocol servers over HTTP/SSE and local OAuth status/logout; lists servers' resources and prompts, reads one resource, and expands one prompt. Interactive login requires the explicit CLI command `horon-agent mcp login <configured-server>`."
     }
 
     fn parameters_schema(&self) -> Value {

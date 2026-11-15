@@ -179,16 +179,8 @@ impl Agent {
             // `messages` is this turn's single owned request snapshot. Memory,
             // timestamps and masking each derive a small delta from it instead
             // of copying the whole transcript again.
-            // Non-blocking memory: uses pending result from last turn, spawns check for next turn
-            let memory_pending = self.build_memory_prompt_nonblocking_shared(
-                std::sync::Arc::clone(&messages),
-                Some(std::sync::Arc::new({
-                    let event_tx = event_tx.clone();
-                    move |event| {
-                        let _ = event_tx.send(event);
-                    }
-                })),
-            );
+            // Memory guidance is the consolidation summary; recall is the agent's own `memory` call.
+            let memory_pending = self.build_memory_prompt_nonblocking_shared(std::sync::Arc::clone(&messages));
             // Use split prompt for better caching - static content cached, dynamic not
             self.log_prompt_prefix_accounting(&split_prompt, &tools);
 
@@ -421,6 +413,8 @@ impl Agent {
                 .checked_sub(std::time::Duration::from_secs(10))
                 .unwrap_or_else(Instant::now);
             let mut tool_calls: Vec<ToolCall> = Vec::new();
+            // Cancel registrations bound at announcement, kept until the call runs.
+            let mut armed: HashMap<String, crate::tool_cancel_registry::ToolCancelGuard> = HashMap::new();
             let mut current_tool: Option<String> = None;
             let mut streaming_tools: HashMap<String, (ToolCall, String)> = HashMap::new();
             let mut generated_image_contexts: Vec<Vec<ContentBlock>> = Vec::new();
@@ -845,6 +839,10 @@ impl Agent {
                             tool.input = ToolCall::parse_streamed_input_to_object(&current_tool_input);
                             tool.refresh_intent_from_input();
 
+                            // Bound before the announcement: a v2 client may
+                            // cancel only an advertised call (#274).
+                            crate::tool_cancel_registry::arm_into(&mut armed, self.session_id(), &tool.id);
+
                             let _ = event_tx.send(ServerEvent::ToolExec {
                                 id: tool.id.clone(),
                                 name: tool.name.clone(),
@@ -999,6 +997,9 @@ impl Agent {
                         }
                         text_wrapped_detected = false;
                         tool_calls.clear();
+                        // A retry re-announces its calls; stale entries would
+                        // answer a cancel for an id the client no longer sees.
+                        armed.clear();
                         current_tool = None;
                         streaming_tools.clear();
                         tool_id_to_name.clear();
@@ -1358,6 +1359,8 @@ impl Agent {
                         id: Some(tc.id.clone()),
                         delta: tc.input.to_string(),
                     });
+                    // Armed before the announcement, as on the streaming path.
+                    crate::tool_cancel_registry::arm_into(&mut armed, self.session_id(), &tc.id);
                     let _ = event_tx.send(ServerEvent::ToolExec {
                         id: tc.id.clone(),
                         name: tc.name.clone(),
@@ -1901,14 +1904,12 @@ impl Agent {
                 // Reset background signal before waiting
                 self.background_tool_signal.reset();
 
-                // The wait itself lives in `tool_wait`: completion, Alt+B, a
-                // server reload, and a per-call cancel all end here, and only
-                // the last one is new. The cancel signal is registered for
-                // just this call, so a `cancel_tool_call` cannot reach a
-                // sibling or the next call of the turn.
-                let cancel_signal = InterruptSignal::new();
-                let tool_cancel_guard =
-                    crate::tool_cancel_registry::register(self.session_id(), &tc.id, cancel_signal.clone());
+                // The wait lives in `tool_wait`: completion, Alt+B, a reload
+                // and a per-call cancel all end here.
+                // Takes over the announcement's registration (or makes one),
+                // so a cancel that landed in between is already fired here.
+                let (tool_cancel_guard, cancel_signal) =
+                    crate::tool_cancel_registry::take_armed(&mut armed, self.session_id(), &tc.id);
                 let running_tool_guard = crate::running_tool_registry::register(self.session_id(), &tc.id, &tc.name);
                 let wait_outcome = tool_wait::wait_for_tool(
                     &mut tool_handle,
@@ -2178,6 +2179,9 @@ impl Agent {
                 // place user text between tool_results, which may violate API constraints.
                 // All non-urgent injection happens at Point D after all tools are done.
             }
+
+            // Announced but never run: not cancellable into the next round.
+            armed.clear();
 
             if tool_results_dirty {
                 self.save_session()?;

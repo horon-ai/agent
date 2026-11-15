@@ -647,7 +647,7 @@ impl Tool for TodoTool {
                             "status": {
                                 "type": "string",
                                 "enum": ["pending", "in_progress", "blocked", "completed", "cancelled"],
-                                "description": "Status. Use completed when the task is done; use blocked, with `blocker`, when it cannot proceed until something outside your control lands."
+                                "description": "Status; use blocked (with `blocker`) when it cannot proceed."
                             },
                             "blocker": {
                                 "type": "string",

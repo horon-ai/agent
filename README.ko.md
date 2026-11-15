@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: OpenAI 호환 엔드포인트를 쓰는 코딩 에이전트" width="720">
+  <img src="docs/assets/hero.svg" alt="horon-agent: Chat Completions, Responses, Anthropic, Gemini 엔드포인트를 쓰는 코딩 에이전트" width="720">
 </p>
 
 <p align="center">
-  <strong>에이전트는 하나, 동등한 모드는 둘. 프로그램이 움직이거나 사람이 터미널에서 직접 움직이며, 모델은 OpenAI 호환 엔드포인트면 무엇이든 된다.</strong>
+  <strong>에이전트는 하나, 동등한 모드는 둘. 프로그램이 움직이거나 사람이 터미널에서 직접 움직이며, 모델은 Chat Completions, Responses, Anthropic Messages, Gemini generateContent 중 한 방식으로 부른다.</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent는 OpenAI 호환 `/chat/completions` 엔드포인트를 쓰는 헤드리스 코딩 에이전트다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다. 데몬 하나가 모든 클라이언트에 답하고, 한 번만 실행하는 명령과 SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램, 터미널 클라이언트 `horon-tui`가 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 누가 에이전트를 움직이느냐뿐이다.
+horon agent는 프로파일의 `type`이 고르는 네 가지 모델 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 말하는 헤드리스 코딩 에이전트다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다. 데몬 하나가 모든 클라이언트에 답하고, 한 번만 실행하는 명령과 SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램, 터미널 클라이언트 `horon-tui`가 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 누가 에이전트를 움직이느냐뿐이다.
 
 에이전트 바이너리는 `horon-agent`이고 스스로 터미널 화면을 그리지 않는다. 터미널 클라이언트 `horon-tui`는 에이전트 SDK 위에 만든 별도 패키지이며, 같은 릴리스 태그에서 자체 압축 파일로 나온다.
 
@@ -61,7 +61,7 @@ cargo build --release -p horon-agent
 
 ## 빠른 시작
 
-에이전트가 쓸 엔드포인트를 정한다. OpenAI 호환 서버면 무엇이든 되고, 아래는 키가 필요 없는 로컬 서버 예시다.
+에이전트가 쓸 엔드포인트를 정한다. 방식은 프로파일의 `type`이 고르며, 아래는 키가 필요 없는 로컬 Chat Completions 서버 예시다.
 
 ```toml
 # ~/.horon/config.toml
@@ -162,7 +162,7 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 ## 구조
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 OpenAI 호환 엔드포인트를 직접 호출한다" width="860">
+  <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 프로파일의 엔드포인트를 직접 호출한다" width="860">
 </p>
 
 크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다. 헤드리스 그래프 규칙은 CI에서 `scripts/ci/check_headless_graph.py`가 확인하며, `horon-agent`에서 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트 중 하나라도 닿으면 실패한다.

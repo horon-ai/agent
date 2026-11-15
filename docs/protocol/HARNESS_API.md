@@ -61,9 +61,11 @@ A request sent without the capability is rejected with a structured `unsupported
 
 Four events were added: `runtime_state`, `control_receipt`, `snapshot_marker` and `snapshot`. All are gated by a capability; the server does not send them to a connection that did not negotiate it, and the SDK discards them after receiving them. Byte-level behaviour of existing connections is unchanged.
 
-### Not yet wired up
+### Where the answers come from
 
-The protocol shape and SDK methods of `apply_control`/`get_control_receipt` and `get_snapshot` are settled, but the storage and observation implementation behind them belongs to separate work. Until that work lands, the bridge answers these requests with `unsupported`. From the client's side that is the same "this server does not offer it yet" answer, so no branching changes.
+All four requests are served. The daemon advertises `durable_runtime_api` in its `pong` (`crates/app-core/src/server/session_connections.rs`) and owns the session, its cancel signals and the control ledger, so the bridge only translates a request into the daemon's own frame and translates the reply back (`crates/harness-api-server/src/translate.rs`); the daemon dispatches them in `crates/app-core/src/server/client_lifecycle.rs` and builds the snapshot from the session's observation owner (`crates/app-core/src/server/runtime_state_api.rs`).
+
+`unsupported` therefore means **this daemon is older**, not that the surface is unimplemented. The bridge returns it, naming `durable_runtime_v1`, only when the daemon it dialled did not advertise `durable_runtime_api`: an older daemon answers an unknown request with an error frame carrying no id, so forwarding would leave the client waiting out its own timeout. From the client's side that is the same "this server does not offer it" answer as any other missing capability, so no branching changes.
 
 ## Handoff compaction
 
@@ -382,6 +384,164 @@ answers `unknown_request`, which a client treats as "this build cannot delete"
 rather than as a missing session. The SDKs expose it as `delete_session` (Rust, Python)
 and `deleteSession` (TypeScript).
 
+## Swarm chat surface removal (protocol 1.21)
+
+The harness API keeps major version 1 and moved from minor version 20 to 21. This
+entry is a **removal recorded, not a surface change**: the swarm chat primitives
+that went away (`swarm` actions `share`, `share_append`, `read`, `channel`,
+`list_channels`, `channel_members`, `subscribe_channel`, `unsubscribe_channel`,
+and the `channel` argument of `swarm message`) lived on the internal daemon wire
+(`horon-agent-protocol`) and in the `swarm` tool schema. None of them was ever
+exposed as a harness API request, event, or field, so a client that spoke 1.20
+sends and reads exactly the same frames.
+
+The removal is recorded here because it changes what a session's transcript can
+contain and what an old session replays:
+
+- The wire requests `CommShare`, `CommRead`, `CommListChannels`,
+  `CommChannelMembers`, `CommSubscribeChannel`, and `CommUnsubscribeChannel` are
+  gone, as are the `CommContext` and `CommChannels` server events, the
+  `SharedContext` notification type, the `channel` field on
+  `NotificationType::Message`, `SwarmEventType::ContextUpdate`, and the
+  `ContextEntry` and `SwarmChannelInfo` types.
+- A stored session written before the removal keeps its `swarm` tool calls with
+  their original names and arguments through load, projection, and render, so
+  resuming it loses no transcript. Replay is covered by
+  `session::tests::retired_swarm_actions`.
+- A new call naming a removed action fails instead of degrading: the tool answers
+  `Action '<name>' was removed: the swarm shared-context store and topic channels
+  are gone. Use action='message' (with to_session for a DM) ... and artifacts for
+  durable data.` A `channel` argument on `message` is refused the same way. Both
+  are covered by
+  `tool::communicate::tests::input_format::retired_channel_and_shared_context_actions_are_rejected`.
+
+### Migration
+
+| Was | Now |
+| --- | --- |
+| `swarm {action:"dm"}` / `swarm {action:"message", to_session}` | unchanged |
+| `swarm {action:"broadcast"}` / `swarm {action:"message"}` | unchanged; reaches the sender's spawned subtree |
+| `swarm {action:"channel", channel, message}` | `swarm {action:"message", to_session}` for one agent, or without `to_session` for the subtree |
+| `swarm {action:"share"|"share_append"|"read", key, value}` | node artifacts on graph edges (`complete_node` carries the typed handoff); `status`/`summary` observe the swarm |
+| `swarm {action:"list_channels"|"channel_members"|"subscribe_channel"|"unsubscribe_channel"}` | no replacement; group reach is the spawned subtree |
+| `swarm {action:"await_members"}` | unchanged |
+
+The daemon wire is same-binary and private, so this is a one-pass removal rather
+than a deprecation window: no external producer speaks old swarm frames, and the
+harness API never carried them.
+
+## Cancellable work (protocol 1.22)
+
+The harness API keeps major version 1 and moved from minor version 21 to 22.
+Everything below is additive: a client that sends none of the four requests
+reads the same frames it did before, and every event it already knew decodes
+unchanged.
+
+The daemon already did all four things for its own clients. The gap was the
+harness API: an SDK or desktop client could start a turn, a tool call and a
+background terminal, and could not stop any of them or ask what was still
+running. This version puts those four operations on the socket, gated behind
+one capability.
+
+| Capability | Surface it gates |
+| --- | --- |
+| `cancellable_work_v1` | `cancel_turn`, `cancel_tool_call`, `cancel_background_terminal`, `list_background_work`, and the three reply events below |
+
+The bridge advertises `cancellable_work_v1` unconditionally, like every other
+gated capability, so a client can check it before sending. Whether the request
+can actually run depends on the daemon behind the bridge: it must advertise
+`cancellable_work_api` in its own capability list. A daemon that does not is
+answered `unsupported` naming `cancellable_work_v1`, not `unknown_request`,
+because the request is valid for this protocol version and the cause is the
+build behind the socket. The bridge can only forward these four requests when
+the daemon serves them, and refusing beats writing a frame an older daemon
+would silently drop, which would park the client until its own timeout.
+
+### Requests
+
+| Request | Fields | Meaning |
+| --- | --- | --- |
+| `cancel_turn` | `session_id`, `run_id` | Stop the run the caller saw start, and only that run |
+| `cancel_tool_call` | `session_id`, `call_id` | Stop one tool call while the turn keeps running |
+| `cancel_background_terminal` | `session_id`, `call_id` | Stop one background terminal this session started |
+| `list_background_work` | `session_id` | The work still running in this session |
+
+`cancel` already existed and stops whatever turn is running. `cancel_turn`
+names the run id a client observed, so a cancel that loses the race with a
+finished turn cannot reach the successor turn. `run_id` and `call_id` must not
+be empty; an empty value is refused as `invalid_request` before anything is
+forwarded.
+
+A cancelled tool call still reports a `tool_done`, and the cancelled turn
+reports its own stop, so the transcript stays valid and the model sees a result
+for every call it made. A background task's stop is confirmed by its final
+`background_work` event, not by the reply: the reply only says a cancellation
+was accepted.
+
+### Events
+
+```json
+{"v":1,"reply_to":10,"ev":"cancel_turn_result","session_id":"s-1","run_id":"run-7","accepted":true}
+{"v":1,"reply_to":11,"ev":"tool_call_cancel_result","session_id":"s-1","call_id":"call-3","accepted":false,"reason":"final"}
+{"v":1,"reply_to":12,"ev":"background_work_list","session_id":"s-1","items":[{"call_id":"call-4","task_id":"bg_9","kind":"terminal"}]}
+```
+
+| Event | Fields |
+| --- | --- |
+| `cancel_turn_result` | `session_id`, `run_id`, `accepted`, optional `reason` |
+| `tool_call_cancel_result` | `session_id`, `call_id`, `accepted`, optional `reason` |
+| `background_work_list` | `session_id`, `items` |
+
+Every reply echoes the `run_id` or `call_id` it answers. The daemon's frames are
+broadcast to the connection without per-request correlation, so without the echo
+a client with two cancels in flight could match the wrong reply.
+
+The echo comes from the daemon, so a bridge speaking to a daemon that predates
+it answers no reply for that frame instead of a reply with an empty subject: the
+client sees its own request timeout, which names a cause it can act on, rather
+than a verdict that belongs to another request.
+
+`reason` is absent when the cancellation was accepted, and names the refusal
+otherwise.
+
+| Value | Meaning |
+| --- | --- |
+| `unknown` | The session is not running that run, or does not know that call |
+| `final` | The call already ended |
+| `not_cancellable` | The call exists but cannot be stopped through this request |
+
+A `background_work_list` item carries `call_id`, `task_id`, `kind`,
+`command`, `cwd` and `output`. `kind` is `terminal` or `tool_call`. The last
+three are absent when they do not apply, and `output` is the last 64 KiB of what
+the task has produced so far, base64-encoded. Only work a tool call started is
+listed; daemon housekeeping has no call id and no editor-side home.
+
+The bridge re-decodes each item field by field rather than passing the daemon's
+object through, so a field a future daemon adds is dropped instead of reaching a
+client that cannot read it.
+
+### Client compatibility
+
+- The three events are new names. A client that predates them skips them, as it
+  skips any unknown event, and the round trip of every older frame is covered by
+  `schema_snapshot_tests::older_event_frames_still_decode_after_the_enum_grew`.
+- A `cancel_turn` reply still arrives after the existing `ok` acknowledgement
+  that `cancel` has always answered with, so a client waiting on the
+  acknowledgement is unaffected.
+- The SDKs expose the four operations as `cancel_turn` / `cancelTurn`,
+  `cancel_tool_call` / `cancelToolCall`, `cancel_background_terminal` /
+  `cancelBackgroundTerminal` and `list_background_work` /
+  `listBackgroundWork`, and each refuses before writing to the socket when the
+  capability is absent.
+
+### Sources
+
+- Request definitions: `CancelTurn`, `CancelToolCall`, `CancelBackgroundTerminal` and `ListBackgroundWork` in `crates/harness-api/src/requests.rs`
+- Event definitions: `CancelTurnResult`, `ToolCallCancelResult`, `BackgroundWorkList`, `ToolCallCancelOutcome` and `BackgroundWorkItem` in `crates/harness-api/src/events.rs`
+- Implementation: `crates/app-core/src/server/background_work.rs`, `crates/app-core/src/server/tool_cancel.rs`, `crates/app-core/src/server/client_lifecycle.rs`
+- Capability constants: `CAPABILITY_CANCELLABLE_WORK_V1` in `crates/harness-api/src/lib.rs`, `cancellable_work_api` in `crates/app-core/src/server/session_connections.rs`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -399,7 +559,7 @@ A request sent without the capability is answered `unsupported` with the missing
 
 ### Heads
 
-A session can hold several heads after a rewind or a branched import. The selected head is **host-local**. It is not replicated and is not part of the session's permanent identity. `list_session_heads` reports the heads and the current selection, and `selected_head` is absent when the several heads need an explicit choice. Until one is selected, execution is refused, and `select_session_head` answers `busy` when another process holds the write lock. Because the choice changes what the user's next turn continues from, never pick one silently; show the choice to the user.
+A session holds several heads after a branched import or after a turn is appended to a rewound branch. A rewind alone adds none: it writes no event, it records a selection over the graph that is already there, so the log keeps its single tip. The selected head is **host-local**. It is not replicated and is not part of the session's permanent identity. `list_session_heads` reports the heads and the current selection, and `selected_head` is absent when the several heads need an explicit choice. Until one is selected, execution is refused, and `select_session_head` answers `busy` when another process holds the write lock. Because the choice changes what the user's next turn continues from, never pick one silently; show the choice to the user.
 
 ### History
 
@@ -440,6 +600,24 @@ The five stable `ErrorCode` values are unchanged, so older clients keep decoding
 | `serving_model` | `string` | Model that produced the most recent assistant response. After a fallback answered it differs from `model`, which returns to the session's own selection once the turn ends. Absent when no response has been named yet. |
 
 Both fields are optional. An older daemon omits them, and a client that ignores them keeps working. Once the catalog and one identity report have arrived, the bridge answers `get_runtime_info` from its cache when no fallback list is configured, because the serving model can then only be the session's own. With a fallback list configured, or before the first identity report, it asks the daemon for the catalog on every `get_runtime_info`, because the serving model can change without the catalog changing.
+
+
+### Connection lifetime after a client leaves
+
+A bridge serves an API connection for as long as the client's socket is open, and
+it holds one daemon connection for that client. When the client goes away the
+bridge closes its daemon leg and keeps listening on the socket; only a bridge
+that fails to bind or loses its listener exits.
+
+The client half of that rule is easy to get wrong in a test harness: splitting a
+socket into read and write halves does not make each half an independent
+connection, so dropping only the write half leaves the stream open, no FIN
+reaches the bridge, and the bridge keeps its daemon leg. Both halves have to go.
+This is a harness mistake rather than a bridge defect, and it is why
+`crates/harness-api-server/tests/v1_client_round_trip.rs` drops both halves and
+bounds its daemon-leg read: a bridge that keeps the leg open after its client
+left now fails the assertion instead of hanging the target until the runner's
+timeout.
 
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
@@ -647,5 +825,5 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
-- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 20`
+- Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
 - `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`

@@ -5,10 +5,7 @@ use super::client_actions::{
 use super::client_ask::{
     handle_ask_response, handle_ask_response_with_receipt, handle_permission_decision, spawn_ask_forwarder,
 };
-use super::client_comm::{
-    handle_comm_channel_members, handle_comm_list, handle_comm_list_channels, handle_comm_message, handle_comm_read,
-    handle_comm_share, handle_comm_subscribe_channel, handle_comm_unsubscribe_channel,
-};
+use super::client_comm::{handle_comm_list, handle_comm_message};
 use super::client_comm_swarms::{handle_comm_list_swarms, handle_comm_set_swarm_label};
 use super::client_disconnect_cleanup::{cleanup_client_connection, detach_client_attachment};
 use super::client_lifecycle_logging::{
@@ -37,10 +34,10 @@ use super::provider_control::{
     try_available_models_catalog,
 };
 use super::{
-    AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, SessionControlHandle, SessionInterruptQueues,
-    SharedContext, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan, format_structured_completion_report,
-    register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail, update_member_status,
-    update_member_status_with_report, update_member_status_with_report_tldr,
+    AwaitMembersRuntime, ClientConnectionInfo, FileTouchService, PlanProposalStore, SessionControlHandle,
+    SessionInterruptQueues, SwarmEvent, SwarmMember, SwarmMutationRuntime, VersionedPlan,
+    format_structured_completion_report, register_session_interrupt_queue, send_swarm_plan_to_session, truncate_detail,
+    update_member_status, update_member_status_with_report, update_member_status_with_report_tldr,
 };
 use crate::agent::Agent;
 use crate::bus::{Bus, BusEvent};
@@ -63,7 +60,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 const RELOAD_STARTING_GUARD_MAX_AGE: Duration = Duration::from_secs(30);
 const REQUEST_HANDLER_STALL_THRESHOLDS_MS: [u64; 3] = [2_000, 10_000, 60_000];
 
@@ -461,12 +457,10 @@ pub(super) async fn handle_client(
     client_connections: Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: PlanProposalStore,
     swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
     file_touch: FileTouchService,
-    channel_subscriptions: ChannelSubscriptions,
-    channel_subscriptions_by_session: ChannelSubscriptions,
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: broadcast::Sender<SwarmEvent>,
@@ -513,12 +507,10 @@ pub(super) async fn handle_client(
                             provider_template: &provider_template,
                             swarm_members: &swarm_members,
                             swarms_by_id: &swarms_by_id,
-                            shared_context: &shared_context,
+                            plan_proposals: &plan_proposals,
                             swarm_plans: &swarm_plans,
                             swarm_coordinators: &swarm_coordinators,
                             file_touch: &file_touch,
-                            channel_subscriptions: &channel_subscriptions,
-                            channel_subscriptions_by_session: &channel_subscriptions_by_session,
                             client_connections: &client_connections,
                             event_history: &event_history,
                             event_counter: &event_counter,
@@ -1032,6 +1024,21 @@ pub(super) async fn handle_client(
         };
         if let Some((id, stop_turn)) = targeted_cancel {
             let ack_queued = client_event_tx.send(ServerEvent::Ack { id }).is_ok();
+            // The ack says the cancel arrived; a targeted one also needs a
+            // verdict, because a client that named a run must learn whether
+            // anything was actually stopped. Sent after the ack so a client
+            // that only waits for the ack keeps its current ordering.
+            if let Request::CancelTurn { run_id, .. } = &request {
+                let verdict = ServerEvent::CancelTurnResult {
+                    id,
+                    run_id: run_id.clone(),
+                    accepted: stop_turn,
+                    reason: (!stop_turn).then(|| "unknown".to_string()),
+                };
+                if client_event_tx.send(verdict).is_err() {
+                    crate::logging::warn("SERVER_REQUEST_REPLY_DROPPED request=cancel_turn");
+                }
+            }
             crate::logging::info(&format!(
                 "SERVER_INTERRUPT_CANCEL_PRE_ACK_DISPATCH id={} session={} ack_queued={} targeted={} stops_turn={} decoded_to_dispatch_ms={}",
                 id,
@@ -1537,8 +1544,6 @@ pub(super) async fn handle_client(
                         &swarm_members,
                         &swarms_by_id,
                         &file_touch,
-                        &channel_subscriptions,
-                        &channel_subscriptions_by_session,
                         &swarm_plans,
                         &event_history,
                         &event_counter,
@@ -1809,8 +1814,6 @@ pub(super) async fn handle_client(
                                 &swarm_members,
                                 &swarms_by_id,
                                 &file_touch,
-                                &channel_subscriptions,
-                                &channel_subscriptions_by_session,
                                 &swarm_plans,
                                 &swarm_coordinators,
                                 &client_count,
@@ -1849,8 +1852,6 @@ pub(super) async fn handle_client(
                                 swarm_enabled,
                                 &swarm_members,
                                 &swarms_by_id,
-                                &channel_subscriptions,
-                                &channel_subscriptions_by_session,
                                 &swarm_plans,
                                 &swarm_coordinators,
                                 &client_event_tx,
@@ -1893,8 +1894,6 @@ pub(super) async fn handle_client(
                             swarm_enabled,
                             &swarm_members,
                             &swarms_by_id,
-                            &channel_subscriptions,
-                            &channel_subscriptions_by_session,
                             &swarm_plans,
                             &swarm_coordinators,
                             &client_event_tx,
@@ -1921,8 +1920,6 @@ pub(super) async fn handle_client(
                         swarm_enabled,
                         &swarm_members,
                         &swarms_by_id,
-                        &channel_subscriptions,
-                        &channel_subscriptions_by_session,
                         &swarm_plans,
                         &swarm_coordinators,
                         &client_event_tx,
@@ -2118,8 +2115,6 @@ pub(super) async fn handle_client(
                         &swarm_members,
                         &swarms_by_id,
                         &file_touch,
-                        &channel_subscriptions,
-                        &channel_subscriptions_by_session,
                         &swarm_plans,
                         &swarm_coordinators,
                         &client_count,
@@ -2486,8 +2481,7 @@ pub(super) async fn handle_client(
                             }
                             let (tx, mut rx) = mpsc::unbounded_channel();
                             handle_set_feature(id, crate::protocol::FeatureToggle::Swarm, enabled, &agent, &client_session_id, &friendly_name,
-                                &mut swarm_enabled, &swarm_members, &swarms_by_id, &swarm_coordinators,
-                                &channel_subscriptions, &channel_subscriptions_by_session, &swarm_plans, &tx).await;
+                                &mut swarm_enabled, &swarm_members, &swarms_by_id, &swarm_coordinators,  &swarm_plans, &tx).await;
                             while let Ok(event) = rx.try_recv() {
                                 if let ServerEvent::Error { message, .. } = event { anyhow::bail!("{message}"); }
                             }
@@ -2532,52 +2526,11 @@ pub(super) async fn handle_client(
             }
 
             // === Agent communication ===
-            Request::CommShare {
-                id,
-                session_id: req_session_id,
-                key,
-                value,
-                append,
-            } => {
-                handle_comm_share(
-                    id,
-                    req_session_id,
-                    key,
-                    value,
-                    append,
-                    &client_event_tx,
-                    &swarm_members,
-                    &swarms_by_id,
-                    &shared_context,
-                    &event_history,
-                    &event_counter,
-                    &swarm_event_tx,
-                )
-                .await;
-            }
-
-            Request::CommRead {
-                id,
-                session_id: req_session_id,
-                key,
-            } => {
-                handle_comm_read(
-                    id,
-                    req_session_id,
-                    key,
-                    &client_event_tx,
-                    &swarm_members,
-                    &shared_context,
-                )
-                .await;
-            }
-
             Request::CommMessage {
                 id,
                 from_session,
                 message,
                 to_session,
-                channel,
                 delivery,
                 wake,
                 tldr,
@@ -2588,7 +2541,6 @@ pub(super) async fn handle_client(
                     from_session,
                     message,
                     to_session,
-                    channel,
                     delivery,
                     wake,
                     tldr,
@@ -2598,7 +2550,6 @@ pub(super) async fn handle_client(
                     &soft_interrupt_queues,
                     &swarm_members,
                     &swarms_by_id,
-                    &channel_subscriptions,
                     &event_history,
                     &event_counter,
                     &swarm_event_tx,
@@ -2659,36 +2610,6 @@ pub(super) async fn handle_client(
                 .await;
             }
 
-            Request::CommListChannels {
-                id,
-                session_id: req_session_id,
-            } => {
-                handle_comm_list_channels(
-                    id,
-                    req_session_id,
-                    &client_event_tx,
-                    &swarm_members,
-                    &channel_subscriptions,
-                )
-                .await;
-            }
-
-            Request::CommChannelMembers {
-                id,
-                session_id: req_session_id,
-                channel,
-            } => {
-                handle_comm_channel_members(
-                    id,
-                    req_session_id,
-                    channel,
-                    &client_event_tx,
-                    &swarm_members,
-                    &channel_subscriptions,
-                )
-                .await;
-            }
-
             Request::CommProposePlan {
                 id,
                 session_id: req_session_id,
@@ -2701,7 +2622,7 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                     &swarm_members,
                     &swarms_by_id,
-                    &shared_context,
+                    &plan_proposals,
                     &swarm_plans,
                     &swarm_coordinators,
                     &sessions,
@@ -2726,7 +2647,7 @@ pub(super) async fn handle_client(
                     &client_event_tx,
                     &swarm_members,
                     &swarms_by_id,
-                    &shared_context,
+                    &plan_proposals,
                     &swarm_plans,
                     &swarm_coordinators,
                     &sessions,
@@ -2752,7 +2673,7 @@ pub(super) async fn handle_client(
                     reason,
                     &client_event_tx,
                     &swarm_members,
-                    &shared_context,
+                    &plan_proposals,
                     &swarm_coordinators,
                     &sessions,
                     &soft_interrupt_queues,
@@ -2896,8 +2817,6 @@ pub(super) async fn handle_client(
                     &swarms_by_id,
                     &swarm_coordinators,
                     &swarm_plans,
-                    &channel_subscriptions,
-                    &channel_subscriptions_by_session,
                     &event_history,
                     &event_counter,
                     &swarm_event_tx,
@@ -2941,8 +2860,6 @@ pub(super) async fn handle_client(
                     &swarms_by_id,
                     &swarm_coordinators,
                     &swarm_plans,
-                    &channel_subscriptions,
-                    &channel_subscriptions_by_session,
                     &event_history,
                     &event_counter,
                     &swarm_event_tx,
@@ -3201,46 +3118,6 @@ pub(super) async fn handle_client(
                 .await;
             }
 
-            Request::CommSubscribeChannel {
-                id,
-                session_id: req_session_id,
-                channel,
-            } => {
-                handle_comm_subscribe_channel(
-                    id,
-                    req_session_id,
-                    channel,
-                    &client_event_tx,
-                    &swarm_members,
-                    &channel_subscriptions,
-                    &channel_subscriptions_by_session,
-                    &event_history,
-                    &event_counter,
-                    &swarm_event_tx,
-                )
-                .await;
-            }
-
-            Request::CommUnsubscribeChannel {
-                id,
-                session_id: req_session_id,
-                channel,
-            } => {
-                handle_comm_unsubscribe_channel(
-                    id,
-                    req_session_id,
-                    channel,
-                    &client_event_tx,
-                    &swarm_members,
-                    &channel_subscriptions,
-                    &channel_subscriptions_by_session,
-                    &event_history,
-                    &event_counter,
-                    &swarm_event_tx,
-                )
-                .await;
-            }
-
             Request::CommAwaitMembers {
                 id,
                 session_id: req_session_id,
@@ -3444,8 +3321,6 @@ pub(super) async fn handle_client(
                 &swarm_coordinators,
                 &swarm_plans,
                 &file_touch,
-                &channel_subscriptions,
-                &channel_subscriptions_by_session,
                 &client_connections,
                 &client_connection_id,
                 &shutdown_signals,
@@ -3537,8 +3412,6 @@ pub(super) async fn handle_client(
             &swarm_coordinators,
             &swarm_plans,
             &file_touch,
-            &channel_subscriptions,
-            &channel_subscriptions_by_session,
             &client_connections,
             &client_connection_id,
             &shutdown_signals,
@@ -4472,169 +4345,8 @@ mod ack_transport_tests;
 /// reported as an ack, or the client stops retrying and the announcement is
 /// replayed on every attach and restart.
 #[cfg(test)]
-mod ack_transport_failure_tests {
-    use super::*;
-    use crate::auth::test_sandbox::AuthTestSandbox;
-    use crate::server::state::{EmitOutcome, PendingFailoverEvent, emit_session_event};
-
-    fn switch_event(chain_id: &str, from: &str, to: &str, attempt: u32) -> ServerEvent {
-        ServerEvent::FailoverSwitched {
-            chain_id: chain_id.to_string(),
-            from: from.to_string(),
-            to: to.to_string(),
-            reason: "429 Too Many Requests".to_string(),
-            attempt,
-            max: 3,
-        }
-    }
-
-    fn stored_switches(sandbox: &AuthTestSandbox) -> Vec<PendingFailoverEvent> {
-        let path = sandbox.root().join("failover-events.json");
-        if !path.exists() {
-            return Vec::new();
-        }
-        crate::storage::read_json::<Vec<PendingFailoverEvent>>(&path).expect("the announcement file is valid JSON")
-    }
-
-    /// A second ack for the same key finds nothing left to clear. That is still
-    /// success: the entry is already gone and retrying cannot help, so the
-    /// client must not be pushed into an ack loop over it.
-    #[test]
-    fn a_duplicate_ack_still_succeeds_and_removes_nothing() {
-        let sandbox = AuthTestSandbox::new().expect("isolated home");
-        let session_id = "sess-ack-duplicate";
-        assert_eq!(
-            emit_session_event(session_id, switch_event("chain-1", "model-a", "model-b", 1)),
-            EmitOutcome::NoSink
-        );
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        for id in [500, 501] {
-            handle_failover_ack(
-                id,
-                session_id,
-                "chain-1".to_string(),
-                "model-a".to_string(),
-                "model-b".to_string(),
-                1,
-                &tx,
-            );
-            assert!(
-                matches!(rx.try_recv(), Ok(ServerEvent::Ack { id: replied }) if replied == id),
-                "the first ack clears the entry and the duplicate ack is not an error"
-            );
-        }
-
-        assert!(
-            stored_switches(&sandbox).is_empty(),
-            "the acknowledged entry is gone and the duplicate changed nothing"
-        );
-    }
-
-    /// The lock is held for the whole retry budget, so the clear cannot run. The
-    /// handler must say so and the entry must survive; the lock is taken by this
-    /// process on a separate file descriptor, which is exactly what the
-    /// cross-process lock sees, so the contention is not a timing race.
-    #[test]
-    fn a_held_announcement_lock_is_an_error_not_an_ack() {
-        let sandbox = AuthTestSandbox::new().expect("isolated home");
-        let session_id = "sess-ack-lock-held";
-        assert_eq!(
-            emit_session_event(session_id, switch_event("chain-1", "model-a", "model-b", 1)),
-            EmitOutcome::NoSink
-        );
-        assert_eq!(
-            stored_switches(&sandbox).len(),
-            1,
-            "precondition: one pending announcement"
-        );
-
-        let lock_path = sandbox.root().join("failover-events.lock");
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)
-            .expect("open the announcement lock");
-        lock.try_lock().expect("this test holds the announcement lock");
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        handle_failover_ack(
-            400,
-            session_id,
-            "chain-1".to_string(),
-            "model-a".to_string(),
-            "model-b".to_string(),
-            1,
-            &tx,
-        );
-
-        assert!(
-            matches!(rx.try_recv(), Ok(ServerEvent::Error { id: 400, .. })),
-            "a clear that never ran must be reported as an error, not an ack"
-        );
-        assert_eq!(
-            stored_switches(&sandbox).len(),
-            1,
-            "the entry a client was told was cleared is still on disk"
-        );
-
-        lock.unlock().expect("release the announcement lock");
-    }
-
-    /// The rewrite cannot land because the storage directory is read-only. The
-    /// entry survives, so the reply must be an error.
-    #[test]
-    #[cfg(unix)]
-    fn a_failed_announcement_rewrite_is_an_error_not_an_ack() {
-        use std::os::unix::fs::PermissionsExt;
-
-        struct RestorePermissions(std::path::PathBuf);
-        impl Drop for RestorePermissions {
-            fn drop(&mut self) {
-                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
-            }
-        }
-
-        let sandbox = AuthTestSandbox::new().expect("isolated home");
-        let session_id = "sess-ack-read-only";
-        assert_eq!(
-            emit_session_event(session_id, switch_event("chain-1", "model-a", "model-b", 1)),
-            EmitOutcome::NoSink
-        );
-        assert_eq!(
-            stored_switches(&sandbox).len(),
-            1,
-            "precondition: one pending announcement"
-        );
-
-        let _restore = RestorePermissions(sandbox.root().to_path_buf());
-        std::fs::set_permissions(sandbox.root(), std::fs::Permissions::from_mode(0o500))
-            .expect("make the storage directory read-only");
-
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        handle_failover_ack(
-            600,
-            session_id,
-            "chain-1".to_string(),
-            "model-a".to_string(),
-            "model-b".to_string(),
-            1,
-            &tx,
-        );
-
-        assert!(
-            matches!(rx.try_recv(), Ok(ServerEvent::Error { id: 600, .. })),
-            "a rewrite that failed must be reported as an error, not an ack"
-        );
-        assert_eq!(
-            stored_switches(&sandbox).len(),
-            1,
-            "the entry a client was told was cleared is still on disk"
-        );
-    }
-}
+#[path = "client_lifecycle_ack_failure_tests.rs"]
+mod ack_transport_failure_tests;
 
 #[cfg(test)]
 #[path = "client_lifecycle_tests.rs"]

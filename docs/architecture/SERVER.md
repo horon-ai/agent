@@ -14,7 +14,7 @@ horon agent uses a **one server, many clients** structure. A single server proce
 │  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
 │  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
 │  ├── Registry:     ~/.horon/servers.json                                    │
-│  ├── Provider (OpenAI-compatible, direct /chat/completions)                 │
+│  ├── Provider (one runtime: chat, responses, messages, gemini)              │
 │  ├── MCP pool (shared across sessions)                                      │
 │  └── Sessions:                                                              │
 │        ├── 🦊 fox   (active)  → "🔥 blazing 🦊 fox"                         │

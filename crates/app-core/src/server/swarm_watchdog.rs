@@ -238,7 +238,6 @@ pub(super) async fn sweep_stalled_workers(
                     from_name: Some(stall.label.clone()),
                     notification_type: NotificationType::Message {
                         scope: Some("swarm".to_string()),
-                        channel: None,
                         tldr: Some(format!("{} stalled", stall.label)),
                     },
                     message: coordinator_message(&stall),

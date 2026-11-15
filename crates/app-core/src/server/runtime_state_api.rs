@@ -40,19 +40,14 @@ pub(super) async fn snapshot(
     max_bytes: Option<u64>,
 ) -> Result<horon_agent_harness_api::SessionSnapshot, String> {
     let observation = super::session_observation::observation_for(session_id);
-    // The marker FIFO is the connection's, and this reply reaches the client as
-    // one frame that carries both halves, so a local channel is the right place
-    // for the record: the pairing is preserved by the reply itself rather than
-    // by two frames staying in order.
-    let (marker_tx, _marker_rx) = tokio::sync::mpsc::unbounded_channel();
+    // One reply carries the marker and the view, so the pairing is preserved by
+    // the reply itself rather than by two frames staying in order.
     let request = super::session_observation::SnapshotRequest {
         cursor,
         tail,
         max_bytes,
     };
-    let view = observation
-        .take_snapshot(&request, &marker_tx)
-        .map_err(|_| "the snapshot marker could not be recorded".to_string())?;
+    let view = observation.take_snapshot(&request);
     let state = runtime_state_summary(session_id).await?;
     Ok(horon_agent_harness_api::SessionSnapshot {
         generation: view.generation,

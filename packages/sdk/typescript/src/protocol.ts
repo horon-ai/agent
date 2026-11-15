@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 20;
+export const API_VERSION_MINOR = 22;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -23,6 +23,10 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["monitor_v1", []],
   ["snapshot_marker_v1", ["get_snapshot", "snapshot_marker"]],
   ["ask_receipts_v1", ["ask_response.answer_id"]],
+  [
+    "cancellable_work_v1",
+    ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"],
+  ],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -518,6 +522,19 @@ export interface SnapshotMarkerInfo {
   marker_id: string;
 }
 
+/** One background work item that is still running. */
+export interface BackgroundWorkItem {
+  /** Tool call that started this work; what the cancel requests take. */
+  call_id: string;
+  task_id: string;
+  /** `terminal` or `tool_call`. */
+  kind: string;
+  command?: string;
+  cwd?: string;
+  /** Last 64 KiB of output so far, as base64. */
+  output?: string;
+}
+
 /** One consistent view of runtime state plus a bounded history tail. */
 export interface SessionSnapshot {
   generation: string;
@@ -689,6 +706,23 @@ export type ApiRequest =
       chunk: SessionBlobChunk;
     }
   | { req: "get_session_record_blob_status"; session_id: string; reference: CanonicalRecordRef }
+  /**
+   * Cancel the run the caller saw start, and only that run. Requires
+   * `cancellable_work_v1`. Replies `cancel_turn_result`.
+   */
+  | { req: "cancel_turn"; session_id: string; run_id: string }
+  /**
+   * Stop one tool call while its turn keeps running. Requires
+   * `cancellable_work_v1`. Replies `tool_call_cancel_result`.
+   */
+  | { req: "cancel_tool_call"; session_id: string; call_id: string }
+  /**
+   * Stop one background terminal this session started. Requires
+   * `cancellable_work_v1`. Replies `tool_call_cancel_result`.
+   */
+  | { req: "cancel_background_terminal"; session_id: string; call_id: string }
+  /** The background work still running in this session. Requires `cancellable_work_v1`. */
+  | { req: "list_background_work"; session_id: string }
   /** Requires `durable_runtime_v1`. Replies `runtime_state`. */
   | { req: "get_runtime_state"; session_id: string }
   /**
@@ -999,6 +1033,15 @@ export type ApiEvent =
       total_size: number;
       complete: boolean;
     }
+  /** Reply to `cancel_turn`. Requires `cancellable_work_v1`. */
+  | { ev: "cancel_turn_result"; session_id: string; run_id: string; accepted: boolean; reason?: string }
+  /**
+   * Reply to `cancel_tool_call` and `cancel_background_terminal`. Requires
+   * `cancellable_work_v1`.
+   */
+  | { ev: "tool_call_cancel_result"; session_id: string; call_id: string; accepted: boolean; reason?: string }
+  /** Reply to `list_background_work`. Requires `cancellable_work_v1`. */
+  | { ev: "background_work_list"; session_id: string; items: BackgroundWorkItem[] }
   /** Reply to `get_runtime_state`. Requires `durable_runtime_v1`. */
   | { ev: "runtime_state"; session_id: string; state: RuntimeStateSummary }
   /** Reply to `apply_control` and `get_control_receipt`. */
@@ -1114,6 +1157,9 @@ export const KNOWN_EVENT_KINDS = [
   "control_receipt",
   "snapshot_marker",
   "snapshot",
+  "cancel_turn_result",
+  "tool_call_cancel_result",
+  "background_work_list",
 ] as const;
 
 /** Every request tag the SDK can send. */
@@ -1183,6 +1229,10 @@ export const KNOWN_REQUEST_KINDS = [
   "apply_control",
   "get_control_receipt",
   "get_snapshot",
+  "cancel_turn",
+  "cancel_tool_call",
+  "cancel_background_terminal",
+  "list_background_work",
   "ping",
   "export_session_markdown",
 ] as const;

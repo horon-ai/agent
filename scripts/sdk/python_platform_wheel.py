@@ -123,6 +123,12 @@ def add_binaries(wheel_contents: dict[str, tuple[bytes, int]], binary_dir: pathl
     files = sorted(path for path in binary_dir.iterdir() if path.is_file())
     if not files:
         raise SystemExit(f"no files extracted from the runtime asset for {primary}")
+    # MIT requires the notice to travel with every copy it covers, and this wheel
+    # ships a copy of the binary outside the pure wheel's dist-info. A release
+    # archive always carries LICENSE, so its absence here means the asset is
+    # wrong, not that the terms are optional.
+    if not any(path.name == "LICENSE" for path in files):
+        raise SystemExit(f"the runtime asset for {primary} carries no LICENSE")
 
     primary_name = "horon-agent.exe" if primary.endswith(".exe") else "horon-agent"
     launcher_written = False

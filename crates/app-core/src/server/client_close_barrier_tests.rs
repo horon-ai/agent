@@ -394,8 +394,6 @@ async fn cleanup_without_a_removal_publishes_no_gate_and_keeps_other_sessions_in
     let swarm_coordinators = Arc::new(RwLock::new(HashMap::new()));
     let swarm_plans = Arc::new(RwLock::new(HashMap::new()));
     let file_touch = FileTouchService::new();
-    let channel_subscriptions = Arc::new(RwLock::new(HashMap::new()));
-    let channel_subscriptions_by_session = Arc::new(RwLock::new(HashMap::new()));
     let (events, _events_rx) = mpsc::unbounded_channel::<ServerEvent>();
     let (swarm_events, _) = broadcast::channel(8);
     let mut processing_task = None;
@@ -411,8 +409,6 @@ async fn cleanup_without_a_removal_publishes_no_gate_and_keeps_other_sessions_in
         &swarm_coordinators,
         &swarm_plans,
         &file_touch,
-        &channel_subscriptions,
-        &channel_subscriptions_by_session,
         &connections,
         "conn_gone",
         &Arc::new(RwLock::new(HashMap::new())),

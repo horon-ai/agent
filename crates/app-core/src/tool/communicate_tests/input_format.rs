@@ -462,3 +462,60 @@ fn format_status_snapshot_includes_activity_and_metadata() {
     );
     assert!(output.output.contains("Files: src/server/comm_sync.rs"));
 }
+
+/// The retired channel/shared-context surface must fail loudly. A silent
+/// fallback would turn an old `read` call into a subtree broadcast.
+#[tokio::test]
+async fn retired_channel_and_shared_context_actions_are_rejected() {
+    let tool = CommunicateTool::new();
+    let ctx = test_ctx("sess-test", Path::new("."));
+
+    for action in [
+        "share",
+        "share_append",
+        "read",
+        "list_channels",
+        "channel_members",
+        "subscribe_channel",
+        "unsubscribe_channel",
+    ] {
+        let error = tool
+            .execute(json!({ "action": action }), ctx.clone())
+            .await
+            .expect_err(&format!("action '{action}' must be rejected"));
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("Action '{action}' was removed")),
+            "unexpected rejection text for '{action}': {message}"
+        );
+        assert!(
+            message.contains("action='message'") && message.contains("artifacts"),
+            "rejection should point at the replacement surface, got: {message}"
+        );
+    }
+
+    let error = tool
+        .execute(
+            json!({ "action": "message", "message": "hi", "channel": "parser" }),
+            ctx.clone(),
+        )
+        .await
+        .expect_err("the 'channel' parameter must be rejected");
+    let message = error.to_string();
+    assert!(message.contains("The 'channel' parameter was removed"), "{message}");
+    assert!(message.contains("'#parser'"), "{message}");
+}
+
+/// The retired inbox aliases must not normalize onto a live action: renaming
+/// them would silently turn a stored `read` into something else instead of
+/// letting the action be rejected.
+#[test]
+fn retired_inbox_aliases_are_not_canonicalized() {
+    for alias in ["inbox", "messages", "check_messages", "read_messages", "read_inbox", "  Inbox  "] {
+        assert_eq!(
+            canonical_swarm_action(alias),
+            alias,
+            "'{alias}' must pass through so the action is rejected, not redirected"
+        );
+    }
+}

@@ -31,7 +31,7 @@
 두 턴 루프가 같은 분할기를 부릅니다. 비스트리밍 경로는
 `plan_tool_round_groups`를 쓰고
 (`crates/app-core/src/agent/turn_loops.rs:154` `plan_tool_round_groups`), 스트리밍 데몬 경로도 같은 헬퍼를 부르므로
-(`crates/app-core/src/agent/turn_streaming_mpsc.rs:1648` `plan_tool_round_groups`), 묶기 규칙과 상한, 순서 규칙이 둘 사이에서 어긋날 수 없습니다.
+(`crates/app-core/src/agent/turn_streaming_mpsc.rs:1651` `plan_tool_round_groups`), 묶기 규칙과 상한, 순서 규칙이 둘 사이에서 어긋날 수 없습니다.
 
 ## 어떤 도구가 겹칠 수 있는가
 
@@ -80,20 +80,20 @@ API 요청을 쓰기 때문입니다.
 
 그룹 구성원은 동시에 돌고 끝나는 순서대로 끝나지만, 결과는 라운드 안에서의
 인덱스로 적용됩니다. `run_group`은 모은 결과를 반환 전에 인덱스로 정렬하고
-(`tool_round.rs:376` `results.sort_by_key`), 두 루프 모두 그룹 구성원을 요청
+(`tool_round.rs:378` `results.sort_by_key`), 두 루프 모두 그룹 구성원을 요청
 순서로 적용하므로 터미널 이벤트, 저장된 소요 시간, 이력 메시지가 모델의 순서를
 따릅니다(`turn_loops.rs:1969` `results.remove`,
-`turn_streaming_mpsc.rs:2563` `results.insert`). 제공자는 각 `tool_use`와 그
+`turn_streaming_mpsc.rs:2567` `results.insert`). 제공자는 각 `tool_use`와 그
 `tool_result`를 id로 짝짓기 때문에, 순서가 뒤바뀐 라운드는 트랜스크립트를
 망칩니다.
 
 그룹 안에서는 실패 규칙 두 가지가 성립합니다.
 
 - 각 구성원은 자기 태스크에서 돌므로, 패닉하는 도구는 그룹 전체를 잃는 대신 그
-  호출의 오류 결과가 됩니다(`tool_round.rs:281` `tokio::spawn`).
+  호출의 오류 결과가 됩니다(`tool_round.rs:288` `tokio::spawn`).
 - 취소되면 그룹은 이미 가진 결과를 유지하고 결과를 내지 못한 인덱스를
   보고합니다. 그래야 호출자가 그 인덱스마다 건너뛴 결과를 쓰고
-  `tool_result`를 `tool_use`마다 하나씩 유지할 수 있습니다 (`tool_round.rs:382` `unstarted`).
+  `tool_result`를 `tool_use`마다 하나씩 유지할 수 있습니다 (`tool_round.rs:384` `unstarted`).
 
 ## 컨텍스트 예산
 
@@ -107,7 +107,7 @@ API 요청을 쓰기 때문입니다.
 공유합니다(`tool/mod.rs:780` `CompactionManager::new`,
 `tool/mod.rs:801` `clone_sharing_compaction`). 그래서 가드는 새 관리자가 보고할
 바닥값이 아니라 실제 세션 예산과 토큰 수를 봅니다. 두 루프 모두 도구를 실행하는
-라운드에 공유 클론을 넘깁니다(`turn_loops.rs:1818` `run_group`, `turn_streaming_mpsc.rs:1892` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2558` `run_group`).
+라운드에 공유 클론을 넘깁니다(`turn_loops.rs:1818` `run_group`, `turn_streaming_mpsc.rs:1895` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2562` `run_group`).
 
 라운드는 자기 카운터도 하나 가집니다. 도구 계층 가드가 자기가 속한 라운드를 볼
 수 없기 때문입니다. `effective_token_count()`는
@@ -125,7 +125,7 @@ API 요청을 쓰기 때문입니다.
 텍스트가 그 대상입니다(`round_budget.rs:165` `RoundTokenBudget::admit`). 두 루프
 모두 라운드마다 한 번 만들어 모든 그룹에 넘기므로, 뒤 그룹은 앞 그룹이 이미 쓴
 만큼을 청구받습니다(`turn_loops.rs:1635` `RoundTokenBudget::seed`,
-`turn_streaming_mpsc.rs:1657` `RoundTokenBudget::seed`). 라운드는 도구 계층의
+`turn_streaming_mpsc.rs:1660` `RoundTokenBudget::seed`). 라운드는 도구 계층의
 규칙을 자기 누계에 적용합니다(`round_budget.rs:181` `projected_tokens`). 들어가는
 출력은 허용하고, 들어가지 않는 출력은 호출자가 지불을 요청하지 않았으면
 보류하고 요청했으면 자릅니다(`round_budget.rs:182` `single_output_max_tokens`).
@@ -245,15 +245,15 @@ API 요청을 쓰기 때문입니다.
 있으며, 이는 평범한 사다리가 동작하는 것입니다.) 정지된 호출은 실행되지 않고 그
 도구 결과에 정지 안내가 담깁니다. 라운드에서 그 뒤의 모든 호출은 오류 표시가
 붙은 `[Skipped: the loop guard ended the turn]` 결과로 쓰여 트랜스크립트가 균형을
-유지합니다(`turn_streaming_mpsc.rs:2352` `LOOP_GUARD_SKIP`). 실제로 실행된 폴링
+유지합니다(`turn_streaming_mpsc.rs:2356` `LOOP_GUARD_SKIP`). 실제로 실행된 폴링
 아닌 호출은 실행을 끝내고, 턴 경계가 카운트를 지우므로
 (`loop_guard.rs:301` `consecutive_polls`) 다음 턴은 온전한 허용량으로 시작합니다.
 잘못된 호출과 SDK가 답한 호출은 가드에 아예 닿지 않습니다. 두 루프 모두 조회
 전에 디스패치 집합에서 빼기 때문이며
-(`turn_loops.rs:1707` `RoundMember::Execute`, `turn_streaming_mpsc.rs:2465` `consult_loop_guard`), 둘 다 실행을 끊지 않습니다.
+(`turn_loops.rs:1707` `RoundMember::Execute`, `turn_streaming_mpsc.rs:2469` `consult_loop_guard`), 둘 다 실행을 끊지 않습니다.
 
 스트리밍 데몬 경로에서는 정지를 `TurnStopReason::LimitReached`로 알립니다
-(`turn_streaming_mpsc.rs:2356` `TurnStopReason::LimitReached`). 와이어 프로토콜이
+(`turn_streaming_mpsc.rs:2360` `TurnStopReason::LimitReached`). 와이어 프로토콜이
 "어떤 한도가 이 턴을 끝냈다"는 뜻으로 이미 나르는 사유입니다(비스트리밍 경로는
 같은 안내를 기록하고 정지 사유 없이 돌아옵니다). 하네스 안의 어느 것도 그 턴을
 다시 시작하지 않습니다. 정지는 턴을 끝내고 다음 수를 세션 소유자에게 남깁니다.
@@ -263,9 +263,9 @@ SDK의 재시도 정책은 그 사유에서 포기하고
 안내는 세션을 소유한 클라이언트나 데몬이 다음 턴을 시작해야 한다고 분명히
 말하고, 정지된 턴 안의 어떤 것도 재개를 기대할 수 없습니다. 새 턴이 얻는 것은
 새 허용량입니다. 턴 진입마다 가드가 초기화되기 때문입니다. `/overnight`
-감독자(`overnight.rs:355` `run_turn_monitored`)는 정지된 턴을 완료된 턴으로 보고
+감독자(`overnight.rs:353` `run_turn_monitored`)는 정지된 턴을 완료된 턴으로 보고
 이어가기 프롬프트에서 다음 턴을 시작하며
-(`overnight.rs:349` `build_continuation_prompt`), 그 턴은 `run_turn`에
+(`overnight.rs:347` `build_continuation_prompt`), 그 턴은 `run_turn`에
 `run_once_capture`를 거쳐 닿고(`turn_execution.rs:97` `run_turn`), 진입 시 가드를
 초기화합니다(`turn_loops.rs:527` `loop_guard.reset`). 그래서 상한은 실행이 아니라
 턴을 제한합니다. 그런 감독자가 없는 무인 데몬에서는 운영자가 하나를 시작할 때까지
@@ -297,12 +297,12 @@ SDK의 재시도 정책은 그 사유에서 포기하고
 그룹마다 디스패치 전에 결정 하나를 냅니다
 (`turn_loops.rs:1720` `consult_loop_guard`). 스트리밍 루프는 구성원 하나짜리
 그룹이면 실행 전에, 여러 구성원 그룹이면 어느 구성원이든 시작하기 전에 결정
-하나를 냅니다(`turn_streaming_mpsc.rs:1813` `consult_loop_guard`, `turn_streaming_mpsc.rs:2465` `consult_loop_guard`).
+하나를 냅니다(`turn_streaming_mpsc.rs:1816` `consult_loop_guard`, `turn_streaming_mpsc.rs:2469` `consult_loop_guard`).
 
 거부된 호출은 디스패치 집합에서 빠지지만 자기 인덱스에 터미널 이벤트 하나와 도구
 결과 하나를 여전히 남깁니다(`turn_loops.rs:1736` `RoundMember::Blocked`,
-`turn_streaming_mpsc.rs:1818` `write_loop_guard_result`). 정지는 남은 결과를 쓰고
-안내를 기록한 뒤 턴을 끝냅니다(`turn_loops.rs:508` `record_loop_guard_stop`, `turn_streaming_mpsc.rs:2344` `finish_loop_guard_stop`).
+`turn_streaming_mpsc.rs:1821` `write_loop_guard_result`). 정지는 남은 결과를 쓰고
+안내를 기록한 뒤 턴을 끝냅니다(`turn_loops.rs:508` `record_loop_guard_stop`, `turn_streaming_mpsc.rs:2348` `finish_loop_guard_stop`).
 
 ### 가드가 표시하지 않는 것
 
@@ -355,7 +355,7 @@ loop_guard = false
 동시성이 생기기 전과 같은 방식으로 돕니다
 (`turn_loops.rs:154` `plan_tool_round_groups`). 두 루프 모두 불러온 설정에서
 플래그를 읽습니다(`turn_loops.rs:1623` `features.parallel_tools`,
-`turn_streaming_mpsc.rs:1647` `features.parallel_tools`). `loop_guard`는 두 루프가
+`turn_streaming_mpsc.rs:1650` `features.parallel_tools`). `loop_guard`는 두 루프가
 모두 부르는 `consult_loop_guard`에서 읽습니다 (`turn_loops.rs:190` `features.loop_guard`).
 
 ## 한계
@@ -366,18 +366,18 @@ loop_guard = false
 `crates/app-core/src/server/state.rs:15` `background-tool`) 대상
 정체성을 나르지 않고, 실행 중 도구 레지스트리는 세션마다 항목 하나만 들므로
 기다리는 호출 하나만 지목할 수 있습니다. 여러 구성원 그룹은 항목을 등록하지
-않으므로(`turn_streaming_mpsc.rs:1912` `running_tool_registry`), 그룹이 도는 동안
+않으므로(`turn_streaming_mpsc.rs:1913` `running_tool_registry`), 그룹이 도는 동안
 올린 요청은 호출을 옮기는 대신 `moved: false`로 보고합니다
-(`turn_streaming_mpsc.rs:2558` `run_group`). 응답은 레지스트리 항목과 시그널로
-계산하고(`crates/app-core/src/server/client_lifecycle.rs:1510` `move_tool_to_background`),
+(`turn_streaming_mpsc.rs:2562` `run_group`). 응답은 레지스트리 항목과 시그널로
+계산하고(`crates/app-core/src/server/client_lifecycle.rs:1517` `move_tool_to_background`),
 이벤트 모양은 `moved`를 담고 `tool_call_id`와 `tool_name`은 없습니다 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 
 시그널은 그룹 뒤에 지우므로, 그룹 중에 들어온 시그널이 다음 구성원 하나짜리 호출을
-옮기지 못합니다(`turn_streaming_mpsc.rs:2575` `background_tool_signal.reset`).
+옮기지 못합니다(`turn_streaming_mpsc.rs:2579` `background_tool_signal.reset`).
 
 구성원 하나짜리 그룹은 인라인 경로를 타고, 그 경로는 기다리는 호출을 등록하므로
 여전히 백그라운드로 옮길 수 있습니다
-(`turn_streaming_mpsc.rs:1912` `running_tool_registry::register`). 이는 모든
+(`turn_streaming_mpsc.rs:1913` `running_tool_registry::register`). 이는 모든
 `Ordered` 호출과, `parallel_tools`가 꺼져 있을 때의 모든 호출을 덮습니다. 단 그
 호출이 도구에 닿아야 합니다. 잘못된 호출과 SDK가 답한 호출은 등록 없이
 해결됩니다.
@@ -395,12 +395,12 @@ loop_guard = false
 않습니다.
 
 스트리밍 루프는 라운드 안에서 두 군데 반응합니다. 첫 그룹 뒤의 각 그룹 전에 큐를
-직접 읽습니다(`turn_streaming_mpsc.rs:1660` `has_urgent_interrupt`). 여러 구성원
+직접 읽습니다(`turn_streaming_mpsc.rs:1663` `has_urgent_interrupt`). 여러 구성원
 그룹이 도는 동안에는 종료 시그널과 인터럽트 큐를 모두 지켜보는 취소를
-`run_group`에 넘깁니다(`turn_streaming_mpsc.rs:2554` `watching_interrupt`,
+`run_group`에 넘깁니다(`turn_streaming_mpsc.rs:2558` `watching_interrupt`,
 `tool_round.rs:74` `GroupCancel::new`). 그 감시는 큐에 대한 술어이고, 구성원이
 실행 중인 동안 그룹이 `INTERRUPT_POLL_INTERVAL`마다 다시 읽으므로
-(`tool_round.rs:68` `INTERRUPT_POLL_INTERVAL`, `tool_round.rs:422` `poll_for_interrupt`), 정지가 나면 끝나지 않은 구성원을 중단시키고 모든 유료 요청을 끝까지 돌리지
+(`tool_round.rs:68` `INTERRUPT_POLL_INTERVAL`, `tool_round.rs:424` `poll_for_interrupt`), 정지가 나면 끝나지 않은 구성원을 중단시키고 모든 유료 요청을 끝까지 돌리지
 않습니다. 25 ms는 폴링 간격이지 보장된 지연이 아닙니다. 정지는 다음 틱에
 인지되고, 그 창 안에 끝난 구성원은 결과를 그대로 보고합니다.
 
@@ -414,7 +414,7 @@ loop_guard = false
 
 두 진입점은 같은 방식으로 끝납니다. 그룹 경계 검사와 그룹 중간 인터럽트가 모두
 `finish_streamed_round_interrupt`로 끝나므로
-(`turn_streaming_mpsc.rs:1662` `finish_streamed_round_interrupt`), 어느 쪽이 정지를
+(`turn_streaming_mpsc.rs:1665` `finish_streamed_round_interrupt`), 어느 쪽이 정지를
 알아챘든 트랜스크립트와 클라이언트 이벤트, 저장된 세션이 같습니다.
 
 ### 훅

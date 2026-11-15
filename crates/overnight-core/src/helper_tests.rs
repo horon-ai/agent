@@ -104,6 +104,40 @@ fn resource_and_git_summaries_are_compact() {
 }
 
 #[test]
+fn resource_summary_names_a_platform_gap_instead_of_calling_it_unknown() {
+    // A fact named in `unavailable` reads as a property of the operating
+    // system, so the report never presents a platform gap as a failed probe.
+    let resources = ResourceSnapshot {
+        captured_at: Utc::now(),
+        cpu_count: Some(8),
+        unavailable: vec![
+            "memory_available_mb".to_string(),
+            "load_one".to_string(),
+            "battery_percent".to_string(),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(
+        resource_summary(&resources),
+        "RAM unavailable on this platform, load unavailable on this platform, battery unavailable on this platform"
+    );
+}
+
+#[test]
+fn resource_summary_still_says_unknown_when_the_read_simply_failed() {
+    // No fact is listed as unmeasurable, so an absent value is this sample's
+    // own failure and must not be blamed on the platform.
+    let resources = ResourceSnapshot {
+        captured_at: Utc::now(),
+        ..Default::default()
+    };
+    assert_eq!(
+        resource_summary(&resources),
+        "RAM unknown, load unknown, battery unknown"
+    );
+}
+
+#[test]
 fn format_minutes_is_human_compact() {
     assert_eq!(format_minutes(45), "45m");
     assert_eq!(format_minutes(120), "2h");

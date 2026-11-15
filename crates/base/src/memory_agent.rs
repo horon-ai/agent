@@ -258,29 +258,6 @@ impl MemoryAgent {
         }
         ss.last_query = Some(query);
         ss.last_check = Some(Instant::now());
-        let manager = manager_for_working_dir(ss.working_dir.as_deref());
-        memory::clear_pending_memory(session_id);
-        if !memory::memory_runtime_active() {
-            return Ok(());
-        }
-        let memory::MemoryRelevanceResult {
-            prompt,
-            display_prompt,
-            selected_entries,
-        } = manager.get_relevant_parallel(session_id, messages, None).await?;
-        if let Some(prompt) = prompt {
-            let count = selected_entries.len();
-            memory::set_pending_memory_with_selection(
-                session_id,
-                prompt,
-                count,
-                &selected_entries,
-                display_prompt,
-                self.sessions
-                    .get(session_id)
-                    .and_then(|state| state.working_dir.as_deref()),
-            );
-        }
         self.sessions.entry(session_id.to_string()).or_default().failed_at = None;
         Ok(())
     }

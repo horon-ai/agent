@@ -6,7 +6,7 @@ This covers tool loading tiers, effects and approval tiers, edit safety, the anc
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree.
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 9,151 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
 
 ### Three tiers
 
@@ -52,12 +52,12 @@ memory = "essential"
 The static part of a listing `core` session's system prompt gains an `# Additional tools` section. One short guidance sentence is followed by `- <name>: <one-line description>` rows in name order (`crates/base/src/prompt.rs:463` `build_additional_tools_section`). The guidance sentence says only how to call a listed tool through the `run` action of `toolbox`. A row's description is the first sentence of the tool description, capped at 60 characters, so the model fetches parameters separately with `toolbox describe`.
 
 - The same index is used regardless of provider. Providers with native deferred loading receive this index alongside the deferred definitions. Providers without it drop the deferred definitions, so this index is the only thing that names them.
-- Rows are filtered by the same rule the session sees from `toolbox list`. `mcp__*` proxies and `toolbox` itself are left out, and a tool the session policy would have `toolbox` refuse (outside the allow-list, disabled, or turned off by the SDK) is not listed (`turn_execution.rs:856` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
+- Rows are filtered by the same rule the session sees from `toolbox list`. `mcp__*` proxies and `toolbox` itself are left out, and a tool the session policy would have `toolbox` refuse (outside the allow-list, disabled, or turned off by the SDK) is not listed (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
 - The index freezes once, when the first tool list is locked. A warm-up request before MCP servers register does not freeze it; it is rebuilt once at lock time and then pinned. Unlocking tools, compaction, MCP connections, provider switches, and configuration reloads afterwards do not change it (`turn_execution.rs:793` `ensure_listed_tools_index`).
-- Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1143` `reset_listed_tools_index`).
-- When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:186`). An overridden session still keeps the names of listed tools.
-- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`.
-- The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:254` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
+- Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1129` `reset_listed_tools_index`).
+- When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:178`). An overridden session still keeps the names of listed tools.
+- A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`. Each listed core tool opens its description with a sentence that fits, so no row stops mid-word; `todo` is the one row still cut, because its model-visible text is kept as written.
+- The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:247` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox
 
@@ -87,7 +87,7 @@ In a listing `core` daemon, listed tools such as `replace`, `webfetch`, and `ask
 
 #### Hosted search
 
-Model requests go straight to an OpenAI-compatible `/chat/completions` and carry no hosted tools in the body, so nothing attaches OpenAI's hosted `web_search`. `websearch` works only as a local tool.
+Model requests go straight to the endpoint the profile's `type` names, and no wire carries hosted tools in the body, so nothing attaches OpenAI's hosted `web_search`. `websearch` works only as a local tool.
 
 ### Why core stays closed
 
@@ -625,7 +625,7 @@ Extraction stores memories one session at a time and never merges across session
 - Two memories share a subject when they share at least two content terms and at least 60% of their combined term set, or when they share a tag. The pass prefers merging over keeping near-duplicates: a wrong merge costs a ranking slot, not data, and every merge is logged with the superseded ids and the session or tool that stored each.
 - A `correction` outranks every other category on its subject, because it records what the user said is true; a `fact` extracted later does not overwrite it. Within one category the newest entry wins.
 - Both scopes consolidate: the working folder's project store and the user-level global store, each with its own pass marker and summary (`crates/base/src/memory/consolidation.rs`).
-- Each scope's summary is written next to that scope's memory file and injected as memory guidance on the next fresh user turn, in the same slot as the per-turn relevance payload. It contributes nothing until a pass has run.
+- Each scope's summary is written next to that scope's memory file and injected as memory guidance on the next fresh user turn. It is the only memory text a turn carries on its own: relevance is never recalled in the background, only by an explicit `memory` recall, so the summary contributes nothing until a pass has run.
 - `[agents] memory_consolidation_min_new` (Horon default `20`) is how many memories must have been stored since the previous pass before it runs. A pass reloads the graph, merges and rewrites it, so it is batched instead of run per session.
 - `[agents] memory_consolidation_summary_bytes` (Horon default `4096`) caps the injected summary. Over the cap the text is cut at a character boundary, never dropped.
 
@@ -660,7 +660,54 @@ Servers that publish resources or prompts are reached through the same `mcp` too
 
 - A server that did not advertise the `resources` or `prompts` capability gets `MCP resources are not supported by '<server>' …` and no JSON-RPC request is written for it.
 - `notifications/resources/list_changed` and `notifications/prompts/list_changed` drop the cached list, so the next `resources` or `prompts` call refetches it. The cache belongs to the connection and starts empty again after a reconnect.
-- Resource subscriptions (`resources/subscribe`), sampling, and roots are not implemented.
+
+### Server-initiated requests
+
+A server may ask the client something. Every such frame (`method` plus an `id`) is answered on the same connection, over both stdio and remote transports, so a server never waits on a reply that never comes. The reply table is fixed:
+
+| Server method | Reply |
+| --- | --- |
+| `ping` | `{"jsonrpc":"2.0","id":<id>,"result":{}}` |
+| `roots/list` | One root (the session working directory as a `file://` URI) when `[mcp] expose_roots = true`; otherwise the `-32601` error below. |
+| Anything else (`sampling/createMessage`, `resources/subscribe`, `resources/unsubscribe`, `elicitation/create`, …) | `{"jsonrpc":"2.0","id":<id>,"error":{"code":-32601,"message":"Method not found: <method>"}}` |
+
+- The client capabilities sent in `initialize` are exactly what the connection serves: `{"roots": {"listChanged": false}}` when `expose_roots` is on, and `{}` otherwise. A capability is never declared while the matching request is refused.
+- `[mcp] expose_roots` is off by default. Turning it on tells every connected server the directory the session works in.
+- A notification (`method` with no `id`) is not a request and never earns a reply; the `notifications/*/list_changed` handling above is unchanged.
+- Replies are written through the connection's bounded writer channel, never inline on the reader task, so a slow or full transport cannot stall frame handling. A closed channel is logged once and the reader keeps draining to EOF, which is what publishes the transport-closed signal.
+- Remote (HTTP/SSE) connections answer through a dedicated POST that does not touch the request registry: a reply has an `id` and no `method`, so it must never travel the request path. A reply the server refuses is logged once per method. Legacy SSE posts to the endpoint the server announced.
+- Resource subscriptions are still not implemented: a server may ask to subscribe, but the answer is `-32601` and no `notifications/resources/updated` is delivered.
+
+## The scratch directory and its cleanup
+
+`bash` children receive `TMPDIR` and `HORON_AGENT_SCRATCH_DIR` pointing at
+`~/.horon/scratch`, so an agent can put large temporary files, a clone or a
+`CARGO_TARGET_DIR` there instead of beside the work. A cold Rust `target/` is
+tens of gigabytes, so those entries are removed once nothing needs them.
+
+At daemon start, a pass removes top-level entries whose newest file anywhere
+inside is older than the retention window: `HORON_AGENT_SCRATCH_RETENTION_DAYS`,
+default 7 days, and `0` turns the pass off entirely
+(`crates/base/src/scratch_maintenance.rs`). The pass runs at most once a day per
+machine, and a custom `HORON_AGENT_SCRATCH_DIR` is never touched.
+
+An entry is kept regardless of age when a live process has its working directory
+inside it, because an idle shell in a scratch tree writes nothing and the age
+check alone cannot see it. That guard is only as good as the platform's answer
+to "working directories of live processes":
+
+| Platform | Source | Guard |
+| --- | --- | --- |
+| Linux | `/proc/<pid>/cwd` | real |
+| macOS | `proc_pidinfo(PROC_PIDVNODEPATHINFO)` via `libproc` | real, no privileges needed |
+| Windows | none: no process table lists working directories without extra privileges | **inert** |
+
+On Windows the age check is the only protection, so a long-running build whose
+`target/` sits under the scratch directory can be removed while it runs. Keep
+long builds outside `~/.horon/scratch` there, or lower
+`HORON_AGENT_SCRATCH_RETENTION_DAYS`. `crates/base/tests/scratch_live_working_dir.rs`
+holds a live child inside an aged scratch entry and fails on a platform whose
+answer is empty, which is how the macOS gap was closed.
 
 ## Large tool output and context saving
 

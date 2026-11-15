@@ -94,12 +94,11 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 모두 기능으로 게이트되며, 그 기능을 협상하지 않은 연결에는 서버가 보내지 않고 SDK도 받은
 뒤 버린다. 기존 연결의 바이트 수준 동작은 바뀌지 않는다.
 
-### 아직 연결되지 않은 부분
+### 응답이 만들어지는 곳
 
-`apply_control`/`get_control_receipt`와 `get_snapshot`의 프로토콜 모양과 SDK 메서드는
-확정됐지만, 그 뒤의 저장·관측 구현은 별도 작업이 소유한다. 그 작업이 붙기 전까지 브리지는
-이 요청들에 `unsupported`로 답한다. 클라이언트 입장에서는 "이 서버가 아직 제공하지 않는다"와
-같은 응답이므로 분기 처리가 달라지지 않는다.
+네 요청은 모두 실제로 처리된다. 데몬이 `pong`에서 `durable_runtime_api`를 알리고(`crates/app-core/src/server/session_connections.rs`) 세션과 취소 신호, 제어 원장을 소유하므로, 브리지는 요청을 데몬의 프레임으로 번역하고 응답을 되번역할 뿐이다(`crates/harness-api-server/src/translate.rs`). 데몬은 이 요청을 `crates/app-core/src/server/client_lifecycle.rs`에서 분기하고, 스냅샷은 세션의 관측 소유자로 만든다(`crates/app-core/src/server/runtime_state_api.rs`).
+
+그래서 `unsupported`는 **이 데몬이 구버전이라는 뜻**이지, 기능이 구현되지 않았다는 뜻이 아니다. 브리지는 접속한 데몬이 `durable_runtime_api`를 알리지 않았을 때만 `durable_runtime_v1`을 지목한 이 응답을 돌려준다. 구버전 데몬은 모르는 요청에 id가 없는 오류 프레임으로 답하므로 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다린다. 클라이언트 입장에서는 다른 기능이 없을 때와 같은 "이 서버가 제공하지 않는다"는 응답이므로 분기 처리는 달라지지 않는다.
 
 ## 핸드오프 압축
 
@@ -393,6 +392,144 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 답하고 클라이언트는 그것을 "세션이 없다"가 아니라 "이 빌드는 삭제할 수 없다"로 읽는다. SDK는 Rust와 Python에서
 `delete_session`, TypeScript에서 `deleteSession`으로 노출한다.
 
+## Swarm 채팅 표면 제거(프로토콜 1.21)
+
+하네스 API는 주 버전 1을 유지하고 부 버전이 20에서 21로 올라간다. 이 항목은 **표면 변경이 아니라
+제거 사실의 기록**이다. 없어진 swarm 채팅 기본 연산(`swarm` 동작 `share`, `share_append`, `read`,
+`channel`, `list_channels`, `channel_members`, `subscribe_channel`,
+`unsubscribe_channel`과 `swarm message`의 `channel` 인자)은 내부 데몬 와이어
+(`horon-agent-protocol`)와 `swarm` 도구 스키마에만 있었다. 어느 것도 하네스 API 요청·이벤트·필드로
+노출된 적이 없으므로 1.20을 쓰던 클라이언트는 같은 프레임을 보내고 읽는다.
+
+제거 사실을 여기에 적는 이유는 세션 전사에 담길 수 있는 내용과 옛 세션의 재생이 바뀌기
+때문이다.
+
+- 와이어 요청 `CommShare`, `CommRead`, `CommListChannels`, `CommChannelMembers`,
+  `CommSubscribeChannel`, `CommUnsubscribeChannel`이 사라졌다. 서버 이벤트 `CommContext`,
+  `CommChannels`, 알림 타입 `SharedContext`, `NotificationType::Message`의 `channel` 필드,
+  `SwarmEventType::ContextUpdate`, `ContextEntry`, `SwarmChannelInfo` 타입도 함께 사라졌다.
+- 제거 전에 저장된 세션은 불러오기·프로젝션·렌더를 거치면서 `swarm` 도구 호출의 이름과 인자를
+  그대로 유지하므로, 재개해도 전사가 사라지지 않는다. 재생은
+  `session::tests::retired_swarm_actions`가 검증한다.
+- 없어진 동작을 부르는 새 호출은 브로드캐스트로 떨어지지 않고 실패한다. 도구는
+  `Action '<name>' was removed: the swarm shared-context store and topic channels are gone.
+  Use action='message' (with to_session for a DM) ... and artifacts for durable data.`로
+  답한다. `message`에 붙인 `channel` 인자도 같은 방식으로 거절된다. 둘 다
+  `tool::communicate::tests::input_format::retired_channel_and_shared_context_actions_are_rejected`가
+  검증한다.
+
+### 이전 방법
+
+|이전|지금|
+| --- | --- |
+| `swarm {action:"dm"}` / `swarm {action:"message", to_session}` | 그대로 |
+| `swarm {action:"broadcast"}` / `swarm {action:"message"}` | 그대로. 보내는 쪽이 띄운 서브트리에 닿는다 |
+| `swarm {action:"channel", channel, message}` | 한 에이전트면 `swarm {action:"message", to_session}`, 서브트리면 `to_session` 없이 |
+| `swarm {action:"share"\|"share_append"\|"read", key, value}` | 그래프 엣지의 노드 아티팩트(`complete_node`가 타입 지정 핸드오프를 나른다), swarm 관찰은 `status`/`summary` |
+| `swarm {action:"list_channels"\|"channel_members"\|"subscribe_channel"\|"unsubscribe_channel"}` | 대체 없음. 그룹 도달은 띄운 서브트리다 |
+| `swarm {action:"await_members"}` | 그대로 |
+
+데몬 와이어는 같은 바이너리 안에서만 쓰는 사설 표면이므로 폐기 기간 없이 한 번에 제거했다. 옛
+swarm 프레임을 말하는 외부 생산자가 없고, 하네스 API가 그 프레임을 실어 나른 적도 없다.
+
+## 취소 가능한 작업(프로토콜 1.22)
+
+하네스 API는 주 버전 1을 유지하고 부 버전이 21에서 22로 올라간다. 아래 내용은 모두 추가형이다.
+새 요청 네 개를 보내지 않는 클라이언트는 이전과 같은 프레임을 읽고, 이미 알던 이벤트는 모두
+그대로 해독된다.
+
+데몬은 이 네 가지 동작을 자기 클라이언트에게 이미 제공하고 있었다. 빠진 곳은 하네스 API였다.
+SDK나 데스크톱 클라이언트는 턴과 도구 호출, 백그라운드 터미널을 시작할 수 있었지만 어느 것도
+멈추지 못했고, 무엇이 아직 돌고 있는지도 물을 수 없었다. 이 버전이 그 네 동작을 소켓 위에
+올리고 하나의 능력 뒤에 묶는다.
+
+|능력|통제하는 표면|
+| --- | --- |
+| `cancellable_work_v1` | `cancel_turn`, `cancel_tool_call`, `cancel_background_terminal`, `list_background_work`와 아래 응답 이벤트 세 개 |
+
+브리지는 다른 게이트 능력과 마찬가지로 `cancellable_work_v1`을 항상 광고하므로 클라이언트는
+보내기 전에 확인할 수 있다. 실제로 요청이 도는지는 브리지 뒤의 데몬에 달려 있다. 데몬이 자기
+능력 목록에 `cancellable_work_api`를 광고해야 한다. 광고하지 않는 데몬이면 이 프로토콜 버전에서
+유효한 요청이므로 `unknown_request`가 아니라 `cancellable_work_v1`을 적은 `unsupported`로
+답한다. 원인은 소켓 뒤의 빌드이기 때문이다. 브리지는 데몬이 이 네 요청을 처리할 때만 넘길 수
+있고, 옛 데몬이 조용히 버릴 프레임을 쓰는 대신 거절하는 편이 낫다. 그러지 않으면 클라이언트가
+자기 타임아웃까지 기다리게 된다.
+
+### 요청
+
+|요청|필드|뜻|
+| --- | --- | --- |
+| `cancel_turn` | `session_id`, `run_id` | 호출자가 시작하는 것을 본 바로 그 실행만 멈춘다 |
+| `cancel_tool_call` | `session_id`, `call_id` | 턴은 계속 돌게 두고 도구 호출 하나를 멈춘다 |
+| `cancel_background_terminal` | `session_id`, `call_id` | 이 세션이 띄운 백그라운드 터미널 하나를 멈춘다 |
+| `list_background_work` | `session_id` | 이 세션에서 아직 돌고 있는 작업 |
+
+`cancel`은 이미 있었고 돌고 있는 턴을 무엇이든 멈춘다. `cancel_turn`은 클라이언트가 관찰한 실행
+id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 턴에 닿지 않는다. `run_id`와 `call_id`는
+비어 있으면 안 되고, 빈 값은 아무것도 넘기기 전에 `invalid_request`로 거절된다.
+
+취소된 도구 호출도 `tool_done`을 보고하고 취소된 턴도 자기 정지를 보고하므로 전사는 유효하게
+남고 모델은 자기가 낸 모든 호출에 결과를 받는다. 백그라운드 작업의 정지는 응답이 아니라 마지막
+`background_work` 이벤트가 확인한다. 응답은 취소가 접수됐다는 것만 말한다.
+
+### 이벤트
+
+```json
+{"v":1,"reply_to":10,"ev":"cancel_turn_result","session_id":"s-1","run_id":"run-7","accepted":true}
+{"v":1,"reply_to":11,"ev":"tool_call_cancel_result","session_id":"s-1","call_id":"call-3","accepted":false,"reason":"final"}
+{"v":1,"reply_to":12,"ev":"background_work_list","session_id":"s-1","items":[{"call_id":"call-4","task_id":"bg_9","kind":"terminal"}]}
+```
+
+|이벤트|필드|
+| --- | --- |
+| `cancel_turn_result` | `session_id`, `run_id`, `accepted`, 선택 `reason` |
+| `tool_call_cancel_result` | `session_id`, `call_id`, `accepted`, 선택 `reason` |
+| `background_work_list` | `session_id`, `items` |
+
+모든 응답은 자기가 답하는 `run_id`나 `call_id`를 그대로 되돌려 준다. 데몬 프레임은 요청별 상관
+없이 연결로 브로드캐스트되므로, 이 반향이 없으면 취소 두 개를 동시에 보낸 클라이언트가 엉뚱한
+응답을 짝지을 수 있다.
+
+반향은 데몬이 붙이는 값이므로, 이 필드가 없던 데몬과 연결된 브리지는 그 프레임에 대해 빈 값을 담은
+응답을 보내는 대신 응답을 보내지 않는다. 클라이언트는 엉뚱한 요청의 판정을 받는 대신 자기 요청의
+시간 초과를 겪고, 그 실패는 원인을 짚을 수 있는 형태다.
+
+`reason`은 취소가 접수됐으면 없고, 거절이면 이유를 적는다.
+
+|값|뜻|
+| --- | --- |
+| `unknown` | 세션이 그 실행을 돌리고 있지 않거나 그 호출을 모른다 |
+| `final` | 호출이 이미 끝났다 |
+| `not_cancellable` | 호출은 있지만 이 요청으로 멈출 수 없다 |
+
+`background_work_list`의 항목은 `call_id`, `task_id`, `kind`, `command`, `cwd`, `output`을
+나른다. `kind`는 `terminal` 또는 `tool_call`이다. 뒤 세 필드는 해당하지 않으면 없고, `output`은
+지금까지 나온 출력의 마지막 64 KiB를 base64로 담는다. 도구 호출이 시작한 작업만 나열한다. 데몬
+자체 관리 작업은 호출 id도 편집기 쪽 자리도 없다.
+
+브리지는 데몬 객체를 그대로 넘기지 않고 항목을 필드별로 다시 해독하므로, 나중 데몬이 더한 필드는
+그것을 읽을 수 없는 클라이언트에 닿지 않고 버려진다.
+
+### 클라이언트 호환성
+
+- 세 이벤트는 새 이름이다. 그것을 모르는 클라이언트는 모르는 이벤트를 모두 건너뛰듯이 건너뛰고,
+  옛 프레임의 왕복은
+  `schema_snapshot_tests::older_event_frames_still_decode_after_the_enum_grew`가 검증한다.
+- `cancel_turn` 응답은 `cancel`이 늘 답하던 기존 `ok` 확인 뒤에 도착하므로, 확인을 기다리는
+  클라이언트는 영향을 받지 않는다.
+- SDK는 네 동작을 `cancel_turn`/`cancelTurn`, `cancel_tool_call`/`cancelToolCall`,
+  `cancel_background_terminal`/`cancelBackgroundTerminal`,
+  `list_background_work`/`listBackgroundWork`로 노출하고, 능력이 없으면 소켓에 쓰기 전에
+  거절한다.
+
+### 출처
+
+- 요청 정의: `crates/harness-api/src/requests.rs`의 `CancelTurn`, `CancelToolCall`, `CancelBackgroundTerminal`, `ListBackgroundWork`
+- 이벤트 정의: `crates/harness-api/src/events.rs`의 `CancelTurnResult`, `ToolCallCancelResult`, `BackgroundWorkList`, `ToolCallCancelOutcome`, `BackgroundWorkItem`
+- 구현: `crates/app-core/src/server/background_work.rs`, `crates/app-core/src/server/tool_cancel.rs`, `crates/app-core/src/server/client_lifecycle.rs`
+- 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_CANCELLABLE_WORK_V1`, `crates/app-core/src/server/session_connections.rs`의 `cancellable_work_api`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두
@@ -415,7 +552,9 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 
 ### 헤드
 
-세션은 되감기나 분기된 가져오기 뒤에 헤드를 여러 개 보유할 수 있다. 선택된 헤드는
+세션은 분기된 가져오기 뒤에, 또는 되감은 브랜치에 턴이 덧붙은 뒤에 헤드를 여러 개
+보유한다. 되감기만으로는 헤드가 늘지 않는다. 되감기는 이벤트를 쓰지 않고 이미 있는
+그래프 위에 선택만 기록하므로 로그의 끝은 하나로 남는다. 선택된 헤드는
 **호스트 로컬**이다. 복제되지 않고 세션의 영구 정체성에도 속하지 않는다.
 `list_session_heads`는 헤드와 현재 선택을 보고하며, 여러 헤드 중 명시적 선택이
 필요하면 `selected_head`가 없다. 하나를 선택할 때까지 실행을 거부하고, 다른
@@ -498,6 +637,20 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 없을 때 브리지가 `get_runtime_info`에 캐시로 답한다. 이때 응답한 모델은 세션의 모델뿐이기
 때문이다. 예비 모델 목록이 있거나 식별 정보를 아직 받지 못했으면 매 `get_runtime_info`마다
 데몬에 카탈로그를 묻는다. 카탈로그가 바뀌지 않아도 응답한 모델이 바뀔 수 있기 때문이다.
+
+### 클라이언트가 떠난 뒤의 연결 수명
+
+브리지는 클라이언트 소켓이 열려 있는 동안 API 연결을 서비스하고, 그 클라이언트를
+위한 데몬 연결을 하나 쥔다. 클라이언트가 사라지면 브리지는 데몬 쪽 연결을 닫고
+소켓에서 계속 기다린다. 바인드에 실패했거나 리스너를 잃은 브리지만 종료한다.
+
+이 규칙의 클라이언트 쪽은 시험 환경에서 틀리기 쉽다. 소켓을 읽기와 쓰기 반쪽으로
+나눠도 각 반쪽이 독립된 연결이 되지는 않으므로, 쓰기 반쪽만 버리면 스트림이 열린
+채로 남아 브리지에 FIN이 닿지 않고 브리지는 데몬 연결을 계속 쥔다. 두 반쪽을 모두
+버려야 한다. 이것은 브리지 결함이 아니라 시험 환경의 실수이며,
+`crates/harness-api-server/tests/v1_client_round_trip.rs`가 두 반쪽을 모두 버리고
+데몬 쪽 읽기에 시간 한도를 두는 이유다. 클라이언트가 떠난 뒤에도 데몬 연결을
+쥐는 브리지는 이제 러너 타임아웃까지 멈추는 대신 단정에서 실패한다.
 
 전체 저장 형식, 한도, 레거시 마이그레이션 규칙은
 `docs/protocol/SESSION_STORE.ko.md`에 있다.
@@ -712,5 +865,5 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 - 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
-- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 20`
+- 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
 - `[messages]` 모드: 요청 `GetMessageModes`는 `crates/harness-api/src/requests.rs`, 응답 `MessageModes`는 `crates/harness-api/src/events.rs`에 있고, 브리지가 `crates/harness-api-server/src/message_modes.rs`에서 직접 답한다

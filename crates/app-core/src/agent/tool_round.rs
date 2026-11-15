@@ -278,14 +278,16 @@ pub(crate) async fn run_group(
         let registry = Arc::clone(&registry);
         let name = call.name.clone();
         let input = call.input.clone();
+        // Each member is cancellable by its own call id while it runs, which
+        // is what lets a `cancel_tool_call` name one member of a concurrent
+        // group. Registered before the task exists, so no window opens in which
+        // the member is running but not yet cancellable; the guard lives
+        // exactly as long as the member's future.
+        let cancel = InterruptSignal::new();
+        let cancel_guard = crate::tool_cancel_registry::register(&base_ctx.session_id, &call.id, cancel.clone());
         let handle = tokio::spawn(async move { registry.execute(&name, input, ctx).await });
         let abort = handle.abort_handle();
         aborts.push(abort.clone());
-        // Each member is cancellable by its own call id while it runs, which
-        // is what lets a `cancel_tool_call` name one member of a concurrent
-        // group. The guard lives exactly as long as the member's future.
-        let cancel = InterruptSignal::new();
-        let cancel_guard = crate::tool_cancel_registry::register(&base_ctx.session_id, &call.id, cancel.clone());
         in_flight.push(async move {
             let _cancel_guard = cancel_guard;
             let slot = tokio::select! {

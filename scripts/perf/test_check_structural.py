@@ -70,7 +70,13 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
     "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
     "request_message_copies=0",
-    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9400 tool_count=8 eager_count=8",
+    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8 "
+    "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2100,ls:500,agentgrep:1900,toolbox:1091",
+    "STRUCTURAL_PERF section=prompt static_bytes=1322 "
+    "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
+    "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
+    "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=0 git_spawns_in_repo=1 "
+    "gpu_probe_spawns_without_display=0 gpu_reported=0",
 ]
 
 
@@ -448,7 +454,8 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_above_its_ceiling_fails_the_gate(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=70000 tool_count=8 eager_count=8",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=70000 tool_count=8 eager_count=8 "
+            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:63000,ls:500,agentgrep:1900,toolbox:1091",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
@@ -458,7 +465,7 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_that_serialized_nothing_fails_rather_than_passing_on_a_zero(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=0 tool_count=0 eager_count=0",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=0 tool_count=0 eager_count=0 per_tool=",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
@@ -468,18 +475,165 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_that_lost_a_tool_fails_even_under_the_ceiling(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9000 tool_count=7 eager_count=8",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9000 tool_count=7 eager_count=8 "
+            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:3092,ls:500,agentgrep:1900",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
         named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
         self.assertIn("tool_count", named)
 
+    def test_prefix_per_tool_sum_mismatch_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8 "
+            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2101,ls:500,agentgrep:1900,toolbox:1091",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"per_tool_bytes"})
+
+    def test_a_prefix_line_without_a_breakdown_is_not_a_measurement(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, "a prefix line with no per-tool breakdown is not a pass")
+        self.assertIn("per_tool", run.stderr)
+
+    def test_prefix_over_ceiling_fails(self):
+        # One byte over the committed ceiling, with a breakdown that adds up,
+        # so the ceiling is the only check that can fail.
+        ceiling = json.loads(BUDGET_FILE.read_text(encoding="utf-8"))["bounds"]["prefix_tools_bytes_max"]
+        over = ceiling + 1
+        sizes = [900, 700, 1100, 800, 0, 500, 1900, 1091]
+        sizes[4] = over - 2 - 7 - sum(sizes)
+        names = ["read", "write", "edit", "apply_patch", "bash", "ls", "agentgrep", "toolbox"]
+        per_tool = ",".join(f"{name}:{size}" for name, size in zip(names, sizes))
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prefix",
+            f"STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes={over} tool_count=8 eager_count=8 "
+            f"per_tool={per_tool}",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"tools_bytes"})
+
     def test_a_missing_prefix_section_fails_the_same_way(self):
         without_prefix = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=prefix")]
         run = run_gate(without_prefix)
         self.assertEqual(run.code, 2, "a prefix section that did not run is not a pass")
         self.assertEqual(run.result["missing"], ["prefix"])
+
+
+class PromptSectionTest(unittest.TestCase):
+    """The static prompt line is a measurement, and a line of zeros is not one."""
+
+    PROMPT_LINE = (
+        "STRUCTURAL_PERF section=prompt static_bytes=1322 "
+        "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
+        "index_bytes=585 "
+    )
+
+    def test_prompt_section_missing_fails(self):
+        without_prompt = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=prompt")]
+        run = run_gate(without_prompt)
+        self.assertEqual(run.code, 2, "a prompt section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["prompt"])
+
+    def test_prompt_counters_off_is_not_measured(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE + "index_clipped_rows=1 warm_source_reads=0 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("warm_source_reads", named)
+
+    def test_a_request_that_reads_a_prompt_source_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE + "index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=1",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"unchanged_request_source_reads"})
+
+    def test_a_second_clipped_index_row_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE + "index_clipped_rows=2 warm_source_reads=8 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"index_clipped_rows"})
+
+    def test_a_static_prompt_over_its_ceiling_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            self.PROMPT_LINE.replace("static_bytes=1322", "static_bytes=1323")
+            + "index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"static_bytes"})
+
+    def test_a_digest_that_is_not_a_sha256_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=prompt",
+            "STRUCTURAL_PERF section=prompt static_bytes=1322 static_sha256=unknown static_tokens=305 "
+            "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertIn("static_sha256", named)
+
+
+class SessionContextSectionTest(unittest.TestCase):
+    """The session-context line counts processes that were started, and a line of zeros does not."""
+
+    def test_session_context_section_missing_fails(self):
+        without = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=session_context")]
+        run = run_gate(without)
+        self.assertEqual(run.code, 2, "a session-context section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["session_context"])
+
+    def test_a_repository_that_started_no_git_was_not_measured(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=session_context",
+            "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=0 git_spawns_in_repo=0 "
+            "gpu_probe_spawns_without_display=0 gpu_reported=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 1, run.stderr)
+        named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+        self.assertEqual(named, {"git_spawns_in_repo"})
+
+    def test_each_session_context_spawn_over_its_ceiling_fails_alone(self):
+        for counter, line in (
+            ("git_spawns_outside_repo", "git_spawns_outside_repo=1 git_spawns_in_repo=1 gpu_probe_spawns_without_display=0"),
+            ("git_spawns_in_repo", "git_spawns_outside_repo=0 git_spawns_in_repo=2 gpu_probe_spawns_without_display=0"),
+            (
+                "gpu_probe_spawns_without_display",
+                "git_spawns_outside_repo=0 git_spawns_in_repo=1 gpu_probe_spawns_without_display=1",
+            ),
+        ):
+            lines = replace_line(
+                "STRUCTURAL_PERF section=session_context",
+                f"STRUCTURAL_PERF section=session_context {line} gpu_reported=0",
+            )
+            run = run_gate(lines)
+            self.assertEqual(run.code, 1, run.stderr)
+            named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
+            self.assertEqual(named, {counter})
 
 
 class MissingMeasurementTest(unittest.TestCase):
@@ -588,6 +742,12 @@ class BudgetTest(unittest.TestCase):
             "hooks_unset_process_spawns_max",
             "hooks_unset_message_copies_max",
             "prefix_tools_bytes_max",
+            "prompt_static_bytes_max",
+            "prompt_unchanged_request_source_reads_max",
+            "prompt_index_clipped_rows_max",
+            "session_context_git_spawns_outside_repo_max",
+            "session_context_git_spawns_in_repo_max",
+            "session_context_gpu_probe_spawns_without_display_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

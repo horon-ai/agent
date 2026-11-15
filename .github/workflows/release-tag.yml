@@ -25,6 +25,13 @@ on:
         description: Full main commit SHA to evaluate (default the main tip). Dry run only; no tag is created.
         required: false
         type: string
+      republish_container:
+        description: >-
+          Tag whose container image should be rebuilt and pushed without touching
+          the tag, the release or its assets (vMAJOR.MINOR.PATCH that already
+          exists). Every other job is skipped.
+        required: false
+        type: string
 
 env:
   # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
@@ -45,8 +52,10 @@ concurrency:
 jobs:
   plan:
     name: Choose release tag
+    # A container republish names its tag and must not choose, create or move one.
     if: >-
       github.repository == 'horon-ai/agent' &&
+      inputs.republish_container == '' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
@@ -143,18 +152,47 @@ jobs:
   container:
     name: Publish container image
     needs: [plan, release]
+    # `always()` keeps this job alive when a republish skips plan, tag and
+    # release; the step conditions below then decide what actually runs.
+    if: >-
+      always() &&
+      (inputs.republish_container != '' || needs.release.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     env:
-      TAG: ${{ needs.plan.outputs.tag }}
+      TAG: ${{ inputs.republish_container || needs.plan.outputs.tag }}
       IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Validate the republished tag
+        if: inputs.republish_container != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_REF: ${{ github.ref }}
+          TAG_SHA_HINT: ${{ inputs.republish_container }}
+        run: |
+          set -euo pipefail
+          # Same rules as the automatic path: the reviewed workflow must run from
+          # dev, the tag must already exist, and the tagged commit must carry a
+          # successful push CI run with every mandatory job. Nothing here creates,
+          # moves or deletes a tag.
+          [[ "$WORKFLOW_REF" = refs/heads/dev ]] || {
+            echo "::error::a container republish must run from dev, not $WORKFLOW_REF" >&2; exit 1; }
+          [[ "$TAG_SHA_HINT" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Not a release tag: $TAG_SHA_HINT" >&2; exit 1; }
+          git fetch --tags --force origin >/dev/null
+          git rev-parse --verify "refs/tags/${TAG_SHA_HINT}^{commit}" >/dev/null
+          tag_sha=$(git rev-parse --verify "refs/tags/${TAG_SHA_HINT}^{commit}")
+          python3 scripts/release/check_ci.py "$tag_sha" --repo "$GITHUB_REPOSITORY" --timeout 2700
+          echo "Republishing the image for ${TAG_SHA_HINT} at ${tag_sha}"
 
       - name: Download and verify published Linux binaries
         shell: bash

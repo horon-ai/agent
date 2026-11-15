@@ -8,12 +8,40 @@ pub(crate) use mcp::McpCommand;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
-    /// Send the API key as Authorization: Bearer <key> (OpenAI-compatible default)
+    /// Send the API key as Authorization: Bearer <key> (default for openai-compatible and openai-responses)
     Bearer,
-    /// Send the API key in an API-key header (defaults to api-key)
+    /// Send the API key in a header: api-key for the OpenAI wires, x-api-key for anthropic-compatible and x-goog-api-key for gemini-compatible
     ApiKey,
     /// Do not send authentication, useful for localhost model servers
     None,
+}
+
+/// Request/response shape of the endpoint a profile points at.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum ProviderTypeArg {
+    /// OpenAI Chat Completions: POST <base-url>/chat/completions, Bearer auth by default
+    #[value(name = "openai-compatible")]
+    OpenAiCompatible,
+    /// OpenAI Responses: POST <base-url>/responses, Bearer auth by default
+    #[value(name = "openai-responses")]
+    OpenAiResponses,
+    /// Anthropic Messages: POST <base-url>/messages, x-api-key header by default
+    #[value(name = "anthropic-compatible")]
+    AnthropicCompatible,
+    /// Gemini generateContent: POST <base-url>/models/{model}:streamGenerateContent?alt=sse, x-goog-api-key header by default
+    #[value(name = "gemini-compatible")]
+    GeminiCompatible,
+}
+
+impl From<ProviderTypeArg> for crate::config::NamedProviderType {
+    fn from(value: ProviderTypeArg) -> Self {
+        match value {
+            ProviderTypeArg::OpenAiCompatible => Self::OpenAiCompatible,
+            ProviderTypeArg::OpenAiResponses => Self::OpenAiResponses,
+            ProviderTypeArg::AnthropicCompatible => Self::AnthropicCompatible,
+            ProviderTypeArg::GeminiCompatible => Self::GeminiCompatible,
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -85,7 +113,7 @@ pub(crate) struct Args {
     pub(crate) model: Option<String>,
 
     /// Named provider profile from [providers.<name>] in config.toml.
-    /// Implies --provider openai-compatible for OpenAI-compatible profiles.
+    /// Implies --provider openai-compatible for a profile of any type.
     #[arg(long, global = true)]
     pub(crate) provider_profile: Option<String>,
 
@@ -663,8 +691,8 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         dry_run: bool,
 
-        /// Also import display metadata that exists only in the legacy SQLite index
-        #[arg(long)]
+        /// Also import display metadata that exists only in the old SQLite index
+        #[arg(long, hide = !super::index_import::AVAILABLE)]
         legacy_index: bool,
 
         #[arg(long)]
@@ -770,12 +798,12 @@ pub(crate) enum ProviderCommand {
         json: bool,
     },
 
-    /// Add a named OpenAI-compatible API provider profile
+    /// Add a named API provider profile
     Add {
         /// Profile name used with --provider-profile and config defaults, e.g. my-gateway
         name: String,
 
-        /// OpenAI-compatible API base URL, e.g. https://llm.example.com/v1
+        /// API base URL including the version prefix, e.g. https://llm.example.com/v1. Each type appends its own path: /chat/completions, /responses, /messages, or /models/{model}:streamGenerateContent
         #[arg(long, alias = "api-base")]
         base_url: String,
 
@@ -803,11 +831,15 @@ pub(crate) enum ProviderCommand {
         #[arg(long, conflicts_with_all = ["api_key", "api_key_stdin", "api_key_env"])]
         no_api_key: bool,
 
+        /// Request/response shape of the endpoint: openai-compatible, openai-responses, anthropic-compatible, or gemini-compatible
+        #[arg(long = "type", value_enum, default_value = "openai-compatible")]
+        provider_type: ProviderTypeArg,
+
         /// Authentication style for the API key
         #[arg(long, value_enum)]
         auth: Option<ProviderAuthArg>,
 
-        /// Header name when --auth api-key is used (default: api-key)
+        /// Header name when --auth api-key is used (default: api-key for the OpenAI types, x-api-key for anthropic-compatible, x-goog-api-key for gemini-compatible)
         #[arg(long)]
         auth_header: Option<String>,
 

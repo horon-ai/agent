@@ -70,6 +70,13 @@ run_gate "cargo fmt --all --check" cargo fmt --all --check
 
 echo ""
 echo "=== Quality Guardrails ==="
+# Needs `gh` and the network, so it is not part of `cargo` gates; on a machine
+# without them it says so instead of pretending the references were checked.
+if command -v gh >/dev/null 2>&1; then
+    run_gate "issue references resolve" python3 scripts/ci/check_issue_refs.py
+else
+    echo "⏭  issue references resolve (gh not installed)"
+fi
 if $SKIP_SLOW; then
     echo "⏭  cargo check / clippy / machete (--skip-slow)"
 else
@@ -98,6 +105,7 @@ run_gate "headless graph contract tests" python3 -m unittest scripts/ci/test_che
 run_gate "wildcard re-export ratchet" python3 scripts/ci/check_wildcard_reexports.py
 run_gate "platform cfg contract tests" python3 -m unittest scripts/ci/test_check_platform_cfg.py
 run_ratchet "platform cfg allowlist" check_platform_cfg.py
+run_gate "soak report contract tests" python3 -m unittest scripts/perf/test_check_soak.py
 
 if $SKIP_SLOW; then
     :

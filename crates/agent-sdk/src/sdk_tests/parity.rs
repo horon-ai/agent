@@ -102,6 +102,10 @@ const CAPABILITIES: &[Capability] = &[
     cap("soft_interrupt_with_id", "softInterruptWithId"),
     cap("background_tool", "backgroundTool"),
     cap("background_tool_result", "backgroundToolResult"),
+    cap("cancel_turn", "cancelTurn"),
+    cap("cancel_tool_call", "cancelToolCall"),
+    cap("cancel_background_terminal", "cancelBackgroundTerminal"),
+    cap("list_background_work", "listBackgroundWork"),
     cap("ping", "ping"),
     cap("run", "run"),
     cap("run_structured", "runStructured"),
@@ -320,6 +324,7 @@ fn rust_client_source() -> String {
         "structured.rs",
         "export.rs",
         "message_modes.rs",
+        "cancellable_work.rs",
     ]
     .into_iter()
     .map(|file| {

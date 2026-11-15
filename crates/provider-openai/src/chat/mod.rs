@@ -30,12 +30,18 @@ mod degradation_tests;
 mod schema_recovery_tests;
 
 use crate::chat::prompt_cache_memo::PromptCacheKeyMemo;
-use crate::chat::request::{CHAT_COMPLETIONS_PATH, build_chat_completions_request_reporting};
+use crate::chat::request::build_chat_completions_request_reporting;
 use crate::chat::stream::ChatCompletionsStream;
 use crate::chat::transport::{
-    ChatAuth, INITIAL_RESPONSE_TIMEOUT, apply_auth, http_response_error_with_hint, redact_secret,
-    transport_error_message,
+    ChatAuth, INITIAL_RESPONSE_TIMEOUT, apply_auth, http_response_error_labeled, redact_secret,
+    transport_error_message_labeled,
 };
+use crate::wire::WireProtocol;
+use crate::wire::anthropic::{AnthropicParser, build_messages_request};
+use crate::wire::gemini::{GeminiParser, build_generate_content_request};
+use crate::wire::responses::{ResponsesParser, build_responses_request};
+use crate::wire::sse::WireSseStream;
+use crate::wire::turns;
 use anyhow::Result;
 use async_trait::async_trait;
 use horon_agent_message_types::{Message, ToolDefinition, messages_with_dynamic_system_context};
@@ -57,6 +63,12 @@ const PROMPT_CACHE_RETENTION_FIELD: &str = "prompt_cache_retention";
 
 /// The official OpenAI endpoint, the only host that receives the retention field.
 const OFFICIAL_OPENAI_HOST: &str = "api.openai.com";
+
+/// Prefix of the identity stamped on Anthropic native thinking blocks.
+const ANTHROPIC_NATIVE_PREFIX: &str = "anthropic-compatible";
+
+/// Effort levels the Gemini `generateContent` wire exposes.
+const GEMINI_SELECTABLE_EFFORTS: &[&str] = &["minimal", "low", "medium", "high", "xhigh"];
 
 /// Resolves the `prompt_cache_retention` value for a model id.
 ///
@@ -94,6 +106,8 @@ pub struct OpenAiCompatibleProvider {
     model: Mutex<String>,
     models: Vec<String>,
     reasoning_effort: Mutex<Option<String>>,
+    /// Which request and response shape this profile speaks.
+    wire: WireProtocol,
 }
 
 impl OpenAiCompatibleProvider {
@@ -139,7 +153,22 @@ impl OpenAiCompatibleProvider {
             model: Mutex::new(default_model),
             models,
             reasoning_effort: Mutex::new(None),
+            wire: WireProtocol::default(),
         })
+    }
+
+    /// Select the request and response shape this profile speaks.
+    ///
+    /// The default is Chat Completions, so a profile written before the other
+    /// wires existed keeps sending exactly the bytes it always did.
+    pub fn with_wire(mut self, wire: WireProtocol) -> Self {
+        self.wire = wire;
+        self
+    }
+
+    /// The wire this profile speaks.
+    pub fn wire(&self) -> WireProtocol {
+        self.wire
     }
 
     /// Name shown to the user for this profile.
@@ -194,10 +223,11 @@ impl OpenAiCompatibleProvider {
 
     /// The URL one streaming completion is POSTed to.
     pub fn endpoint(&self) -> String {
-        if self.base_url.ends_with(&format!("/{}", CHAT_COMPLETIONS_PATH)) {
-            self.base_url.clone()
-        } else {
-            format!("{}/{CHAT_COMPLETIONS_PATH}", self.base_url)
+        match self.wire {
+            // Only this wire's path names the model, so the other three do not
+            // pay for reading it.
+            WireProtocol::GeminiGenerateContent => self.wire.endpoint(&self.base_url, &self.model()),
+            _ => self.wire.endpoint(&self.base_url, ""),
         }
     }
 
@@ -234,14 +264,45 @@ impl OpenAiCompatibleProvider {
         // exactly the bytes it sent before receipts existed.
         let session_id = context.and_then(|c| c.session_id.as_deref());
         let mut receipts = Vec::new();
-        let mut body = build_chat_completions_request_reporting(
-            &self.model(),
-            messages,
-            tools,
-            system,
-            reasoning.as_deref(),
-            session_id.map(|_| &mut receipts),
-        );
+        let model = self.model();
+        let mut body = match self.wire {
+            WireProtocol::ChatCompletions => build_chat_completions_request_reporting(
+                &model,
+                messages,
+                tools,
+                system,
+                reasoning.as_deref(),
+                session_id.map(|_| &mut receipts),
+            ),
+            WireProtocol::Responses => build_responses_request(
+                &model,
+                messages,
+                tools,
+                system,
+                reasoning.as_deref(),
+                session_id.map(|_| &mut receipts),
+            ),
+            // The Anthropic and Gemini endpoints reject a history whose turns do
+            // not alternate or whose calls and results do not pair up, so both
+            // read the normalized history instead of the stored one.
+            WireProtocol::AnthropicMessages => build_messages_request(
+                &model,
+                &turns::normalize(messages),
+                tools,
+                system,
+                reasoning.as_deref(),
+                &self.native_tag(&model),
+                session_id.map(|_| &mut receipts),
+            ),
+            WireProtocol::GeminiGenerateContent => build_generate_content_request(
+                &model,
+                &turns::normalize(messages),
+                tools,
+                system,
+                reasoning.as_deref(),
+                session_id.map(|_| &mut receipts),
+            ),
+        };
         if let Some(session_id) = session_id {
             horon_agent_provider_core::degradation::record(session_id, &receipts);
         }
@@ -256,14 +317,31 @@ impl OpenAiCompatibleProvider {
         serde_json::to_vec(&body).expect("a JSON object always serializes")
     }
 
+    /// The identity an Anthropic native thinking block is stamped with.
+    ///
+    /// A stored block is replayed only into the endpoint that produced it, so
+    /// the tag names the profile when it has one and the host otherwise.
+    fn native_tag(&self, model: &str) -> String {
+        let host = base_url_host(&self.base_url);
+        let identity = self.profile_id.as_deref().or(host.as_deref()).unwrap_or("");
+        format!("{ANTHROPIC_NATIVE_PREFIX}:{identity}/{model}")
+    }
+
     /// Add the prompt-cache fields this endpoint accepts.
     ///
     /// The key is derived from the already-built body, so a request pays no
-    /// second build: the cacheable prefix is the system message plus the tool
+    /// second build: the cacheable prefix is the system text plus the tool
     /// catalog, both read straight out of the body about to be sent. The
     /// profile's `extra_body` is merged afterwards, so it still wins on either
     /// field.
+    ///
+    /// Only the two OpenAI wires carry these fields: the Anthropic and Gemini
+    /// endpoints answer an unknown top-level field with a rejection, so a
+    /// request that pinned a cache slot would fail instead of running.
     fn apply_prompt_cache(&self, body: &mut Value, context: Option<&ProviderRequestContext>) {
+        if !matches!(self.wire, WireProtocol::ChatCompletions | WireProtocol::Responses) {
+            return;
+        }
         let host = base_url_host(&self.base_url);
         let key_enabled = self
             .prompt_cache_key
@@ -292,7 +370,7 @@ impl OpenAiCompatibleProvider {
     /// serialization of the tool catalog and the SHA-256 pass. The lock never
     /// spans an await: this runs inside the synchronous body build.
     fn prompt_cache_key_for(&self, scope: &str, body: &Value) -> String {
-        let (system, tools) = prompt_cache_key_field_values(body);
+        let (system, tools) = prompt_cache_key_field_values(self.wire, body);
         let mut memo = self
             .prompt_cache_memo
             .lock()
@@ -346,28 +424,29 @@ impl OpenAiCompatibleProvider {
         }
 
         let endpoint = self.endpoint();
+        let label = self.wire.label();
         let mut attempts = 0u8;
         loop {
             // `Bytes` so the failed-request bytes stay available to the
             // classifier without copying what was just serialized.
             let body: bytes::Bytes = self.build_body(messages, tools, system, context).into();
-            let response = self.post_chat_completion(&endpoint, body.clone()).await?;
+            let response = self.post_stream(&endpoint, body.clone()).await?;
 
             let retry_after = horon_agent_provider_core::retry_after::retry_after(response.headers());
             let status = response.status();
             if status.is_success() {
                 let redact: Option<Arc<str>> = self.api_key.as_deref().map(Arc::from);
-                return Ok(Box::pin(ChatCompletionsStream::new(response.bytes_stream(), redact)));
+                return Ok(self.stream_for(response, redact));
             }
 
-            let error_body = horon_agent_provider_core::http_error_body(response, "chat completions").await;
-            let hint = match schema_recovery::classify(status.as_u16(), &error_body, &body) {
+            let error_body = horon_agent_provider_core::http_error_body(response, self.wire.error_context()).await;
+            let hint = match schema_recovery::classify_for(status.as_u16(), &error_body, &body, self.wire.dialect()) {
                 schema_recovery::SchemaRecovery::Retry { description }
                     if attempts < schema_recovery::MAX_SCHEMA_RECOVERY_ATTEMPTS =>
                 {
                     attempts += 1;
                     horon_agent_logging::warn(&self.sanitize(format!(
-                        "OpenAI-compatible provider at {endpoint} rejected a tool schema: {description}"
+                        "{label} provider at {endpoint} rejected a tool schema: {description}"
                     )));
                     // Rebuilding the body re-runs normalization, which now drops
                     // the construct just learned; any other prevention drop is
@@ -380,7 +459,8 @@ impl OpenAiCompatibleProvider {
                 )),
                 schema_recovery::SchemaRecovery::Stop { hint } => hint,
             };
-            return Err(http_response_error_with_hint(
+            return Err(http_response_error_labeled(
+                label,
                 &endpoint,
                 status.as_u16(),
                 retry_after,
@@ -391,8 +471,27 @@ impl OpenAiCompatibleProvider {
         }
     }
 
-    /// POST one Chat Completions request and wait for the initial response.
-    async fn post_chat_completion(&self, endpoint: &str, body: bytes::Bytes) -> Result<reqwest::Response> {
+    /// Wrap the response body in the stream parser this wire reads.
+    fn stream_for(&self, response: reqwest::Response, redact: Option<Arc<str>>) -> EventStream {
+        let label = self.wire.label();
+        let body = response.bytes_stream();
+        match self.wire {
+            WireProtocol::ChatCompletions => Box::pin(ChatCompletionsStream::new(body, redact)),
+            WireProtocol::Responses => Box::pin(WireSseStream::new(body, ResponsesParser::new(), label, redact)),
+            WireProtocol::AnthropicMessages => Box::pin(WireSseStream::new(
+                body,
+                AnthropicParser::new(self.native_tag(&self.model())),
+                label,
+                redact,
+            )),
+            WireProtocol::GeminiGenerateContent => {
+                Box::pin(WireSseStream::new(body, GeminiParser::new(), label, redact))
+            }
+        }
+    }
+
+    /// POST one streaming request and wait for the initial response.
+    async fn post_stream(&self, endpoint: &str, body: bytes::Bytes) -> Result<reqwest::Response> {
         let mut request = self
             .client
             .post(endpoint)
@@ -405,7 +504,13 @@ impl OpenAiCompatibleProvider {
         }
         send_with_initial_response_timeout(request, INITIAL_RESPONSE_TIMEOUT)
             .await
-            .map_err(|error| anyhow::anyhow!(self.sanitize(transport_error_message(endpoint, &error.to_string()))))
+            .map_err(|error| {
+                anyhow::anyhow!(self.sanitize(transport_error_message_labeled(
+                    self.wire.label(),
+                    endpoint,
+                    &error.to_string()
+                )))
+            })
     }
 }
 
@@ -433,6 +538,27 @@ fn base_url_host(base_url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
+/// The effort levels an Anthropic endpoint accepts for `model`.
+///
+/// The base ladder is the three levels every Claude generation understands;
+/// `xhigh` and `max` are added only where the model's caps say the API takes
+/// them, and a model with no reasoning control at all reports an empty list
+/// rather than levels its request would have to drop.
+fn anthropic_efforts(model: &str) -> Vec<&'static str> {
+    let caps = horon_agent_provider_core::anthropic_reasoning_caps(model);
+    if !caps.output_effort && !caps.manual_thinking {
+        return Vec::new();
+    }
+    let mut efforts = vec!["low", "medium", "high"];
+    if caps.xhigh_effort {
+        efforts.push("xhigh");
+    }
+    if caps.max_effort {
+        efforts.push("max");
+    }
+    efforts
+}
+
 /// Whether a host is documented to understand `prompt_cache_key`.
 fn host_accepts_prompt_cache_key(host: &str) -> bool {
     matches!(host, OFFICIAL_OPENAI_HOST | "openrouter.ai")
@@ -451,13 +577,20 @@ fn cache_scope(context: &ProviderRequestContext) -> Option<&str> {
 /// The cacheable prefix read out of a request body about to be sent: the static
 /// system text and the tool catalog. Conversation turns are deliberately absent
 /// so a compaction that rewrites them leaves the key alone.
-fn prompt_cache_key_field_values(body: &Value) -> (&str, Option<&Value>) {
-    let system = body["messages"]
-        .as_array()
-        .and_then(|messages| messages.first())
-        .filter(|first| first["role"].as_str() == Some("system"))
-        .and_then(|first| first["content"].as_str())
-        .unwrap_or("");
+///
+/// Chat Completions carries the system text as the first `messages` entry and
+/// Responses carries it as `instructions`; a body of either shape yields the
+/// same key material.
+fn prompt_cache_key_field_values(wire: WireProtocol, body: &Value) -> (&str, Option<&Value>) {
+    let system = match wire {
+        WireProtocol::Responses => body["instructions"].as_str().unwrap_or(""),
+        _ => body["messages"]
+            .as_array()
+            .and_then(|messages| messages.first())
+            .filter(|first| first["role"].as_str() == Some("system"))
+            .and_then(|first| first["content"].as_str())
+            .unwrap_or(""),
+    };
     (system, body.get("tools"))
 }
 
@@ -509,10 +642,13 @@ impl Provider for OpenAiCompatibleProvider {
         PROVIDER_NAME
     }
 
-    /// Chat Completions `prompt_tokens` is the total input, already including
-    /// the cached subset; adding the cached slice again would double count it.
+    /// Whether the reported input tokens already include the cached subset.
+    ///
+    /// Chat Completions, Responses and Gemini report a total, so adding the
+    /// cached slice again would double count it; Anthropic reports the cache
+    /// reads and writes separately and the caller has to add them up.
     fn usage_is_inclusive(&self) -> Option<bool> {
-        Some(true)
+        Some(self.wire.usage_is_inclusive())
     }
 
     /// No native compaction artifact exists for a Chat Completions endpoint,
@@ -566,7 +702,7 @@ impl Provider for OpenAiCompatibleProvider {
             .map(|model| ModelRoute {
                 model: model.clone(),
                 provider: self.display_name.clone(),
-                api_method: "chat_completions".to_string(),
+                api_method: self.wire.api_method().to_string(),
                 available: true,
                 detail: detail.clone(),
                 cheapness: None,
@@ -594,8 +730,20 @@ impl Provider for OpenAiCompatibleProvider {
         Ok(())
     }
 
+    /// The effort levels this wire and model accept.
+    ///
+    /// The two OpenAI wires take the shared OpenAI ladder. Anthropic's ladder is
+    /// derived from what the model's caps allow, so a model with no reasoning
+    /// control reports none instead of offering levels its request would refuse.
+    /// Gemini has its own five-level scale.
     fn available_efforts(&self) -> Vec<&'static str> {
-        horon_agent_provider_core::OPENAI_SELECTABLE_EFFORTS.to_vec()
+        match self.wire {
+            WireProtocol::ChatCompletions | WireProtocol::Responses => {
+                horon_agent_provider_core::OPENAI_SELECTABLE_EFFORTS.to_vec()
+            }
+            WireProtocol::AnthropicMessages => anthropic_efforts(&self.model()),
+            WireProtocol::GeminiGenerateContent => GEMINI_SELECTABLE_EFFORTS.to_vec(),
+        }
     }
 
     fn supports_image_input(&self) -> bool {
@@ -632,6 +780,7 @@ impl OpenAiCompatibleProvider {
             model: Mutex::new(self.model()),
             models: self.models.clone(),
             reasoning_effort: Mutex::new(self.reasoning_effort()),
+            wire: self.wire,
         }
     }
 }

@@ -186,7 +186,7 @@ Two instances exchange **originals only**: canonical event records and original 
 
 ### Harness API surface (protocol 1.12)
 
-The store is reached through the harness API. The major version stays at `1`; this surface arrived when the minor version moved from 11 to 12, and the current minor version is 20 (`crates/harness-api/src/lib.rs:68-70`). A client negotiates the handshake and then checks the capabilities it needs before sending anything.
+The store is reached through the harness API. The major version stays at `1`; this surface arrived when the minor version moved from 11 to 12, and the current minor version is 22 (`crates/harness-api/src/lib.rs:72-74`). A client negotiates the handshake and then checks the capabilities it needs before sending anything.
 
 | Capability | What it gates |
 | --- | --- |
@@ -216,7 +216,9 @@ Migration is offline and non-destructive (`legacy.rs`).
 - Old files, SQLite databases, WAL, SHM, `sdk-archive.json`, to-do state and edit statistics are neither deleted nor modified.
 - Migrating the same source again is a deterministic no-op (deterministic origin id and event ids). A different source hash is `source_conflict`.
 - When the new log verifies, it is read first. Otherwise the legacy originals are read and a non-destructive migration is offered.
-- Display metadata that exists only in the old SQLite index is imported through an explicit, read-only, opt-in path. `session migrate --apply --legacy-index` reads a protected prepared copy inside one consistent transaction. That path exists only in builds with the `legacy-session-index-import` feature. The default build opens no database and refuses with `migration_required`. Normal operation opens no database, and a database whose display metadata was not imported emits the same `migration_required` diagnostic instead of a listing whose titles quietly vanished.
+- Display metadata that exists only in the old SQLite index is imported through an explicit, read-only, opt-in path. `session migrate --apply --legacy-index` reads a protected prepared copy inside one consistent transaction. That path exists only in builds with the `legacy-session-index-import` feature, and `--legacy-index` is hidden from `--help` in a build without it (`src/cli/args.rs`). The default build opens no database and refuses with `migration_required`. Normal operation opens no database, and a database whose display metadata was not imported emits the same `migration_required` diagnostic instead of a listing whose titles quietly vanished.
+- Every surfaced refusal names the build that can finish the job: `session migrate`, `session inspect` and `session doctor` print the same remedy — install a binary compiled with `--features legacy-session-index-import`, then re-run `--legacy-index`. The release build carries `pdf` only (`.github/workflows/release.yml`), so a released binary says "install such a build" rather than telling the operator to re-run a flag it hides and refuses.
+- Passing `--legacy-index` to a build without the feature fails before any session is read, with that same remedy and without touching the database.
 
 #### SQLite that is not a session is out of scope
 

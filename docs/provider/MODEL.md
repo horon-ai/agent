@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](MODEL.ko.md)
 
-The agent sends model requests directly to an OpenAI-compatible API's `/chat/completions`. There is no router process or plugin layer in between, and no port is opened for the model. Endpoints are written under `[providers.<name>]` in `config.toml` and selected with `[provider] default_provider` or `--provider-profile`.
+The agent sends model requests directly to the endpoint of the profile's wire protocol. A profile speaks one of four wires: Chat Completions, the OpenAI Responses API, Anthropic Messages, or Gemini generateContent. There is no router process or plugin layer in between, and no port is opened for the model. Endpoints are written under `[providers.<name>]` in `config.toml` and selected with `[provider] default_provider` or `--provider-profile`.
 
 ## Model path
 
@@ -10,10 +10,61 @@ Model requests leave through a single path.
 
 1. `[provider] default_provider` selects the startup profile name. Given `--provider-profile <name>`, that run selects the `[providers.<name>]` table instead. `-p`/`--provider` takes `auto` (the default, which follows `[provider] default_provider` or `--provider-profile`), `openai-compatible`, or one profile id: either a built-in id such as `openrouter`, or the name of a `[providers.<name>]` table you wrote.
 2. The model is chosen from `--model <id>`, the profile's `default_model`, and `[provider] default_model`, whichever is set. If none is set the call ends in an error.
-3. The request URL is `base_url` with `/chat/completions` appended. Write the API prefix such as `/v1` as part of `base_url`.
+3. The request URL is `base_url` with the path of the profile's `type` appended, such as `/chat/completions` for `openai-compatible`. Write the API prefix such as `/v1` as part of `base_url`.
 4. Tool definitions travel as `tools` in the same request body. No separate model server relays the tools.
 
 Calling a model with no profile selected makes the agent stop before it reaches the network, and stderr tells you to add an `openai-compatible` profile under `[providers.<name>]`.
+
+## Wire protocols
+
+A profile's `type` key picks the request and response shape. Four values are accepted.
+
+| `type` | Endpoint | Default auth header | Effort field | `api_method` |
+| --- | --- | --- | --- | --- |
+| `openai-compatible` (default) | `POST {base_url}/chat/completions` | `Authorization: Bearer <key>` | `reasoning_effort` | `chat_completions` |
+| `openai-responses` | `POST {base_url}/responses` | `Authorization: Bearer <key>` | `reasoning.effort` | `responses` |
+| `anthropic-compatible` | `POST {base_url}/messages` | `x-api-key: <key>` | `output_config.effort` with adaptive thinking, or `thinking.budget_tokens` | `messages` |
+| `gemini-compatible` | `POST {base_url}/models/{model}:streamGenerateContent?alt=sse` | `x-goog-api-key: <key>` | `generationConfig.thinkingConfig` | `generate_content` |
+
+A `base_url` that already ends with the wire's path is used as it is, so a gateway that publishes the full path needs no rewriting. The `anthropic-compatible` wire sends `anthropic-version: 2023-06-01` unless the profile's `headers` set that name itself. `open-router` is rejected at runtime, and the error names the four supported values.
+
+`type` defaults the credential header, and an explicit `auth` always wins. With `auth` omitted, the two OpenAI kinds send `Authorization: Bearer <key>`, `anthropic-compatible` sends `x-api-key`, and `gemini-compatible` sends `x-goog-api-key`. `auth = "header"` without `auth_header` sends `api-key` for the OpenAI kinds, `x-api-key` for Anthropic, and `x-goog-api-key` for Gemini. `auth = "none"` sends no key. A profile written before these wires existed keeps working unchanged, because `openai-compatible` is the default and its defaults did not move.
+
+Effort maps per wire. `openai-compatible` sends `reasoning_effort`, and `openai-responses` sends `reasoning.effort`. `anthropic-compatible` sends `output_config.effort` with adaptive thinking for models that accept it, or `thinking.budget_tokens` for models that take a manual budget (low 4096, medium 10000, high, xhigh and max 32000), and nothing for a non-Claude model. `gemini-compatible` sends `generationConfig.thinkingConfig` with `thinkingBudget` for a `gemini-2.5*` model (minimal 512, low 1024, medium 8192, high and xhigh 24576) and `thinkingLevel` (`MINIMAL` through `XHIGH`) for the rest, always with `includeThoughts: true`.
+
+Each wire appears in the model routes under its own `api_method` value from the table above. The runtime identity stays `openai-compatible` or `openai-compatible:<profile>` for all four, so stored sessions, the harness API and the SDK see one provider name.
+
+`prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. The model list comes from the profile's static `[[providers.<name>.models]]` array; no wire asks the endpoint for a list.
+
+```toml
+# Chat Completions, the default
+[providers.my-chat]
+type = "openai-compatible"
+base_url = "https://llm.example.com/v1"
+api_key_env = "MY_CHAT_API_KEY"
+default_model = "my-model"
+
+# OpenAI Responses API
+[providers.my-responses]
+type = "openai-responses"
+base_url = "https://llm.example.com/v1"
+api_key_env = "MY_RESPONSES_API_KEY"
+default_model = "my-model"
+
+# Anthropic Messages; no auth line, so x-api-key carries the key
+[providers.my-anthropic]
+type = "anthropic-compatible"
+base_url = "https://api.anthropic.com/v1"
+api_key_env = "ANTHROPIC_API_KEY"
+default_model = "claude-sonnet-4-6"
+
+# Gemini generateContent; no auth line, so x-goog-api-key carries the key
+[providers.my-gemini]
+type = "gemini-compatible"
+base_url = "https://generativelanguage.googleapis.com/v1beta"
+api_key_env = "GEMINI_API_KEY"
+default_model = "gemini-2.5-pro"
+```
 
 ## Explicit provider prefixes
 
@@ -47,15 +98,15 @@ input = ["text", "image"]
 
 | Key | Meaning |
 | --- | --- |
-| `type` | `"openai-compatible"`. The value the model path in this build uses. |
+| `type` | `"openai-compatible"` (default), `"openai-responses"`, `"anthropic-compatible"`, or `"gemini-compatible"`. It picks the wire listed under [Wire protocols](#wire-protocols). |
 | `base_url` | Required. The address including the API prefix. `http` is accepted only for a local or private host: `localhost`, a `*.local` name, a loopback, private, link-local or CGNAT address, or an IPv6 loopback, unique-local or link-local address. Every other host must use `https`. |
 | `api_key_env` | Name of the environment variable holding the key. It checks the process environment first and reads `env_file` when no value is there. |
 | `env_file` | Name of the key file kept in the config directory. Write one per line, such as `MY_GW_API_KEY=...`. |
-| `auth` | One of `bearer` (default), `header`, `none`. `header` takes the header name from `auth_header` and uses `api-key` when empty. |
+| `auth` | One of `bearer`, `header`, `none`. Leaving it out applies the `type` default: `bearer` for the two OpenAI kinds, and `header` with the wire's own header for Anthropic and Gemini. `header` takes the header name from `auth_header` and falls back to `api-key`, `x-api-key`, or `x-goog-api-key` by type when it is empty. |
 | `default_model` | The profile's default model id. |
 | `models` | The `[[providers.<name>.models]]` array. `id` is required, and `context_window`, `input`, `reasoning`, and `reasoning_effort` may accompany it. |
 | `headers` | Extra HTTP headers added to every request. |
-| `extra_body` | A top-level JSON object merged into the request body. Use it for backend-only fields such as `chat_template_kwargs`. |
+| `extra_body` | A top-level JSON object merged into the top level of every request body on all four wires. Use it for backend-only fields such as `chat_template_kwargs`. |
 | `requires_api_key` | States whether a key is needed. Set it to `false` where there is no key, as with a local endpoint. |
 | `prompt_cache_key` | Decides whether a lineage-stable `prompt_cache_key` goes into the request body. `true` always sends it, `false` never does, and leaving it empty sends it only for `api.openai.com` and `openrouter.ai` hosts. Set it to `false` when a gateway with a strict schema returns 400 for the unknown field. |
 
@@ -73,7 +124,7 @@ A model role is a named workload-to-model mapping shared by every feature that n
 | `plan` | Planning turns: the model that writes a plan before execution hands off (#70). | `plan` |
 | `aux` | Cheap auxiliary work: compaction summaries, titles, classification, memory extraction. | `aux` |
 | `judge` | Typed judgments: one bounded call answering a `bool`, `choice`, or `score` question about text the turn already produced. Today the single caller is unexpected-stop recovery (`docs/runtime/TURNS.md`). | `judge` |
-| `image` | Image generation and editing: the one role whose model does not speak Chat Completions. Its single caller is the `generate_image` tool, which posts to `/images/generations` and `/images/edits` on the same profile. No inherited fallback, because a text model cannot answer an image request. | `image` |
+| `image` | Image generation and editing: the one role whose model does not speak Chat Completions. Its single caller is the `generate_image` tool, which posts to `/images/generations` and `/images/edits` on the same profile, and only a profile of type `openai-compatible` or `openai-responses` accepts it. No inherited fallback, because a text model cannot answer an image request. | `image` |
 
 No other role exists. A new role is added only together with the workload that calls it. Reason: a role with no named caller is a second spelling of `default`, and a role that appears before its consumer cannot be reviewed for the model it should point at.
 
@@ -132,20 +183,21 @@ An unset role configuration behaves exactly as the build does today: no `roles` 
 
 ### The `image` role and the one model path
 
-The build's rule is that one model path serves models: a turn posts `/chat/completions` to the profile named by `[provider] default_provider` or `--provider-profile`. The `generate_image` tool is the one documented exception, and it is a route rather than an architecture:
+The build's rule is that one model path serves models: a turn posts to the endpoint of the profile's `type`, on the profile named by `[provider] default_provider` or `--provider-profile`. The `generate_image` tool is the one documented exception, and it is a route rather than an architecture:
 
 - It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
+- Only a profile of type `openai-compatible` or `openai-responses` accepts this route. A profile on the Anthropic or Gemini wire reports that image generation is not configured, because neither wire carries an Images endpoint.
 - There is still one provider runtime, no second router and no plugin host. `crates/provider-openai/src/images.rs` is a request builder beside `chat/`, not a runtime.
 - The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
 - A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
 - The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.
-- Output is limited to the OpenAI Images shape. A gateway that speaks it works unchanged, including the Horon AI Gateway. Gemini-native and Responses-hosted image tools are out of scope; the MCP recipe in `docs/provider/INTEGRATIONS.md` covers anything this route does not.
+- Output is limited to the OpenAI Images shape. A gateway that speaks it works unchanged, including the Horon AI Gateway. The Gemini-native image API and the Responses API's `image_generation` tool are out of scope; the MCP recipe in `docs/provider/INTEGRATIONS.md` covers anything this route does not.
 
 ### The `judge` role in practice
 
 `crates/provider-core/src/judge.rs` owns the pure half of a judgment: the prompt (`JudgeRequest::prompt`), the response schema (`response_schema`), the limits (64 questions, 48 KiB of state, 4 KiB of instructions per question, 64 choice labels, 64 score levels), and a strict parser that rejects an invented label, an out-of-range probability, a missing or duplicated id, and any extra field. `crates/base/src/judge.rs` owns the half that needs configuration: `resolve_judge_model` walks the chain above, and `judge_with` forks the caller's provider, selects the resolved model, waits inside the attempt budget, and returns the parsed answers with the provider's usage.
 
-A judgment is an ordinary `/chat/completions` call, so this role adds no endpoint and no credential; that keeps the build's one-model-path rule intact. A model that cannot be selected is an error, never a silent inheritance of the session model: the point of a judgment is a second model's opinion. The attempt budget is `[autojudge] attempt_timeout_ms`: it defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. The budget covers the whole attempt, model selection included, because a judgment holds up the turn it is judging.
+A judgment is an ordinary model call on the session's own profile, so this role adds no endpoint and no credential; that keeps the build's one-model-path rule intact. A model that cannot be selected is an error, never a silent inheritance of the session model: the point of a judgment is a second model's opinion. The attempt budget is `[autojudge] attempt_timeout_ms`: it defaults to 3000, `0` means the default rather than no deadline, and anything above 30 s is clamped. The budget covers the whole attempt, model selection included, because a judgment holds up the turn it is judging.
 
 The role is named `judge` and the `/judge` command is a different workload: `/judge` spawns a reviewer worker inside a swarm and resolves its model through the session agent-model overrides (`/model judge`, `/agents judge <model>`). Both read `[autojudge] model` as their model override, so one setting names the model in both places, but a judgment never spawns a worker and a worker never answers a typed question.
 
@@ -186,7 +238,7 @@ The decision is one replay event, `prewalk` in the stored session, and that even
 
 A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 28 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.
 
-Calls without a session id send no key. `prompt_cache_key = true` sends it regardless of host, but use `false` for an endpoint that rejects unknown fields.
+Calls without a session id send no key. `prompt_cache_key = true` sends it regardless of host, but use `false` for an endpoint that rejects unknown fields. The field is a Chat Completions and Responses API feature, so the two OpenAI wires send it and the Anthropic and Gemini wires do not.
 
 The `api.openai.com` host also carries `prompt_cache_retention`. Its value is `HORON_AGENT_OPENAI_PROMPT_CACHE_RETENTION` (`in_memory` or `24h`) when that is set, and otherwise `24h` only when the model supports extended retention. Models that use the default 30-minute retention get no field. Other hosts do not get this field. `extra_body` is merged after both fields, so a profile can override the values.
 
@@ -213,6 +265,7 @@ Key files get narrowed permissions when read. You can also write the key value d
 
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
+  --type openai-compatible \
   --base-url https://llm.example.com/v1 \
   --model my-model \
   --api-key-env MY_GW_API_KEY \
@@ -220,7 +273,9 @@ printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --set-default
 ```
 
-`--set-default` writes `[provider] default_provider = "my-gw"` and `[provider] default_model` together. To change an existing name, pass `--overwrite`. For a local endpoint that needs no key, use `--auth none`.
+`--type` takes `openai-compatible`, `openai-responses`, `anthropic-compatible`, or `gemini-compatible` and defaults to `openai-compatible`. Without `--auth` the command writes no `auth` line, so the type's default credential header applies. `--set-default` writes `[provider] default_provider = "my-gw"` and `[provider] default_model` together. To change an existing name, pass `--overwrite`. For a local endpoint that needs no key, use `--auth none`.
+
+Profiles are added through the CLI and the configuration file. Headless mode and TUI mode read the same profiles, and no provider settings screen exists in either.
 
 Check the new profile right away like this.
 
@@ -234,7 +289,7 @@ horon --provider-profile my-gw --model my-model run "hello"
 horon provider current --json
 ```
 
-The output fields are `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, and `unavailable_reason` when it is not ready (`src/cli/commands/report_info.rs`). `ready` being `true` means the current configuration can call `/chat/completions`.
+The output fields are `requested_provider`, `requested_model`, `resolved_provider`, `selected_model`, `ready`, and `unavailable_reason` when it is not ready (`src/cli/commands/report_info.rs`). `ready` being `true` means the current configuration can call the profile's endpoint.
 
 ## Troubleshooting
 
@@ -243,8 +298,8 @@ The output fields are `requested_provider`, `requested_model`, `resolved_provide
 | `Unknown provider profile '<name>'. Add [providers.<name>] to config.toml.` | The name `default_provider` or `--provider-profile` points at is not in the configuration. Match the table name and value. |
 | `Provider profile '<name>' has invalid base_url ...` | `base_url` is empty, is not an absolute URL, or is a plain `http` URL for a host that is not local or private. The message says `https://... or http://localhost`; the full `http` allowance is the local and private host list in the `base_url` row above. Include the API prefix. |
 | A missing-key error | The error names the environment variable to fill in. The key value never appears in the error. Export the variable or write it to `env_file`. |
-| 401 or 403 | The key is wrong or the `auth` style does not match the endpoint. It is usually `bearer`, and `x-api-key` style endpoints use `auth = "header"` with `auth_header`. |
-| 404 | `base_url` may be missing a prefix such as `/v1`. The agent appends only `/chat/completions` to `base_url`. |
+| 401 or 403 | The key is wrong or the `auth` style does not match the endpoint. The `type` default is `bearer` for the two OpenAI kinds and the wire's own header for `anthropic-compatible` and `gemini-compatible`; an explicit `auth = "header"` with `auth_header` overrides both. |
+| 404 | `base_url` may be missing a prefix such as `/v1`, or it already carries the wire path and the profile names the wrong `type`. The agent appends only the path of the profile's `type` to `base_url`. |
 | Model not found | One of `--model`, the profile `default_model`, or `[provider] default_model` names an id the endpoint does not know. Match the `id` in `[[providers.<name>.models]]`. |
 
 ## Built-in profiles

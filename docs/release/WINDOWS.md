@@ -24,7 +24,7 @@ The install script requires PowerShell 5.1 or later. Intel and AMD Windows machi
 Open PowerShell and run:
 
 ```powershell
-irm https://horon-agent.sh/install.ps1 | iex
+irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
 The install script proceeds in this order:
@@ -40,7 +40,7 @@ The install script never unpacks the release archive itself. `install-release` i
 Installing Alacritty is optional and no longer happens automatically. To request it explicitly, run:
 
 ```powershell
-$script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
+$script = [scriptblock]::Create((irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1))
 & $script -ConfigureAlacritty
 ```
 
@@ -49,7 +49,7 @@ HoronAgent may also offer this option interactively after startup.
 When the release has no matching prebuilt Windows asset, the install script does not silently start a long build; it prints a message the user can act on and fails. To explicitly allow a source build, run:
 
 ```powershell
-$script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
+$script = [scriptblock]::Create((irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1))
 & $script -BuildFromSource
 ```
 

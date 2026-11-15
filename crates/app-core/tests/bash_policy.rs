@@ -443,39 +443,35 @@ async fn git_guard_refuses_a_stash_in_the_shared_checkout_and_allows_a_linked_wo
 
 #[tokio::test]
 async fn a_named_service_can_wait_for_a_tcp_port() {
-    if Command::new("python3").arg("--version").output().is_err() {
-        return;
-    }
     let _env = TEST_ENV.lock().await;
     let env = IsolatedEnv::new("service-port", "");
     let registry = registry().await;
     let session = "policy-service-port";
-    // Ask the OS for a free port, then hand it to the server. The tiny race
-    // between closing the probe socket and the server binding is acceptable:
-    // the readiness wait allows ten seconds for the bind to succeed.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
-    let port = listener.local_addr().expect("the bound address").port();
-    drop(listener);
 
+    // The listener is held by this process, so readiness has something certain
+    // to connect to. Booting a server from the runner's interpreter made the
+    // case depend on that interpreter: on a machine where `python3` exists but
+    // its server never binds, every attempt burned the whole window and the
+    // failure said nothing about the port check the case is meant to cover.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a bound port");
+    let port = listener.local_addr().expect("the bound address").port();
     let output = run_bash(
         &registry,
         session,
         env.home(),
         json!({
-            "command": format!("python3 -m http.server {port} --bind 127.0.0.1"),
+            "command": "sleep 60",
             "name": "web",
             "ready": {"port": port, "timeout_secs": 10.0}
         }),
     )
     .await
-    .expect("the web service starts");
-
-    let first_line = output.lines().next().unwrap_or_default();
+    .expect("the web service call is accepted");
+    let first_line = output.lines().next().unwrap_or_default().to_owned();
     assert!(
         first_line.starts_with("web: running pid=") && first_line.ends_with(" ready"),
-        "the port check must report readiness: {first_line:?}"
+        "an accepting port must report readiness: {first_line:?}"
     );
-
     registry
         .execute(
             "bg",
@@ -484,6 +480,38 @@ async fn a_named_service_can_wait_for_a_tcp_port() {
         )
         .await
         .expect("cleanup cancels the web service");
+    drop(listener);
+
+    // The same check must refuse to claim readiness when nothing accepts, so a
+    // green first half cannot come from reporting ready unconditionally.
+    let free = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let closed = free.local_addr().expect("the bound address").port();
+    drop(free);
+    let output = run_bash(
+        &registry,
+        session,
+        env.home(),
+        json!({
+            "command": "sleep 60",
+            "name": "web-off",
+            "ready": {"port": closed, "timeout_secs": 0.05}
+        }),
+    )
+    .await
+    .expect("the second service call is accepted");
+    let first_line = output.lines().next().unwrap_or_default();
+    assert!(
+        !first_line.ends_with(" ready"),
+        "a closed port must not report readiness: {first_line:?}"
+    );
+    registry
+        .execute(
+            "bg",
+            json!({"action": "cancel", "task_id": "web-off"}),
+            context(session, env.home()),
+        )
+        .await
+        .expect("cleanup cancels the second web service");
 }
 
 #[tokio::test]

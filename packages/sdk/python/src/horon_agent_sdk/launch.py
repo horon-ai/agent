@@ -608,7 +608,7 @@ async def launch_instance(options: LaunchOptions | None = None) -> LaunchedInsta
             "horon_agent_not_found",
             f"could not run `{binary}`: horon-agent is not installed, or not on PATH. "
             "Reinstall a platform wheel of horon-agent-sdk (which carries the runtime), "
-            "install horon-agent from https://horon-agent.sh, or pass `binary` with its full path.",
+            "install horon-agent from https://agent.horon.ai/install/, or pass `binary` with its full path.",
         ) from error
     except OSError as error:
         if ephemeral:

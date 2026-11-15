@@ -1,6 +1,4 @@
-//! Daemon reports for ACP v2 connections (todo 5 of the acp-v2-dual-stack
-//! plan): user-message insertion, foreground turn state, tool exits and stored
-//! message ids, all gated on the connection having negotiated v2.
+//! Daemon reports for ACP v2 connections: insertions, foreground state, tool exits, message ids.
 
 use super::*;
 use serde_json::{Value, json};
@@ -152,12 +150,10 @@ pub(super) struct Harness {
     client_connections: Arc<RwLock<HashMap<String, ClientConnectionInfo>>>,
     swarm_members: Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: Arc<RwLock<HashMap<String, HashSet<String>>>>,
-    shared_context: Arc<RwLock<HashMap<String, HashMap<String, SharedContext>>>>,
+    plan_proposals: PlanProposalStore,
     swarm_plans: Arc<RwLock<HashMap<String, VersionedPlan>>>,
     swarm_coordinators: Arc<RwLock<HashMap<String, String>>>,
     file_touch: FileTouchService,
-    channel_subscriptions: ChannelSubscriptions,
-    channel_subscriptions_by_session: ChannelSubscriptions,
     event_history: Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: broadcast::Sender<SwarmEvent>,
@@ -186,12 +182,10 @@ impl Harness {
             client_connections: Arc::new(RwLock::new(HashMap::new())),
             swarm_members: Arc::new(RwLock::new(HashMap::new())),
             swarms_by_id: Arc::new(RwLock::new(HashMap::new())),
-            shared_context: Arc::new(RwLock::new(HashMap::new())),
+            plan_proposals: Arc::new(RwLock::new(HashMap::new())),
             swarm_plans: Arc::new(RwLock::new(HashMap::new())),
             swarm_coordinators: Arc::new(RwLock::new(HashMap::new())),
             file_touch: FileTouchService::new(),
-            channel_subscriptions: Arc::new(RwLock::new(HashMap::new())),
-            channel_subscriptions_by_session: Arc::new(RwLock::new(HashMap::new())),
             event_history: Arc::new(RwLock::new(std::collections::VecDeque::new())),
             event_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             swarm_event_tx: broadcast::channel(8).0,
@@ -217,12 +211,10 @@ impl Harness {
             Arc::clone(&self.client_connections),
             self.swarm_members.clone(),
             self.swarms_by_id.clone(),
-            self.shared_context.clone(),
+            self.plan_proposals.clone(),
             self.swarm_plans.clone(),
             self.swarm_coordinators.clone(),
             self.file_touch.clone(),
-            self.channel_subscriptions.clone(),
-            self.channel_subscriptions_by_session.clone(),
             self.event_history.clone(),
             self.event_counter.clone(),
             self.swarm_event_tx.clone(),
@@ -1328,12 +1320,8 @@ async fn cancel_of_queued_v2_prompt_withdraws_it() {
     h.close(vec![editor, observer, desktop]).await;
 }
 
-/// IS-5 cancel clause across surfaces (todo 16): this editor's turn runs, a
-/// second v2 connection's prompt waits for the agent, and the editor cancels.
 /// The cancel holds the cancelled turn's idle state until its own reply is
-/// queued; the agent must not pass to the waiting turn before that idle state
-/// reached the session, or the waiting turn's `running` and text overtake it
-/// and a v2 adapter never sees `idle cancelled`.
+/// queued, so the waiting turn's `running` and text cannot overtake it.
 #[tokio::test]
 async fn cancelled_idle_precedes_the_queued_peer_turn() {
     let h = Harness::new();

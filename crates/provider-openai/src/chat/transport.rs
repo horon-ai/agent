@@ -22,6 +22,13 @@ pub const MAX_ERROR_BODY_CHARS: usize = 2000;
 /// Replacement text for a credential that would otherwise reach a message.
 pub const REDACTED: &str = "[redacted]";
 
+/// The display label Chat Completions failures have always opened with.
+///
+/// Other wires pass their own label to [`http_response_error_labeled`] and
+/// [`transport_error_message_labeled`]; everything after the label keeps the
+/// same shape so the shared failover classifier reads all four alike.
+pub(crate) const CHAT_LABEL: &str = "OpenAI-compatible";
+
 /// How a profile presents its credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatAuth {
@@ -119,6 +126,25 @@ pub fn http_response_error_with_hint(
     hint: Option<&str>,
     api_key: Option<&str>,
 ) -> anyhow::Error {
+    http_response_error_labeled(CHAT_LABEL, endpoint, status, retry_after, body, hint, api_key)
+}
+
+/// [`http_response_error_with_hint`], naming the wire the failure came from.
+///
+/// Every wire keeps the same sentence shape because the shared classifiers key
+/// on the words ("authentication failed", "rate limit", the status code), not on
+/// the prefix; only the label that opens the sentence changes. With
+/// [`CHAT_LABEL`] the produced text is byte-identical to what the Chat
+/// Completions path has always emitted.
+pub(crate) fn http_response_error_labeled(
+    label: &str,
+    endpoint: &str,
+    status: u16,
+    retry_after: Option<RetryAfter>,
+    body: &str,
+    hint: Option<&str>,
+    api_key: Option<&str>,
+) -> anyhow::Error {
     let body = if body.trim().is_empty() {
         "<empty response body>".to_string()
     } else {
@@ -130,16 +156,16 @@ pub fn http_response_error_with_hint(
     };
     let message = match classify_http_status(status) {
         HttpErrorKind::Authentication => {
-            format!("OpenAI-compatible provider authentication failed (HTTP {status}) at {endpoint}: {body}")
+            format!("{label} provider authentication failed (HTTP {status}) at {endpoint}: {body}")
         }
         HttpErrorKind::RateLimited => {
-            format!("OpenAI-compatible provider rate limit exceeded (HTTP 429) at {endpoint}: {body}")
+            format!("{label} provider rate limit exceeded (HTTP 429) at {endpoint}: {body}")
         }
         HttpErrorKind::Server => {
-            format!("OpenAI-compatible provider server error (HTTP {status}) at {endpoint}: {body}")
+            format!("{label} provider server error (HTTP {status}) at {endpoint}: {body}")
         }
         HttpErrorKind::Client => {
-            format!("OpenAI-compatible provider request failed (HTTP {status}) at {endpoint}: {body}")
+            format!("{label} provider request failed (HTTP {status}) at {endpoint}: {body}")
         }
     };
     error_with_retry_after(redact_secret(message, api_key), retry_after)
@@ -148,7 +174,12 @@ pub fn http_response_error_with_hint(
 /// Describe a transport-level failure, marking transient faults the shared
 /// classifier recognizes.
 pub fn transport_error_message(endpoint: &str, error: &str) -> String {
-    let message = format!("OpenAI-compatible provider transport error at {endpoint}: {error}");
+    transport_error_message_labeled(CHAT_LABEL, endpoint, error)
+}
+
+/// [`transport_error_message`], naming the wire the failure came from.
+pub(crate) fn transport_error_message_labeled(label: &str, endpoint: &str, error: &str) -> String {
+    let message = format!("{label} provider transport error at {endpoint}: {error}");
     if is_transient_transport_error(error) {
         format!("{message} (transient transport error)")
     } else {
@@ -174,4 +205,112 @@ pub fn snippet(text: &str, max_chars: usize) -> String {
     let mut bounded: String = trimmed.chars().take(max_chars).collect();
     bounded.push_str("… [truncated]");
     bounded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The Chat Completions text is what every log line, failover decision and
+    /// user-facing report has been reading, so parameterizing the label must
+    /// not move a single byte of it.
+    #[test]
+    fn the_chat_label_reproduces_the_exact_messages() {
+        let endpoint = "http://x/v1/chat/completions";
+        let cases = [
+            (
+                401,
+                "bad key",
+                "OpenAI-compatible provider authentication failed (HTTP 401) at http://x/v1/chat/completions: bad key",
+            ),
+            (
+                403,
+                "forbidden",
+                "OpenAI-compatible provider authentication failed (HTTP 403) at http://x/v1/chat/completions: forbidden",
+            ),
+            (
+                429,
+                "slow down",
+                "OpenAI-compatible provider rate limit exceeded (HTTP 429) at http://x/v1/chat/completions: slow down",
+            ),
+            (
+                500,
+                "boom",
+                "OpenAI-compatible provider server error (HTTP 500) at http://x/v1/chat/completions: boom",
+            ),
+            (
+                404,
+                "no model",
+                "OpenAI-compatible provider request failed (HTTP 404) at http://x/v1/chat/completions: no model",
+            ),
+        ];
+        for (status, body, expected) in cases {
+            assert_eq!(
+                http_response_error(endpoint, status, None, body, None).to_string(),
+                expected,
+                "{status}"
+            );
+        }
+        assert_eq!(
+            transport_error_message(endpoint, "connection reset by peer"),
+            "OpenAI-compatible provider transport error at http://x/v1/chat/completions: connection reset by peer (transient transport error)"
+        );
+        assert_eq!(
+            transport_error_message(endpoint, "dns says no"),
+            "OpenAI-compatible provider transport error at http://x/v1/chat/completions: dns says no"
+        );
+    }
+
+    /// The same sentence with another wire's label: the failover classifier keys
+    /// on "authentication failed" and the status code, not on the prefix.
+    #[test]
+    fn another_label_shares_the_sentence_shape_and_still_hides_the_key() {
+        let key = "sk-gemini-secret";
+        let message = http_response_error_labeled(
+            "Gemini-compatible",
+            "http://x/models/gemini-2.5-pro:streamGenerateContent?alt=sse",
+            401,
+            None,
+            &format!("API key not valid: {key}"),
+            None,
+            Some(key),
+        )
+        .to_string();
+        assert!(
+            message.starts_with("Gemini-compatible provider authentication failed (HTTP 401) at "),
+            "{message}"
+        );
+        assert!(message.contains("authentication failed"), "{message}");
+        assert!(!message.contains(key), "the key must be redacted: {message}");
+        assert!(message.contains(REDACTED), "{message}");
+
+        let transport = transport_error_message_labeled(
+            "Anthropic-compatible",
+            "http://x/v1/messages",
+            "connection reset by peer",
+        );
+        assert_eq!(
+            transport,
+            "Anthropic-compatible provider transport error at http://x/v1/messages: connection reset by peer (transient transport error)"
+        );
+    }
+
+    /// A hint survives the body truncation on every label, because it explains
+    /// whether a retry can help.
+    #[test]
+    fn a_hint_is_kept_for_another_label() {
+        let long_body = "x".repeat(MAX_ERROR_BODY_CHARS + 100);
+        let message = http_response_error_labeled(
+            "Gemini-compatible",
+            "http://x/m",
+            400,
+            None,
+            &long_body,
+            Some("retryable"),
+            None,
+        )
+        .to_string();
+        assert!(message.contains("[truncated]"), "{message}");
+        assert!(message.ends_with(" [retryable]"), "{message}");
+    }
 }

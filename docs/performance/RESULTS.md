@@ -53,7 +53,7 @@ Dimension labels follow this rule. `MEMORY` is allocation and memory, `TIME` is 
 | Replication export, bytes against the reference implementation (same 64 → 256) | `WORK` | 8,445,218 → 138,506,722 B (16.4×) | 102,903 → 411,795 B (4.0×) |
 | Cache facade, over-limit path (temporary allocation · canonical serialization) | `MEMORY` | 3,146,158 B, 1 time | 0 B, 0 times |
 | Cache facade, wall clock | `TIME` (no improvement) | about 19 ms per MiB | about 19 ms per MiB |
-| Attach/detach soak, resources after 200 cycles | `RESOURCES` | fd 14, threads 25, tasks 2,141, `shared_context` 0 | fd 14, threads 22, tasks 2,141, `shared_context` 0 |
+| Attach/detach soak, resources after 200 cycles | `RESOURCES` | fd 14, threads 25, tasks 2,141 | fd 14, threads 22, tasks 2,141 |
 
 A few points are easy to misread from the table alone, so they are set out here.
 
@@ -85,7 +85,7 @@ Six items were measured and then rejected. Each item carries the numbers a later
 
 | Item | Decision | Numbers behind it |
 | --- | --- | --- |
-| Idle session eviction policy | not adopted | 0.999 fds and 0.998 threads per session, 0.41 MB RSS. The slope does not bend from 1 to 1,000 sessions. The `shared_context` entry and the debug job are 0 at all five population counts, and the soak returns the session count to 0 |
+| Idle session eviction policy | not adopted | 0.999 fds and 0.998 threads per session, 0.41 MB RSS. The slope does not bend from 1 to 1,000 sessions. The debug job count (`/debug/job_count`) is 0 at all five population counts, and the soak returns the session count to 0 |
 | `globalEvents` multiplexing | not adopted (protocol change) | 7.4 consumer-side fds and 3.0 threads per watched session. The daemon's own share is 1.0 connection per session, and the bridge attaches one session per connection |
 | Narrowing the session map lock scope | not adopted | Removing an unrelated session waits for the whole import. 861 / 5,561 / 11,255 / 24,499 ms at 1 / 20 / 60 / 150 events, ratio 1.00 |
 | Replacing the 25 ms interrupt poll timer with notification | not adopted | It would save a worst case of 29.7 ms (27.6 ms on average) at the cost of restructuring a wakeup once per watch-group round |
@@ -102,9 +102,9 @@ This section is the point of this page. Leave out any one of the statements belo
 - **The history page improvement covers repeated paging while the head does not move.** The index is tied to the log's identity stamp (device, inode, length, mtime, ctime), so a single append, import or reset invalidates it. A session that keeps growing therefore pays the old cost once more and rebuilds the index. That rebuild cost was not measured. A single page fetch from a new head is not faster.
 - **The cache improvement is allocation, not throughput.** Wall clock is about 19 ms per MiB on both sides. Escaping cost dominates either way.
 - **The soak asserts fds, threads, queues, pending requests and tasks. Not RSS.** RSS rose from 68.4 MB to 79.5 MB and then stayed flat (peak 83.7 MB), and is recorded as an observation only.
-- **The 200-cycle soak resolves one leaked resource per 20 cycles.** The plan asked for 1,000 cycles and that item is `[~]`. The 1,000-cycle variant is in the repository behind `#[ignore]`.
+- **The 200-cycle soak resolves one leaked resource per 20 cycles.** The plan asked for 1,000 cycles; that form now runs weekly in `Attach/Detach Soak` (`.github/workflows/soak.yml`) and its first run was clean, while the 200-cycle gate in `ci.yml` stays the pull-request form.
 - **The structural gate did not assert the frame limit when this plan closed.** The counters the gate read then included no frame count, and the frame limit was held by `crates/harness-api-server/src/framing_tests.rs` alone. The gate now has a `frame` section (`scripts/perf/check_structural.py`): the bridge reader and the SDK reader each report `max_frame_bytes`, `accepted_frame_bytes` and `rejected_frame_bytes`, and the gate requires the cap to equal `frame_max_bytes` (64 MiB) and the smallest refused frame to be exactly one byte above the largest accepted one. It still counts no frames.
-- **`shared_context` has no removal path anywhere in the tree** (`crates/app-core/src/server.rs:771`). It measured 0 at every population count, but that 0 means "nobody used it", not "nothing leaks". The soak only checks that this map does not grow monotonically either.
+- **The `shared_context` map these numbers once covered no longer exists.** It was removed with the rest of the topic-channel store (#299), so the soak no longer samples it and the table above carries no figure for it. The historical reading stands as recorded: 0 at every population count, which meant "nobody used it" rather than "nothing leaks". What survives in the `server:memory` payload is the swarm block beside it — `member_count`, `status_counts`, `swarm_count`, `swarm_membership_count`, `plan_count`, `plan_item_count` and their byte estimates (`crates/app-core/src/server/debug_server_state.rs`) — and that block is what a future soak would sample.
 - **The replication export's serialization factor is fixed per page.** It is 513 at the 256-event cap, but export time still grows with the log (278.2 ms for 1,000 events, 2,657.2 ms for 10,000). Bytes are flat within a page, not across the whole export.
 - **The cache facade's warm-restore time is a single-shot measurement.** It includes page cache variance, and in the same case the range covers 108.6 / 901.8 ms on the lane and 108.9 / 499.7 ms for the lead's re-run. Only the byte-exact boundary decision is reproducible.
 - **The absolute milliseconds of the four not-adopted decisions are not release numbers.** They were taken in the debug test profile in a scratch home; what transfers is the ratio (wait time equals import time, session creation about 1.2 s).
@@ -159,7 +159,7 @@ cargo test --locked -p horon-agent-base --lib event_cache -- --nocapture
 cargo build --locked -p horon-agent-base --example facade_cache_probe
 ```
 
-The soak has a 200-cycle default form and a 1,000-cycle variant behind `#[ignore]`.
+The soak has a 200-cycle default form and a 1,000-cycle variant behind `#[ignore]`. The 1,000-cycle form is what the scheduled `Attach/Detach Soak` workflow (`.github/workflows/soak.yml`) runs weekly; it is not part of `CI Required`, so a retention failure never blocks a pull request, and it opens or updates one tracking issue instead of failing a review.
 
 ```bash
 HORON_AGENT_WORKSPACE_TRUST=trust \
@@ -168,17 +168,40 @@ HORON_AGENT_WORKSPACE_TRUST=trust \
   cargo test -p horon-agent --test e2e soak_attach_detach_1000_cycles -- --ignored --exact --nocapture
 ```
 
+The scheduled run is reproducible by hand: `gh workflow run soak.yml --ref dev -f cycles=1000`. Its report is the `soak-attach-detach-report` artifact, and `python3 scripts/perf/check_soak.py <captured log>` renders the same Markdown from a local run.
+
+### The 1,000-cycle baseline on a hosted runner
+
+The first run was the `dev` push after the workflow merged ([run 43600180217](https://github.com/horon-ai/agent/actions/runs/43600180217), commit `af41e0b7`), on `ubuntu-24.04` with `HORON_AGENT_PERF_COUNTERS=1`.
+
+| Measure | Value |
+| --- | --- |
+| Cycles | 1,000, in 10 windows of 100 |
+| Cycle time | 7 min 38 s (13:34:30Z → 13:42:08Z), about 0.46 s per cycle |
+| Whole job | 10 min 56 s including the cold build |
+| Verdict | `STRUCTURAL_PERF section=soak cycles=1000 fd_retention=0 thread_retention=0 non_returning=0` |
+| Report | **Clean.** Every counter returned to its baseline |
+
+| Counter | Baseline → final | Slope per 100 cycles |
+| --- | --- | --- |
+| `fd_count` | 16 → 16 | +0.000 |
+| `thread_count` | 16 → 16 | +0.000 |
+| `queue_depth_high_water` | 0 → 1 | +0.100 |
+| `pending_requests`, `interrupt_poll_wakeups`, `background_tasks`, `live_sessions`, `connected_clients` | 0 → 0 | +0.000 |
+
+`queue_depth_high_water` is a high-water mark, not a final value: it records the deepest queue seen at any point, so a transient 1 is not retention. The 180-minute job timeout leaves more than an order of magnitude of headroom over the measured run.
+
 How to use the structural gate and the A/B runner, the required keys of the report template, and the procedure for raising a bound are in [`docs/performance/BENCHMARK.md`](BENCHMARK.md). The gate command is `python3 scripts/perf/check_structural.py` and the A/B runner is `scripts/perf/ab_perf.py`.
 
 ## Status
 
-The plan has 17 items: 13 are done and 4 are partially done (`[~]`). Partially done means the following.
+The plan has 17 items: 14 are done and 3 are partially done (`[~]`). Partially done means the following.
 
 | Item | Status | Meaning |
 | --- | --- | --- |
 | 7. NDJSON framing caps for both SDKs | `[~]` | The code and tests are on `dev` and verified. The evidence file this item pointed at disappeared with a worktree and was not reconstructed. The behavior is proven, the evidence trail is not |
 | 12. Auxiliary and result cache byte accounting | `[~]` | The code is on `dev`, and the lead re-ran the decisive lines and reproduced them. The lane's raw evidence file is gone, and the file now in its place is a reconstruction that labels itself `recovered` |
-| 15. Attach/detach soak | `[~]` | The soak itself is valid but ran 200 cycles rather than the 1,000 the plan required. The 1,000-cycle variant is in the repository behind `#[ignore]` |
+| 15. Attach/detach soak | `[x]` | The 1,000-cycle plan item now runs: `.github/workflows/soak.yml` runs it weekly and on demand, and the first run completed 1,000 cycles clean in 7 min 38 s (`fd_retention=0`, `thread_retention=0`, `non_returning=0`, run 43600180217). The 200-cycle form stays the pull-request gate |
 | 17. CI structural gate and report template | `[~]` | The gate really runs (35 bounds, `EXIT=0`, `EXIT=1` on violation, `EXIT=2` when a measurement is missing, 40 contract tests). Two conditions from the plan remain. There is no frame count counter, and "passes at B0" is structurally impossible (the code that prints the `STRUCTURAL_PERF` line landed after B0). The gate now asserts the frame cap itself in its `frame` section for both readers, and still reads no frame count |
 
 The other 13 items are done.
@@ -636,6 +659,61 @@ In run 42568289247 (Linux, right after a turn, the 1·5·10 session slope), of t
 
 - Returning memory only freed 60 KB, so the other roughly 200 KB is fragmentation inside the allocator's arena. Returning more often would have little effect.
 - On macOS the live data growth is 140 KB for horon against 191 KB for jcode, and the after-turn growth in this run's Windows measurement is 310 KB for horon against 396 KB for jcode. The Linux difference comes from allocator (glibc) fragmentation, and changing the allocator carries a high regression risk on other paths, so it was not done here.
+
+## Measurements from the `perf-bench-harness-prompt` plan
+
+This plan measured the request bytes and prompt surface a turn pays for, cut them, and bounded them in the structural gate (#324). It also changes one behaviour: an edit to `.horon/prompt-overlay.md`, `preferred-tools.md` or `system-prompt.md` during a session now takes effect at the next session boundary (new session, `/clear`, working-directory change, restore), the rule AGENTS.md already followed.
+
+### Measurement conditions
+
+- Three-OS A/B: [run 43667470921](https://github.com/horon-ai/agent/actions/runs/43667470921), candidate `f5993e9d`, baseline `horon-base` built from `dev` `5285d2a4` in the same job. `suites=compare`, `oneshot_runs=5`, median with min–max. A difference inside the min–max overlap is a tie.
+- Linux A/B with `compare,startup,tools`: [run 43670649131](https://github.com/horon-ai/agent/actions/runs/43670649131).
+- macOS re-measurement of `compare`: [run 43672354272](https://github.com/horon-ai/agent/actions/runs/43672354272), taken because the first macOS `--version` sample did not overlap.
+- Byte and counter values: structural gate [run 43666931419](https://github.com/horon-ai/agent/actions/runs/43666931419) and ci.yml [run 43662099986](https://github.com/horon-ai/agent/actions/runs/43662099986), identical on ubuntu and macOS. The before values come from wave 1 on the same branch (`308f6c5e`, equal to `dev` for these surfaces).
+
+### Prompt surface and session context
+
+| Surface | Before | After |
+| --- | --- | --- |
+| Eager core tool catalog (8 schemas) | 9,714 B | 9,151 B |
+| Core one-shot first request `tools` (mock server) | 9,818 B | 9,255 B |
+| Static prompt (core, no prompt files) | 1,367 B, 319 tokens | 1,322 B, 305 tokens |
+| `# Additional tools` index | 629 B, 5 rows cut mid-sentence | 585 B, 1 row (`todo`) |
+| Prompt source probes over 9 unchanged requests | 54 | 0 |
+| Session-context `git` processes, outside a repository / in a work tree | 1 / 3 | 0 / 1 |
+| GPU probe processes without a PCI display controller | 1 | 0 |
+
+The structural gate now bounds each of these at the after value (`prefix_tools_bytes_max` 9151, down from 9751).
+
+### Time and memory (median ms, min–max in parentheses)
+
+| OS | Scenario | `horon-base` (dev) | Candidate |
+| --- | --- | --- | --- |
+| Linux | one-shot | 40.24 (39.92–179.35) | 29.35 (28.39–44.31) |
+| Linux | core one-shot | 42.92 (41.29–49.03) | 31.31 (30.72–45.41) |
+| Linux | skill call | 37.43 (36.77–38.08) | 26.31 (25.22–26.45) |
+| Linux | MCP tool call | 55.62 (50.58–57.65) | 40.16 (39.54–44.96) |
+| macOS | one-shot | 54.93 (53.10–495.17) | 47.07 (44.89–265.97) |
+| macOS | core one-shot | 60.63 (55.86–88.40) | 49.28 (48.89–127.21) |
+| macOS | skill call | 108.27 (85.84–128.53) | 62.82 (51.71–87.13) |
+| macOS | MCP tool call | 82.51 (80.09–191.23) | 76.41 (73.10–206.67) |
+| Windows | one-shot | 170.15 (158.82–229.05) | 188.26 (142.17–370.69) |
+| Windows | core one-shot | 200.21 (171.71–436.16) | 179.55 (149.18–427.49) |
+| Windows | skill call | 176.06 (158.48–180.42) | 145.75 (139.41–231.53) |
+| Windows | MCP tool call | 302.51 (201.68–494.52) | 268.93 (172.28–412.46) |
+
+- One-shot peak RSS: Linux 46.6 → 39.4 MB, macOS 31.6 → 24.0 MB, Windows 33.9 → 33.6 MB. One-shot fsync calls stay at 10 on Linux for both sides.
+- The Linux run 43670649131 agrees: one-shot 48.69 → 34.59 ms, skill call 43.12 → 30.72 ms, MCP tool call 78.07 → 49.12 ms, peak RSS 40.0 → 38.3 MB, fsync 10 and 10.
+- No scenario got slower with non-overlapping ranges. Windows one-shot (170.15 → 188.26) and macOS MCP tool call in run 43672354272 (101.94 → 107.63) have a worse median inside overlapping ranges, which is a tie.
+- `--version`: the first macOS sample was 7.36 (6.99–7.50) → 7.89 (7.79–8.18) ms, which does not overlap. The re-measurement gave 9.27 (8.96–10.48) → 8.29 (7.99–8.43) ms, non-overlapping the other way, and Linux and Windows overlap in both runs. The `--version` path has no code change on this branch, so the first sample is runner noise.
+- Startup and tools suites have no same-job baseline and are reported only: `serve` socket ready 20.39 ms (20.57 ms in the dev baseline run 43612646876), bridge no-op reply 21.59 ms (21.89 ms).
+
+### What these numbers do not say
+
+- The time cut is not attributed. Fewer `git` processes per session context and less per-request prompt work both run on the measured paths, but no run splits the difference between them.
+- The plan targeted a catalog of at most 9,000 B and a core one-shot `tools` cut of at least 700 B. The `intent` description keeps "shown in the UI" because a contract test requires it, and `bash` keeps its note that `rg` skips hidden and ignored files, which another test pins, so the catalog is 9,151 B and the cut is 563 B.
+- `[features] foreign_rules` (off by default) still reads its rule files on every request and is not counted by the prompt source reads.
+- Both Windows benchmark builds print the same two `linker stdout` lines for the baseline and the candidate. They come from the benchmark's Windows release link, not from this change; the ci.yml runs of this branch have no warning.
 
 ## Automatic measurement: latest measured commit on `main`
 

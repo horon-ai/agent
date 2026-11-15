@@ -59,6 +59,12 @@ pub(super) struct RemoteState {
     closed: Arc<AtomicBool>,
     stop: Notify,
     request_timeout: Duration,
+    /// The root list this connection serves for `roots/list`, or `None` when the
+    /// `roots` capability was not declared. Fixed for the connection's life.
+    roots: Option<Vec<super::protocol::McpRoot>>,
+    /// Server-request methods whose reply POST already failed, so a broken
+    /// reply path costs one warning per method rather than one per frame.
+    reply_failures: std::sync::Mutex<std::collections::HashSet<String>>,
     /// Server-initiated notifications, by method, forwarded to the connection
     /// watcher. Also carries the transport-closed sentinel.
     notifications: mpsc::UnboundedSender<String>,
@@ -127,12 +133,13 @@ impl RemoteState {
         }
     }
 
-    /// Route one inbound JSON-RPC message (or batch) to its waiter.
-    async fn dispatch(&self, value: Value) {
+    /// Route one inbound JSON-RPC message (or batch) to its waiter, answering
+    /// any server-initiated request through [`Self::post_server_reply`].
+    async fn dispatch(state: &Arc<Self>, value: Value) {
         match &value {
             Value::Array(items) => {
                 for item in items {
-                    Box::pin(self.dispatch(item.clone())).await;
+                    Box::pin(Self::dispatch(state, item.clone())).await;
                 }
             }
             Value::Object(map) => {
@@ -144,13 +151,20 @@ impl RemoteState {
                         // tool-list change; the connection watcher decides what
                         // to do with it.
                         (Some(method), None) => {
-                            let _ = self.notifications.send(method.to_string());
+                            let _ = state.notifications.send(method.to_string());
                         }
-                        // A server-initiated request would need a reply, and no
-                        // client capabilities were advertised.
+                        // A server-initiated request keeps waiting until an
+                        // answer arrives. Reply through the same table the stdio
+                        // reader uses, so the transports cannot diverge.
+                        (Some(method), Some(id)) if !id.is_null() => {
+                            let reply = super::protocol::server_request_reply(method, id, state.roots.as_deref());
+                            let state = Arc::clone(state);
+                            let method = method.to_string();
+                            tokio::spawn(async move { state.post_server_reply(&method, reply).await });
+                        }
                         _ => crate::logging::debug(&format!(
                             "MCP [{}]: ignoring server message {}",
-                            self.name,
+                            state.name,
                             method.unwrap_or("?")
                         )),
                     }
@@ -166,13 +180,13 @@ impl RemoteState {
                 match serde_json::from_value::<JsonRpcResponse>(value) {
                     Ok(response) => {
                         if let Some(id) = response.id
-                            && let Some(tx) = self.pending.lock().await.remove(&id)
+                            && let Some(tx) = state.pending.lock().await.remove(&id)
                             && tx.send(response).is_err()
                         {
                             crate::logging::debug("MCP response receiver already closed");
                         }
                     }
-                    Err(err) => crate::logging::debug(&format!("MCP [{}]: unparseable response: {err}", self.name)),
+                    Err(err) => crate::logging::debug(&format!("MCP [{}]: unparseable response: {err}", state.name)),
                 }
             }
             _ => {}
@@ -238,6 +252,65 @@ impl RemoteState {
 
     fn bearer_token(&self) -> Option<String> {
         self.bearer.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Whether every POST goes to the endpoint the server announced, which is
+    /// how the HTTP+SSE transport works.
+    fn uses_announced_endpoint(&self) -> bool {
+        self.post_endpoint.read().unwrap_or_else(|p| p.into_inner()).is_some()
+    }
+
+    /// POST one JSON-RPC response to a server-initiated request.
+    ///
+    /// A response body has an `id` and no `method`, so it must not travel
+    /// through [`post_message`]: that path exists to deliver requests and would
+    /// find nothing in `pending` to cancel or fail. Nothing here touches
+    /// `pending` or `closed` either, so a refused or failed reply can never
+    /// disturb an in-flight call. Failures are logged once per method.
+    async fn post_server_reply(self: &Arc<Self>, method: &str, reply: Value) {
+        let target = if self.uses_announced_endpoint() {
+            self.post_endpoint.read().unwrap_or_else(|p| p.into_inner()).clone()
+        } else {
+            Some(self.url.clone())
+        };
+        let Some(url) = target else {
+            self.warn_reply_failure(method, "the HTTP+SSE connection has no POST endpoint");
+            return;
+        };
+        let body = reply.to_string();
+        let failed = self.bearer_token();
+        let mut result = send_post(self, url.clone(), &body).await;
+        if result
+            .as_ref()
+            .is_ok_and(|response| response.status() == StatusCode::UNAUTHORIZED)
+            && self.recover_from_unauthorized(failed).await
+        {
+            result = send_post(self, url, &body).await;
+        }
+        match result {
+            // Neutralizing a 401 retry leaves the second status checked here.
+            Ok(response) if response.status().is_success() => {}
+            Ok(response) => {
+                self.warn_reply_failure(method, &format!("server answered HTTP {}", response.status()));
+            }
+            Err(error) => self.warn_reply_failure(method, &error.without_url().to_string()),
+        }
+    }
+
+    /// One line per method: a server that ignores the reply POST must not be
+    /// able to fill the log with one entry per request.
+    fn warn_reply_failure(&self, method: &str, reason: &str) {
+        let first = self
+            .reply_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(method.to_string());
+        if first {
+            crate::logging::warn(&format!(
+                "MCP [{}]: could not answer server request '{method}': {reason}",
+                self.name
+            ));
+        }
     }
 }
 
@@ -377,17 +450,32 @@ fn build_static_headers(config: &McpServerConfig) -> Result<(HeaderMap, bool)> {
     Ok((headers, has_auth))
 }
 
+/// The handle-side plumbing a remote connection is wired into: the outbound
+/// queue, the request registry, the closed flag, the notification sink, and the
+/// root list this connection will serve for `roots/list`.
+pub(super) struct RemoteChannels {
+    pub writer_rx: mpsc::Receiver<String>,
+    pub pending: Pending,
+    pub closed: Arc<AtomicBool>,
+    pub notifications: mpsc::UnboundedSender<String>,
+    pub roots: Option<Vec<super::protocol::McpRoot>>,
+}
+
 /// Start a remote transport. The caller still has to run the MCP
 /// `initialize` handshake over the returned handle channels.
 pub(super) async fn start(
     name: &str,
     config: &McpServerConfig,
     transport: RemoteTransport,
-    writer_rx: mpsc::Receiver<String>,
-    pending: Pending,
-    closed: Arc<AtomicBool>,
-    notifications: mpsc::UnboundedSender<String>,
+    channels: RemoteChannels,
 ) -> Result<RemoteConnection> {
+    let RemoteChannels {
+        writer_rx,
+        pending,
+        closed,
+        notifications,
+        roots,
+    } = channels;
     let raw_url = config
         .url
         .as_deref()
@@ -424,6 +512,8 @@ pub(super) async fn start(
         closed,
         stop: Notify::new(),
         request_timeout: super::client::request_timeout_for(config),
+        roots,
+        reply_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
         notifications,
         fallback_to_sse: AtomicBool::new(false),
         // Even custom headers (not just Authorization) can contain credentials.
@@ -667,7 +757,7 @@ async fn streamable_post_inner(
                 {
                     let value = serde_json::from_str::<Value>(&event.data)
                         .map_err(|err| format!("MCP SSE returned invalid JSON: {err}"))?;
-                    state.dispatch(value).await;
+                    RemoteState::dispatch(state, value).await;
                 }
             }
             if let Some(id) = info.id
@@ -702,7 +792,7 @@ async fn streamable_post_inner(
             snippet(&text)
         )
     })?;
-    state.dispatch(value).await;
+    RemoteState::dispatch(state, value).await;
     if let Some(id) = info.id
         && state.pending.lock().await.contains_key(&id)
     {
@@ -810,7 +900,7 @@ async fn sse_reader(
                 {
                     let value =
                         serde_json::from_str::<Value>(&event.data).context("MCP SSE message contains invalid JSON")?;
-                    state.dispatch(value).await;
+                    RemoteState::dispatch(&state, value).await;
                 }
             }
         }
@@ -975,3 +1065,7 @@ impl SseParser {
 #[cfg(test)]
 #[path = "remote_tests.rs"]
 mod remote_tests;
+
+#[cfg(test)]
+#[path = "remote_server_requests_tests.rs"]
+mod remote_server_requests_tests;

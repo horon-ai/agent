@@ -53,6 +53,10 @@ mod message_modes_snapshot_tests;
 mod schema_snapshot_tests;
 
 #[cfg(test)]
+#[path = "harness_api_tests/cancellable_work_snapshot.rs"]
+mod cancellable_work_snapshot_tests;
+
+#[cfg(test)]
 #[path = "harness_api_tests/capability_coverage.rs"]
 mod capability_coverage_tests;
 
@@ -67,7 +71,7 @@ mod tool_done_verdict_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 20;
+pub const API_VERSION_MINOR: u32 = 22;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -87,6 +91,13 @@ pub const CAPABILITY_SNAPSHOT_MARKER_V1: &str = "snapshot_marker_v1";
 /// `ask_response` without an id is the legacy request and needs no
 /// negotiation.
 pub const CAPABILITY_ASK_RECEIPTS_V1: &str = "ask_receipts_v1";
+/// A client can stop one tool call or one background terminal, cancel the run
+/// it saw start, and list the background work that survived a reconnect. Gates
+/// `cancel_turn`, `cancel_tool_call`, `cancel_background_terminal` and
+/// `list_background_work`. The feature needs a daemon that predates this
+/// protocol version to do the work, not merely the bridge, which is why the
+/// capability is advertised only when that daemon answered its probe.
+pub const CAPABILITY_CANCELLABLE_WORK_V1: &str = "cancellable_work_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -106,6 +117,15 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_MONITOR_V1, &[]),
     (CAPABILITY_SNAPSHOT_MARKER_V1, &["get_snapshot", "snapshot_marker"]),
     (CAPABILITY_ASK_RECEIPTS_V1, &["ask_response.answer_id"]),
+    (
+        CAPABILITY_CANCELLABLE_WORK_V1,
+        &[
+            "cancel_turn",
+            "cancel_tool_call",
+            "cancel_background_terminal",
+            "list_background_work",
+        ],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -114,6 +134,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_MONITOR_V1,
     CAPABILITY_SNAPSHOT_MARKER_V1,
     CAPABILITY_ASK_RECEIPTS_V1,
+    CAPABILITY_CANCELLABLE_WORK_V1,
 ];
 
 /// The structured refusal for a request this server cannot serve.

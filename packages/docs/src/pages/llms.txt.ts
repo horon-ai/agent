@@ -10,8 +10,9 @@ export const GET: APIRoute = async ({ site }) => {
   const lines = [
     "# horon agent",
     "",
-    "> Coding agent in one Rust binary for any OpenAI-compatible endpoint, with a",
-    "> terminal client, SDKs, ACP and RPC.",
+    "> Coding agent in one Rust binary that calls a Chat Completions, Responses,",
+    "> Anthropic Messages or Gemini generateContent endpoint, whichever wire the",
+    "> profile's type picks, with a terminal client, SDKs, ACP and RPC.",
     "",
     "horon agent runs a turn, calls tools and exits, or stays up as a daemon that",
     "the terminal client, SDKs, editors and host programs attach to over a Unix",

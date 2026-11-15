@@ -5,7 +5,7 @@ reply, reports tool calls, and cleans up the private instance on exit.
 
 ## Run it
 
-Install [horon-agent](https://horon-agent.sh), sign in to at least one model provider, then:
+Install [horon-agent](https://agent.horon.ai/install/), sign in to at least one model provider, then:
 
 ```bash
 npm install

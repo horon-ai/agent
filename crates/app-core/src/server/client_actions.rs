@@ -4,7 +4,7 @@ use super::client_disconnect_cleanup::blocking_session_io;
 use super::{
     ClientConnectionInfo, SessionInterruptQueues, SwarmEvent, SwarmMember, SwarmState, VersionedPlan,
     broadcast_swarm_status, fanout_session_event, persist_swarm_state_for, queue_soft_interrupt_for_session,
-    remove_session_channel_subscriptions, remove_session_from_swarm, swarm_id_for_session,
+    remove_session_from_swarm, swarm_id_for_session,
 };
 use crate::agent::Agent;
 use crate::protocol::{FeatureToggle, NotificationType, ServerEvent};
@@ -16,7 +16,6 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 type SessionAgents = Arc<RwLock<HashMap<String, Arc<Mutex<Agent>>>>>;
-type ChannelSubscriptions = Arc<RwLock<HashMap<String, HashMap<String, HashSet<String>>>>>;
 
 pub(super) struct NotifySessionContext<'a> {
     pub sessions: &'a SessionAgents,
@@ -70,7 +69,6 @@ pub(super) async fn handle_notify_session(id: u64, session_id: String, message: 
                     from_name: Some("scheduled task".to_string()),
                     notification_type: NotificationType::Message {
                         scope: Some("scheduled".to_string()),
-                        channel: None,
                         tldr: None,
                     },
                     message: message.clone(),
@@ -123,8 +121,6 @@ pub(super) async fn handle_set_feature(
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     swarms_by_id: &Arc<RwLock<HashMap<String, HashSet<String>>>>,
     swarm_coordinators: &Arc<RwLock<HashMap<String, String>>>,
-    channel_subscriptions: &ChannelSubscriptions,
-    channel_subscriptions_by_session: &ChannelSubscriptions,
     swarm_plans: &Arc<RwLock<HashMap<String, VersionedPlan>>>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
@@ -211,12 +207,6 @@ pub(super) async fn handle_set_feature(
                     swarms_by_id,
                     swarm_coordinators,
                     swarm_plans,
-                )
-                .await;
-                remove_session_channel_subscriptions(
-                    client_session_id,
-                    channel_subscriptions,
-                    channel_subscriptions_by_session,
                 )
                 .await;
             }

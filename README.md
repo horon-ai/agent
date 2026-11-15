@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: a coding agent for OpenAI-compatible endpoints" width="720">
+  <img src="docs/assets/hero.svg" alt="horon-agent: a coding agent for Chat Completions, Responses, Anthropic and Gemini endpoints" width="720">
 </p>
 
 <p align="center">
-  <strong>One agent, two equal modes. A program drives it, or you drive it from the terminal, on any OpenAI-compatible endpoint.</strong>
+  <strong>One agent, two equal modes. A program drives it, or you drive it from the terminal, over Chat Completions, Responses, Anthropic Messages or Gemini generateContent.</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent is a headless coding agent for any OpenAI-compatible `/chat/completions` endpoint. It POSTs straight to your endpoint, with no router process and no plugin host in between, and one daemon answers every client: a one-shot command, an SDK, an editor over ACP, a host program over stdio RPC, or the `horon-tui` terminal client. Sessions, tools, MCP servers and configuration are shared across all of them. Only the driver changes.
+horon agent is a headless coding agent that speaks one of four model wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. It POSTs straight to your endpoint, with no router process and no plugin host in between, and one daemon answers every client: a one-shot command, an SDK, an editor over ACP, a host program over stdio RPC, or the `horon-tui` terminal client. Sessions, tools, MCP servers and configuration are shared across all of them. Only the driver changes.
 
 The agent binary is `horon-agent`, and it never draws a terminal of its own. The terminal client is `horon-tui`, a separate package built on the agent SDK and released from the same tag as its own archive.
 
@@ -61,7 +61,7 @@ Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows (
 
 ## Quick start
 
-Point the agent at an endpoint. Any OpenAI-compatible server works; this one is local and needs no key.
+Point the agent at an endpoint. The profile's `type` picks the wire; this one is a local Chat Completions server and needs no key.
 
 ```toml
 # ~/.horon/config.toml
@@ -162,7 +162,7 @@ Both talk the harness API (protocol v1) over the `api-bridge` socket and can sta
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs and editors over ACP reach the agent daemon through the harness API and the ACP adapter, and the terminal client horon-tui attaches the same way while a bare run hosts the agent in-process; the daemon stores sessions in an event log and calls an OpenAI-compatible endpoint directly" width="860">
+  <img src="docs/assets/architecture.svg" alt="Architecture: SDKs and editors over ACP reach the agent daemon through the harness API and the ACP adapter, and the terminal client horon-tui attaches the same way while a bare run hosts the agent in-process; the daemon stores sessions in an event log and calls the profile's endpoint directly" width="860">
 </p>
 
 Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs/architecture/CRATES.md); the daemon, sessions and sockets are in [docs/architecture/SERVER.md](docs/architecture/SERVER.md). The headless graph rule is checked in CI by `scripts/ci/check_headless_graph.py`, which fails if `ratatui`, `crossterm`, `horon-tui` or any `horon-agent-tui*` crate becomes reachable from `horon-agent`.

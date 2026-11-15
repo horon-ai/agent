@@ -19,7 +19,7 @@ One agent with two equal modes. In headless mode a program drives a session: a o
 | 5 | Two modes, one engine | Headless mode and TUI mode drive the same daemon and sessions. The agent binary has no terminal stack in its dependency graph; TUI mode is a separate package on the SDK, released from the same tag | `AGENTS.md` (Modes, binaries and release units; Fixed requirement 1), `scripts/ci/check_headless_graph.py`, `docs/release/INSTALL.md` |
 | 6 | SDK-first | The harness API is the contract between the engine and any client, including the TUI and server code | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
 | 7 | Tools cost tokens | The `core` profile sends 7 of its 18 tools every request and reaches the rest through `toolbox`; schema bytes are a budget, not free | `AGENTS.md` (What this build is), `docs/runtime/TOOLS.md` |
-| 8 | One model path | OpenAI-compatible `/chat/completions` only; no second provider runtime, router process, or plugin host. External tools arrive over MCP | `AGENTS.md` (What this build is) |
+| 8 | One model path | Four wires behind one path, chosen by `[providers.<name>] type`: Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent. No second provider runtime, router process, or plugin host. External tools arrive over MCP | `AGENTS.md` (What this build is) |
 | 9 | Clean cutover | Surface that stopped earning its place is deleted with every caller migrated, not kept behind an alias. The home directory moved to `~/.horon` with no compatibility path | commits `738712a2` (#7), `d6a0f81b` (#9), `a3a70db7` (#88) |
 | 10 | Zero CI warnings | A run with warnings is not finished; the cause is fixed, not silenced | `AGENTS.md` (CI warnings), `scripts/ci/run_warnings.py` |
 

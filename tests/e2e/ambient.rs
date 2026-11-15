@@ -331,7 +331,6 @@ fn test_ambient_system_prompt_builder() {
         low_confidence: 2,
         contradictions: 1,
         missing_embeddings: 0,
-        duplicate_candidates: 3,
         last_consolidation: None,
     };
     let recent_sessions = vec![];

@@ -391,3 +391,88 @@ async fn cancelling_a_sequential_call_continues_the_same_turn() {
         "a finished call leaves no cancel registration behind"
     );
 }
+
+/// Issue #274. A v2 client is told a call is cancellable at its `ToolExec`
+/// and may cancel it immediately; the daemon used to register the call only
+/// when it reached the execution loop, so a cancel in that window was answered
+/// `accepted: false` and the adapter refused `-32602` for a call it had just
+/// advertised.
+///
+/// The stream is held open past the announcement so the execution loop cannot
+/// have run yet: the cancel below lands in exactly that window, and the
+/// assertion is about the ordering rather than about who won a race.
+#[tokio::test]
+async fn a_cancel_that_follows_the_announcement_is_accepted() {
+    let _sandbox = crate::auth::test_sandbox::AuthTestSandbox::new().unwrap();
+    let (gate, mut started) = Gate::new();
+    let registry = Registry::empty();
+    registry
+        .register(
+            "read".to_string(),
+            Arc::new(GatedTool {
+                name: "read",
+                gate: Arc::clone(&gate),
+            }) as Arc<dyn Tool>,
+        )
+        .await;
+
+    let (provider, tx) = provider_pair();
+    let mut agent = Agent::new(provider, registry);
+    let session_id = agent.session.id.clone();
+    agent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "read one file".into(),
+            cache_control: None,
+        }],
+    );
+    for event in tool_use_events("call-announced", "read", "{\"key\":\"announced\"}") {
+        tx.send(Ok(event)).await.unwrap();
+    }
+
+    let (out, mut rx) = mpsc::unbounded_channel();
+    let task = tokio::spawn(async move { agent.run_turn_streaming_mpsc(out).await.map(|_| agent) });
+
+    // The announcement is the client's invitation to cancel, and the provider
+    // stream is still open, so the call cannot have entered the execution loop.
+    let announced = tokio::time::timeout(Duration::from_secs(30), async {
+        while let Some(event) = rx.recv().await {
+            if let ServerEvent::ToolExec { id, .. } = event {
+                return id;
+            }
+        }
+        panic!("the turn never announced its tool call");
+    })
+    .await
+    .expect("the call is announced before the deadline");
+    assert_eq!(announced, "call-announced");
+
+    assert!(
+        crate::tool_cancel_registry::cancel(&session_id, &announced),
+        "the call was announced as cancellable, so the cancel must be accepted"
+    );
+
+    // Finish the round; the cancelled call must not run its tool at all.
+    tx.send(Ok(round_end())).await.unwrap();
+    drop(tx);
+
+    let agent = tokio::time::timeout(Duration::from_secs(30), task)
+        .await
+        .expect("the turn completes after the cancel")
+        .unwrap()
+        .unwrap();
+
+    let results = tool_results(&agent);
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert_eq!(results[0].0, "call-announced");
+    assert_eq!(results[0].1, super::CANCELLED_TOOL_RESULT);
+    assert!(
+        started.try_recv().is_err(),
+        "a call cancelled before it ran must never reach its tool"
+    );
+    assert_eq!(
+        crate::tool_cancel_registry::running_call_ids(&session_id),
+        Vec::<String>::new(),
+        "a finished call leaves no cancel registration behind"
+    );
+}

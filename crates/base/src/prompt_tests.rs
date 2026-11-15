@@ -433,6 +433,9 @@ fn agents_md_symlink_alias_is_deduplicated_by_canonical_file_path() {
 
 #[test]
 fn test_session_context_includes_time_timezone_and_system_info() {
+    // Holds the counter lock: building the context starts counted `git` and
+    // GPU probes, which must not land in the session-context measurement.
+    let _env = crate::storage::lock_test_env();
     let context = build_session_context(None, &[]);
     assert!(context.contains("# Session Context"));
     assert!(context.contains("Time: "));
@@ -731,9 +734,38 @@ fn project_system_prompt_file_replaces_default_base_prompt() {
 
     // Empty override falls back to the built-in default.
     std::fs::write(horon_agent_dir.join("system-prompt.md"), "   \n").unwrap();
-    assert_eq!(load_base_system_prompt(Some(&dir)), DEFAULT_SYSTEM_PROMPT);
+    assert_eq!(load_base_system_prompt(Some(&dir)), DEFAULT_SYSTEM_PROMPT.trim_end());
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A replacement `system-prompt.md` reaches the prompt exactly as before the
+/// built-in default was trimmed: surrounding whitespace dropped, inner blank
+/// lines kept. The default now ends without a newline, so no part of a joined
+/// static prompt is followed by two blank lines.
+#[test]
+fn user_system_prompt_replacement_is_unchanged() {
+    use crate::prompt::load_base_system_prompt;
+
+    with_prompt_guidance_home(|_home| {
+        let dir = tempfile::tempdir().expect("project dir");
+        let horon_dir = dir.path().join(".horon");
+        std::fs::create_dir_all(&horon_dir).expect("create .horon");
+        std::fs::write(
+            horon_dir.join("system-prompt.md"),
+            "\n  First line.\n\nSecond line.\n\n",
+        )
+        .expect("write");
+        assert_eq!(load_base_system_prompt(Some(dir.path())), "First line.\n\nSecond line.");
+
+        let empty = tempfile::tempdir().expect("empty project dir");
+        let default = load_base_system_prompt(Some(empty.path()));
+        assert!(
+            !default.ends_with('\n'),
+            "the built-in prompt still ends with a newline"
+        );
+        assert_eq!(default, DEFAULT_SYSTEM_PROMPT.trim_end());
+    });
 }
 
 // Restore HORON_HOME even when a regression assertion panics.

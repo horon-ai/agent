@@ -4,21 +4,6 @@
   "targets": [
     {
       "package": "horon-agent",
-      "target": "e2e",
-      "min_passed": 76
-    },
-    {
-      "package": "horon-agent",
-      "target": "acp_stdio",
-      "min_passed": 16
-    },
-    {
-      "package": "horon-agent",
-      "target": "acp_stdio_v2",
-      "min_passed": 32
-    },
-    {
-      "package": "horon-agent",
       "target": "acp_infra",
       "min_passed": 30,
       "skipped": [
@@ -30,6 +15,16 @@
       "package": "horon-agent",
       "target": "acp_lifecycle",
       "min_passed": 11
+    },
+    {
+      "package": "horon-agent",
+      "target": "acp_stdio",
+      "min_passed": 16
+    },
+    {
+      "package": "horon-agent",
+      "target": "acp_stdio_v2",
+      "min_passed": 32
     },
     {
       "package": "horon-agent",
@@ -48,6 +43,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "e2e",
+      "min_passed": 76
+    },
+    {
+      "package": "horon-agent",
       "target": "harness_roundtrip",
       "min_passed": 2
     },
@@ -59,7 +59,7 @@
     {
       "package": "horon-agent",
       "target": "openai_compatible_cli",
-      "min_passed": 2
+      "min_passed": 5
     },
     {
       "package": "horon-agent",
@@ -73,13 +73,18 @@
     },
     {
       "package": "horon-agent",
+      "target": "session_event_lifecycle",
+      "min_passed": 6
+    },
+    {
+      "package": "horon-agent",
       "target": "session_replication",
       "min_passed": 5
     },
     {
       "package": "horon-agent-app-core",
-      "target": "pi_adoption_tier2",
-      "min_passed": 19
+      "target": "bash_policy",
+      "min_passed": 13
     },
     {
       "package": "horon-agent-app-core",
@@ -92,19 +97,19 @@
       "min_passed": 1
     },
     {
+      "package": "horon-agent-app-core",
+      "target": "pi_adoption_tier2",
+      "min_passed": 19
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "cache_identity_contract",
+      "min_passed": 4
+    },
+    {
       "package": "horon-agent-base",
       "target": "core_tool_profile",
       "min_passed": 3
-    },
-    {
-      "package": "horon-agent-base",
-      "target": "v0_1_session_fixture",
-      "min_passed": 1
-    },
-    {
-      "package": "horon-agent-base",
-      "target": "prompt_guidance_integration",
-      "min_passed": 1
     },
     {
       "package": "horon-agent-base",
@@ -122,9 +127,84 @@
       "min_passed": 3
     },
     {
+      "package": "horon-agent-base",
+      "target": "prompt_guidance_integration",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "v0_1_session_fixture",
+      "min_passed": 1
+    },
+    {
       "package": "horon-agent-harness-api-server",
       "target": "search_artifacts_qa",
       "min_passed": 2
+    },
+    {
+      "package": "horon-agent-harness-api-server",
+      "target": "v1_client_round_trip",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-import-core",
+      "target": "claude_adversarial",
+      "min_passed": 25
+    },
+    {
+      "package": "horon-agent-platform",
+      "target": "builder_tls",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-schema-dialect",
+      "target": "recovery_coverage",
+      "min_passed": 6
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "client_behavior",
+      "min_passed": 33
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "durable_runtime_api",
+      "min_passed": 7
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "edit_stats",
+      "min_passed": 3
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "lifecycle_events",
+      "min_passed": 8
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "message_modes_api",
+      "min_passed": 4
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "session_replication",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "structured_output",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "typed_errors",
+      "min_passed": 6
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "user_response_capability",
+      "min_passed": 1
     },
     {
       "package": "horon-agent-session-store",
@@ -155,6 +235,11 @@
       "package": "horon-agent-session-store",
       "target": "contract",
       "min_passed": 24
+    },
+    {
+      "package": "horon-agent-session-store",
+      "target": "dirty_batches",
+      "min_passed": 9
     },
     {
       "package": "horon-agent-session-store",
@@ -207,49 +292,9 @@
       "min_passed": 19
     },
     {
-      "package": "horon-agent-sdk",
-      "target": "client_behavior",
-      "min_passed": 33
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "durable_runtime_api",
-      "min_passed": 7
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "edit_stats",
-      "min_passed": 3
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "lifecycle_events",
-      "min_passed": 8
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "message_modes_api",
-      "min_passed": 4
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "session_replication",
-      "min_passed": 5
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "structured_output",
-      "min_passed": 5
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "typed_errors",
-      "min_passed": 6
-    },
-    {
-      "package": "horon-agent-sdk",
-      "target": "user_response_capability",
-      "min_passed": 1
+      "package": "horon-agent-session-types",
+      "target": "degradation_record",
+      "min_passed": 2
     },
     {
       "package": "horon-agent-token-estimate",
@@ -257,23 +302,8 @@
       "min_passed": 8
     },
     {
-      "package": "horon-agent-platform",
-      "target": "builder_tls",
-      "min_passed": 1
-    },
-    {
-      "package": "horon-agent-import-core",
-      "target": "claude_adversarial",
-      "min_passed": 25
-    },
-    {
-      "package": "horon-agent-schema-dialect",
-      "target": "recovery_coverage",
-      "min_passed": 6
-    },
-    {
-      "package": "horon-agent-session-types",
-      "target": "degradation_record",
+      "package": "horon-agent-base",
+      "target": "scratch_live_working_dir",
       "min_passed": 2
     }
   ]

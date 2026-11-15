@@ -24,7 +24,7 @@ HoronAgent는 Windows를 정식 지원 플랫폼으로 다룬다. Windows 구현
 PowerShell을 열고 실행한다.
 
 ```powershell
-irm https://horon-agent.sh/install.ps1 | iex
+irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
 ```
 
 설치 스크립트는 다음 순서로 움직인다.
@@ -40,7 +40,7 @@ irm https://horon-agent.sh/install.ps1 | iex
 Alacritty 설치는 선택 사항이고 더 이상 자동으로 설치하지 않는다. 명시적으로 요청하려면 다음을 실행한다.
 
 ```powershell
-$script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
+$script = [scriptblock]::Create((irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1))
 & $script -ConfigureAlacritty
 ```
 
@@ -49,7 +49,7 @@ HoronAgent는 실행 후에 이 옵션을 대화형으로 제안할 수도 있�
 릴리스에 맞는 Windows 사전 빌드 자산이 없으면 설치 스크립트는 오래 걸리는 빌드를 조용히 시작하지 않고, 사용자가 조치할 수 있는 메시지를 내고 실패한다. 소스 빌드를 명시적으로 허용하려면 다음을 실행한다.
 
 ```powershell
-$script = [scriptblock]::Create((irm https://horon-agent.sh/install.ps1))
+$script = [scriptblock]::Create((irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1))
 & $script -BuildFromSource
 ```
 

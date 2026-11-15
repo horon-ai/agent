@@ -6,6 +6,7 @@
 
 mod allocator;
 pub mod ipc;
+mod resources;
 pub mod signal;
 pub mod term;
 mod tls;
@@ -24,8 +25,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use horon_agent_platform_api::{
-    FileIds, FileStamp, PlatformAdapter, ProcessMemoryFacts, ReadyChild, SleepAssertion, StdinState, StopRequest,
-    SyncMode,
+    FileIds, FileStamp, PlatformAdapter, PlatformResources, ProcessMemoryFacts, ReadyChild, SleepAssertion, StdinState,
+    StopRequest, SyncMode,
 };
 use rustls::ClientConfig;
 
@@ -223,6 +224,10 @@ impl PlatformAdapter for Adapter {
         // Linux reads XDG_RUNTIME_DIR in the caller, which owns the fallback
         // order; there is no platform-provided directory beyond it.
         None
+    }
+
+    fn host_resources(disk_path: Option<&Path>) -> PlatformResources {
+        resources::host_resources(disk_path)
     }
 
     fn user_config_home() -> Option<PathBuf> {

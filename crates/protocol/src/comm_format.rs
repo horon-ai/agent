@@ -1,9 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{
-    AgentInfo, AgentStatusSnapshot, AwaitedMemberStatus, ContextEntry, HistoryMessage, PlanGraphStatus,
-    SwarmChannelInfo, ToolCallSummary,
-};
+use super::{AgentInfo, AgentStatusSnapshot, AwaitedMemberStatus, HistoryMessage, PlanGraphStatus, ToolCallSummary};
 
 pub fn format_comm_plan_followup(summary: &PlanGraphStatus) -> String {
     let mut parts = Vec::new();
@@ -72,19 +69,6 @@ pub fn comm_cleanup_candidate_session_ids(
         .collect::<Vec<_>>();
     ids.sort();
     ids
-}
-
-pub fn format_comm_context_entries(entries: &[ContextEntry]) -> String {
-    if entries.is_empty() {
-        "No shared context found.".to_string()
-    } else {
-        let mut output = String::from("Shared context from other agents:\n\n");
-        for entry in entries {
-            let from = entry.from_name.as_deref().unwrap_or(&entry.from_session);
-            output.push_str(&format!("  {} (from {}): {}\n", entry.key, from, entry.value));
-        }
-        output
-    }
 }
 
 pub fn duplicate_comm_friendly_names<'a>(names: impl IntoIterator<Item = Option<&'a str>>) -> HashSet<&'a str> {
@@ -596,23 +580,6 @@ pub fn format_comm_awaited_members_with_reports(
     }
 
     output
-}
-
-pub fn format_comm_channels(channels: &[SwarmChannelInfo]) -> String {
-    if channels.is_empty() {
-        "No swarm channels found.".to_string()
-    } else {
-        let mut output = String::from("Swarm channels:\n\n");
-        for channel in channels {
-            output.push_str(&format!(
-                "  #{} — {} subscriber{}\n",
-                channel.channel,
-                channel.member_count,
-                if channel.member_count == 1 { "" } else { "s" }
-            ));
-        }
-        output
-    }
 }
 
 #[cfg(test)]

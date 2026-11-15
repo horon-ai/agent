@@ -389,6 +389,10 @@ codex_user = false
 claude_user = false
 # [mcp_servers.*] in ~/.codex/config.toml, read live and never copied.
 codex_user = false
+# Answer a connected server's `roots/list` with the session working directory as
+# one file:// root, and declare the `roots` capability in `initialize`. Off by
+# default: it tells every server which directory this session works in.
+expose_roots = false
 
 [acp]
 # Agent Client Protocol adapter compatibility profile: standard, extended, or full.
@@ -410,20 +414,28 @@ tool_profile = "acp"
 # [providers.<name>] table below. `--provider-profile <name>` overrides this for
 # one launch.
 #   default_provider = "openrouter"
-# A profile is one OpenAI-compatible endpoint:
+# A profile is one endpoint plus one wire. `type` picks the wire:
+#   openai-compatible     POST <base_url>/chat/completions   (default)
+#   openai-responses      POST <base_url>/responses
+#   anthropic-compatible  POST <base_url>/messages           (sends anthropic-version)
+#   gemini-compatible     POST <base_url>/models/{model}:streamGenerateContent?alt=sse
 #   [providers.myprofile]
 #   type = "openai-compatible"
 #   base_url = "https://api.example.com/v1"   # the /v1 prefix is part of it
 #   api_key_env = "MYPROFILE_API_KEY"         # or api_key, or env_file
-#   auth = "bearer"                           # bearer, header, or none
+#   auth = "bearer"                           # omitted applies the type default:
+#                                             # Bearer for the OpenAI kinds, x-api-key
+#                                             # for Anthropic, x-goog-api-key for Gemini
 #   default_model = "my-model"
 #   prompt_cache_key = true                   # lineage-stable cache key: true, false, or omitted
-#                                             # (omitted sends it only to api.openai.com and openrouter.ai)
+#                                             # (omitted sends it only to api.openai.com and openrouter.ai;
+#                                             #  the OpenAI wires send it, Anthropic and Gemini do not)
 #   [[providers.myprofile.models]]
 #   id = "my-model"
-# Every model request posts to <base_url>/chat/completions with that profile's
-# credential. Nothing else serves models in this build: no second provider
-# runtime, no router process, no plugin host.
+# Every model request posts to the endpoint of that profile's `type` with the
+# profile's credential. `extra_body` keys are merged into every request body on
+# all four wires. There is still one provider runtime, no router process, no
+# plugin host, and external tools come in over MCP.
 # OpenAI reasoning effort (none|minimal|low|medium|high|xhigh|max)
 openai_reasoning_effort = "low"
 # Reasoning effort for models that accept it (none|low|medium|high|xhigh|max).
@@ -547,17 +559,21 @@ swarm_max_concurrent_agents = 32
 swarm_stall_after_secs = 600
 # swarm_stall_nudge = false
 #
-# Recall uses Jev typed Decisions directly, without embeddings or a sidecar LLM.
+# Recall is explicit: the agent calls the `memory` tool with the query it wrote,
+# and that call ranks candidates through Jev typed Decisions, without embeddings
+# or a sidecar LLM. No background pass recalls on its own between turns.
 # Provider values: auto, openrouter, typesafe, aimlapi.
 # auto prefers TypeSafe, then OpenRouter, then AI/ML API credentials.
 # Env override: HORON_AGENT_MEMORY_JEV_PROVIDER
 # memory_jev_provider = "auto"
-# Minimum relevance probability (0.8..=1.0). Invalid values fail closed.
+# Minimum relevance probability (0.8..=1.0) a `memory` recall must clear.
+# Invalid values fail closed.
 # memory_jev_threshold = 0.8
 # BYOK: OPENROUTER_API_KEY, TYPESAFE_API_KEY, or AIMLAPI_API_KEY.
 # No fallback after auth, billing, or network failure; no silent BYOK spend.
 # Memories remain local; the query and candidate memories go to the selected provider.
-# No keys? Local memory list/search/remember/forget still work.
+# No keys? Local memory list/search/remember/forget still work, and so does recall
+# without a provider ranking step.
 #
 # Optional text-generating extraction is separate from recall. Disable it to
 # learn only through the main agent's explicit memory writes.

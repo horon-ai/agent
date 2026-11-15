@@ -413,7 +413,6 @@ pub(super) async fn handle_comm_resync_plan(id: u64, req_session_id: String, ctx
                     from_name: member.friendly_name.clone(),
                     notification_type: NotificationType::Message {
                         scope: Some("plan".to_string()),
-                        channel: None,
                         tldr: None,
                     },
                     message: format!("Plan attached to this session (v{}, {} items).", version, item_count),

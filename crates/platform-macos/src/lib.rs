@@ -18,11 +18,13 @@ pub mod ipc;
 mod unix_term;
 
 mod memory;
+mod resources;
 #[path = "../../platform-linux/src/signal.rs"]
 pub mod signal;
 pub mod term;
 mod tls;
 pub mod watch;
+mod working_dirs;
 
 pub use unix::UnixInhibitor;
 
@@ -35,7 +37,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use horon_agent_platform_api::{
-    FileIds, FileStamp, PlatformAdapter, ProcessMemoryFacts, ReadyChild, StdinState, StopRequest, SyncMode,
+    FileIds, FileStamp, PlatformAdapter, PlatformResources, ProcessMemoryFacts, ReadyChild, StdinState, StopRequest,
+    SyncMode,
 };
 use rustls::ClientConfig;
 
@@ -244,6 +247,10 @@ impl PlatformAdapter for Adapter {
         }
     }
 
+    fn host_resources(disk_path: Option<&Path>) -> PlatformResources {
+        resources::host_resources(disk_path)
+    }
+
     fn user_config_home() -> Option<PathBuf> {
         // macOS keeps application support outside the dotfile namespace.
         std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support"))
@@ -298,8 +305,7 @@ impl PlatformAdapter for Adapter {
     }
 
     fn process_working_dirs() -> Vec<PathBuf> {
-        // macOS has no process table that lists working directories cheaply.
-        Vec::new()
+        working_dirs::process_working_dirs()
     }
 
     fn process_memory_facts() -> ProcessMemoryFacts {

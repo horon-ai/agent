@@ -23,4 +23,12 @@ pub struct McpSourcesConfig {
     /// Read Codex CLI's `[mcp_servers.*]` in `~/.codex/config.toml`. Off by
     /// default; the file is read live, never copied.
     pub codex_user: bool,
+    /// Answer a server's `roots/list` with the session working directory, and
+    /// declare the `roots` client capability in `initialize`. Off by default:
+    /// a root hands the server a filesystem path it may then ask to read.
+    pub expose_roots: bool,
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod tests;
