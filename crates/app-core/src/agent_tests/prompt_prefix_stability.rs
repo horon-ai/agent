@@ -199,15 +199,18 @@ fn isolated_home() -> (tempfile::TempDir, RestoreHome) {
     (home, restore)
 }
 
-/// Two requests of one session copy the captured AGENTS.md text and the
-/// skills section rendered at the boundary: neither is captured, rendered or
-/// replaced again, so both requests read the same buffers.
+/// A request is assembled from the sections captured at the session boundary
+/// and does not rebuild them: the AGENTS.md text edited on disk afterwards
+/// does not appear, and the skills section is the one rendered at capture,
+/// although the session's own skills list is empty and a fresh render would
+/// produce no section at all.
 #[tokio::test]
 async fn snapshot_sections_are_shared_not_copied() {
     let _guard = crate::storage::lock_test_env();
     let (_home, _restore) = isolated_home();
     let project = tempfile::tempdir().expect("project dir");
-    std::fs::write(project.path().join("AGENTS.md"), "agents-md-captured-once").expect("write AGENTS.md");
+    let agents_md_path = project.path().join("AGENTS.md");
+    std::fs::write(&agents_md_path, "agents-md-captured-once").expect("write AGENTS.md");
 
     let provider: Arc<dyn Provider> = Arc::new(NativeAutoCompactionProvider);
     let mut agent = Agent::new_with_initial_working_dir(
@@ -215,14 +218,16 @@ async fn snapshot_sections_are_shared_not_copied() {
         Registry::empty(),
         Some(project.path().to_str().expect("utf-8 project path")),
     );
+    assert!(
+        agent.prompt_skills_snapshot.is_empty(),
+        "the isolated session lists no skills"
+    );
     let skills = [crate::prompt::SkillInfo {
         name: "captured-skill".to_string(),
         description: "Rendered once at the session boundary.".to_string(),
     }];
     agent.prompt_skills_section = crate::prompt::build_available_skills_section(&skills);
-    let agents_md = agent.agents_md_snapshot.0.as_deref().map(str::as_ptr);
-    let section = agent.prompt_skills_section.as_deref().map(str::as_ptr);
-    assert!(agents_md.is_some() && section.is_some(), "both sections are captured");
+    std::fs::write(&agents_md_path, "agents-md-edited-later").expect("edit AGENTS.md");
 
     let first = agent.build_system_prompt_split(None).static_part;
     let second = agent.build_system_prompt_split(None).static_part;
@@ -232,9 +237,8 @@ async fn snapshot_sections_are_shared_not_copied() {
         "the prefix moved between requests"
     );
     assert!(first.contains("agents-md-captured-once"), "{first}");
+    assert!(!first.contains("agents-md-edited-later"), "{first}");
     assert!(first.contains("captured-skill"), "{first}");
-    assert_eq!(agent.agents_md_snapshot.0.as_deref().map(str::as_ptr), agents_md);
-    assert_eq!(agent.prompt_skills_section.as_deref().map(str::as_ptr), section);
 }
 
 /// A skills list too large for its budget reaches the prompt exactly as the
