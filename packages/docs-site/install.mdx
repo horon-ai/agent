@@ -1,23 +1,22 @@
 ---
 title: Install
 description: Install horon agent from the release installer, npm, a container image, or a source checkout.
-section: Start
-order: 2
 ---
 
 ## Installer
 
-**macOS · Linux**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
-```
-
-**Windows (PowerShell)**
-
-```powershell
-irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
-```
+<Tabs>
+  <Tab title="macOS · Linux">
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
+    ```
+  </Tab>
+  <Tab title="Windows (PowerShell)">
+    ```powershell
+    irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
+    ```
+  </Tab>
+</Tabs>
 
 The installer downloads the release archive and `SHA256SUMS`, then hands them to
 `horon install-release`, which verifies the checksum, stages an immutable version

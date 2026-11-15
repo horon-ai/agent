@@ -1,0 +1,79 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "horon agent",
+  "description": "One Rust binary coding agent that calls the endpoint the profile's type picks, Chat Completions, Responses, Anthropic Messages or Gemini generateContent, with a terminal client, SDKs, ACP and RPC.",
+  "colors": {
+    "primary": "#3b617b",
+    "light": "#7199b6",
+    "dark": "#5a86a6"
+  },
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#0b0c0e"
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["index", "getting-started", "install", "configuration"]
+          },
+          {
+            "group": "Using horon",
+            "pages": ["cli", "sessions", "tools", "editors"]
+          }
+        ]
+      },
+      {
+        "tab": "Developers",
+        "groups": [
+          {
+            "group": "SDKs",
+            "pages": ["sdk-typescript", "sdk-python"]
+          },
+          {
+            "group": "Internals",
+            "pages": ["architecture", "releasing", "repo-map"]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/horon-ai/agent"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Install",
+      "href": "/install"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/horon-ai/agent"
+    }
+  },
+  "seo": {
+    "indexing": "navigable",
+    "metatags": {
+      "canonical": "https://agent.horon.ai"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "cursor", "vscode", "mcp"]
+  }
+}

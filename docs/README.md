@@ -4,7 +4,7 @@ Language: **English** | [한국어](README.ko.md)
 
 This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
 
-The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) is a separate set of pages written in `packages/docs`; nothing generates it from this folder, so a behavior change that the site also describes is edited in both places.
+The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) is a separate set of pages written for Mintlify in `packages/docs-site`; nothing generates it from this folder, so a behavior change that the site also describes is edited in both places.
 
 ## Two modes, one agent
 

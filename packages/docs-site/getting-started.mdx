@@ -1,8 +1,6 @@
 ---
 title: Getting started
 description: horon agent is one coding agent with two modes, headless for programs and TUI for people, that talks to Chat Completions, Responses, Anthropic and Gemini endpoints.
-section: Start
-order: 1
 ---
 
 horon agent is a coding agent with two equal modes on one engine. In headless
@@ -26,7 +24,7 @@ TUI mode a person drives the same daemon and sessions from the terminal.
 
 ## First turn
 
-Install the CLI (see [Install](/install/)), then point the agent at an endpoint.
+Install the CLI (see [Install](/install)), then point the agent at an endpoint.
 A profile speaks Chat Completions, the Responses API, Anthropic Messages, or
 Gemini generateContent; this example uses a local Chat Completions server with no
 key.
@@ -80,8 +78,17 @@ Keys, themes, the status line and command files are documented in
 
 ## Where to go next
 
-- [Configuration](/configuration/) — provider profiles, model roles, storage.
-- [CLI](/cli/) — every subcommand and what it does.
-- [Tools](/tools/) — the core tool set and how deferred loading works.
-- [TypeScript SDK](/sdk-typescript/) and [Python SDK](/sdk-python/) — embed the
-  engine in an application.
+<CardGroup cols={2}>
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Provider profiles, model roles and storage.
+  </Card>
+  <Card title="CLI" icon="terminal" href="/cli">
+    Every subcommand and what it does.
+  </Card>
+  <Card title="Tools" icon="wrench" href="/tools">
+    The core tool set and how deferred loading works.
+  </Card>
+  <Card title="SDKs" icon="code" href="/sdk-typescript">
+    Embed the engine with the TypeScript or Python SDK.
+  </Card>
+</CardGroup>
