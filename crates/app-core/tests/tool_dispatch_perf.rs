@@ -231,6 +231,93 @@ async fn dispatch(
     }
 }
 
+/// Count what `calls` runs of `work` allocate on this thread.
+fn counted(calls: usize, mut work: impl FnMut()) -> Cost {
+    let allocations_before = ALLOCATIONS.load(Ordering::Relaxed);
+    let bytes_before = ALLOCATED_BYTES.load(Ordering::Relaxed);
+    for _ in 0..calls {
+        COUNTING.with(|counting| counting.set(true));
+        work();
+        COUNTING.with(|counting| counting.set(false));
+    }
+    Cost {
+        allocations: ALLOCATIONS.load(Ordering::Relaxed) - allocations_before,
+        bytes: ALLOCATED_BYTES.load(Ordering::Relaxed) - bytes_before,
+    }
+}
+
+/// The fields of a `done` lifecycle line for the small input, as text.
+const DONE_LINE_FIELDS: &[(&str, &str)] = &[
+    ("phase", "done"),
+    ("tool_name", TOOL_NAME),
+    ("resolved_tool_name", TOOL_NAME),
+    ("session_id", "session-tool-dispatch-perf"),
+    ("message_id", "message-tool-dispatch-perf"),
+    ("tool_call_id", "small-0"),
+    ("execution_mode", "Direct"),
+    ("cwd", "/tmp/horon-tool-dispatch-perf"),
+    ("input_json_bytes", "58"),
+    ("input_keys", "content,file_path"),
+    (
+        "touched_paths",
+        "file_path:/tmp/horon-tool-dispatch-perf/notes/summary.md",
+    ),
+    ("touched_path_count", "1"),
+    ("content_bytes", "15"),
+    ("content_chars", "15"),
+    ("elapsed_ms", "0"),
+    ("execute_ms", "0"),
+    ("hook_transform_ms", "0"),
+    ("hook_gate_ms", "0"),
+    ("post_feedback_ms", "0"),
+    ("overflow_guard_ms", "0"),
+    ("output_bytes", "2"),
+    ("output_chars", "2"),
+    ("image_count", "0"),
+];
+
+/// Print what the stages reachable from outside the crate cost on their own.
+///
+/// These lines are not bounds: the gate reads only the `STRUCTURAL_PERF`
+/// line. They say where the allocations of a dispatch come from, so a change
+/// to one stage can be read against that stage instead of the total.
+fn print_stage_breakdown() {
+    let line = counted(MEASURED_DISPATCHES, || {
+        horon_agent_app_core::logging::event_info("TOOL_DISPATCH_PROBE", DONE_LINE_FIELDS.iter().copied());
+    });
+    let small = small_input();
+    let crash_small = counted(MEASURED_DISPATCHES, || {
+        horon_agent_app_core::crash::record_tool_operation(TOOL_NAME, &small);
+    });
+    let large = large_input();
+    let crash_large = counted(MEASURED_DISPATCHES, || {
+        horon_agent_app_core::crash::record_tool_operation(TOOL_NAME, &large);
+    });
+    let clone_small = counted(MEASURED_DISPATCHES, || drop(std::hint::black_box(small.clone())));
+    let clone_large = counted(MEASURED_DISPATCHES, || drop(std::hint::black_box(large.clone())));
+    let text_large = counted(MEASURED_DISPATCHES, || drop(std::hint::black_box(large.to_string())));
+    let schema = FixtureTool.parameters_schema();
+    let schema_build = counted(MEASURED_DISPATCHES, || {
+        drop(std::hint::black_box(FixtureTool.parameters_schema()))
+    });
+    let schema_text = counted(MEASURED_DISPATCHES, || drop(std::hint::black_box(schema.to_string())));
+    for (stage, cost) in [
+        ("log_line", line),
+        ("crash_ring_small", crash_small),
+        ("crash_ring_large", crash_large),
+        ("input_clone_small", clone_small),
+        ("input_clone_large", clone_large),
+        ("input_text_large", text_large),
+        ("schema_build", schema_build),
+        ("schema_text", schema_text),
+    ] {
+        println!(
+            "STRUCTURAL_PERF_NOTE section=tool_dispatch stage={stage} calls={MEASURED_DISPATCHES} allocs={} alloc_bytes={}",
+            cost.allocations, cost.bytes
+        );
+    }
+}
+
 /// Reports what one dispatch allocates for a small and a 10 KB input.
 ///
 /// The bounds live in `scripts/perf/structural_budget.json`; this test only
@@ -280,6 +367,8 @@ async fn one_dispatch_allocates_a_bounded_amount() {
         large.allocations > 0,
         "the allocation counter recorded nothing for the large input"
     );
+
+    print_stage_breakdown();
 
     println!(
         "STRUCTURAL_PERF section=tool_dispatch source=app-core dispatches={MEASURED_DISPATCHES} small_allocs={} small_alloc_bytes={} large_allocs={} large_alloc_bytes={}",

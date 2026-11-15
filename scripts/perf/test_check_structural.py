@@ -694,6 +694,13 @@ class ToolDispatchSectionTest(unittest.TestCase):
             {"dispatches"},
         )
 
+    def test_note_lines_are_repeated_and_never_judged(self):
+        note = "STRUCTURAL_PERF_NOTE section=tool_dispatch stage=log_line calls=200 allocs=999999999 alloc_bytes=0"
+        run = run_gate([*HEALTHY_LINES, note])
+        self.assertEqual(run.code, 0, run.stderr)
+        self.assertIn(note, run.stdout.splitlines())
+        self.assertEqual(run.result, run_gate(HEALTHY_LINES).result, "a note changes no check")
+
 
 class MissingMeasurementTest(unittest.TestCase):
     def test_a_missing_section_fails_instead_of_passing_on_nothing(self):

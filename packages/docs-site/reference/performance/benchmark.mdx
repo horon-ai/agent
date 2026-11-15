@@ -277,7 +277,7 @@ The gate asks "is the shape still bounded", not "is it fast". It therefore reads
 
 The mock model server records `body_bytes`, `tools_bytes`, and `tool_count` for every request it answers (`GET /__stats`), and a `compare` run copies them into each run record as `request_bytes`, so a bench run reports the same per-request shape the `prefix` row bounds.
 
-An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`.
+An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`. A test may also print `STRUCTURAL_PERF_NOTE ...` lines that say where its counts come from; the gate repeats them in its output and judges none of them. The `tool_dispatch_perf` target prints one per stage it can call on its own (one log line, one crash-ring record, a copy and the text of the input, the tool schema).
 
 ```bash
 python3 scripts/perf/check_structural.py                 # everything

@@ -275,7 +275,7 @@ PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에�
 
 모의 모델 서버는 응답한 요청마다 `body_bytes`, `tools_bytes`, `tool_count`를 기록하므로(`GET /__stats`), 벤치 실행은 `prefix` 행이 경계로 두는 요청별 모양을 그대로 보고한다.
 
-각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다.
+각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다. 테스트는 값이 어디서 나오는지 알리는 `STRUCTURAL_PERF_NOTE ...` 줄도 인쇄할 수 있고, 게이트는 그 줄을 출력에 그대로 옮기되 판정하지 않는다. `tool_dispatch_perf` 타깃은 따로 호출할 수 있는 단계마다 한 줄씩 인쇄한다(로그 한 줄, 크래시 링 기록 한 건, 입력의 복사본과 텍스트, 도구 스키마).
 
 ```bash
 python3 scripts/perf/check_structural.py                 # 전체

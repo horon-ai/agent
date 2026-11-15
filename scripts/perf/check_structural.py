@@ -61,6 +61,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUDGET_FILE = REPO_ROOT / "scripts" / "perf" / "structural_budget.json"
 RESULT_PREFIX = "STRUCTURAL_PERF_RESULT "
+# A measurement may print lines with this prefix to say where its counts come
+# from. The gate repeats them in its own output and never judges them.
+NOTE_PREFIX = "STRUCTURAL_PERF_NOTE "
 LINE_PATTERN = re.compile(r"^STRUCTURAL_PERF\s+(.*)$")
 
 # One cargo invocation per measurement. `--test-threads=1` and `--exact` keep a
@@ -378,6 +381,10 @@ def parse_lines(text: str) -> list[dict[str, str]]:
             raise GateError(f"STRUCTURAL_PERF line has no section: {raw.strip()}")
         records.append(record)
     return records
+
+
+def note_lines(text: str) -> list[str]:
+    return [raw.strip() for raw in text.splitlines() if raw.strip().startswith(NOTE_PREFIX)]
 
 
 def as_int(record: dict[str, str], key: str, section: str) -> int:
@@ -1044,7 +1051,8 @@ def main(argv: list[str] | None = None) -> int:
         if not path.exists():
             print(f"Structural performance gate: no such log: {path}", file=sys.stderr)
             return 2
-        records = parse_lines(path.read_text(encoding="utf-8", errors="replace"))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        records = parse_lines(text)
     else:
         text = ""
         for measurement in MEASUREMENTS:
@@ -1058,6 +1066,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Structural performance gate: {error}", file=sys.stderr)
                 return 2
         records = parse_lines(text)
+    for note in note_lines(text):
+        print(note)
 
     try:
         report, missing, skipped = gate(records, bounds, sections)
