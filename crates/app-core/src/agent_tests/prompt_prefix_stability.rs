@@ -15,11 +15,12 @@ use super::*;
 use crate::config::CORE_TOOL_PROFILE;
 
 /// The `core`-profile static prompt of a session with no prompt files, as the
-/// `prompt` measurement reported it. Capturing the sources per session moved
-/// no byte of it (1,367 B); trimming the built-in prompt's trailing newline
-/// removed one.
-const CORE_STATIC_BYTES: usize = 1366;
-const CORE_STATIC_SHA256: &str = "3275b88c172e254adda71a824b51ef1ac25efe4a0f849fcb3fe95e509e3bafbf";
+/// `prompt` measurement reported it (ci.yml run 43656656999, both OSes).
+/// Capturing the sources per session moved no byte of it (1,367 B); trimming
+/// the built-in prompt's trailing newline and fitting the listed tools' first
+/// sentences to the index brought it to 1,322 B.
+const CORE_STATIC_BYTES: usize = 1322;
+const CORE_STATIC_SHA256: &str = "380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936";
 
 /// Tool calls answered before the prefix is compared for the last time.
 const TOOL_ROUND_TRIPS: usize = 3;
@@ -397,7 +398,10 @@ async fn listed_tool_full_descriptions_keep_details() {
             .map(|tool| tool.description.clone())
             .unwrap_or_else(|| panic!("{name} is registered"))
     };
-    let mcp = description("mcp");
+    // The session's `mcp` is the fixture's stand-in, so the real tool is asked.
+    let manager = crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default());
+    let mcp_tool = crate::tool::mcp::McpManagementTool::new(Arc::new(tokio::sync::RwLock::new(manager)));
+    let mcp = crate::tool::Tool::description(&mcp_tool);
     for detail in [
         "OAuth status/logout",
         "HTTP/SSE",
