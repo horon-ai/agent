@@ -105,6 +105,9 @@ The injection point marker is `S` (`STREAM_RULE_POINT`). It is distinct from the
 `[features] foreign_rules = true` reads `.cursor/rules/*.mdc`, `.cursorrules`, `.clinerules`,
 Copilot instructions, Windsurf rules, and `GEMINI.md`. The default `foreign_rules_mode = "inline"`
 puts every body into the system prompt.
+These files are read on every request, not captured with the session snapshot, and the structural
+gate's prompt source reads do not count them; the "no source read per request" bound holds only
+while `foreign_rules` is off, its default.
 
 `foreign_rules_mode = "rulebook"` inlines the body only for `alwaysApply` rules and shows the rest
 as a `# Rulebook` list with just paths, descriptions, and applicable globs. The bodies of the other

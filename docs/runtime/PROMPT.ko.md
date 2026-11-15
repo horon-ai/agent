@@ -124,6 +124,8 @@ body = "사과로 시작하지 말고 바로 결론부터 쓰세요."
 `[features] foreign_rules = true`는 `.cursor/rules/*.mdc`, `.cursorrules`, `.clinerules`,
 Copilot instructions, Windsurf rules, `GEMINI.md`를 읽는다. 기본 `foreign_rules_mode = "inline"`은
 모든 본문을 시스템 프롬프트에 넣는다.
+이 파일들은 세션 스냅샷에 담기지 않고 요청마다 읽히며, 구조 게이트의 프롬프트 원천 읽기 수에도
+잡히지 않는다. "요청당 원천 읽기 0" 상한은 기본값대로 `foreign_rules`가 꺼져 있을 때만 성립한다.
 
 `foreign_rules_mode = "rulebook"`은 `alwaysApply` 규칙만 본문을 인라인하고 나머지는 경로, 설명,
 적용 글롭만 `# Rulebook` 목록으로 보여 준다. 나머지 규칙의 본문은 `read`·`edit`·`write`·

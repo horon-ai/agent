@@ -745,10 +745,12 @@ pub fn build_system_prompt_split_with_agents_md(
 /// the base prompt, overlay and preferred-tools snapshot, and the skills
 /// section already rendered by [`build_available_skills_section`].
 ///
-/// This is the per-request path of a long-lived agent. It reads no prompt
-/// source file and copies each captured section once, straight into the
+/// This is the per-request path of a long-lived agent. It reads no captured
+/// prompt source and copies each captured section once, straight into the
 /// static part, so the static part stays byte-identical until the agent
-/// captures its sources again at a session boundary.
+/// captures its sources again at a session boundary. The one exception is
+/// `[features] foreign_rules` (off by default): its rule files are still read
+/// per request and are not counted as prompt source reads.
 pub fn build_system_prompt_split_with_snapshot(
     skill_prompt: Option<&str>,
     skills_section: Option<&str>,

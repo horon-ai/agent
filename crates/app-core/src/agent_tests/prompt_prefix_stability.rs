@@ -205,7 +205,7 @@ fn isolated_home() -> (tempfile::TempDir, RestoreHome) {
 /// although the session's own skills list is empty and a fresh render would
 /// produce no section at all.
 #[tokio::test]
-async fn snapshot_sections_are_shared_not_copied() {
+async fn requests_use_captured_sections() {
     let _guard = crate::storage::lock_test_env();
     let (_home, _restore) = isolated_home();
     let project = tempfile::tempdir().expect("project dir");
