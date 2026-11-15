@@ -9,84 +9,84 @@
 <text x="722.7" y="116.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="bold">Windows</text>
 <text x="32.0" y="158.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">--version time</text>
 <rect x="285.0" y="132.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">4.16 ms · #1 of 8</text>
-<text x="294.0" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 2.46×</text>
+<text x="294.0" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">4.03 ms · #1 of 8</text>
+<text x="294.0" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: Claude Code 2.64×</text>
 <rect x="500.3" y="132.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">7.51 ms · #1 of 8</text>
-<text x="509.3" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.29×</text>
+<text x="509.3" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">11.2 ms · #1 of 8</text>
+<text x="509.3" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.47×</text>
 <rect x="715.7" y="132.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">11.6 ms · #1 of 8</text>
-<text x="724.7" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.21×</text>
+<text x="724.7" y="150.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">13.7 ms · #1 of 8</text>
+<text x="724.7" y="167.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.17×</text>
 <text x="32.0" y="208.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">Install size</text>
 <rect x="285.0" y="182.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
 <text x="294.0" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">116 MB · #2 of 8</text>
 <text x="294.0" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: pi 0.94×</text>
 <rect x="500.3" y="182.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">97.2 MB · #1 of 8</text>
+<text x="509.3" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">97.3 MB · #1 of 8</text>
 <text x="509.3" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: pi 1.12×</text>
 <rect x="715.7" y="182.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">96.9 MB · #1 of 8</text>
+<text x="724.7" y="200.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">97.0 MB · #1 of 8</text>
 <text x="724.7" y="217.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: pi 1.12×</text>
 <text x="32.0" y="258.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">One-shot prompt time</text>
 <rect x="285.0" y="232.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">43.1 ms · #1 of 8</text>
-<text x="294.0" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 3.35×</text>
+<text x="294.0" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">53.5 ms · #1 of 8</text>
+<text x="294.0" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 2.69×</text>
 <rect x="500.3" y="232.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">55.2 ms · #1 of 8</text>
-<text x="509.3" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: pi 5.59×</text>
-<rect x="715.7" y="232.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">118 ms · #1 of 8</text>
-<text x="724.7" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.09×</text>
+<text x="509.3" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">92.2 ms · #1 of 8</text>
+<text x="509.3" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 5.60×</text>
+<rect x="715.7" y="232.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
+<text x="724.7" y="250.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">207 ms · #2 of 8</text>
+<text x="724.7" y="267.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.78×</text>
 <text x="32.0" y="308.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">One-shot prompt memory</text>
-<rect x="285.0" y="282.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">39.8 MB · #1 of 8</text>
-<text x="294.0" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.05×</text>
+<rect x="285.0" y="282.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
+<text x="294.0" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">39.8 MB · #2 of 8</text>
+<text x="294.0" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.98×</text>
 <rect x="500.3" y="282.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">31.8 MB · #1 of 8</text>
-<text x="509.3" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.07×</text>
+<text x="509.3" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">30.0 MB · #1 of 8</text>
+<text x="509.3" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.13×</text>
 <rect x="715.7" y="282.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">35.3 MB · #2 of 8</text>
-<text x="724.7" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.87×</text>
+<text x="724.7" y="300.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">36.5 MB · #2 of 8</text>
+<text x="724.7" y="317.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.77×</text>
 <text x="32.0" y="358.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">Skill invocation time</text>
 <rect x="285.0" y="332.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">36.9 ms · #1 of 8</text>
-<text x="294.0" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.58×</text>
+<text x="294.0" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">36.8 ms · #1 of 8</text>
+<text x="294.0" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.56×</text>
 <rect x="500.3" y="332.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">48.8 ms · #1 of 8</text>
-<text x="509.3" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: Claude Code 5.10×</text>
+<text x="509.3" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">90.6 ms · #1 of 8</text>
+<text x="509.3" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 5.33×</text>
 <rect x="715.7" y="332.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">129 ms · #1 of 8</text>
-<text x="724.7" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.18×</text>
+<text x="724.7" y="350.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">169 ms · #1 of 8</text>
+<text x="724.7" y="367.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.26×</text>
 <text x="32.0" y="408.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">MCP tool call time</text>
 <rect x="285.0" y="382.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">61.9 ms · #1 of 8</text>
-<text x="294.0" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 2.87×</text>
+<text x="294.0" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">63.2 ms · #1 of 7</text>
+<text x="294.0" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 2.79×</text>
 <rect x="500.3" y="382.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">66.6 ms · #1 of 7</text>
-<text x="509.3" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 4.57×</text>
+<text x="509.3" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">151 ms · #1 of 7</text>
+<text x="509.3" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 3.68×</text>
 <rect x="715.7" y="382.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="724.7" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">161 ms · #1 of 7</text>
-<text x="724.7" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.60×</text>
+<text x="724.7" y="400.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">241 ms · #1 of 8</text>
+<text x="724.7" y="417.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.32×</text>
 <text x="32.0" y="458.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">Memory with the most sessions</text>
 <rect x="285.0" y="432.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="294.0" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">49.9 MB · #2 of 8</text>
-<text x="294.0" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.97×</text>
+<text x="294.0" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">49.3 MB · #2 of 8</text>
+<text x="294.0" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.98×</text>
 <rect x="500.3" y="432.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">38.8 MB · #1 of 8</text>
-<text x="509.3" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.11×</text>
+<text x="509.3" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">38.1 MB · #1 of 8</text>
+<text x="509.3" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.13×</text>
 <rect x="715.7" y="432.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">33.6 MB · #2 of 8</text>
-<text x="724.7" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.90×</text>
+<text x="724.7" y="450.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">32.7 MB · #2 of 8</text>
+<text x="724.7" y="467.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.92×</text>
 <text x="32.0" y="508.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">Memory per additional session</text>
 <rect x="285.0" y="482.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="294.0" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">634 KB · #2 of 8</text>
-<text x="294.0" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.34×</text>
+<text x="294.0" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">510 KB · #2 of 8</text>
+<text x="294.0" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.52×</text>
 <rect x="500.3" y="482.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="509.3" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">391 KB · #2 of 8</text>
-<text x="509.3" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.85×</text>
-<rect x="715.7" y="482.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">395 KB · #2 of 8</text>
-<text x="724.7" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.79×</text>
+<text x="509.3" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">354 KB · #2 of 8</text>
+<text x="509.3" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.97×</text>
+<rect x="715.7" y="482.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
+<text x="724.7" y="500.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">278 KB · #1 of 8</text>
+<text x="724.7" y="517.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.44×</text>
 <text x="32.0" y="558.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">fsync calls per one-shot prompt</text>
 <rect x="285.0" y="532.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
 <text x="294.0" y="550.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">10 calls · #4 of 6</text>
@@ -97,14 +97,14 @@
 <text x="724.7" y="550.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">not measured</text>
 <text x="32.0" y="608.0" font-size="13.5" fill="#1f2328" text-anchor="start" font-weight="bold">First session memory</text>
 <rect x="285.0" y="582.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="294.0" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">44.3 MB · #1 of 8</text>
-<text x="294.0" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.05×</text>
+<text x="294.0" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">44.8 MB · #1 of 8</text>
+<text x="294.0" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.03×</text>
 <rect x="500.3" y="582.0" width="209.3" height="42" rx="6" fill="#dafbe1"/>
-<text x="509.3" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">35.4 MB · #1 of 8</text>
-<text x="509.3" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.14×</text>
+<text x="509.3" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">35.0 MB · #1 of 8</text>
+<text x="509.3" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">next: jcode 1.15×</text>
 <rect x="715.7" y="582.0" width="209.3" height="42" rx="6" fill="#fff1d6"/>
-<text x="724.7" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">30.1 MB · #2 of 8</text>
-<text x="724.7" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.91×</text>
-<text x="32.0" y="650.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent f7a53f1 · measured 2026-11-15 13:37 UTC · run 43719041648</text>
+<text x="724.7" y="600.0" font-size="12.5" fill="#1f2328" text-anchor="start" font-weight="bold">30.2 MB · #2 of 8</text>
+<text x="724.7" y="617.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">best: jcode 0.88×</text>
+<text x="32.0" y="650.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent cdc8cb8 · measured 2026-11-15 17:01 UTC · run 43736928002</text>
 <text x="32.0" y="668.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>

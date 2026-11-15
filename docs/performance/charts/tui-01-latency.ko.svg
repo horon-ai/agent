@@ -17,63 +17,57 @@
 <line x1="798.0" y1="158.0" x2="798.0" y2="308.0" stroke="#eaeef2"/>
 <text x="798.0" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">40</text>
 <text x="142.0" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">에이전트 첫 화면</text>
-<rect x="152.0" y="164.0" width="495.2" height="18" rx="3" fill="#d3d9e1"/>
-<text x="655.2" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">30.7</text>
+<rect x="152.0" y="164.0" width="593.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="753.8" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">36.8</text>
 <text x="142.0" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui 첫 화면</text>
-<rect x="152.0" y="194.0" width="435.2" height="18" rx="3" fill="#d3d9e1"/>
-<text x="595.2" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">26.9</text>
+<rect x="152.0" y="194.0" width="645.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="805.2" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">39.9</text>
 <text x="142.0" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">입력 반향 p95</text>
-<rect x="152.0" y="224.0" width="2.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="162.7" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.17</text>
+<rect x="152.0" y="224.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="162.0" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.11</text>
 <text x="142.0" y="267.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">렌더 p50</text>
-<rect x="152.0" y="254.0" width="24.2" height="18" rx="3" fill="#d3d9e1"/>
-<text x="184.2" y="267.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.50</text>
+<rect x="152.0" y="254.0" width="21.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="181.0" y="267.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.30</text>
 <text x="142.0" y="297.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">렌더 p95</text>
-<rect x="152.0" y="284.0" width="25.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="185.7" y="297.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.59</text>
+<rect x="152.0" y="284.0" width="22.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="182.0" y="297.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.36</text>
 <rect x="32" y="338.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="356.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
 <line x1="152.0" y1="378.0" x2="152.0" y2="528.0" stroke="#eaeef2"/>
 <text x="152.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="281.2" y1="378.0" x2="281.2" y2="528.0" stroke="#eaeef2"/>
-<text x="281.2" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">25</text>
-<line x1="410.4" y1="378.0" x2="410.4" y2="528.0" stroke="#eaeef2"/>
-<text x="410.4" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">50</text>
-<line x1="539.6" y1="378.0" x2="539.6" y2="528.0" stroke="#eaeef2"/>
-<text x="539.6" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">75</text>
-<line x1="668.8" y1="378.0" x2="668.8" y2="528.0" stroke="#eaeef2"/>
-<text x="668.8" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">100</text>
+<line x1="367.3" y1="378.0" x2="367.3" y2="528.0" stroke="#eaeef2"/>
+<text x="367.3" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">20</text>
+<line x1="582.7" y1="378.0" x2="582.7" y2="528.0" stroke="#eaeef2"/>
+<text x="582.7" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">40</text>
 <line x1="798.0" y1="378.0" x2="798.0" y2="528.0" stroke="#eaeef2"/>
-<text x="798.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">125</text>
+<text x="798.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">60</text>
 <text x="142.0" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">에이전트 첫 화면</text>
-<rect x="152.0" y="384.0" width="531.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="691.9" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">103</text>
+<rect x="152.0" y="384.0" width="571.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="731.6" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">53.1</text>
 <text x="142.0" y="427.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui 첫 화면</text>
-<rect x="152.0" y="414.0" width="531.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="691.4" y="427.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">103</text>
+<rect x="152.0" y="414.0" width="532.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="692.6" y="427.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">49.5</text>
 <text x="142.0" y="457.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">입력 반향 p95</text>
 <rect x="152.0" y="444.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="162.0" y="457.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.30</text>
+<text x="162.0" y="457.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.17</text>
 <text x="142.0" y="487.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">렌더 p50</text>
-<rect x="152.0" y="474.0" width="6.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="166.4" y="487.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.24</text>
+<rect x="152.0" y="474.0" width="10.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="170.3" y="487.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.95</text>
 <text x="142.0" y="517.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">렌더 p95</text>
-<rect x="152.0" y="504.0" width="16.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="176.3" y="517.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">3.16</text>
+<rect x="152.0" y="504.0" width="11.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="171.7" y="517.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.08</text>
 <rect x="32" y="558.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="576.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <line x1="152.0" y1="598.0" x2="152.0" y2="748.0" stroke="#eaeef2"/>
 <text x="152.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="281.2" y1="598.0" x2="281.2" y2="748.0" stroke="#eaeef2"/>
-<text x="281.2" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0.50</text>
-<line x1="410.4" y1="598.0" x2="410.4" y2="748.0" stroke="#eaeef2"/>
-<text x="410.4" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1</text>
-<line x1="539.6" y1="598.0" x2="539.6" y2="748.0" stroke="#eaeef2"/>
-<text x="539.6" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1.50</text>
-<line x1="668.8" y1="598.0" x2="668.8" y2="748.0" stroke="#eaeef2"/>
-<text x="668.8" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="313.5" y1="598.0" x2="313.5" y2="748.0" stroke="#eaeef2"/>
+<text x="313.5" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1</text>
+<line x1="475.0" y1="598.0" x2="475.0" y2="748.0" stroke="#eaeef2"/>
+<text x="475.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<line x1="636.5" y1="598.0" x2="636.5" y2="748.0" stroke="#eaeef2"/>
+<text x="636.5" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">3</text>
 <line x1="798.0" y1="598.0" x2="798.0" y2="748.0" stroke="#eaeef2"/>
-<text x="798.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2.50</text>
+<text x="798.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">4</text>
 <text x="142.0" y="617.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">에이전트 첫 화면</text>
 <rect x="152.0" y="604.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="200.0" y="617.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">측정 불가</text>
@@ -84,11 +78,11 @@
 <rect x="152.0" y="664.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="200.0" y="677.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">측정 불가</text>
 <text x="142.0" y="707.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">렌더 p50</text>
-<rect x="152.0" y="694.0" width="554.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="714.5" y="707.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">2.15</text>
+<rect x="152.0" y="694.0" width="486.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="646.5" y="707.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">3.01</text>
 <text x="142.0" y="737.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">렌더 p95</text>
-<rect x="152.0" y="724.0" width="583.6" height="18" rx="3" fill="#d3d9e1"/>
-<text x="743.6" y="737.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">2.26</text>
-<text x="32.0" y="784.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent f7a53f1 · 측정 2026-11-15 13:37 UTC · 실행 43719041648</text>
+<rect x="152.0" y="724.0" width="515.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="675.9" y="737.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">3.19</text>
+<text x="32.0" y="784.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: horon-ai/agent cdc8cb8 · 측정 2026-11-15 17:00 UTC · 실행 43736928002</text>
 <text x="32.0" y="802.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">OS마다 다른 GitHub 호스티드 러너와 모의 모델로 쟀습니다. 같은 OS 안에서만 비교하고 OS끼리는 비교하지 않습니다.</text>
 </svg>
