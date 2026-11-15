@@ -3,10 +3,12 @@
 //!
 //! A directory outside any repository starts no process: a walk up the
 //! directory tree answers that from the filesystem. A work tree costs one
-//! `git status --porcelain=v1 --branch`, whose header names the branch and
-//! whose remaining lines are the changed paths. Everything the walk cannot
-//! vouch for (a bare repository, a directory inside a git directory, a
-//! repository selected through the environment, a status call that failed)
+//! `git status --porcelain=v1 --branch --no-ahead-behind`, whose header names
+//! the branch and whose remaining lines are the changed paths; the ahead and
+//! behind counts the three-call path never printed are not computed.
+//! Everything the walk cannot vouch for (a bare repository, a directory inside
+//! a git directory, a repository selected through the environment, a status
+//! call that failed)
 //! takes the three-call path this module started with, so those cases keep
 //! exactly the lines they always produced.
 
@@ -94,7 +96,7 @@ fn git_in(working_dir: Option<&Path>) -> Command {
 pub(super) fn git_info_from_status(working_dir: Option<&Path>) -> Result<Option<String>, StatusFailed> {
     horon_agent_perf_counters::record_session_context_git_spawn();
     let Ok(output) = git_in(working_dir)
-        .args(["status", "--porcelain=v1", "--branch"])
+        .args(["status", "--porcelain=v1", "--branch", "--no-ahead-behind"])
         .output()
     else {
         return Err(StatusFailed);
