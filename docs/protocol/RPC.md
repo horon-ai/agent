@@ -25,7 +25,7 @@ The adapter starts the daemon when none is running, then subscribes and reads th
 A minimal exchange is two lines in and one line out for the acknowledgement, then the turn frames. The `prompt` response is written *before* the turn runs, so a host that waits for it never deadlocks on a long answer.
 
 ```json
-{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
+{"type":"ready","protocolVersion":1,"supportedProtocolVersions":[1],"maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864,"supportsBashExcludeFromContext":true}
 {"id":"p1","type":"prompt","message":"Reply with only the word ok"}
 {"id":"p1","type":"response","command":"prompt","success":true}
 ```

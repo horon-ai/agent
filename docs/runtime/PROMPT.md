@@ -239,37 +239,37 @@ Every character falls into exactly one class. No character falls into none and c
 
 | Class | o200k | cl100k | Location |
 | --- | --- | --- | --- |
-| Hangul | 0.78 | 1.22 | `crates/token-estimate/src/lib.rs:129` |
-| Han | 0.95 | 1.90 | `crates/token-estimate/src/lib.rs:141` |
-| Kana | 0.95 | 1.04 | `crates/token-estimate/src/lib.rs:151` |
-| Arabic script | 0.38 | 0.88 | `crates/token-estimate/src/lib.rs:159` |
-| Indic script | 0.38 | 1.20 | `crates/token-estimate/src/lib.rs:168` |
-| Other alphabets | 0.30 | 0.50 | `crates/token-estimate/src/lib.rs:177` |
-| Non-ASCII symbols | 0.90 | 1.00 | `crates/token-estimate/src/lib.rs:186` |
-| Emoji | 2.00 | 2.00 | `crates/token-estimate/src/lib.rs:196` |
-| ASCII alphanumerics | 4.87 chars/token | 4.87 chars/token | `crates/token-estimate/src/lib.rs:73` |
-| ASCII punctuation | 0.55 | 0.55 | `crates/token-estimate/src/lib.rs:77` |
+| Hangul | 0.78 | 1.22 | `crates/token-estimate/src/lib.rs:144` |
+| Han | 0.95 | 1.90 | `crates/token-estimate/src/lib.rs:156` |
+| Kana | 0.95 | 1.04 | `crates/token-estimate/src/lib.rs:166` |
+| Arabic script | 0.38 | 0.88 | `crates/token-estimate/src/lib.rs:174` |
+| Indic script | 0.38 | 1.20 | `crates/token-estimate/src/lib.rs:183` |
+| Other alphabets | 0.30 | 0.50 | `crates/token-estimate/src/lib.rs:192` |
+| Non-ASCII symbols | 0.90 | 1.00 | `crates/token-estimate/src/lib.rs:201` |
+| Emoji | 2.00 | 2.00 | `crates/token-estimate/src/lib.rs:211` |
+| ASCII alphanumerics | 4.87 chars/token | 4.87 chars/token | `crates/token-estimate/src/lib.rs:76` |
+| ASCII punctuation | 0.55 | 0.55 | `crates/token-estimate/src/lib.rs:80` |
 
 The two tokenizer families diverge most on Hangul. o200k merges common Korean substrings into one token, and cl100k spends nearly one token per syllable. The same sentence is therefore 44 tokens under o200k and 72 under cl100k.
 
 ### Word-run units
 
-Characters are counted by class, but the sum is not used directly. Each whitespace-delimited run is computed separately (`crates/token-estimate/src/lib.rs:284`), because the same characters cost fewer tokens when bound inside a word. A linear model with a fixed weight per character cannot hit the Rust source and JSON benchmarks at once.
+Characters are counted by class, but the sum is not used directly. Each whitespace-delimited run is computed separately (`crates/token-estimate/src/lib.rs:231`), because the same characters cost fewer tokens when bound inside a word. A linear model with a fixed weight per character cannot hit the Rust source and JSON benchmarks at once.
 
-- A run is at least 1 token. An empty string also returns 1 (`crates/token-estimate/src/lib.rs:213`); returning 0 would let the caller read for free.
+- A run is at least 1 token. An empty string also returns 1 (`crates/token-estimate/src/lib.rs:319`); returning 0 would let the caller read for free.
 - ASCII punctuation is added on top of a run's body, because brackets and commas split far finer than words.
 - A run containing Hangul does not add punctuation again. Hangul syllables already make up most of the run, and adding punctuation again overestimated the Korean samples.
 - A run whose punctuation is half its characters or more is treated as symbol-dense. Its ASCII alphanumerics are not averaged at prose ratios; each piece between separators counts as `ceil(length / 4.87)` (minimum 1 token) (`crates/token-estimate/src/lib.rs` `SEGMENT_DENSITY_PERCENT`). Lowering the threshold to 25% or 35% overestimated a short JSON benchmark by 30%, so it was set to 50%. This rule raised `TOKEN_ESTIMATE_VERSION` to `script-aware-v2`.
 
 ### CJK merge discount
 
-Han and Kana discount by run length (`crates/token-estimate/src/lib.rs:120`).
+Han and Kana discount by run length (`crates/token-estimate/src/lib.rs:135`).
 
 ```
 merge = max(1 - 18.0 / cjk_len, min_merge)
 ```
 
-`CJK_MERGE_WINDOW` is 18.0 (`crates/token-estimate/src/lib.rs:99`). The discount floor differs per class: 0.53 for Han (`crates/token-estimate/src/lib.rs:105`) and 0.70 for Kana (`crates/token-estimate/src/lib.rs:112`).
+`CJK_MERGE_WINDOW` is 18.0 (`crates/token-estimate/src/lib.rs:114`). The discount floor differs per class: 0.53 for Han (`crates/token-estimate/src/lib.rs:120`) and 0.70 for Kana (`crates/token-estimate/src/lib.rs:127`).
 
 The problem this solves is that one ratio cannot fit both prose and repetition. In prose, characters merge with neighbours and attach cheaply; repeating the same character at length leaves no neighbour to merge with, and each character costs nearly a token. Tuning the ratio for prose underestimates repetition, and tuning for repetition overestimates prose. So the ratio fits prose, and a floor keeps short runs from taking the full prose discount.
 

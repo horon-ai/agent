@@ -98,7 +98,7 @@ Transcript Logger -> Session Reporter
 
 #### 사용자 지정 규칙
 
-이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1451-1458`), 승인 대기 정책은 `[ambient]`에 있다(`:1381-1418`).
+이 빌드에는 동작을 승격하거나 강등하는 규칙 테이블이 없다. `[safety.rules]`나 `[safety.notifications]` 같은 하위 표도 없다. `SafetyConfig`의 필드는 모두 `[safety]` 아래 평평하게 놓여 있고(`crates/config-types/src/lib.rs:1347-1353`), 승인 대기 정책은 `[ambient]`에 있다(`:1277-1313`).
 
 ```toml
 [safety]
@@ -112,7 +112,7 @@ desktop_notifications = true
 # approval_for_clientless_runs = false
 ```
 
-`approval_timeout_secs`의 기본값은 1800초다(`crates/config-types/src/lib.rs:1405-1406`, `:1420-1422`). 시간이 지나면 `approval_default_on_timeout`이 적용되고 기본값은 `"deny"`다(`:1410-1411`, `:1424-1426`). 승인 대기 중인 요청이 만료되면 기록이 남고, 감사할 수 없는 이력은 승인을 거부 쪽으로 닫는다(`crates/base/src/safety.rs:340-360`).
+`approval_timeout_secs`의 기본값은 1800초다(`crates/config-types/src/lib.rs:1302`, `:1316-1318`). 시간이 지나면 `approval_default_on_timeout`이 적용되고 기본값은 `"deny"`다(`:1307`, `:1320-1322`). 승인 대기 중인 요청이 만료되면 기록이 남고, 감사할 수 없는 이력은 승인을 거부 쪽으로 닫는다(`crates/base/src/safety.rs:340-360`).
 
 ---
 
@@ -138,7 +138,7 @@ desktop_notifications = true
 
 이 도구는 코어 18도구에 들어 있지 않다. ambient 실행기가 등록하고, 세션의 도구 허용 목록이 통과시켜야 호출된다. 클라이언트가 붙지 않은 무인 실행을 위해 `[ambient] approval_for_clientless_runs`를 켜면 그때만 허용 목록에 합쳐진다(`crates/base/src/config.rs:608-611`, `crates/base/src/config/tool_selection.rs:29-34`). 기본값은 꺼짐이고, 코어 집합은 18개 그대로다(`crates/base/src/config.rs:652-671`, 테스트는 `crates/base/src/config_tool_tiers_tests.rs:26-41`).
 
-ambient 세션이 아닌 곳에서 부르면 "request_permission is only available to ambient sessions" 오류로 거절한다(`crates/app-core/src/tool/ambient.rs:105`).
+ambient 세션이 아닌 곳에서 부르면 "request_permission is only available to ambient sessions" 오류로 거절한다(`crates/app-core/src/tool/ambient.rs:115-121`).
 
 ```rust
 // Tool: request_permission
@@ -158,7 +158,7 @@ ambient 세션이 아닌 곳에서 부르면 "request_permission is only availab
 }
 ```
 
-스키마의 필수 항목은 `action`, `description`, `rationale`이고 나머지는 선택이다(`crates/app-core/src/tool/ambient.rs:542-600`). 실행은 요청을 대기열에 넣고 디스크에 대기 기록을 만든 뒤 알림을 보낸다(`:689-800`). 알림은 기록이 만들어진 뒤에만 나간다. 답하는 사람이 알림이 가리키는 기록을 바로 찾을 수 있어야 하기 때문이다.
+스키마의 필수 항목은 `action`, `description`, `rationale`이고 나머지는 선택이다(`crates/app-core/src/tool/ambient.rs:557-600`). 실행은 요청을 대기열에 넣고 디스크에 대기 기록을 만든 뒤 알림을 보낸다(`:704`). 알림은 기록이 만들어진 뒤에만 나간다. 답하는 사람이 알림이 가리키는 기록을 바로 찾을 수 있어야 하기 때문이다.
 
 **응답:**
 ```rust
@@ -216,7 +216,7 @@ desktop_notifications = true
 # ntfy_server = "https://ntfy.sh"
 ```
 
-이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:1451-1458`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
+이 빌드의 알림 채널은 ntfy.sh와 데스크톱 알림 두 가지다. 이메일, 메신저 봇, 클라우드 릴레이 채널은 제거되어 `SafetyConfig`에 해당 키가 없다(`crates/config-types/src/lib.rs:1347-1353`). 옛 설정 파일에 그 키가 남아 있어도 알 수 없는 필드로 무시하고 로드된다.
 
 묶음 간격, 조용한 시간, 최소 긴급도 같은 선호 항목도 이 빌드에 없다.
 
@@ -350,9 +350,9 @@ pub type PathDenyPredicate = Arc<dyn Fn(&Path) -> Option<String> + Send + Sync>;
 
 `ask`는 사용자에게 선택지를 내미는 도구다. 이 빌드에서 그 도구는 **답할 수 있는 클라이언트가 세션에 붙어 있을 때만 기다린다. 그 대기는 300초에서 끊긴다.**
 
-데몬은 자체 화면을 그리지 않으며 클라이언트가 붙어 있다고 가정할 수 없다. 그래서 `ask`는 먼저 세션에 답변 채널이 등록돼 있는지 확인한다(`crates/app-core/src/tool/ask.rs:357`). 채널은 세션에 붙은 연결이 `supports_ask_requests`를 광고할 때 설치되고 연결이 끊기거나 다른 세션으로 다시 붙으면 걷힌다(`crates/app-core/src/server/client_lifecycle.rs:2045-2053`, `crates/app-core/src/tool/ask_bridge.rs:72-88`). 채널의 존재 자체가 "이 연결은 질문을 보여주고 답할 수 있다"는 신호다(`crates/app-core/src/tool/ask_bridge.rs:6-13`). 광고는 하네스 API `Hello`의 `supports_ask_requests`로 협상한다(`crates/harness-api/src/requests.rs:42-45`).
+데몬은 자체 화면을 그리지 않으며 클라이언트가 붙어 있다고 가정할 수 없다. 그래서 `ask`는 먼저 세션에 답변 채널이 등록돼 있는지 확인한다(`crates/app-core/src/tool/ask.rs:359`). 채널은 세션에 붙은 연결이 `supports_ask_requests`를 광고할 때 설치되고 연결이 끊기거나 다른 세션으로 다시 붙으면 걷힌다(`crates/app-core/src/server/client_lifecycle.rs:1955-1963`, `crates/app-core/src/tool/ask_bridge.rs:72-89`). 채널의 존재 자체가 "이 연결은 질문을 보여주고 답할 수 있다"는 신호다(`crates/app-core/src/tool/ask_bridge.rs:6-13`). 광고는 하네스 API `Hello`의 `supports_ask_requests`로 협상한다(`crates/harness-api/src/requests.rs:51-54`).
 
-- 채널이 없으면: 요청을 검증한 뒤 `[tools] ask_policy`로 답을 정해 즉시 돌려준다. 기다리지 않는다(`crates/app-core/src/tool/ask.rs:372-377`).
+- 채널이 없으면: 요청을 검증한 뒤 `[tools] ask_policy`로 답을 정해 즉시 돌려준다. 기다리지 않는다(`crates/app-core/src/tool/ask.rs:376-384`).
 - 채널이 있으면: `ask_requested`를 내보내고 `ask_response`를 기다린다(`crates/app-core/src/server/client_ask.rs:80`, `crates/app-core/src/tool/ask.rs:386-408`). 상한은 `CLIENT_ANSWER_TIMEOUT` 300초다(`crates/app-core/src/tool/ask.rs:31`). 그래서 클라이언트가 붙어 있는 세션은 최악의 경우 턴이 5분 늦어진다.
 - 답이 오지 않으면(시간 초과, 연결 끊김, 쓸 수 있는 선택지가 없는 응답) 정책으로 되돌아간다. 도구 텍스트에 그 이유를 적는다(`crates/app-core/src/tool/ask.rs:216-236`, `:361-369`). `ask_policy = "error"`면 이때 호출이 오류로 끝난다(`:362-367`).
 
@@ -360,7 +360,7 @@ pub type PathDenyPredicate = Arc<dyn Fn(&Path) -> Option<String> + Send + Sync>;
 
 #### 정책 두 가지
 
-정책은 클라이언트가 답하지 못했을 때의 처리다. `AskPolicy`는 변형이 둘이다(`crates/tool-types/src/lib.rs:110-116`).
+정책은 클라이언트가 답하지 못했을 때의 처리다. `AskPolicy`는 변형이 둘이다(`crates/tool-types/src/lib.rs:122-130`).
 
 ```rust
 pub enum AskPolicy {
@@ -451,7 +451,7 @@ pub enum Urgency {
 #### 1단계: 기반
 - [x] 동작 분류기(자동 허용 목록과 권한 필요 두 단계, `crates/base/src/safety.rs:306-374`)
 - [x] 검토 대기열(영속 저장, `crates/base/src/safety.rs:698-708`)
-- [x] 에이전트용 `request_permission` 도구(`crates/app-core/src/tool/ambient.rs:535-620`)
+- [x] 에이전트용 `request_permission` 도구(`crates/app-core/src/tool/ambient.rs:548-702`)
 - [x] 기록 로거와 세션 요약(`crates/base/src/safety.rs:627-690`)
 
 #### 2단계: 알림 채널
@@ -466,8 +466,8 @@ pub enum Urgency {
 - [ ] CLI 명령(`horon safety review/list/approve/deny/log`)
 
 #### 4단계: 설정
-- [x] `[safety]` 설정 구역(`crates/base/src/config/default_file.rs:817`)
-- [x] `[ambient]` 승인 정책(`crates/config-types/src/lib.rs:1381-1418`)
+- [x] `[safety]` 설정 구역(`crates/base/src/config/default_file.rs:737`)
+- [x] `[ambient]` 승인 정책(`crates/config-types/src/lib.rs:1277-1313`)
 - [ ] 사용자 지정 분류 규칙(동작 승격·강등)
 - [ ] 프로젝트별 재정의
 

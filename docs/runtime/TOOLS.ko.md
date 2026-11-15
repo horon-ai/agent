@@ -32,7 +32,7 @@ memory = "essential"
 
 - `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:679` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
 - `CORE_TOOLS`는 열여덟 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:652` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다. `swarm`, `todo`, `session_search`가 마지막으로 합류했고, SDK 구동 세션은 `enabled` 목록이 이름을 대지 않는 한 `session_search`와 `swarm`을 끈 채로 둡니다 (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
-- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:647`, `config.rs:1093` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:763` `ToolLoadTiers::tier`).
+- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:617`, `config.rs:1093` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:763` `ToolLoadTiers::tier`).
 - 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:759` `apply_builtin_load_tiers`).
 - `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:735` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:608` `freeze_mcp_surface`, `turn_execution.rs:641` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
 - `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:763` `ToolLoadTiers::tier`).
@@ -49,7 +49,7 @@ memory = "essential"
 
 ### 목록 색인
 
-목록 모드 `core` 세션의 시스템 프롬프트 정적 부분에는 `# Additional tools` 절이 붙습니다. 짧은 안내 문장 하나와 `- <이름>: <한 줄 설명>` 행이 이름순으로 나옵니다 (`crates/base/src/prompt.rs:463` `build_additional_tools_section`). 안내 문장은 한 문장이고, 목록의 도구를 `toolbox`의 `run` 동작으로 부르는 방법만 알립니다. 행의 설명은 도구 설명의 첫 문장이거나 60자까지이므로, 매개변수는 모델이 `toolbox describe`로 따로 받습니다.
+목록 모드 `core` 세션의 시스템 프롬프트 정적 부분에는 `# Additional tools` 절이 붙습니다. 짧은 안내 문장 하나와 `- <이름>: <한 줄 설명>` 행이 이름순으로 나옵니다 (`crates/base/src/prompt.rs:447` `build_additional_tools_section`). 안내 문장은 한 문장이고, 목록의 도구를 `toolbox`의 `run` 동작으로 부르는 방법만 알립니다. 행의 설명은 도구 설명의 첫 문장이거나 60자까지이므로, 매개변수는 모델이 `toolbox describe`로 따로 받습니다.
 
 - 프로바이더와 상관없이 같은 색인을 씁니다. 네이티브 지연 로딩이 있는 프로바이더도 지연 정의와 함께 이 색인을 받습니다. 없는 프로바이더는 지연 정의를 버리므로 이 색인이 이름을 알리는 유일한 경로입니다.
 - 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
@@ -142,8 +142,8 @@ memory = "essential"
 
 레지스트리는 이름만으로 효과를 묻지 않고 그 호출의 입력까지 넘겨 묻습니다.
 
-- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1269`).
-- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1281`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
+- `declared_effects`는 `effects_for_input(input)`을 부릅니다 (`crates/app-core/src/tool/mod.rs:1271`).
+- `declared_effects_sync`는 `effects()`만 읽습니다 (`crates/app-core/src/tool/mod.rs:1283`). 라운드를 내보내기 전에 도는 검사라 맵을 기다릴 수 없고, 잠금이 잡혀 있으면 `None`을 돌려줍니다.
 - 두 함수 모두 `None`을 "분류할 수 없음"으로 씁니다. 호출자는 그 값을 쓰기 배리어로 읽습니다. 읽기 전용 게이트는 자기가 볼 수 없는 영향 범위를 가진 도구 때문에 열리지 않습니다.
 
 ### 두 게이트
@@ -152,12 +152,12 @@ memory = "essential"
 
 | 경로 | 위치 | 무엇을 하는가 |
 | --- | --- | --- |
-| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1983`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:2027`)를 지나 도구를 꺼내고 승인 게이트(`:2087`)와 `pre_tool` 훅(`:2202`)을 차례로 지납니다. |
-| 에이전트 | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | 라운드가 호출을 내보내기 전에 이름 하나를 검사합니다. 계획 모드 게이트가 `:1081`에 있습니다. |
+| 레지스트리 | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1985`) | 이름을 해석하고 세션 정책을 확인한 뒤, 계획 모드 게이트(`:2029`)를 지나 도구를 꺼내고 승인 게이트(`:2089`)와 `pre_tool` 훅(`:2204`)을 차례로 지납니다. |
+| 에이전트 | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1227`) | 라운드가 호출을 내보내기 전에 이름 하나를 검사합니다. 계획 모드 게이트가 `:1248`에 있습니다. |
 
 에이전트 경로가 계획 모드 검사를 함수 맨 앞에 두는 이유는 그 아래 SDK 분기 때문입니다. SDK가 켠 도구나 콜백 도구는 허용 목록 검사에서 곧바로 `Ok`로 빠져나갑니다. 그 분기 뒤에 게이트를 두면 정확히 영향 범위를 볼 수 없는 호출이 검사를 지나칩니다. 그래서 계획 모드 검사는 그 분기보다 먼저 돌고, 레지스트리 경로도 같은 이유로 같은 기본값을 씁니다.
 
-두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:2031`, `:2190`).
+두 경로 모두 거절할 때 `TOOL_LIFECYCLE` 경고를 남기고 `block_reason`을 `plan_mode` 또는 `approval`로 적습니다 (`crates/app-core/src/tool/mod.rs:2033`, `:2192`).
 
 ### 계획 모드 상태 기계
 
@@ -170,22 +170,22 @@ memory = "essential"
 | `PendingApproval` | `pending_approval` | 예 | 계획을 제출했고 사용자가 아직 결정하지 않았습니다. |
 | `Approved` | `approved` | 아니요 | 계획이 승인되어 효과가 다시 허용됩니다. |
 
-읽기 전용 여부는 `is_read_only`가 정합니다 (`crates/app-core/src/plan_mode.rs:50`). 게이트는 `allows_effects`로 판정하며, 읽기 전용 상태에서는 `parallel_safe`인 호출만 통과시킵니다 (`crates/app-core/src/plan_mode.rs:164`). 아무것도 선언하지 않은 도구는 트레이트 기본값이 쓰기 배리어라서 거절됩니다.
+읽기 전용 여부는 `is_read_only`가 정합니다 (`crates/app-core/src/plan_mode.rs:50`). 게이트는 `allows_effects`로 판정하며, 읽기 전용 상태에서는 `parallel_safe`인 호출만 통과시킵니다 (`crates/app-core/src/plan_mode.rs:195`). 아무것도 선언하지 않은 도구는 트레이트 기본값이 쓰기 배리어라서 거절됩니다.
 
 상태는 세션 ID로 키를 잡은 프로세스 전역 맵에 있습니다. 레지스트리 필드로 두지 않은 이유는 `Registry::Clone`이 호출마다 복제되기 때문입니다. 필드로 두면 복제본마다 상태가 갈라집니다.
 
 - `state_for`는 항목이 없는 세션에 `Off`를 돌려줍니다 (`crates/app-core/src/plan_mode.rs:83`).
 - `set_state`는 `Off`를 저장하지 않고 항목을 지웁니다 (`crates/app-core/src/plan_mode.rs:94`).
 - `clear_state`는 세션 항목을 지웁니다 (`crates/app-core/src/plan_mode.rs:105`).
-- `transition`은 상태를 바꾸고 그 전이를 세션 재생 타임라인에 기록합니다 (`crates/app-core/src/plan_mode.rs:185`).
+- `transition`은 상태를 바꾸고 그 전이를 세션 재생 타임라인에 기록합니다 (`crates/app-core/src/plan_mode.rs:216`).
 
 거절 문구는 `block_message`가 만듭니다 (`crates/app-core/src/plan_mode.rs:173`). 무엇이 거절됐는지, 아무것도 바뀌지 않았는지, 빠져나갈 두 길이 무엇인지를 한 문단에 담습니다. 같은 호출을 다시 보내도 결과가 같다는 점도 적습니다.
 
-계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:920`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:455`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
+계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:920`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:283`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
 
 ### 승인 등급
 
-`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:368`). 기본값은 `off`이고 (`crates/base/src/config.rs:1023`), 이는 지금까지처럼 묻지 않는 동작입니다.
+`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:370`). 기본값은 `off`이고 (`crates/base/src/config.rs:1023`), 이는 지금까지처럼 묻지 않는 동작입니다.
 
 판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:232`). 순서가 중요합니다.
 
@@ -201,7 +201,7 @@ memory = "essential"
 
 `dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:1033`, `crates/base/src/config/default_file.rs:341`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
 
-게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:2087`, 훅은 `:2202`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
+게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:2089`, 훅은 `:2204`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
 
 `irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없으며 파일시스템 경로를 대지 않아서, `write` 모드는 묻지 않습니다. 승인할 파일이 없기 때문입니다. `all` 모드는 묻습니다. `irc` 호출이 읽기 전용이 아니기 때문입니다.
 
@@ -260,9 +260,9 @@ ACP에서는 두 범위 옵션(`allow-path`, `allow-folder`)을 v2 세션에서�
 - 도구 호출 하나가 변이 단위 하나입니다. 여러 파일을 건드린 호출은 한 단위에 파일별 before/after를 담습니다.
 - 한 호출이 같은 경로를 두 번 건드리면 첫 before와 마지막 after만 남겨 순변경 하나로 기록합니다 (`crates/app-core/src/tool/undo.rs:95` `record`).
 - 기록은 쓰기가 성공한 뒤에만 합니다. 실패한 쓰기는 단위를 남기지 않습니다.
-- `commit`은 단위를 실행 취소 이력으로 옮기고, `abort`는 단위와 그 바이트를 버립니다 (`store.rs:228`, `store.rs:261`).
+- `commit`은 단위를 실행 취소 이력으로 옮기고, `abort`는 단위와 그 바이트를 버립니다 (`crates/edit-safety/src/store.rs:228` `commit`, `:261` `abort`).
 - 이력은 세션마다 하나이고 프로세스 수명 동안만 유지합니다. 재시작하면 비어 있습니다.
-- 예산은 64 MiB입니다 (`store.rs:25` `DEFAULT_BYTE_BUDGET`). 커밋할 때 사용량이 예산을 넘으면 가장 오래된 단위부터 통째로 버립니다. 방금 커밋한 단위는 자기 커밋으로는 버려지지 않으므로, 예산보다 큰 단위도 최신인 동안은 남습니다 (`store.rs:228` `commit`).
+- 예산은 64 MiB입니다 (`crates/edit-safety/src/store.rs:25` `DEFAULT_BYTE_BUDGET`). 커밋할 때 사용량이 예산을 넘으면 가장 오래된 단위부터 통째로 버립니다. 방금 커밋한 단위는 자기 커밋으로는 버려지지 않으므로, 예산보다 큰 단위도 최신인 동안은 남습니다 (`crates/edit-safety/src/store.rs:228` `commit`).
 - 활성 단위의 바이트도 저장소 사용량에 잡히지만, 예산 정리는 커밋 시점에만 일어납니다.
 
 ### undo
@@ -271,7 +271,7 @@ ACP에서는 두 범위 옵션(`allow-path`, `allow-folder`)을 v2 세션에서�
 
 1. 각 파일의 현재 바이트를 단위의 after 상태와 비교합니다.
 2. 하나라도 다르면 기본적으로 호출을 거부합니다. `force: true`이면 덮어쓰고, 덮어쓴 경로를 결과에 나열합니다.
-3. 기록된 상태에 읽을 수 없던 파일이 있으면 단위 전체를 거부합니다. 일부만 복원하고 성공으로 보고하지 않습니다 (`store.rs:277` `undo`).
+3. 기록된 상태에 읽을 수 없던 파일이 있으면 단위 전체를 거부합니다. 일부만 복원하고 성공으로 보고하지 않습니다 (`crates/edit-safety/src/store.rs:277` `undo`).
 4. 성공하면 파일을 before 상태로 되돌립니다. 파일이 없던 상태였으면 지우고, 바이트가 있던 상태였으면 그 바이트를 씁니다.
 
 저널은 파일을 직접 건드리지 않습니다. 복원할 바이트를 돌려주고, 쓰기는 호출자인 `undo` 도구가 합니다. 이 분리 덕분에 크레이트 단위 테스트는 파일 시스템 없이 돕니다.
@@ -287,7 +287,7 @@ ACP에서는 두 범위 옵션(`allow-path`, `allow-folder`)을 v2 세션에서�
 
 ### hashline 앵커
 
-`read`에 `hashline: true`를 주면 각 줄 앞에 `{줄번호:>5}#{태그}:{본문}`을 붙입니다 (`crates/app-core/src/tool/read.rs:153`). 태그는 그 줄 바이트의 SHA-256 첫 두 바이트를 소문자 16진수 네 자리로 쓴 것입니다 (`crates/edit-safety/src/hashline.rs:27` `tag_for`). 16비트 값이므로 암호학적 약속이 아니라, 모델이 읽은 줄을 가리키는 값싼 표식입니다.
+`read`에 `hashline: true`를 주면 각 줄 앞에 `{줄번호:>5}#{태그}:{본문}`을 붙입니다 (`crates/app-core/src/tool/read.rs:164`). 태그는 그 줄 바이트의 SHA-256 첫 두 바이트를 소문자 16진수 네 자리로 쓴 것입니다 (`crates/edit-safety/src/hashline.rs:27` `tag_for`). 16비트 값이므로 암호학적 약속이 아니라, 모델이 읽은 줄을 가리키는 값싼 표식입니다.
 
 - 2000바이트를 넘는 줄은 잘리고 `----` 태그를 받습니다 (`read_selector.rs:15` `MAX_LINE_LEN`). 이 앵커는 내용을 가리키지 않으므로 편집에 쓸 수 없습니다.
 - `hashline_edit`는 `[tools] hashline_edit = true`일 때만 등록됩니다. 기본값은 `false`이고 코어 집합 밖입니다.
@@ -434,7 +434,7 @@ Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[too
 - 세션에 작업 디렉터리가 없음. `ctx.working_dir.as_deref()`가 `None`이면 그 자리에서 반환하고 `nested_agents: no working_dir; skipping ancestor AGENTS.md injection` 로그를 남깁니다.
 - 읽은 파일이 작업 디렉터리 밖이거나, 심볼릭 링크가 바깥을 가리킴.
 - 위쪽 어디에도 `AGENTS.md`가 없음.
-- 읽기 결과가 이미 32 KiB 이상임(`base_output_bytes >= MAX_BASE_OUTPUT_BYTES`). 이 상한은 도구 결과 가드가 시작되는 지점이 아닙니다. 가드의 실제 한도는 `single_output_max_tokens`가 정하는 `min(예산 × 0.30, 50,000)` 토큰이고(`crates/app-core/src/tool/mod.rs:1201-1203`, 상수 정의는 `:1361`과 `:1372`), 이 값을 토큰당 4글자로 환산하므로(`APPROX_CHARS_PER_TOKEN = 4`, `crates/core/src/util.rs:17`) 예산이 16만 6,667 토큰 이상이면 20만 자에 머뭅니다. 문맥이 거의 찬 세션에서는 남은 여유가 이 값보다 먼저 걸립니다(`mod.rs:1668-1671`). 실제 모델의 문맥 창 규모에서는 32 KiB가 그 한도에 한참 못 미칩니다. 이 상한을 두는 이유는 덧붙임 때문에 아직 받아들일 만한 결과가 가드 한도 너머로 밀리지 않게 하려는 것입니다. 그 대가로 32 KiB와 가드의 실제 한도 사이에 드는 결과는 본문을 그대로 돌려받으면서 계약은 하나도 붙지 않고, 그 사실을 알리는 표시도 없습니다. 가드의 한도를 넘으면 결과 자체가 보류되고, 호출자가 `accept_large_output`을 넘길 때만 잘려서 돌아옵니다.
+- 읽기 결과가 이미 32 KiB 이상임(`base_output_bytes >= MAX_BASE_OUTPUT_BYTES`). 이 상한은 도구 결과 가드가 시작되는 지점이 아닙니다. 가드의 실제 한도는 `single_output_max_tokens`가 정하는 `min(예산 × 0.30, 50,000)` 토큰이고(`crates/app-core/src/tool/mod.rs:1766`, 상수는 `:1920`과 `:1931`), 이 값을 토큰당 4글자로 다시 환산하므로(`max_chars = max_tokens * 4`, `:2384`) 예산이 16만 6,667 토큰 이상이면 20만 자에 머뭅니다. 문맥이 거의 찬 세션에서는 남은 여유가 이 값보다 먼저 걸립니다(`:2381`). 실제 모델의 문맥 창 규모에서는 32 KiB가 그 한도에 한참 못 미칩니다. 이 상한을 두는 이유는 덧붙임 때문에 아직 받아들일 만한 결과가 가드 한도 너머로 밀리지 않게 하려는 것입니다. 그 대가로 32 KiB와 가드의 실제 한도 사이에 드는 결과는 본문을 그대로 돌려받으면서 계약은 하나도 붙지 않고, 그 사실을 알리는 표시도 없습니다. 가드의 한도를 넘으면 결과 자체가 보류되고, 호출자가 `accept_large_output`을 넘길 때만 잘려서 돌아옵니다.
 - 같은 세션에서 그 경로를 이미 주입했음. 아래 세션 범위 캐시를 따릅니다.
 - `read`가 텍스트 분기까지 오지 않음. `agent://` 참조는 `is_agent_url`, 이미지는 `is_image_file`, PDF는 `is_pdf_file`, 바이너리는 `is_binary_file` 분기에서 먼저 반환하므로 주입 지점에 닿지 않습니다.
 
@@ -796,7 +796,7 @@ Windows에서는 나이 검사가 유일한 보호이므로, `target/`이 스크
 
 ### 도구 등록
 
-`aux_complete` 도구는 `[tools] aux_completion`이 켜져 있을 때만 등록됩니다 (`crates/app-core/src/tool/mod.rs:2425`). 등록 함수가 설정을 읽고 꺼져 있으면 곧바로 반환합니다. 꺼진 상태에서는 도구 목록에 나타나지 않고 이름으로도 찾히지 않습니다.
+`aux_complete` 도구는 `[tools] aux_completion`이 켜져 있을 때만 등록됩니다 (`crates/app-core/src/tool/mod.rs:3056`). 등록 함수가 설정을 읽고 꺼져 있으면 곧바로 반환합니다. 꺼진 상태에서는 도구 목록에 나타나지 않고 이름으로도 찾히지 않습니다.
 
 `CORE_TOOLS`에는 없습니다 (`crates/base/src/config.rs:652`). 코어 프로필의 닫힌 목록은 넓어지지 않습니다. 호출마다 곁가지 모델 요청을 하나 더 쓴다는 점이 이 스위치를 기본 꺼짐으로 두는 이유입니다 (`crates/base/src/config.rs:1030`).
 
@@ -808,7 +808,7 @@ Windows에서는 나이 검사가 유일한 보호이므로, `target/`이 스크
 
 같은 실제 값은 언제나 같은 자리표시자를 받습니다. 한 값이 대화에 여러 번 나와도 자리표시자가 바뀌지 않으므로, 캐시되는 프롬프트 접두사가 흔들리지 않습니다. 키가 파일에 남으므로 재시작 뒤 이어서 여는 세션도 예전 자리표시자를 그대로 복원합니다. 세션 보관함을 만들 때 이름이 `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASS`, `AUTH`, `CREDENTIAL`, `PRIVATE`에 해당하고 값이 8자 이상인 환경 변수를 미리 등록하므로, 환경 변수에서 온 자격증명의 자리표시자도 재시작 뒤에 풀립니다.
 
-세 모드가 있습니다 (`crates/config-types/src/lib.rs:488`).
+세 모드가 있습니다 (`crates/config-types/src/lib.rs:490`).
 
 | 모드 | 동작 |
 | --- | --- |
@@ -816,7 +816,7 @@ Windows에서는 나이 검사가 유일한 보호이므로, `target/`이 스크
 | `obfuscate` | 검출된 자격증명을 안정된 자리표시자로 바꾸고, 실제 값이 필요한 도구에는 원래 값을 돌려줍니다. |
 | `block` | 자격증명이 바깥으로 나갈 호출을 거절합니다. |
 
-모드 이름은 케밥 표기로 읽고, 모르는 값은 기본값으로 떨어집니다 (`crates/config-types/src/lib.rs:509`). 설정 파일의 다른 항목까지 못 읽게 되지 않도록 한 처리입니다. 설정 항목 이름은 `secrets_mode`이고 (`crates/base/src/config.rs:1032`), 기본 설정 파일에도 `secrets_mode = "off"`로 적혀 있습니다 (`crates/base/src/config/default_file.rs:470`).
+모드 이름은 케밥 표기로 읽고, 모르는 값은 기본값으로 떨어집니다 (`crates/config-types/src/lib.rs:521`). 설정 파일의 다른 항목까지 못 읽게 되지 않도록 한 처리입니다. 설정 항목 이름은 `secrets_mode`이고 (`crates/base/src/config.rs:1032`), 기본 설정 파일에도 `secrets_mode = "off"`로 적혀 있습니다 (`crates/base/src/config/default_file.rs:335`).
 
 검출 규칙은 새로 만들지 않고 기존 마스킹과 같은 표를 씁니다. 디스크 경로의 `redact_secrets`가 쓰는 패턴 목록이 그대로 와이어 경로의 목록입니다 (`crates/base/src/message.rs:51`). 표가 하나이므로 디스크를 위해 추가한 패턴이 와이어에도 자동으로 적용됩니다. 이미 마스킹된 텍스트를 다시 마스킹하지 않는 것도 규칙입니다. 자리표시자를 다른 패턴이 한 번 더 감싸면, 바깥것을 복원해도 안쪽 자리표시자만 돌아옵니다.
 

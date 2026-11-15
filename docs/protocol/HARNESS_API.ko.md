@@ -472,6 +472,8 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 남고 모델은 자기가 낸 모든 호출에 결과를 받는다. 백그라운드 작업의 정지는 응답이 아니라 마지막
 `background_work` 이벤트가 확인한다. 응답은 취소가 접수됐다는 것만 말한다.
 
+소켓 뒤 데몬 쪽에서는 순서 규칙이 두 가지 적용된다. 끝난 턴은 그 세션의 다음 `message`를 읽기 전에 닫히므로, 턴의 종료 이벤트에 다음 prompt로 답하는 클라이언트가 `Already processing a message`로 거절되지 않는다(`crates/app-core/src/server/client_lifecycle.rs:820-830`). 그리고 취소의 `Interrupted`와 그 턴의 `Done`은 취소한 턴 자신의 프레임이 모두 전달된 뒤에 쓰이며, 그 대기는 500ms가 상한이다(`crates/app-core/src/server/client_lifecycle.rs:3970-3980`, `crates/app-core/src/server/fanout_flush.rs:56-60`).
+
 ### 이벤트
 
 ```json

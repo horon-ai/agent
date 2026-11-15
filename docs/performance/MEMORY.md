@@ -26,11 +26,11 @@ Where possible, the budgets below bind to counters and caps the codebase already
 Do not add new temporary instrumentation; use the existing debug surfaces.
 
 - Agent and session memory profile over the debug socket: `agent:memory`
-  (`crates/app-core/src/server/debug_command_exec.rs:401`)
+  (`crates/app-core/src/server/debug_command_exec.rs:434`)
 - Fast server incident triage: `server:memory-incident`
-  (`crates/app-core/src/server/debug_server_state.rs:170`)
+  (`crates/app-core/src/server/debug_server_state.rs:165`)
 - Whole-server attribution: `server:memory`
-  (`crates/app-core/src/server/debug_server_state.rs:184`)
+  (`crates/app-core/src/server/debug_server_state.rs:179`)
 - Process lifetime timeline: `python scripts/perf/analyze_memory_log.py --days 1`
 
 Main sources in the code:
@@ -60,14 +60,14 @@ Two kinds of budget are used.
 Source: `crates/base/src/runtime_memory_log.rs`
 
 The log file count, pending event queue, and sampling intervals are values the code enforces directly. A smaller value from config does not
-push the sampling interval cap below its floor (`crates/base/src/runtime_memory_log.rs:482-495`, `:521-524`).
+push the sampling interval cap below its floor (`crates/base/src/runtime_memory_log.rs:474-479`, `:513-518`).
 
 | Metric | Budget | Why |
 |---|---:|---|
-| Server log file count | `<= 90` | `MAX_SERVER_LOG_FILES`. Beyond that the oldest files are deleted (`:19`, `:602-606`) |
+| Server log file count | `<= 90` | `MAX_SERVER_LOG_FILES`. Beyond that the oldest files are deleted (`:19`, `:594-600`) |
 | Client log file count | `<= 90` | `MAX_CLIENT_LOG_FILES` (`:28`) |
-| Pending event count | `<= 64` | `MAX_PENDING_EVENTS`. Beyond that the oldest events are dropped (`:31`, `:343-344`) |
-| Pending category count | `<= 8` | `MAX_PENDING_CATEGORIES` (`:32`, `:364`) |
+| Pending event count | `<= 64` | `MAX_PENDING_EVENTS`. Beyond that the oldest events are dropped (`:31`, `:335-336`) |
+| Pending category count | `<= 8` | `MAX_PENDING_CATEGORIES` (`:32`, `:356`) |
 | Process sample interval | `>= 15s` | `MIN_PROCESS_INTERVAL_SECS` (`:10`) |
 | Attribution sample interval | `>= 60s` | `MIN_ATTRIBUTION_INTERVAL_SECS` (`:12`) |
 
@@ -86,7 +86,7 @@ restore the cap and its reasoning in this section.
 
 #### Session and transcript memory
 
-Source: `crates/app-core/src/server/debug_server_state.rs:660-760`
+Source: `crates/app-core/src/server/debug_server_state.rs:641-745`
 
 These are not strict caps yet, but the relationship is expected. `agent:memory` and `server:memory` export these summed per session.
 

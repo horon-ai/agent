@@ -11,8 +11,8 @@ horon agent는 **서버 하나, 클라이언트 여럿** 구조를 쓴다. 서�
 │                              SERVER (🔥 blazing)                              │
 │                                                                             │
 │  horon serve                                                                │
-│  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
-│  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
+│  ├── Unix socket:  <runtime dir>/horon-agent.sock                           │
+│  ├── Debug socket: <runtime dir>/horon-agent-debug.sock                     │
 │  ├── Registry:     ~/.horon/servers.json                                    │
 │  ├── Provider (one runtime: chat, responses, messages, gemini)              │
 │  ├── MCP pool (shared across sessions)                                      │
@@ -159,12 +159,16 @@ horon --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /re
 
 ## 소켓 경로
 
+디렉터리는 `HORON_AGENT_RUNTIME_DIR`, `XDG_RUNTIME_DIR`, 플랫폼의 사용자별 런타임 디렉터리(macOS에서는 사설 `TMPDIR`) 순서로 정하고, 모두 없으면 임시 디렉터리 아래 `horon-agent-<사용자 식별자>`를 쓴다(`crates/storage/src/lib.rs:36-52`, `crates/harness-api/src/sockets.rs:15-27`와 같은 규칙). `XDG_RUNTIME_DIR`이 설정된 Linux에서는 `/run/user/$UID`다.
+
 ```
-/run/user/$UID/
+<runtime dir>
 ├── horon-agent.sock              # Main communication socket
 ├── horon-agent-debug.sock        # Debug/testing socket
 └── horon-agent-daemon.lock       # "one daemon on horon-agent.sock" flock
 ```
+
+디버그 소켓 이름은 주 소켓 이름의 `.sock` 접미사를 `-debug`로 바꾼 것이다(`crates/app-core/src/server/socket.rs:75-82`).
 
 `--socket`이나 `HORON_AGENT_SOCKET`으로 경로를 바꾸면 곁 잠금 파일(`<socket>.daemon.lock`)도 따로
 생기므로, 분리된 서버가 소켓을 잡아도 공유 데몬은 계속 돈다. 데몬 하나는 런타임 디렉터리가 아니라 *소켓* 하나에 붙는다. 띄우기 잠금은 늘 소켓
@@ -188,3 +192,15 @@ horon --socket /tmp/horon-agent.sock -C /local/checkout --remote-working-dir /re
 | 세션 재개 | `horon --resume fox`가 기존 세션에 다시 연결한다 |
 | `horon run` | 에이전트가 프로세스 안에서 돌고 도구가 서버를 필요로 하지 않으면 서버를 쓰지 않는다 |
 | `horon run` + `swarm` | 공유 데몬을 준비하거나, `--socket`이 사용자 지정이면 그 실행이 소유한 임시 서버를 띄운다 |
+
+### 턴 종료와 취소의 순서
+
+요청 루프는 끝난 턴의 보고를 클라이언트 입력보다 먼저 받고, 턴은 그 보고를 종료 이벤트보다 먼저 보낸다
+(`crates/app-core/src/server/client_lifecycle.rs`). 그래서 클라이언트가 그 종료 이벤트를 보고 보낸 프롬프트는 "Already processing a
+message"를 만나지 않고 이미 닫힌 턴을 본다. 거부된 턴도 같다. 오류 프레임보다 보고를 먼저 보낸다
+(`crates/app-core/src/server/client_lifecycle.rs`). 보고는 턴마다 최대 한 번이라 클라이언트 입출력을 굶기지 않는다.
+
+취소는 세션의 턴 이벤트 전달자가 플러시 전에 큐에 있던 것을 모두 넘길 때까지 최대 500ms 기다린 뒤에야 `Interrupted`와 `Done`을
+쓴다(`crates/app-core/src/server/client_lifecycle.rs`, `crates/app-core/src/server/fanout_flush.rs`). 이 플러시가 없으면 취소된 턴의
+마지막 도구 프레임이 그 프레임들보다 늦게 편집기에 닿아 다음 프롬프트에 섞일 수 있다. 살아 있는 전달자가 없는 세션은 곧바로
+돌아오고, 기한이 지난 대기자는 답을 받지 않아도 된다.

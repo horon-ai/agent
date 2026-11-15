@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 800" width="960" height="800" role="img" aria-labelledby="t d">
+<title id="t">Branch, CI and release flow</title><desc id="d">Work lands on dev and main ships. A change branch is cut from dev and opened as a pull request against dev; require-issue.yml fails it unless the body or title links an existing issue of this repository, and only Dependabot is exempt. ci.yml and structural-perf.yml first run Changed Paths from scripts/ci/classify_changes.py. A documentation-only change runs Documentation Checks and Documentation Corpus Test and skips the release build, the three-OS test matrix, the SDK jobs and the structural gate; any other change runs every gate, including a change under packages/docs, which counts as code. CI Required and Structural performance required always finish and fail only when a gate failed or was cancelled, so they are the required checks. The pull request is squash-merged into dev and the push runs CI again. A release is a pull request with base main and head dev titled Release: dev into main, merged with a merge commit and never squashed; its push run on main is the release evidence that scripts/release/check_ci.py accepts, and it must be a fully successful push run, not a documentation-only one. When that run passes, release-tag.yml asks scripts/release/next_version.py for the next patch tag, creates the tag, calls release.yml for the binaries, and pushes ghcr.io/horon-ai/agent. A documentation-only push to main carrying [skip ci] starts no CI run and creates no tag. After a release the main-to-dev sync pull request is merged with a merge commit so dev holds every main commit. benchmark-docs.yml measures a main push whose CI passed and writes docs(perf) commits with [skip ci] into the results block on both branches.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="800" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="30" font-size="12.5" class="m">dev — where work lands</text>
+<line x1="30" y1="40" x2="930" y2="40" stroke="var(--line)" stroke-width="1.4"/>
+
+<rect x="30" y="56" width="180" height="86" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="78" font-size="12.5" font-weight="600">change branch</text>
+<text x="46" y="96" font-size="11" class="mono">&lt;type&gt;/&lt;slug&gt;</text>
+<text x="46" y="114" font-size="10.5" class="m">cut from dev, one task per</text>
+<text x="46" y="128" font-size="10.5" class="m">worktree under .hyper/</text>
+
+<rect x="238" y="56" width="200" height="86" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="254" y="78" font-size="12.5" font-weight="600">PR to dev</text>
+<text x="254" y="96" font-size="10.5" class="m">require-issue.yml: a linked,</text>
+<text x="254" y="110" font-size="10.5" class="m">existing issue is required</text>
+<text x="254" y="124" font-size="10.5" class="m">(Dependabot is exempt)</text>
+
+<rect x="466" y="56" width="270" height="86" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="482" y="78" font-size="12.5" font-weight="600">Changed Paths</text>
+<text x="482" y="96" font-size="10.5" class="m">scripts/ci/classify_changes.py gives</text>
+<text x="482" y="110" font-size="10.5" class="mono">code / docs / docs_only</text>
+<text x="482" y="128" font-size="10.5" class="m">every uncertainty resolves to code=true</text>
+
+<rect x="764" y="56" width="166" height="86" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="780" y="78" font-size="12.5" font-weight="600">merge</text>
+<text x="780" y="96" font-size="10.5" class="m">squash into dev after every</text>
+<text x="780" y="110" font-size="10.5" class="m">job is green and</text>
+<text x="780" y="124" font-size="10.5" class="mono">run_warnings.py</text>
+
+<line x1="210" y1="99" x2="234" y2="99" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="438" y1="99" x2="462" y2="99" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="736" y1="99" x2="760" y2="99" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="238" y="160" width="498" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="254" y="182" font-size="12.5" font-weight="600">gates by change type (ci.yml + structural-perf.yml)</text>
+<rect x="252" y="192" width="228" height="104" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="266" y="210" font-size="11.5" font-weight="600">docs-only</text>
+<text x="266" y="228" font-size="10.5" class="m">Documentation Checks</text>
+<text x="266" y="242" font-size="10.5" class="m">links, UTF-8, EN/KO pairs,</text>
+<text x="266" y="256" font-size="10.5" class="m">install claims, bench block</text>
+<text x="266" y="274" font-size="10.5" class="m">Documentation Corpus Test</text>
+<text x="266" y="288" font-size="10.5" class="m">the embedded docs still build</text>
+<rect x="494" y="192" width="228" height="104" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="508" y="210" font-size="11.5" font-weight="600">anything else</text>
+<text x="508" y="228" font-size="10.5" class="m">Quality Guardrails, Build &amp; Test</text>
+<text x="508" y="242" font-size="10.5" class="m">on three OSes, Windows ARM64,</text>
+<text x="508" y="256" font-size="10.5" class="m">SDK jobs, docs site, workflow</text>
+<text x="508" y="274" font-size="10.5" class="m">lint, structural gate</text>
+<text x="508" y="288" font-size="10.5" class="m">packages/docs counts as code</text>
+<line x1="466" y1="142" x2="466" y2="156" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="30" y="160" width="180" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="182" font-size="12" font-weight="600">required checks</text>
+<text x="46" y="202" font-size="10.5" class="mono">CI Required</text>
+<text x="46" y="218" font-size="10.5" class="mono">Structural performance</text>
+<text x="46" y="232" font-size="10.5" class="mono">required</text>
+<text x="46" y="254" font-size="10.5" class="m">both always finish; they fail</text>
+<text x="46" y="268" font-size="10.5" class="m">only when a gate failed or</text>
+<text x="46" y="282" font-size="10.5" class="m">was cancelled, so a skipped</text>
+<text x="46" y="296" font-size="10.5" class="m">gate never leaves a check pending</text>
+
+<rect x="30" y="340" width="900" height="48" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="362" font-size="12.5" font-weight="600">push to dev</text>
+<text x="46" y="379" font-size="10.5" class="m">the push run is classified against the head of the last successful dev push run of the same workflow; a head already in origin/main, a dispatch, a re-run and any lookup failure run everything</text>
+<line x1="480" y1="314" x2="480" y2="336" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<text x="30" y="428" font-size="12.5" class="m">main — what ships</text>
+<line x1="30" y1="438" x2="930" y2="438" stroke="var(--line)" stroke-width="1.4"/>
+
+<rect x="30" y="454" width="230" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="476" font-size="12.5" font-weight="600">Release PR</text>
+<text x="46" y="494" font-size="10.5" class="m">base main, head dev,</text>
+<text x="46" y="508" font-size="10.5" class="mono">Release: dev into main</text>
+<text x="46" y="526" font-size="10.5" class="m">merged with a merge commit,</text>
+<text x="46" y="540" font-size="10.5" class="m">never squashed</text>
+
+<rect x="288" y="454" width="230" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="304" y="476" font-size="12.5" font-weight="600">push CI on main</text>
+<text x="304" y="494" font-size="10.5" class="m">runs every gate regardless of</text>
+<text x="304" y="508" font-size="10.5" class="m">the paths; a documentation-only</text>
+<text x="304" y="522" font-size="10.5" class="m">run is not release evidence</text>
+<text x="304" y="540" font-size="10.5" class="mono">check_ci.py</text>
+
+<rect x="546" y="454" width="200" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="562" y="476" font-size="12.5" font-weight="600">release-tag.yml</text>
+<text x="562" y="494" font-size="10.5" class="m">next_version.py picks the next</text>
+<text x="562" y="508" font-size="10.5" class="m">patch tag; the tag is created</text>
+<text x="562" y="522" font-size="10.5" class="m">once and never moved, then it</text>
+<text x="562" y="536" font-size="10.5" class="m">calls release.yml</text>
+
+<rect x="774" y="454" width="156" height="118" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="790" y="476" font-size="12.5" font-weight="600">publish</text>
+<text x="790" y="494" font-size="10.5" class="m">release.yml builds the four OS</text>
+<text x="790" y="508" font-size="10.5" class="m">binaries and the TUI archive;</text>
+<text x="790" y="522" font-size="10.5" class="m">a container job then pushes</text>
+<text x="790" y="534" font-size="10.5" class="mono">ghcr.io/</text>
+<text x="790" y="548" font-size="10.5" class="mono">horon-ai/agent</text>
+
+<line x1="260" y1="507" x2="284" y2="507" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="518" y1="507" x2="542" y2="507" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="746" y1="507" x2="770" y2="507" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="145" y1="388" x2="145" y2="450" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="30" y="588" width="440" height="90" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="610" font-size="12.5" font-weight="600">sync PR: main into dev</text>
+<text x="46" y="628" font-size="10.5" class="m">base dev, head main, merged with a merge commit, so dev</text>
+<text x="46" y="642" font-size="10.5" class="m">holds every commit main has. It needs a linked issue like any</text>
+<text x="46" y="656" font-size="10.5" class="m">PR. Afterwards both sides show 0 commits the other lacks.</text>
+<path d="M852 572 L852 580 L470 580 L470 586" fill="none" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="490" y="588" width="440" height="90" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="610" font-size="12.5" font-weight="600">[skip ci] push to main</text>
+<text x="506" y="628" font-size="10.5" class="m">A docs-only release refresh (as in #327 and #328), or a</text>
+<text x="506" y="642" font-size="10.5" class="m">docs(perf) commit from benchmark-docs.yml, carries [skip ci]:</text>
+<text x="506" y="656" font-size="10.5" class="m">no CI run, no tag, no release. The next release and sync reconcile.</text>
+
+<text x="30" y="706" font-size="11.5" class="m">benchmark-docs.yml measures a main push whose CI passed and whose agent code changed, then commits the numbers into the results block with [skip ci].</text>
+<text x="30" y="724" font-size="11.5" class="m">release.yml and release-tag.yml are not part of the pull-request gating; a release is the only path that publishes.</text>
+<text x="30" y="742" font-size="11.5" class="m">On every ref except main a newer run cancels the older one; on main a push run is release evidence, so a running one is never cancelled.</text>
+<text x="30" y="768" font-size="11" class="m">The claim that a sync leaves exactly zero commits missing on each side is the AGENTS.md confirm step, drawn as stated and not re-measured here.</text>
+</svg>

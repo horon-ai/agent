@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 734" width="960" height="734" role="img" aria-labelledby="t d">
+<title id="t">ACP 버전 협상</title><desc id="d">하나의 horon acp 끝점이 initialize에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답한다. protocolVersion 1은 v1 표면을 고르고, 2 이상의 정수는 v2를 고르며 문자열 name과 version을 가진 info 객체를 요구한다. 0은 지원 목록 [1, 2]와 함께 -32022로 거절하고, 값이 없거나 정수가 아니거나 65535를 넘으면 -32602다. [acp] protocol_v2 = false이면 쓸 수 있는 모든 값이 v1로 답하고 0도 -32022 대신 v1이 된다. 아래 절반은 initialize 뒤에 두 표면이 무엇을 다르게 하는지 보여 준다. v1은 턴이 끝날 때까지 기다렸다가 stopReason으로 답하고, v2는 저장을 확인하는 즉시 session/prompt를 승인한 뒤 state_update로 상태를 알린다. session/load 대신 session/resume과 replayFrom을 쓰고, authenticate 대신 연결 단위 auth/login과 auth/logout을 쓴다. session/set_mode 대신 session/set_config_option을 쓰고, capabilities는 true/false 대신 객체 표지를 쓴다. 클라이언트가 각 표면을 어떻게 다루는지에 대한 부분은 스키마 이름과 어댑터 계약에서 추론했다.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="734" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="32" font-size="13" class="m">1. 끝점은 하나, 표면은 둘: initialize가 버전을 고른다</text>
+
+<rect x="30" y="48" width="252" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="70" font-size="12.5" font-weight="600">클라이언트가 보내는 값</text>
+<text x="46" y="88" font-size="11.5" class="m">initialize { protocolVersion }</text>
+<rect x="44" y="98" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="124" font-size="13" class="mono">1</text>
+<rect x="44" y="146" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="172" font-size="13" class="mono">2, 3, … 65535</text>
+
+<rect x="344" y="48" width="252" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="360" y="70" font-size="12.5" font-weight="600">v2가 켜진 select()</text>
+<text x="360" y="88" font-size="11.5" class="m">src/cli/acp/v2/negotiate.rs</text>
+<rect x="358" y="98" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="118" font-size="12.5" class="mono">AcpVersion::V1</text>
+<text x="372" y="133" font-size="11" class="m">양쪽이 지원하는 가장 높은 값</text>
+<rect x="358" y="146" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="166" font-size="12.5" class="mono">AcpVersion::V2</text>
+<text x="372" y="181" font-size="11" class="m">2로 답하고 info를 요구한다</text>
+
+<line x1="282" y1="119" x2="340" y2="119" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="282" y1="167" x2="340" y2="167" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="658" y="48" width="272" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="674" y="70" font-size="12.5" font-weight="600">연결이 말하는 표면</text>
+<rect x="672" y="80" width="242" height="50" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="100" font-size="12.5" class="mono">v1 surface</text>
+<text x="686" y="118" font-size="11" class="m">쓰던 에디터는 그대로 동작한다</text>
+<rect x="672" y="138" width="242" height="50" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="158" font-size="12.5" class="mono">v2 surface</text>
+<text x="686" y="176" font-size="11" class="m">info와 객체 capability 표지</text>
+<line x1="596" y1="119" x2="654" y2="105" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="596" y1="167" x2="654" y2="163" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="30" y="210" width="252" height="88" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="232" font-size="12.5" font-weight="600">클라이언트가 보내는 값</text>
+<rect x="44" y="240" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="257" font-size="12.5" class="mono">0</text>
+<rect x="44" y="268" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="285" font-size="12" class="mono">없음 / 70000 / "1"</text>
+
+<rect x="344" y="210" width="252" height="88" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="360" y="232" font-size="12.5" font-weight="600">버전을 고르지 못함</text>
+<rect x="358" y="240" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="257" font-size="12" class="mono">InitError::Unsupported</text>
+<rect x="358" y="268" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="285" font-size="12" class="mono">InitError::InvalidParams</text>
+<line x1="282" y1="252" x2="340" y2="252" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="282" y1="280" x2="340" y2="280" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="658" y="210" width="272" height="88" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="674" y="232" font-size="12.5" font-weight="600">오류 프레임</text>
+<rect x="672" y="240" width="242" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="257" font-size="12" class="mono">-32022 지원 안 함</text>
+<rect x="672" y="268" width="242" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="285" font-size="12" class="mono">-32602 잘못된 파라미터</text>
+<line x1="596" y1="252" x2="654" y2="252" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="596" y1="280" x2="654" y2="280" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="30" y="314" width="900" height="72" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="336" font-size="12.5" font-weight="600">v2 끄기: [acp] protocol_v2 = false, 또는 HORON_AGENT_ACP_PROTOCOL_V2=0</text>
+<text x="46" y="355" font-size="11.5" class="m">쓸 수 있는 모든 값이 v1로 답하고 연결은 2를 알지 못한다. 0도 -32022 대신 v1로 답하므로 이 스위치는 완전한 되돌림이다.</text>
+<text x="46" y="372" font-size="11.5" class="m">바뀐 설정을 적용하려면 horon acp 프로세스를 새로 시작해야 한다.</text>
+
+<text x="30" y="412" font-size="13" class="m">2. initialize 뒤에 두 표면이 다르게 하는 것</text>
+
+<rect x="30" y="428" width="440" height="284" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="452" font-size="13" font-weight="600">v1 연결</text>
+<text x="46" y="470" font-size="11" class="m">schema-v1.26.0, 안정 판</text>
+
+<text x="46" y="496" font-size="12" class="mono" font-weight="600">session/prompt</text>
+<text x="46" y="511" font-size="11" class="m">턴이 끝날 때까지 기다렸다 stopReason으로 답한다</text>
+<text x="46" y="538" font-size="12" class="mono" font-weight="600">session/load</text>
+<text x="46" y="553" font-size="11" class="m">먼저 기록을 session/update로 재생한다</text>
+<text x="46" y="580" font-size="12" class="mono" font-weight="600">authenticate</text>
+<text x="46" y="595" font-size="11" class="m">유일한 인증 메서드, logout 없음</text>
+<text x="46" y="622" font-size="12" class="mono" font-weight="600">session/set_mode</text>
+<text x="46" y="637" font-size="11" class="m">모드 변경을 current_mode_update로 알린다</text>
+<text x="46" y="664" font-size="12" class="mono" font-weight="600">capabilities</text>
+<text x="46" y="679" font-size="11" class="m">true / false, loadSession: true</text>
+
+<rect x="490" y="428" width="440" height="284" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="452" font-size="13" font-weight="600">v2 연결</text>
+<text x="506" y="470" font-size="11" class="m">schema-v2.0.0-alpha.13, 안정 부분만</text>
+
+<text x="506" y="496" font-size="12" class="mono" font-weight="600">session/prompt</text>
+<text x="506" y="511" font-size="11" class="m">저장을 확인하면 {messageId}로 답하고 state_update가 뒤따른다</text>
+<text x="506" y="538" font-size="12" class="mono" font-weight="600">session/resume</text>
+<text x="506" y="553" font-size="11" class="m">replayFrom을 쓰고 session/load는 -32601</text>
+<text x="506" y="580" font-size="12" class="mono" font-weight="600">auth/login, auth/logout</text>
+<text x="506" y="595" font-size="11" class="m">연결 단위, 저장된 키는 지우지 않는다</text>
+<text x="506" y="622" font-size="12" class="mono" font-weight="600">session/set_config_option</text>
+<text x="506" y="637" font-size="11" class="m">set_mode는 -32601, configId와 groupId를 쓴다</text>
+<text x="506" y="664" font-size="12" class="mono" font-weight="600">capabilities</text>
+<text x="506" y="679" font-size="11" class="m">객체 표지, loadSession 없음, fs/*와 terminal/* 요청 없음</text>
+</svg>

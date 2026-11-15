@@ -11,8 +11,8 @@ horon agent uses a **one server, many clients** structure. A single server proce
 │                              SERVER (🔥 blazing)                              │
 │                                                                             │
 │  horon serve                                                                │
-│  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
-│  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
+│  ├── Unix socket:  <runtime dir>/horon-agent.sock                           │
+│  ├── Debug socket: <runtime dir>/horon-agent-debug.sock                     │
 │  ├── Registry:     ~/.horon/servers.json                                    │
 │  ├── Provider (one runtime: chat, responses, messages, gemini)              │
 │  ├── MCP pool (shared across sessions)                                      │
@@ -158,12 +158,16 @@ Clients carry a reconnect loop. When the connection drops (server reload, networ
 
 ## Socket paths
 
+The directory comes from `HORON_AGENT_RUNTIME_DIR`, then `XDG_RUNTIME_DIR`, then the platform's per-user runtime directory (on macOS the private `TMPDIR`), and as a last resort `horon-agent-<user discriminator>` under the temporary directory (`crates/storage/src/lib.rs:36-52`, matching `crates/harness-api/src/sockets.rs:15-27`). On Linux with `XDG_RUNTIME_DIR` set that is `/run/user/$UID`.
+
 ```
-/run/user/$UID/
+<runtime dir>
 ├── horon-agent.sock              # Main communication socket
 ├── horon-agent-debug.sock        # Debug/testing socket
 └── horon-agent-daemon.lock       # "one daemon on horon-agent.sock" flock
 ```
+
+The debug socket is the main socket's name with `-debug` in place of the `.sock` suffix (`crates/app-core/src/server/socket.rs:75-82`).
 
 Changing the path with `--socket` or `HORON_AGENT_SOCKET` also gives the side lock file its own place (`<socket>.daemon.lock`), so a separate
 server can hold its socket while the shared daemon keeps running. A daemon attaches to one *socket*, not to the runtime directory. The spawn
@@ -186,3 +190,15 @@ channel and uses the same path for every session. A session interrupted mid-relo
 | Resume a session | `horon --resume fox` reconnects to the existing session |
 | `horon run` | The agent runs in-process and uses no server unless a tool needs one |
 | `horon run` + `swarm` | Prepares the shared daemon, or a temporary server owned by that run when `--socket` is user-supplied |
+
+### Turn end and cancel ordering
+
+The request loop takes a finished turn's report ahead of client input, and the turn sends that report before its terminal event goes out
+(`crates/app-core/src/server/client_lifecycle.rs`). A prompt a client sends on that terminal event therefore finds the turn already closed
+instead of meeting "Already processing a message". A rejected turn reports the same way: the report is sent before the error frame
+(`crates/app-core/src/server/client_lifecycle.rs`). At most one report arrives per turn, so this cannot starve client I/O.
+
+A cancel waits, bounded at 500 ms, for the session's turn event forwarders to forward everything queued before the flush, and only then
+writes `Interrupted` and `Done` (`crates/app-core/src/server/client_lifecycle.rs`, `crates/app-core/src/server/fanout_flush.rs`). Without
+that flush the cancelled turn's last tool frame could reach the editor after those frames and land in the next prompt. A session with no
+live forwarder returns at once, and a waiter whose bound runs out needs no answer.
