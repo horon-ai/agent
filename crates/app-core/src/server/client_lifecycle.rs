@@ -822,24 +822,10 @@ pub(super) async fn handle_client(
             line.clear();
             tokio::select! {
             biased;
-            // Prioritize direct client I/O so subscribe/ping/message requests do not get
-            // starved behind noisy background bus traffic.
-            n = reader.read_line(&mut line) => {
-                let n = match n {
-                    Ok(n) => n,
-                    Err(e) => {
-                        crate::logging::error(&format!("Client read error: {}", e));
-                        break;
-                    }
-                };
-                if n == 0 {
-                    break; // Client disconnected
-                }
-                let mut connections = client_connections.write().await;
-                if let Some(info) = connections.get_mut(&client_connection_id) {
-                    info.last_seen = Instant::now();
-                }
-            }
+            // A finished turn first: the client may already hold that turn's
+            // terminal event and have answered it with the next prompt, which
+            // must find the turn closed, not meet "Already processing a
+            // message". At most one per turn, so it cannot starve client I/O.
             done = processing_done_rx.recv() => {
                 if let Some((done_id, result, completion_report)) = done {
                     if Some(done_id) != processing_message_id {
@@ -880,6 +866,24 @@ pub(super) async fn handle_client(
                     break;
                 }
                 continue;
+            }
+            // Then direct client I/O, so subscribe/ping/message requests do not
+            // get starved behind noisy background bus traffic.
+            n = reader.read_line(&mut line) => {
+                let n = match n {
+                    Ok(n) => n,
+                    Err(e) => {
+                        crate::logging::error(&format!("Client read error: {}", e));
+                        break;
+                    }
+                };
+                if n == 0 {
+                    break; // Client disconnected
+                }
+                let mut connections = client_connections.write().await;
+                if let Some(info) = connections.get_mut(&client_connection_id) {
+                    info.last_seen = Instant::now();
+                }
             }
             disconnect_signal = disconnect_rx.recv() => {
                 if disconnect_signal.is_some() {
@@ -3698,12 +3702,13 @@ async fn start_processing_message(
             }) => (result, Some(start_message_index), Some(pending_queue)),
             Ok(TurnBegin::Withdrawn) => return,
             Ok(TurnBegin::Rejected(message)) => {
+                // The report first, as for a turn that ran (see below).
+                let _ = done_tx.send((id, Ok(()), None));
                 let _ = rejection_tx.send(ServerEvent::Error {
                     id,
                     message,
                     retry_after_secs: None,
                 });
-                let _ = done_tx.send((id, Ok(()), None));
                 return;
             }
             Err(panic_payload) => {
@@ -3763,14 +3768,15 @@ async fn start_processing_message(
         if pending > 0 {
             let _ = tx.send(ServerEvent::SoftInterruptQueue { pending });
         }
-        let _ = tx.send(terminal_event);
-        // Tell the request loop the turn finished before this task waits for
-        // its idle state to be forwarded: the client already has its terminal
-        // event, and a prompt it sends next must not meet
-        // "Already processing a message". The next turn's task still waits for
-        // the agent this task keeps until the idle state is out (close), so its
-        // `running` cannot precede this turn's idle.
+        // Tell the request loop the turn finished before the client can see
+        // its terminal event: a prompt the client sends on that event must find
+        // this report already queued, which the loop reads ahead of client
+        // input, and so never meets "Already processing a message". The next
+        // turn's task still waits for the agent this task keeps until the idle
+        // state is out (close), so its `running` cannot precede this turn's
+        // idle.
         let _ = done_tx.send((id, result, completion_report));
+        let _ = tx.send(terminal_event);
         foreground.close(agent).await;
     }));
 }
@@ -3964,6 +3970,10 @@ async fn cancel_processing_message(
             .await;
         }
         if let Some(message_id) = state.message_id.take() {
+            // This reply goes straight to the client, the turn's own events
+            // through its forwarder: let those out first, or the turn's last
+            // tool frame lands after this `Done`, inside the next prompt.
+            super::fanout_flush::flush(&session_label, std::time::Duration::from_millis(500)).await;
             let _ = client_event_tx.send(ServerEvent::Interrupted);
             let _ = client_event_tx.send(ServerEvent::Done { id: message_id });
             crate::logging::info(&format!(
