@@ -102,6 +102,30 @@ cargo test -p horon-agent-base soft_interrupt_store
 기다리게 두지 않는다. 실제로 턴이 도는 중이면 예전처럼 즉시 `None`을 돌려주고
 메시지는 대기열로 간다.
 
+### 끝난 턴은 다음 프롬프트를 읽기 전에 닫힌다
+
+요청 루프는 끝난 턴의 보고를 클라이언트 입력보다 먼저 읽습니다
+(`crates/app-core/src/server/client_lifecycle.rs:825-829`, `biased`가 붙은
+`processing_done_rx.recv()` 갈래). 턴 태스크는 그 보고를 종료 이벤트보다 먼저
+보내므로, `Done`을 받고 곧바로 다음 프롬프트를 보낸 클라이언트는 `Already
+processing a message`를 만나지 않고 이미 닫힌 턴을 봅니다
+(`crates/app-core/src/server/client_lifecycle.rs:3771-3779`). 거부된 턴도 오류
+이벤트보다 보고를 먼저 보냅니다
+(`crates/app-core/src/server/client_lifecycle.rs:3705-3707`). 다음 턴의 태스크는
+이번 턴의 idle 상태가 나갈 때까지 에이전트를 계속 쥐므로, 다음 턴의 `running`이
+이번 턴의 idle보다 앞설 수 없습니다.
+
+취소 응답만은 요청 루프가 턴의 포워더를 거치지 않고 클라이언트로 바로 씁니다.
+그래서 세션의 포워더가 밀린 이벤트를 다 내보낼 때까지 먼저 기다립니다.
+`fanout_flush::flush`를 500밀리초 한도로 부른 뒤 `Interrupted`와 `Done`을
+보냅니다(`crates/app-core/src/server/client_lifecycle.rs:3976-3978`). 이 대기가
+없으면 취소된 턴의 마지막 도구 프레임이 그 턴의 `Done` 뒤, 다음 프롬프트 안에
+들어갑니다. 포워더는 생성될 때 플러시 채널을 등록하고, 요청이 도착한 시점에
+이벤트 대기열이 비어 있었을 때만 응답하며, 종료할 때 채널을 버립니다. 살아 있는
+포워더가 없는 세션은 곧바로 돌아오고, 한도를 다 쓴 플러시는 경고를 남기고 응답을
+그대로 보냅니다(`crates/app-core/src/server/fanout_flush.rs`,
+`crates/app-core/src/server/state.rs:996`).
+
 ## 소프트 인터럽트: 끊김 없는 메시지 주입
 
 ### 개요

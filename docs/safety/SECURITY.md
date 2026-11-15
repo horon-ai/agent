@@ -16,9 +16,9 @@ Three files in the workspace are gated (`crates/base/src/workspace_trust.rs:22` 
 - `.mcp.json`
 - `.claude/mcp.json`
 
-User-level configuration is not gated. `~/.horon/mcp.json`, `~/.claude.json`, and `~/.claude/mcp.json` are the user's own configuration, not something a repository decides.
+User-level configuration is not gated. `~/.horon/mcp.json`, `~/.claude.json`, and `~/.claude/mcp.json` are the user's own configuration, not something a repository decides. Those Claude Code files are read only when `[mcp] claude_user` is on, `~/.codex/config.toml` only when `[mcp] codex_user` is on, and the per-project entries in `~/.claude.json` are matched to the session's project directory, so one repository's entry never reaches another (`crates/base/src/mcp/sources.rs:1-14`).
 
-There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
+There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:258`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
 
 ### Digest rules
 
@@ -90,13 +90,13 @@ The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:158` 
 | `panic.thread` | The name or ID of the thread that panicked. |
 | `operations` | Up to the last 64 tool dispatches, oldest first. |
 
-`operations` is a process-wide ring buffer (`crash.rs:25` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the serialized input JSON string. When the feature is off, dispatches are not recorded at all.
+`operations` is a process-wide ring buffer (`crash.rs:25` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the input text after redaction and truncation (`crash.rs:42-46` `OperationRecord`). When the feature is off, dispatches are not recorded at all.
 
 `report.txt` lays out the same contents for humans. Its first line is `horon-agent crash bundle (local only; nothing was transmitted)` (`crash.rs:205` `render_report`).
 
 ### Redaction
 
-Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:51`).
+Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:44`).
 
 - The same pass applies to the panic message, location, thread name, tool names, and tool input JSON.
 - Fields are truncated at 2048 characters with `[truncated]` appended. Tool names are truncated at 128 characters (`crash.rs:241` `truncate_chars`).
@@ -112,7 +112,7 @@ The bundle is written to a local directory with `std::fs::write` only. There are
 
 `[features] crash_bundles` defaults to `true` (`crates/config-types/src/feature.rs:54`). Setting it to `false` means the panic hook writes no bundle and tool dispatches are not recorded either.
 
-The hook is installed once at startup (`src/cli/startup.rs:52`). Later calls only update the enabled flag (`crash.rs:67` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
+The hook is installed once at startup (`src/cli/startup.rs:38`). Later calls only update the enabled flag (`crash.rs:67` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
 
 ### Limits
 
@@ -208,7 +208,7 @@ This section is not a re-measurement of the table above; it only counts whether 
   `scripts/ci/check_security.sh`. That script runs `cargo audit --deny warnings`, so a new warning
   (unmaintained, unsound, yanked) fails CI.
 - `scripts/ci/check_security.sh` ignores the vulnerability advisories explicitly classified
-  above (`rustls-webpki`) so CI stays actionable
+  above (`rustls-webpki`, `lopdf`, `quick-xml`) so CI stays actionable
   (`audit_ignores` in `scripts/ci/check_security.sh`). New
   vulnerabilities still fail CI by default.
 - 2026-11-13: three advisories published the same day failed the preflight on a push that changed no

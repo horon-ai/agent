@@ -175,7 +175,7 @@ aux = "my-small-model"
 
 ### 구현 주체
 
-#73이 공유 타입을 쓴다. `crates/config-types/src/lib.rs`의 `NamedProviderConfig`에 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
+#73이 공유 타입을 쓴다. `crates/config-types/src/named_provider.rs:150-151`에서 `NamedProviderConfig`로 평면화되는 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
 
 역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
 

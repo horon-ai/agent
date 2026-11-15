@@ -26,11 +26,11 @@
 임시 계측을 새로 넣지 말고 기존 디버그 표면을 쓴다.
 
 - 디버그 소켓을 통한 에이전트·세션 메모리 프로필: `agent:memory`
-  (`crates/app-core/src/server/debug_command_exec.rs:401`)
+  (`crates/app-core/src/server/debug_command_exec.rs:434`)
 - 서버 사고 빠른 분류: `server:memory-incident`
-  (`crates/app-core/src/server/debug_server_state.rs:170`)
+  (`crates/app-core/src/server/debug_server_state.rs:165`)
 - 서버 전체 귀속: `server:memory`
-  (`crates/app-core/src/server/debug_server_state.rs:184`)
+  (`crates/app-core/src/server/debug_server_state.rs:179`)
 - 프로세스 수명 타임라인: `python scripts/perf/analyze_memory_log.py --days 1`
 
 코드의 주요 출처:
@@ -60,14 +60,14 @@
 출처: `crates/base/src/runtime_memory_log.rs`
 
 로그 파일, 보류 이벤트 큐, 샘플링 간격은 코드가 직접 막는 값이다. 샘플링 간격
-상한은 설정에서 더 작은 값을 줘도 그 아래로 내려가지 않는다 (`crates/base/src/runtime_memory_log.rs:482-495`, `:521-524`).
+상한은 설정에서 더 작은 값을 줘도 그 아래로 내려가지 않는다 (`crates/base/src/runtime_memory_log.rs:474-479`, `:513-518`).
 
 | 지표 | 예산 | 이유 |
 |---|---:|---|
-| 서버 로그 파일 수 | `<= 90` | `MAX_SERVER_LOG_FILES`. 넘으면 오래된 파일부터 지운다(`:19`, `:602-606`) |
+| 서버 로그 파일 수 | `<= 90` | `MAX_SERVER_LOG_FILES`. 넘으면 오래된 파일부터 지운다(`:19`, `:594-600`) |
 | 클라이언트 로그 파일 수 | `<= 90` | `MAX_CLIENT_LOG_FILES`(`:28`) |
-| 보류 이벤트 수 | `<= 64` | `MAX_PENDING_EVENTS`. 넘으면 오래된 이벤트를 버린다(`:31`, `:343-344`) |
-| 보류 범주 수 | `<= 8` | `MAX_PENDING_CATEGORIES`(`:32`, `:364`) |
+| 보류 이벤트 수 | `<= 64` | `MAX_PENDING_EVENTS`. 넘으면 오래된 이벤트를 버린다(`:31`, `:335-336`) |
+| 보류 범주 수 | `<= 8` | `MAX_PENDING_CATEGORIES`(`:32`, `:356`) |
 | 프로세스 샘플 간격 | `>= 15s` | `MIN_PROCESS_INTERVAL_SECS`(`:10`) |
 | 귀속 샘플 간격 | `>= 60s` | `MIN_ATTRIBUTION_INTERVAL_SECS`(`:12`) |
 
@@ -86,7 +86,7 @@
 
 #### 세션과 트랜스크립트 메모리
 
-출처: `crates/app-core/src/server/debug_server_state.rs:660-760`
+출처: `crates/app-core/src/server/debug_server_state.rs:641-745`
 
 아직 엄격한 상한은 아니지만 기대하는 관계는 있다. `agent:memory`와
 `server:memory`가 세션별로 합산해 내보내는 값이다.

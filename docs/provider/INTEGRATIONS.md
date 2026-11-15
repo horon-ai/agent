@@ -110,6 +110,24 @@ MCP management tools accept ad-hoc remote connections through `url`, `transport`
 or connect to a named configured server without those fields. `command`, `args`, and `env` are
 still the local stdio connection fields.
 
+### Server-initiated requests
+
+A server may ask the client for something. Only two methods are answered, and both transports answer through
+one function so they cannot diverge (`crates/base/src/mcp/protocol.rs:144-157`).
+
+| Method | Answer |
+| --- | --- |
+| `ping` | An empty result. |
+| `roots/list` | The connection's root list, but only when `roots` was declared in `initialize`. Otherwise a method-not-found reply. |
+| anything else | A method-not-found reply naming the method, so the server gets an answer instead of a silent timeout. This covers `sampling/createMessage`, `resources/subscribe`, `resources/unsubscribe`, `elicitation/create`. |
+
+`roots` is declared only when the connection has a root list to serve, and that is off by default: the `[mcp] expose_roots`
+setting gates it, because answering tells every server which directory the session works in
+(`crates/base/src/config/default_file.rs:392-395`). With it on, the one root is the session project folder, or the process
+working directory when no project folder was given (`crates/base/src/mcp/client.rs:112-137`). Without a root list the
+capability is omitted and `roots/list` is refused (`crates/base/src/mcp/protocol.rs:76-99`). The list never changes after
+`initialize`, so a server is told it will hear no `notifications/roots/list_changed`.
+
 ### Startup, connection waits, and prompt caching
 
 Session tool registration does not wait for remote network traffic. Management,

@@ -673,18 +673,23 @@ It reuses `VersionedPlan` / `PlanItem` (which already has `blocked_by` edges,
 - Roles (coordinator / worktree manager) become scheduler policy rather than
   user-visible entities.
 
-### Runaway protection: one total member cap
-Runaway protection is one cap, not a matrix of limits. A swarm may hold at most
-**`MAX_SWARM_MEMBERS` = 1000** live members (agents). There is deliberately **no depth
-cap and no per-node breadth/fan-out cap**. The spawn tree may nest and fan out freely
-until the swarm reaches 1000 members, at which point an additional spawn is refused with
-a clear error. This is implemented in `ensure_spawn_coordinator_swarm`
-(`server/comm_session.rs`) by counting the swarm's live members and refusing a spawn at
-the cap. The old `MAX_SWARM_SPAWN_DEPTH` depth limit has been removed.
+### Runaway protection: a live-agent budget under one hard member cap
+Runaway protection is two counts, not a matrix of limits. A swarm may hold at most
+**`MAX_SWARM_MEMBERS` = 1000** live members (`crates/swarm-core/src/lib.rs:43`), and
+that ceiling holds even when the configurable budget is off. Below it,
+`agents.swarm_max_concurrent_agents` (default `32`, `crates/config-types/src/lib.rs:636-638`;
+`0` turns it off) caps the live spawned agents, and it applies to deep recursive spawning
+as well as to `run_plan`. There is deliberately **no depth cap and no per-node
+breadth/fan-out cap**. The spawn tree may nest and fan out freely until one of the two
+counts is reached, at which point an additional spawn is refused with a clear error.
+This is implemented in `ensure_spawn_coordinator_swarm`
+(`crates/app-core/src/server/comm_session.rs:993`, checks at `:1107` and `:1123`) by
+counting the swarm's live members and live spawned agents. The old
+`MAX_SWARM_SPAWN_DEPTH` depth limit has been removed.
 
 ### Honest trade-offs and limits
-- The single member cap is the only regulator. It bounds total concurrency and cost, but
-  it cannot stop a lopsided tree (say, one greedy node eating much of the budget). That
+- The two counts are the only regulators. They bound total concurrency and cost, but
+  they cannot stop a lopsided tree (say, one greedy node eating much of the budget). That
   judgment is left to the agents and the gate discipline.
 - The graph **orders** work but does not mutually exclude it. Two subtrees editing the
   same file is still the "talk it over by DM, no lock" case, as today.

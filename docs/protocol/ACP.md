@@ -127,7 +127,7 @@ Every `session/update` of that turn goes out before the response. The `stopReaso
 | `refusal` | The model refused |
 | `cancelled` | Cancelled through `session/cancel`, `$/cancel_request` or `session/close` |
 
-A cancelled turn always answers `cancelled`, whatever shape the daemon stream ends in. Interrupting the current turn externally also gives `cancelled`. Daemon events left over from the cancelled turn (late text, tool, plan and diff frames and that turn's termination signal) are drained by the adapter, so they never leak into the next `session/prompt`. The `session/prompt` after a cancelled turn asks the daemon whether the session is still busy before sending the message. That wait is at most about 5 seconds. If the session is still busy, the message is sent anyway and a daemon refusal is answered with `-32603`. A daemon event that arrives about 10 seconds or more after the cancelled turn responded cannot be drained and may mix into the next prompt's updates. Token usage is carried in `_meta["horon-agent"].usage` of the response.
+A cancelled turn always answers `cancelled`, whatever shape the daemon stream ends in. Interrupting the current turn externally also gives `cancelled`. Daemon events left over from the cancelled turn (late text, tool, plan and diff frames and that turn's termination signal) are drained by the adapter, so they never leak into the next `session/prompt`. The `session/prompt` after a cancelled turn asks the daemon whether the session is still busy before sending the message. That wait is at most about 5 seconds. If the session is still busy, the message is sent anyway and a daemon refusal is answered with `-32603`. On the daemon side the cancel's `Interrupted` and the turn's `Done` are written only after the cancelled turn's own frames have been forwarded, with a 500 ms bound on that wait, so the turn's last tool frame cannot land inside the next prompt. A daemon event that arrives about 10 seconds or more after the cancelled turn responded cannot be drained and may mix into the next prompt's updates. Token usage is carried in `_meta["horon-agent"].usage` of the response.
 
 `session/cancel` is a notification. Sent when no prompt is running, it does nothing. `$/cancel_request` cancels requests in both directions. Pointed at a running prompt, that prompt receives one response and ends. Any other running request is answered `-32800`. Unknown ids are ignored.
 
@@ -355,7 +355,7 @@ protocol_v2 = true     # false answers every client with v1 only
 
 ## Conformance testing
 
-`cargo test --locked -p horon-agent --test acp_stdio` runs 15 tests, one per integration scenario IS-1 through IS-15. Every frame is validated against `tests/fixtures/acp/schema-v1.26.0.json`.
+`cargo test --locked -p horon-agent --test acp_stdio` runs the fifteen integration scenarios IS-1 through IS-15, plus a golden check of the v1 `authMethods` frames. Every frame is validated against `tests/fixtures/acp/schema-v1.26.0.json`.
 
 ```bash
 # official acp-tck v1 suite (pinned commit, isolated daemon)
