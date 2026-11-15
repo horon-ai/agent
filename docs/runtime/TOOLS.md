@@ -6,7 +6,7 @@ This covers tool loading tiers, effects and approval tiers, edit safety, the anc
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 9,111 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 9,151 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
 
 ### Three tiers
 
