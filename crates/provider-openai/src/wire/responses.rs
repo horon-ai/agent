@@ -124,6 +124,18 @@ fn error_text(error: &Value) -> String {
     }
 }
 
+/// Whether `haystack` contains `needle`, ignoring ASCII case, without allocating.
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let haystack = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return needle.is_empty();
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
 /// The terminal error a failed response payload means, if this payload is one.
 fn server_error_event(payload: &str) -> Option<StreamEvent> {
     // A payload that is not JSON cannot be a server error; the malformed-chunk
@@ -298,14 +310,16 @@ impl WireParser for ResponsesParser {
             self.finished = true;
             return;
         }
-        if events.is_empty() && payload.to_lowercase().contains(WEBSOCKET_FALLBACK_NOTICE) {
-            // The transport announced a switch to HTTPS; the response itself
-            // has not started, so the native stream drops this frame too.
-            return;
-        }
         if events.is_empty()
             && let Err(error) = serde_json::from_str::<serde::de::IgnoredAny>(payload)
         {
+            if contains_ascii_case_insensitive(payload, WEBSOCKET_FALLBACK_NOTICE) {
+                // The transport announced a switch to HTTPS. The notice is plain
+                // text, so it can only reach this branch, and the native stream
+                // drops it silently too. Checked after the JSON test so a normal
+                // frame never pays for the scan.
+                return;
+            }
             // One unreadable frame is a bad frame, not a broken response: report
             // it and keep reading, so the rest of the answer still arrives. This
             // is the one error this wrapper reports without ending the stream.
