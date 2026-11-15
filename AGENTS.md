@@ -187,7 +187,7 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 |`docs/`|behaviour documents in English/Korean pairs; the English files are compiled into the agent binary|
 |`packages/sdk/typescript`, `packages/sdk/python`|the TypeScript and Python SDKs|
 |`packages/npm/horon`|the `@horon-ai/horon` launcher|
-|`packages/docs`|the agent.horon.ai site: hand-written pages, not generated from `docs/`|
+|`packages/docs-site`|the agent.horon.ai site: a Mintlify project of hand-written pages, not generated from `docs/`|
 |`scripts/ci`, `scripts/perf`, `scripts/release`, `scripts/install`, `scripts/npm`|gates, benchmarks, release, installer and packaging scripts|
 
 Boundaries, each with the gate that enforces it:
@@ -375,7 +375,7 @@ the last successful `dev` push run of the same workflow (two-dot diff).
   matrix, the SDK jobs and the structural performance gate are skipped.
 - **Anything else** (code, workflows, scripts, dependencies, lockfiles): every
   gate runs.
-- **Site pages count as code.** `packages/docs/` is not in the documentation
+- **Site pages count as code.** `packages/docs-site/` is not in the documentation
   list of `classify_changes.py`, so a change to a site page runs every gate.
 - **Pushes to `main`, manual dispatches and re-runs of a `dev` push always run
   everything.** A `dev` push whose head is already in `origin/main`, and any
@@ -465,7 +465,7 @@ A moved or deleted doc must leave no stale path in code, scripts, or tests.
 binary and the TUI binary. The `<!-- bench-charts -->` and `<!-- bench-auto -->`
 blocks of `docs/performance/RESULTS.md` are written by
 `scripts/perf/bench_docs.py` in `benchmark-docs.yml`; change the script, not the
-block. A statement that also appears on a `packages/docs` page is changed there
+block. A statement that also appears on a `packages/docs-site` page is changed there
 in the same pull request.
 
 ## Not without the owner's explicit request
@@ -490,7 +490,7 @@ in the same pull request.
 - **Wrong checkout.** A relative path used from the main checkout edits the
   main checkout, not the worktree. Check the path before every edit.
 - **Two documentation sets.** `docs/` is compiled into the binary;
-  `packages/docs` is the site. Neither is generated from the other, so a claim
+  `packages/docs-site` is the site. Neither is generated from the other, so a claim
   fixed in one stays wrong in the other until both are edited.
 - **Renamed heading.** It breaks `#anchor` links in both languages;
   `check_docs_pairs.py` reports them.

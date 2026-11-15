@@ -205,12 +205,12 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 
 ## Documentation
 
-The docs are written in English (default) and Korean (`.ko.md` next to each file, as in `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. [agent.horon.ai](https://agent.horon.ai) is a separate, shorter set of pages written in [packages/docs](packages/docs); it is not generated from `docs/`, so a behavior change updates both by hand.
+The docs are written in English (default) and Korean (`.ko.md` next to each file, as in `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. [agent.horon.ai](https://agent.horon.ai) is a separate, shorter set of pages written for Mintlify in [packages/docs-site](packages/docs-site); it is not generated from `docs/`, so a behavior change updates both by hand.
 
 | Topic | Read |
 | --- | --- |
 | Documentation site (`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
-| Documentation site source | [packages/docs](packages/docs) |
+| Documentation site source | [packages/docs-site](packages/docs-site) |
 | Index and fixed requirements | [docs/README.md](docs/README.md) |
 | Terminal client and its user files | [docs/runtime/TUI.md](docs/runtime/TUI.md) |
 | Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
