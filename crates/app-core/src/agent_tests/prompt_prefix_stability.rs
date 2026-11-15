@@ -363,6 +363,8 @@ const INDEX_FITTED_TOOLS: [&str; 5] = ["ask", "mcp", "monitor", "swarm", "undo"]
 
 /// Every index row ends at its tool's first sentence, so no row is cut
 /// mid-word, except `todo`, whose model-visible text is left as written.
+/// The session fixture lists a stand-in `mcp`, so the real tool's row is
+/// rendered from its own description with the helper the index uses.
 #[tokio::test]
 async fn listed_tool_index_rows_end_at_a_sentence() {
     let _guard = crate::storage::lock_test_env();
@@ -378,10 +380,24 @@ async fn listed_tool_index_rows_end_at_a_sentence() {
         );
     }
     for (name, description) in &rows {
-        if name != "todo" {
+        if name == "todo" {
+            assert!(
+                description.ends_with("..."),
+                "todo's row is no longer cut: {description}"
+            );
+        } else {
             assert!(!description.ends_with("..."), "{name} is clipped: {description}");
         }
     }
+
+    let manager = crate::mcp::McpManager::with_config(crate::mcp::McpConfig::default());
+    let mcp_tool = crate::tool::mcp::McpManagementTool::new(Arc::new(tokio::sync::RwLock::new(manager)));
+    let mcp_row = crate::prompt::one_line_description(crate::tool::Tool::description(&mcp_tool));
+    assert!(!mcp_row.ends_with("..."), "the real mcp row is clipped: {mcp_row}");
+    assert!(
+        mcp_row.chars().count() <= crate::prompt::ONE_LINE_DESCRIPTION_MAX_CHARS,
+        "{mcp_row}"
+    );
 }
 
 /// Shortening the first sentence moved no detail out of the full description
