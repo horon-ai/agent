@@ -131,6 +131,10 @@ fn gemini_endpoint(base: &str, model: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "provider_tests.rs"]
+mod provider_tests;
+
+#[cfg(test)]
 mod tests {
     use super::WireProtocol;
     use horon_agent_schema_dialect::registry;

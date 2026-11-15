@@ -26,3 +26,4 @@ pub use request::{
     insert_additional_tools, is_openai_encrypted_content_too_large_error, openai_encrypted_content_fallback_summary,
     openai_encrypted_content_is_sendable,
 };
+pub use wire::WireProtocol;
