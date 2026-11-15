@@ -1,0 +1,130 @@
+name: Turn end race stress (temporary)
+
+on:
+  push:
+    branches: [fix/request-loop-turn-race]
+
+permissions:
+  contents: read
+
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  HORON_AGENT_CI: "1"
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
+  ROUNDS: "50"
+
+jobs:
+  stress:
+    name: ${{ matrix.side }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-latest]
+        side: [candidate, base]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: Prepare source
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$GITHUB_WORKSPACE"
+          if [ "${{ matrix.side }}" = base ]; then
+            git fetch --quiet origin dev
+            base="$(git merge-base HEAD origin/dev)"
+            src="$RUNNER_TEMP/base-src"
+            git worktree add --quiet "$src" "$base"
+            # The base gets only the deterministic request-loop test (the flush
+            # test needs this branch's flush), to show it fails without the fix.
+            python3 - "$GITHUB_WORKSPACE" "$src" <<'PY'
+          import sys, pathlib
+          cand, base = map(pathlib.Path, sys.argv[1:])
+          rel = "crates/app-core/src/server/client_lifecycle_tests"
+          text = (cand / rel / "turn_end_race.rs").read_text()
+          cut = text.index("/// A cancel writes its")
+          (base / rel / "turn_end_race.rs").write_text(text[:cut].rstrip() + "\n")
+          events = base / rel / "acp_v2_events.rs"
+          events.write_text(events.read_text() + '\n#[path = "turn_end_race.rs"]\nmod turn_end_race;\n')
+          PY
+          fi
+          echo "SRC=$src" >> "$GITHUB_ENV"
+          echo "source $(git -C "$src" rev-parse HEAD) side ${{ matrix.side }}"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: ${{ env.SRC }}
+          key: race-stress-${{ matrix.side }}
+      - name: Build test executables
+        shell: bash
+        working-directory: ${{ env.SRC }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p horon-agent --test acp_stdio --test acp_infra --no-run \
+            --message-format=json-render-diagnostics > "$RUNNER_TEMP/int.jsonl"
+          cargo test --locked -p horon-agent-app-core --lib --no-run \
+            --message-format=json-render-diagnostics > "$RUNNER_TEMP/lib.jsonl"
+      - name: Repeat
+        shell: bash
+        working-directory: ${{ env.SRC }}
+        run: |
+          set -uo pipefail
+          exe() {
+            python3 - "$1" "$2" <<'PY'
+          import json, sys
+          for line in open(sys.argv[1]):
+              m = json.loads(line)
+              if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["name"] == sys.argv[2]:
+                  print(m["executable"])
+          PY
+          }
+          stdio="$(exe "$RUNNER_TEMP/int.jsonl" acp_stdio)"
+          infra="$(exe "$RUNNER_TEMP/int.jsonl" acp_infra)"
+          lib="$(exe "$RUNNER_TEMP/lib.jsonl" horon_agent_app_core | head -1)"
+          logs="$RUNNER_TEMP/logs"; mkdir -p "$logs"
+          summary="$RUNNER_TEMP/summary.txt"; : > "$summary"
+          prefix=server::client_lifecycle::tests::acp_v2_events::turn_end_race
+          tests=(
+            "stdio|is15_isolation"
+            "infra|acp_cancel_with_permission_pending_keeps_the_next_prompt_clean_real_daemon"
+            "lib|$prefix::a_prompt_waiting_beside_the_turn_end_is_not_busy"
+            "lib|$prefix::prompt_sent_right_after_done_is_not_busy"
+          )
+          if [ "${{ matrix.side }}" = candidate ]; then
+            tests+=("lib|$prefix::a_reply_after_a_fanout_flush_follows_the_queued_turn_events")
+          fi
+          for entry in "${tests[@]}"; do
+            kind="${entry%%|*}"; name="${entry#*|}"
+            case "$kind" in stdio) bin="$stdio";; infra) bin="$infra";; lib) bin="$lib";; esac
+            pass=0; fail=0
+            for i in $(seq 1 "$ROUNDS"); do
+              out="$logs/${name##*::}-$i.txt"
+              if "$bin" "$name" --exact --test-threads 1 > "$out" 2>&1 && grep -q "test result: ok. 1 passed" "$out"; then
+                pass=$((pass + 1)); rm -f "$out"
+              else
+                fail=$((fail + 1))
+              fi
+            done
+            echo "${{ matrix.side }} ${{ matrix.runner }} ${name##*::} pass=$pass fail=$fail" | tee -a "$summary"
+          done
+          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.side }}" = candidate ] && grep -q "fail=[1-9]" "$summary"; then
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: race-stress-${{ matrix.side }}-${{ matrix.runner }}
+          path: |
+            ${{ runner.temp }}/summary.txt
+            ${{ runner.temp }}/logs
+          if-no-files-found: warn
