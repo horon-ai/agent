@@ -19,6 +19,7 @@ pub(crate) struct ProviderAddOptions {
     pub api_key: Option<String>,
     pub api_key_stdin: bool,
     pub no_api_key: bool,
+    pub provider_type: NamedProviderType,
     pub auth: Option<ProviderAuthArg>,
     pub auth_header: Option<String>,
     pub env_file: Option<String>,
@@ -34,6 +35,8 @@ pub(crate) struct ProviderSetupReport {
     status: &'static str,
     profile: String,
     config_path: String,
+    #[serde(rename = "type")]
+    provider_type: &'static str,
     api_base: String,
     model: String,
     api_key_env: Option<String>,
@@ -56,6 +59,7 @@ pub(crate) fn run_provider_add_command(options: ProviderAddOptions) -> Result<()
         println!("  config: {}", report.config_path);
         println!("  base:   {}", report.api_base);
         println!("  model:  {}", report.model);
+        println!("  type:   {}", report.provider_type);
         println!("  auth:   {}", report.auth);
         if let Some(env_file_path) = &report.env_file_path {
             if report.api_key_stored {
@@ -103,13 +107,14 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
     }
 
     let api_key = read_api_key(&options)?;
-    let auth = resolve_auth_mode(&options, api_key.as_deref(), &api_base)?;
-    let uses_auth = !matches!(auth, NamedProviderAuth::None);
+    let stored_auth = resolve_auth_mode(&options, api_key.as_deref(), &api_base)?;
+    let effective_auth = stored_auth.unwrap_or_else(|| options.provider_type.default_auth());
+    let uses_auth = !matches!(effective_auth, NamedProviderAuth::None);
 
     if !uses_auth && options.auth_header.is_some() {
         anyhow::bail!("--auth-header can only be used with --auth api-key");
     }
-    if !matches!(auth, NamedProviderAuth::Header) && options.auth_header.is_some() {
+    if !matches!(options.auth, Some(ProviderAuthArg::ApiKey)) && options.auth_header.is_some() {
         anyhow::bail!("--auth-header requires --auth api-key");
     }
 
@@ -145,11 +150,11 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
     let api_key_stored = api_key.is_some() && env_file.is_some();
 
     let profile = NamedProviderConfig {
-        provider_type: NamedProviderType::OpenAiCompatible,
+        provider_type: options.provider_type,
         base_url: api_base.clone(),
         api: None,
-        auth: auth.clone(),
-        auth_header: match auth {
+        auth: stored_auth,
+        auth_header: match effective_auth {
             NamedProviderAuth::Header => options
                 .auth_header
                 .as_deref()
@@ -220,13 +225,14 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
         status: "ok",
         profile: name.clone(),
         config_path: path_to_string(config_path),
+        provider_type: provider_type_label(&profile.provider_type),
         api_base,
         model: model.clone(),
         api_key_env,
         env_file,
         env_file_path,
         api_key_stored,
-        auth: auth_label(&auth).to_string(),
+        auth: auth_label(&profile.resolved_auth()).to_string(),
         default_set: options.set_default,
         run_command: format!(
             "horon-agent --provider-profile {} --model {} run 'hello'",
@@ -303,15 +309,26 @@ fn read_api_key(options: &ProviderAddOptions) -> Result<Option<String>> {
     }
 }
 
-fn resolve_auth_mode(options: &ProviderAddOptions, api_key: Option<&str>, api_base: &str) -> Result<NamedProviderAuth> {
+/// Auth mode to store in the written profile.
+///
+/// `None` means the user did not name a mode, so no `auth` line is written and
+/// the profile's `type` default applies. Two cases still resolve to an explicit
+/// [`NamedProviderAuth::None`]: `--no-api-key`/`--auth none`, and a keyless
+/// localhost profile, because neither may fall through to a type default that
+/// would send an empty credential.
+fn resolve_auth_mode(
+    options: &ProviderAddOptions,
+    api_key: Option<&str>,
+    api_base: &str,
+) -> Result<Option<NamedProviderAuth>> {
     if options.no_api_key {
-        return Ok(NamedProviderAuth::None);
+        return Ok(Some(NamedProviderAuth::None));
     }
     if matches!(options.auth, Some(ProviderAuthArg::None)) {
         if api_key.is_some() || options.api_key_env.is_some() || options.env_file.is_some() {
             anyhow::bail!("--auth none cannot be combined with API key options");
         }
-        return Ok(NamedProviderAuth::None);
+        return Ok(Some(NamedProviderAuth::None));
     }
     if options.auth.is_none()
         && api_key.is_none()
@@ -319,14 +336,14 @@ fn resolve_auth_mode(options: &ProviderAddOptions, api_key: Option<&str>, api_ba
         && options.env_file.is_none()
         && api_base_uses_localhost(api_base)
     {
-        return Ok(NamedProviderAuth::None);
+        return Ok(Some(NamedProviderAuth::None));
     }
 
-    Ok(match options.auth.unwrap_or(ProviderAuthArg::Bearer) {
+    Ok(options.auth.map(|auth| match auth {
         ProviderAuthArg::Bearer => NamedProviderAuth::Bearer,
         ProviderAuthArg::ApiKey => NamedProviderAuth::Header,
         ProviderAuthArg::None => NamedProviderAuth::None,
-    })
+    }))
 }
 
 fn resolve_api_key_env(name: &str, configured: Option<&str>) -> Result<String> {
@@ -382,9 +399,14 @@ fn append_profile_section(mut content: String, name: &str, profile: &NamedProvid
     }
 
     content.push_str(&format!("[providers.{name}]\n"));
-    content.push_str("type = \"openai-compatible\"\n");
+    content.push_str(&format!(
+        "type = {}\n",
+        toml_quote(provider_type_label(&profile.provider_type))
+    ));
     content.push_str(&format!("base_url = {}\n", toml_quote(&profile.base_url)));
-    content.push_str(&format!("auth = {}\n", toml_quote(auth_label(&profile.auth))));
+    if let Some(auth) = profile.auth.as_ref() {
+        content.push_str(&format!("auth = {}\n", toml_quote(auth_label(auth))));
+    }
     if let Some(header) = profile.auth_header.as_deref() {
         content.push_str(&format!("auth_header = {}\n", toml_quote(header)));
     }
@@ -537,6 +559,18 @@ fn auth_label(auth: &NamedProviderAuth) -> &'static str {
     }
 }
 
+/// The `type = "…"` value written to config.toml, matching the serde names of
+/// [`NamedProviderType`].
+fn provider_type_label(provider_type: &NamedProviderType) -> &'static str {
+    match provider_type {
+        NamedProviderType::OpenAiCompatible => "openai-compatible",
+        NamedProviderType::OpenAiResponses => "openai-responses",
+        NamedProviderType::AnthropicCompatible => "anthropic-compatible",
+        NamedProviderType::GeminiCompatible => "gemini-compatible",
+        NamedProviderType::OpenRouter => "open-router",
+    }
+}
+
 fn toml_quote(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|error| {
         crate::logging::warn(&format!(
@@ -605,6 +639,7 @@ mod tests {
             api_key: Some("secret-test-key".to_string()),
             api_key_stdin: false,
             no_api_key: false,
+            provider_type: NamedProviderType::OpenAiCompatible,
             auth: None,
             auth_header: None,
             env_file: None,
@@ -688,5 +723,136 @@ mod tests {
         let config = std::fs::read_to_string(temp.path().join("config.toml")).expect("config");
         assert!(config.contains("auth = \"none\""));
         assert!(config.contains("requires_api_key = false"));
+    }
+
+    /// Config text of a fresh `provider add` run for `options`.
+    fn written_config(options: ProviderAddOptions) -> (String, ProviderSetupReport) {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let _home = EnvVarGuard::set("HORON_HOME", temp.path());
+        let report = configure_provider_profile(options).expect("configure provider");
+        let config = std::fs::read_to_string(temp.path().join("config.toml")).expect("config");
+        (config, report)
+    }
+
+    fn options_with_type(provider_type: NamedProviderType) -> ProviderAddOptions {
+        let mut options = base_options();
+        options.provider_type = provider_type;
+        options.set_default = false;
+        options
+    }
+
+    #[test]
+    fn provider_add_default_type_writes_openai_compatible_and_bearer() {
+        let _lock = crate::storage::lock_test_env();
+        let (config, report) = written_config(options_with_type(NamedProviderType::OpenAiCompatible));
+
+        assert!(config.contains("type = \"openai-compatible\""));
+        assert!(
+            !config.contains("\nauth = "),
+            "an unset --auth must not write an auth line, got:\n{config}"
+        );
+        assert_eq!(report.provider_type, "openai-compatible");
+        assert_eq!(report.auth, "bearer");
+
+        let parsed: Config = toml::from_str(&config).expect("valid config");
+        let profile = parsed.providers.get("my-api").expect("profile");
+        assert_eq!(profile.provider_type, NamedProviderType::OpenAiCompatible);
+        assert_eq!(profile.auth, None, "the type default must stay implicit");
+        assert_eq!(profile.resolved_auth(), NamedProviderAuth::Bearer);
+    }
+
+    #[test]
+    fn provider_add_anthropic_type_keeps_the_header_default() {
+        let _lock = crate::storage::lock_test_env();
+        let (config, report) = written_config(options_with_type(NamedProviderType::AnthropicCompatible));
+
+        assert!(config.contains("type = \"anthropic-compatible\""));
+        assert!(
+            !config.contains("\nauth = "),
+            "an unset --auth must not write an auth line, got:\n{config}"
+        );
+        assert!(!config.contains("auth_header = "), "no custom header was asked for");
+        assert_eq!(report.provider_type, "anthropic-compatible");
+        assert_eq!(report.auth, "header");
+
+        let parsed: Config = toml::from_str(&config).expect("valid config");
+        let profile = parsed.providers.get("my-api").expect("profile");
+        assert_eq!(profile.provider_type, NamedProviderType::AnthropicCompatible);
+        assert_eq!(profile.auth, None);
+        assert_eq!(profile.resolved_auth(), NamedProviderAuth::Header);
+        assert_eq!(profile.resolved_auth_header().as_deref(), Some("x-api-key"));
+    }
+
+    #[test]
+    fn provider_add_gemini_type_keeps_the_header_default() {
+        let _lock = crate::storage::lock_test_env();
+        let (config, report) = written_config(options_with_type(NamedProviderType::GeminiCompatible));
+
+        assert!(config.contains("type = \"gemini-compatible\""));
+        assert!(
+            !config.contains("\nauth = "),
+            "the Gemini default auth must stay implicit"
+        );
+        assert_eq!(report.provider_type, "gemini-compatible");
+        assert_eq!(report.auth, "header");
+
+        let parsed: Config = toml::from_str(&config).expect("valid config");
+        let profile = parsed.providers.get("my-api").expect("profile");
+        assert_eq!(profile.provider_type, NamedProviderType::GeminiCompatible);
+        assert_eq!(profile.resolved_auth(), NamedProviderAuth::Header);
+        assert_eq!(profile.resolved_auth_header().as_deref(), Some("x-goog-api-key"));
+    }
+
+    #[test]
+    fn provider_add_openai_responses_type_writes_its_own_kebab_value() {
+        let _lock = crate::storage::lock_test_env();
+        let (config, report) = written_config(options_with_type(NamedProviderType::OpenAiResponses));
+
+        assert!(config.contains("type = \"openai-responses\""));
+        assert_eq!(report.provider_type, "openai-responses");
+        assert_eq!(report.auth, "bearer");
+    }
+
+    #[test]
+    fn provider_add_explicit_auth_wins_over_the_type_default() {
+        let _lock = crate::storage::lock_test_env();
+        let mut options = options_with_type(NamedProviderType::AnthropicCompatible);
+        options.auth = Some(ProviderAuthArg::Bearer);
+        let (config, report) = written_config(options);
+
+        assert!(config.contains("type = \"anthropic-compatible\""));
+        assert!(config.contains("auth = \"bearer\""));
+        assert_eq!(report.auth, "bearer");
+
+        let parsed: Config = toml::from_str(&config).expect("valid config");
+        let profile = parsed.providers.get("my-api").expect("profile");
+        assert_eq!(profile.auth, Some(NamedProviderAuth::Bearer));
+        assert_eq!(profile.resolved_auth(), NamedProviderAuth::Bearer);
+    }
+
+    #[test]
+    fn provider_add_auth_header_without_api_key_auth_is_refused() {
+        let _lock = crate::storage::lock_test_env();
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let _home = EnvVarGuard::set("HORON_HOME", temp.path());
+        let mut options = base_options();
+        options.provider_type = NamedProviderType::AnthropicCompatible;
+        options.auth_header = Some("x-custom-key".to_string());
+        options.set_default = false;
+
+        let err = configure_provider_profile(options).expect_err("--auth-header alone must fail");
+        assert_eq!(err.to_string(), "--auth-header requires --auth api-key");
+        assert!(
+            !temp.path().join("config.toml").exists(),
+            "a refused run must not write a config file"
+        );
+
+        let mut options = base_options();
+        options.no_api_key = true;
+        options.api_key = None;
+        options.auth_header = Some("x-custom-key".to_string());
+        options.set_default = false;
+        let err = configure_provider_profile(options).expect_err("--no-api-key plus --auth-header must fail");
+        assert_eq!(err.to_string(), "--auth-header can only be used with --auth api-key");
     }
 }

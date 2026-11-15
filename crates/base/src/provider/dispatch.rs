@@ -21,10 +21,11 @@ impl CompletionMode<'_> {
 }
 
 /// Error shown when no direct OpenAI-compatible runtime is configured.
-fn missing_provider_error() -> anyhow::Error {
+pub(super) fn missing_provider_error() -> anyhow::Error {
     anyhow::anyhow!(
         "No OpenAI-compatible provider is configured. Add [providers.<name>] with \
-         type = \"openai-compatible\" to config.toml, then select it with --provider-profile <name> \
+         type = \"openai-compatible\", \"openai-responses\", \"anthropic-compatible\" or \
+         \"gemini-compatible\" to config.toml, then select it with --provider-profile <name> \
          or [provider] default_provider = \"<name>\"."
     )
 }

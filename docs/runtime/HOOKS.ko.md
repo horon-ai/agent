@@ -101,8 +101,8 @@ pre_tool = ["~/bin/horon-agent-tool-policy", "~/bin/horon-agent-audit-policy"]
 (`crates/app-core/src/agent/turn_execution.rs:256-270`). `PROMPT_TOKENS`는
 제공자가 보고한 전체 프롬프트 크기이며 있을 때만 채운다. `INPUT_TOKENS`는 제공자가
 보고한 원시 입력 수다. 이 값들은 제공자 사이에서 정규화되지 않는다. 이 빌드는 모델
-호출이 OpenAI 호환 엔드포인트 하나로 나가므로
-(`crates/base/src/provider/openai.rs:16`) 캐시 입력이 `INPUT_TOKENS`에
+호출이 프로파일 `type`을 따르는 엔드포인트를 가진 프로바이더 런타임 하나로 나가므로
+(`crates/provider-openai/src/wire/mod.rs`의 `WireProtocol::endpoint`) 캐시 입력이 `INPUT_TOKENS`에
 포함되는지는 그 상류의 보고 방식을 따른다. 캐시 필드는 턴 안에 그 지표를 보고하는
 어시스턴트 메시지가 없으면 생략한다.
 

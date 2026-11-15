@@ -43,12 +43,29 @@ pub enum SchemaRecovery {
 /// every later request in the process, for a failure that had nothing to do with
 /// the schema.
 pub fn classify(status: u16, error_body: &str, sent_body: &[u8]) -> SchemaRecovery {
+    classify_for(status, error_body, sent_body, &registry::OPENAI)
+}
+
+/// [`classify`], reading the rejection against the dialect the wire normalizes
+/// with.
+///
+/// Each wire strips a different keyword set, so a rejection only teaches the
+/// dialect that will rebuild the request: a Gemini 400 naming `propertyNames`
+/// must not add that keyword to the OpenAI list, and vice versa. The learned
+/// construct is recorded under `spec.id`, which is also the id
+/// [`horon_agent_schema_dialect::normalize`] consults.
+pub(crate) fn classify_for(
+    status: u16,
+    error_body: &str,
+    sent_body: &[u8],
+    spec: &horon_agent_schema_dialect::DialectSpec,
+) -> SchemaRecovery {
     if classify_http_status(status) != HttpErrorKind::Client {
         return SchemaRecovery::Stop { hint: None };
     }
-    // The OpenAI-compatible provider normalizes with this same dialect, so a
+    // The wire that produced this failure normalizes with `spec`, so a
     // construct learned here is one its rebuilt request drops.
-    match recover_from_error(error_body, &registry::OPENAI) {
+    match recover_from_error(error_body, spec) {
         RecoveryAction::NotSchemaRelated => SchemaRecovery::Stop { hint: None },
         RecoveryAction::Unrecoverable { hint } => SchemaRecovery::Stop { hint: Some(hint) },
         RecoveryAction::RetryWithoutConstruct { description } => {
@@ -117,6 +134,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("temporary quirk store");
         quirks::use_test_path(dir.path().join("schema-quirks.json"));
         quirks::forget("openai");
+        quirks::forget("gemini");
         dir
     }
 
@@ -210,6 +228,62 @@ mod tests {
                 .rejected_formats
                 .iter()
                 .any(|format| format == "uri")
+        );
+    }
+
+    /// The Gemini dialect drops `propertyNames`, so a real Gemini 400 naming it
+    /// is learnable there even though the OpenAI dialect keeps the keyword.
+    #[test]
+    fn a_gemini_rejection_is_learned_against_the_gemini_dialect() {
+        let _dir = isolated();
+        let sent = body_with(json!({
+            "type": "object",
+            "properties": { "data": { "propertyNames": { "type": "string" } } }
+        }));
+        let rejection = error(
+            "Invalid JSON payload received. Unknown name \"propertyNames\" at \
+             'request.tools[0].function_declarations[0].parameters': Cannot find field.",
+        );
+        match classify_for(400, &rejection, &sent, &registry::GEMINI) {
+            SchemaRecovery::Retry { description } => {
+                assert!(description.contains("gemini"), "{description}");
+                assert!(description.contains("propertyNames"), "{description}");
+            }
+            other => panic!("the Gemini dialect drops propertyNames, so it is learnable: {other:?}"),
+        }
+        assert!(
+            quirks::learned_for("gemini")
+                .rejected_keywords
+                .iter()
+                .any(|keyword| keyword == "propertyNames"),
+            "the construct is remembered under the gemini dialect"
+        );
+        assert!(
+            quirks::learned_for("openai").rejected_keywords.is_empty(),
+            "the other dialect's list stays untouched"
+        );
+    }
+
+    /// A 5xx or a client error that is not about schemas is not something the
+    /// dialect argument can change, so it stops without a hint either way.
+    #[test]
+    fn a_non_schema_failure_stops_under_any_dialect() {
+        let _dir = isolated();
+        let sent = body_with(json!({ "type": "object" }));
+        for status in [401u16, 429, 500, 503] {
+            assert_eq!(
+                classify_for(status, &error("model not found"), &sent, &registry::GEMINI),
+                SchemaRecovery::Stop { hint: None },
+                "{status}"
+            );
+        }
+        assert_eq!(
+            classify_for(400, &error("the model does not exist"), &sent, &registry::GEMINI),
+            SchemaRecovery::Stop { hint: None }
+        );
+        assert!(
+            quirks::learned_for("gemini").rejected_keywords.is_empty(),
+            "nothing was learned"
         );
     }
 }

@@ -483,11 +483,6 @@
       "wire::event_types::approval_failover_wire_tests"
     ],
     "horon-agent-provider-openai": [
-      "chat::degradation_tests",
-      "chat::prompt_cache_tests",
-      "chat::schema_recovery::tests",
-      "chat::schema_recovery_tests",
-      "chat::tests",
       "citations::tests",
       "images::tests",
       "request::tests",

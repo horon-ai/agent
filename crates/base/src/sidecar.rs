@@ -177,7 +177,8 @@ impl Sidecar {
             provider: None,
             unavailable_reason: Some(
                 "no model provider is configured in this process; add [providers.<name>] with \
-                 type = \"openai-compatible\" to config.toml and select it with --provider-profile <name>"
+                 type = \"openai-compatible\", \"openai-responses\", \"anthropic-compatible\" or \
+                 \"gemini-compatible\" to config.toml and select it with --provider-profile <name>"
                     .to_string(),
             ),
         }

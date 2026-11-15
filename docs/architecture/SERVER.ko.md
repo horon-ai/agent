@@ -14,7 +14,7 @@ horon agent는 **서버 하나, 클라이언트 여럿** 구조를 쓴다. 서�
 │  ├── Unix socket:  /run/user/$UID/horon-agent.sock                                │
 │  ├── Debug socket: /run/user/$UID/horon-agent-debug.sock                          │
 │  ├── Registry:     ~/.horon/servers.json                                    │
-│  ├── Provider (OpenAI-compatible, direct /chat/completions)                 │
+│  ├── Provider (one runtime: chat, responses, messages, gemini)              │
 │  ├── MCP pool (shared across sessions)                                      │
 │  └── Sessions:                                                              │
 │        ├── 🦊 fox   (active)  → "🔥 blazing 🦊 fox"                         │

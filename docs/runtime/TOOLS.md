@@ -87,7 +87,7 @@ In a listing `core` daemon, listed tools such as `replace`, `webfetch`, and `ask
 
 #### Hosted search
 
-Model requests go straight to an OpenAI-compatible `/chat/completions` and carry no hosted tools in the body, so nothing attaches OpenAI's hosted `web_search`. `websearch` works only as a local tool.
+Model requests go straight to the endpoint the profile's `type` names, and no wire carries hosted tools in the body, so nothing attaches OpenAI's hosted `web_search`. `websearch` works only as a local tool.
 
 ### Why core stays closed
 

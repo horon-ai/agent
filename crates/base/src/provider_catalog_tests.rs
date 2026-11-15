@@ -511,78 +511,125 @@ fn named_provider_config_accepts_openai_compatible_spelling() {
     assert_eq!(profile.models[0].id, "opaque/model@id");
 }
 
-#[test]
-fn named_anthropic_compatible_profile_maps_endpoint_auth_headers_and_model() {
+/// Prefix shared by the env names the removed Anthropic profile bridge used to
+/// export. Every named profile type now runs through the OpenAI-compatible
+/// runtime, so applying any of them must leave no variable under this prefix.
+const ANTHROPIC_BRIDGE_ENV_PREFIX: &str = "HORON_AGENT_ANTHROPIC_";
+
+/// The one remaining env name under that prefix, owned by `config::env_overrides`.
+const KEPT_ANTHROPIC_ENV: &str = "HORON_AGENT_ANTHROPIC_REASONING_EFFORT";
+
+fn anthropic_bridge_env_names() -> Vec<String> {
+    let mut names: Vec<String> = std::env::vars()
+        .map(|(name, _)| name)
+        .filter(|name| name.starts_with(ANTHROPIC_BRIDGE_ENV_PREFIX))
+        .filter(|name| name != KEPT_ANTHROPIC_ENV)
+        .collect();
+    names.sort();
+    names
+}
+
+/// Apply one named profile and assert it lands on the general catalog env path:
+/// the cache namespace names the profile, the direct API base and model come
+/// from the profile, and nothing is exported under the removed bridge prefix.
+fn assert_profile_takes_general_env_path(
+    config_source: &str,
+    profile_name: &str,
+    expected_api_base: &str,
+    expected_model: &str,
+) {
     let _lock = crate::storage::lock_test_env();
     let _guard = EnvGuard::save(&[
+        "HORON_AGENT_OPENROUTER_API_BASE",
+        "HORON_AGENT_OPENROUTER_API_KEY_NAME",
+        "HORON_AGENT_OPENROUTER_ENV_FILE",
+        "HORON_AGENT_OPENROUTER_CACHE_NAMESPACE",
+        "HORON_AGENT_OPENROUTER_PROVIDER_FEATURES",
+        "HORON_AGENT_OPENROUTER_TRANSPORT_STATE",
+        "HORON_AGENT_OPENROUTER_ALLOW_NO_AUTH",
+        "HORON_AGENT_OPENROUTER_MODEL_CATALOG",
+        "HORON_AGENT_OPENROUTER_MODEL",
+        "HORON_AGENT_OPENROUTER_STATIC_MODELS",
+        "HORON_AGENT_OPENROUTER_AUTH_HEADER",
+        "HORON_AGENT_OPENROUTER_AUTH_HEADER_NAME",
         "HORON_AGENT_NAMED_PROVIDER_PROFILE",
-        "HORON_AGENT_ANTHROPIC_API_BASE",
-        "HORON_AGENT_ANTHROPIC_API_KEY_NAME",
-        "HORON_AGENT_ANTHROPIC_AUTH",
-        "HORON_AGENT_ANTHROPIC_AUTH_HEADER",
-        "HORON_AGENT_ANTHROPIC_HEADERS",
-        "HORON_AGENT_ANTHROPIC_MODEL",
-        "HORON_AGENT_RUNTIME_PROVIDER",
+        "GATEWAY_TOKEN",
     ]);
-    let previous_home = std::env::var_os("HORON_HOME");
-    let temp = tempfile::TempDir::new().expect("tempdir");
-    crate::env::set_var("HORON_HOME", temp.path());
-    crate::config::Config::invalidate_cache();
 
-    let config_path = crate::config::Config::path().expect("config path");
-    std::fs::create_dir_all(config_path.parent().expect("config parent")).expect("create config dir");
-    std::fs::write(
-        &config_path,
+    // Start from a clean slate for any leftover bridge variable this process
+    // inherited, then restore it when the test ends.
+    let stale = anthropic_bridge_env_names();
+    let stale_refs: Vec<&str> = stale.iter().map(String::as_str).collect();
+    let _stale_guard = EnvGuard::save(&stale_refs);
+    for name in &stale {
+        crate::env::remove_var(name);
+    }
+
+    let cfg: crate::config::Config = toml::from_str(config_source).expect("config should parse");
+
+    apply_named_provider_profile_env_from_config(profile_name, &cfg).expect("apply profile");
+
+    for (key, expected) in [
+        ("HORON_AGENT_OPENROUTER_CACHE_NAMESPACE", Some(profile_name)),
+        ("HORON_AGENT_NAMED_PROVIDER_PROFILE", Some(profile_name)),
+        ("HORON_AGENT_OPENROUTER_API_BASE", Some(expected_api_base)),
+        ("HORON_AGENT_OPENROUTER_API_KEY_NAME", Some("GATEWAY_TOKEN")),
+        ("HORON_AGENT_OPENROUTER_MODEL", Some(expected_model)),
+    ] {
+        assert_eq!(std::env::var(key).ok().as_deref(), expected, "{key} for {profile_name}");
+    }
+    assert!(
+        anthropic_bridge_env_names().is_empty(),
+        "a {profile_name} profile must not export the removed Anthropic bridge env"
+    );
+}
+
+#[test]
+fn named_anthropic_compatible_profile_takes_general_env_path() {
+    assert_profile_takes_general_env_path(
         r#"
-        [providers.corporate-claude]
+        [providers.gateway-anthropic]
         type = "anthropic-compatible"
         base_url = "https://gateway.example.com/anthropic/v1/"
-        auth = "bearer"
-        api_key_env = "CORPORATE_CLAUDE_TOKEN"
+        api_key_env = "GATEWAY_TOKEN"
         default_model = "claude-custom"
-
-        [providers.corporate-claude.headers]
-        x-tenant-id = "tenant-42"
-
-        [[providers.corporate-claude.models]]
-        id = "claude-custom"
-        context_window = 128000
         "#,
-    )
-    .expect("write config");
+        "gateway-anthropic",
+        "https://gateway.example.com/anthropic/v1",
+        "claude-custom",
+    );
+}
 
-    apply_named_provider_profile_env("corporate-claude").expect("apply Anthropic profile");
-    assert_eq!(
-        std::env::var("HORON_AGENT_ANTHROPIC_API_BASE").ok().as_deref(),
-        Some("https://gateway.example.com/anthropic/v1")
+#[test]
+fn named_gemini_compatible_profile_takes_general_env_path() {
+    assert_profile_takes_general_env_path(
+        r#"
+        [providers.gateway-gemini]
+        type = "gemini-compatible"
+        base_url = "https://gateway.example.com/gemini/v1beta/"
+        api_key_env = "GATEWAY_TOKEN"
+        default_model = "gemini-custom"
+        "#,
+        "gateway-gemini",
+        "https://gateway.example.com/gemini/v1beta",
+        "gemini-custom",
     );
-    assert_eq!(
-        std::env::var("HORON_AGENT_ANTHROPIC_API_KEY_NAME").ok().as_deref(),
-        Some("CORPORATE_CLAUDE_TOKEN")
-    );
-    assert_eq!(
-        std::env::var("HORON_AGENT_ANTHROPIC_AUTH").ok().as_deref(),
-        Some("bearer")
-    );
-    assert_eq!(
-        std::env::var("HORON_AGENT_ANTHROPIC_MODEL").ok().as_deref(),
-        Some("claude-custom")
-    );
-    let headers: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(&std::env::var("HORON_AGENT_ANTHROPIC_HEADERS").expect("custom headers env"))
-            .expect("headers JSON");
-    assert_eq!(headers.get("x-tenant-id").map(String::as_str), Some("tenant-42"));
-    assert_eq!(
-        std::env::var("HORON_AGENT_RUNTIME_PROVIDER").ok().as_deref(),
-        Some("anthropic-api")
-    );
+}
 
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_HOME");
-    }
-    crate::config::Config::invalidate_cache();
+#[test]
+fn named_openai_responses_profile_takes_general_env_path() {
+    assert_profile_takes_general_env_path(
+        r#"
+        [providers.gateway-responses]
+        type = "openai-responses"
+        base_url = "https://gateway.example.com/openai/v1/"
+        api_key_env = "GATEWAY_TOKEN"
+        default_model = "responses-custom"
+        "#,
+        "gateway-responses",
+        "https://gateway.example.com/openai/v1",
+        "responses-custom",
+    );
 }
 
 #[test]

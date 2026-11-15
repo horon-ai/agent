@@ -358,11 +358,11 @@ pub struct Config {
 
     /// Named provider profiles, keyed by profile name.
     ///
-    /// Example:
+    /// Example; `type` picks the wire: `openai-compatible` (default),
+    /// `openai-responses`, `anthropic-compatible`, or `gemini-compatible`:
     /// [providers.my-gateway]
     /// type = "openai-compatible"
-    /// base_url = "https://llm.example.com/v1"
-    /// api_key_env = "MY_GATEWAY_API_KEY"
+    /// base_url = "https://llm.example.com/v1", api_key_env = "MY_GATEWAY_API_KEY"
     pub providers: BTreeMap<String, NamedProviderConfig>,
 
     /// Agent-specific model defaults

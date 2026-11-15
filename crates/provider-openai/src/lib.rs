@@ -4,6 +4,11 @@ pub mod images;
 pub mod request;
 pub mod stream;
 pub mod websocket_health;
+pub mod wire;
+
+#[cfg(test)]
+#[path = "test_support_tests.rs"]
+pub(crate) mod test_support;
 
 #[cfg(test)]
 mod verdict_bytes_tests;
@@ -21,3 +26,4 @@ pub use request::{
     insert_additional_tools, is_openai_encrypted_content_too_large_error, openai_encrypted_content_fallback_summary,
     openai_encrypted_content_is_sendable,
 };
+pub use wire::WireProtocol;

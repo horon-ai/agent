@@ -17,7 +17,7 @@ server re-execs.
 │  ├── Unix socket    $XDG_RUNTIME_DIR/...     │
 │  ├── Debug socket   ...-debug.sock           │
 │  ├── Registry       ~/.horon/servers.json    │
-│  ├── Provider       OpenAI-compatible        │
+│  ├── Provider       four wires / one runtime │
 │  ├── MCP pool       shared across sessions   │
 │  └── Sessions       append-only event logs   │
 └──────────────────────────────────────────────┘
@@ -28,21 +28,30 @@ server re-execs.
 
 ## The model path
 
-Model requests leave through one path and nothing else serves models in this
-build: no second provider runtime, no router process, no plugin host.
+Model requests leave through one path: one provider runtime, no router process,
+no plugin host. The profile's `type` picks the wire, and four are accepted.
+
+| `type` | Endpoint | `api_method` |
+| --- | --- | --- |
+| `openai-compatible` (default) | `POST {base_url}/chat/completions` | `chat_completions` |
+| `openai-responses` | `POST {base_url}/responses` | `responses` |
+| `anthropic-compatible` | `POST {base_url}/messages` | `messages` |
+| `gemini-compatible` | `POST {base_url}/models/{model}:streamGenerateContent?alt=sse` | `generate_content` |
 
 1. `[provider] default_provider` selects the startup profile; `--provider-profile
    <name>` selects a `[providers.<name>]` table instead.
 2. The model comes from `--model <id>`, the profile's `default_model`, then
    `[provider] default_model`. If none is set the call ends in an error.
-3. The request URL is `base_url` + `/chat/completions`; the API prefix such as
-   `/v1` is part of `base_url`.
+3. The request URL is `base_url` + the path of that `type`; the API prefix such as
+   `/v1` is part of `base_url`, and a `base_url` that already ends with the path
+   is used as it is.
 4. Tool definitions travel as `tools` in the same request body.
 
 The one documented exception is the optional `generate_image` tool: when the active
 profile names `roles.image`, it posts to `/images/generations` and `/images/edits`
 on that same profile, with the same base URL, credential and `extra_body`. It is
-off unless `[tools] generate_image = true`.
+off unless `[tools] generate_image = true`, and only an `openai-compatible` or
+`openai-responses` profile serves it.
 
 ## Two binaries
 

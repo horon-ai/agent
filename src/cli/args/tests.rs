@@ -337,6 +337,96 @@ fn provider_add_subcommand_parses_agent_friendly_flags() {
     }
 }
 
+/// `provider add` must accept each profile type and refuse anything else.
+fn add_args_with_type(type_value: Option<&str>) -> Vec<&str> {
+    let mut argv = vec![
+        "horon-agent",
+        "provider",
+        "add",
+        "my-api",
+        "--base-url",
+        "https://llm.example.com/v1",
+        "--model",
+        "model-a",
+        "--api-key-env",
+        "MY_API_KEY",
+    ];
+    if let Some(value) = type_value {
+        argv.push("--type");
+        argv.push(value);
+    }
+    argv
+}
+
+fn parsed_provider_type(args: Args) -> ProviderTypeArg {
+    match args.command {
+        Some(Command::Provider(ProviderCommand::Add { provider_type, .. })) => provider_type,
+        other => panic!("unexpected command: {:?}", other),
+    }
+}
+
+#[test]
+fn provider_add_type_defaults_to_openai_compatible() {
+    let args = Args::try_parse_from(add_args_with_type(None)).unwrap();
+    assert_eq!(parsed_provider_type(args), ProviderTypeArg::OpenAiCompatible);
+}
+
+#[test]
+fn provider_add_type_parses_every_profile_type() {
+    for (value, expected) in [
+        ("openai-compatible", ProviderTypeArg::OpenAiCompatible),
+        ("openai-responses", ProviderTypeArg::OpenAiResponses),
+        ("anthropic-compatible", ProviderTypeArg::AnthropicCompatible),
+        ("gemini-compatible", ProviderTypeArg::GeminiCompatible),
+    ] {
+        let args = Args::try_parse_from(add_args_with_type(Some(value))).unwrap();
+        assert_eq!(parsed_provider_type(args), expected, "--type {value}");
+    }
+}
+
+#[test]
+fn provider_add_type_rejects_an_unknown_value() {
+    let error = Args::try_parse_from(add_args_with_type(Some("bogus"))).expect_err("bogus --type must fail");
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("--type"),
+        "the error must name the flag, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("bogus"),
+        "the error must quote the value, got: {rendered}"
+    );
+    assert!(
+        rendered.contains("anthropic-compatible") || rendered.contains("possible values"),
+        "the error must list the accepted values, got: {rendered}"
+    );
+}
+
+/// The clap value must reach the config type unchanged, or a `--type` the user
+/// typed would silently write a different wire.
+#[test]
+fn provider_add_type_maps_onto_the_config_type() {
+    for (value, expected) in [
+        ("openai-compatible", crate::config::NamedProviderType::OpenAiCompatible),
+        ("openai-responses", crate::config::NamedProviderType::OpenAiResponses),
+        (
+            "anthropic-compatible",
+            crate::config::NamedProviderType::AnthropicCompatible,
+        ),
+        ("gemini-compatible", crate::config::NamedProviderType::GeminiCompatible),
+    ] {
+        let parsed = crate::config::NamedProviderType::from(parsed_provider_type(
+            Args::try_parse_from(add_args_with_type(Some(value))).unwrap(),
+        ));
+        assert_eq!(parsed, expected, "--type {value}");
+        assert_eq!(
+            parsed.default_auth(),
+            expected.default_auth(),
+            "--type {value} keeps its default auth"
+        );
+    }
+}
+
 /// The bridge has two sockets and the global `--socket` already owns one of
 /// them. When the subcommand flag was also `--socket`, clap bound the global
 /// and the bridge listened on, and dialled, the same path: it came up looking

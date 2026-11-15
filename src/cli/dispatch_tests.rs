@@ -340,33 +340,52 @@ async fn spawn_lock_creates_missing_runtime_directory() {
 }
 
 #[test]
-fn provider_profile_transport_follows_profile_type() {
-    // Issue #1560: --provider-profile forced OpenAI-compatible for every profile.
+fn provider_profile_transport_is_uniform_across_profile_types() {
+    // Two separate claims: each of the four `type` values parses from a config
+    // file, and the transport choice is `ProviderChoice::OpenaiCompatible` for
+    // every profile name. The choice ignores the profile entirely, so the
+    // runtime identity stays `openai-compatible[:profile]` and the wire itself
+    // comes from the profile's `type` inside the runtime builder.
     let config: crate::config::Config = toml::from_str(
         r#"
-[providers.fcc-anthropic]
-type = "anthropic-compatible"
+[providers.fcc-chat]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:8081/v1"
+auth = "none"
+
+[providers.fcc-responses]
+type = "openai-responses"
 base_url = "http://127.0.0.1:8082/v1"
 auth = "none"
 
-[providers.local-openai]
-type = "openai-compatible"
-base_url = "http://127.0.0.1:8000/v1"
+[providers.fcc-anthropic]
+type = "anthropic-compatible"
+base_url = "http://127.0.0.1:8083/v1"
+auth = "none"
+
+[providers.fcc-gemini]
+type = "gemini-compatible"
+base_url = "http://127.0.0.1:8084/v1"
 auth = "none"
 "#,
     )
     .expect("valid config");
 
+    for profile in ["fcc-chat", "fcc-responses", "fcc-anthropic", "fcc-gemini"] {
+        assert!(
+            config.providers.contains_key(profile),
+            "{profile} must parse from its type name"
+        );
+        assert!(
+            matches!(
+                provider_choice_for_named_profile(profile),
+                ProviderChoice::OpenaiCompatible
+            ),
+            "{profile} must resolve to the OpenAI-compatible runtime identity"
+        );
+    }
     assert!(matches!(
-        provider_choice_for_named_profile_in("fcc-anthropic", &config),
-        ProviderChoice::Auto
-    ));
-    assert!(matches!(
-        provider_choice_for_named_profile_in("local-openai", &config),
-        ProviderChoice::OpenaiCompatible
-    ));
-    assert!(matches!(
-        provider_choice_for_named_profile_in("missing", &config),
+        provider_choice_for_named_profile("missing"),
         ProviderChoice::OpenaiCompatible
     ));
 }

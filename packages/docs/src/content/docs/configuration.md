@@ -37,11 +37,11 @@ input = ["text", "image"]
 
 | Key | Meaning |
 | --- | --- |
-| `type` | `"openai-compatible"` — the only value the model path uses in this build. |
+| `type` | `"openai-compatible"` (default), `"openai-responses"`, `"anthropic-compatible"`, or `"gemini-compatible"`. It picks the wire: Chat Completions, the Responses API, Anthropic Messages, or Gemini generateContent. |
 | `base_url` | Required. The address including the API prefix, e.g. `/v1`. |
 | `api_key_env` | Environment variable holding the key, checked before `env_file`. |
 | `env_file` | Key file kept in the config directory, one `NAME=value` per line. |
-| `auth` | `bearer` (default), `header` (name from `auth_header`, defaults to `api-key`), or `none`. |
+| `auth` | `bearer`, `header` (name from `auth_header`, defaulting to `api-key`, `x-api-key`, or `x-goog-api-key` by type), or `none`. Leaving it out applies the type default: `bearer` for the two OpenAI kinds and the wire's own header for Anthropic and Gemini. |
 | `default_model` | The profile's default model id. |
 | `models` | Optional array; `id` is required and `context_window`, `input`, `reasoning`, `reasoning_effort` may accompany it. |
 | `headers` | Extra HTTP headers on every request. |
@@ -49,9 +49,27 @@ input = ["text", "image"]
 | `requires_api_key` | Set `false` where there is no key, as with a local endpoint. |
 | `prompt_cache_key` | `true` always sends a lineage-stable key, `false` never; empty sends it only for `api.openai.com` and `openrouter.ai` hosts. |
 
-The request URL is `base_url` with `/chat/completions` appended, and tool
-definitions travel in the same request body as `tools`. Nothing relays between
-the agent and the endpoint.
+The request URL is `base_url` with the path of the profile's `type` appended,
+and tool definitions travel in the same request body as `tools`. Nothing relays
+between the agent and the endpoint.
+
+| `type` | Endpoint | Default auth header |
+| --- | --- | --- |
+| `openai-compatible` | `POST {base_url}/chat/completions` | `Authorization: Bearer <key>` |
+| `openai-responses` | `POST {base_url}/responses` | `Authorization: Bearer <key>` |
+| `anthropic-compatible` | `POST {base_url}/messages` | `x-api-key: <key>` |
+| `gemini-compatible` | `POST {base_url}/models/{model}:streamGenerateContent?alt=sse` | `x-goog-api-key: <key>` |
+
+A `base_url` that already ends with the wire's path is used as it is. The
+Anthropic wire sends `anthropic-version: 2023-06-01` unless the profile's
+`headers` set that name, and `open-router` is rejected at runtime by a message
+that lists the four values. Effort maps per wire: `reasoning_effort` on Chat
+Completions, `reasoning.effort` on Responses, `output_config.effort` or
+`thinking.budget_tokens` on Anthropic, and `generationConfig.thinkingConfig` on
+Gemini. The model routes report the wire as `api_method`
+(`chat_completions`, `responses`, `messages`, `generate_content`) while the
+runtime identity stays `openai-compatible[:<profile>]` for all four, so stored
+sessions and the SDK are unchanged.
 
 ## Model roles
 

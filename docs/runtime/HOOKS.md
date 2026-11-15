@@ -107,8 +107,9 @@ The token fields are summed from the assistant messages of the current turn
 (`crates/app-core/src/agent/turn_execution.rs:256-270`). `PROMPT_TOKENS` is the
 whole prompt size the provider reported, and it is filled only when present.
 `INPUT_TOKENS` is the raw input count the provider reported. These values are not
-normalized across providers. This build sends model calls through a single
-OpenAI-compatible endpoint (`crates/base/src/provider/openai.rs:16`), so whether
+normalized across providers. This build sends model calls through one provider
+runtime, whose endpoint follows the profile's `type`
+(`crates/provider-openai/src/wire/mod.rs` `WireProtocol::endpoint`), so whether
 cached input is included in `INPUT_TOKENS` follows how that upstream reports it.
 The cache fields are omitted when no assistant message in the turn reports that
 metric.

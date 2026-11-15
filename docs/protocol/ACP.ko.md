@@ -12,7 +12,7 @@ horon acp            # 표준 입출력으로 ACP v1을 처리한다
 
 `acp`는 stdout에 ACP 메시지(줄 단위 UTF-8 JSON)만 쓴다. 로그는 stderr로 나가고, stdin이 닫히면 바로 종료한다. 처리 중이던 요청은 응답을 받지 못한다.
 
-모델 호출은 `[providers.<name>]`에 적은 OpenAI 호환 엔드포인트의 `/chat/completions`로 직접 나가므로 그 프로파일이 준비돼 있어야 한다. 설정과 API 키는 [MODEL.ko.md](../provider/MODEL.ko.md)를 따른다.
+모델 호출은 활성 `[providers.<name>]` 프로파일의 `type`이 고른 방식(Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent)의 엔드포인트로 직접 나가므로 그 프로파일이 준비돼 있어야 한다. 설정과 API 키는 [MODEL.ko.md](../provider/MODEL.ko.md)를 따른다.
 
 `acp`는 에이전트 데몬에 연결한다. 데몬이 없으면 `acp`가 직접 띄우고, 이때 도구 프로필을 `[acp] tool_profile`(기본 `acp`)로 요청한다. 이미 떠 있는 데몬은 자기 설정을 그대로 쓴다. `--tool-profile`을 직접 주면 그 값이 우선한다.
 

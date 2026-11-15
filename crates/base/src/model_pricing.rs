@@ -229,7 +229,7 @@ fn openai_compatible_profile_is_local(horon_agent_provider: &str) -> bool {
     if let Some(named) = crate::config::config().providers.get(id) {
         return api_base_is_local(&named.base_url)
             || named.requires_api_key == Some(false)
-            || named.auth == crate::config::NamedProviderAuth::None;
+            || named.resolved_auth() == crate::config::NamedProviderAuth::None;
     }
     false
 }

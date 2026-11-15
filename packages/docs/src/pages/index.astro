@@ -3,14 +3,14 @@ import BaseLayout from "@/layouts/BaseLayout.astro";
 import { itemsFor, SECTIONS } from "@/data/nav";
 
 const description =
-  "horon agent: a coding agent in one Rust binary for any OpenAI-compatible endpoint, with a terminal client, SDKs, ACP and RPC.";
+  "horon agent: one Rust binary coding agent that calls the endpoint the profile's type picks, Chat Completions, Responses, Anthropic Messages or Gemini generateContent, with a terminal client, SDKs, ACP and RPC.";
 ---
 
 <BaseLayout title="horon agent" description={description}>
   <main class="home">
     <section class="hero">
       <p class="eyebrow">agent.horon.ai</p>
-      <h1>One Rust binary.<br />Any OpenAI-compatible endpoint.</h1>
+      <h1>One Rust binary.<br />Four model wires.</h1>
       <p class="lede">
         A coding agent with a terminal client of its own. It runs a turn, calls
         tools and exits — or stays up as a daemon that the client, SDKs, editors and

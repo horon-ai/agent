@@ -545,11 +545,10 @@ impl MultiProvider {
                         );
                     }
                     // This build ships only the direct OpenAI-compatible
-                    // runtime, so an explicit OpenAI route usually has no
-                    // built-in runtime behind it. Name the active profile:
-                    // it is the runtime the user is actually talking to, and
-                    // silently routing the OpenAI spec there would send an
-                    // OpenAI model id to a foreign endpoint.
+                    // runtime, so an explicit OpenAI route has no built-in
+                    // runtime behind it. Name the active profile: silently
+                    // routing the OpenAI spec there would send an OpenAI
+                    // model id to a foreign endpoint.
                     if let Some(profile_id) = ProviderRegistry::new(self).active_compatible_profile_id() {
                         anyhow::bail!(
                             "The built-in OpenAI runtime is not available, so '{model}' cannot be routed to OpenAI. \
@@ -560,7 +559,8 @@ impl MultiProvider {
                     }
                     anyhow::bail!(
                         "No OpenAI-compatible provider is configured. Add [providers.<name>] with \
-                         type = \"openai-compatible\" to config.toml and select it with --provider-profile <name>."
+                         type = \"openai-compatible\", \"openai-responses\", \"anthropic-compatible\" or \
+                         \"gemini-compatible\" to config.toml and select it with --provider-profile <name>."
                     );
                 };
                 // A pinned built-in route must not keep the previous direct
