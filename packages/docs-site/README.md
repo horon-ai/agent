@@ -12,6 +12,9 @@ The `Reference` tab (English) and its Korean counterpart under `ko/` are not
 written here. `scripts/ci/sync_docs_site.py` generates `reference/`, `ko/reference/`
 and `images/reference/` from `docs/`, which stays the source of truth. Edit
 `docs/`, run the script, and commit the result; never edit those folders by hand.
+Three more sources feed the same tab: `PHILOSOPHY.md` (with its Korean pair) and
+the READMEs of `packages/sdk/typescript`, `packages/sdk/python` and
+`packages/npm/horon`, which are English only.
 
 ```bash
 python3 scripts/ci/sync_docs_site.py          # rewrite the generated files

@@ -47,6 +47,17 @@ LANGUAGES = {
     "ko": ("ko/", ".ko.md", re.compile(r"^언어:\s")),
 }
 
+# Pages whose source is not under `docs/`, keyed by their virtual path under
+# `docs/` (which fixes the route) and valued by the English source in the
+# repository. A Korean pair beside the source (`PHILOSOPHY.ko.md`) is used when
+# it exists; a page with none appears in the English tab only.
+EXTRA_SOURCES = {
+    "philosophy.md": "PHILOSOPHY.md",
+    "sdk/typescript.md": "packages/sdk/typescript/README.md",
+    "sdk/python.md": "packages/sdk/python/README.md",
+    "sdk/npm.md": "packages/npm/horon/README.md",
+}
+
 # Sidebar labels for pages whose title is too long for a sidebar. Keyed by the
 # source path under `docs/`; a page not listed uses its title.
 SIDEBAR_TITLES = {
@@ -58,6 +69,10 @@ SIDEBAR_TITLES = {
     "performance/MEMORY.md": "Memory budgets",
     "runtime/SWARM_TASK_GRAPH.md": "Swarm task graph",
     "runtime/TOOL_SCHEDULING.md": "Tool scheduling",
+    "philosophy.md": "Philosophy",
+    "sdk/typescript.md": "TypeScript SDK",
+    "sdk/python.md": "Python SDK",
+    "sdk/npm.md": "npm launcher",
 }
 
 # Descriptions for pages whose first paragraph does not read as one. A page not
@@ -92,6 +107,7 @@ SIDEBAR_TITLES_KO = {
     "performance/MEMORY.md": "메모리 예산",
     "runtime/SWARM_TASK_GRAPH.md": "Swarm 태스크 그래프",
     "runtime/TOOL_SCHEDULING.md": "도구 스케줄링",
+    "philosophy.md": "철학",
 }
 
 DESCRIPTIONS_KO = {
@@ -115,17 +131,38 @@ MASKED = re.compile(r"\x00(\d+)\x00")
 
 
 def source_pages() -> list[PurePosixPath]:
-    """English source pages as paths relative to `docs/`, in a stable order."""
-    return sorted(
+    """English pages as virtual paths under `docs/`, in a stable order."""
+    docs = (
         PurePosixPath(path.relative_to(DOCS).as_posix())
         for path in DOCS.rglob("*.md")
         if not path.name.endswith(".ko.md")
     )
+    return sorted([*docs, *(PurePosixPath(key) for key in EXTRA_SOURCES)])
 
 
 def source_for(page: PurePosixPath, lang: str) -> PurePosixPath:
     suffix = LANGUAGES[lang][1]
     return page if suffix == ".md" else page.with_name(page.stem + suffix)
+
+
+def repo_source(page: PurePosixPath, lang: str) -> PurePosixPath | None:
+    """Repository path of the page's source in `lang`, or None when it has none."""
+    extra = EXTRA_SOURCES.get(page.as_posix())
+    if extra is None:
+        return PurePosixPath("docs") / source_for(page, lang)
+    path = PurePosixPath(extra)
+    if lang != "en":
+        path = path.with_name(path.stem + LANGUAGES[lang][1])
+    return path if (REPO / path).is_file() else None
+
+
+def extra_page_for(repo_path: PurePosixPath) -> PurePosixPath | None:
+    """The page an extra source (in any language) produces, if `repo_path` is one."""
+    for key, english in EXTRA_SOURCES.items():
+        base = PurePosixPath(english)
+        if repo_path in {base.with_name(base.stem + suffix) for _, suffix, _ in LANGUAGES.values()}:
+            return PurePosixPath(key)
+    return None
 
 
 def route(page: PurePosixPath) -> str:
@@ -153,12 +190,13 @@ def image_url(rel: PurePosixPath) -> str:
 def anchor_map(source: PurePosixPath) -> dict[str, str]:
     """GitHub heading slug -> the id Mintlify gives that heading, where they differ.
 
-    GitHub drops `/` from a heading id (`A/B` -> `ab`); Mintlify keeps it
-    (`a/b`), so a link written against the source needs the second form.
+    `source` is a repository path. GitHub drops `/` from a heading id (`A/B` ->
+    `ab`); Mintlify keeps it (`a/b`), so a link written against the source needs
+    the second form.
     """
     mapping: dict[str, str] = {}
     in_fence = False
-    for line in (DOCS / source).read_text(encoding="utf-8").splitlines():
+    for line in (REPO / source).read_text(encoding="utf-8").splitlines():
         if FENCE.match(line):
             in_fence = not in_fence
             continue
@@ -179,30 +217,31 @@ def mapped_anchor(fragment: str, source: PurePosixPath) -> str:
 
 
 def rewrite_target(target: str, origin: PurePosixPath, pages: set[PurePosixPath], lang: str) -> str:
-    """Map one relative link target found in `docs/<origin>` to a site URL."""
+    """Map one relative link target found in the repository file `origin` to a site URL."""
     if target.startswith("#"):
         return mapped_anchor(target[1:], origin)
     if EXTERNAL.match(target):
         return target
     path_part, _, fragment = target.partition("#")
-    resolved = PurePosixPath("docs") / origin.parent
+    resolved = origin.parent
     for part in PurePosixPath(path_part).parts:
         if part == "..":
             resolved = resolved.parent
         elif part != ".":
             resolved = resolved / part
-    try:
-        inside = resolved.relative_to("docs")
-    except ValueError:
-        return GITHUB_BLOB + resolved.as_posix() + (f"#{fragment}" if fragment else "")
-    anchor = mapped_anchor(fragment, inside) if (DOCS / inside).is_file() else (f"#{fragment}" if fragment else "")
-    english = inside
-    if inside.name.endswith(".ko.md"):
-        english = inside.with_name(inside.name[: -len(".ko.md")] + ".md")
-    if english in pages:
-        return site_url(route(english), lang) + anchor
-    if inside.suffix == ".svg" and (DOCS / inside).is_file():
-        return image_url(inside) + anchor
+    exists = (REPO / resolved).is_file()
+    anchor = mapped_anchor(fragment, resolved) if exists else (f"#{fragment}" if fragment else "")
+    page = extra_page_for(resolved)
+    if page is None and resolved.parts[:1] == ("docs",):
+        inside = PurePosixPath(*resolved.parts[1:])
+        if inside.suffix == ".svg" and exists:
+            return image_url(inside) + anchor
+        page = inside
+        if inside.name.endswith(".ko.md"):
+            page = inside.with_name(inside.name[: -len(".ko.md")] + ".md")
+    if page is not None and page in pages:
+        shown = lang if repo_source(page, lang) is not None else "en"
+        return site_url(route(page), shown) + anchor
     return GITHUB_BLOB + resolved.as_posix() + anchor
 
 
@@ -274,7 +313,9 @@ def describe(body: list[str]) -> str:
 
 
 def convert_page(page: PurePosixPath, lang: str, pages: set[PurePosixPath]) -> str:
-    source = DOCS / source_for(page, lang)
+    repo = repo_source(page, lang)
+    assert repo is not None, f"{page} has no {lang} source"
+    source = REPO / repo
     lines = source.read_text(encoding="utf-8").splitlines()
     switch = LANGUAGES[lang][2]
     title = ""
@@ -299,7 +340,7 @@ def convert_page(page: PurePosixPath, lang: str, pages: set[PurePosixPath]) -> s
             continue
         if switch.match(line) or HTML_COMMENT_LINE.match(line):
             continue
-        out.append(convert_line(line, source_for(page, lang), pages, lang))
+        out.append(convert_line(line, repo, pages, lang))
     while out and not out[0].strip():
         out.pop(0)
     description = DESCRIPTIONS_BY_LANG[lang].get(page.as_posix())
@@ -310,7 +351,7 @@ def convert_page(page: PurePosixPath, lang: str, pages: set[PurePosixPath]) -> s
         front.append(f"sidebarTitle: {json.dumps(sidebar, ensure_ascii=False)}")
     front.append(f"description: {json.dumps(description, ensure_ascii=False)}")
     front.append("---")
-    note = f"{{/* Generated from docs/{source_for(page, lang).as_posix()} by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}}"
+    note = f"{{/* Generated from {repo.as_posix()} by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}}"
     return "\n".join([*front, "", note, "", *out]).rstrip() + "\n"
 
 
@@ -320,7 +361,8 @@ def expected_files() -> dict[Path, str | Path]:
     files: dict[Path, str | Path] = {}
     for lang in LANGUAGES:
         for page in sorted(pages):
-            files[mdx_path(page, lang)] = convert_page(page, lang, pages)
+            if repo_source(page, lang) is not None:
+                files[mdx_path(page, lang)] = convert_page(page, lang, pages)
     for svg in sorted(DOCS.rglob("*.svg")):
         files[SITE / IMAGES / svg.relative_to(DOCS).as_posix()] = svg
     return files

@@ -54,7 +54,8 @@
                 "group": "Start here",
                 "pages": [
                   "reference/index",
-                  "reference/diagram/index"
+                  "reference/diagram/index",
+                  "reference/philosophy"
                 ]
               },
               {
@@ -115,6 +116,14 @@
                   "reference/release/npm",
                   "reference/release/windows"
                 ]
+              },
+              {
+                "group": "SDKs and packages",
+                "pages": [
+                  "reference/sdk/typescript",
+                  "reference/sdk/python",
+                  "reference/sdk/npm"
+                ]
               }
             ]
           },
@@ -150,7 +159,8 @@
                 "group": "시작",
                 "pages": [
                   "ko/reference/index",
-                  "ko/reference/diagram/index"
+                  "ko/reference/diagram/index",
+                  "ko/reference/philosophy"
                 ]
               },
               {

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sync_docs_site as sync
 
 PAGES = set(sync.source_pages())
-ORIGIN = PurePosixPath("runtime/TOOLS.md")
+ORIGIN = PurePosixPath("docs/runtime/TOOLS.md")
 
 
 def convert(line: str, origin: PurePosixPath = ORIGIN) -> str:
@@ -57,7 +57,7 @@ class LinkTests(unittest.TestCase):
         )
 
     def test_image_points_at_the_copied_svg(self) -> None:
-        out = convert("![x](01-system-overview.svg)", PurePosixPath("diagram/README.md"))
+        out = convert("![x](01-system-overview.svg)", PurePosixPath("docs/diagram/README.md"))
         self.assertEqual(out, "![x](/images/reference/diagram/01-system-overview.svg)")
 
     def test_external_link_and_autolink(self) -> None:
@@ -67,16 +67,34 @@ class LinkTests(unittest.TestCase):
 
 class AnchorTests(unittest.TestCase):
     def test_slash_in_a_heading_is_kept_in_the_site_id(self) -> None:
-        mapping = sync.anchor_map(PurePosixPath("performance/BENCHMARK.md"))
+        mapping = sync.anchor_map(PurePosixPath("docs/performance/BENCHMARK.md"))
         self.assertEqual(mapping.get("ab-measurement"), "a/b-measurement")
 
     def test_same_page_fragment_uses_the_site_id(self) -> None:
-        out = sync.rewrite_target("#ab-measurement", PurePosixPath("performance/BENCHMARK.md"), PAGES, "en")
+        out = sync.rewrite_target("#ab-measurement", PurePosixPath("docs/performance/BENCHMARK.md"), PAGES, "en")
         self.assertEqual(out, "#a/b-measurement")
 
     def test_unmapped_fragment_is_unchanged(self) -> None:
-        out = sync.rewrite_target("#overview", PurePosixPath("performance/BENCHMARK.md"), PAGES, "en")
+        out = sync.rewrite_target("#overview", PurePosixPath("docs/performance/BENCHMARK.md"), PAGES, "en")
         self.assertEqual(out, "#overview")
+
+
+class ExtraSourceTests(unittest.TestCase):
+    def test_extra_pages_are_generated_with_the_philosophy_in_both_languages(self) -> None:
+        self.assertIsNotNone(sync.repo_source(PurePosixPath("philosophy.md"), "ko"))
+        self.assertIsNone(sync.repo_source(PurePosixPath("sdk/python.md"), "ko"))
+
+    def test_korean_philosophy_links_to_the_philosophy_page(self) -> None:
+        out = sync.rewrite_target("PHILOSOPHY.md", PurePosixPath("PHILOSOPHY.ko.md"), PAGES, "ko")
+        self.assertEqual(out, "/ko/reference/philosophy")
+
+    def test_link_to_a_page_with_no_korean_source_falls_back_to_english(self) -> None:
+        out = sync.rewrite_target("../../packages/sdk/python/README.md", PurePosixPath("docs/runtime/TOOLS.md"), PAGES, "ko")
+        self.assertEqual(out, "/reference/sdk/python")
+
+    def test_package_readme_link_to_an_unmirrored_file_goes_to_github(self) -> None:
+        out = sync.rewrite_target("RELEASING.md", PurePosixPath("packages/sdk/python/README.md"), PAGES, "en")
+        self.assertEqual(out, f"{sync.GITHUB_BLOB}packages/sdk/python/RELEASING.md")
 
 
 class PageTests(unittest.TestCase):
