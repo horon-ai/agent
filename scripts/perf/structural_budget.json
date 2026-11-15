@@ -12,7 +12,7 @@
     "prefix: the tool catalog one core-profile request sends is 9151 bytes for the core profile's eight eager tools (was 9751; 9714 measured before the description cuts; raised from 9111 by the 40-byte rg note bash_definition_prefers_repository_search_tools requires), measured from the request body the provider builds; the tool count is checked beside it so a catalog that shrank its way under the ceiling fails instead of passing.",
     "prompt: the core static prompt with no prompt files is at most 1322 bytes (ci.yml run 43656656999, down from 1367), a request after the session captured its prompt sources reads none of them (54 probes over nine requests before the snapshot, 0 after), and at most one listed-tool index row is cut mid-sentence (todo keeps its text; 5 rows were cut before).",
     "session context: describing a directory outside any repository starts no git process (1 before), a work tree starts one (3 before), and a machine whose PCI list has no display controller starts no GPU probe (1 before); structural-perf run 43654214186.",
-    "tool dispatch: one Registry::execute call of a fixture tool, counted by the allocator of the tool_dispatch_perf target, for a small file-write input and for one carrying 10 KB of content. The four ceilings are the measured values: 638 allocations and 29430 requested bytes per dispatch for the small input, 638 and 39817 for the 10 KB one, read from structural-perf run 43774864729 after the lifecycle fields were built once per dispatch. The baseline before that change was 682 and 32002, 696 and 107420 (runs 43770373891 and 43772274944)."
+    "tool dispatch: one Registry::execute call of a fixture tool, counted by the allocator of the tool_dispatch_perf target, for a small file-write input and for one carrying 10 KB of content. The four ceilings are the measured values: 632 allocations and 28926 requested bytes per dispatch for the small input, 632 and 39313 for the 10 KB one, read from structural-perf run 43775715090 after a prepared schema was found without building its text. Earlier values: 638 and 29430, 638 and 39817 once the lifecycle fields were built once per dispatch (run 43774864729); 682 and 32002, 696 and 107420 before any change (runs 43770373891 and 43772274944)."
   ],
   "bounds": {
     "queue_depth_high_water": 64,
@@ -53,9 +53,9 @@
     "session_context_git_spawns_outside_repo_max": 0,
     "session_context_git_spawns_in_repo_max": 1,
     "session_context_gpu_probe_spawns_without_display_max": 0,
-    "tool_dispatch_small_allocs_per_dispatch_max": 638,
-    "tool_dispatch_small_alloc_bytes_per_dispatch_max": 29430,
-    "tool_dispatch_large_allocs_per_dispatch_max": 638,
-    "tool_dispatch_large_alloc_bytes_per_dispatch_max": 39817
+    "tool_dispatch_small_allocs_per_dispatch_max": 632,
+    "tool_dispatch_small_alloc_bytes_per_dispatch_max": 28926,
+    "tool_dispatch_large_allocs_per_dispatch_max": 632,
+    "tool_dispatch_large_alloc_bytes_per_dispatch_max": 39313
   }
 }
