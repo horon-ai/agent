@@ -48,6 +48,7 @@ mod debug_session_admin;
 mod debug_swarm_read;
 mod debug_swarm_write;
 mod durable_state;
+mod fanout_flush;
 pub mod foreground_state;
 mod headless;
 mod idle_hibernation;
