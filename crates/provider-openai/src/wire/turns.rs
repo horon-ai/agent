@@ -46,8 +46,8 @@ fn missing_output() -> String {
 ///
 /// Pure: no I/O and no global state.
 pub fn normalize(messages: &[Message]) -> Vec<Message> {
-    let merged = merge_consecutive(messages);
-    let mut pool = result_pool(&merged);
+    let mut merged = merge_consecutive(messages);
+    let mut pool = result_pool(&mut merged);
     let mut output: Vec<Message> = Vec::with_capacity(merged.len());
     // The calls of the latest assistant turn, in the order they were issued.
     let mut pending: Vec<String> = Vec::new();
@@ -66,16 +66,10 @@ pub fn normalize(messages: &[Message]) -> Vec<Message> {
                 push(&mut output, message);
             }
             Role::User => {
-                // Results are delivered from the pool, so the copy in this turn
-                // must not be sent again.
-                let mut kept: Vec<ContentBlock> = Vec::with_capacity(message.content.len());
-                for block in message.content {
-                    if !matches!(block, ContentBlock::ToolResult { .. }) {
-                        kept.push(block);
-                    }
-                }
+                // The results were taken out of the merged history into the pool,
+                // so what this turn still holds is exactly what it keeps.
                 let mut content = answers(&std::mem::take(&mut pending), &mut pool);
-                content.extend(kept);
+                content.extend(message.content);
                 push(
                     &mut output,
                     Message {
@@ -121,12 +115,20 @@ fn answers(ids: &[String], pool: &mut HashMap<String, VecDeque<ContentBlock>>) -
 }
 
 /// Every stored tool result, in history order, grouped by the call it answers.
-fn result_pool(messages: &[Message]) -> HashMap<String, VecDeque<ContentBlock>> {
+///
+/// The results are moved out of `messages`, so each one is copied once (into the
+/// pooled entry) rather than twice, and each user turn is left holding only the
+/// blocks it keeps.
+fn result_pool(messages: &mut [Message]) -> HashMap<String, VecDeque<ContentBlock>> {
     let mut pool: HashMap<String, VecDeque<ContentBlock>> = HashMap::new();
-    for message in messages.iter().filter(|message| message.role == Role::User) {
-        for block in &message.content {
-            if let ContentBlock::ToolResult { tool_use_id, .. } = block {
-                pool.entry(tool_use_id.clone()).or_default().push_back(block.clone());
+    for message in messages.iter_mut().filter(|message| message.role == Role::User) {
+        for block in std::mem::take(&mut message.content) {
+            match &block {
+                ContentBlock::ToolResult { tool_use_id, .. } => {
+                    let key = tool_use_id.clone();
+                    pool.entry(key).or_default().push_back(block);
+                }
+                _ => message.content.push(block),
             }
         }
     }

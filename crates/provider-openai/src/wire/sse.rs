@@ -91,9 +91,7 @@ impl<P: WireParser> WireSseStream<P> {
     /// Parse every complete frame already buffered, queuing its events.
     fn drain_frames(&mut self) {
         while let Some(data) = self.framer.take_next() {
-            let mut events = VecDeque::new();
-            self.parser.parse(&data, &mut events);
-            self.pending.extend(events);
+            self.parser.parse(&data, &mut self.pending);
         }
     }
 }
@@ -133,12 +131,10 @@ impl<P: WireParser> Stream for WireSseStream<P> {
                     // before the closing events: returning early would skip the
                     // `finish` step below on the next poll, which then only sees
                     // `drained` and ends the stream silently.
-                    let mut closing = VecDeque::new();
                     if let Some(data) = this.framer.flush() {
-                        this.parser.parse(&data, &mut closing);
+                        this.parser.parse(&data, &mut this.pending);
                     }
-                    this.parser.finish(&mut closing);
-                    this.pending.extend(closing);
+                    this.parser.finish(&mut this.pending);
                     if let Some(event) = this.pop_pending() {
                         return Poll::Ready(Some(Ok(event)));
                     }

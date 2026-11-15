@@ -1,9 +1,9 @@
 //! The OpenAI Responses wire: request body and stream events.
 //!
-//! `POST {base}/responses` is the shape the provider has always spoken, so this
-//! module adds no translation of its own for the conversation or the tool
-//! catalog: [`build_responses_request`] assembles the body from the canonical
-//! history with the existing input and tool builders.
+//! `POST {base}/responses` is the Responses API's own shape, and this module adds
+//! no translation of its own for the conversation or the tool catalog:
+//! [`build_responses_request`] assembles the body from the canonical history with
+//! the existing input and tool builders.
 //!
 //! The stream is the Chat-compatible Responses parser
 //! ([`parse_openai_response_event`]) wrapped so the events leave in the order the
@@ -11,7 +11,9 @@
 //! arrives and an explicit start only for a reasoning item, never a close; the
 //! wrapper opens the thinking block on the first delta, closes it before text, a
 //! tool call, usage or the end of the message, and reports a truncated body at
-//! EOF. Native reasoning items are history-only and are not replayed here.
+//! EOF. Reasoning items are not carried in either direction: the request is sent
+//! with `store: false` and no `include` for encrypted reasoning, and the inner
+//! parser's `OpenAIReasoning` event is dropped rather than stored for replay.
 
 use crate::chat::transport::snippet;
 use crate::stream::{StreamingToolCallState, parse_openai_response_event};
@@ -55,8 +57,10 @@ pub fn build_responses_request(
         "model": model,
         "input": crate::request::build_responses_input(messages),
         "stream": true,
-        // Reasoning items are replayed from history instead of being stored on
-        // the account, so a request never depends on earlier account state.
+        // The answer is not stored on the account, so a request never depends on
+        // earlier account state. Reasoning items are not replayed either way:
+        // the request adds no `include` for encrypted reasoning and the parser
+        // drops the reasoning item it sees.
         "store": false,
     });
     if !system.trim().is_empty() {
@@ -220,8 +224,9 @@ impl ResponsesParser {
     fn translate(&mut self, events: VecDeque<StreamEvent>, out: &mut VecDeque<StreamEvent>) {
         for event in events {
             match event {
-                // History-only: the reasoning item is replayed by the request
-                // builder, never rendered as stream content.
+                // Dropped: this wire sends `store: false` without requesting
+                // encrypted reasoning, so the item could not be replayed, and a
+                // reasoning delta already reached the consumer as thinking text.
                 StreamEvent::OpenAIReasoning { .. } => {}
                 StreamEvent::ThinkingStart => self.ensure_thinking(out),
                 StreamEvent::ThinkingDelta(delta) => {

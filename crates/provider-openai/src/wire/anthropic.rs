@@ -446,7 +446,7 @@ impl WireParser for AnthropicParser {
                 let Some(index) = parsed.get("index").and_then(Value::as_u64) else {
                     return;
                 };
-                let content_block = parsed.get("content_block").cloned().unwrap_or(Value::Null);
+                let content_block = &parsed["content_block"];
                 match content_block.get("type").and_then(Value::as_str) {
                     Some("text") => {
                         self.blocks.insert(index, Block::Text);
@@ -515,7 +515,7 @@ impl WireParser for AnthropicParser {
                 let Some(index) = parsed.get("index").and_then(Value::as_u64) else {
                     return;
                 };
-                let delta = parsed.get("delta").cloned().unwrap_or(Value::Null);
+                let delta = &parsed["delta"];
                 match delta.get("type").and_then(Value::as_str) {
                     Some("text_delta") => {
                         self.blocks.entry(index).or_insert(Block::Text);

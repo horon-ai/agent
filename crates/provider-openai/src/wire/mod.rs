@@ -118,6 +118,11 @@ fn joined(base: &str, path: &str) -> String {
 }
 
 /// The Gemini streaming URL for `model`, honouring a base that names the method.
+///
+/// A model id may be written either bare (`gemini-2.5-pro`) or with the
+/// resource prefix the Gemini API itself uses (`models/gemini-2.5-pro`). The
+/// path already carries `models/`, so one leading prefix is dropped here rather
+/// than sent twice, which the server would reject.
 fn gemini_endpoint(base: &str, model: &str) -> String {
     const METHOD: &str = ":streamGenerateContent";
     const QUERY: &str = "?alt=sse";
@@ -126,6 +131,7 @@ fn gemini_endpoint(base: &str, model: &str) -> String {
     } else if base.ends_with(METHOD) {
         format!("{base}{QUERY}")
     } else {
+        let model = model.strip_prefix("models/").unwrap_or(model);
         joined(base, &format!("models/{model}{METHOD}{QUERY}"))
     }
 }
@@ -230,6 +236,21 @@ mod tests {
         let full = "https://api.example.test/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse";
         assert_eq!(gemini.endpoint(full, MODEL), full);
         assert_eq!(gemini.endpoint(&format!("{full}/"), MODEL), full);
+    }
+
+    #[test]
+    fn a_gemini_model_written_with_its_resource_prefix_names_the_model_once() {
+        // The path already carries `models/`, so a model id in the API's own
+        // `models/<id>` form must not double it.
+        let gemini = WireProtocol::GeminiGenerateContent;
+        let expected = "https://api.example.test/v1/models/gemini-2.5-pro:streamGenerateContent?alt=sse";
+        assert_eq!(gemini.endpoint(BASE, "gemini-2.5-pro"), expected);
+        assert_eq!(gemini.endpoint(BASE, "models/gemini-2.5-pro"), expected);
+        // Only one prefix is a resource prefix; the rest is the model's own name.
+        assert_eq!(
+            gemini.endpoint(BASE, "models/models/gemini-2.5-pro"),
+            "https://api.example.test/v1/models/models/gemini-2.5-pro:streamGenerateContent?alt=sse"
+        );
     }
 
     #[test]
