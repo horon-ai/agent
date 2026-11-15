@@ -1160,6 +1160,10 @@ jobs:
         # `tool::lifecycle::tests` (5) pins the `TOOL_LIFECYCLE` field list a
         # dispatch builds once and relabels for its done or error line: names,
         # order, values, and the input size counted without building the text.
+        # `tool::arg_repair::prepared_tests` (6) pins the prepared-schema cache
+        # every dispatch looks up: one entry per schema, a changed schema gets
+        # its own validator, and two schemas under one key never share one.
+        # `tool::arg_repair::tests` (16) are the repairs that lookup serves.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1173,6 +1177,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 5 \
             -- tool::lifecycle::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 6 \
+            -- tool::arg_repair::prepared_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 16 \
+            -- tool::arg_repair::tests:: --nocapture
 
       - name: Run prompt surface cohort
         shell: bash

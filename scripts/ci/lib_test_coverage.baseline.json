@@ -187,7 +187,6 @@
       "tool::ambient::tests",
       "tool::apply_patch::apply_patch_tests",
       "tool::approval_override::tests",
-      "tool::arg_repair::tests",
       "tool::arg_repair_record::tests",
       "tool::artifacts::render_tests",
       "tool::artifacts::tests",
