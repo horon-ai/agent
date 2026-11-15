@@ -517,7 +517,7 @@ still states the old behaviour. To find the pages:
 |`packages/npm/`, `publish-*.yml`|`docs/release/NPM.md`, `docs/release/INSTALL.md`|
 |a value in "Configuration that must keep its default"|that table and the page that documents the setting|
 
-The same rule covers `README.md`, this file, and `packages/docs` (see
+The same rule covers `README.md`, this file, and `packages/docs-site` (see
 "Two documentation sets" below). A code pull request that needs no document
 change says so in its body with the reason.
 
