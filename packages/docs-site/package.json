@@ -1,0 +1,15 @@
+{
+  "name": "@horon-ai/agent-docs-site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Mintlify documentation site for horon-agent (agent.horon.ai)",
+  "scripts": {
+    "dev": "mint dev",
+    "validate": "mint validate",
+    "broken-links": "mint broken-links",
+    "check": "mint validate && mint broken-links"
+  },
+  "devDependencies": {
+    "mint": "^4.3.34"
+  }
+}
