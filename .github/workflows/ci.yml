@@ -2045,10 +2045,16 @@ jobs:
     timeout-minutes: 10
     # `packages/docs-site` is the Mintlify project served at agent.horon.ai.
     # Mintlify builds and deploys it from the connected GitHub repository, so
-    # nothing deploys from CI: this job only fails when the project no longer
-    # validates or contains a broken internal link.
+    # nothing deploys from CI: this job fails when the project no longer
+    # validates, contains a broken internal link, or when its Reference pages
+    # are stale against `docs/` (`scripts/ci/sync_docs_site.py --check`).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Reference pages are current
+        run: |
+          python3 -m unittest -v scripts/ci/test_sync_docs_site.py
+          python3 scripts/ci/sync_docs_site.py --check
 
       # The Mintlify CLI (`mint`) runs on Node; pin it instead of inheriting the
       # image's version.

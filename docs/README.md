@@ -4,7 +4,7 @@ Language: **English** | [한국어](README.ko.md)
 
 This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
 
-The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) is a separate set of pages written for Mintlify in `packages/docs-site`; nothing generates it from this folder, so a behavior change that the site also describes is edited in both places.
+The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) shows them under its Reference tab: `scripts/ci/sync_docs_site.py` writes `packages/docs-site/reference/` from this folder, and the guides in the rest of `packages/docs-site` are written by hand, so a behavior change that a guide also describes is edited in both places.
 
 ## Two modes, one agent
 
@@ -61,3 +61,4 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | The same content appears in two documents | Make one the source of truth and have the other point at it. |
 | You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
 | You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
+| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the regenerated `packages/docs-site/reference/` and `packages/docs-site/images/reference/`; CI fails while they are stale. |

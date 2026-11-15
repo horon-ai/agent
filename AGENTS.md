@@ -187,7 +187,7 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 |`docs/`|behaviour documents in English/Korean pairs; the English files are compiled into the agent binary|
 |`packages/sdk/typescript`, `packages/sdk/python`|the TypeScript and Python SDKs|
 |`packages/npm/horon`|the `@horon-ai/horon` launcher|
-|`packages/docs-site`|the agent.horon.ai site: a Mintlify project of hand-written pages, not generated from `docs/`|
+|`packages/docs-site`|the agent.horon.ai site: a Mintlify project. `reference/` and `images/reference/` are generated from `docs/` by `scripts/ci/sync_docs_site.py`; every other page is hand-written|
 |`scripts/ci`, `scripts/perf`, `scripts/release`, `scripts/install`, `scripts/npm`|gates, benchmarks, release, installer and packaging scripts|
 
 Boundaries, each with the gate that enforces it:
@@ -550,9 +550,11 @@ in the same pull request.
 
 - **Wrong checkout.** A relative path used from the main checkout edits the
   main checkout, not the worktree. Check the path before every edit.
-- **Two documentation sets.** `docs/` is compiled into the binary;
-  `packages/docs-site` is the site. Neither is generated from the other, so a claim
-  fixed in one stays wrong in the other until both are edited.
+- **Two documentation sets.** `docs/` is compiled into the binary and is the
+  source of truth for the site's Reference tab: edit `docs/`, run
+  `python3 scripts/ci/sync_docs_site.py` and commit the result, never edit
+  `packages/docs-site/reference/`. The site's other pages are hand-written, so a
+  claim fixed in `docs/` stays wrong in a guide until the guide is edited too.
 - **Renamed heading.** It breaks `#anchor` links in both languages;
   `check_docs_pairs.py` reports them.
 - **Stale `Cargo.lock`.** It passes every job that does not pass `--locked` and

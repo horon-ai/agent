@@ -4,7 +4,7 @@
 
 이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
-문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 `packages/docs-site`에서 Mintlify용으로 따로 쓴 문서 묶음이다. 이 폴더에서 생성하지 않으므로, 사이트도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
+문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 이 문서들을 Reference 탭에 보여 준다. `scripts/ci/sync_docs_site.py`가 이 폴더에서 `packages/docs-site/reference/`를 생성하고, `packages/docs-site`의 나머지 가이드는 손으로 쓰므로, 가이드도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
 
 ## 하나의 에이전트, 두 가지 모드
 
@@ -61,3 +61,4 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | 같은 내용이 두 문서에 있을 때 | 하나를 정본으로 두고 나머지는 그것을 가리킨다. |
 | 측정 기록·인수 기록·계획을 남기고 싶을 때 | 문서를 만들지 않고 PR 본문이나 이슈에 적는다. 성능 수치는 `performance/RESULTS.md`에만 적는다. |
 | 문서를 고칠 때 | 짝을 함께 맞춘다. 모든 `X.md` 옆에 한국어 `X.ko.md`를 두고, `python3 scripts/ci/check_docs_pairs.py`가 두 파일의 존재와 제목·표 행·코드 펜스·링크 수 일치, 상대 링크 해석을 확인한다. |
+| `docs/` 아래 파일을 고칠 때 | `python3 scripts/ci/sync_docs_site.py`를 실행해 다시 생성된 `packages/docs-site/reference/`와 `packages/docs-site/images/reference/`를 함께 커밋한다. 오래된 상태면 CI가 실패한다. |

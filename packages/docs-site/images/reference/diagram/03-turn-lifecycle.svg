@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" width="960" height="700" role="img" aria-labelledby="t d">
+<title id="t">turn lifecycle</title><desc id="d">A prompt read by the daemon's request loop starts a turn: the agent begins a fresh TurnState, sends one request to the provider wire the profile's type names, and streams the response back as events. Tool calls run with the eager schemas the request carried, or through toolbox for tools that are deferred or index-only, and every result returns to the next request. When no tool call remains the turn finishes and the terminal event closes it. Each event is appended to the session store and fanned out to the session's attachments; since #339 (0f2711ef) the turn sends its completion report to the request loop before its terminal event, so a prompt sent on Done never meets a busy session, and a cancel flushes the session's fanout forwarders, bounded at 500 ms, before it writes Interrupted and Done.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="700" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="30" font-size="12.5" class="m">The turn</text>
+<text x="560" y="30" font-size="12.5" class="m">Where each step lands</text>
+
+<rect x="30" y="44" width="470" height="620" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+
+<rect x="44" y="60" width="380" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="79" font-size="13" font-weight="600" text-anchor="middle">prompt</text>
+<text x="234" y="96" font-size="11" class="m mono" text-anchor="middle">message frame</text>
+<line x1="234" y1="106" x2="234" y2="118" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="118" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="138" font-size="12.5" font-weight="600" text-anchor="middle">request loop takes the turn</text>
+<text x="234" y="157" font-size="11" class="m mono" text-anchor="middle">handle_client</text>
+<line x1="234" y1="170" x2="234" y2="182" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="182" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
+<text x="234" y="202" font-size="12.5" font-weight="600" text-anchor="middle">turn state</text>
+<text x="234" y="221" font-size="11" class="m mono" text-anchor="middle">begin_turn_state → TurnState</text>
+<line x1="234" y1="234" x2="234" y2="246" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="246" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="266" font-size="12.5" font-weight="600" text-anchor="middle">provider request</text>
+<text x="234" y="285" font-size="11" class="m mono" text-anchor="middle">POST the wire of the profile's type</text>
+<line x1="234" y1="298" x2="234" y2="310" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="310" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="330" font-size="12.5" font-weight="600" text-anchor="middle">streamed response</text>
+<text x="234" y="349" font-size="11" class="m mono" text-anchor="middle">text deltas, reasoning, tool calls</text>
+<line x1="234" y1="362" x2="234" y2="374" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="374" width="380" height="66" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="394" font-size="12.5" font-weight="600" text-anchor="middle">tool calls</text>
+<text x="234" y="412" font-size="11" class="m mono" text-anchor="middle">eager schemas, called directly</text>
+<text x="234" y="429" font-size="11" class="m mono" text-anchor="middle">deferred: toolbox run</text>
+<line x1="234" y1="440" x2="234" y2="452" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="452" width="380" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="471" font-size="12.5" font-weight="600" text-anchor="middle">tool results</text>
+<text x="234" y="488" font-size="11" class="m mono" text-anchor="middle">paired with calls</text>
+
+<path d="M424 475 H470 V272 H424" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="492" y="374" font-size="10" class="m" transform="rotate(90 492 374)">more tools</text>
+
+<line x1="234" y1="498" x2="234" y2="520" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="244" y="514" font-size="10" class="m">no tool call left</text>
+
+<rect x="44" y="520" width="380" height="60" rx="8" fill="var(--bg)" stroke="var(--ok)" stroke-width="1.5"/>
+<text x="234" y="541" font-size="12.5" font-weight="600" text-anchor="middle">finish</text>
+<text x="234" y="559" font-size="11" class="m mono" text-anchor="middle">completion report first,</text>
+<text x="234" y="574" font-size="11" class="m mono" text-anchor="middle">then the terminal event: Done</text>
+
+<rect x="44" y="592" width="380" height="56" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="612" font-size="11.5" text-anchor="middle">the next prompt finds the turn closed,</text>
+<text x="234" y="630" font-size="11.5" text-anchor="middle">never "Already processing a message"</text>
+
+<rect x="560" y="44" width="370" height="196" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="574" y="66" font-size="12.5" class="m">session store, append-only</text>
+<rect x="574" y="78" width="342" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="745" y="98" font-size="12" class="mono" text-anchor="middle">~/.horon/sessions/&lt;id&gt;/events.jsonl</text>
+<text x="745" y="117" font-size="11" class="m" text-anchor="middle">the original; every turn event appended</text>
+<rect x="574" y="140" width="342" height="86" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="745" y="160" font-size="12" text-anchor="middle">derived caches, rebuilt from that log</text>
+<text x="745" y="179" font-size="11" class="m mono" text-anchor="middle">checkpoint.json  sparse-index.jsonl</text>
+<text x="745" y="197" font-size="11" class="m mono" text-anchor="middle">summary.json  facade-cache.json</text>
+<text x="745" y="215" font-size="11" class="m" text-anchor="middle">each keeps the log's Stamp</text>
+
+<rect x="560" y="256" width="370" height="150" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="574" y="278" font-size="12.5" class="m">fanout to the session's attachments</text>
+<rect x="574" y="290" width="342" height="100" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="745" y="309" font-size="11" class="mono" text-anchor="middle">session_event_fanout_sender</text>
+<text x="745" y="325" font-size="11" class="mono" text-anchor="middle">_with_fallback</text>
+<text x="745" y="346" font-size="11" class="m" text-anchor="middle">one forwarder task per turn; sends to every</text>
+<text x="745" y="364" font-size="11" class="m" text-anchor="middle">live client, falls back when none listens</text>
+
+<rect x="560" y="422" width="370" height="226" rx="12" fill="var(--panel)" stroke="var(--b)" stroke-width="1.5"/>
+<text x="574" y="444" font-size="12.5" font-weight="600">Ordering rules (#339, 0f2711ef)</text>
+<text x="574" y="470" font-size="11.5">The loop reads a finished turn's report</text>
+<text x="574" y="487" font-size="11.5">ahead of client input, and the turn sends</text>
+<text x="574" y="504" font-size="11.5">that report before its terminal event.</text>
+<text x="574" y="530" font-size="11.5">A cancel flushes the session's forwarders,</text>
+<text x="574" y="547" font-size="11.5">bounded at 500 ms, before it writes</text>
+<text x="574" y="566" font-size="11.5" class="mono">Interrupted</text>
+<text x="662" y="566" font-size="11.5">and</text>
+<text x="692" y="566" font-size="11.5" class="mono">Done</text>
+<text x="574" y="600" font-size="11.5">so the cancelled turn's last tool frame</text>
+<text x="574" y="617" font-size="11.5">cannot land inside the next prompt.</text>
+<text x="574" y="637" font-size="11" class="m mono">fanout_flush.rs · state.rs · client_lifecycle.rs</text>
+
+<line x1="520" y1="331" x2="556" y2="331" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<text x="480" y="686" font-size="12" class="m" text-anchor="middle">A turn ends when the model stops asking for tools; the store keeps the log, the forwarder keeps the clients in step.</text>
+</svg>

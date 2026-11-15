@@ -35,6 +35,65 @@
         ]
       },
       {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Start here",
+            "pages": ["reference/index", "reference/diagram/index"]
+          },
+          {
+            "group": "Architecture",
+            "pages": ["reference/architecture/server", "reference/architecture/crates"]
+          },
+          {
+            "group": "Protocols",
+            "pages": [
+              "reference/protocol/acp",
+              "reference/protocol/harness-api",
+              "reference/protocol/rpc",
+              "reference/protocol/session-store"
+            ]
+          },
+          {
+            "group": "Runtime",
+            "pages": [
+              "reference/runtime/tools",
+              "reference/runtime/tool-scheduling",
+              "reference/runtime/turns",
+              "reference/runtime/prompt",
+              "reference/runtime/hooks",
+              "reference/runtime/irc",
+              "reference/runtime/tui",
+              "reference/runtime/swarm-task-graph"
+            ]
+          },
+          {
+            "group": "Providers",
+            "pages": ["reference/provider/model", "reference/provider/integrations"]
+          },
+          {
+            "group": "Safety",
+            "pages": ["reference/safety/safety", "reference/safety/security"]
+          },
+          {
+            "group": "Performance",
+            "pages": [
+              "reference/performance/benchmark",
+              "reference/performance/results",
+              "reference/performance/memory"
+            ]
+          },
+          {
+            "group": "Release",
+            "pages": [
+              "reference/release/install",
+              "reference/release/npm",
+              "reference/release/windows"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "Developers",
         "groups": [
           {
