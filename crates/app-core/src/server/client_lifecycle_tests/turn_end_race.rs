@@ -71,7 +71,10 @@ async fn a_prompt_waiting_beside_the_turn_end_is_not_busy() {
         editor.until(|event| matches!(event, ServerEvent::Pong { .. })),
     )
     .await;
-    assert!(pong.is_err(), "the request loop is parked on the swarm plan table: {pong:?}");
+    assert!(
+        pong.is_err(),
+        "the request loop is parked on the swarm plan table: {pong:?}"
+    );
 
     gate.add_permits(1);
     let first = editor
