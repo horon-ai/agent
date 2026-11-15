@@ -30,8 +30,8 @@ Each OS calls `.github/workflows/benchmark-os.yml` once, and inside it the work 
 
 | Job | Count | What it does |
 | --- | --- | --- |
-| `build` | 1 per OS | Builds the `horon-agent` and `loading_probe` release binaries once and uploads them as the `bench-bin-<os>-<run_id>` artifact (tar, kept 1 day). With a `baseline_ref` and `compare` selected it also builds that commit separately into `baseline/` inside the same tar. Both builds use the values `release.yml` uses for shipped binaries (`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`). The repository's `[profile.release]` is for local rebuilds (`opt-level = 1`, incremental), and the competing tools run their own shipped release builds. |
-| `measure` | 1 per OS × measurement unit | Downloads the binaries and measures exactly one unit. The units are `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, and `tui`. With a baseline build, `compare` measures it as the `horon-base` row, alternating inside the same job. |
+| `build` | 1 per OS | Builds the `horon-agent` and `loading_probe` release binaries once and uploads them as the `bench-bin-<os>-<run_id>` artifact (tar, kept 1 day). With a `baseline_ref` and `compare` or `tools` selected it also builds that commit separately into `baseline/` inside the same tar. Both builds use the values `release.yml` uses for shipped binaries (`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`). The repository's `[profile.release]` is for local rebuilds (`opt-level = 1`, incremental), and the competing tools run their own shipped release builds. |
+| `measure` | 1 per OS × measurement unit | Downloads the binaries and measures exactly one unit. The units are `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, and `tui`. With a baseline build, `compare` measures it as the `horon-base` row, alternating inside the same job, and `tools` starts it as a second daemon and alternates the CPU windows of the two daemons case by case. |
 | `compile` | 1 per OS | Rebuilds from source itself, so it runs separately and does not share a machine with the other measurements. |
 | `merge` | 1 per OS | Collects the per-unit results `bench-part-<os>-<unit>-<run_id>` into the same `benchmark-<os>-<run_id>` artifact as before (`scripts/perf/bench_merge.py`). |
 
@@ -45,6 +45,7 @@ gh workflow run benchmark.yml --ref dev -f os=windows                     # Wind
 gh workflow run benchmark.yml --ref dev -f os=linux,macos -f suites=compare,tools
 gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
+gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=tools -f baseline_ref=dev   # daemon CPU per tool call, branch against dev
 ```
 
 | Input | Default | Meaning |
@@ -55,7 +56,7 @@ gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 | `sessions` | `1 5 10` | Concurrent session counts for the session memory comparison |
 | `turns` | `3` | Turns sent per session |
 | `oneshot_runs` | `5` | How many samples each build takes for the one-shot, skill and MCP cells; `compare.md` names the count on its Host line. Five is the floor for a median; raise it to about 20 when the median has to separate two close builds |
-| `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately as the `horon-base` row. That makes a before-and-after comparison on the same runner |
+| `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately, as the `horon-base` row in `compare` and as a second daemon in `tools`. That makes a before-and-after comparison on the same runner |
 | `features` | empty | Cargo features added to the **candidate** release build only (`--features <value>`); the `horon-base` build never gets them, so the two rows stay comparable. Empty leaves the build command byte-identical to a run without this input, and the artifact then holds an empty `features.txt` line. The value must match `^[a-z0-9_,-]*$`. The `build` job keys its rust-cache entry on it, so a feature build never reuses the default artifacts |
 
 An unknown OS or group name fails the run immediately (`scripts/perf/bench_select.py`). Results stay for 30 days as the per-OS `merge` job summary and the `benchmark-<os>-<run_id>` artifact (JSON, Markdown). Intermediate artifact names do not start with `benchmark-`, so they do not mix into the `benchmark-docs.yml` download.
@@ -80,7 +81,7 @@ There are no secrets and no API charges. Every measurement that needs a model at
 | `compare` | `bench_compare.py`, `install_competitors.sh` | `--version` time, one-question latency and peak memory (once with the tool allow-list the recorded results use, and for horon once more as `oneshot_core` with the default core tool surface), the bytes of every model request (`request_bytes`), memory by concurrent session count, install size, skill invocation time, and MCP tool call time and tool round trip for horon and the competing tools (`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`). Linux also counts `fsync` calls and names the files they flush (`fsync_paths`). |
 | `startup` | `bench_startup.py` | `--help` and `--version` load, `serve` socket readiness, the `serve` startup stage table from one extra run with `HORON_AGENT_STARTUP_PROFILE=1`, and per-stage harness bridge readiness |
 | `loading` | `bench_loading.py` | Session loading of a fixed-seed fixture, COLD and WARM |
-| `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket |
+| `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket, and on Linux the daemon's CPU time and context switches per call |
 | `reload` | `bench_reload_storm.py` | Latency until `history` arrives when reopening N sessions (1, 10, 40) at once |
 | `tui` | `bench_tui.py` | The interactive client `horon-tui`: first frame (bare `horon-agent` and a direct launch), the handoff between them, PTY input echo, idle and post-turn RSS, one drawn frame from the `render_bench` example, and install size |
 | `compile` | `bench_compile.py` | `cargo check` with no change, and rebuild time after editing `src/main.rs`, `crates/app-core`, or build-meta |
@@ -216,6 +217,7 @@ Each scenario gets its own home and workspace under `<scenario>/run<N>` beneath 
 - Memory metrics differ per OS. Do not compare Linux PSS, macOS RSS, and Windows Working Set as the same number.
 - The Windows bash tool runs through `cmd.exe`. `bash (true)` becomes `exit 0` and `bash (ls fixture tree)` becomes `dir /b tree` to do the same work.
 - Tool latency is debug socket round trip plus `Agent::execute_tool` time. Model turns, approvals, and prompt assembly are not included.
+- Tool CPU per call is the daemon's own CPU, read from `/proc/<pid>` before and after a window of calls: on-CPU time summed over its threads (`schedstat`), CPU time of the children it reaped (the shell of a `bash` call) as a separate column, and voluntary and involuntary context switches. `--cpu-iterations` sets the calls per window and `--cpu-rounds` the windows per case; the workflow takes 5 windows of 50 calls. One window is one sample, so the table gives the median, minimum and maximum of the windows. When a daemon thread exits inside a window the window is retaken up to three times, and after that it falls back to the process tick counters (10 ms steps, no switch counts), which the `source` column names as `stat`. The counters exist on Linux only: macOS and Windows record `cpu: null` with the reason, never 0. A call that fails inside a window voids that case's CPU figure. With `--baseline-binary` the second daemon runs the same cases on its own throwaway root, and the comparison table marks a case `lower` or `higher` only when the two min–max ranges do not overlap; an overlap is a `tie`.
 - Repeating the reload storm at one level leaves the earlier opened sessions in the daemon and makes the second one slower. Read absolute values with `--iterations 1`.
 - The compile benchmark breaks the cargo fingerprint through mtime. With hash-based fingerprints it produces the same value as no change.
 - macOS temporary folder paths are long enough to exceed the Unix socket path limit of 104 bytes. The scripts use a short folder under `/tmp`.

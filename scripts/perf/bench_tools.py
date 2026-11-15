@@ -20,6 +20,21 @@ and waits for the single `debug_response` line. `latency_ms` is measured from
 just before `sendall` to the moment the terminating newline is read, so it
 includes the frame write, the tool execution, and the read.
 
+CPU per call
+------------
+`--cpu-iterations N` adds a second pass after the latency pass. For every case
+it reads the daemon's CPU counters from `/proc`, makes N calls, reads them
+again, and reports the difference per call: on-CPU time of the daemon's
+threads, CPU time of the children it reaped (the shell of a `bash` call), and
+voluntary and involuntary context switches. One such window is one sample;
+`--cpu-rounds` sets how many are taken. The counters are Linux only, so other
+systems record `cpu: null` with the reason and never a zero.
+
+`--baseline-binary` starts a second daemon from another build on its own
+throwaway root and measures the same cases against it. The CPU windows of the
+two daemons alternate case by case, so both sides see the same runner state.
+The baseline numbers sit under `baseline` in each row.
+
 Failure handling
 ----------------
 A tool that answers `ok:false` is recorded with `error` and a null latency
@@ -45,6 +60,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bench_common as common  # noqa: E402
 
 SUITE = "tools"
+BASELINE_SUITE = "tools-baseline"
+# A window that lost a thread falls back to 10 ms process ticks; take it again.
+CPU_WINDOW_ATTEMPTS = 3
 SMALL_LINES = 5
 LARGE_LINES = 1000
 GREP_TREE_FILES = 40
@@ -319,6 +337,180 @@ def ensure_session(debug: str, work_dir: Path) -> tuple[str, str]:
         return "", "create_session returned unusable output: %s" % error
 
 
+class Target:
+    """One daemon under measurement: its own throwaway root, fixture, session and cases."""
+
+    def __init__(self, role: str, binary: str):
+        self.role = role
+        self.binary = binary
+        self.root: Path | None = None
+        self.process: subprocess.Popen | None = None
+        self.client: DebugSocket | None = None
+        self.cases: list[dict] = []
+
+    def start(self, repo: Path, args: argparse.Namespace) -> str | None:
+        """Start the daemon and one session; return why that failed, or None."""
+        self.root = Path(common.short_temp_dir("hb-tools-"))
+        fixture = build_fixture(self.root / "workspace")
+        log_path = self.root / "serve.log"
+        self.process, env = start_daemon(self.binary, self.root, repo, log_path)
+        socket_path = os.path.join(env["HORON_AGENT_RUNTIME_DIR"], "horon-agent.sock")
+        debug_path = socket_path.replace(".sock", "-debug.sock")
+        if not common.wait_for_socket(socket_path, args.startup_timeout):
+            return "daemon never opened %s%s" % (socket_path, read_tail(log_path))
+        connect_with_retry(debug_path, args.startup_timeout)
+
+        session_id, error = ensure_session(debug_path, fixture["root"])
+        if error:
+            return "could not create a session: %s" % error
+
+        self.client = DebugSocket(debug_path, session_id, timeout=args.timeout)
+        self.cases = build_cases(fixture["root"])
+        resolve_payloads(self.cases, repo, fixture["root"])
+        return None
+
+    def close(self) -> None:
+        if self.process is not None:
+            common.terminate_pgroup(self.process.pid)
+        if self.root is not None:
+            shutil.rmtree(self.root, ignore_errors=True)
+
+
+def measure_latency(target: Target, case: dict, args: argparse.Namespace) -> dict:
+    """Warm one case up, then time `--iterations` calls of it."""
+    client = target.client
+    if case.get("reset"):
+        case["reset"]()
+    command = tool_command(case["tool"], case["payload"]())
+    input_bytes = len(command)
+    latencies: list[float] = []
+    output_bytes: list[int] = []
+    errors: list[str] = []
+    expect_error = bool(case.get("expect_error"))
+
+    for _ in range(args.warmup):
+        if case.get("reset"):
+            case["reset"]()
+        try:
+            client.call(command)
+        except OSError:
+            break
+
+    for _ in range(args.iterations):
+        if case.get("reset"):
+            case["reset"]()
+        try:
+            latency_ms, size, payload = client.call(command)
+        except (OSError, socket.timeout) as error:
+            errors.append("%s: %s" % (type(error).__name__, error))
+            continue
+        ok = bool(payload.get("ok"))
+        if ok == expect_error:
+            detail = payload.get("output") or payload.get("message") or "unexpected ok state"
+            errors.append(str(detail)[:200])
+            continue
+        latencies.append(latency_ms)
+        output_bytes.append(size)
+
+    common.eprint(
+        "bench_tools: %-9s %-34s %s" % (target.role, case["label"], render_stats(latencies))
+    )
+    return summarize_case(case["label"], case["tool"], latencies, output_bytes, input_bytes, errors)
+
+
+def cpu_window(target: Target, case: dict, calls: int) -> tuple[dict | None, str | None]:
+    """What the daemon spent on `calls` calls of one case: (usage, why it is missing)."""
+    client = target.client
+    pid = target.process.pid
+    command = tool_command(case["tool"], case["payload"]())
+    expect_error = bool(case.get("expect_error"))
+    usage = None
+    for _ in range(CPU_WINDOW_ATTEMPTS):
+        before = common.process_cpu_snapshot(pid)
+        if before is None:
+            return None, "no /proc CPU counters for the daemon on this system"
+        for _ in range(calls):
+            if case.get("reset"):
+                case["reset"]()
+            try:
+                _, _, payload = client.call(command)
+            except (OSError, socket.timeout) as error:
+                return None, "call failed inside the CPU window: %s: %s" % (type(error).__name__, error)
+            if bool(payload.get("ok")) == expect_error:
+                detail = payload.get("output") or payload.get("message") or "unexpected ok state"
+                return None, "call failed inside the CPU window: %s" % str(detail)[:200]
+        after = common.process_cpu_snapshot(pid)
+        if after is None:
+            return None, "the daemon's /proc entry vanished inside the CPU window"
+        usage = common.cpu_usage_between(before, after)
+        if usage["source"] == "schedstat":
+            break
+    return usage, None
+
+
+def summarize_cpu(windows: list[dict], calls: int, error: str | None) -> dict:
+    """Per-call CPU figures over the windows of one case; `cpu` is None with a reason on failure."""
+    if error or not windows:
+        return {"cpu": None, "cpu_error": error or "no CPU window completed"}
+
+    def per_call(key: str) -> dict | None:
+        values = [window[key] for window in windows]
+        if any(value is None for value in values):
+            return None
+        return common.summarize([value / calls for value in values])
+
+    return {
+        "cpu": {
+            "calls_per_window": calls,
+            "cpu_ms_per_call": per_call("cpu_ms"),
+            "children_cpu_ms_per_call": per_call("children_cpu_ms"),
+            "voluntary_switches_per_call": per_call("voluntary_switches"),
+            "involuntary_switches_per_call": per_call("involuntary_switches"),
+            "sources": sorted({window["source"] for window in windows}),
+        },
+        "cpu_error": None,
+    }
+
+
+def measure_cpu(targets: list[Target], args: argparse.Namespace) -> dict[str, list[dict]]:
+    """Per role, one CPU summary per case. The targets' windows alternate within a case."""
+    summaries: dict[str, list[dict]] = {target.role: [] for target in targets}
+    for index, case in enumerate(targets[0].cases):
+        windows: dict[str, list[dict]] = {target.role: [] for target in targets}
+        errors: dict[str, str | None] = {target.role: None for target in targets}
+        for _ in range(args.cpu_rounds):
+            for target in targets:
+                if errors[target.role]:
+                    continue
+                usage, error = cpu_window(target, target.cases[index], args.cpu_iterations)
+                if usage is None:
+                    errors[target.role] = error
+                else:
+                    windows[target.role].append(usage)
+        for target in targets:
+            summary = summarize_cpu(windows[target.role], args.cpu_iterations, errors[target.role])
+            summaries[target.role].append(summary)
+            common.eprint(
+                "bench_tools: %-9s %-34s %s" % (target.role, case["label"], render_cpu(summary))
+            )
+    return summaries
+
+
+def start_baseline(binary: str, repo: Path, args: argparse.Namespace) -> tuple[Target | None, str | None]:
+    """A started baseline daemon, or why there is none."""
+    if not os.path.isfile(binary):
+        return None, "baseline binary not found at %s" % binary
+    target = Target("baseline", binary)
+    try:
+        reason = target.start(repo, args)
+    except RuntimeError as error:
+        reason = str(error)
+    if reason:
+        target.close()
+        return None, reason
+    return target, None
+
+
 def run(args: argparse.Namespace) -> int:
     started_at = common.utc_now_iso()
     results: list[dict] = []
@@ -330,73 +522,39 @@ def run(args: argparse.Namespace) -> int:
         return finish(args, results, skipped, started_at)
 
     repo = Path(args.repo).resolve() if args.repo else Path(__file__).resolve().parents[2]
-    root = Path(common.short_temp_dir("hb-tools-"))
-    process = None
+    candidate = Target("candidate", binary)
+    baseline: Target | None = None
     try:
-        fixture = build_fixture(root / "workspace")
-        log_path = root / "serve.log"
-        process, env = start_daemon(binary, root, repo, log_path)
-        socket_path = os.path.join(env["HORON_AGENT_RUNTIME_DIR"], "horon-agent.sock")
-        debug_path = socket_path.replace(".sock", "-debug.sock")
-        if not common.wait_for_socket(socket_path, args.startup_timeout):
-            tail = read_tail(log_path)
-            skipped.append(
-                {"name": SUITE, "reason": "daemon never opened %s%s" % (socket_path, tail)}
-            )
-            return finish(args, results, skipped, started_at)
-        connect_with_retry(debug_path, args.startup_timeout)
-
-        session_id, error = ensure_session(debug_path, fixture["root"])
-        if error:
-            skipped.append({"name": SUITE, "reason": "could not create a session: %s" % error})
+        reason = candidate.start(repo, args)
+        if reason:
+            skipped.append({"name": SUITE, "reason": reason})
             return finish(args, results, skipped, started_at)
 
-        client = DebugSocket(debug_path, session_id, timeout=args.timeout)
-        cases = build_cases(fixture["root"])
-        resolve_payloads(cases, repo, fixture["root"])
+        for case in candidate.cases:
+            results.append(measure_latency(candidate, case, args))
 
-        for case in cases:
-            if case.get("reset"):
-                case["reset"]()
-            command = tool_command(case["tool"], case["payload"]())
-            input_bytes = len(command)
-            latencies: list[float] = []
-            output_bytes: list[int] = []
-            errors: list[str] = []
-            expect_error = bool(case.get("expect_error"))
+        if args.baseline_binary:
+            baseline, reason = start_baseline(os.path.abspath(args.baseline_binary), repo, args)
+            if baseline is None:
+                skipped.append({"name": BASELINE_SUITE, "reason": reason})
+            else:
+                for row, case in zip(results, baseline.cases):
+                    measured = measure_latency(baseline, case, args)
+                    row["baseline"] = {
+                        key: measured[key] for key in ("latency_ms", "output_bytes", "errors", "error")
+                    }
 
-            for _ in range(args.warmup):
-                if case.get("reset"):
-                    case["reset"]()
-                try:
-                    client.call(command)
-                except OSError:
-                    break
-
-            for _ in range(args.iterations):
-                if case.get("reset"):
-                    case["reset"]()
-                try:
-                    latency_ms, size, payload = client.call(command)
-                except (OSError, socket.timeout) as error:
-                    errors.append("%s: %s" % (type(error).__name__, error))
-                    continue
-                ok = bool(payload.get("ok"))
-                if ok == expect_error:
-                    detail = payload.get("output") or payload.get("message") or "unexpected ok state"
-                    errors.append(str(detail)[:200])
-                    continue
-                latencies.append(latency_ms)
-                output_bytes.append(size)
-
-            results.append(
-                summarize_case(case["label"], case["tool"], latencies, output_bytes, input_bytes, errors)
-            )
-            common.eprint("bench_tools: %-34s %s" % (case["label"], render_stats(latencies)))
+        if args.cpu_iterations:
+            targets = [candidate] if baseline is None else [candidate, baseline]
+            summaries = measure_cpu(targets, args)
+            for index, row in enumerate(results):
+                row.update(summaries["candidate"][index])
+                if baseline is not None:
+                    row["baseline"].update(summaries["baseline"][index])
     finally:
-        if process is not None:
-            common.terminate_pgroup(process.pid)
-        shutil.rmtree(root, ignore_errors=True)
+        candidate.close()
+        if baseline is not None:
+            baseline.close()
     return finish(args, results, skipped, started_at)
 
 
@@ -410,6 +568,123 @@ def render_stats(values: list[float]) -> str:
         stats["max"],
         stats["samples"],
     )
+
+
+def fmt_cpu_ms(value: float | None) -> str:
+    """Per-call CPU is a fraction of a millisecond, so it keeps three decimals."""
+    return "—" if value is None else "%.3f ms" % value
+
+
+def fmt_count(stats: dict | None) -> str:
+    return "—" if stats is None else "%.2f" % stats["median"]
+
+
+def render_cpu(summary: dict) -> str:
+    cpu = summary["cpu"]
+    if cpu is None:
+        return "cpu unmeasured (%s)" % summary["cpu_error"]
+    stats = cpu["cpu_ms_per_call"]
+    return "cpu/call median=%s min=%s max=%s windows=%d" % (
+        fmt_cpu_ms(stats["median"]),
+        fmt_cpu_ms(stats["min"]),
+        fmt_cpu_ms(stats["max"]),
+        stats["samples"],
+    )
+
+
+def cpu_verdict(candidate: dict, baseline: dict) -> str:
+    """Compare two per-call CPU series; ranges that overlap are a tie, not a win."""
+    if candidate["max"] < baseline["min"]:
+        return "lower"
+    if candidate["min"] > baseline["max"]:
+        return "higher"
+    return "tie"
+
+
+def cpu_markdown(results: list[dict]) -> list[str]:
+    """The CPU tables; empty when the run took no CPU pass."""
+    if not any("cpu" in row for row in results):
+        return []
+    lines = ["", "### Tool CPU per call", ""]
+    rows = []
+    for row in results:
+        cpu = row.get("cpu")
+        if cpu is None:
+            rows.append([row["name"], "—", "—", "—", "—", "—", "—", "0", "—"])
+            continue
+        stats = cpu["cpu_ms_per_call"]
+        children = cpu["children_cpu_ms_per_call"]
+        rows.append(
+            [
+                row["name"],
+                fmt_cpu_ms(stats["median"]),
+                fmt_cpu_ms(stats["min"]),
+                fmt_cpu_ms(stats["max"]),
+                fmt_cpu_ms(children["median"]),
+                fmt_count(cpu["voluntary_switches_per_call"]),
+                fmt_count(cpu["involuntary_switches_per_call"]),
+                "%d × %d" % (stats["samples"], cpu["calls_per_window"]),
+                "+".join(cpu["sources"]),
+            ]
+        )
+    lines.append(
+        common.markdown_table(
+            [
+                "Tool case",
+                "daemon cpu median",
+                "min",
+                "max",
+                "child cpu median",
+                "voluntary switches",
+                "involuntary switches",
+                "windows × calls",
+                "source",
+            ],
+            rows,
+        )
+    )
+    reasons = sorted({row["cpu_error"] for row in results if row.get("cpu_error")})
+    if reasons:
+        lines.append("")
+        lines.append("CPU unmeasured: " + "; ".join(reasons))
+
+    compared = []
+    for row in results:
+        ours = (row.get("cpu") or {}).get("cpu_ms_per_call")
+        theirs = ((row.get("baseline") or {}).get("cpu") or {}).get("cpu_ms_per_call")
+        if ours is None or theirs is None:
+            continue
+        delta = "—"
+        if theirs["median"] > 0:
+            delta = "%+.1f%%" % ((ours["median"] - theirs["median"]) / theirs["median"] * 100.0)
+        compared.append(
+            [
+                row["name"],
+                fmt_cpu_ms(ours["median"]),
+                "%s – %s" % (fmt_cpu_ms(ours["min"]), fmt_cpu_ms(ours["max"])),
+                fmt_cpu_ms(theirs["median"]),
+                "%s – %s" % (fmt_cpu_ms(theirs["min"]), fmt_cpu_ms(theirs["max"])),
+                delta,
+                cpu_verdict(ours, theirs),
+            ]
+        )
+    if compared:
+        lines.extend(["", "### Tool CPU per call: candidate against baseline", ""])
+        lines.append(
+            common.markdown_table(
+                [
+                    "Tool case",
+                    "candidate median",
+                    "candidate min – max",
+                    "baseline median",
+                    "baseline min – max",
+                    "median delta",
+                    "verdict",
+                ],
+                compared,
+            )
+        )
+    return lines
 
 
 def read_tail(path: Path, lines: int = 12) -> str:
@@ -445,6 +720,7 @@ def markdown(results: list[dict], skipped: list[dict]) -> str:
     if failed:
         lines.append("")
         lines.append("Unmeasured: " + ", ".join(failed))
+    lines.extend(cpu_markdown(results))
     return "\n".join(lines)
 
 
@@ -470,11 +746,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=120.0, help="per-call socket deadline")
     parser.add_argument("--json-out", default=None)
     parser.add_argument("--markdown-out", default=None)
+    parser.add_argument(
+        "--cpu-iterations",
+        type=int,
+        default=0,
+        help="calls per CPU window of each case; 0 skips the CPU pass (Linux only)",
+    )
+    parser.add_argument("--cpu-rounds", type=int, default=5, help="CPU windows per case")
+    parser.add_argument(
+        "--baseline-binary",
+        default=None,
+        help="another horon-agent build to measure beside --binary, in the same run",
+    )
     args = parser.parse_args(argv)
     if args.iterations < 1:
         parser.error("--iterations must be positive")
     if args.warmup < 0:
         parser.error("--warmup must not be negative")
+    if args.cpu_iterations < 0:
+        parser.error("--cpu-iterations must not be negative")
+    if args.cpu_rounds < 1:
+        parser.error("--cpu-rounds must be positive")
     return args
 
 
