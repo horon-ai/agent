@@ -11,7 +11,8 @@ horon-agent builds the system prompt in several layers. Two of them are files th
 ### Layers (in order)
 
 1. **Base system prompt**: the built-in `crates/base/src/prompt/system_prompt.md`, replaceable by a
-   file (see below).
+   file (see below). Trailing whitespace is trimmed from the built-in text as it is from a
+   replacement file, so the next layer follows exactly one blank line.
 2. Feature modules (for example the `[[stream_rules]]` guidance below).
 3. `AGENTS.md`: the project's `./AGENTS.md` and the global `~/AGENTS.md`. An `AGENTS.md` in a subdirectory that this layer does not cover is attached separately to `read` results when `[tools] nested_agents_md` is on ([`docs/runtime/TOOLS.md`](TOOLS.md)).
 4. Prompt overlay: `./.horon/prompt-overlay.md` and `~/.horon/prompt-overlay.md`.
@@ -58,7 +59,7 @@ To replace layer 1 entirely, create one of these files.
 
 The first non-empty file wins. Without one, the built-in default is used. An empty or whitespace-only file falls back to the default, so an empty prompt cannot be shipped by accident.
 
-This replaces only the base prompt. AGENTS.md, overlays, skills, and memory still apply.
+This replaces only the base prompt. AGENTS.md, overlays, skills, and memory still apply. The file is read when a session captures its prompt, not on every request (see Notes).
 
 ### Enforcing rules mid-stream ([[stream_rules]])
 
@@ -104,6 +105,9 @@ The injection point marker is `S` (`STREAM_RULE_POINT`). It is distinct from the
 `[features] foreign_rules = true` reads `.cursor/rules/*.mdc`, `.cursorrules`, `.clinerules`,
 Copilot instructions, Windsurf rules, and `GEMINI.md`. The default `foreign_rules_mode = "inline"`
 puts every body into the system prompt.
+These files are read on every request, not captured with the session snapshot, and the structural
+gate's prompt source reads do not count them; the "no source read per request" bound holds only
+while `foreign_rules` is off, its default.
 
 `foreign_rules_mode = "rulebook"` inlines the body only for `alwaysApply` rules and shows the rest
 as a `# Rulebook` list with just paths, descriptions, and applicable globs. The bodies of the other
@@ -114,7 +118,9 @@ read in advance, and unrelated rules take no context.
 ### Notes
 
 - Changes to these files apply to **new sessions**. A running session keeps the prompt it captured
-  at start.
+  at start: the base prompt, AGENTS.md, the overlay, the preferred-tools guidance and the skills
+  list are read again only at a session boundary (a new session, a working directory change, a
+  clear, or a restored session).
 - Editing the built-in `system_prompt.md` takes a rebuild, because it is embedded with
   `include_str!`.
 - Swarm model routing guidance has a similar dedicated file, `.horon/swarm-prompt.md`.

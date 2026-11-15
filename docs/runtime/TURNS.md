@@ -10,7 +10,7 @@ This document explains what the agent does when a turn ends unexpectedly and who
 
 ### TurnState holds the material
 
-`TurnState` owns a turn's counters and outcome outside the agent loop. It has twelve fields (`crates/agent-runtime/src/turn_state.rs:83-96`).
+`TurnState` owns a turn's counters and outcome outside the agent loop. It has fourteen fields (`crates/agent-runtime/src/turn_state.rs:471-486`).
 
 | Field | What it counts |
 | --- | --- |
@@ -25,6 +25,8 @@ This document explains what the agent does when a turn ends unexpectedly and who
 | `unparsed_tool_markup_nudges` | Nudges about unparsed tool markup |
 | `auto_continuations` | Auto continuations used |
 | `final_text` | The turn's final text |
+| `model_fallback_original` | The session model a model fallback moved away from, until it is restored |
+| `model_fallback_tried` | The fallback entries this turn already spent, oldest first |
 | `outcome` | The turn outcome (`TurnOutcome`) |
 
 `TurnState` holds no reference to `Agent` and touches no session, client event, or disk. That is why both turn loops (the sequential loop in `crates/app-core/src/agent/turn_loops.rs` and the streaming loop in `crates/app-core/src/agent/interrupts.rs`) share the same decision functions.
@@ -74,7 +76,7 @@ The `/judge` command is a different workload. It spawns a reviewer worker inside
 
 ### At most two auto continuations per turn
 
-Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:215-219`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:82-100`, test `crates/agent-runtime/src/turn_state_tests.rs:18-26`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:136`).
+Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:633-636`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:489-491`, test `crates/agent-runtime/src/turn_state_tests.rs:200-208`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
 
 ### Soft interrupts survive a restart
 
@@ -119,11 +121,11 @@ Hard interrupts are still needed. When the user wants an immediate stop, `cancel
 
 ### The queue and the in-flight set
 
-`SoftInterruptQueue` manages the `pending` and `in_flight` vectors under one lock (`crates/agent-runtime/src/lib.rs:40-63`). `pending` holds messages that have not entered the conversation, and `in_flight` holds messages injected this turn that the turn has not finished.
+`SoftInterruptQueue` manages the `pending` and `in_flight` vectors under one lock (`crates/agent-runtime/src/lib.rs:67-76`). `pending` holds messages that have not entered the conversation, and `in_flight` holds messages injected this turn that the turn has not finished.
 
-- `transfer_to_in_flight` moves `pending` into `in_flight` as a whole. Both vectors change under the same lock, so no message can end up in neither (`crates/agent-runtime/src/lib.rs:113-120`).
-- `commit` clears `in_flight` when the turn succeeds (`:124-131`).
-- `restore` returns the messages of a failed, cancelled, or panicked turn to the front of `pending` (`:136-148`).
+- `transfer_to_in_flight` moves `pending` into `in_flight` as a whole. Both vectors change under the same lock, so no message can end up in neither (`crates/agent-runtime/src/lib.rs:132-134`).
+- `commit` clears `in_flight` when the turn succeeds (`:157-162`).
+- `restore` returns the messages of a failed, cancelled, or panicked turn to the front of `pending` (`:168-179`).
 
 Each turn creates one `InFlightGuard` (`crates/app-core/src/agent/interrupts.rs:21-70`). On a normal exit or a restore path, `disarm` makes the drop a no-op. When a provider or tool layer panics, an armed guard drops, calls `restore`, and the injected messages return to the queue instead of disappearing (`:58-70`).
 
@@ -250,8 +252,8 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 The harness API advertises this feature only when the connected daemon's safety-feature probe reports `runtime_commands`.
 Older daemons return an explicit unsupported error.
-This is an additive API (the current minor version is 15), available from both the Rust and TypeScript SDKs
-(`crates/harness-api/src/lib.rs:53-55`).
+This is an additive API (the current minor version is 22), available from both the Rust and TypeScript SDKs
+(`crates/harness-api/src/lib.rs:72-74`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -301,8 +303,8 @@ session's runtime host, including SSH and managed remote runtimes.
   `{"transport": null, "provider": ...}`, and passing `auto`, `https`, or `websocket`
   raises the error above (`crates/app-core/src/server/runtime_commands.rs:200-210`).
   `openai_transport` in the configuration file and the environment only stores a value,
-  and no provider reads it (`crates/config-types/src/lib.rs:1341`,
-  `crates/base/src/config/env_overrides.rs:476`).
+  and no provider reads it (`crates/config-types/src/lib.rs:1249`,
+  `crates/base/src/config/env_overrides.rs:491-495`).
 - `fast`: the no-argument command toggles priority and off, and explicit on/off/flex/status
   are supported. Providers that cannot apply it return the real error.
 - `refresh_model_list`: a real provider catalog refresh.

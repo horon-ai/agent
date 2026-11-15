@@ -365,7 +365,8 @@ async fn core_surface_lists_todo_and_session_search() {
 }
 
 /// `[tools.load_mode]` still wins over the new default: an explicit `off`
-/// removes the tool from the request, the index, and the prompt.
+/// removes the tool from the request, the index, and the prompt. A core tool
+/// the table does not name, `swarm` here, stays on the surface.
 #[tokio::test]
 async fn load_mode_off_removes_todo_and_session_search() {
     let _guard = crate::storage::lock_test_env();
@@ -376,12 +377,16 @@ async fn load_mode_off_removes_todo_and_session_search() {
     let agent = super::tool_tiers::agent_with_mcp_management_tool().await;
 
     let definitions = agent.tool_definitions_for_debug().await;
-    for name in ["swarm", "todo", "session_search"] {
+    for name in ["todo", "session_search"] {
         assert!(
             !definitions.iter().any(|definition| definition.name == name),
             "{name} is off in this session"
         );
     }
+    assert!(
+        definitions.iter().any(|definition| definition.name == "swarm"),
+        "swarm was not turned off, so it stays"
+    );
     assert!(
         !agent.system_prompt_for_debug().contains(crate::prompt::TODO_HINT),
         "no todo tool means no hint"

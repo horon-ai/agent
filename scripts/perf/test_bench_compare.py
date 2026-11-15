@@ -865,12 +865,11 @@ class ScenarioSummarizeTests(unittest.TestCase):
 
 
 class ScenarioSelectionTests(unittest.TestCase):
-    def test_default_is_all_four_scenarios(self) -> None:
+    def test_default_is_every_scenario(self) -> None:
+        every = ["oneshot", "oneshot_core", "sessions", "skill", "mcp"]
         args = bench.parse_args([])
-        self.assertEqual(args.scenarios, ["oneshot", "sessions", "skill", "mcp"])
-        self.assertEqual(
-            bench.parse_scenarios(args.scenarios), ["oneshot", "sessions", "skill", "mcp"]
-        )
+        self.assertEqual(args.scenarios, every)
+        self.assertEqual(bench.parse_scenarios(args.scenarios), every)
 
     def test_a_comma_list_and_a_repeated_name_normalize(self) -> None:
         self.assertEqual(bench.parse_scenarios(["skill,mcp", "skill"]), ["skill", "mcp"])
@@ -1289,6 +1288,259 @@ class SkillFixtureTests(unittest.TestCase):
             self.assertEqual(os.path.dirname(path), os.path.join(root, "bench-skill"))
             with open(path, encoding="utf-8") as fh:
                 self.assertIn("BENCH-SKILL-SENTINEL", fh.read())
+
+
+class StatsOnlyMock:
+    """A mock server that only answers ``stats()``, for a run with no agent.
+
+    The first call is the "before" count; every later call returns the
+    requests the test wants the run to have made.
+    """
+
+    base_url = "http://127.0.0.1:9"
+
+    def __init__(self, requests: list[dict]) -> None:
+        self.requests = requests
+        self.calls = 0
+
+    def stats(self) -> dict:
+        self.calls += 1
+        if self.calls == 1:
+            return {"request_count": 0, "requests": []}
+        return {"request_count": len(self.requests), "requests": list(self.requests)}
+
+
+def run_record(requests: list[dict]) -> dict:
+    """One real ``measure_oneshot`` record around a process that does nothing."""
+    env = {key: value for key, value in os.environ.items() if key != "HORON_HOME"}
+    return bench.measure_oneshot(
+        [sys.executable, "-c", "pass"], os.getcwd(), env, StatsOnlyMock(requests), 60.0
+    )
+
+
+class RequestBytesTests(unittest.TestCase):
+    """Each run record says what its model requests weighed."""
+
+    def test_oneshot_record_carries_request_bytes(self) -> None:
+        run = run_record([
+            {"ts": 0.0, "body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8},
+            {"ts": 0.0, "body_bytes": 12480, "tools_bytes": 9714, "tool_count": 8},
+        ])
+        self.assertIsNone(run["error"])
+        self.assertEqual(run["mock_requests"], 2)
+        self.assertEqual(
+            run["request_bytes"],
+            [
+                {"body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8},
+                {"body_bytes": 12480, "tools_bytes": 9714, "tool_count": 8},
+            ],
+        )
+        result = {
+            "name": "horon",
+            "label": "horon",
+            "oneshot": bench.summarize_oneshot([run]),
+            "sessions_memory": {},
+        }
+        markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
+        self.assertIn("| request bytes |", markdown)
+        self.assertIn("| 12,000 / 9,714 (8 tools) |", markdown)
+
+    def test_request_bytes_missing_keys_reports_none(self) -> None:
+        run = run_record([
+            {"ts": 0.0},
+            {"ts": 0.0, "body_bytes": 310, "tools_bytes": 0, "tool_count": 0},
+        ])
+        # A key the mock server did not report is unknown, not zero.
+        self.assertEqual(
+            run["request_bytes"][0], {"body_bytes": None, "tools_bytes": None, "tool_count": None}
+        )
+        self.assertIn('"tools_bytes": null', json.dumps(run["request_bytes"][0]))
+        # A reported zero is a real value and stays a zero.
+        self.assertEqual(
+            run["request_bytes"][1], {"body_bytes": 310, "tools_bytes": 0, "tool_count": 0}
+        )
+
+    def test_a_report_without_request_bytes_keeps_its_columns(self) -> None:
+        result = {
+            "name": "horon",
+            "label": "horon",
+            "oneshot": {"ms": 100.0, "peak_rss_bytes": 40e6, "tool_roundtrip": True},
+            "sessions_memory": {},
+        }
+        markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
+        self.assertNotIn("request bytes", markdown)
+
+
+class CoreOneshotTests(unittest.TestCase):
+    """The core-profile one-shot runs the default tool surface, or says it did not."""
+
+    def test_core_oneshot_argv_has_no_tools_flag(self) -> None:
+        captured: list[list[str]] = []
+
+        def fake(argv, cwd, env, mock, timeout, syscalls=False):
+            captured.append(list(argv))
+            return {"ms": 40.0, "error": None,
+                    "request_bytes": [{"body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8}]}
+
+        saved = bench.measure_oneshot
+        bench.measure_oneshot = fake
+        try:
+            with tempfile.TemporaryDirectory() as root:
+                cwd = os.path.join(root, "ws")
+                os.makedirs(cwd)
+                run = bench.HoronRunner("/h").oneshot_core(FakeMockServer(), root, cwd, 1.0)
+        finally:
+            bench.measure_oneshot = saved
+        plain = bench.horon_oneshot_argv("/h")
+        self.assertEqual(plain[plain.index("--tools") + 1], "bash")
+        self.assertNotIn("--tools", captured[0])
+        self.assertNotIn("bash", captured[0])
+        self.assertEqual(captured[0], [arg for arg in plain if arg not in ("--tools", "bash")])
+        self.assertEqual(run["ms"], 40.0)
+        self.assertIsNone(run["error"])
+
+    def test_core_oneshot_without_tool_catalog_is_an_error(self) -> None:
+        offered = bench.bco.check_surface(run_record([
+            {"ts": 0.0, "body_bytes": 12000, "tools_bytes": 9714, "tool_count": 8},
+        ]))
+        self.assertIsNone(offered["error"])
+        self.assertIsNotNone(offered["ms"])
+
+        bare = bench.bco.check_surface(run_record([
+            {"ts": 0.0, "body_bytes": 900, "tools_bytes": 0, "tool_count": 0},
+        ]))
+        self.assertEqual(bare["error"], "core surface missing")
+        self.assertIsNone(bare["ms"])
+        self.assertIsNone(bare["peak_rss_bytes"])
+        summary = bench.bco.summarize([bare])
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["error"], "core surface missing")
+        self.assertIsNone(summary["ms"])
+        result = {"name": "horon", "label": "horon", "oneshot_core": summary, "sessions_memory": {}}
+        markdown = bench.render_markdown(bc.build_report("compare", [result], []), [1], 1)
+        self.assertIn("**Core-profile one-shot**", markdown)
+        self.assertIn("failed: core surface missing", markdown)
+
+    def test_a_tool_without_a_core_profile_is_skipped(self) -> None:
+        class FakeRunner:
+            name = "jcode"
+            label = "jcode"
+            binary = "/j"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        try:
+            result = bench.measure_tools(
+                [FakeRunner()], FakeMockServer(), [1], 1, 1, 3, 30.0, scenarios=["oneshot_core"]
+            )[0]
+        finally:
+            bench.tool_version, bench.measure_version, bench.measure_install_size = saved
+        self.assertEqual(result["oneshot_core"], {"skipped": "jcode has no core tool profile"})
+        self.assertIsNone(result["oneshot"])
+
+
+class FsyncPathsTests(unittest.TestCase):
+    """Each counted flush is attributed to the file or directory it flushed."""
+
+    ROOT = "/tmp/hcmp-horon-x"
+    EVENTS = ROOT + "/home/sessions/0b5e6c1a-2f3d-4a5b-9c8d-1e2f3a4b5c6d/events.jsonl"
+    TRACE = (
+        f"4101  fdatasync(7<{EVENTS}>) = 0\n"
+        f"4101  fdatasync(7<{EVENTS}> <unfinished ...>\n"
+        f"4102  fsync(9<{ROOT}/home/sessions>) = 0\n"
+        "4101  <... fdatasync resumed>) = 0\n"
+        "4103  fsync(11) = 0\n"
+        "4101  +++ exited with 0 +++\n"
+    )
+
+    def _measure(self, available: bool, calls: list) -> dict:
+        trace = self.TRACE
+        root = self.ROOT
+
+        class FakeRunner:
+            name = "horon"
+            label = "horon"
+            binary = "/b"
+
+            def env_for_version(self, root: str) -> dict:
+                return {}
+
+            def oneshot(self, mock, root_dir, cwd, timeout, syscalls=False) -> dict:
+                calls.append(syscalls)
+                record = {"ms": 40.0, "peak_rss_bytes": 1, "tool_roundtrip": True, "error": None}
+                if syscalls == bench.bfp.MODE:
+                    record["fsync_paths"] = bench.bfp.parse(trace, (root,))
+                elif syscalls:
+                    record["fsync_calls"] = 4
+                return record
+
+        saved = (bench.tool_version, bench.measure_version, bench.measure_install_size,
+                 bench.strace_available)
+        bench.tool_version = lambda binary, env: "v1"
+        bench.measure_version = lambda argv, env, runs: {"summary": {"median": 1.0}}
+        bench.measure_install_size = lambda binary: (1, None)
+        bench.strace_available = lambda: available
+        try:
+            return bench.measure_tools(
+                [FakeRunner()], FakeMockServer(), [1], 1, 1, 2, 30.0, syscalls=True,
+                scenarios=["oneshot"],
+            )[0]
+        finally:
+            (bench.tool_version, bench.measure_version, bench.measure_install_size,
+             bench.strace_available) = saved
+
+    def test_fsync_paths_grouped(self) -> None:
+        groups = bench.bfp.parse(self.TRACE, (self.ROOT,))
+        self.assertEqual(groups, [
+            {"path": "<root>/home/sessions/<id>/events.jsonl", "count": 2, "fsync": 0, "fdatasync": 2},
+            {"path": "<root>/home/sessions", "count": 1, "fsync": 1, "fdatasync": 0},
+            {"path": "fd:11", "count": 1, "fsync": 1, "fdatasync": 0},
+        ])
+        argv = bench.bfp.strace_argv(["/bin/tool", "run"], "/tmp/t.txt", bench.SYSCALL_NAMES)
+        self.assertIn("-y", argv)
+        self.assertNotIn("-c", argv)
+        self.assertEqual(argv[-2:], ["/bin/tool", "run"])
+
+        calls: list = []
+        oneshot = self._measure(True, calls)["oneshot"]
+        # Two timed runs, two counted runs, then one extra run traced per call.
+        self.assertEqual(calls, [False, False, True, True, bench.bfp.MODE])
+        self.assertEqual(len(oneshot["runs"]), 2)
+        self.assertEqual(sum(group["count"] for group in oneshot["fsync_paths"]), oneshot["fsync_calls"])
+
+    def test_fsync_paths_skipped_without_strace(self) -> None:
+        traced: list[str] = []
+        self.assertEqual(
+            bench.bfp.measure(lambda: traced.append("run") or {}, False),
+            {"skipped": "strace unavailable"},
+        )
+        self.assertEqual(traced, [])
+
+        calls: list = []
+        oneshot = self._measure(False, calls)["oneshot"]
+        self.assertEqual(oneshot["fsync_paths"], {"skipped": "strace unavailable"})
+        self.assertNotIn(bench.bfp.MODE, calls)
+        self.assertEqual(oneshot["ms"], 40.0)
+
+    def test_fsync_paths_group_real_session_names_across_runs(self) -> None:
+        # Session directories are named session_<word>_<millis>_<16 hex>; two
+        # runs or two builds pick different names, and must still share keys.
+        first = "/tmp/a/home/sessions/session_sauropod_1763150000123_63b5285181a99f5a"
+        second = "/tmp/b/home/sessions/session_t-rex_1763150000456_43ab7c6b5d77b230"
+        keys = []
+        for root, session in (("/tmp/a", first), ("/tmp/b", second)):
+            trace = f"7  fdatasync(3<{session}/events.jsonl>) = 0\n7  fsync(4<{session}>) = 0\n"
+            keys.append([group["path"] for group in bench.bfp.parse(trace, (root,))])
+        self.assertEqual(keys[0], keys[1])
+        self.assertEqual(
+            keys[0],
+            ["<root>/home/sessions/session_<id>", "<root>/home/sessions/session_<id>/events.jsonl"],
+        )
 
 
 if __name__ == "__main__":

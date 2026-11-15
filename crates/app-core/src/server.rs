@@ -2277,6 +2277,8 @@ impl Server {
 
         let main_listener = Listener::bind(&self.socket_path)?;
         let debug_listener = Listener::bind(&self.debug_socket_path)?;
+        crate::startup_profile::mark(crate::startup_profile::SOCKET_BOUND);
+        crate::startup_profile::report_to_log();
         irc::install(self);
 
         // Server reload replaces the process image where the platform supports

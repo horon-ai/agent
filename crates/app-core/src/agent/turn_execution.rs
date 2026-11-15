@@ -797,18 +797,18 @@ impl Agent {
         {
             return;
         }
-        if self.locked_tools.is_none() && self.listed_tools_rows().is_some() {
+        if self.locked_tools.is_none() && self.listed_tools_index_built() {
             return;
         }
         if self.locked_tools.is_some() {
             self.freeze_mcp_surface();
         }
-        let rows = self.build_listed_tools_index().await;
+        let index = super::prompt_snapshot::ListedToolsIndex::new(self.build_listed_tools_index().await);
         let mut slot = self
             .listed_tools_index
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *slot = Some(rows);
+        *slot = Some(index);
         if self.locked_tools.is_some() {
             self.listed_tools_index_frozen
                 .store(true, std::sync::atomic::Ordering::Release);
@@ -816,30 +816,6 @@ impl Agent {
         drop(slot);
         if self.locked_tools.is_some() {
             self.publish_listed_mcp_surface();
-        }
-    }
-
-    /// The index rows, or `None` while the index has not been built.
-    fn listed_tools_rows(&self) -> Option<Vec<(String, String)>> {
-        self.listed_tools_index
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-
-    /// The rendered index section, when this session lists any tool.
-    ///
-    /// A session that reaches the prompt before anything built the index gets no
-    /// section and a warning: guessing here would seed the cached prefix with a
-    /// list the session never resolved, and staying silent would hide a missing
-    /// call site.
-    pub(crate) fn listed_tools_section(&self) -> Option<String> {
-        match self.listed_tools_rows() {
-            Some(rows) => crate::prompt::build_additional_tools_section(&rows),
-            None => {
-                logging::warn("listed tools index not built before prompt");
-                None
-            }
         }
     }
 

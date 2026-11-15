@@ -6,7 +6,7 @@ use horon_agent_tool_types::ToolOutput;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-pub const TOOL_INTENT_DESCRIPTION: &str = "Required short label shown in the UI: why this call is being made.";
+pub const TOOL_INTENT_DESCRIPTION: &str = "Short label shown in the UI: why this call is made.";
 
 /// Input key a caller sets to accept the token cost of an oversized result.
 ///
@@ -19,7 +19,7 @@ pub const ACCEPT_LARGE_OUTPUT_KEY: &str = "accept_large_output";
 /// Deliberately terse: this rides on every tool schema on every request, so
 /// each word is paid forever. The full explanation lives in the refusal
 /// message, which is only ever shown when it is actually relevant.
-pub const ACCEPT_LARGE_OUTPUT_DESCRIPTION: &str = "Re-run accepting the stated token cost of a withheld result.";
+pub const ACCEPT_LARGE_OUTPUT_DESCRIPTION: &str = "Accept the stated token cost of a withheld result.";
 
 pub fn intent_schema_property() -> Value {
     serde_json::json!({

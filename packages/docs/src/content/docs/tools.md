@@ -55,6 +55,8 @@ one instruction line — `Call one with toolbox: action "run", tool "<name>", ar
 — then one `- <name>: <description>` row per tool. A row carries only the first
 sentence of the tool description's first non-empty line, capped at 60 characters
 including the trailing `...`; the model fetches parameters with `toolbox describe`.
+Each listed core tool opens with a sentence that fits the row, so only `todo`, whose
+model-visible text is kept as written, is still cut.
 
 The index freezes when the first tool list is locked and does not change
 afterwards. `/clear` keeps it because it is the same session; only a session

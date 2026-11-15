@@ -306,7 +306,7 @@ impl Tool for AskTool {
     fn description(&self) -> &str {
         // Always-on prompt cost. The timeout and fallback behavior is host
         // behavior the result reports, not something the model plans around.
-        "Ask the user up to four questions with concrete options when only they can decide."
+        "Ask the user up to four questions with concrete options. Use only when they alone can decide."
     }
 
     fn parameters_schema(&self) -> Value {

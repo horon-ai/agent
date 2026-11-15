@@ -73,8 +73,8 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 
 | 묶음 | 스크립트 | 재는 것 |
 | --- | --- | --- |
-| `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리, 동시 세션 수에 따른 메모리, 설치 크기, 스킬 호출 시간, MCP 도구 호출 시간과 도구 왕복. Linux는 `fsync` 호출 수도 잰다. |
-| `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, 하네스 브리지 단계별 준비 시간 |
+| `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리(기록된 결과와 같은 도구 허용 목록으로 한 번, horon은 기본 core 도구 표면으로 `oneshot_core`를 한 번 더), 모델 요청마다의 바이트 수(`request_bytes`), 동시 세션 수에 따른 메모리, 설치 크기, 스킬 호출 시간, MCP 도구 호출 시간과 도구 왕복. Linux는 `fsync` 호출 수와 그 호출이 flush한 파일(`fsync_paths`)도 잰다. |
+| `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, `HORON_AGENT_STARTUP_PROFILE=1`로 한 번 더 돌린 실행의 `serve` 기동 단계 표, 하네스 브리지 단계별 준비 시간 |
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연 |
 | `reload` | `bench_reload_storm.py` | 세션 N개(1, 10, 40)를 동시에 다시 열어 `history`가 올 때까지의 지연 |
@@ -107,6 +107,8 @@ python3 scripts/perf/bench_reload_storm.py --binary ./target/release/horon-agent
 python3 scripts/perf/bench_startup.py ./target/release/horon-agent --runs 10
 ```
 
+`bench_startup.py`는 서버 준비 시간이 어느 단계에서 나오는지도 보여 준다. `serve`는 기본으로 기동에 관해 아무것도 쓰지 않는다. `HORON_AGENT_STARTUP_PROFILE`에 비어 있지 않은 값을 주면 데몬 소켓을 bind한 뒤 기동 단계 표를 로그에 한 번 쓴다. 스크립트는 시간을 재는 표본과 별도로 `HORON_AGENT_STARTUP_PROFILE=1`을 준 `serve`를 한 번 더 돌리고, 그 표를 `Server startup stages (one extra run with HORON_AGENT_STARTUP_PROFILE=1, not timed):` 블록으로 인쇄한다. 열은 `stage`, `at ms`, `delta ms`, `share`다. `process_start` 뒤의 단계는 `config_loaded`(설정과 프로바이더 준비 끝), `server_new`(저장된 상태를 읽어 서버 값이 만들어짐), `socket_bound`(main·debug 소켓 bind 끝)다. 시간을 재는 실행은 이 변수를 주지 않는다.
+
 스위트가 뜨는지만 확인하려면 스모크를 돌린다. tools, reload, compare(horon만, `oneshot`과 `sessions`) 스위트를 한 번씩 실행하고 하나라도 죽거나 건너뛰거나 오류를 기록하면 종료 코드 1로 끝난다. 스위트는 데몬이 뜨지 못해도 종료 코드 0으로 끝나므로 스모크는 종료 코드 대신 각 JSON 보고서를 읽는다. 벤치마크 워크플로는 PR에서 돌지 않으므로 `ci.yml`의 `Build & Test` 잡이 코드 PR마다 방금 빌드한 바이너리로 이 스모크를 돌린다.
 
 ```bash
@@ -134,7 +136,9 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | --- | --- |
 | `version_ms` | `--version` 실행 N회(기본 5)의 통계 |
 | `oneshot_ms` | one-shot `run` 질문 1건(기동, `ls` 도구 1회, 최종 응답)의 시간, 그동안의 최대 프로세스 트리 메모리, 도구 왕복 여부 |
+| `oneshot_core` | 같은 one-shot 질문에서 `--tools`를 뺀 실행. 요청이 기본 `core` 표면을 싣는다. 즉시 보내는 도구 7개와 `toolbox`, 시스템 프롬프트의 도구 인덱스다. 행마다 plain one-shot의 home과 작업 폴더를 다시 쓰므로 두 행은 도구 표면만 다르다. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`이고 실행마다 `oneshot_core.runs[*].request_bytes`가 남는다. 첫 요청이 도구를 하나도 싣지 않은 실행은 시간 없이 `core surface missing`으로 기록한다. core 프로필이 없는 도구(horon과 두 번째 horon 빌드를 뺀 모든 도구)는 `{"skipped": "<label> has no core tool profile"}`을 남긴다. `oneshot_ms` 행은 `RESULTS.md`와 비교할 수 있도록 `--tools bash`를 그대로 쓴다 |
 | `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
+| `fsync_paths` | `--syscalls`를 켰을 때 행마다 one-shot을 한 번 더 돌린다. 시간도 재지 않고 호출 수에도 넣지 않는 이 실행을 `strace -f -y`로 추적해 `fsync`·`fdatasync`마다 그 fd 뒤의 파일이나 폴더 이름을 얻는다. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`이고 호출이 많은 순서다. 실행의 임시 루트는 `<root>`로, 세션 폴더 이름(`session_<word>_<millis>_<hex>`)은 `session_<id>`로, UUID와 긴 hex id, 긴 숫자열은 `<id>`로 적어 두 실행과 두 빌드가 같은 묶음으로 나뉜다. `strace`가 이름을 얻지 못한 fd는 `fd:<n>`이다. 묶음 수의 합은 추적한 그 실행이 한 flush 수와 같다. `strace`가 없으면 값은 `{"skipped": "strace unavailable"}`이다 |
 | `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 | `skill_ms` | one-shot `run` 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
@@ -142,6 +146,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `mcp_ready_ms` | 프로세스 시작부터 도구 목록에 `bench_echo`가 처음 보인 요청까지의 시간(MCP 서버 시작과 도구 등록). 가짜 모델이 그 요청을 본 시각으로 잰다 |
 | `tool_round_trip` | 스킬 본문의 센티널이나 MCP가 돌려준 nonce를 나중 요청에서 실제로 봤을 때만 `true` |
 | `request_offsets_ms` | 실행 기록(JSON)마다 남는, 프로세스 시작부터 각 모델 요청이 도착할 때까지의 시간. 간격으로 기동, 도구 왕복, 종료 구간을 OS마다 나눠 본다 |
+| `request_bytes` | 실행 기록(JSON)마다 남는, 모델 요청당 `{body_bytes, tools_bytes, tool_count}` 항목. 가짜 모델이 받은 JSON 본문 바이트, 그중 도구 카탈로그 바이트, 요청이 제공한 도구 수다. JSON `oneshot.runs[*].request_bytes[*]`이고 `oneshot_core` 아래에도 같다. 가짜 모델이 보고하지 않은 키는 0이 아니라 `null`이다. 0은 실제 값(도구를 제공하지 않는 요청)이기 때문이다. 보고서의 `request bytes` 열은 첫 실행의 첫 요청을 `body / tools (N tools)`로 보여 주고, 값이 있는 행이 있을 때만 나타난다 |
 | `thread_names` | 데몬 세션 측정의 각 세션 수마다, 턴 직후 데몬 프로세스의 스레드를 이름별로 센 값(Linux `/proc/<pid>/task/*/comm`). 세션 수에 따라 어느 스레드가 느는지 본다. 다른 OS는 `null` |
 | `live_heap_bytes` | 데몬 세션 측정에서 idle과 턴 직후에 잰, malloc 영역이 실제로 쥐고 있는 바이트(macOS `heap(1)`의 "All zones" 합계). RSS 기울기와 나란히 보면 세션당 증가가 살아 있는 데이터인지 할당자가 붙든 메모리인지 갈린다. 턴 직후 값은 RSS를 잰 뒤에 재고, 다른 OS는 `null` |
 | `post_turn_rss_anon_bytes`, `post_turn_rss_file_bytes` | 턴 직후 데몬 트리 RSS를 익명 메모리(힙·스택)와 파일 매핑(실행 파일·라이브러리)으로 나눈 값(Linux `/proc/<pid>/status`의 `RssAnon`, `RssFile`). 세션당 증가가 어느 쪽에서 오는지 본다. 다른 OS는 `null` |
@@ -150,7 +155,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
-세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세는 데만 쓴다.
+세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세고 `fsync_paths`를 얻는 데만 쓴다.
 
 ### omp와 omo
 
@@ -171,8 +176,9 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 ### 스킬 호출과 MCP 도구 호출
 
-`compare` 묶음은 `--scenarios`로 시나리오를 고른다. 기본값은 `oneshot,sessions,skill,mcp`이고, 부분집합을 주면 빠진 시나리오는 실제로 돌지 않으며 보고서에도 표가 나오지 않는다. 모르는 이름은 실행을 바로 실패시킨다.
+`compare` 묶음은 `--scenarios`로 시나리오를 고른다. 기본값은 `oneshot,oneshot_core,sessions,skill,mcp`이고, 부분집합을 주면 빠진 시나리오는 실제로 돌지 않으며 보고서에도 표가 나오지 않는다. 모르는 이름은 실행을 바로 실패시킨다.
 
+- `oneshot_core`: one-shot 질문에서 `--tools` 허용 목록을 뺀 것이라 턴이 기본 `core` 도구 프로필로 돈다. 바이너리에 새 기능이 필요 없으므로 `--bin horon-base=<path>`로 준 기준선 빌드도 같은 방법으로 재고, 그 쌍의 `request_bytes`에서 프롬프트나 도구 설명 변경이 옮긴 바이트가 보인다.
 - `skill`: 프롬프트가 `[bench:skill]`로 시작한다. 가짜 모델은 그 마커를 보고 스킬 전용 도구(`Skill`, `skill`, `skills.read`, `skill_manage`)가 있으면 그것을 부르고, 없으면 설명에 `skill://`가 있는 읽기 도구에 `skill://bench-skill`을 넘기고, 그것도 없으면 읽기 도구나 셸 도구로 프롬프트가 준 `SKILL.md` 절대 경로를 연다. 어느 경로였는지는 요청 기록의 `via`와 보고서의 `Via` 열에 남는다.
 - `mcp`: 프롬프트가 `[bench:mcp]`로 시작한다. 가짜 모델은 이름이 `bench_echo`로 끝나는 도구를 찾아 `{"text": "bench-nonce-N"}`으로 한 번 부른다. 그 도구가 Responses 네임스페이스 안에 있으면 함수 이름은 `bench_echo`, 네임스페이스는 별도 `namespace` 필드로 보낸다(Codex가 받는 `function_call` 모양). 도구 목록에 서버 도구가 없을 때는 각 에이전트가 문서로 정한 경로를 따른다. 고정 도구 `mcp_call`(`mcp-call`), `action` 열거값에 `call`이 있는 관리 도구 `mcp`(`mcp-action`), 프롬프트가 지연 도구로 적은 `mcp__<서버>__bench_echo`를 `ToolSearch`의 `select:<이름>`으로 먼저 불러오는 경로(`tool-search`), omp처럼 프롬프트에 `xd://...bench_echo` 라우트만 적는 도구는 그 라우트를 `write` 도구로 부르는 경로(`mcp-route`)다.
 - 도구를 불렀는데 센티널이나 nonce가 돌아오지 않으면 마지막 도구 결과의 끝 400자가 실행 기록의 `result_excerpt`에 남는다. 샌드박스 거부나 셸 오류를 다시 돌리지 않고 확인하기 위한 값이다.
@@ -251,18 +257,26 @@ PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에�
 | 대기 요청 | `pending_requests`, `pending_requests_high_water` | 요청 중 1 이상, 응답 뒤 0, 상한 이하 |
 | 페이지 범위 | `history_page_replayed`, `history_page_flattened`, `history_index_builds`, `warm_read_bytes` | 데운 페이지는 재생 0, 색인 재구축 0, 페이지 크기만큼만 평탄화, 로그의 1/10 이하만 읽기 |
 | 스트리밍 해시 버퍼 | `large_request`, `small_request`, `buffer_bytes` | 세 값이 같고 `HASH_STREAM_BUFFER` 이하 |
-| NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 상한은 예산 값과 같고, 수용은 상한 이하, 거절은 상한 초과 |
+| NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 두 리더(브리지, SDK) 모두 상한이 예산 값과 같고, 수용된 가장 큰 프레임은 1바이트 이상이면서 상한 이하이며, 거절된 가장 작은 프레임은 상한을 넘되 수용된 프레임보다 정확히 1바이트 크다 |
 | 자원 반납 | `fd_retention`, `thread_retention`, `non_returning` | 20사이클 소크 뒤 예산 이하, 반납 실패 0 |
+| 컨텍스트 압축 | `spill_kept_bytes`, `read_stub_bytes`, `aging_batches` | 1 MiB 도구 출력이 1바이트 이상이면서 압축 예산 48 KiB 이하로 모델에 닿고, 바뀌지 않은 파일의 두 번째 읽기는 1바이트 이상 512바이트 이하인 안내이며, 에이징 압력 지점을 넘긴 요청 둘이 프롬프트 프리픽스를 정확히 한 번 다시 쓴다(0회도 실패) |
 | IRC 메일박스 | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | 상한 100 이하, 1000건 유입에 드롭 900, 브로드캐스트당 본문 할당 1회, 정리 뒤 대기자 0, 동시 브로드캐스트 16 이하 |
 | 스킬 목록과 작업 폴더 스킬 | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | 스킬 200개 목록에서 스킬당 파일 읽기 1회 이하·8 KiB 이하(본문 32 KiB를 통째로 읽으면 실패), 바뀌지 않은 작업 폴더 요청 9회의 파일·폴더 읽기 0, 예열 읽기 1 이상 |
 | MCP 사용자 설정 | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 예열 읽기 1 이상, 예열 뒤 바뀌지 않은 사용자 설정을 다시 읽는 횟수 0 |
-| 요청 프리픽스 | `tools_bytes`, `tool_count` | `core` 프로필의 도구 카탈로그가 1바이트 이상이고 커밋된 상한 이하이며, 도구 수가 그 카탈로그를 만든 즉시 사용 정의 수와 같다 |
+| 설정하지 않은 `pre_request` 훅 | `request_messages_in_probe`, `hook_process_spawns`, `request_message_copies` | 프로브가 메시지를 1개 이상 투영하고, 훅을 설정하지 않으면 프로세스 생성 0, 메시지 복사 0 |
+| 요청 프리픽스 | `tools_bytes`, `tool_count`, `per_tool` | `core` 프로필의 도구 카탈로그가 1바이트 이상이고 커밋된 상한 이하이며, 도구 수가 그 카탈로그를 만든 즉시 사용 정의 수와 같다. `per_tool`은 카탈로그 순서의 `name:bytes` 목록이다. 크기의 합에 배열의 대괄호 둘과 항목 사이 쉼표를 더한 값이 `tools_bytes`와 같아야 하고, `per_tool`이 없는 줄은 측정이 아니다 |
+| 정적 프롬프트(`prompt`) | `static_bytes`, `static_sha256`, `static_tokens`, `index_bytes`, `index_clipped_rows`, `warm_source_reads`, `unchanged_request_source_reads` | `STRUCTURAL_PERF section=prompt` 줄로 찍힌다. `static_bytes`는 `prompt_static_bytes_max` 이하이고, 세션이 프롬프트 원천을 캡처한 뒤의 요청은 원천 파일을 하나도 읽지 않으며(`prompt_unchanged_request_source_reads_max`, 0), 문장 중간에서 잘리는 인덱스 행은 `prompt_index_clipped_rows_max`(1)개 이하다. 하한은 아무것도 재지 않은 줄을 거부한다. 정적 프롬프트와 그 토큰 추정치, 도구 인덱스가 1바이트 이상이고, 다이제스트가 SHA-256이며, 세션 캡처와 첫 조립을 합쳐 원천 파일을 하나 이상 읽으려 해야 한다. `static_sha256`은 시계 줄(`Time: `)을 뺀 프롬프트의 해시라 같은 프리픽스는 어느 실행에서나 같은 값이다. 두 읽기 카운터는 파일이 있든 없든 프롬프트 원천 파일을 읽으려는 시도를 센다 |
+| 세션 컨텍스트(`session_context`) | `git_spawns_outside_repo`, `git_spawns_in_repo`, `gpu_probe_spawns_without_display`, `gpu_probe_spawns_here`, `gpu_reported` | 저장소 밖 폴더는 `git`을 띄우지 않고(`session_context_git_spawns_outside_repo_max`, 0), 작업 트리는 한 번 띄우며(`session_context_git_spawns_in_repo_max`, 1), 표시 장치가 없는 PCI 장치 목록에서는 GPU 탐지를 띄우지 않는다(`session_context_gpu_probe_spawns_without_display_max`, 0). `git_spawns_in_repo`는 1 이상이어야 하기도 하다. 저장소를 설명하려면 `git` 프로세스가 필요하므로 0은 카운터가 꺼져 있었다는 뜻이다. 모두 자식 프로세스를 띄우려는 시도를 세므로 `git`이나 `lspci`가 없어도 센다. `gpu_probe_spawns_without_display`는 빈 PCI 장치 목록을 대상으로 재므로 어느 러너에서나 같은 값이다. `gpu_probe_spawns_here`와 `gpu_reported`는 시험을 돌린 기계를 설명하며 게이트는 둘 다 읽지 않는다 |
+
+가짜 모델 서버는 응답한 요청마다 `body_bytes`, `tools_bytes`, `tool_count`를 기록하고(`GET /__stats`), `compare` 실행은 그 값을 실행 기록마다 `request_bytes`로 옮겨 적는다. 그래서 벤치 실행이 `prefix` 행이 경계를 거는 것과 같은 요청별 모양을 보고한다.
+
+모의 모델 서버는 응답한 요청마다 `body_bytes`, `tools_bytes`, `tool_count`를 기록하므로(`GET /__stats`), 벤치 실행은 `prefix` 행이 경계로 두는 요청별 모양을 그대로 보고한다.
 
 각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다.
 
 ```bash
 python3 scripts/perf/check_structural.py                 # 전체
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix, prompt, session_context
 python3 scripts/perf/check_structural.py --print-plan    # 실행할 cargo 명령만 보기
 python3 -m unittest -v scripts/perf/test_check_structural.py   # 게이트의 계약 테스트
 ```

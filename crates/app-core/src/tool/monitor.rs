@@ -173,7 +173,7 @@ impl Tool for MonitorTool {
     fn description(&self) -> &str {
         // Always-on prompt cost: the pacing policy and restart rules are host
         // behavior, and `rearm` is named in the action enum.
-        "Watch a file or command across restarts; changes wake you instead of polling."
+        "Watch a file or command across restarts. Changes wake you instead of polling."
     }
 
     fn effects(&self) -> super::ToolEffects {

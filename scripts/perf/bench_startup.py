@@ -8,6 +8,9 @@ logs, or credentials.
 Two surfaces are measured:
 
 - server ready: `horon-agent serve` accepts a connection on its daemon socket.
+  One more `serve` run, outside the timed sample, sets
+  `HORON_AGENT_STARTUP_PROFILE=1` and prints the stage table the daemon wrote
+  to its log, so a slower server-ready number names the stage that grew.
 - harness bridge readiness: `horon-agent api-bridge` reaches the stable harness
   API in three stages, timed separately so a regression names its stage:
   the API socket becomes connectable, the bridge answers `hello` with
@@ -20,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import socket
 import statistics
@@ -37,6 +41,12 @@ import bench_common as bc  # noqa: E402
 
 API_VERSION_MAJOR = 1
 STAGE_TIMEOUT_S = 20.0
+PROFILE_ENV = "HORON_AGENT_STARTUP_PROFILE"
+PROFILE_HEADER = "=== Startup Profile"
+PROFILE_WAIT_S = 2.0
+# One stage row: time since process start, time since the previous stage, share
+# of the total, stage name. The daemon's log prefix before it is ignored.
+PROFILE_ROW = re.compile(r"(\d+(?:\.\d+)?)ms\s+(\d+(?:\.\d+)?)ms\s+(\d+(?:\.\d+)?)%\s+(\S+)")
 
 @dataclass
 class BridgeReadiness:
@@ -143,6 +153,80 @@ def measure_server_startup(binary: str, runs: int) -> list[float]:
                     proc.wait(timeout=2)
             shutil.rmtree(root, ignore_errors=True)
     return times
+
+def parse_startup_profile(text: str) -> list[dict]:
+    """Stage rows of the last startup profile table in a daemon log, in order."""
+    stages: list[dict] | None = None
+    for line in text.splitlines():
+        if PROFILE_HEADER in line:
+            stages = []
+            continue
+        match = PROFILE_ROW.search(line)
+        if stages is not None and match:
+            stages.append(
+                {
+                    "stage": match[4],
+                    "at_ms": float(match[1]),
+                    "delta_ms": float(match[2]),
+                    "percent": float(match[3]),
+                }
+            )
+    return stages or []
+
+def read_daemon_logs(home: str) -> str:
+    logs = sorted(Path(home).rglob("horon-agent-*.log"))
+    return "\n".join(path.read_text(errors="replace") for path in logs)
+
+def measure_startup_profile(binary: str) -> list[dict]:
+    """Run `serve` once with the startup profile on and return its stage rows.
+
+    The run is separate from the timed sample, which never sets the variable.
+    The daemon writes the table after it binds its sockets, so the log is read
+    until two reads agree or the wait runs out.
+    """
+    root = tempfile.mkdtemp(prefix="ha-serve-")
+    env = isolated_env(root)
+    env[PROFILE_ENV] = "1"
+    proc = None
+    stages: list[dict] = []
+    try:
+        proc = subprocess.Popen(
+            [binary, "serve"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        if wait_for_socket(env["HORON_AGENT_SOCKET"], 5.0):
+            deadline = time.monotonic() + PROFILE_WAIT_S
+            while time.monotonic() < deadline:
+                seen = parse_startup_profile(read_daemon_logs(env["HORON_HOME"]))
+                if seen and seen == stages:
+                    break
+                stages = seen
+                time.sleep(0.05)
+    finally:
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+        shutil.rmtree(root, ignore_errors=True)
+    return stages
+
+def print_startup_profile(stages: list[dict]) -> None:
+    print(f"\nServer startup stages (one extra run with {PROFILE_ENV}=1, not timed):")
+    if not stages:
+        print("  no startup profile in the daemon log")
+        return
+    width = max(len(stage["stage"]) for stage in stages)
+    print(f"  {'stage':<{width}}  {'at ms':>8}  {'delta ms':>8}  {'share':>6}")
+    for stage in stages:
+        print(
+            f"  {stage['stage']:<{width}}  {stage['at_ms']:>8.1f}"
+            f"  {stage['delta_ms']:>8.1f}  {stage['percent']:>5.1f}%"
+        )
 
 def api_socket_path(env: dict[str, str]) -> str:
     return os.path.join(env["HORON_AGENT_RUNTIME_DIR"], "horon-agent-api.sock")
@@ -324,6 +408,7 @@ def main() -> int:
     print(f"\nMeasuring isolated server startup ({args.runs} runs)...")
     server_times = measure_server_startup(binary, args.runs)
     print_stats("Server ready (isolated socket connectable)", server_times)
+    print_startup_profile(measure_startup_profile(binary))
 
     print(f"\nMeasuring harness bridge readiness ({args.runs} runs)...")
     bridge_results = measure_bridge_startup(binary, args.runs)

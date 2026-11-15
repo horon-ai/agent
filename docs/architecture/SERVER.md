@@ -114,7 +114,7 @@ Properties worth knowing:
 
 Swarm workers are unattended sessions running inside this process regardless of the `spawn_mode` on the `spawn` request. The values are
 `headless`, `inline` (the default), and `auto`, and all three create the same in-process session and open no terminal window. Old config or
-environment values `visible` and `headed` read as `inline` (`SwarmSpawnMode` at `crates/config-types/src/lib.rs:795`).
+environment values `visible` and `headed` read as `inline` (`SwarmSpawnMode` at `crates/config-types/src/swarm_spawn.rs:11`).
 
 ### Session ownership marker files (`active_pids`)
 
