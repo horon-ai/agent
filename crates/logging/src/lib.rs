@@ -7,8 +7,9 @@
 pub mod watchdog;
 
 use chrono::Local;
+use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -462,32 +463,63 @@ where
     V: ToString,
     I: IntoIterator<Item = (K, V)>,
 {
-    let event = sanitize_log_value(event);
-    let mut ordered = BTreeMap::new();
-    for (key, value) in fields {
-        let raw_key = key.as_ref();
-        let key = sanitize_log_key(raw_key);
-        let value = redact_auth_field(raw_key, &value.to_string());
-        ordered.insert(key, value);
-    }
+    format_structured_event_as(structured_json_enabled(), event, fields)
+}
 
-    if structured_json_enabled() {
+/// Assemble one structured line, as JSON or as `key=value` text.
+///
+/// The text line is written into one buffer. A key that is already clean is
+/// used as it was given and a value that needs no redaction or cut is used as
+/// it was rendered, so the usual field costs the one allocation of its
+/// rendered value.
+fn format_structured_event_as<K, V, I>(json: bool, event: &str, fields: I) -> String
+where
+    K: AsRef<str>,
+    V: ToString,
+    I: IntoIterator<Item = (K, V)>,
+{
+    let event = sanitize_log_value(event);
+    let mut rendered: Vec<(K, String)> = fields
+        .into_iter()
+        .map(|(key, value)| (key, value.to_string()))
+        .collect();
+    let mut ordered: Vec<(Cow<'_, str>, String)> = rendered
+        .iter_mut()
+        .map(|(key, value)| {
+            let raw_key = AsRef::<str>::as_ref(&*key);
+            (
+                sanitize_log_key(raw_key),
+                redact_rendered_field(raw_key, std::mem::take(value)),
+            )
+        })
+        .collect();
+    // Fields are written in key order. The sort is stable, so of two fields
+    // that share a key the later one stays last, and the last one is written.
+    ordered.sort_by(|left, right| left.0.cmp(&right.0));
+
+    if json {
         let mut object = serde_json::Map::new();
         object.insert("event".to_string(), serde_json::Value::String(event));
         for (key, value) in ordered {
-            object.insert(key, serde_json::Value::String(value));
+            object.insert(key.into_owned(), serde_json::Value::String(value));
         }
         return format!("EVENT_JSON {}", serde_json::Value::Object(object));
     }
 
-    let mut parts = Vec::with_capacity(ordered.len() + 1);
-    parts.push(format!("event={}", format_log_field_value(&event)));
-    parts.extend(
-        ordered
-            .into_iter()
-            .map(|(key, value)| format!("{}={}", key, format_log_field_value(&value))),
-    );
-    format!("EVENT {}", parts.join(" "))
+    let fields_len: usize = ordered.iter().map(|(key, value)| key.len() + value.len() + 2).sum();
+    let mut line = String::with_capacity("EVENT event=".len() + event.len() + fields_len);
+    line.push_str("EVENT event=");
+    push_log_field_value(&mut line, &event);
+    for (index, (key, value)) in ordered.iter().enumerate() {
+        if ordered.get(index + 1).is_some_and(|(next, _)| next == key) {
+            continue;
+        }
+        line.push(' ');
+        line.push_str(key);
+        line.push('=');
+        push_log_field_value(&mut line, value);
+    }
+    line
 }
 
 fn structured_json_enabled() -> bool {
@@ -497,33 +529,30 @@ fn structured_json_enabled() -> bool {
     )
 }
 
-fn sanitize_log_key(key: &str) -> String {
-    let sanitized: String = key
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if sanitized.is_empty() {
+fn sanitize_log_key(key: &str) -> Cow<'_, str> {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.';
+    if !key.is_empty() && key.len() <= MAX_LOG_KEY_BYTES && key.chars().all(allowed) {
+        return Cow::Borrowed(key);
+    }
+    let sanitized: String = key.chars().map(|c| if allowed(c) { c } else { '_' }).collect();
+    Cow::Owned(if sanitized.is_empty() {
         "field".to_string()
     } else {
-        truncate(&sanitized, 80)
-    }
+        truncate(&sanitized, MAX_LOG_KEY_BYTES)
+    })
 }
 
-fn format_log_field_value(value: &str) -> String {
+/// Append a value, JSON-quoted when it is empty or holds whitespace, `=` or a
+/// quote.
+fn push_log_field_value(line: &mut String, value: &str) {
     if value.is_empty()
         || value
             .chars()
             .any(|c| c.is_whitespace() || c == '=' || c == '"' || c == '\'')
     {
-        serde_json::to_string(value).unwrap_or_else(|_| "\"<unserializable>\"".to_string())
+        line.push_str(&serde_json::to_string(value).unwrap_or_else(|_| "\"<unserializable>\"".to_string()));
     } else {
-        value.to_string()
+        line.push_str(value);
     }
 }
 
@@ -646,28 +675,55 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Whether a field name looks credential-like, compared without regard to
+/// ASCII case.
+fn is_credential_key(key: &str) -> bool {
+    const MARKERS: [&str; 10] = [
+        "token",
+        "secret",
+        "key",
+        "credential",
+        "callback",
+        "authorization",
+        "auth_code",
+        "oauth_code",
+        "code_verifier",
+        "code_challenge",
+    ];
+    let key = key.as_bytes();
+    MARKERS.iter().any(|marker| {
+        key.windows(marker.len())
+            .any(|window| window.eq_ignore_ascii_case(marker.as_bytes()))
+    })
+}
+
 fn redact_auth_field(key: &str, value: &str) -> String {
-    let key = key.to_ascii_lowercase();
-    if key.contains("token")
-        || key.contains("secret")
-        || key.contains("key")
-        || key.contains("credential")
-        || key.contains("callback")
-        || key.contains("authorization")
-        || key.contains("auth_code")
-        || key.contains("oauth_code")
-        || key.contains("code_verifier")
-        || key.contains("code_challenge")
-    {
+    if is_credential_key(key) {
         return "<redacted>".to_string();
     }
     sanitize_log_value(value)
 }
 
+/// `redact_auth_field` for a value that is already rendered: a value the
+/// sanitizer would leave unchanged is returned as it is.
+fn redact_rendered_field(key: &str, value: String) -> String {
+    if is_credential_key(key) {
+        return "<redacted>".to_string();
+    }
+    // Without a line break, a tab or a `?` there is nothing to replace and no
+    // URL query to redact, and a value within the limit is not cut.
+    let unchanged =
+        value.len() <= MAX_LOG_VALUE_BYTES && !value.bytes().any(|byte| matches!(byte, b'\n' | b'\r' | b'\t' | b'?'));
+    if unchanged { value } else { sanitize_log_value(&value) }
+}
+
+const MAX_LOG_KEY_BYTES: usize = 80;
+const MAX_LOG_VALUE_BYTES: usize = 160;
+
 fn sanitize_log_value(value: &str) -> String {
     let value = value.replace(['\n', '\r', '\t'], " ");
     let value = redact_url_queries(&value);
-    truncate(&value, 160)
+    truncate(&value, MAX_LOG_VALUE_BYTES)
 }
 
 fn redact_url_queries(value: &str) -> String {
@@ -843,3 +899,7 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 }
+
+#[cfg(test)]
+#[path = "structured_line_tests.rs"]
+mod structured_line_tests;
