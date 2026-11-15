@@ -565,3 +565,356 @@ default_model = "broken-model"
         assert!(message.contains("base_url"), "{message}");
     });
 }
+
+/// One loopback server that records the request head of what it is sent and
+/// answers with an empty SSE body.
+///
+/// A profile's extra headers are not exposed by any accessor, so the only
+/// honest way to check the `anthropic-version` default is to read the request
+/// the wire actually sends.
+struct RecordingServer {
+    base_url: String,
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
+    stop: Arc<std::sync::atomic::AtomicUsize>,
+    accept: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RecordingServer {
+    fn start() -> Self {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        listener.set_nonblocking(true).expect("non-blocking listener");
+        let address = listener.local_addr().expect("loopback address");
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen_thread = Arc::clone(&seen);
+        let stop_thread = Arc::clone(&stop);
+        let accept = std::thread::spawn(move || {
+            while stop_thread.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).ok();
+                        stream.set_read_timeout(Some(std::time::Duration::from_secs(5))).ok();
+                        let mut buffer = Vec::new();
+                        let mut chunk = [0u8; 2048];
+                        let mut content_length = 0usize;
+                        loop {
+                            let read = match stream.read(&mut chunk) {
+                                Ok(0) | Err(_) => break,
+                                Ok(read) => read,
+                            };
+                            buffer.extend_from_slice(&chunk[..read]);
+                            let text = String::from_utf8_lossy(&buffer).to_string();
+                            if let Some(end) = text.find("\r\n\r\n") {
+                                if content_length == 0 {
+                                    content_length = text[..end]
+                                        .lines()
+                                        .filter_map(|line| line.split_once(':'))
+                                        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                                        .and_then(|(_, value)| value.trim().parse().ok())
+                                        .unwrap_or(0);
+                                }
+                                if buffer.len() >= end + 4 + content_length {
+                                    break;
+                                }
+                            }
+                        }
+                        if let Ok(text) = String::from_utf8(buffer) {
+                            seen_thread
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                                .push(text);
+                        }
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                              Connection: close\r\nContent-Length: 0\r\n\r\n",
+                        );
+                        let _ = stream.flush();
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                }
+            }
+        });
+        Self {
+            base_url: format!("http://{address}/v1"),
+            seen,
+            stop,
+            accept: Some(accept),
+        }
+    }
+
+    /// The header block of the last request, lowercased for comparisons.
+    fn last_request_headers(&self) -> String {
+        let seen = self.seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let request = seen.last().cloned().unwrap_or_default();
+        let head = match request.find("\r\n\r\n") {
+            Some(end) => request[..end].to_string(),
+            None => request,
+        };
+        head.to_ascii_lowercase()
+    }
+
+    fn request_count(&self) -> usize {
+        self.seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).len()
+    }
+}
+
+impl Drop for RecordingServer {
+    fn drop(&mut self) {
+        self.stop.store(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(accept) = self.accept.take() {
+            let _ = accept.join();
+        }
+    }
+}
+
+/// The `type` of a `[providers.<name>]` profile decides the wire, and every
+/// wire keeps the one runtime name the product reports.
+#[test]
+fn named_profile_type_decides_the_wire_every_runtime_reports() {
+    with_clean_provider_test_env(|| {
+        write_provider_config(
+            r#"
+[providers.chat]
+type = "openai-compatible"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "chat-model"
+
+[[providers.chat.models]]
+id = "chat-model"
+
+[providers.responses]
+type = "openai-responses"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "responses-model"
+
+[[providers.responses.models]]
+id = "responses-model"
+
+[providers.messages]
+type = "anthropic-compatible"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "messages-model"
+
+[[providers.messages.models]]
+id = "messages-model"
+
+[providers.gemini]
+type = "gemini-compatible"
+base_url = "http://127.0.0.1:18080/v1beta"
+auth = "none"
+default_model = "gemini-model"
+
+[[providers.gemini.models]]
+id = "gemini-model"
+"#,
+        );
+
+        for (profile_name, api_method) in [
+            ("chat", "chat_completions"),
+            ("responses", "responses"),
+            ("messages", "messages"),
+            ("gemini", "generate_content"),
+        ] {
+            let provider = MultiProvider::from_named_provider_profile(profile_name)
+                .unwrap_or_else(|error| panic!("profile '{profile_name}' must build a runtime: {error}"));
+            let runtime = provider
+                .execution_provider()
+                .unwrap_or_else(|| panic!("profile '{profile_name}' must install its runtime"));
+            assert_eq!(runtime.name(), horon_agent_provider_openai::PROVIDER_NAME);
+            assert_eq!(provider.display_name(), profile_name);
+            let routes = runtime.model_routes();
+            assert_eq!(routes.len(), 1, "profile '{profile_name}' has one model");
+            assert_eq!(
+                routes[0].api_method, api_method,
+                "profile '{profile_name}' must speak the wire its type names"
+            );
+        }
+    });
+}
+
+/// The managed OpenRouter runtime is gone, so `type = "open-router"` is a named
+/// error that lists every value this build can run.
+#[test]
+fn open_router_type_is_rejected_with_the_supported_values() {
+    with_clean_provider_test_env(|| {
+        write_provider_config(
+            r#"
+[providers.legacy]
+type = "open-router"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "legacy-model"
+"#,
+        );
+
+        let error = match MultiProvider::from_named_provider_profile("legacy") {
+            Ok(_) => panic!("a removed provider type must not build a runtime"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("\"open-router\""), "{message}");
+        for supported in [
+            "\"openai-compatible\"",
+            "\"openai-responses\"",
+            "\"anthropic-compatible\"",
+            "\"gemini-compatible\"",
+        ] {
+            assert!(message.contains(supported), "{message} must name {supported}");
+        }
+    });
+}
+
+/// An Anthropic profile that names no version header still sends the one the
+/// Messages API requires, and a profile that names its own keeps it.
+#[test]
+fn anthropic_profiles_send_a_version_header_they_do_not_override() {
+    with_clean_provider_test_env(|| {
+        let server = RecordingServer::start();
+        let base_url = server.base_url.clone();
+        write_provider_config(&format!(
+            r#"
+[providers.messages-default]
+type = "anthropic-compatible"
+base_url = "{base_url}"
+auth = "none"
+default_model = "claude-qa"
+
+[[providers.messages-default.models]]
+id = "claude-qa"
+
+[providers.messages-custom]
+type = "anthropic-compatible"
+base_url = "{base_url}"
+auth = "none"
+default_model = "claude-qa"
+
+[[providers.messages-custom.models]]
+id = "claude-qa"
+
+[providers.messages-custom.headers]
+anthropic-version = "2024-11-05"
+"#,
+        ));
+
+        let runtime = enter_test_runtime();
+        for (profile_name, expected_version) in [
+            (
+                "messages-default",
+                crate::provider_catalog::ANTHROPIC_VERSION_HEADER_VALUE,
+            ),
+            ("messages-custom", "2024-11-05"),
+        ] {
+            let provider = MultiProvider::from_named_provider_profile(profile_name)
+                .unwrap_or_else(|error| panic!("profile '{profile_name}' must build a runtime: {error}"));
+            let runtime_handle = provider
+                .execution_provider()
+                .unwrap_or_else(|| panic!("profile '{profile_name}' must install its runtime"));
+            let sent = runtime.block_on(async {
+                runtime_handle
+                    .complete(&[Message::user("ping")], &[], "be brief", None)
+                    .await
+            });
+            assert!(sent.is_ok(), "the loopback profile answers profile '{profile_name}'");
+            let headers = server.last_request_headers();
+            assert!(
+                headers.starts_with("post /v1/messages "),
+                "the Messages wire posts to /v1/messages: {headers}"
+            );
+            let expected = format!("anthropic-version: {expected_version}");
+            assert!(
+                headers.contains(&expected),
+                "profile '{profile_name}' must send '{expected}': {headers}"
+            );
+            assert_eq!(
+                headers.matches("anthropic-version:").count(),
+                1,
+                "profile '{profile_name}' sends the version header exactly once: {headers}"
+            );
+        }
+        assert_eq!(server.request_count(), 2);
+    });
+}
+
+/// Image generation exists only on the two OpenAI wires, and Gemini refuses a
+/// base URL whose query string the wire would append a second one to.
+#[test]
+fn image_generation_is_openai_only_and_gemini_refuses_a_query_string() {
+    with_clean_provider_test_env(|| {
+        write_provider_config(
+            r#"
+[providers.paint]
+type = "openai-responses"
+base_url = "http://127.0.0.1:18080/v1"
+auth = "none"
+default_model = "paint-model"
+
+[[providers.paint.models]]
+id = "paint-model"
+
+[providers.paint.roles]
+image = "gpt-image-1"
+
+[providers.painted]
+type = "gemini-compatible"
+base_url = "http://127.0.0.1:18080/v1beta"
+auth = "none"
+default_model = "gemini-model"
+
+[[providers.painted.models]]
+id = "gemini-model"
+
+[providers.painted.roles]
+image = "imagen-3.0"
+
+[providers.keyed]
+type = "gemini-compatible"
+base_url = "http://127.0.0.1:18080/v1beta?key=inline"
+auth = "none"
+default_model = "gemini-model"
+"#,
+        );
+
+        let endpoint = super::external::image_endpoint("paint")
+            .expect("the Responses wire accepts image generation")
+            .expect("the profile names an image model");
+        assert_eq!(endpoint.profile, "paint");
+        assert_eq!(endpoint.base_url, "http://127.0.0.1:18080/v1");
+
+        let error = super::external::image_endpoint("painted").expect_err("the Gemini wire has no image route");
+        let message = error.to_string();
+        assert!(message.contains("gemini-compatible"), "{message}");
+        assert!(message.contains("openai-responses"), "{message}");
+
+        let error = match MultiProvider::from_named_provider_profile("keyed") {
+            Ok(_) => panic!("a gemini base_url must not carry a query string"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("query string"), "{message}");
+        assert!(message.contains("api_key_env"), "{message}");
+    });
+}
+
+/// The guidance a missing-provider error ends with names every wire this build
+/// can run, so a user with an Anthropic or Gemini endpoint is not told to
+/// rewrite it as an OpenAI one.
+#[test]
+fn missing_provider_guidance_names_every_wire() {
+    let message = super::dispatch::missing_provider_error().to_string();
+    assert!(
+        message.starts_with("No OpenAI-compatible provider is configured. "),
+        "{message}"
+    );
+    for supported in [
+        "\"openai-compatible\"",
+        "\"openai-responses\"",
+        "\"anthropic-compatible\"",
+        "\"gemini-compatible\"",
+    ] {
+        assert!(message.contains(supported), "{message} must name {supported}");
+    }
+}

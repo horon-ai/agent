@@ -5,14 +5,16 @@
 //! `OpenAiCompatibleProfile`. There is no registry and no second runtime path.
 
 use super::Provider;
-use horon_agent_provider_openai::{ChatAuth, OpenAiCompatibleProvider};
+use horon_agent_provider_openai::{ChatAuth, OpenAiCompatibleProvider, WireProtocol};
 use std::sync::{Arc, RwLock};
 
-/// Everything the direct Chat Completions provider needs, after profile
-/// resolution has produced an endpoint, credential and catalog.
+/// Everything one direct provider runtime needs, after profile resolution has
+/// produced an endpoint, credential, wire and catalog.
 pub struct DirectOpenAiCompatibleSpec {
     pub base_url: String,
     pub auth: ChatAuth,
+    /// Request and response shape this endpoint speaks.
+    pub wire: WireProtocol,
     pub api_key: Option<String>,
     pub display_name: String,
     pub profile_id: String,
@@ -27,11 +29,12 @@ pub struct DirectOpenAiCompatibleSpec {
     pub prompt_cache_retention: Option<String>,
 }
 
-/// Build the direct Chat Completions runtime for a resolved profile.
+/// Build the direct provider runtime for a resolved profile.
 pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<Arc<dyn Provider>> {
     let configured_retention = spec.prompt_cache_retention;
     let mut provider =
         OpenAiCompatibleProvider::new(spec.base_url, spec.auth, spec.api_key, spec.default_model, spec.models)?
+            .with_wire(spec.wire)
             .with_display_name(spec.display_name)
             .with_profile_id(spec.profile_id)
             .with_prompt_cache_key_policy(spec.prompt_cache_key)
@@ -101,6 +104,7 @@ pub fn build_openai_compatible_profile_runtime(
     build_direct_openai_compatible_runtime(DirectOpenAiCompatibleSpec {
         base_url: resolved.api_base,
         auth,
+        wire: WireProtocol::ChatCompletions,
         api_key,
         display_name: resolved.display_name,
         profile_id: resolved.id,
@@ -116,25 +120,25 @@ pub fn build_openai_compatible_profile_runtime(
 /// Build the runtime for a user-defined `[providers.<name>]` profile from
 /// config.toml.
 ///
-/// Only `type = "openai-compatible"` profiles are supported: the native
-/// Anthropic wire format and the managed OpenRouter runtime are gone, so any
-/// other type is a named configuration error rather than a silent fallback.
+/// Each supported `type` names one wire; the profile's endpoint, credential and
+/// catalog resolve once and the wire decides only the request and response
+/// shape. The managed OpenRouter runtime is gone, so `open-router` is a named
+/// configuration error that lists the supported values rather than a silent
+/// fallback.
 pub fn build_named_openai_compatible_runtime(
     profile_name: &str,
     profile: &crate::config::NamedProviderConfig,
 ) -> anyhow::Result<Arc<dyn Provider>> {
-    if !matches!(
-        profile.provider_type,
-        crate::config::NamedProviderType::OpenAiCompatible
-    ) {
+    let Some(wire) = named_provider_wire(&profile.provider_type) else {
         anyhow::bail!(
-            "Provider profile '{}' has type {:?}; only \"openai-compatible\" profiles are supported. \
-             Rewrite [providers.{}] with type = \"openai-compatible\".",
+            "Provider profile '{}' has type \"{}\", which is not supported. \
+             Rewrite [providers.{}] with type = \"openai-compatible\", \"openai-responses\", \
+             \"anthropic-compatible\" or \"gemini-compatible\".",
             profile_name,
-            profile.provider_type,
+            named_provider_type_name(&profile.provider_type),
             profile_name,
         );
-    }
+    };
 
     let base_url = crate::provider_catalog::normalize_api_base(&profile.base_url).ok_or_else(|| {
         anyhow::anyhow!(
@@ -143,6 +147,16 @@ pub fn build_named_openai_compatible_runtime(
             profile.base_url,
         )
     })?;
+
+    if matches!(wire, WireProtocol::GeminiGenerateContent) && base_url.contains(['?', '#']) {
+        anyhow::bail!(
+            "Provider profile '{}' has a base_url carrying a query string or fragment. \
+             A gemini-compatible base_url must not carry a query string: the wire appends \
+             \"/models/<model>:streamGenerateContent?alt=sse\" to it, so the key travels through \
+             api_key_env or env_file instead.",
+            profile_name,
+        );
+    }
 
     let auth = profile_chat_auth(profile);
 
@@ -192,23 +206,61 @@ pub fn build_named_openai_compatible_runtime(
         models.insert(0, default_model.clone());
     }
 
+    let mut headers = profile
+        .headers
+        .iter()
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    // The Messages API refuses a request without a version header. The profile
+    // may name its own; the default fills in only when it does not.
+    if matches!(wire, WireProtocol::AnthropicMessages)
+        && !headers
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case("anthropic-version"))
+    {
+        headers.push((
+            "anthropic-version".to_string(),
+            crate::provider_catalog::ANTHROPIC_VERSION_HEADER_VALUE.to_string(),
+        ));
+    }
+
     build_direct_openai_compatible_runtime(DirectOpenAiCompatibleSpec {
         base_url,
         auth,
+        wire,
         api_key,
         display_name: profile_name.to_string(),
         profile_id: profile_name.to_string(),
         default_model,
         models,
-        headers: profile
-            .headers
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect(),
+        headers,
         extra_body: profile.extra_body.clone(),
         prompt_cache_key: profile.prompt_cache_key,
         prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
     })
+}
+
+/// The wire a supported `NamedProviderType` speaks, or `None` for a type this
+/// build cannot run.
+fn named_provider_wire(provider_type: &crate::config::NamedProviderType) -> Option<WireProtocol> {
+    match provider_type {
+        crate::config::NamedProviderType::OpenAiCompatible => Some(WireProtocol::ChatCompletions),
+        crate::config::NamedProviderType::OpenAiResponses => Some(WireProtocol::Responses),
+        crate::config::NamedProviderType::AnthropicCompatible => Some(WireProtocol::AnthropicMessages),
+        crate::config::NamedProviderType::GeminiCompatible => Some(WireProtocol::GeminiGenerateContent),
+        crate::config::NamedProviderType::OpenRouter => None,
+    }
+}
+
+/// The config.toml `type` value of a [`NamedProviderType`], matching its serde name.
+fn named_provider_type_name(provider_type: &crate::config::NamedProviderType) -> &'static str {
+    match provider_type {
+        crate::config::NamedProviderType::OpenAiCompatible => "openai-compatible",
+        crate::config::NamedProviderType::OpenAiResponses => "openai-responses",
+        crate::config::NamedProviderType::AnthropicCompatible => "anthropic-compatible",
+        crate::config::NamedProviderType::GeminiCompatible => "gemini-compatible",
+        crate::config::NamedProviderType::OpenRouter => "open-router",
+    }
 }
 
 fn named_profile_api_key(profile: &crate::config::NamedProviderConfig) -> Option<String> {
@@ -310,14 +362,17 @@ pub fn image_endpoint(profile_name: &str) -> anyhow::Result<Option<ImageEndpoint
     let Some(profile) = config.providers.get(profile_name) else {
         anyhow::bail!("Provider profile '{profile_name}' is not configured.");
     };
+    // `/images/generations` exists only on the OpenAI-shaped endpoints; the
+    // Anthropic and Gemini wires have no image route at all, so naming one here
+    // would send an image request to a URL that cannot answer it.
     if !matches!(
         profile.provider_type,
-        crate::config::NamedProviderType::OpenAiCompatible
+        crate::config::NamedProviderType::OpenAiCompatible | crate::config::NamedProviderType::OpenAiResponses
     ) {
         anyhow::bail!(
-            "Provider profile '{profile_name}' has type {:?}; image generation needs an \
-             \"openai-compatible\" profile.",
-            profile.provider_type
+            "Provider profile '{profile_name}' has type \"{}\"; image generation needs an \
+             \"openai-compatible\" or \"openai-responses\" profile.",
+            named_provider_type_name(&profile.provider_type)
         );
     }
     let model = profile
