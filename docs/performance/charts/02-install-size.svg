@@ -109,6 +109,6 @@
 <text x="192.2" y="985.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
 <rect x="202.2" y="972.0" width="383.4" height="18" rx="3" fill="#d3d9e1"/>
 <text x="593.6" y="985.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">515 (5.31×)</text>
-<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent f7a53f1 · measured 2026-11-15 12:58 UTC · run 43714998312</text>
+<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent f7a53f1 · measured 2026-11-15 13:37 UTC · run 43719041648</text>
 <text x="32.0" y="1050.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>

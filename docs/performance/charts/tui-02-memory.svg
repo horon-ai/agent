@@ -15,11 +15,11 @@
 <line x1="798.0" y1="158.0" x2="798.0" y2="248.0" stroke="#eaeef2"/>
 <text x="798.0" y="264.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">6</text>
 <text x="134.2" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
-<rect x="144.2" y="164.0" width="586.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="739.2" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.39</text>
+<rect x="144.2" y="164.0" width="596.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="748.5" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.47</text>
 <text x="134.2" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
-<rect x="144.2" y="194.0" width="612.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="765.1" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.62</text>
+<rect x="144.2" y="194.0" width="623.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="775.8" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.72</text>
 <text x="134.2" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
 <rect x="144.2" y="224.0" width="651.2" height="18" rx="3" fill="#d3d9e1"/>
 <text x="803.5" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.98</text>
@@ -38,11 +38,11 @@
 <line x1="798.0" y1="318.0" x2="798.0" y2="408.0" stroke="#eaeef2"/>
 <text x="798.0" y="424.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
 <text x="134.2" y="337.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">idle RSS</text>
-<rect x="144.2" y="324.0" width="574.1" height="18" rx="3" fill="#d3d9e1"/>
-<text x="726.3" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.78</text>
+<rect x="144.2" y="324.0" width="580.2" height="18" rx="3" fill="#d3d9e1"/>
+<text x="732.5" y="337.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.88</text>
 <text x="134.2" y="367.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">post-turn RSS</text>
-<rect x="144.2" y="354.0" width="588.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="740.6" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.00</text>
+<rect x="144.2" y="354.0" width="594.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="746.8" y="367.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">9.09</text>
 <text x="134.2" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
 <rect x="144.2" y="384.0" width="329.1" height="18" rx="3" fill="#d3d9e1"/>
 <text x="481.4" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.03</text>
@@ -69,6 +69,6 @@
 <text x="134.2" y="557.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">install size</text>
 <rect x="144.2" y="544.0" width="653.6" height="18" rx="3" fill="#d3d9e1"/>
 <text x="805.9" y="557.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.00</text>
-<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent f7a53f1 · measured 2026-11-15 12:58 UTC · run 43714998312</text>
+<text x="32.0" y="604.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent f7a53f1 · measured 2026-11-15 13:37 UTC · run 43719041648</text>
 <text x="32.0" y="622.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>
