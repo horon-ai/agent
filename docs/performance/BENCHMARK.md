@@ -205,6 +205,21 @@ Config surfaces differ per tool, so the harness places things like this. The `Vi
 
 Each scenario gets its own home and workspace under `<scenario>/run<N>` beneath the tool root. Reusing the same home lets a previous run's MCP schema cache or skill hints skip preparation work. Skill and MCP fixtures also live only in that scenario's home, so they cannot leak into another scenario's numbers. The whole root is deleted when the run ends.
 
+### Comparison report (PDF)
+
+`scripts/perf/bench_report.py` turns one `benchmark.yml` run into a printable comparison of horon with the other agents. It reads each OS's `compare.json`, draws every chart through the `ztd-charts-mcp` server (spoken to over stdio with `npx`, so Node must be installed), and writes `report.html`, `charts/*.svg`, `specs/*.json` and `summary.json`. A cell the run did not record is shown as "not measured" with the recorded reason; no value is filled in from elsewhere.
+
+```bash
+gh workflow run benchmark.yml --ref main -f os=all -f suites=compare,startup,tools -f oneshot_runs=10
+python3 scripts/perf/bench_report.py fetch --run <run-id> --out /tmp/bench-run
+python3 scripts/perf/bench_report.py build --in /tmp/bench-run --out /tmp/bench-report \
+  --commit <sha> --release <tag> --run-url <run-url>
+weasyprint /tmp/bench-report/report.html /tmp/bench-report/report.pdf   # pip install weasyprint
+```
+
+- The last step is any HTML-to-PDF printer. The report stays near 0.3 MB, small enough to send as one file.
+- The report text is Korean. The numbers are the `compare` suite's: mock model, so no API credit is spent and real model latency is not included.
+
 ### Measurement limits
 
 - The model is fake, so real model latency and token cost are not included. What is measured is the agent's own startup, memory, and tool round trip cost.
