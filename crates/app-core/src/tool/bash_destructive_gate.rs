@@ -52,7 +52,7 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
     let cmd_desc = if !horon_agent_platform::term::shell_is_posix() {
         "The Windows command to execute via cmd.exe. Use cmd.exe syntax and quoting, not Bash syntax."
     } else {
-        "Shell command. Temp files: $HORON_AGENT_SCRATCH_DIR, not /tmp."
+        "Shell command. Temp files: $HORON_AGENT_SCRATCH_DIR, not /tmp. rg skips hidden and ignored by default."
     };
     serde_json::json!({
         "type": "object",
