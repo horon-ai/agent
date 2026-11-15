@@ -407,15 +407,18 @@ the last successful `dev` push run of the same workflow (two-dot diff).
   is confirmed.
 - **Branch.** `<type>/<slug>`, with the type of the commit (`feat/`, `fix/`,
   `perf/`, `docs/`). The base and the pull request target are `dev`. `main`
-  changes only through the release pull request below.
+  changes only through the release pull request below, or through the
+  documentation refresh of `main` described there.
 - **Commit.** Conventional Commits: `type(scope): summary`. A commit an agent
   writes ends with the trailer
   `Co-authored-by: Horon AI Bot <353694987+horon-ai-bot[bot]@users.noreply.github.com>`.
 - **Pull request.** It must reference an existing issue of this repository
   (`require-issue.yml`; a pull request number does not count, and only
-  Dependabot is exempt). The body lists what changed and the evidence for it.
-  Squash-merge into `dev` after every job is green and `run_warnings.py`
-  prints no warning. Never force-push.
+  Dependabot is exempt). The body lists what changed and the evidence for it,
+  and either the documents updated for the change or one line saying why no
+  document describes it (see "Docs follow the code"). Squash-merge into `dev`
+  after every job is green and `run_warnings.py` prints no warning. Never
+  force-push.
 
 ## Release and branch sync: dev into main, then main back into dev
 
@@ -441,11 +444,23 @@ a sync back.
    `0` commits missing on each side except the sync merge itself, and
    `git diff origin/dev origin/main` is empty.
 
+**Documentation refresh of `main`.** Between releases the documents on `main`
+can lag the code `main` ships. They are refreshed without a release, as in
+#327 and #328: land the refresh on `dev` first, then cherry-pick it onto a
+`docs/` branch cut from `origin/main`, re-check every changed statement,
+pointer and diagram against `main`'s code, and keep `main`'s values where
+`dev` has changes `main` does not. Leave the generated blocks of
+`docs/performance/RESULTS.md` as they are on `main`. The pull request has base
+`main`, carries documentation only, and is squash-merged with `[skip ci]` in
+the commit subject, so the push to `main` starts no CI run and
+`release-tag.yml` creates no tag. The next release and sync back reconcile the
+two copies.
+
 ## Docs
 
 `docs/` is grouped by topic into `architecture/`, `protocol/`, `runtime/`,
-`provider/`, `safety/`, `performance/`, and `release/`. File names are
-uppercase (`docs/runtime/TOOLS.md`). Extend an existing doc before adding a
+`provider/`, `safety/`, `performance/`, `release/`, and `diagram/`. File names
+are uppercase (`docs/runtime/TOOLS.md`). Extend an existing doc before adding a
 new file. Docs are bilingual and English is the default: `X.md` is the
 canonical English text and `X.ko.md` is its Korean counterpart in the same
 folder, as with `README.md` and `README.ko.md`. Change both in the same commit.
@@ -453,12 +468,58 @@ Each pair keeps the same headings, tables, code fences and links, and links
 between docs stay inside their own language. `python3 scripts/ci/check_docs_pairs.py`
 checks this and runs in the Quality Guardrails job.
 
+`docs/diagram/` holds hand-written SVG diagrams of the code on the branch they
+are on, each as `NN-name.svg` with English labels and `NN-name.ko.svg` with
+Korean labels, and `docs/diagram/README.md` (with its Korean pair) shows them on
+one page with the files each one is drawn from. They follow the style of
+`docs/assets/architecture.svg`: self-contained, no script or external
+reference, light and dark colours through `prefers-color-scheme`.
+
 Every English Markdown file under `docs/`, including subfolders, and the root
 `README.md` are compiled into the binary and served by the `horon_agent_docs`
 tool (`crates/app-core/build.rs`); `.ko.md` files are not bundled. The root
 `PHILOSOPHY.md` pair is checked like the READMEs but is not bundled.
 A moved or deleted doc must leave no stale path in code, scripts, or tests.
 `docs/README.md` is the index; update it in the same change.
+
+**Docs follow the code.** A change that alters behaviour a document describes
+updates that document, its Korean pair, and the diagram that draws it in the
+same pull request, not in a follow-up. A change is not done while a document
+still states the old behaviour. To find the pages:
+
+1. Search for every changed file path, symbol, CLI flag, config key and
+   default: `rg -n '<path-or-name>' README.md README.ko.md AGENTS.md docs/`.
+   A page that names it describes it.
+2. Check the area table below for pages that describe the behaviour without
+   naming the file.
+3. Re-read each hit against the new code: counts (tools, fields, profiles),
+   protocol minor versions, defaults, `path:line` pointers, and command
+   output. Update it to the current tense; history goes in the pull request
+   body, not in the document.
+
+|Changed area|Documents to check|
+|---|---|
+|`src/cli/` commands, flags and dispatch, `src/main.rs`|`README.md`, `docs/release/INSTALL.md`, `docs/diagram/02-run-modes`|
+|`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes`|
+|`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation`|
+|`src/cli/rpc/`|`docs/protocol/RPC.md`|
+|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`|`docs/protocol/HARNESS_API.md`|
+|`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle`|
+|`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
+|`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
+|`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|
+|`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
+|`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|
+|approval, workspace trust, crash bundles, `scripts/ci/check_security.sh`|`docs/safety/SAFETY.md`, `docs/safety/SECURITY.md`|
+|`crates/platform*`, a crate added, removed or renamed in `Cargo.toml`|`docs/architecture/CRATES.md`, "Repository layout" above, `docs/diagram/01-system-overview`|
+|`.github/workflows/`, `scripts/ci/classify_changes.py`, `scripts/release/`|"CI gates by change type" and "Release and branch sync" above, `docs/release/`, `docs/diagram/08-branch-release-flow`|
+|`scripts/perf/`, `benchmark*.yml`, `scripts/perf/structural_budget.json`|`docs/performance/BENCHMARK.md`, `docs/performance/MEMORY.md`|
+|`packages/npm/`, `publish-*.yml`|`docs/release/NPM.md`, `docs/release/INSTALL.md`|
+|a value in "Configuration that must keep its default"|that table and the page that documents the setting|
+
+The same rule covers `README.md`, this file, and `packages/docs-site` (see
+"Two documentation sets" below). A code pull request that needs no document
+change says so in its body with the reason.
 
 **Wording.** Follow the terminology in "Modes, binaries and release units":
 "headless" and "TUI" name the two modes, and the binaries are called the agent

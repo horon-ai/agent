@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 780" width="960" height="780" role="img" aria-labelledby="t d">
+<title id="t">프로파일별 도구 로딩</title><desc id="d">세션은 시작할 때 도구마다 로딩 등급을 한 번 정하고 세션 중에는 바꾸지 않는다. 손대지 않은 기본 core 프로파일은 목록 세션이다. core는 CORE_TOOLS 열여덟 개에 toolbox를 더한 허용 목록이고, 일곱 도구(read, write, edit, apply_patch, bash, ls, agentgrep)를 toolbox와 함께 미리 보내며, 나머지 열한 개(replace, webfetch, websearch, skill_manage, mcp, monitor, undo, ask, todo, session_search, swarm)는 discoverable이 되어 시스템 프롬프트의 Additional tools 절에 이름만 오른다. 허용 목록이 없는 full 프로파일은 필수가 아닌 모든 도구를 discoverable로 두고, 선택 도구는 toolbox 뒤에 놓인다. acp, minimal, none, 명시적 enabled 목록, 프로파일을 정하지 않은 세션은 허용한 도구를 모두 미리 보내고 색인이 없다. acp는 열두 개, minimal은 여덟 개, none은 아무것도 허용하지 않는다. [tools.load_mode]의 명시적 항목은 프로파일보다 우선하지만 toolbox 자체는 discoverable이 될 수 없고, off 항목은 도구를 제거한다. toolbox = "off"나 disabled 항목은 목록 모드를 끄고 core 열여덟 도구를 모두 미리 보내는 표면으로 되돌린다. irc 도구는 core 집합 밖에 있고 [tools] irc = true일 때 비어 있지 않은 허용 목록에 합류한다. 열한 개 이름은 crates/base/src/config.rs의 CORE_TOOLS와 ESSENTIAL_TOOLS 차이에서 나왔다. 여러 스위치가 어긋날 때 운영자의 프로파일이 어느 등급이 되는지는 ToolLoadTiers::tier에서 추론했다.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="780" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="32" font-size="13" class="m">1. 프로파일이 허용하는 것과 미리 보내는 것</text>
+
+<rect x="30" y="48" width="176" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="72" font-size="12.5" class="mono" font-weight="600">core (기본값)</text>
+<text x="46" y="94" font-size="11.5">허용: 18 + toolbox</text>
+<text x="46" y="112" font-size="11.5">미리 전송: 7 + toolbox</text>
+<text x="46" y="134" font-size="11" class="m">목록 세션</text>
+<text x="46" y="150" font-size="11" class="m">11개는 색인에만 있고</text>
+<text x="46" y="166" font-size="11" class="m">스키마를 보내지 않는다</text>
+<text x="46" y="188" font-size="11" class="m">접근 경로:</text>
+<text x="46" y="204" font-size="11" class="m">toolbox list / describe /</text>
+<text x="46" y="220" font-size="11" class="m">run</text>
+<text x="46" y="238" font-size="10.5" class="m">미리 보내는 8개 = 9,151 bytes</text>
+
+<rect x="222" y="48" width="176" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="238" y="72" font-size="12.5" class="mono" font-weight="600">full</text>
+<text x="238" y="94" font-size="11.5">허용: 전부</text>
+<text x="238" y="112" font-size="11.5">미리 전송: 필수 집합</text>
+<text x="238" y="134" font-size="11" class="m">허용 목록이 없으면 나머지</text>
+<text x="238" y="150" font-size="11" class="m">도구가 toolbox 뒤로 가고</text>
+<text x="238" y="166" font-size="11" class="m">일곱 도구와 toolbox는</text>
+<text x="238" y="182" font-size="11" class="m">미리 전송된다</text>
+<text x="238" y="206" font-size="11" class="m">irc는 full 세션에 합류한다</text>
+<text x="238" y="230" font-size="10.5" class="m"> </text>
+
+<rect x="414" y="48" width="176" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="430" y="72" font-size="12.5" class="mono" font-weight="600">acp</text>
+<text x="430" y="94" font-size="11.5">허용: 12</text>
+<text x="430" y="112" font-size="11.5">미리 전송: 12 전부</text>
+<text x="430" y="134" font-size="11" class="m">bash, read, write, edit,</text>
+<text x="430" y="150" font-size="11" class="m">replace, apply_patch,</text>
+<text x="430" y="166" font-size="11" class="m">agentgrep, ls, batch,</text>
+<text x="430" y="182" font-size="11" class="m">mcp, ask, todo</text>
+<text x="430" y="206" font-size="11" class="m">toolbox 없음, 색인 없음</text>
+<text x="430" y="230" font-size="10.5" class="m">ask는 에디터가 답한다</text>
+
+<rect x="606" y="48" width="160" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="622" y="72" font-size="12.5" class="mono" font-weight="600">minimal / lite</text>
+<text x="622" y="94" font-size="11.5">허용: 8</text>
+<text x="622" y="112" font-size="11.5">미리 전송: 8 전부</text>
+<text x="622" y="134" font-size="11" class="m">bash, read, write,</text>
+<text x="622" y="150" font-size="11" class="m">edit, replace,</text>
+<text x="622" y="166" font-size="11" class="m">apply_patch,</text>
+<text x="622" y="182" font-size="11" class="m">agentgrep, ls</text>
+<text x="622" y="206" font-size="11" class="m">색인 없음</text>
+
+<rect x="782" y="48" width="148" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="798" y="72" font-size="12.5" class="mono" font-weight="600">none</text>
+<text x="798" y="94" font-size="11.5">허용: 없음</text>
+<text x="798" y="112" font-size="11.5">미리 전송: 없음</text>
+<text x="798" y="134" font-size="11" class="m">irc를 켜도 비어 있다</text>
+<text x="798" y="162" font-size="11" class="m">disable_base_tools로도</text>
+<text x="798" y="178" font-size="11" class="m">이 상태가 된다</text>
+
+<rect x="30" y="254" width="900" height="120" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="276" font-size="12.5" font-weight="600">목록 세션이 되려면 세 조건을 모두 만족해야 한다</text>
+<text x="46" y="298" font-size="11.5" class="m">· 프로파일이 손대지 않은 기본 core다</text>
+<text x="46" y="316" font-size="11.5" class="m">· 허용 목록을 명시하지 않았다(enabled 목록, SDK enabled 목록, new_with_session 허용 목록이 모두 없다)</text>
+<text x="46" y="334" font-size="11.5" class="m">· toolbox에 닿을 수 있다([tools.load_mode]로 끄지 않았고 [tools] disabled에 없다)</text>
+<text x="46" y="356" font-size="11.5" class="m">그 밖의 경우는 허용한 도구를 모두 미리 보내고 색인이 없다. core 세션에 SDK enabled 목록이 붙으면 목록 모드가 꺼진다.</text>
+
+<text x="30" y="404" font-size="13" class="m">2. core 목록 세션 안에서</text>
+
+<rect x="30" y="420" width="286" height="212" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="442" font-size="12.5" font-weight="600">미리 보내는 스키마 (8)</text>
+<text x="46" y="462" font-size="11" class="m">스키마가 캐시되는 접두부에 들어간다</text>
+<rect x="44" y="472" width="258" height="30" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="491" font-size="11" class="mono">read write edit apply_patch</text>
+<rect x="44" y="508" width="258" height="30" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="527" font-size="11" class="mono">bash ls agentgrep toolbox</text>
+<text x="46" y="558" font-size="10.5" class="m">일곱 도구는 모든 프로파일에서</text>
+<text x="46" y="572" font-size="10.5" class="m">ESSENTIAL_TOOLS다. toolbox는 필수로</text>
+<text x="46" y="586" font-size="10.5" class="m">고정되어 창구 자체는 미뤄지지 않는다</text>
+<text x="46" y="606" font-size="10.5" class="m">mcp_search와 mcp_call은 MCP 서버가 하나라도</text>
+<text x="46" y="620" font-size="10.5" class="m">있으면 미리 전송되고 없으면 색인으로 간다</text>
+
+<rect x="330" y="420" width="300" height="200" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="346" y="442" font-size="12.5" font-weight="600">프롬프트에 이름만 오르는 도구 (11)</text>
+<text x="346" y="462" font-size="11" class="m">한 줄씩, 설명 첫 문장, 60자까지</text>
+<rect x="344" y="472" width="272" height="88" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="358" y="489" font-size="11" class="mono">replace webfetch websearch</text>
+<text x="358" y="505" font-size="11" class="mono">skill_manage mcp monitor undo</text>
+<text x="358" y="521" font-size="11" class="mono">ask todo session_search swarm</text>
+<text x="358" y="543" font-size="10.5" class="m"># Additional tools 절이 toolbox run을</text>
+<text x="358" y="556" font-size="10.5" class="m">설명하는 안내 문장 하나를 뒤따른다</text>
+<text x="346" y="580" font-size="10.5" class="m">행은 toolbox list와 같은 규칙으로 걸러진다.</text>
+<text x="346" y="594" font-size="10.5" class="m">mcp__* 프록시, toolbox 자신, 세션이 닿을 수</text>
+<text x="346" y="608" font-size="10.5" class="m">없는 도구는 오르지 않는다</text>
+
+<rect x="644" y="420" width="286" height="200" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="660" y="442" font-size="12.5" font-weight="600">모델이 도달하는 방법</text>
+<text x="660" y="466" font-size="11" class="mono">toolbox list</text>
+<text x="660" y="482" font-size="10.5" class="m">이름과 한 줄 설명, 이름 순서</text>
+<text x="660" y="506" font-size="11" class="mono">toolbox describe</text>
+<text x="660" y="522" font-size="10.5" class="m">설명과 입력 스키마를 텍스트로 준다</text>
+<text x="660" y="546" font-size="11" class="mono">toolbox run</text>
+<text x="660" y="562" font-size="10.5" class="m">대상 도구를 Registry::execute로 실행하므로</text>
+<text x="660" y="576" font-size="10.5" class="m">계획 모드와 승인, 훅이 대상에 적용된다</text>
+<text x="660" y="600" font-size="10.5" class="m">promote 동작은 없다. 승격은 세션 중 도구</text>
+<text x="660" y="614" font-size="10.5" class="m">목록을 바꿔 프롬프트 캐시를 잃는다</text>
+
+<text x="30" y="652" font-size="13" class="m">3. 덮어쓰기, 그리고 목록 모드를 끄는 스위치</text>
+
+<rect x="30" y="668" width="440" height="92" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="690" font-size="12" class="mono" font-weight="600">[tools.load_mode]</text>
+<text x="46" y="710" font-size="11" class="m">ask = "essential"이면 목록 세션에서도 그 스키마를 보낸다.</text>
+<text x="46" y="726" font-size="11" class="m">명시한 항목이 프로파일보다 우선한다</text>
+<text x="46" y="742" font-size="11" class="m">toolbox = "discoverable"은 다시 필수가 되고 "off"는 제거한다</text>
+
+<rect x="490" y="668" width="440" height="92" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="690" font-size="12" font-weight="600">목록 끄기와 irc 스위치</text>
+<text x="506" y="710" font-size="11" class="m">toolbox를 빼면 core 열여덟 도구가 모두 미리 전송되어</text>
+<text x="506" y="726" font-size="11" class="m">닿을 수 없는 도구가 남지 않는다</text>
+<text x="506" y="742" font-size="11" class="m">[tools] irc = true는 비어 있지 않은 허용 목록에 합류한다</text>
+</svg>

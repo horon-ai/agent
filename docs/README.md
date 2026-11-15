@@ -25,6 +25,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | Folder | Document | Contents |
 | --- | --- | --- |
 | `docs/` | [`README.md`](README.md) | This index and the update rules |
+| `diagram/` | [`README.md`](diagram/README.md) | Eight hand-written SVG diagrams with the code paths each one draws: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading, branch and release flow |
 | `architecture/` | [`SERVER.md`](architecture/SERVER.md) | Server, session, and socket structure |
 | | [`CRATES.md`](architecture/CRATES.md) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
@@ -54,7 +55,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 
 | When this changes | Do this |
 | --- | --- |
-| Current behavior changes | Edit the document that describes that behavior. |
+| Current behavior changes | Edit the document that describes that behavior, and the diagram in `diagram/` that draws it, in the same change. |
 | You want a new document | First consider adding a section to an existing document in the right folder. A new file gets an uppercase name and a row in this table. |
 | A document moves or is deleted | Fix this table and the paths in code, scripts, and tests in the same change. |
 | The same content appears in two documents | Make one the source of truth and have the other point at it. |

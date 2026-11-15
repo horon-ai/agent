@@ -98,7 +98,7 @@ Actions that leave a trace outside the local sandbox, affect shared state, or ar
 
 #### Custom rules
 
-This build has no rule table that promotes or demotes actions. There are no subtables such as `[safety.rules]` or `[safety.notifications]` either. Every field of `SafetyConfig` sits flat under `[safety]` (`crates/config-types/src/lib.rs:1451-1458`), and the approval-wait policy lives under `[ambient]` (`:1381-1418`).
+This build has no rule table that promotes or demotes actions. There are no subtables such as `[safety.rules]` or `[safety.notifications]` either. Every field of `SafetyConfig` sits flat under `[safety]` (`crates/config-types/src/lib.rs:1347-1353`), and the approval-wait policy lives under `[ambient]` (`:1277-1313`).
 
 ```toml
 [safety]
@@ -112,7 +112,7 @@ desktop_notifications = true
 # approval_for_clientless_runs = false
 ```
 
-`approval_timeout_secs` defaults to 1800 seconds (`crates/config-types/src/lib.rs:1405-1406`, `:1420-1422`). When it elapses, `approval_default_on_timeout` applies, and its default is `"deny"` (`:1410-1411`, `:1424-1426`). A pending request that expires leaves a record, and a history that cannot be audited closes approvals toward denial (`crates/base/src/safety.rs:340-360`).
+`approval_timeout_secs` defaults to 1800 seconds (`crates/config-types/src/lib.rs:1302`, `:1316-1318`). When it elapses, `approval_default_on_timeout` applies, and its default is `"deny"` (`:1307`, `:1320-1322`). A pending request that expires leaves a record, and a history that cannot be audited closes approvals toward denial (`crates/base/src/safety.rs:340-360`).
 
 ---
 
@@ -138,7 +138,7 @@ desktop_notifications = true
 
 This tool is not part of the core 18 tools. The ambient runner registers it, and the session's tool allowlist has to admit it for the call to happen. For unattended runs with no client attached, it joins the allowlist only when `[ambient] approval_for_clientless_runs` is on (`crates/base/src/config.rs:608-611`, `crates/base/src/config/tool_selection.rs:29-34`). The default is off, and the core set stays at 18 (`crates/base/src/config.rs:652-671`, tests in `crates/base/src/config_tool_tiers_tests.rs:26-41`).
 
-Calling it outside an ambient session is refused with the error "request_permission is only available to ambient sessions" (`crates/app-core/src/tool/ambient.rs:105`).
+Calling it outside an ambient session is refused with the error "request_permission is only available to ambient sessions" (`crates/app-core/src/tool/ambient.rs:115-121`).
 
 ```rust
 // Tool: request_permission
@@ -158,7 +158,7 @@ Calling it outside an ambient session is refused with the error "request_permiss
 }
 ```
 
-The schema's required fields are `action`, `description`, and `rationale`; the rest are optional (`crates/app-core/src/tool/ambient.rs:542-600`). Execution queues the request, writes the pending record to disk, and then sends the notification (`:689-800`). The notification goes out only after the record exists, because whoever answers has to be able to find the record the notification points at right away.
+The schema's required fields are `action`, `description`, and `rationale`; the rest are optional (`crates/app-core/src/tool/ambient.rs:557-600`). Execution queues the request, writes the pending record to disk, and then sends the notification (`:704`). The notification goes out only after the record exists, because whoever answers has to be able to find the record the notification points at right away.
 
 **Responses:**
 ```rust
@@ -216,7 +216,7 @@ desktop_notifications = true
 # ntfy_server = "https://ntfy.sh"
 ```
 
-This build has two notification channels: ntfy.sh and desktop notifications. Email, messenger bot, and cloud relay channels were removed, and `SafetyConfig` has no keys for them (`crates/config-types/src/lib.rs:1451-1458`). If an old config file still contains those keys, it loads and ignores them as unknown fields.
+This build has two notification channels: ntfy.sh and desktop notifications. Email, messenger bot, and cloud relay channels were removed, and `SafetyConfig` has no keys for them (`crates/config-types/src/lib.rs:1347-1353`). If an old config file still contains those keys, it loads and ignores them as unknown fields.
 
 Preferences such as bundling intervals, quiet hours, and minimum urgency do not exist in this build either.
 
@@ -350,9 +350,9 @@ The limits are written in the source. `bash` reaches every path through a shell 
 
 `ask` is the tool that offers the user choices. In this build that tool **waits only while a client that can answer is attached to the session. That wait is cut off at 300 seconds.**
 
-The daemon draws no screen of its own and cannot assume a client is attached. So `ask` first checks whether a reply channel is registered on the session (`crates/app-core/src/tool/ask.rs:357`). The channel is installed when a connection attached to the session advertises `supports_ask_requests`, and it is withdrawn when the connection drops or reattaches to a different session (`crates/app-core/src/server/client_lifecycle.rs:2045-2053`, `crates/app-core/src/tool/ask_bridge.rs:72-88`). The channel's existence is itself the signal that "this connection can show a question and answer it" (`crates/app-core/src/tool/ask_bridge.rs:6-13`). The advertisement is negotiated through `supports_ask_requests` in the harness API `Hello` (`crates/harness-api/src/requests.rs:42-45`).
+The daemon draws no screen of its own and cannot assume a client is attached. So `ask` first checks whether a reply channel is registered on the session (`crates/app-core/src/tool/ask.rs:359`). The channel is installed when a connection attached to the session advertises `supports_ask_requests`, and it is withdrawn when the connection drops or reattaches to a different session (`crates/app-core/src/server/client_lifecycle.rs:1955-1963`, `crates/app-core/src/tool/ask_bridge.rs:72-89`). The channel's existence is itself the signal that "this connection can show a question and answer it" (`crates/app-core/src/tool/ask_bridge.rs:6-13`). The advertisement is negotiated through `supports_ask_requests` in the harness API `Hello` (`crates/harness-api/src/requests.rs:51-54`).
 
-- No channel: after validating the request, it decides the answer with `[tools] ask_policy` and returns immediately. It does not wait (`crates/app-core/src/tool/ask.rs:372-377`).
+- No channel: after validating the request, it decides the answer with `[tools] ask_policy` and returns immediately. It does not wait (`crates/app-core/src/tool/ask.rs:376-384`).
 - Channel present: it emits `ask_requested` and waits for `ask_response` (`crates/app-core/src/server/client_ask.rs:80`, `crates/app-core/src/tool/ask.rs:386-408`). The cap is `CLIENT_ANSWER_TIMEOUT`, 300 seconds (`crates/app-core/src/tool/ask.rs:31`). So a session with a client attached can have a turn delayed by five minutes in the worst case.
 - No answer (timeout, disconnection, or a response with no usable option): it falls back to the policy and states the reason in the tool text (`crates/app-core/src/tool/ask.rs:216-236`, `:361-369`). With `ask_policy = "error"` the call fails at that point (`:362-367`).
 
@@ -360,7 +360,7 @@ Choices sent by the client are not trusted as-is either. Labels that are not amo
 
 #### The two policies
 
-The policy governs what happens when the client cannot answer. `AskPolicy` has two variants (`crates/tool-types/src/lib.rs:110-116`).
+The policy governs what happens when the client cannot answer. `AskPolicy` has two variants (`crates/tool-types/src/lib.rs:122-130`).
 
 ```rust
 pub enum AskPolicy {
@@ -451,7 +451,7 @@ This section is the plan from design time. It splits what is in the tree now fro
 #### Stage 1: foundation
 - [x] Action classifier (auto-allowed list and requires-permission tiers, `crates/base/src/safety.rs:306-374`)
 - [x] Review queue (persistent storage, `crates/base/src/safety.rs:698-708`)
-- [x] `request_permission` tool for the agent (`crates/app-core/src/tool/ambient.rs:535-620`)
+- [x] `request_permission` tool for the agent (`crates/app-core/src/tool/ambient.rs:548-702`)
 - [x] Transcript logger and session summary (`crates/base/src/safety.rs:627-690`)
 
 #### Stage 2: notification channels
@@ -466,8 +466,8 @@ This section is the plan from design time. It splits what is in the tree now fro
 - [ ] CLI commands (`horon safety review/list/approve/deny/log`)
 
 #### Stage 4: configuration
-- [x] `[safety]` config section (`crates/base/src/config/default_file.rs:817`)
-- [x] `[ambient]` approval policy (`crates/config-types/src/lib.rs:1381-1418`)
+- [x] `[safety]` config section (`crates/base/src/config/default_file.rs:737`)
+- [x] `[ambient]` approval policy (`crates/config-types/src/lib.rs:1277-1313`)
 - [ ] Custom classification rules (promote or demote actions)
 - [ ] Per-project overrides
 

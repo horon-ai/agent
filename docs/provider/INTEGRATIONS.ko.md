@@ -102,6 +102,24 @@ MCP 관리 도구는 `url`, `transport`, `headers`로 즉석 원격 연결을 �
 그 필드 없이 이름이 지정된 설정 서버에 연결한다. `command`, `args`, `env`는
 여전히 로컬 stdio 연결 필드다.
 
+### 서버가 시작한 요청
+
+서버가 클라이언트에 무언가를 물을 수 있다. 답하는 메서드는 둘뿐이고, 두 전송이 같은 함수로 답하므로
+서로 어긋나지 않는다(`crates/base/src/mcp/protocol.rs:144-157`).
+
+| 메서드 | 응답 |
+| --- | --- |
+| `ping` | 빈 결과. |
+| `roots/list` | 연결의 루트 목록. 단 `initialize`에서 `roots`를 선언했을 때만이고, 아니면 메서드 없음 응답이다. |
+| 그 밖의 메서드 | 메서드 이름을 담은 메서드 없음 응답. 서버가 조용히 기한을 기다리지 않고 답을 받는다. `sampling/createMessage`, `resources/subscribe`, `resources/unsubscribe`, `elicitation/create`가 여기 해당한다. |
+
+`roots`는 연결에 내줄 루트 목록이 있을 때만 선언하고, 기본값은 꺼짐이다. `[mcp] expose_roots` 설정이 이 선언을 여는데,
+답하면 모든 서버에 이 세션이 어느 디렉터리에서 일하는지 알려 주기 때문이다
+(`crates/base/src/config/default_file.rs:392-395`). 켜면 루트 하나가 세션 프로젝트 폴더이고, 프로젝트 폴더가 없으면
+프로세스 작업 디렉터리다(`crates/base/src/mcp/client.rs:112-137`). 루트 목록이 없으면 기능 선언을 빼고 `roots/list`도
+거부한다(`crates/base/src/mcp/protocol.rs:76-99`). 목록은 `initialize` 뒤에 바뀌지 않으므로 서버는
+`notifications/roots/list_changed`를 듣지 못한다고 통보받는다.
+
 ### 시작, 연결 대기, 프롬프트 캐싱
 
 세션 도구 등록은 원격 네트워크 트래픽을 기다리지 않는다. 관리,

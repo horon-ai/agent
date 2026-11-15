@@ -254,37 +254,37 @@ run`의 첫 반복이 그렇다. 합성 메시지나 에이전트가 만든 메�
 
 | 부류 | o200k | cl100k | 위치 |
 | --- | --- | --- | --- |
-| 한글 | 0.78 | 1.22 | `crates/token-estimate/src/lib.rs:129` |
-| 한자 | 0.95 | 1.90 | `crates/token-estimate/src/lib.rs:141` |
-| 가나 | 0.95 | 1.04 | `crates/token-estimate/src/lib.rs:151` |
-| 아랍 문자 | 0.38 | 0.88 | `crates/token-estimate/src/lib.rs:159` |
-| 인도계 문자 | 0.38 | 1.20 | `crates/token-estimate/src/lib.rs:168` |
-| 그 밖의 알파벳 | 0.30 | 0.50 | `crates/token-estimate/src/lib.rs:177` |
-| 비ASCII 기호 | 0.90 | 1.00 | `crates/token-estimate/src/lib.rs:186` |
-| 이모지 | 2.00 | 2.00 | `crates/token-estimate/src/lib.rs:196` |
-| ASCII 영숫자 | 4.87자/토큰 | 4.87자/토큰 | `crates/token-estimate/src/lib.rs:73` |
-| ASCII 문장부호 | 0.55 | 0.55 | `crates/token-estimate/src/lib.rs:77` |
+| 한글 | 0.78 | 1.22 | `crates/token-estimate/src/lib.rs:144` |
+| 한자 | 0.95 | 1.90 | `crates/token-estimate/src/lib.rs:156` |
+| 가나 | 0.95 | 1.04 | `crates/token-estimate/src/lib.rs:166` |
+| 아랍 문자 | 0.38 | 0.88 | `crates/token-estimate/src/lib.rs:174` |
+| 인도계 문자 | 0.38 | 1.20 | `crates/token-estimate/src/lib.rs:183` |
+| 그 밖의 알파벳 | 0.30 | 0.50 | `crates/token-estimate/src/lib.rs:192` |
+| 비ASCII 기호 | 0.90 | 1.00 | `crates/token-estimate/src/lib.rs:201` |
+| 이모지 | 2.00 | 2.00 | `crates/token-estimate/src/lib.rs:211` |
+| ASCII 영숫자 | 4.87자/토큰 | 4.87자/토큰 | `crates/token-estimate/src/lib.rs:76` |
+| ASCII 문장부호 | 0.55 | 0.55 | `crates/token-estimate/src/lib.rs:80` |
 
 두 토크나이저 계열은 한글에서 가장 크게 갈립니다. o200k는 흔한 한국어 부분 문자열을 한 토큰으로 합치고, cl100k는 음절마다 거의 한 토큰을 씁니다. 그래서 같은 문장이 o200k에서 44토큰, cl100k에서 72토큰입니다.
 
 ### 단어 실행 단위
 
-문자는 부류별로 세지만, 그 합을 그대로 쓰지 않습니다. 텍스트를 공백으로 나눈 실행(run)마다 따로 계산합니다 (`crates/token-estimate/src/lib.rs:284`). 같은 문자라도 단어 안에 묶여 있을 때 토큰이 적게 들기 때문입니다. 문자 하나에 고정 가중치를 주는 선형 모델로는 Rust 소스와 JSON의 기준점을 동시에 맞출 수 없습니다.
+문자는 부류별로 세지만, 그 합을 그대로 쓰지 않습니다. 텍스트를 공백으로 나눈 실행(run)마다 따로 계산합니다 (`crates/token-estimate/src/lib.rs:231`). 같은 문자라도 단어 안에 묶여 있을 때 토큰이 적게 들기 때문입니다. 문자 하나에 고정 가중치를 주는 선형 모델로는 Rust 소스와 JSON의 기준점을 동시에 맞출 수 없습니다.
 
-- 실행 하나는 최소 1토큰입니다. 빈 문자열도 1을 돌려줍니다 (`crates/token-estimate/src/lib.rs:213`). 0을 돌려주면 호출자가 공짜로 읽습니다.
+- 실행 하나는 최소 1토큰입니다. 빈 문자열도 1을 돌려줍니다 (`crates/token-estimate/src/lib.rs:319`). 0을 돌려주면 호출자가 공짜로 읽습니다.
 - ASCII 문장부호는 실행의 본문 위에 더합니다. 괄호와 쉼표는 단어보다 훨씬 잘게 쪼개지기 때문입니다.
 - 한글이 섞인 실행은 문장부호를 다시 더하지 않습니다. 한글 음절이 이미 실행의 대부분을 차지하고, 문장부호를 또 더하면 한국어 표본이 과대 추정되는 것으로 측정됐습니다.
 - 문장부호가 실행 글자의 절반 이상이면 기호 밀집 실행으로 봅니다. 이 실행의 ASCII 영숫자는 산문 비율로 평균 내지 않고, 구분자 사이 조각마다 `ceil(길이 / 4.87)`(최소 1토큰)으로 셉니다 (`crates/token-estimate/src/lib.rs` `SEGMENT_DENSITY_PERCENT`). 임계를 25%나 35%로 낮추면 짧은 JSON 기준 표본이 실측보다 30% 크게 잡혀, 50%로 정했습니다. 이 규칙을 넣으며 `TOKEN_ESTIMATE_VERSION`을 `script-aware-v2`로 올렸습니다.
 
 ### CJK 병합 할인
 
-한자와 가나는 실행 길이에 따라 할인율이 달라집니다 (`crates/token-estimate/src/lib.rs:120`).
+한자와 가나는 실행 길이에 따라 할인율이 달라집니다 (`crates/token-estimate/src/lib.rs:135`).
 
 ```
 merge = max(1 - 18.0 / cjk_len, min_merge)
 ```
 
-`CJK_MERGE_WINDOW`는 18.0입니다 (`crates/token-estimate/src/lib.rs:99`). 할인 바닥은 부류마다 따로 있습니다. 한자는 0.53 (`crates/token-estimate/src/lib.rs:105`), 가나는 0.70 (`crates/token-estimate/src/lib.rs:112`)입니다.
+`CJK_MERGE_WINDOW`는 18.0입니다 (`crates/token-estimate/src/lib.rs:114`). 할인 바닥은 부류마다 따로 있습니다. 한자는 0.53 (`crates/token-estimate/src/lib.rs:120`), 가나는 0.70 (`crates/token-estimate/src/lib.rs:127`)입니다.
 
 이 장치가 푸는 문제는 하나의 비율로는 산문과 반복을 함께 맞출 수 없다는 점입니다. 산문에서는 글자가 이웃과 합쳐져 싸게 붙고, 같은 글자를 길게 반복하면 합칠 이웃이 없어 글자마다 거의 한 토큰이 듭니다. 비율을 산문에 맞추면 반복이 과소 추정되고, 반복에 맞추면 산문이 과대 추정됩니다. 그래서 비율은 산문에 맞추고, 짧은 실행이 산문 할인을 그대로 받지 않도록 바닥을 둡니다.
 

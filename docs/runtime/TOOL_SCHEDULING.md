@@ -396,7 +396,7 @@ waiting call. A multi-member group registers no entry (`turn_streaming_mpsc.rs:1
 `running_tool_registry`), so a request raised while the group runs reports
 `moved: false` instead of moving a call (`turn_streaming_mpsc.rs:2562` `run_group`).
 The response is computed from the registry entry and the signal
-(`crates/app-core/src/server/client_lifecycle.rs:1517` `move_tool_to_background`), and
+(`crates/app-core/src/server/client_lifecycle.rs:1521` `move_tool_to_background`), and
 the event shape carries `moved` without `tool_call_id` or `tool_name`
 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 
@@ -424,7 +424,7 @@ The streaming loop responds in two places inside a round. It reads the queue dir
 before each group after the first (`turn_streaming_mpsc.rs:1663`
 `has_urgent_interrupt`). While a multi-member group runs, it passes a cancel that
 watches both the shutdown signal and the interrupt queue to `run_group`
-(`turn_streaming_mpsc.rs:2558` `watching_interrupt`, `tool_round.rs:74`
+(`turn_streaming_mpsc.rs:2558` `watching_interrupt`, `tool_round.rs:84`
 `GroupCancel::new`). That watch is a predicate over the queue, and while members are
 executing the group re-reads it every `INTERRUPT_POLL_INTERVAL` (`tool_round.rs:68`
 `INTERRUPT_POLL_INTERVAL`, `tool_round.rs:424` `poll_for_interrupt`), so a stop aborts
