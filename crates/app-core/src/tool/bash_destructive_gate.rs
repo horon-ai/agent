@@ -52,7 +52,7 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
     let cmd_desc = if !horon_agent_platform::term::shell_is_posix() {
         "The Windows command to execute via cmd.exe. Use cmd.exe syntax and quoting, not Bash syntax."
     } else {
-        "Shell command. Temp: $HORON_AGENT_SCRATCH_DIR, not /tmp. rg skips hidden and ignored by default."
+        "Shell command. Temp files: $HORON_AGENT_SCRATCH_DIR, not /tmp. rg skips hidden and ignored by default."
     };
     serde_json::json!({
         "type": "object",
@@ -65,39 +65,39 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
             },
             "cwd": {
                 "type": "string",
-                "description": "Start directory for this call only; omit to continue where the last call ended."
+                "description": "Directory for this call only; default: where the last call ended."
             },
             "timeout": {
                 "type": "integer",
-                "description": "Time in MILLISECONDS (not seconds); default 120000, 0 disables, max 600000."
+                "description": "MILLISECONDS, not seconds; default 120000, 0 disables, max 600000."
             },
             "run_in_background": {
                 "type": "boolean",
-                "description": "Run in background. Emit `HORON_AGENT_PROGRESS {json}` lines for progress reporting."
+                "description": "Run in background; `HORON_AGENT_PROGRESS {json}` lines report progress."
             },
             "name": {
                 "type": "string",
-                "description": "Named background service (1-48 chars, letters, digits, ._-); `bg` takes the name as task_id."
+                "description": "Background service name (1-48 chars: letters, digits, ._-); also its `bg` task_id."
             },
             "ready": {
                 "type": "object",
-                "description": "With `name`: wait until `log` and/or `port` checks pass. Ignored alone.",
+                "description": "With `name`: wait for `log` and/or `port`.",
                 "properties": {
                     "log": {
                         "type": "string",
-                        "description": "Regex matched against the last 64 KiB of output."
+                        "description": "Regex over the last 64 KiB of output."
                     },
                     "port": {
                         "type": "integer",
-                        "description": "TCP port that must accept a connection."
+                        "description": "TCP port that must accept connections."
                     },
                     "host": {
                         "type": "string",
-                        "description": "Host for the port check (default 127.0.0.1)."
+                        "description": "Port check host (default 127.0.0.1)."
                     },
                     "timeout_secs": {
                         "type": "number",
-                        "description": "Readiness wait in seconds (default 30, max 3600)."
+                        "description": "Seconds to wait (default 30, max 3600)."
                     }
                 }
             },
@@ -111,16 +111,16 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
             },
             "stall_wake_seconds": {
                 "type": "integer",
-                "description": "With run_in_background: wake after N seconds without output/progress (min 30). For jobs that may hang."
+                "description": "With run_in_background: wake after N seconds (min 30) with no output or progress."
             },
             "justification": {
                 "type": "string",
-                "description": "Only when re-issuing a command the destructive gate refused; explain which user request it serves."
+                "description": "Only to re-run a command the destructive gate refused: the user request it serves."
             },
             "pty": {
                 "type": "string",
                 "enum": ["off", "auto", "always"],
-                "description": "`auto` allocates a terminal for interactive programs, `always` forces one, `off` uses pipes."
+                "description": "`auto`: terminal if interactive; `always`: terminal; `off`: pipes."
             }
         }
     })

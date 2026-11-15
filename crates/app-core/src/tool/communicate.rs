@@ -1720,8 +1720,7 @@ impl CommunicateTool {
     }
 
     fn new_for_working_dir(working_dir: Option<&std::path::Path>) -> Self {
-        const BASE_DESCRIPTION: &str =
-            "Coordinate agents: spawn workers with a prompt, message them, and manage swarm plans.";
+        const BASE_DESCRIPTION: &str = "Coordinate worker agents and swarm plans. Spawn workers with a prompt, message them, and manage swarm plans.";
         let swarm_prompt = crate::prompt::load_swarm_prompt(working_dir);
         let description = if swarm_prompt.is_empty() {
             BASE_DESCRIPTION.to_string()

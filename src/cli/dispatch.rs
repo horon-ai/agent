@@ -154,9 +154,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             let provider_start = Instant::now();
             let provider = provider_init::init_provider_for_serve(&args.provider, args.model.as_deref()).await?;
             let provider_ms = provider_start.elapsed().as_millis();
+            startup_profile::mark(startup_profile::CONFIG_LOADED);
             let server_new_start = Instant::now();
             let server = server::Server::new_with_name(provider, server_name);
             let server_new_ms = server_new_start.elapsed().as_millis();
+            startup_profile::mark(startup_profile::SERVER_NEW);
             crate::logging::info(&format!(
                 "[TIMING] serve bootstrap: provider_init={}ms, server_new={}ms, before_run={}ms",
                 provider_ms,

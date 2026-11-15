@@ -12,7 +12,8 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 ### 계층 (순서대로)
 
 1. **기본 시스템 프롬프트**: 내장 `crates/base/src/prompt/system_prompt.md`이며
-   파일로 재정의할 수 있다(아래 참고).
+   파일로 재정의할 수 있다(아래 참고). 내장 문구도 재정의 파일처럼 끝 공백을 잘라 내므로
+   다음 계층과의 사이에는 빈 줄이 정확히 하나만 들어간다.
 2. 기능 모듈(예: `[[stream_rules]]` 안내, 아래 참고).
 3. `AGENTS.md`: 프로젝트 `./AGENTS.md`와 전역 `~/AGENTS.md`. 이 계층이 다루지 않는 하위 디렉터리의 `AGENTS.md`는 `[tools] nested_agents_md`가 켜져 있으면 `read` 결과에 따로 붙는다([`docs/runtime/TOOLS.ko.md`](TOOLS.ko.md)).
 4. 프롬프트 오버레이: `./.horon/prompt-overlay.md`와 `~/.horon/prompt-overlay.md`.
@@ -72,7 +73,7 @@ horon-agent는 여러 계층으로 시스템 프롬프트를 만든다. 그중 �
 비어 있지 않은 첫 파일이 이긴다. 없으면 내장 기본값을 쓴다. 비어 있거나 공백만 있는 파일은
 기본값으로 돌아가므로 실수로 빈 프롬프트를 배포할 수 없다.
 
-이것은 기본 프롬프트만 교체한다. AGENTS.md, 오버레이, 스킬, 메모리는 여전히 적용된다.
+이것은 기본 프롬프트만 교체한다. AGENTS.md, 오버레이, 스킬, 메모리는 여전히 적용된다. 이 파일은 요청마다 읽지 않고 세션이 프롬프트를 캡처할 때 읽는다(참고 절).
 
 ### 스트리밍 중 규칙 강제 ([[stream_rules]])
 
@@ -123,6 +124,8 @@ body = "사과로 시작하지 말고 바로 결론부터 쓰세요."
 `[features] foreign_rules = true`는 `.cursor/rules/*.mdc`, `.cursorrules`, `.clinerules`,
 Copilot instructions, Windsurf rules, `GEMINI.md`를 읽는다. 기본 `foreign_rules_mode = "inline"`은
 모든 본문을 시스템 프롬프트에 넣는다.
+이 파일들은 세션 스냅샷에 담기지 않고 요청마다 읽히며, 구조 게이트의 프롬프트 원천 읽기 수에도
+잡히지 않는다. "요청당 원천 읽기 0" 상한은 기본값대로 `foreign_rules`가 꺼져 있을 때만 성립한다.
 
 `foreign_rules_mode = "rulebook"`은 `alwaysApply` 규칙만 본문을 인라인하고 나머지는 경로, 설명,
 적용 글롭만 `# Rulebook` 목록으로 보여 준다. 나머지 규칙의 본문은 `read`·`edit`·`write`·
@@ -133,7 +136,8 @@ Copilot instructions, Windsurf rules, `GEMINI.md`를 읽는다. 기본 `foreign_
 ### 참고
 
 - 이 파일들의 변경은 **새 세션**에 적용된다. 실행 중인 세션은 시작할 때 캡처한 프롬프트를
-  유지한다.
+  유지한다. 기본 프롬프트, AGENTS.md, 오버레이, 선호 도구 안내, 스킬 목록은 세션 경계(새 세션,
+  작업 폴더 변경, clear, 세션 복원)에서만 다시 읽는다.
 - 내장 `system_prompt.md`를 편집하려면 다시 빌드해야 한다. `include_str!`로 내장되기
   때문이다.
 - Swarm 모델 라우팅 안내에는 비슷한 전용 파일이 있다. `.horon/swarm-prompt.md`다.

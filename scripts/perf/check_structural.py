@@ -225,6 +225,34 @@ MEASUREMENTS = (
             "agent::tests::tool_request_bytes::core_profile_request_prefix_is_measured",
         ],
     },
+    # The static system prompt is the other half of the cached request prefix.
+    # Its size, its digest and the source files probed to assemble it are
+    # measured from the agent's own builder, on a session that changed nothing
+    # between requests.
+    {
+        "section": "prompt",
+        "source": "static-prompt",
+        "args": [
+            "-p",
+            "horon-agent-app-core",
+            "--lib",
+            "agent::tests::prompt_request_bytes::core_profile_static_prompt_is_measured",
+        ],
+    },
+    # A session context is built when a session is created or restored, and
+    # its git and GPU lines come from child processes. They are counted in
+    # three fixed situations: a directory outside any repository, a fresh
+    # repository, and the GPU probe on its own.
+    {
+        "section": "session_context",
+        "source": "session-context",
+        "args": [
+            "-p",
+            "horon-agent-base",
+            "--lib",
+            "prompt::session_context_tests::session_context_child_processes_are_measured",
+        ],
+    },
 )
 
 REQUIRED_SECTIONS = (
@@ -240,6 +268,8 @@ REQUIRED_SECTIONS = (
     "mcp_config",
     "hooks",
     "prefix",
+    "prompt",
+    "session_context",
 )
 
 
@@ -707,14 +737,32 @@ def check_hooks(report: Report, records: list[dict[str, str]], bounds: dict[str,
         )
 
 
+def per_tool_sizes(record: dict[str, str], section: str) -> list[int]:
+    """The bytes of each catalog entry, from `per_tool=name:bytes,name:bytes`."""
+    value = record.get("per_tool")
+    if value is None:
+        raise GateError(f"section {section}: measurement is missing per_tool")
+    sizes: list[int] = []
+    for entry in value.split(","):
+        if not entry:
+            continue
+        name, separator, size = entry.rpartition(":")
+        if not separator or not name or not size.isdigit():
+            raise GateError(f"section {section}: per_tool entry is not name:bytes: {entry!r}")
+        sizes.append(int(size))
+    return sizes
+
+
 def check_prefix(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
     """The request prefix stays inside its committed byte ceiling.
 
-    Three statements, because a ceiling alone certifies nothing. The floor
+    Four statements, because a ceiling alone certifies nothing. The floor
     rejects a zero, which is what a catalog that never serialized reports; the
-    ceiling is the bound; and the tool count is compared against the eager
+    ceiling is the bound; the tool count is compared against the eager
     definitions the same measurement saw, so a catalog that fell under the
-    ceiling by losing a tool fails here instead of passing quietly.
+    ceiling by losing a tool fails here instead of passing quietly; and the
+    per-tool sizes must account for the total, so the breakdown a later change
+    is judged against cannot drift from the number the ceiling bounds.
     """
     for record in records:
         section = "prefix"
@@ -724,6 +772,86 @@ def check_prefix(report: Report, records: list[dict[str, str]], bounds: dict[str
         report.at_most(section, "tools_bytes", tools, bounds["prefix_tools_bytes_max"])
         report.at_least(section, "tool_count", count, 1)
         report.equal(section, "tool_count", count, as_int(record, "eager_count", section))
+        sizes = per_tool_sizes(record, section)
+        report.equal(section, "per_tool_count", len(sizes), count)
+        # A JSON array spends two brackets and one comma between entries.
+        report.equal(section, "per_tool_bytes", sum(sizes) + 2 + max(len(sizes) - 1, 0), tools)
+
+
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+
+
+def check_prompt(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The static prompt stays inside its ceiling and costs no read per request.
+
+    The floors refuse a line that measured nothing. A prompt of zero bytes was
+    never built, and a first build that probed no source file means the
+    counters were off, in which case the zero beside it for an unchanged
+    request would read as a pass it did not earn. The digest is the identity
+    of the prefix, so a value that is not a SHA-256 fails as well. The
+    ceilings hold what the session snapshot bought: the static bytes, no
+    source read once the session captured its sources, and at most one index
+    row cut mid-sentence.
+    """
+    for record in records:
+        section = "prompt"
+        static_bytes = as_int(record, "static_bytes", section)
+        report.at_least(section, "static_bytes", static_bytes, 1)
+        report.at_most(section, "static_bytes", static_bytes, bounds["prompt_static_bytes_max"])
+        report.at_least(section, "static_tokens", as_int(record, "static_tokens", section), 1)
+        report.at_least(section, "index_bytes", as_int(record, "index_bytes", section), 1)
+        digest = record.get("static_sha256")
+        if digest is None:
+            raise GateError(f"section {section}: measurement is missing static_sha256")
+        report.check(
+            section,
+            "static_sha256",
+            len(digest),
+            SHA256_HEX.fullmatch(digest) is not None,
+            "64 lowercase hex digits",
+        )
+        clipped = as_int(record, "index_clipped_rows", section)
+        report.at_least(section, "index_clipped_rows", clipped, 0)
+        report.at_most(section, "index_clipped_rows", clipped, bounds["prompt_index_clipped_rows_max"])
+        report.at_least(section, "warm_source_reads", as_int(record, "warm_source_reads", section), 1)
+        unchanged = as_int(record, "unchanged_request_source_reads", section)
+        report.at_least(section, "unchanged_request_source_reads", unchanged, 0)
+        report.at_most(
+            section,
+            "unchanged_request_source_reads",
+            unchanged,
+            bounds["prompt_unchanged_request_source_reads_max"],
+        )
+
+
+def check_session_context(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """The session context starts no `git` outside a repository, one inside, and no GPU probe without a display.
+
+    The floor refuses a line that measured nothing: describing a repository
+    takes at least one `git` process, so a zero there means the counters were
+    off, and the zeros beside it would read as a pass they did not earn.
+    """
+    for record in records:
+        section = "session_context"
+        outside = as_int(record, "git_spawns_outside_repo", section)
+        report.at_least(section, "git_spawns_outside_repo", outside, 0)
+        report.at_most(
+            section,
+            "git_spawns_outside_repo",
+            outside,
+            bounds["session_context_git_spawns_outside_repo_max"],
+        )
+        in_repo = as_int(record, "git_spawns_in_repo", section)
+        report.at_least(section, "git_spawns_in_repo", in_repo, 1)
+        report.at_most(section, "git_spawns_in_repo", in_repo, bounds["session_context_git_spawns_in_repo_max"])
+        gpu = as_int(record, "gpu_probe_spawns_without_display", section)
+        report.at_least(section, "gpu_probe_spawns_without_display", gpu, 0)
+        report.at_most(
+            section,
+            "gpu_probe_spawns_without_display",
+            gpu,
+            bounds["session_context_gpu_probe_spawns_without_display_max"],
+        )
 
 
 CHECKS = {
@@ -739,6 +867,8 @@ CHECKS = {
     "mcp_config": check_mcp_config,
     "hooks": check_hooks,
     "prefix": check_prefix,
+    "prompt": check_prompt,
+    "session_context": check_session_context,
 }
 
 

@@ -1,40 +1,28 @@
 //! System prompt management
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
+
+mod git_context;
+mod hardware;
+mod static_sources;
+
+use git_context::get_git_info;
+use hardware::hardware_context;
+#[cfg(test)]
+pub(crate) use static_sources::load_agents_md_files_from_dirs;
+pub use static_sources::{StaticPromptSources, load_agents_md_files_from_dir, load_base_system_prompt};
+use static_sources::{
+    base_system_prompt_parts, load_preferred_tools_files_from_dir, load_prompt_overlay_files_from_dir,
+};
 
 /// Default system prompt for horon-agent (embedded at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("prompt/system_prompt.md");
 
-/// Load the base system prompt, allowing the user to fully replace the built-in
-/// [`DEFAULT_SYSTEM_PROMPT`]. Precedence: project `./.horon/system-prompt.md`,
-/// then global `~/.horon/system-prompt.md`, then the built-in default.
-///
-/// This is a *replacement* hook. To merely add guidance on top of the default,
-/// use `.horon/prompt-overlay.md` instead.
-pub fn load_base_system_prompt(working_dir: Option<&Path>) -> String {
-    let project_dir = working_dir.unwrap_or(Path::new("."));
-    let candidates = [
-        Some(project_dir.join(".horon").join("system-prompt.md")),
-        crate::storage::horon_agent_dir()
-            .ok()
-            .map(|dir| dir.join("system-prompt.md")),
-    ];
-    for path in candidates.into_iter().flatten() {
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            let trimmed = content.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
-            }
-        }
-    }
-    DEFAULT_SYSTEM_PROMPT.to_string()
-}
-
 /// Tool-selection hint for sessions that can call `todo`.
 ///
 /// Appended by the agent's prompt builder only when the session's tool
-/// selection allows `todo`, so profiles without the tool (`core`) never see it.
+/// selection allows `todo`. `core` includes `todo`, so `core` sessions get it;
+/// a profile or allow list without the tool does not.
 pub const TODO_HINT: &str = "Track multi-step work with the todo tool; editors show it as the plan.";
 
 /// Harness capabilities that conditionally contribute prompt modules.
@@ -49,10 +37,6 @@ impl PromptCapabilities {
             foreign_rules: crate::config::config().features.foreign_rules,
         }
     }
-}
-
-fn base_system_prompt_parts(working_dir: Option<&Path>) -> Vec<String> {
-    vec![load_base_system_prompt(working_dir)]
 }
 
 /// Imported foreign agent rules (`.cursorrules`, Copilot instructions, ...),
@@ -720,21 +704,24 @@ pub fn build_system_prompt_split_with_capabilities(
     capabilities: PromptCapabilities,
 ) -> (SplitSystemPrompt, ContextInfo) {
     let agents_md = load_agents_md_files_from_dir(working_dir);
+    let skills_section = build_available_skills_section(available_skills);
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
-        available_skills,
+        skills_section.as_deref(),
         memory_prompt,
         working_dir,
         capabilities,
-        agents_md,
+        &agents_md,
+        &StaticPromptSources::load(working_dir),
     )
 }
 
 /// Build a split prompt using an already captured AGENTS.md snapshot.
 ///
-/// Long-lived agents use this to keep their provider-cache prefix stable when a
-/// tool edits AGENTS.md during the session. New sessions still capture the
-/// latest instructions.
+/// Only AGENTS.md comes from the caller: the base prompt, the overlay and the
+/// preferred-tools guidance are read from disk on every call. A long-lived
+/// agent uses [`build_system_prompt_split_with_snapshot`] instead, so that no
+/// request of a running session goes to disk for them.
 pub fn build_system_prompt_split_with_agents_md(
     skill_prompt: Option<&str>,
     available_skills: &[SkillInfo],
@@ -742,37 +729,85 @@ pub fn build_system_prompt_split_with_agents_md(
     working_dir: Option<&Path>,
     agents_md: (Option<String>, ContextInfo),
 ) -> (SplitSystemPrompt, ContextInfo) {
+    let skills_section = build_available_skills_section(available_skills);
     build_system_prompt_split_with_capabilities_and_agents_md(
         skill_prompt,
-        available_skills,
+        skills_section.as_deref(),
+        memory_prompt,
+        working_dir,
+        PromptCapabilities::current(),
+        &agents_md,
+        &StaticPromptSources::load(working_dir),
+    )
+}
+
+/// Build a split prompt from sources captured earlier: the AGENTS.md snapshot,
+/// the base prompt, overlay and preferred-tools snapshot, and the skills
+/// section already rendered by [`build_available_skills_section`].
+///
+/// This is the per-request path of a long-lived agent. It reads no captured
+/// prompt source and copies each captured section once, straight into the
+/// static part, so the static part stays byte-identical until the agent
+/// captures its sources again at a session boundary. The one exception is
+/// `[features] foreign_rules` (off by default): its rule files are still read
+/// per request and are not counted as prompt source reads.
+pub fn build_system_prompt_split_with_snapshot(
+    skill_prompt: Option<&str>,
+    skills_section: Option<&str>,
+    memory_prompt: Option<&str>,
+    working_dir: Option<&Path>,
+    agents_md: &(Option<String>, ContextInfo),
+    sources: &StaticPromptSources,
+) -> (SplitSystemPrompt, ContextInfo) {
+    build_system_prompt_split_with_capabilities_and_agents_md(
+        skill_prompt,
+        skills_section,
         memory_prompt,
         working_dir,
         PromptCapabilities::current(),
         agents_md,
+        sources,
     )
+}
+
+/// Append one static section after the ones already written, with the same
+/// `\n\n` separator a join of the parts would put between them.
+fn push_static_section(static_part: &mut String, section: &str) {
+    static_part.push_str("\n\n");
+    static_part.push_str(section);
 }
 
 fn build_system_prompt_split_with_capabilities_and_agents_md(
     skill_prompt: Option<&str>,
-    available_skills: &[SkillInfo],
+    skills_section: Option<&str>,
     memory_prompt: Option<&str>,
     working_dir: Option<&Path>,
     capabilities: PromptCapabilities,
-    agents_md: (Option<String>, ContextInfo),
+    agents_md: &(Option<String>, ContextInfo),
+    sources: &StaticPromptSources,
 ) -> (SplitSystemPrompt, ContextInfo) {
-    let mut static_parts = base_system_prompt_parts(working_dir);
-    let mut dynamic_parts = Vec::new();
+    let (md_content, md_info) = agents_md;
+    let captured_len = [
+        md_content.as_deref(),
+        sources.overlay.0.as_deref(),
+        sources.preferred_tools.0.as_deref(),
+        skills_section,
+    ]
+    .iter()
+    .map(|section| section.map_or(0, |text| text.len() + 2))
+    .sum::<usize>();
+    let mut static_part = String::with_capacity(sources.base.len() + captured_len);
+    static_part.push_str(&sources.base);
     let mut info = ContextInfo {
-        system_prompt_chars: static_parts.join("\n\n").len(),
+        system_prompt_chars: sources.base.len(),
         ..Default::default()
     };
 
     // === STATIC CONTENT (cacheable) ===
 
     // Add AGENTS.md instructions (static per project)
-    let (md_content, md_info) = agents_md;
     if let Some(content) = md_content {
-        static_parts.push(content);
+        push_static_section(&mut static_part, content);
     }
     info.has_project_agents_md = md_info.has_project_agents_md;
     info.project_agents_md_chars = md_info.project_agents_md_chars;
@@ -782,44 +817,46 @@ fn build_system_prompt_split_with_capabilities_and_agents_md(
     // Imported rules from other agent tools, after the native AGENTS.md path.
     if let Some((foreign_content, foreign_chars)) = foreign_rules_section(capabilities, working_dir) {
         info.foreign_rules_chars = foreign_chars;
-        static_parts.push(foreign_content);
+        push_static_section(&mut static_part, &foreign_content);
     }
 
     // Add optional prompt overlays from ~/.horon/ and ./.horon/
-    let (overlay_content, overlay_chars) = load_prompt_overlay_files_from_dir(working_dir);
-    if let Some(content) = overlay_content {
-        info.prompt_overlay_chars = overlay_chars;
-        static_parts.push(content);
+    if let Some(content) = &sources.overlay.0 {
+        info.prompt_overlay_chars = sources.overlay.1;
+        push_static_section(&mut static_part, content);
     }
 
     // Add optional preferred-tool guidance (static per project/user)
-    let (preferred_tools_content, preferred_tools_chars) = load_preferred_tools_files_from_dir(working_dir);
-    if let Some(content) = preferred_tools_content {
-        info.preferred_tools_chars = preferred_tools_chars;
-        static_parts.push(content);
+    if let Some(content) = &sources.preferred_tools.0 {
+        info.preferred_tools_chars = sources.preferred_tools.1;
+        push_static_section(&mut static_part, content);
     }
 
     // Add available skills list (fairly static)
-    if let Some(skills_section) = build_available_skills_section(available_skills) {
-        info.skills_chars = skills_section.len();
-        static_parts.push(skills_section);
+    if let Some(section) = skills_section {
+        info.skills_chars = section.len();
+        push_static_section(&mut static_part, section);
     }
 
     // === TURN CONTEXT (not cached) ===
 
+    let mut dynamic_part = String::new();
+
     // Memory prompt (changes per conversation)
     if let Some(memory) = memory_prompt {
         info.memory_chars = memory.len();
-        dynamic_parts.push(memory.to_string());
+        dynamic_part.push_str(memory);
     }
 
     // Active skill prompt (changes per skill invocation)
     if let Some(skill) = skill_prompt {
-        dynamic_parts.push(format!("# Active Skill\n\n{}", skill));
+        if memory_prompt.is_some() {
+            dynamic_part.push_str("\n\n");
+        }
+        dynamic_part.push_str("# Active Skill\n\n");
+        dynamic_part.push_str(skill);
     }
 
-    let static_part = static_parts.join("\n\n");
-    let dynamic_part = dynamic_parts.join("\n\n");
     info.total_chars = static_part.len() + dynamic_part.len();
 
     (
@@ -897,309 +934,9 @@ where
     ]
 }
 
-/// Get git branch and status summary
-fn get_git_info(working_dir: Option<&Path>) -> Option<String> {
-    let mut command = Command::new("git");
-    if let Some(dir) = working_dir {
-        command.current_dir(dir);
-    }
-    // Check if we're in a git repo
-    let in_repo = command
-        .args(["rev-parse", "--is-inside-work-tree"])
-        .output()
-        .ok()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
-
-    if !in_repo {
-        return None;
-    }
-
-    let mut info = vec!["Git:".to_string()];
-
-    // Current branch
-    let mut branch_command = Command::new("git");
-    if let Some(dir) = working_dir {
-        branch_command.current_dir(dir);
-    }
-    if let Ok(output) = branch_command.args(["branch", "--show-current"]).output()
-        && output.status.success()
-    {
-        let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !branch.is_empty() {
-            info.push(format!("  Branch: {}", branch));
-        }
-    }
-
-    // Short status (modified files count)
-    let mut status_command = Command::new("git");
-    if let Some(dir) = working_dir {
-        status_command.current_dir(dir);
-    }
-    if let Ok(output) = status_command.args(["status", "--porcelain"]).output()
-        && output.status.success()
-    {
-        let status = String::from_utf8_lossy(&output.stdout);
-        let modified: Vec<&str> = status.lines().take(5).collect();
-        if !modified.is_empty() {
-            info.push(format!("  Modified: {} files", status.lines().count()));
-            for file in modified {
-                info.push(format!("    {}", file));
-            }
-            if status.lines().count() > 5 {
-                info.push("    ...".to_string());
-            }
-        }
-    }
-
-    if info.len() > 1 { Some(info.join("\n")) } else { None }
-}
-
-fn hardware_context() -> Option<String> {
-    // Hardware never changes for the life of the process, but this used to be
-    // rebuilt for every session create/attach, forking `lspci` each time. On a
-    // busy shared server that meant one subprocess per client connection.
-    static HARDWARE_CONTEXT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    HARDWARE_CONTEXT.get_or_init(hardware_context_uncached).clone()
-}
-
-fn hardware_context_uncached() -> Option<String> {
-    let mut lines = Vec::new();
-
-    if let Some(machine) = machine_model() {
-        lines.push(format!("  Machine: {}", machine));
-    }
-    if let Some(cpu) = cpu_model() {
-        lines.push(format!("  CPU: {}", cpu));
-    }
-    if let Some(gpu) = gpu_summary() {
-        lines.push(format!("  GPU: {}", gpu));
-    }
-    if let Some(memory) = memory_summary() {
-        lines.push(format!("  Memory: {}", memory));
-    }
-
-    if lines.is_empty() {
-        None
-    } else {
-        let mut out = vec!["Hardware:".to_string()];
-        out.extend(lines);
-        Some(out.join("\n"))
-    }
-}
-
-fn read_trimmed_file(path: impl Into<PathBuf>) -> Option<String> {
-    std::fs::read_to_string(path.into())
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn machine_model() -> Option<String> {
-    let vendor = read_trimmed_file("/sys/devices/virtual/dmi/id/sys_vendor");
-    let product = read_trimmed_file("/sys/devices/virtual/dmi/id/product_name");
-    match (vendor, product) {
-        (Some(vendor), Some(product)) if product.contains(&vendor) => Some(product),
-        (Some(vendor), Some(product)) => Some(format!("{} {}", vendor, product)),
-        (None, Some(product)) => Some(product),
-        (Some(vendor), None) => Some(vendor),
-        (None, None) => None,
-    }
-}
-
-fn cpu_model() -> Option<String> {
-    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").ok()?;
-    cpuinfo.lines().find_map(|line| {
-        let (_, value) = line.split_once(':')?;
-        if line.trim_start().starts_with("model name") {
-            let value = value.trim();
-            if value.is_empty() {
-                None
-            } else {
-                Some(value.to_string())
-            }
-        } else {
-            None
-        }
-    })
-}
-
-fn memory_summary() -> Option<String> {
-    let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let kb = meminfo.lines().find_map(|line| {
-        let rest = line.strip_prefix("MemTotal:")?.trim();
-        rest.split_whitespace().next()?.parse::<u64>().ok()
-    })?;
-    let gib = kb as f64 / 1024.0 / 1024.0;
-    Some(format!("{:.1} GiB", gib))
-}
-
-fn gpu_summary() -> Option<String> {
-    let output = Command::new("lspci").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut gpus: Vec<String> = text
-        .lines()
-        .filter(|line| {
-            line.contains(" VGA compatible controller")
-                || line.contains(" 3D controller")
-                || line.contains(" Display controller")
-        })
-        .filter_map(|line| line.split_once(':').map(|(_, rest)| rest.trim().to_string()))
-        .collect();
-    gpus.dedup();
-    if gpus.is_empty() { None } else { Some(gpus.join("; ")) }
-}
-
-fn same_canonical_path(first: &Path, second: &Path) -> bool {
-    match (std::fs::canonicalize(first), std::fs::canonicalize(second)) {
-        (Ok(first), Ok(second)) => first == second,
-        _ => false,
-    }
-}
-
-pub(crate) fn load_agents_md_files_from_dirs(
-    project_dir: &Path,
-    global_agents_md: Option<&Path>,
-) -> (Option<String>, ContextInfo) {
-    let mut contents = vec![];
-    let mut info = ContextInfo::default();
-
-    // Load a file if it exists: (formatted_content, expanded_size_chars)
-    let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
-        if path.exists() {
-            std::fs::read_to_string(path).ok().map(|content| {
-                let content = crate::context_import::expand_context_imports(&content, path, project_dir);
-                let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, content.len())
-            })
-        } else {
-            None
-        }
-    };
-
-    let project_agents_md = project_dir.join("AGENTS.md");
-    if let Some((content, size)) = load_file(&project_agents_md, "Project Instructions (AGENTS.md)") {
-        info.has_project_agents_md = true;
-        info.project_agents_md_chars = size;
-        contents.push(content);
-    }
-
-    // Canonical file identity handles cwd=$HOME as well as symlinked aliases.
-    // If either file is absent or cannot be resolved, loading below remains the
-    // source of truth and simply skips unreadable files.
-    let global_duplicates_project =
-        global_agents_md.is_some_and(|global_agents_md| same_canonical_path(&project_agents_md, global_agents_md));
-
-    if !global_duplicates_project
-        && let Some(global_agents_md) = global_agents_md
-        && let Some((content, size)) = load_file(global_agents_md, "Global Instructions (~/AGENTS.md)")
-    {
-        info.has_global_agents_md = true;
-        info.global_agents_md_chars = size;
-        contents.push(content);
-    }
-
-    if contents.is_empty() {
-        (None, info)
-    } else {
-        (Some(contents.join("\n\n")), info)
-    }
-}
-
-/// Load AGENTS.md files from a specific working directory.
-pub fn load_agents_md_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, ContextInfo) {
-    let project_dir = working_dir.unwrap_or(Path::new("."));
-    let global_agents_md = crate::storage::user_home_path("AGENTS.md").ok();
-    load_agents_md_files_from_dirs(project_dir, global_agents_md.as_deref())
-}
-
-/// Load optional prompt overlay markdown from ~/.horon/ and ./.horon/
-fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
-    let mut contents = vec![];
-    let mut total_chars = 0usize;
-
-    let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
-        if path.exists() {
-            std::fs::read_to_string(path).ok().map(|content| {
-                let raw_size = content.len();
-                let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, raw_size)
-            })
-        } else {
-            None
-        }
-    };
-
-    let project_dir = working_dir.unwrap_or(Path::new("."));
-    let project_overlay = project_dir.join(".horon").join("prompt-overlay.md");
-    if let Some((content, size)) = load_file(&project_overlay, "Project Prompt Overlay (.horon/prompt-overlay.md)") {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if let Ok(global_overlay) = crate::storage::horon_agent_dir().map(|dir| dir.join("prompt-overlay.md"))
-        && !same_canonical_path(&project_overlay, &global_overlay)
-        && let Some((content, size)) = load_file(&global_overlay, "Global Prompt Overlay (~/.horon/prompt-overlay.md)")
-    {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if contents.is_empty() {
-        (None, 0)
-    } else {
-        (Some(contents.join("\n\n")), total_chars)
-    }
-}
-
-/// Load optional preferred-tool guidance from ~/.horon/ and ./.horon/
-fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
-    let mut contents = vec![];
-    let mut total_chars = 0usize;
-
-    let load_file = |path: &Path, label: &str| -> Option<(String, usize)> {
-        if path.exists() {
-            std::fs::read_to_string(path).ok().map(|content| {
-                let raw_size = content.len();
-                let formatted = format!("# {}\n\n{}", label, content.trim());
-                (formatted, raw_size)
-            })
-        } else {
-            None
-        }
-    };
-
-    let project_dir = working_dir.unwrap_or(Path::new("."));
-    let project_preferred_tools = project_dir.join(".horon").join("preferred-tools.md");
-    if let Some((content, size)) = load_file(
-        &project_preferred_tools,
-        "Project Preferred Tools (.horon/preferred-tools.md)",
-    ) {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if let Ok(global_preferred_tools) = crate::storage::horon_agent_dir().map(|dir| dir.join("preferred-tools.md"))
-        && !same_canonical_path(&project_preferred_tools, &global_preferred_tools)
-        && let Some((content, size)) = load_file(
-            &global_preferred_tools,
-            "Global Preferred Tools (~/.horon/preferred-tools.md)",
-        )
-    {
-        total_chars += size;
-        contents.push(content);
-    }
-
-    if contents.is_empty() {
-        (None, 0)
-    } else {
-        (Some(contents.join("\n\n")), total_chars)
-    }
-}
-
 #[cfg(test)]
 #[path = "prompt_tests.rs"]
 mod prompt_tests;
+
+#[cfg(test)]
+mod session_context_tests;

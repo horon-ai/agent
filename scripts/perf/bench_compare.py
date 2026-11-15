@@ -10,6 +10,9 @@ Measured:
   version_ms        cold ``--version`` wall time (N repeats)
   oneshot_ms        one headless prompt through to completion, plus peak
                     process-tree RSS and whether a tool round-trip happened
+  oneshot_core      the same one-shot without ``--tools``, so the request
+                    carries the default core tool surface; a run whose first
+                    request offered no tools is ``core surface missing``
   sessions_memory   idle and post-turn process-tree RSS for N concurrent
                     sessions x K turns, plus the server's own thread and
                     descriptor counts after the turns; "first session" and
@@ -23,6 +26,12 @@ Measured:
   fsync_calls       fsync + fdatasync calls made by one one-shot run, counted
                     with strace (``--syscalls``; Linux only, recorded as
                     skipped when strace is missing)
+  fsync_paths       with ``--syscalls``, one extra untimed one-shot traced with
+                    ``strace -f -y`` groups those calls by the file or
+                    directory flushed (bench_fsync_paths.py)
+  request_bytes     per run record, the JSON body bytes, tool catalog bytes and
+                    tool count of every model request, as the mock server
+                    received them (``null`` when it did not report a key)
   install_size_bytes  binary or npm package directory size
 
 horon is the baseline; every other row shows its multiple of horon.
@@ -31,7 +40,7 @@ A second build of horon is a row too: `--bin horon-base=<path>` measures it with
 the same runner right after the candidate, so a before/after pair is produced on
 one machine, one mock server, and one load level instead of two runs.
 
-``--scenarios`` picks the phases (default ``oneshot,sessions,skill,mcp``); a
+``--scenarios`` picks the phases (default ``oneshot,oneshot_core,sessions,skill,mcp``); a
 subset really does skip the rest, which is how a skill-only or MCP-only run is
 measured.
 
@@ -50,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import json
 import os
 import re
@@ -66,11 +76,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import bench_common as bc  # noqa: E402
+import bench_core_oneshot as bco  # noqa: E402
+import bench_fsync_paths as bfp  # noqa: E402
+import bench_request_bytes as brb  # noqa: E402
 
 SUITE = "compare"
 DEFAULT_TOOLS = ["horon", "jcode", "claude_code", "codex", "opencode", "pi", "omp", "omo"]
-DEFAULT_SCENARIOS = ["oneshot", "sessions", "skill", "mcp"]
-SCENARIO_NAMES = ("oneshot", "sessions", "skill", "mcp")
+DEFAULT_SCENARIOS = ["oneshot", "oneshot_core", "sessions", "skill", "mcp"]
+SCENARIO_NAMES = ("oneshot", "oneshot_core", "sessions", "skill", "mcp")
 TURN_PROMPT = "List the files in the current directory, then reply with mock-ok."
 SESSION_TURNS = [
     "List the files in the current directory.",
@@ -818,28 +831,32 @@ def parse_strace_summary(text: str) -> dict | None:
 
 
 def measure_oneshot(
-    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, syscalls: bool = False
+    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float,
+    syscalls: bool | str = False,
 ) -> dict:
     """Run one headless prompt and time it, sampling peak tree RSS.
 
     With ``syscalls`` the run is wrapped in a call-counting strace, so the same
     sample also reports how many fsync/fdatasync calls the tool made; the
     summary file lives in a throwaway directory removed before returning.
+    With ``syscalls == "paths"`` the strace logs every flush with its path
+    instead, and the record carries ``fsync_paths`` (bench_fsync_paths.py).
     """
     trace_dir = bc.short_temp_dir("hcmp-strace-") if syscalls else None
     try:
-        return _measure_oneshot(argv, cwd, env, mock, timeout, trace_dir)
+        return _measure_oneshot(argv, cwd, env, mock, timeout, trace_dir, syscalls == bfp.MODE)
     finally:
         if trace_dir:
             shutil.rmtree(trace_dir, ignore_errors=True)
 
 
 def _measure_oneshot(
-    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, trace_dir: str | None
+    argv: list[str], cwd: str, env: dict, mock: MockServer, timeout: float, trace_dir: str | None,
+    paths: bool = False,
 ) -> dict:
     trace_path = os.path.join(trace_dir, "summary.txt") if trace_dir else None
     if trace_path:
-        argv = strace_argv(argv, trace_path)
+        argv = bfp.strace_argv(argv, trace_path, SYSCALL_NAMES) if paths else strace_argv(argv, trace_path)
     try:
         before = mock.stats()["request_count"]
     except Exception:  # noqa: BLE001
@@ -877,6 +894,7 @@ def _measure_oneshot(
     tools_offered: list[str] = []
     result_excerpt = None
     request_offsets_ms: list[float] = []
+    request_bytes: list[dict] = []
     try:
         after = mock.stats()
         requests = after["requests"][before:]
@@ -908,6 +926,9 @@ def _measure_oneshot(
         # split a run into startup, tool round trip and shutdown without a
         # profiler, on every OS the bench runs on.
         request_offsets_ms = [round((r["ts"] - started_wall) * 1000, 2) for r in requests if "ts" in r]
+        # What each request weighed: the bytes a prompt or tool-description
+        # change moves, kept beside the timings of the same run.
+        request_bytes = brb.request_bytes(requests)
     except Exception:  # noqa: BLE001
         roundtrip = None
         saw_requests = None
@@ -919,12 +940,18 @@ def _measure_oneshot(
         detail = (stderr or "").strip().splitlines()
         error = f"exit {proc.returncode}: " + (detail[-1] if detail else "no stderr")
     syscall_counts = None
+    fsync_paths = None
     if trace_path:
         try:
             with open(trace_path, encoding="utf-8", errors="replace") as fh:
-                syscall_counts = parse_strace_summary(fh.read())
+                trace = fh.read()
         except OSError:
-            syscall_counts = None
+            trace = None
+        if trace is not None and paths:
+            root = os.path.dirname(os.path.abspath(cwd))
+            fsync_paths = bfp.parse(trace, (os.path.realpath(root), root))
+        elif trace is not None:
+            syscall_counts = parse_strace_summary(trace)
     log_tail = _log_tail_since(env, log_marks)
     return {
         "ms": None if timed_out else round(elapsed_ms, 2),
@@ -936,12 +963,14 @@ def _measure_oneshot(
         "stdout_tail": (stdout or "").strip()[-300:],
         "fsync_calls": (syscall_counts or {}).get("total"),
         "fsync_breakdown": syscall_counts,
+        "fsync_paths": fsync_paths,
         "sentinel_seen": sentinel_seen,
         "mcp_ready_ms": mcp_ready_ms,
         "via": via,
         "tools_offered": tools_offered,
         "result_excerpt": result_excerpt,
         "request_offsets_ms": request_offsets_ms,
+        "request_bytes": request_bytes,
         "log_tail": log_tail,
         "exit_local_time": exit_local_time,
     }
@@ -1944,6 +1973,11 @@ class HoronRunner(ToolRunner):
         env = self._root(root, mock)
         return measure_oneshot(horon_oneshot_argv(self.binary), cwd, env, mock, timeout, syscalls=syscalls)
 
+    def oneshot_core(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
+        env = self._root(root, mock)
+        argv = bco.argv(horon_oneshot_argv(self.binary))
+        return bco.check_surface(measure_oneshot(argv, cwd, env, mock, timeout))
+
     def skill(self, mock: MockServer, root: str, cwd: str, timeout: float) -> dict:
         path = install_skill(os.path.join(cwd, ".horon", "skills"))
         # MCP is on for both new scenarios; with no server configured it costs
@@ -2590,6 +2624,7 @@ def _empty_result(runner: ToolRunner) -> dict:
         "version": None,
         "version_ms": None,
         "oneshot": None,
+        "oneshot_core": None,
         "sessions_memory": None,
         "skill": None,
         "mcp": None,
@@ -2721,6 +2756,21 @@ def measure_tools(
                     result["oneshot"] = summarize_oneshot(
                         oneshot_runs_by_row[index], syscall_runs_by_row[index] if syscalls else None
                     )
+            if syscalls:
+                # One more untimed run per row, traced per call, says which
+                # files the counted flushes were for.
+                for index, runner in enumerate(runners):
+                    result = results[index]
+                    if result["error"] or result["oneshot"] is None:
+                        continue
+                    root, cwd = roots[runner.name]
+                    result["oneshot"]["fsync_paths"] = bfp.measure(
+                        functools.partial(runner.oneshot, mock, root, cwd, timeout, syscalls=bfp.MODE),
+                        strace_available(),
+                    )
+
+        if "oneshot_core" in selected:
+            bco.measure(runners, results, roots, mock, oneshot_runs, timeout)
 
         if "sessions" in selected:
             points_by_row: list[list[dict]] = [[] for _ in runners]
@@ -2929,6 +2979,7 @@ def render_markdown(
         base_ms = baseline_value(results, ("oneshot", "ms"))
         base_rss = baseline_value(results, ("oneshot", "peak_rss_bytes"))
         show_syscalls = any((r.get("oneshot") or {}).get("fsync_calls") is not None for r in results)
+        show_request_bytes = any(brb.first_request(r.get("oneshot")) for r in results)
         rows = []
         for result in results:
             oneshot = result.get("oneshot") or {}
@@ -2952,6 +3003,8 @@ def render_markdown(
             ]
             if show_syscalls:
                 row.append(fmt_calls(oneshot.get("fsync_calls")))
+            if show_request_bytes:
+                row.append(brb.markdown_cell(oneshot))
             row.append(note[:60])
             rows.append(row)
         lines.append("**One-shot headless prompt** (includes startup, one `ls` tool call, final answer)")
@@ -2961,11 +3014,19 @@ def render_markdown(
                 ["Tool", "Time (median)", "Min–max", "vs horon", "Peak tree RSS", "vs horon",
                  "Tool round-trip"]
                 + (["fsync calls"] if show_syscalls else [])
+                + (["request bytes"] if show_request_bytes else [])
                 + ["Note"],
                 rows,
             )
         )
         lines.append("")
+        if show_request_bytes:
+            lines.append(brb.MARKDOWN_NOTE)
+            lines.append("")
+
+    # A report written before this row existed has no key for it and keeps its shape.
+    if "oneshot_core" in scenarios and any("oneshot_core" in result for result in results):
+        lines.extend(bco.markdown_section(results, scenario_row))
 
     # Skill invocation
     if "skill" in scenarios:

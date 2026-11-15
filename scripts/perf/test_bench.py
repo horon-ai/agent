@@ -20,6 +20,10 @@ import unittest
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS))
+
+import bench_startup  # noqa: E402
+
 PYTHON_FILES = [
     SCRIPTS / "ab_perf.py",
     SCRIPTS / "analyze_memory_log.py",
@@ -165,6 +169,39 @@ class GateMetricContract(unittest.TestCase):
         payload = gate_payload(result.stdout)
         self.assertEqual(payload["idle_rss_anon_kb"], 2048)
         self.assertEqual(payload["idle_live_heap_bytes"], 4096)
+
+
+class StartupProfileParse(unittest.TestCase):
+    LOG = (
+        "[2026-11-14 20:00:00.001] [INFO] server starting\n"
+        "[2026-11-14 20:00:00.020] [INFO] === Startup Profile (20.4ms total) ===\n"
+        "[2026-11-14 20:00:00.020] [INFO]       1.2ms      1.2ms    5.9%  args_parsed                    ███\n"
+        "[2026-11-14 20:00:00.020] [INFO]      12.0ms     10.8ms   52.9%  config_loaded                  ███████████████████████████\n"
+        "[2026-11-14 20:00:00.020] [INFO]      17.3ms      5.3ms   26.0%  server_new                     █████████████\n"
+        "[2026-11-14 20:00:00.020] [INFO]      20.4ms      3.1ms   15.2%  socket_bound                   ████████\n"
+        "[2026-11-14 20:00:00.021] [INFO] [session:abc] accepted client\n"
+    )
+
+    def test_startup_profile_parsed(self) -> None:
+        stages = bench_startup.parse_startup_profile(self.LOG)
+        self.assertEqual(
+            [stage["stage"] for stage in stages],
+            ["args_parsed", "config_loaded", "server_new", "socket_bound"],
+        )
+        self.assertEqual(
+            stages[-1],
+            {"stage": "socket_bound", "at_ms": 20.4, "delta_ms": 3.1, "percent": 15.2},
+        )
+
+    def test_log_without_a_profile_has_no_stages(self) -> None:
+        log = "[2026-11-14 20:00:00.001] [INFO] request took 12.0ms  3.0ms  1.0%  of budget\n"
+        self.assertEqual(bench_startup.parse_startup_profile(log), [])
+
+    def test_only_the_last_table_is_reported(self) -> None:
+        earlier = self.LOG.replace("20.4ms      3.1ms", "99.0ms      3.1ms")
+        stages = bench_startup.parse_startup_profile(earlier + self.LOG)
+        self.assertEqual(len(stages), 4)
+        self.assertEqual(stages[-1]["at_ms"], 20.4)
 
 
 @unittest.skipIf(Path("/proc").is_dir(), "this assertion is about platforms without /proc")
