@@ -39,8 +39,9 @@ async fn prompt_sent_right_after_done_is_not_busy() {
 /// prompt both waiting, when the prompt arrives while the loop is busy with
 /// another request. It must close the turn before it reads the prompt.
 ///
-/// Deterministic: the test holds the connection table, so the loop stops right
-/// after it reads a ping. The turn ends and its `Done` reaches the client while
+/// Deterministic: a `GetHistory` writes its reply and then reads the swarm plan
+/// table, which this test holds; nothing a turn's end or the event writer does
+/// touches that table. The turn ends and its `Done` reaches the client while
 /// the loop waits there, and the client sends its next prompt. Released, the
 /// loop finds both inputs ready at once.
 #[tokio::test]
@@ -53,10 +54,12 @@ async fn a_prompt_waiting_beside_the_turn_end_is_not_busy() {
         .await;
     editor.until(is_running).await;
 
-    let table = h.client_connections.read().await;
-    editor.send(json!({"type": "ping", "id": 11})).await;
-    // Let the loop read the ping and park on the table this test holds.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let plans = h.swarm_plans.write().await;
+    editor.send(json!({"type": "get_history", "id": 11})).await;
+    // The reply is written before the plan read, so the loop is parked now.
+    editor
+        .until(|event| matches!(event, ServerEvent::History { id: 11, .. }))
+        .await;
 
     gate.add_permits(1);
     let first = editor
@@ -69,7 +72,7 @@ async fn a_prompt_waiting_beside_the_turn_end_is_not_busy() {
     editor
         .send(json!({"type": "message", "id": 12, "content": "second"}))
         .await;
-    drop(table);
+    drop(plans);
 
     let second = editor
         .until(|event| matches!(event, ServerEvent::Done { id: 12 } | ServerEvent::Error { id: 12, .. }))
