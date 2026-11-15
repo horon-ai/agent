@@ -257,16 +257,20 @@ PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에�
 | 대기 요청 | `pending_requests`, `pending_requests_high_water` | 요청 중 1 이상, 응답 뒤 0, 상한 이하 |
 | 페이지 범위 | `history_page_replayed`, `history_page_flattened`, `history_index_builds`, `warm_read_bytes` | 데운 페이지는 재생 0, 색인 재구축 0, 페이지 크기만큼만 평탄화, 로그의 1/10 이하만 읽기 |
 | 스트리밍 해시 버퍼 | `large_request`, `small_request`, `buffer_bytes` | 세 값이 같고 `HASH_STREAM_BUFFER` 이하 |
-| NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 상한은 예산 값과 같고, 수용은 상한 이하, 거절은 상한 초과 |
+| NDJSON 프레임 상한 | `max_frame_bytes`, `accepted_frame_bytes`, `rejected_frame_bytes` | 두 리더(브리지, SDK) 모두 상한이 예산 값과 같고, 수용된 가장 큰 프레임은 1바이트 이상이면서 상한 이하이며, 거절된 가장 작은 프레임은 상한을 넘되 수용된 프레임보다 정확히 1바이트 크다 |
 | 자원 반납 | `fd_retention`, `thread_retention`, `non_returning` | 20사이클 소크 뒤 예산 이하, 반납 실패 0 |
+| 컨텍스트 압축 | `spill_kept_bytes`, `read_stub_bytes`, `aging_batches` | 1 MiB 도구 출력이 1바이트 이상이면서 압축 예산 48 KiB 이하로 모델에 닿고, 바뀌지 않은 파일의 두 번째 읽기는 1바이트 이상 512바이트 이하인 안내이며, 에이징 압력 지점을 넘긴 요청 둘이 프롬프트 프리픽스를 정확히 한 번 다시 쓴다(0회도 실패) |
 | IRC 메일박스 | `mailbox_high_water`, `mailbox_dropped`, `broadcast_body_allocations`, `waiters_live_after_churn`, `broadcast_inflight_high_water` | 상한 100 이하, 1000건 유입에 드롭 900, 브로드캐스트당 본문 할당 1회, 정리 뒤 대기자 0, 동시 브로드캐스트 16 이하 |
 | 스킬 목록과 작업 폴더 스킬 | `skill_catalog_file_reads`, `skill_catalog_bytes`, `skill_warmup_file_reads`, `skill_unchanged_request_file_reads`, `skill_unchanged_request_dir_reads` | 스킬 200개 목록에서 스킬당 파일 읽기 1회 이하·8 KiB 이하(본문 32 KiB를 통째로 읽으면 실패), 바뀌지 않은 작업 폴더 요청 9회의 파일·폴더 읽기 0, 예열 읽기 1 이상 |
 | MCP 사용자 설정 | `mcp_config_warmup_reads`, `mcp_config_user_rereads` | 예열 읽기 1 이상, 예열 뒤 바뀌지 않은 사용자 설정을 다시 읽는 횟수 0 |
+| 설정하지 않은 `pre_request` 훅 | `request_messages_in_probe`, `hook_process_spawns`, `request_message_copies` | 프로브가 메시지를 1개 이상 투영하고, 훅을 설정하지 않으면 프로세스 생성 0, 메시지 복사 0 |
 | 요청 프리픽스 | `tools_bytes`, `tool_count`, `per_tool` | `core` 프로필의 도구 카탈로그가 1바이트 이상이고 커밋된 상한 이하이며, 도구 수가 그 카탈로그를 만든 즉시 사용 정의 수와 같다. `per_tool`은 카탈로그 순서의 `name:bytes` 목록이다. 크기의 합에 배열의 대괄호 둘과 항목 사이 쉼표를 더한 값이 `tools_bytes`와 같아야 하고, `per_tool`이 없는 줄은 측정이 아니다 |
 | 정적 프롬프트(`prompt`) | `static_bytes`, `static_sha256`, `static_tokens`, `index_bytes`, `index_clipped_rows`, `warm_source_reads`, `unchanged_request_source_reads` | `STRUCTURAL_PERF section=prompt` 줄로 찍힌다. `static_bytes`는 `prompt_static_bytes_max` 이하이고, 세션이 프롬프트 원천을 캡처한 뒤의 요청은 원천 파일을 하나도 읽지 않으며(`prompt_unchanged_request_source_reads_max`, 0), 문장 중간에서 잘리는 인덱스 행은 `prompt_index_clipped_rows_max`(1)개 이하다. 하한은 아무것도 재지 않은 줄을 거부한다. 정적 프롬프트와 그 토큰 추정치, 도구 인덱스가 1바이트 이상이고, 다이제스트가 SHA-256이며, 세션 캡처와 첫 조립을 합쳐 원천 파일을 하나 이상 읽으려 해야 한다. `static_sha256`은 시계 줄(`Time: `)을 뺀 프롬프트의 해시라 같은 프리픽스는 어느 실행에서나 같은 값이다. 두 읽기 카운터는 파일이 있든 없든 프롬프트 원천 파일을 읽으려는 시도를 센다 |
 | 세션 컨텍스트(`session_context`) | `git_spawns_outside_repo`, `git_spawns_in_repo`, `gpu_probe_spawns_without_display`, `gpu_probe_spawns_here`, `gpu_reported` | 저장소 밖 폴더는 `git`을 띄우지 않고(`session_context_git_spawns_outside_repo_max`, 0), 작업 트리는 한 번 띄우며(`session_context_git_spawns_in_repo_max`, 1), 표시 장치가 없는 PCI 장치 목록에서는 GPU 탐지를 띄우지 않는다(`session_context_gpu_probe_spawns_without_display_max`, 0). `git_spawns_in_repo`는 1 이상이어야 하기도 하다. 저장소를 설명하려면 `git` 프로세스가 필요하므로 0은 카운터가 꺼져 있었다는 뜻이다. 모두 자식 프로세스를 띄우려는 시도를 세므로 `git`이나 `lspci`가 없어도 센다. `gpu_probe_spawns_without_display`는 빈 PCI 장치 목록을 대상으로 재므로 어느 러너에서나 같은 값이다. `gpu_probe_spawns_here`와 `gpu_reported`는 시험을 돌린 기계를 설명하며 게이트는 둘 다 읽지 않는다 |
 
 가짜 모델 서버는 응답한 요청마다 `body_bytes`, `tools_bytes`, `tool_count`를 기록하고(`GET /__stats`), `compare` 실행은 그 값을 실행 기록마다 `request_bytes`로 옮겨 적는다. 그래서 벤치 실행이 `prefix` 행이 경계를 거는 것과 같은 요청별 모양을 보고한다.
+
+모의 모델 서버는 응답한 요청마다 `body_bytes`, `tools_bytes`, `tool_count`를 기록하므로(`GET /__stats`), 벤치 실행은 `prefix` 행이 경계로 두는 요청별 모양을 그대로 보고한다.
 
 각 값은 저장소의 기존 테스트가 `STRUCTURAL_PERF section=<이름> k=v ...` 한 줄로 인쇄하고, 게이트는 그 줄을 읽는다. 카운터가 프로세스 전역이므로 측정마다 `--test-threads=1 --exact`로 테스트 하나만 돌린다.
 

@@ -186,7 +186,7 @@ Two instances exchange **originals only**: canonical event records and original 
 
 ### Harness API surface (protocol 1.12)
 
-The store is reached through the harness API. The major version stays at `1` and the minor version moved from 11 to 12. A client negotiates the handshake and then checks the capabilities it needs before sending anything.
+The store is reached through the harness API. The major version stays at `1`; this surface arrived when the minor version moved from 11 to 12, and the current minor version is 22 (`crates/harness-api/src/lib.rs:72-74`). A client negotiates the handshake and then checks the capabilities it needs before sending anything.
 
 | Capability | What it gates |
 | --- | --- |

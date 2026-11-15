@@ -32,9 +32,9 @@ memory = "essential"
 
 - `ESSENTIAL_TOOLS`의 일곱 도구(`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`)는 어떤 프로필에서도 `essential`입니다 (`config.rs:679` `ESSENTIAL_TOOLS`). 거의 모든 코딩 턴이 쓰는 도구라 스키마가 캐시 접두사에 남습니다.
 - `CORE_TOOLS`는 열여덟 개이고 `core` 프로필의 허용 목록입니다 (`config.rs:652` `CORE_TOOLS`). 목록이 도달 가능성을 정하고, 즉시 보낼지는 세션이 목록 모드인지에 따라 갈립니다. `swarm`, `todo`, `session_search`가 마지막으로 합류했고, SDK 구동 세션은 `enabled` 목록이 이름을 대지 않는 한 `session_search`와 `swarm`을 끈 채로 둡니다 (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
-- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:657`, `config.rs:1093` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:763` `ToolLoadTiers::tier`).
-- 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:800` `apply_builtin_load_tiers`).
-- `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:735` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:648` `freeze_mcp_surface`, `turn_execution.rs:681` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
+- `core` 세션이 목록 모드가 되는 조건은 셋입니다. 프로필이 손대지 않은 기본 `core`이고, 허용 목록이 명시되지 않았고, `toolbox`가 닿을 수 있어야 합니다 (`crates/app-core/src/agent.rs:647`, `config.rs:1093` `ToolConfig::toolbox_reachable`). 이 세션은 일곱 도구와 `toolbox`만 스키마와 함께 보내고, 나머지 열한 코어 도구(`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`)는 `discoverable`이 되어 색인에 이름만 올립니다 (`config.rs:763` `ToolLoadTiers::tier`).
+- 목록 모드가 아닌 세션은 코어 도구를 모두 `essential`로 보냅니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, SDK `enabled` 목록, `new_with_session`에 넘긴 허용 목록이 여기에 듭니다. 이 세션들의 도구 목록과 단계는 바뀌지 않았고 색인도 없습니다. 목록 모드의 `core` 세션에 SDK `enabled`가 붙으면 클라이언트가 도구를 정확히 지정한 것이므로 목록 모드가 꺼지고 지정한 도구가 모두 즉시 실립니다 (`crates/app-core/src/agent/turn_execution.rs:759` `apply_builtin_load_tiers`).
+- `mcp_search`와 `mcp_call`은 기본적으로 즉시 보냅니다 (`config.rs:735` `ALWAYS_EAGER_TOOLS`). 이 둘이 MCP 스키마를 발견하는 통로라서 네이티브 지연 경로에서는 그대로 즉시 보냅니다. 네이티브 지연 로딩이 없는 프로바이더에서는 목록 모드 `core` 세션이 첫 도구 목록을 확정할 때 활성 MCP 서버가 하나도 설정되어 있지 않으면, 두 도구는 즉시 보내지 않고 색인에 올라 `toolbox`로 부릅니다. 서버가 하나라도 있으면 지금처럼 즉시 보냅니다. 이 판단도 세션 중에 바뀌지 않습니다. 네이티브 프로바이더로 확정된 세션은 동결된 색인에 두 도구가 없으므로, 나중에 네이티브가 아닌 프로바이더로 바꿔도 두 도구는 즉시 실린 채로 남습니다(색인에 없는 이름을 안내하지 않기 위해서입니다). `mcp list`와 연결 결과 문구, 새 MCP 도구 공지가 32개를 넘겨 나머지를 줄여 알리는 끝 문장은 두 도구가 색인에 오른 세션에서만 `toolbox`를 가리키고, 그 밖에는 직접 호출을 안내합니다 (`turn_execution.rs:608` `freeze_mcp_surface`, `turn_execution.rs:641` `mcp_surface_listed`). `mcp_tools = "eager"`이면 서버별 정의가 실리므로 이 규칙은 적용되지 않습니다.
 - `toolbox`는 언제나 `essential`입니다. 명시적 `discoverable` 항목은 `essential`로 바뀌고, `off` 항목은 도구를 뺍니다 (`config.rs:763` `ToolLoadTiers::tier`).
 - 지연 기본값은 명시적 `full` 프로필에 허용 목록이 없을 때만 켜집니다. `acp`, `minimal`/`lite`, `none`, 명시적 `enabled` 목록, 프로필 미설정은 통과한 도구를 즉시 보냅니다 (`config.rs:1066` `ToolConfig::load_tiers`).
 - 세션은 시작할 때 단계를 한 번 확정합니다. 설정을 다시 읽어도 세션 중간에 도구가 즉시 집합과 지연 집합 사이를 옮기지 않습니다.
@@ -49,15 +49,15 @@ memory = "essential"
 
 ### 목록 색인
 
-목록 모드 `core` 세션의 시스템 프롬프트 정적 부분에는 `# Additional tools` 절이 붙습니다. 짧은 안내 문장 하나와 `- <이름>: <한 줄 설명>` 행이 이름순으로 나옵니다 (`crates/base/src/prompt.rs:483` `build_additional_tools_section`). 안내 문장은 한 문장이고, 목록의 도구를 `toolbox`의 `run` 동작으로 부르는 방법만 알립니다. 행의 설명은 도구 설명의 첫 문장이거나 60자까지이므로, 매개변수는 모델이 `toolbox describe`로 따로 받습니다.
+목록 모드 `core` 세션의 시스템 프롬프트 정적 부분에는 `# Additional tools` 절이 붙습니다. 짧은 안내 문장 하나와 `- <이름>: <한 줄 설명>` 행이 이름순으로 나옵니다 (`crates/base/src/prompt.rs:463` `build_additional_tools_section`). 안내 문장은 한 문장이고, 목록의 도구를 `toolbox`의 `run` 동작으로 부르는 방법만 알립니다. 행의 설명은 도구 설명의 첫 문장이거나 60자까지이므로, 매개변수는 모델이 `toolbox describe`로 따로 받습니다.
 
 - 프로바이더와 상관없이 같은 색인을 씁니다. 네이티브 지연 로딩이 있는 프로바이더도 지연 정의와 함께 이 색인을 받습니다. 없는 프로바이더는 지연 정의를 버리므로 이 색인이 이름을 알리는 유일한 경로입니다.
-- 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:897` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
-- 색인은 첫 도구 목록이 확정될 때 한 번 굳습니다. MCP 서버 등록 전의 워밍업 요청은 색인을 굳히지 않고, 확정 시점에 한 번 다시 만든 뒤 고정합니다. 이후 도구 잠금 해제, 압축, MCP 연결, 프로바이더 전환, 설정 재로드로는 바뀌지 않습니다 (`turn_execution.rs:834` `ensure_listed_tools_index`).
-- 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1192` `reset_listed_tools_index`).
-- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:175`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
+- 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
+- 색인은 첫 도구 목록이 확정될 때 한 번 굳습니다. MCP 서버 등록 전의 워밍업 요청은 색인을 굳히지 않고, 확정 시점에 한 번 다시 만든 뒤 고정합니다. 이후 도구 잠금 해제, 압축, MCP 연결, 프로바이더 전환, 설정 재로드로는 바뀌지 않습니다 (`turn_execution.rs:793` `ensure_listed_tools_index`).
+- 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1129` `reset_listed_tools_index`).
+- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:178`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
 - 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다. 목록에 오르는 코어 도구는 설명을 행에 들어가는 문장으로 시작하므로 단어 중간에서 끊기는 행이 없습니다. 아직 잘리는 행은 `todo` 하나이고, 모델에게 보이는 그 문구를 쓴 그대로 두기 때문입니다.
-- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:233` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
+- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:247` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
 
 ### toolbox
 
@@ -71,7 +71,7 @@ memory = "essential"
 
 #### 정책은 대상 도구에 한 번 적용됩니다
 
-`toolbox run`은 직접 호출과 같은 정책을 받되, 바깥 호출이 아니라 대상 도구에 한 번만 적용됩니다. 계획 모드, 승인 요청, `pre_tool`/`post_tool` 훅은 안쪽 `Registry::execute`에서 대상 도구의 이름과 입력으로 돌아갑니다. 바깥 `toolbox` 호출에서는 이 단계를 건너뛰므로 승인을 두 번 묻거나 훅이 `toolbox`라는 이름을 받는 일이 없습니다 (`crates/app-core/src/tool/mod.rs:2144`). 허용 목록과 비활성 목록 검사는 바깥에도 남아서 `toolbox` 자신이 닿을 수 있는지 판단합니다.
+`toolbox run`은 직접 호출과 같은 정책을 받되, 바깥 호출이 아니라 대상 도구에 한 번만 적용됩니다. 계획 모드, 승인 요청, `pre_tool`/`post_tool` 훅은 안쪽 `Registry::execute`에서 대상 도구의 이름과 입력으로 돌아갑니다. 바깥 `toolbox` 호출에서는 이 단계를 건너뛰므로 승인을 두 번 묻거나 훅이 `toolbox`라는 이름을 받는 일이 없습니다 (`crates/app-core/src/tool/mod.rs:2015`). 허용 목록과 비활성 목록 검사는 바깥에도 남아서 `toolbox` 자신이 닿을 수 있는지 판단합니다.
 
 계획 모드가 읽기 전용 호출을 가르는 기준도 대상을 따라갑니다. `list`와 `describe`는 읽기 전용이고, `run`은 대상 도구가 선언한 효과를 쓰며, 대상을 알 수 없거나 동작이 올바르지 않으면 쓰기 장벽으로 취급합니다 (`toolbox.rs:132` `effects_for_input`). 그래서 계획 모드에서 `toolbox run write`는 `write` 직접 호출처럼 거부되고, `toolbox run ls`는 통과합니다.
 
@@ -83,7 +83,7 @@ memory = "essential"
 
 #### 클라이언트에서 보이는 모습
 
-목록 모드 `core` 데몬에서는 `replace`, `webfetch`, `ask` 같은 목록 도구가 `toolbox` 호출로 나타납니다. ACP 편집기는 도구 이름으로 종류를 정하는데 `toolbox`는 어느 분류에도 없어서 `other`로 표시됩니다 (`src/cli/acp/util.rs:286` `tool_kind`). 편집기가 `ask`를 직접 호출로 받아 렌더링하는 흐름은 `acp` 프로필 세션에서만 기대할 수 있습니다.
+목록 모드 `core` 데몬에서는 `replace`, `webfetch`, `ask` 같은 목록 도구가 `toolbox` 호출로 나타납니다. ACP 편집기는 도구 이름으로 종류를 정하는데 `toolbox`는 어느 분류에도 없어서 `other`로 표시됩니다 (`src/cli/acp/util.rs:285` `tool_kind`). 편집기가 `ask`를 직접 호출로 받아 렌더링하는 흐름은 `acp` 프로필 세션에서만 기대할 수 있습니다.
 
 #### 호스티드 검색
 
@@ -201,7 +201,7 @@ memory = "essential"
 
 `dual_confirm_classes`의 기본값은 빈 배열입니다 (`crates/base/src/config.rs:1033`, `crates/base/src/config/default_file.rs:341`). 비어 있으면 모든 판단이 모드에 맡겨집니다.
 
-게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:2072`, 훅은 `:2176`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
+게이트는 `pre_tool` 훅보다 앞에 있습니다 (`crates/app-core/src/tool/mod.rs:2087`, 훅은 `:2202`). 물어야 할 호출을 외부 게이트가 이미 내보낸 것처럼 관찰하지 않게 하려는 순서입니다. 셸 안의 명령 위험 하드 거절은 그대로 남습니다. 승인 등급은 사용자에게 물을지만 정합니다.
 
 `irc`는 쓰기 비트만 있고 프로세스·네트워크 비트가 없으며 파일시스템 경로를 대지 않아서, `write` 모드는 묻지 않습니다. 승인할 파일이 없기 때문입니다. `all` 모드는 묻습니다. `irc` 호출이 읽기 전용이 아니기 때문입니다.
 
@@ -289,13 +289,13 @@ ACP에서는 두 범위 옵션(`allow-path`, `allow-folder`)을 v2 세션에서�
 
 `read`에 `hashline: true`를 주면 각 줄 앞에 `{줄번호:>5}#{태그}:{본문}`을 붙입니다 (`crates/app-core/src/tool/read.rs:153`). 태그는 그 줄 바이트의 SHA-256 첫 두 바이트를 소문자 16진수 네 자리로 쓴 것입니다 (`crates/edit-safety/src/hashline.rs:27` `tag_for`). 16비트 값이므로 암호학적 약속이 아니라, 모델이 읽은 줄을 가리키는 값싼 표식입니다.
 
-- 2000바이트를 넘는 줄은 잘리고 `----` 태그를 받습니다 (`read.rs:13` `MAX_LINE_LEN`). 이 앵커는 내용을 가리키지 않으므로 편집에 쓸 수 없습니다.
+- 2000바이트를 넘는 줄은 잘리고 `----` 태그를 받습니다 (`read_selector.rs:15` `MAX_LINE_LEN`). 이 앵커는 내용을 가리키지 않으므로 편집에 쓸 수 없습니다.
 - `hashline_edit`는 `[tools] hashline_edit = true`일 때만 등록됩니다. 기본값은 `false`이고 코어 집합 밖입니다.
 - 입력은 `file_path`와 `ops` 배열입니다. 각 op는 `start_anchor`, 선택적 `end_anchor`, `new_text`를 가집니다.
 - 파일 단위 동작을 지정하면 `ops`를 생략할 수 있습니다. `delete: true`는 파일을 지우고, `move_to: "<경로>"`는 줄 편집을 마친 내용을 그 경로에 쓴 뒤 원본을 지웁니다. 둘 다 줄 편집 뒤에 같은 호출, 같은 변이 단위로 적용되므로 `undo` 한 번이 내용과 원래 경로를 함께 되돌립니다.
 - 이동은 이미 있는 대상을 덮어쓰지 않고 거부합니다. 대상을 의도적으로 교체하려면 `apply_patch`를 씁니다. `move_to`와 `delete`는 함께 쓸 수 없습니다.
 - 경로 정책과 생성 파일 가드는 원본과 이동 대상 모두에 적용되고, `delete`는 보호 경로 검사도 통과해야 합니다.
-- 모든 앵커를 디스크의 현재 내용과 먼저 대조합니다. 하나라도 낡았으면 호출 전체를 거부하고 파일을 쓰지 않습니다 (`crates/app-core/src/tool/hashline_edit.rs:128` `resolve_ops`).
+- 모든 앵커를 디스크의 현재 내용과 먼저 대조합니다. 하나라도 낡았으면 호출 전체를 거부하고 파일을 쓰지 않습니다 (`crates/app-core/src/tool/hashline_edit.rs:249` `resolve_ops`).
 - 줄 번호는 1부터 시작하고, span은 아래로만 진행하며, 겹치는 span은 거부합니다.
 - `new_text`가 빈 문자열이면 span을 지웁니다. 끝의 줄바꿈 하나는 내용이 아니라 구분자로 봅니다.
 - 쓰기 경로는 `edit`와 같습니다. 경로별 잠금, 변이 단위 하나, 같은 파일 접촉 이벤트를 씁니다.
@@ -800,7 +800,7 @@ Windows에서는 나이 검사가 유일한 보호이므로, `target/`이 스크
 
 `CORE_TOOLS`에는 없습니다 (`crates/base/src/config.rs:652`). 코어 프로필의 닫힌 목록은 넓어지지 않습니다. 호출마다 곁가지 모델 요청을 하나 더 쓴다는 점이 이 스위치를 기본 꺼짐으로 두는 이유입니다 (`crates/base/src/config.rs:1030`).
 
-도구 자체는 얇은 어댑터입니다 (`crates/app-core/src/tool/aux_complete.rs:99`). 모델 인자를 계약 타입으로 바꿔 넘기고 텍스트를 돌려줄 뿐, 상한도 스키마 검사도 직접 하지 않습니다. 검사가 두 곳에 있으면 표면마다 규칙이 갈라지기 때문입니다.
+도구 자체는 얇은 어댑터입니다 (`crates/app-core/src/tool/aux_complete.rs:116`). 모델 인자를 계약 타입으로 바꿔 넘기고 텍스트를 돌려줄 뿐, 상한도 스키마 검사도 직접 하지 않습니다. 검사가 두 곳에 있으면 표면마다 규칙이 갈라지기 때문입니다.
 
 ### 비밀값 자리표시자
 
