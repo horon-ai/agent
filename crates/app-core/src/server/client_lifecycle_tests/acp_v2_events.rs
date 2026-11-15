@@ -1390,38 +1390,6 @@ async fn cancelled_idle_precedes_the_queued_peer_turn() {
     h.close(vec![editor, desktop]).await;
 }
 
-/// A prompt sent the instant the previous turn's terminal event arrives must
-/// not meet "Already processing a message". The request loop learns the turn
-/// finished before the turn task waits for its idle state to be forwarded; the
-/// next turn's task still waits for the agent the previous one keeps.
-#[tokio::test]
-async fn prompt_sent_right_after_done_is_not_busy() {
-    let h = Harness::new();
-    let mut editor = h.connect_v2(None, false).await;
-    let mut events = Vec::new();
-    for id in 10..16 {
-        editor
-            .send(json!({"type": "message", "id": id, "content": format!("turn {id}")}))
-            .await;
-        events.extend(
-            editor
-                .until(|event| matches!(event, ServerEvent::Done { id: done } if *done == id))
-                .await,
-        );
-    }
-    assert!(
-        !events.iter().any(|event| matches!(
-            event,
-            ServerEvent::Error { message, .. } if message.contains("Already processing")
-        )),
-        "a prompt sent right after Done is accepted: {events:#?}"
-    );
-    for id in 10..16 {
-        inserted_id(&events, id);
-    }
-    h.close(vec![editor]).await;
-}
-
 /// The cancel of a prompt still waiting for the agent another surface's turn
 /// holds aborts that prompt at once instead of waiting out the cooperative
 /// window: the waiting task cannot end while the cancel parks the peer's lock.
@@ -1539,3 +1507,6 @@ async fn withdraw_does_not_report_the_session_ready_over_a_peer_turn() {
         .await;
     h.close(vec![editor, desktop]).await;
 }
+
+#[path = "turn_end_race.rs"]
+mod turn_end_race;

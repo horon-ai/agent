@@ -993,18 +993,30 @@ pub(super) fn session_event_fanout_sender_with_fallback(
     // live attachments at send time, so a later turn replacing it, or a client
     // attaching afterwards, still reaches whatever is live then.
     register_session_event_sink(&session_id, tx.clone());
+    let mut flushes = super::fanout_flush::register(&session_id);
     tokio::spawn(async move {
         let mut stop_observer = super::foreground_state::StopObserver::default();
-        while let Some(mut event) = rx.recv().await {
-            stop_observer.apply(&mut event);
-            let idle_run = super::foreground_state::idle_run_id(&event);
-            if fanout_session_event(&swarm_members, &session_id, event.clone()).await == 0 {
-                let _ = fallback_tx.send(event);
-            }
-            if let Some(run_id) = idle_run {
-                super::foreground_state::note_forwarded(&run_id);
+        loop {
+            tokio::select! {
+                biased;
+                event = rx.recv() => {
+                    let Some(mut event) = event else { break };
+                    stop_observer.apply(&mut event);
+                    let idle_run = super::foreground_state::idle_run_id(&event);
+                    if fanout_session_event(&swarm_members, &session_id, event.clone()).await == 0 {
+                        let _ = fallback_tx.send(event);
+                    }
+                    if let Some(run_id) = idle_run {
+                        super::foreground_state::note_forwarded(&run_id);
+                    }
+                }
+                // `rx` was just polled empty: every event queued before this
+                // request is forwarded.
+                Some(request) = flushes.recv() => super::fanout_flush::answer(request),
             }
         }
+        drop(flushes);
+        super::fanout_flush::prune(&session_id);
     });
     tx
 }
