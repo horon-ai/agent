@@ -1082,7 +1082,7 @@ fn description_includes_swarm_prompt_guidance() {
     let tool = CommunicateTool::new();
     let description = tool.description();
     assert!(
-        description.starts_with("Coordinate agents"),
+        description.starts_with("Coordinate worker agents"),
         "description should lead with the short coordination summary"
     );
     assert!(
