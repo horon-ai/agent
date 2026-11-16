@@ -50,6 +50,26 @@ pub enum Action {
     Quit,
 }
 
+/// One message from the user, before the harness has confirmed it.
+///
+/// The two strings differ only for a command file: the harness receives the
+/// body it expands to, while the conversation shows the line that was typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// What the harness is sent.
+    pub text: String,
+    /// The line the user typed, which is what the conversation shows.
+    pub display: String,
+}
+
+impl Message {
+    /// A message, with `text` doubling as the line when nothing else is given.
+    fn new(text: String, display: Option<String>) -> Self {
+        let display = display.unwrap_or_else(|| text.clone());
+        Self { text, display }
+    }
+}
+
 /// The whole client state.
 pub struct App {
     /// The conversation so far.
@@ -68,10 +88,23 @@ pub struct App {
     pub pending_turn: bool,
     /// Messages typed while a turn was running, oldest first. Each one is sent
     /// when the turn before it ends.
-    pub queue: Vec<String>,
+    pub queue: Vec<Message>,
+    /// The message handed to the bridge and not yet confirmed or refused.
+    ///
+    /// It keeps the line the user typed beside the text the harness receives,
+    /// so a command file is drawn as the line that was typed rather than as
+    /// the body it expands to.
+    pub in_flight: Option<Message>,
     /// Whether the bridge or the daemon went away. The client stays up so the
     /// conversation can be read; the status line says why nothing is sent.
     pub disconnected: bool,
+    /// Whether a failed send is holding the queue back.
+    ///
+    /// A message the harness refused goes back to the input line or the queue;
+    /// retrying it automatically would loop against a daemon that keeps
+    /// refusing, so the queue waits for the next turn end or an explicit
+    /// submit instead.
+    pub resend_held: bool,
     /// Rows the transcript pane got last frame, used to keep the newest lines.
     pub viewport_height: Option<u16>,
     /// What the client is attached to, for the status line.
@@ -125,7 +158,9 @@ impl App {
             exit_code: 0,
             pending_turn: false,
             queue: Vec::new(),
+            in_flight: None,
             disconnected: false,
+            resend_held: false,
             viewport_height: None,
             description,
             events,
@@ -161,7 +196,9 @@ impl App {
             exit_code: 1,
             pending_turn: false,
             queue: Vec::new(),
+            in_flight: None,
             disconnected: true,
+            resend_held: false,
             viewport_height: None,
             description: "not connected".to_string(),
             events: receiver,
@@ -225,33 +262,60 @@ impl App {
 
     /// A message the bridge could not deliver.
     ///
-    /// The text goes back to the input line, so a dropped send costs a key
-    /// press rather than the message. The turn never started, so the status
-    /// returns to idle instead of staying on `running`. A failure the bridge
-    /// traced to a closed socket also marks the connection lost: otherwise the
-    /// client would keep saying it is ready to send.
+    /// Nothing was sent, so nothing stays in the conversation claiming it was:
+    /// the waiting line is dropped and the text goes back to the input line, so
+    /// a dropped send costs a key press rather than the message. The turn never
+    /// started, so the status returns to idle instead of staying on `running`.
+    /// A failure the bridge traced to a closed socket also marks the connection
+    /// lost: otherwise the client would keep saying it is ready to send.
     pub fn send_failed(&mut self, text: &str, message: &str, lost: bool) {
         self.pending_turn = false;
         self.session_status = Some("idle".to_string());
-        self.keep_text(text);
+        let display = self.take_in_flight(text);
+        // Only the line this send drew is taken back: another message with the
+        // same text may still be waiting its turn.
+        self.transcript.retract_user(&display);
+        self.keep_text(&display);
+        // The queue must not fire this message again on the next pass: a daemon
+        // that keeps refusing would turn the retry into a loop.
+        self.resend_held = true;
         if lost {
             self.lose_connection();
         }
         self.warn(message);
     }
 
+    /// The line to retract or keep for a refused send, consuming the slot.
+    ///
+    /// One message is in flight at a time, so the slot belongs to exactly the
+    /// text the bridge reports; the fallback keeps a stray refusal from
+    /// retracting nothing.
+    fn take_in_flight(&mut self, text: &str) -> String {
+        match self.in_flight.take() {
+            Some(message) if message.text == text => message.display,
+            Some(message) => {
+                self.in_flight = Some(message);
+                text.to_string()
+            }
+            None => text.to_string(),
+        }
+    }
+
     /// The next queued message, as the action that sends it.
     ///
     /// Called after a turn-end event: a message typed during a turn waits for
     /// that turn rather than racing it, and several of them keep their order.
+    /// A message the harness refused holds the queue until the next turn ends
+    /// or the user submits again, so a refused send cannot loop.
     pub fn take_queued(&mut self) -> Option<Action> {
-        if self.pending_turn || self.disconnected {
+        if self.pending_turn || self.disconnected || self.resend_held {
             return None;
         }
-        let text = self.queue.first()?.clone();
+        let message = self.queue.first()?.clone();
         self.queue.remove(0);
-        self.transcript.promote_queued(&text);
-        Some(self.start_turn(text))
+        self.transcript.promote_queued(&message.display);
+        self.in_flight = Some(message.clone());
+        Some(self.start_turn(message.text))
     }
 
     /// Put a message that was not sent back where the user can see it.
@@ -267,7 +331,7 @@ impl App {
             return;
         }
         self.transcript.push_queued(text);
-        self.queue.push(text.to_string());
+        self.queue.push(Message::new(text.to_string(), None));
     }
 
     /// The lines the active prompt wants drawn, if any.
@@ -374,11 +438,15 @@ impl App {
                 self.transcript.text_done();
                 self.transcript.end_running_tools();
                 self.pending_turn = false;
+                self.resend_held = false;
                 self.session_status = Some("idle".to_string());
             }
             ApiEvent::TurnStopped { reason, message, .. } => {
                 self.transcript.end_running_tools();
                 self.pending_turn = false;
+                // A turn boundary is a fresh chance to send: a message a
+                // refused send left waiting is not held for ever.
+                self.resend_held = false;
                 self.session_status = Some("idle".to_string());
                 // A cancel is the user's own decision, so it is a notice. Any
                 // other abnormal stop is news about the harness and stays a
@@ -599,19 +667,25 @@ impl App {
     /// error for doing something ordinary. The message is kept instead and
     /// sent when the turn ends.
     fn send_or_queue(&mut self, text: String, display: Option<String>) -> Option<Action> {
+        // An explicit submit is the user asking again, so a refusal that was
+        // holding the queue back no longer blocks this message.
+        self.resend_held = false;
+        let message = Message::new(text, display);
         if self.disconnected {
-            let shown = display.unwrap_or_else(|| text.clone());
-            self.refuse(&shown);
+            self.refuse(&message.display);
             return None;
         }
         if self.pending_turn {
-            let shown = display.unwrap_or_else(|| text.clone());
-            self.transcript.push_queued(shown);
-            self.queue.push(text);
+            self.transcript.push_queued(message.display.clone());
+            self.queue.push(message);
             return None;
         }
-        self.transcript.push_user(display.unwrap_or_else(|| text.clone()));
-        Some(self.start_turn(text))
+        // Drawn now, and taken back by `send_failed` if the harness refuses it:
+        // the conversation reads in the order things were typed, and a line
+        // that was never delivered does not survive the refusal.
+        self.transcript.push_user(message.display.clone());
+        self.in_flight = Some(message.clone());
+        Some(self.start_turn(message.text))
     }
 
     /// Ask the harness to stop the running turn.

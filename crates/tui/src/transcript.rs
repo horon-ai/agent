@@ -255,6 +255,23 @@ impl Transcript {
         }
     }
 
+    /// Take back the line drawn for a message the harness refused.
+    ///
+    /// The newest line with this text is the one the failed send drew: one
+    /// message is in flight at a time, and a submit during a turn draws a
+    /// waiting line rather than a sent one, so retrying cannot stack a second
+    /// copy of a line that was never delivered. A waiting line for another
+    /// message with the same text is left alone.
+    pub fn retract_user(&mut self, text: &str) {
+        let found = self
+            .items
+            .iter()
+            .rposition(|item| matches!(item, Item::User(sent) if sent == text));
+        if let Some(index) = found {
+            self.items.remove(index);
+        }
+    }
+
     /// End every tool line that never reported a result.
     ///
     /// A turn can end while a call is still running: it was cancelled, the

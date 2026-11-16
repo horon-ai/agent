@@ -178,13 +178,19 @@ fn run_worker(
     events: Sender<Incoming>,
 ) {
     loop {
-        match pump(&events, |timeout| stream.next_result_timeout(timeout)) {
+        // The connection flag is read by the pump so a dead transport is
+        // reported even while the client sits idle with nothing to send.
+        match pump(
+            &events,
+            |timeout| stream.next_result_timeout(timeout),
+            || client.is_closed(),
+        ) {
             Step::UiGone | Step::Closed => return,
             flowing => match take_command(&commands, flowing == Step::Flowing) {
                 CommandPoll::Command(command) => {
                     // The text is captured before the command is moved, so a
                     // failure can hand it back to the client.
-                    let sent = match &command {
+                    let sent_text = match &command {
                         Command::Text(text) => Some(text.clone()),
                         _ => None,
                     };
@@ -199,7 +205,7 @@ fn run_worker(
                         Err(error) => {
                             let lost = lost_connection(&error);
                             let message = format!("{description}: {error}");
-                            let failure = match sent {
+                            let failure = match sent_text {
                                 Some(text) => Incoming::SendFailed { text, message, lost },
                                 None => Incoming::Notice(message),
                             };
@@ -229,6 +235,10 @@ enum Step {
     UiGone,
 }
 
+/// What the client is told when the transport is gone but the stream never
+/// reported an error.
+const CONNECTION_CLOSED: &str = "the harness connection closed";
+
 /// Forward the events that are already ready, up to [`EVENT_BATCH`].
 ///
 /// One event per pass was the old cost: every pass then waited
@@ -244,9 +254,14 @@ enum Step {
 /// user presses during exactly that burst. A stream error is still terminal and
 /// still reported as [`Incoming::Closed`].
 ///
+/// A closed connection is not a stream error: the SDK answers `Ok(None)` on a
+/// closed stream for ever, so `closed` is asked after every empty read. Without
+/// it an idle client would keep saying it is ready and poll a dead channel as
+/// fast as the loop goes round.
+///
 /// `next` is the stream read, generic so the batch can be exercised without a
 /// daemon: `Ok(Some(event))` is a frame, `Ok(None)` is a timeout.
-fn pump<F, E>(events: &Sender<Incoming>, mut next: F) -> Step
+fn pump<F, E>(events: &Sender<Incoming>, mut next: F, closed: impl Fn() -> bool) -> Step
 where
     F: FnMut(Duration) -> Result<Option<ApiEvent>, E>,
     E: std::fmt::Display,
@@ -262,7 +277,13 @@ where
                 forwarded = true;
                 timeout = Duration::ZERO;
             }
-            Ok(None) => break,
+            Ok(None) => {
+                if closed() {
+                    drop(events.send(Incoming::Closed(CONNECTION_CLOSED.to_string())));
+                    return Step::Closed;
+                }
+                break;
+            }
             Err(error) => {
                 // A dropped receiver means the UI already exited, which is the
                 // one case where nobody needs to be told why the stream ended.
@@ -438,7 +459,7 @@ mod tests {
         let (events, received) = mpsc::channel();
         let mut queue = burst(EVENT_BATCH * 2);
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()));
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
 
         assert_eq!(step, Step::Flowing);
         let text = forwarded_text(&received);
@@ -447,7 +468,10 @@ mod tests {
         assert_eq!(text, expected, "the pass reordered or dropped events");
 
         // The rest arrives on the next pass, in the same order.
-        assert_eq!(pump(&events, |_| Ok::<_, Error>(queue.pop_front())), Step::Flowing);
+        assert_eq!(
+            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false),
+            Step::Flowing
+        );
         let text = forwarded_text(&received);
         assert_eq!(text.len(), EVENT_BATCH);
         let expected: Vec<String> = (EVENT_BATCH..EVENT_BATCH * 2).map(|index| index.to_string()).collect();
@@ -463,7 +487,10 @@ mod tests {
         commands.send(Command::Cancel).expect("queue the command");
         let mut queue = burst(EVENT_BATCH * 3);
 
-        assert_eq!(pump(&events, |_| Ok::<_, Error>(queue.pop_front())), Step::Flowing);
+        assert_eq!(
+            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false),
+            Step::Flowing
+        );
         assert_eq!(forwarded_text(&received).len(), EVENT_BATCH);
 
         match take_command(&incoming, true) {
@@ -478,10 +505,14 @@ mod tests {
         // it forever; this one timeout is what keeps an idle client off the CPU.
         let (events, received) = mpsc::channel();
         let mut timeouts = Vec::new();
-        let step = pump(&events, |timeout| {
-            timeouts.push(timeout);
-            Ok::<_, Error>(None)
-        });
+        let step = pump(
+            &events,
+            |timeout| {
+                timeouts.push(timeout);
+                Ok::<_, Error>(None)
+            },
+            || false,
+        );
 
         assert_eq!(step, Step::Idle);
         assert_eq!(timeouts, vec![EVENT_POLL]);
@@ -496,10 +527,14 @@ mod tests {
         let mut queue = burst(3);
         let mut timeouts = Vec::new();
 
-        let step = pump(&events, |timeout| {
-            timeouts.push(timeout);
-            Ok::<_, Error>(queue.pop_front())
-        });
+        let step = pump(
+            &events,
+            |timeout| {
+                timeouts.push(timeout);
+                Ok::<_, Error>(queue.pop_front())
+            },
+            || false,
+        );
 
         assert_eq!(step, Step::Flowing);
         assert_eq!(
@@ -513,9 +548,11 @@ mod tests {
     fn a_stream_error_still_ends_the_bridge() {
         let (events, received) = mpsc::channel();
 
-        let step = pump(&events, |_| {
-            Err::<Option<ApiEvent>, _>(Error::new(ErrorKind::EventBufferOverflow, "behind"))
-        });
+        let step = pump(
+            &events,
+            |_| Err::<Option<ApiEvent>, _>(Error::new(ErrorKind::EventBufferOverflow, "behind")),
+            || false,
+        );
 
         assert_eq!(step, Step::Closed);
         let messages: Vec<Incoming> = received.try_iter().collect();
@@ -532,9 +569,47 @@ mod tests {
         drop(received);
         let mut queue = burst(2);
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()));
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
 
         assert_eq!(step, Step::UiGone, "no receiver is not a failure to report");
+    }
+
+    #[test]
+    fn a_closed_connection_is_reported_once_without_polling_the_dead_stream() {
+        // The SDK answers `Ok(None)` for ever on a closed stream, so without
+        // the closed check this pass would return Idle and the worker would go
+        // round again: a dead connection must cost exactly one read and one
+        // notice, not a spin.
+        let (events, received) = mpsc::channel();
+        let mut reads = 0;
+
+        let step = pump(
+            &events,
+            |_| {
+                reads += 1;
+                Ok::<_, Error>(None)
+            },
+            || true,
+        );
+
+        assert_eq!(step, Step::Closed);
+        assert_eq!(reads, 1, "the dead stream was read again");
+        let messages: Vec<Incoming> = received.try_iter().collect();
+        assert_eq!(messages.len(), 1, "the closed notice was sent more than once");
+        match &messages[0] {
+            Incoming::Closed(reason) => assert_eq!(reason, CONNECTION_CLOSED),
+            other => panic!("expected a closed connection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_live_connection_that_timed_out_is_not_mistaken_for_a_closed_one() {
+        let (events, received) = mpsc::channel();
+
+        let step = pump(&events, |_| Ok::<_, Error>(None), || false);
+
+        assert_eq!(step, Step::Idle);
+        assert!(received.try_iter().next().is_none(), "a timeout is not a disconnection");
     }
 
     #[test]

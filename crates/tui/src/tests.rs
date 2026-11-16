@@ -609,6 +609,17 @@ fn a_closed_bridge_shows_a_disconnection_and_leaves_on_ctrl_c() {
         ),
         None => panic!("no banner for the closed bridge"),
     }
+
+    // The closed channel keeps reporting `Disconnected` on every poll, so the
+    // drain has to stay a no-op: one reason, one state change, nothing added to
+    // the transcript on the passes that follow.
+    let banner = app.banner.clone();
+    let items = app.transcript.items().len();
+    drain_events(&mut app);
+    drain_events(&mut app);
+    assert_eq!(app.banner, banner, "a later pass replaced the reason");
+    assert_eq!(app.transcript.items().len(), items, "a later pass added a line");
+
     let quit = crossterm::event::KeyEvent::new(
         crossterm::event::KeyCode::Char('c'),
         crossterm::event::KeyModifiers::CONTROL,

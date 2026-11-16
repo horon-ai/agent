@@ -68,6 +68,11 @@ fn items(app: &App) -> &[Item] {
     app.transcript.items()
 }
 
+/// The texts waiting for their turn, in queue order.
+fn queued(app: &App) -> Vec<String> {
+    app.queue.iter().map(|message| message.text.clone()).collect()
+}
+
 fn warnings(app: &App) -> usize {
     items(app)
         .iter()
@@ -89,7 +94,7 @@ fn a_submit_during_a_turn_is_queued_and_sent_when_the_turn_ends() {
     type_text(&mut app, "second");
     assert_eq!(app.on_key(enter()), None);
 
-    assert_eq!(app.queue, vec!["first".to_string(), "second".to_string()]);
+    assert_eq!(queued(&app), vec!["first".to_string(), "second".to_string()]);
     assert!(items(&app).contains(&Item::Queued("first".to_string())));
     assert!(items(&app).contains(&Item::Queued("second".to_string())));
     assert_eq!(app.take_queued(), None, "a running turn sends nothing");
@@ -97,7 +102,7 @@ fn a_submit_during_a_turn_is_queued_and_sent_when_the_turn_ends() {
     app.apply_event(&done("s1"));
     assert_eq!(app.take_queued(), Some(Action::Send("first".to_string())));
     assert!(app.pending_turn, "the message that went out starts a turn");
-    assert_eq!(app.queue, vec!["second".to_string()]);
+    assert_eq!(queued(&app), vec!["second".to_string()]);
     assert_eq!(app.take_queued(), None, "one message per turn");
     assert!(items(&app).contains(&Item::User("first".to_string())));
     assert!(
@@ -189,7 +194,7 @@ fn a_cancel_keeps_the_queue_and_sends_it_after_the_turn_stops() {
     app.pending_turn = true;
     type_text(&mut app, "next");
     app.on_key(enter());
-    assert_eq!(app.queue, vec!["next".to_string()]);
+    assert_eq!(queued(&app), vec!["next".to_string()]);
 
     assert_eq!(app.on_key(control('c')), Some(Action::Cancel));
     app.apply_event(&stopped("s1", TurnStopReason::Interrupted, "turn interrupted"));
@@ -243,8 +248,16 @@ fn a_failed_send_with_a_busy_input_line_queues_instead_of_overwriting() {
     app.send_failed("hello", "could not send the message: broken pipe", false);
 
     assert_eq!(app.input.text(), "typing", "the newer typing is not overwritten");
-    assert_eq!(app.queue, vec!["hello".to_string()], "the failed text is kept");
+    assert_eq!(queued(&app), vec!["hello".to_string()], "the failed text is kept");
     assert!(items(&app).contains(&Item::Queued("hello".to_string())));
+
+    // A daemon that keeps refusing must not turn the queue into a retry loop:
+    // the waiting message is not sent again by the idle pass.
+    assert_eq!(app.take_queued(), None, "a refused send is not retried automatically");
+
+    // The next turn boundary is a fresh chance, and an explicit submit is too.
+    app.apply_event(&done("s1"));
+    assert_eq!(app.take_queued(), Some(Action::Send("hello".to_string())));
 }
 
 #[test]
@@ -270,6 +283,135 @@ fn a_send_that_found_a_closed_socket_marks_the_connection_lost() {
     assert_eq!(app.on_key(enter()), None);
     assert_eq!(app.input.text(), "hello again");
     assert!(!app.pending_turn);
+}
+
+#[test]
+fn a_closed_connection_without_a_submit_shows_disconnected_once() {
+    // What the bridge now reports when the daemon dies: nothing was typed and
+    // nothing was sent, yet the client has to say the session is over.
+    let mut app = app();
+    app.pending_turn = true;
+    app.apply_event(&ApiEvent::ToolStart {
+        session_id: "s1".to_string(),
+        call_id: "c1".to_string(),
+        name: "bash".to_string(),
+    });
+
+    app.disconnect("the harness connection closed");
+
+    assert!(app.disconnected, "the status line has to show the loss");
+    assert!(!app.pending_turn);
+    assert!(app.status_line().ends_with("disconnected"), "{}", app.status_line());
+    let call = items(&app)
+        .iter()
+        .find_map(|item| match item {
+            Item::Tool(call) => Some(call),
+            _ => None,
+        })
+        .expect("the tool line is still there");
+    assert_eq!(call.state, ToolState::Failed(TURN_ENDED.to_string()));
+    assert_eq!(warnings(&app), 0, "the banner carries the reason, not a warning line");
+
+    // A repeated closed signal must not stack a second banner or notice: the
+    // bridge can race the channel closing behind the closed flag.
+    let banner = app.banner.clone();
+    app.disconnect("the harness connection closed");
+    assert_eq!(app.banner, banner);
+    assert_eq!(warnings(&app), 0);
+
+    // One submit after it: exactly one warning, and the text stays put.
+    type_text(&mut app, "hello");
+    assert_eq!(app.on_key(enter()), None);
+    assert_eq!(warnings(&app), 1);
+    assert_eq!(app.input.text(), "hello");
+}
+
+#[test]
+fn a_refused_message_is_taken_back_out_of_the_conversation() {
+    let mut app = app();
+    type_text(&mut app, "hello");
+    assert_eq!(app.on_key(enter()), Some(Action::Send("hello".to_string())));
+
+    app.send_failed("hello", "could not send the message: broken pipe", false);
+    assert!(
+        !items(&app).contains(&Item::User("hello".to_string())),
+        "a message that was never sent does not stay in the conversation: {:?}",
+        items(&app)
+    );
+    assert_eq!(app.input.text(), "hello");
+
+    // The retry puts one line back, and a second refusal takes that one away
+    // too: the conversation never collects copies of a line that was not sent.
+    assert_eq!(app.on_key(enter()), Some(Action::Send("hello".to_string())));
+    let drawn = items(&app)
+        .iter()
+        .filter(|item| **item == Item::User("hello".to_string()))
+        .count();
+    assert_eq!(drawn, 1, "{:?}", items(&app));
+    app.send_failed("hello", "could not send the message: broken pipe", false);
+    let drawn = items(&app)
+        .iter()
+        .filter(|item| **item == Item::User("hello".to_string()))
+        .count();
+    assert_eq!(drawn, 0, "{:?}", items(&app));
+}
+
+#[test]
+fn a_refused_queued_message_leaves_no_waiting_line_behind() {
+    let mut app = app();
+    app.pending_turn = true;
+    type_text(&mut app, "hello");
+    app.on_key(enter());
+    app.apply_event(&done("s1"));
+    assert_eq!(app.take_queued(), Some(Action::Send("hello".to_string())));
+
+    app.send_failed("hello", "could not send the message: broken pipe", false);
+
+    assert!(
+        !items(&app).contains(&Item::Queued("hello".to_string())),
+        "the waiting line goes when the message is refused: {:?}",
+        items(&app)
+    );
+    assert!(
+        !items(&app).contains(&Item::User("hello".to_string())),
+        "the promoted line is taken back too: {:?}",
+        items(&app)
+    );
+    assert_eq!(app.input.text(), "hello");
+}
+
+#[test]
+fn a_refused_send_leaves_another_waiting_message_with_the_same_text_alone() {
+    let mut app = app();
+    app.pending_turn = true;
+    for _ in 0..2 {
+        type_text(&mut app, "hi");
+        app.on_key(enter());
+    }
+    assert_eq!(queued(&app), vec!["hi".to_string(), "hi".to_string()]);
+    assert_eq!(
+        items(&app)
+            .iter()
+            .filter(|item| **item == Item::Queued("hi".to_string()))
+            .count(),
+        2
+    );
+
+    app.apply_event(&done("s1"));
+    assert_eq!(app.take_queued(), Some(Action::Send("hi".to_string())));
+    app.send_failed("hi", "could not send the message: broken pipe", false);
+
+    assert_eq!(
+        items(&app)
+            .iter()
+            .filter(|item| **item == Item::Queued("hi".to_string()))
+            .count(),
+        1,
+        "the other waiting message keeps its line: {:?}",
+        items(&app)
+    );
+    assert_eq!(queued(&app), vec!["hi".to_string()], "and it stays queued");
+    assert_eq!(app.input.text(), "hi", "the refused copy is back in the input line");
 }
 
 #[test]
