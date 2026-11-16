@@ -112,7 +112,7 @@ fn mismatched_markers_keep_every_character() {
 #[test]
 fn an_unclosed_fence_draws_the_code_that_arrived() {
     let rows = render("```rust\nfn main() {", 40);
-    assert_eq!(texts(&rows), vec!["  fn main() {"]);
+    assert_eq!(texts(&rows), vec!["  rust", "  fn main() {"]);
     assert_eq!(rows[0].indent(), 2);
 }
 
@@ -120,7 +120,7 @@ fn an_unclosed_fence_draws_the_code_that_arrived() {
 fn a_closed_fence_keeps_its_code_literal() {
     // Marks inside a fence are code, not emphasis: a shell `**` glob stays.
     let rows = render("```sh\nrm -rf **/target\n```\nafter", 40);
-    assert_eq!(texts(&rows), vec!["  rm -rf **/target", "after"]);
+    assert_eq!(texts(&rows), vec!["  sh", "  rm -rf **/target", "after"]);
     assert!(
         rows[0]
             .line()
@@ -378,5 +378,99 @@ fn the_setting_reaches_the_applied_settings() {
     assert_ne!(
         texts(&item_lines::answer("**a**", &look(false))),
         texts(&item_lines::answer("**a**", &look(true)))
+    );
+}
+
+#[test]
+fn a_fence_with_a_language_draws_a_label_row() {
+    let theme = Theme::default();
+    let rows = markdown::render("```rust\nfn main() {}\n```", &theme, Symbols::default(), 40);
+    assert_eq!(texts(&rows), vec!["  rust", "  fn main() {}"]);
+    assert_eq!(
+        rows[0].line().spans[1].style.fg,
+        Some(theme.core.muted),
+        "the label is drawn in the theme's dim token"
+    );
+    assert_eq!(rows[0].indent(), 2, "the label sits at the block's indent");
+}
+
+#[test]
+fn a_fence_without_a_language_draws_no_label_row() {
+    let rows = render("```\ncode\n```", 40);
+    assert_eq!(texts(&rows), vec!["  code"]);
+}
+
+#[test]
+fn the_label_waits_until_the_fence_line_is_complete() {
+    // The line still growing is not drawn at all: `ru` is not the language yet,
+    // and a label that changes as the tag arrives would be worse than a wait.
+    assert!(render("```ru", 40).is_empty());
+    assert!(render("```", 40).is_empty());
+    // Once the line is complete the label is drawn, even before the code is.
+    assert_eq!(texts(&render("```rust\n", 40)), vec!["  rust"]);
+    assert_eq!(texts(&render("```rust\nfn main", 40)), vec!["  rust", "  fn main"]);
+}
+
+#[test]
+fn the_label_row_is_measured_like_any_other_row() {
+    // The scrollback counts what the pane draws, so the label has to be part of
+    // the wrapped block in both cases and absent in one of them.
+    assert_eq!(wrapped("```rust\ncode\n```", 40).len(), 2);
+    assert_eq!(wrapped("```\ncode\n```", 40).len(), 1);
+    // Narrow enough that the label itself wraps: still one row here, but the
+    // count comes from the same wrapper the pane uses.
+    assert_eq!(wrapped("```rust\ncode\n```", 10).len(), 2);
+}
+
+#[test]
+fn a_nested_bullet_keeps_its_nesting() {
+    let bullet = Symbols::default().bullet;
+    let rows = render("- parent\n  - nested item", 40);
+    assert_eq!(
+        texts(&rows),
+        vec![format!("{bullet} parent"), format!("  {bullet} nested item")]
+    );
+    assert_eq!(rows[0].indent(), 2, "the parent hangs under its text");
+    assert_eq!(rows[1].indent(), 4, "the nested item hangs under its own text");
+}
+
+#[test]
+fn a_nested_numbered_item_keeps_its_nesting() {
+    let rows = render("1. one\n  2. nested two", 40);
+    assert_eq!(texts(&rows), vec!["1. one", "  2. nested two"]);
+    assert_eq!(rows[0].indent(), 3);
+    assert_eq!(rows[1].indent(), 5);
+}
+
+#[test]
+fn a_tab_is_one_level_of_nesting() {
+    // A list written with tabs indents one level per tab, the same as two
+    // spaces, so the marker moves out and the item hangs under its own text.
+    let bullet = Symbols::default().bullet;
+    let rows = render("\t- one", 40);
+    assert_eq!(texts(&rows), vec![format!("  {bullet} one")]);
+    assert_eq!(rows[0].indent(), 4);
+}
+
+#[test]
+fn deep_nesting_gives_way_before_the_text_at_a_narrow_width() {
+    // Six levels of source indent in a ten-column pane: the nesting is capped so
+    // the item's words still reach the row.
+    let rows = wrapped("      - deeply nested item", 10);
+    assert!(!rows.is_empty());
+    for row in &rows {
+        assert!(
+            unicode_width::UnicodeWidthStr::width(row.as_str()) <= 10,
+            "row {row:?} is wider than the pane"
+        );
+        assert!(
+            row.trim_start().starts_with(Symbols::default().bullet) || row.starts_with("    "),
+            "row {row:?} lost its nesting"
+        );
+    }
+    // The word itself may be split by the row limit, but its letters are drawn.
+    assert!(
+        rows.iter().any(|row| row.contains("deep")),
+        "the words went missing: {rows:?}"
     );
 }

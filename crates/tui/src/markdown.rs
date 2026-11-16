@@ -33,6 +33,15 @@ const MAX_NESTING: usize = 8;
 /// Columns a tab advances inside a code block.
 const TAB: usize = 4;
 
+/// Columns one level of list nesting adds before its marker.
+const NEST_COLUMNS: usize = 2;
+
+/// The deepest list nesting drawn, so a deep list cannot push its text away.
+const MAX_NEST: usize = 6;
+
+/// Columns a row keeps for text beside an indented marker.
+const MIN_TEXT_COLUMNS: usize = 3;
+
 /// The styles and marks one message is drawn with.
 struct Palette {
     /// Text outside any mark.
@@ -77,7 +86,12 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
     let palette = Palette::new(theme, symbols);
     let mut rows: Vec<Indented> = Vec::new();
     let mut fence: Option<&'static str> = None;
-    for raw in text.lines() {
+    let mut lines = text.lines().peekable();
+    while let Some(raw) = lines.next() {
+        // An opening fence that is the last line of a message with no newline
+        // after it may still be growing, so nothing is drawn for it yet: a
+        // half-received ` ```ru ` must not flash a label that then changes.
+        let complete = lines.peek().is_some() || text.ends_with('\n');
         let line = raw.trim_end();
         if let Some(opened) = fence {
             if closes_fence(line, opened) {
@@ -88,14 +102,16 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
             }
             continue;
         }
-        let body = line.trim_start();
-        let indent = line.len() - body.len();
+        let (indent, body) = leading(line);
         if body.is_empty() {
             rows.push(Indented::plain(Line::default()));
             continue;
         }
-        if let Some(opened) = opens_fence(body) {
+        if let Some((opened, info)) = fence_info(body) {
             fence = Some(opened);
+            if complete && let Some(label) = info.split_whitespace().next() {
+                rows.push(fence_label(label, &palette));
+            }
             continue;
         }
         if let Some(text) = heading(body) {
@@ -111,7 +127,7 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
             continue;
         }
         if let Some((marker, text)) = list_marker(body) {
-            rows.push(list_line(marker, text, &palette));
+            rows.push(list_line(marker, text, indent, width, &palette));
             continue;
         }
         // Tables and syntax this renderer does not claim stay as typed.
@@ -120,15 +136,45 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
     rows
 }
 
-/// The fence marker this line opens a code block with, if it does.
-fn opens_fence(line: &str) -> Option<&'static str> {
-    if line.starts_with("```") {
-        Some("```")
-    } else if line.starts_with("~~~") {
-        Some("~~~")
-    } else {
-        None
+/// The indentation of a line in columns, and the line without it.
+///
+/// A tab is a level of its own, which is what an indented list written with tabs
+/// means: one tab is the same nesting as two spaces.
+fn leading(line: &str) -> (usize, &str) {
+    let mut columns = 0;
+    let mut end = 0;
+    for character in line.chars() {
+        match character {
+            ' ' => columns += 1,
+            '\t' => columns += 2,
+            _ => break,
+        }
+        end += character.len_utf8();
     }
+    (columns, &line[end..])
+}
+
+/// The fence marker this line opens a code block with, and its info string.
+///
+/// The info string is the language the block was tagged with; the renderer draws
+/// its first word as a label and otherwise leaves the tag alone.
+fn fence_info(line: &str) -> Option<(&'static str, &str)> {
+    for marker in ["```", "~~~"] {
+        if let Some(info) = line.strip_prefix(marker) {
+            return Some((marker, info.trim()));
+        }
+    }
+    None
+}
+
+/// The row naming a fenced block's language, above its code.
+///
+/// A fence with no info string draws nothing in its place: an empty row would
+/// separate the block from the text around it for no reason.
+fn fence_label(label: &str, palette: &Palette) -> Indented {
+    let mut spans = vec![Span::raw(" ".repeat(CODE_INDENT))];
+    spans.push(Span::styled(label.to_string(), palette.marker));
+    Indented::new(Line::from(spans), CODE_INDENT)
 }
 
 /// Whether this line ends a block opened with `marker`.
@@ -250,16 +296,24 @@ fn quote_line(depth: usize, text: &str, palette: &Palette) -> Indented {
     Indented::new(Line::from(spans), depth * 2)
 }
 
-/// One row of a list item, aligned under its own text.
-fn list_line(marker: Marker, text: &str, palette: &Palette) -> Indented {
-    let lead = match marker {
+/// One row of a list item, aligned under its own text and nested by its indent.
+///
+/// The item's source indentation is drawn as nesting rather than dropped: a list
+/// written with two spaces per level keeps the levels a reader needs to see which
+/// item a sub-list belongs to. Wrapped rows hang under the item's text, not under
+/// its marker, and the nesting gives way before the text does at a narrow width.
+fn list_line(marker: Marker, text: &str, indent: usize, width: u16, palette: &Palette) -> Indented {
+    let mark = match marker {
         Marker::Bullet => format!("{} ", palette.bullet),
         Marker::Number(number) => format!("{number} "),
     };
-    let indent = UnicodeWidthStr::width(lead.as_str());
+    let mark_width = UnicodeWidthStr::width(mark.as_str());
+    let room = usize::from(width).saturating_sub(mark_width + MIN_TEXT_COLUMNS);
+    let depth = (indent / NEST_COLUMNS).min(MAX_NEST).min(room / NEST_COLUMNS);
+    let lead = format!("{}{mark}", " ".repeat(depth * NEST_COLUMNS));
     let mut spans = vec![Span::styled(lead, palette.marker)];
     spans.extend(inline(text, palette.text, palette, 0));
-    Indented::new(Line::from(spans), indent)
+    Indented::new(Line::from(spans), depth * NEST_COLUMNS + mark_width)
 }
 
 /// Text that starts `indent` columns in, so an indented paragraph stays so.
