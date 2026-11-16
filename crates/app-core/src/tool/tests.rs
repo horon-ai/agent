@@ -893,8 +893,8 @@ async fn lifecycle_timing_fields_carry_durations_and_no_payload() {
         total_ms: 165,
     };
 
-    let timing_fields = timings.fields();
-    let keys: Vec<&str> = timing_fields.iter().map(|(key, _)| key.as_str()).collect();
+    let timing_fields = timings.fields().map(|(key, value)| (key, value.to_string()));
+    let keys: Vec<&str> = timing_fields.iter().map(|(key, _)| *key).collect();
     assert_eq!(
         keys,
         vec![
@@ -928,11 +928,11 @@ async fn lifecycle_timing_fields_carry_durations_and_no_payload() {
         graceful_shutdown_signal: None,
         execution_mode: ToolExecutionMode::Direct,
     };
-    let mut fields = Registry::tool_lifecycle_fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
+    let mut fields = lifecycle::fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
     fields.extend(timings.fields());
     for (key, value) in &fields {
         assert!(
-            !value.contains(MARKER),
+            !value.to_string().contains(MARKER),
             "lifecycle field {key} leaked tool payload text: {value}"
         );
     }

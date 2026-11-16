@@ -131,8 +131,17 @@ pub(crate) fn config(session: &str) -> Option<SessionToolConfig> {
         .map(|o| o.config.clone())
 }
 
+/// Whether the session's overlay defines a custom tool called `name`.
+///
+/// Answered under the read guard: every tool dispatch asks, so the overlay's
+/// configuration is not copied for it.
 pub(crate) fn custom(session: &str, name: &str) -> bool {
-    config(session).is_some_and(|c| c.custom.iter().any(|t| t.name == name))
+    STATE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .overlays
+        .get(session)
+        .is_some_and(|overlay| overlay.config.custom.iter().any(|tool| tool.name == name))
 }
 
 pub(crate) fn apply_definitions(session: &str, mut tools: Vec<ToolDefinition>) -> Vec<ToolDefinition> {

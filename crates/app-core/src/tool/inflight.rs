@@ -26,23 +26,24 @@ use std::sync::{LazyLock, Mutex};
 
 /// Reference counts per tool_call_id. A count (rather than a set) keeps the
 /// registry correct if the same id is somehow executed concurrently, e.g. a
-/// retry racing the original.
-static IN_FLIGHT: LazyLock<Mutex<HashMap<String, usize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// retry racing the original. The map owns the only copy of the id: a guard
+/// borrows the id from its caller, so one call copies its id once.
+static IN_FLIGHT: LazyLock<Mutex<HashMap<Box<str>, usize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// RAII registration for one executing tool call.
-pub struct InFlightToolGuard {
-    tool_call_id: String,
+pub struct InFlightToolGuard<'a> {
+    tool_call_id: &'a str,
 }
 
-impl Drop for InFlightToolGuard {
+impl Drop for InFlightToolGuard<'_> {
     fn drop(&mut self) {
         let Ok(mut map) = IN_FLIGHT.lock() else {
             return;
         };
-        if let Some(count) = map.get_mut(&self.tool_call_id) {
+        if let Some(count) = map.get_mut(self.tool_call_id) {
             *count = count.saturating_sub(1);
             if *count == 0 {
-                map.remove(&self.tool_call_id);
+                map.remove(self.tool_call_id);
             }
         }
     }
@@ -50,15 +51,18 @@ impl Drop for InFlightToolGuard {
 
 /// Mark `tool_call_id` as executing until the returned guard is dropped.
 /// Empty ids are not tracked (nothing can match them during repair).
-pub fn mark_tool_in_flight(tool_call_id: &str) -> Option<InFlightToolGuard> {
+pub fn mark_tool_in_flight(tool_call_id: &str) -> Option<InFlightToolGuard<'_>> {
     if tool_call_id.is_empty() {
         return None;
     }
     let mut map = IN_FLIGHT.lock().ok()?;
-    *map.entry(tool_call_id.to_string()).or_insert(0) += 1;
-    Some(InFlightToolGuard {
-        tool_call_id: tool_call_id.to_string(),
-    })
+    match map.get_mut(tool_call_id) {
+        Some(count) => *count += 1,
+        None => {
+            map.insert(Box::from(tool_call_id), 1);
+        }
+    }
+    Some(InFlightToolGuard { tool_call_id })
 }
 
 /// True while a tool call with this id is executing somewhere in this process.

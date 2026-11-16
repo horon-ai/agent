@@ -2,6 +2,7 @@ use crate::logging;
 use base64::Engine as _;
 use horon_agent_background_types::{BackgroundTaskCompleted, BackgroundTaskProgressEvent, BackgroundTaskStatus};
 use regex::Regex;
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -42,10 +43,20 @@ pub use notifications::{
 /// auth flows. The pattern table itself lives in [`crate::secrets::rules`], shared
 /// with the reversible wire-path obfuscation.
 pub fn redact_secrets(text: &str) -> String {
+    redact_secrets_cow(text).into_owned()
+}
+
+/// [`redact_secrets`] that borrows the input when nothing was redacted.
+///
+/// Same scan, same log lines and the same text as [`redact_secrets`]; the only
+/// difference is that a caller which copies part of the result elsewhere (the
+/// crash ring keeps a 2,048-character prefix) does not pay for a full copy of
+/// text it is about to drop.
+pub(crate) fn redact_secrets_cow(text: &str) -> Cow<'_, str> {
     // Fast path to avoid regex work for most tool outputs.
     if !crate::secrets::may_contain_secret(text) {
         logging::debug("secret redaction fast path skipped regex scan");
-        return text.to_string();
+        return Cow::Borrowed(text);
     }
 
     logging::debug(&format!("running secret redaction scan bytes={}", text.len()));
@@ -68,7 +79,7 @@ pub fn redact_secrets(text: &str) -> String {
         logging::info("redacted secrets from message text");
     }
 
-    redacted
+    Cow::Owned(redacted)
 }
 
 pub const GENERATED_IMAGE_TOOL_NAME: &str = "image_generation";

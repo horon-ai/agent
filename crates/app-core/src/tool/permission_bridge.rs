@@ -536,9 +536,12 @@ pub(super) async fn await_permission(
     let outcome = bridge.wait(&claim.request_id, claim.outcome, ctx).await;
     waiter.finished = true;
     if outcome.approved {
-        let mut fields = Registry::tool_lifecycle_fields("approved", resolved_name, resolved_name, input, ctx);
-        fields.push(("block_reason".to_string(), "approval".to_string()));
-        fields.push(("approval_request_id".to_string(), claim.request_id));
+        let mut fields = super::lifecycle::fields("approved", resolved_name, resolved_name, input, ctx);
+        fields.push(("block_reason", super::lifecycle::FieldValue::Text("approval")));
+        fields.push((
+            "approval_request_id",
+            super::lifecycle::FieldValue::Owned(claim.request_id),
+        ));
         crate::logging::event_info("TOOL_LIFECYCLE", fields);
         return None;
     }

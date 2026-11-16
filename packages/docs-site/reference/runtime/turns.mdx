@@ -380,7 +380,7 @@ feature stays unusable until both sides run the new code.
 `context_notes` gives the model a small notes file. `new_context` lets it decide
 that those notes are enough and start the next turn from a clean active context.
 The tool is registered only while `[tools] context_notes` is on
-(`crates/app-core/src/tool/mod.rs:1095`), because the rollover keeps exactly the
+(`crates/app-core/src/tool/mod.rs:1107`), because the rollover keeps exactly the
 notes the dynamic system prompt carries.
 
 The call itself only records a pending request keyed by session

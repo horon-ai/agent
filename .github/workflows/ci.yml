@@ -245,7 +245,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -799,7 +799,7 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-import-core --min-passed 24 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-logging --min-passed 13 --timeout 600
+            --package horon-agent-logging --min-passed 28 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-platform --min-passed 11 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -878,15 +878,25 @@ jobs:
         # model or session history had no CI check. The step previously ran a
         # filter inherited from upstream CI that matched nothing in this tree,
         # the looks-green-but-never-ran shape the warning budget and the stdin
-        # detector had, so it now requires at least one pass
-        # (`--min-passed 1`), which fails the step when a filter selects no
-        # test instead of reporting a green `0 passed`. The Windows groups stay
-        # out of scope: this step keeps `runner.os != 'Windows'`.
+        # detector had, so it now requires the measured count (`--min-passed`),
+        # which fails the step when a filter selects no test instead of
+        # reporting a green `0 passed`. `secrets::restore_tests` (7) pins the
+        # in-place restore of a tool input: the same text as replacing every
+        # placeholder longest first, keys untouched, and an input that holds no
+        # placeholder coming back equal. `crash::ring_tests` (7) pins the operation
+        # ring a crash bundle reads: redaction before the cut, the stored
+        # detail when a record's strings are reused, and nothing recorded while
+        # bundles are off. The Windows groups stay out of scope: this step
+        # keeps `runner.os != 'Windows'`.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
+            --timeout 600 --min-passed 18 \
             -- secrets:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 7 \
+            -- crash::ring_tests:: --nocapture
 
       - name: Run IRC cohorts
         shell: bash
@@ -1157,6 +1167,19 @@ jobs:
         # modules compiled in every run and no cohort selected them (#300), so
         # two failures sat on `dev` unexecuted until they were fixed.
         # `--min-passed` is the measured count; raise it with the module.
+        # `tool::lifecycle::tests` (5) pins the `TOOL_LIFECYCLE` field list a
+        # dispatch builds once and relabels for its done or error line: names,
+        # order, values, and the input size counted without building the text.
+        # `tool::arg_repair::prepared_tests` (6) pins the prepared-schema cache
+        # every dispatch looks up: one entry per schema, a changed schema gets
+        # its own validator, and two schemas under one key never share one.
+        # `tool::arg_repair::tests` (16) are the repairs that lookup serves.
+        # `tool::policy_route_tests` (8) pins the session policy a dispatch
+        # reads as a shared snapshot: the allow and deny answers, the rejection
+        # text and its order, a writer while a snapshot is held, and an SDK
+        # overlay merged into a copy that is never stored.
+        # `tool::inflight::tests` (3) pins the in-flight marks every dispatch
+        # takes and releases, nested marks included.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1166,6 +1189,26 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 48 \
             -- tool::read::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 5 \
+            -- tool::lifecycle::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 6 \
+            -- tool::arg_repair::prepared_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 16 \
+            -- tool::arg_repair::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 8 \
+            -- tool::policy_route_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- tool::inflight::tests:: --nocapture
 
       - name: Run prompt surface cohort
         shell: bash

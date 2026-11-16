@@ -77,6 +77,8 @@ HEALTHY_LINES = [
     "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
     "STRUCTURAL_PERF section=session_context git_spawns_outside_repo=0 git_spawns_in_repo=1 "
     "gpu_probe_spawns_without_display=0 gpu_reported=0",
+    "STRUCTURAL_PERF section=tool_dispatch source=app-core dispatches=200 small_allocs=2000 "
+    "small_alloc_bytes=100000 large_allocs=2000 large_alloc_bytes=200000",
 ]
 
 
@@ -636,6 +638,70 @@ class SessionContextSectionTest(unittest.TestCase):
             self.assertEqual(named, {counter})
 
 
+class ToolDispatchSectionTest(unittest.TestCase):
+    """The tool-dispatch line counts allocator requests per call, and a line of zeros does not."""
+
+    PREFIX = "STRUCTURAL_PERF section=tool_dispatch"
+
+    def line(self, **counters):
+        values = {
+            "dispatches": 200,
+            "small_allocs": 2000,
+            "small_alloc_bytes": 100000,
+            "large_allocs": 2000,
+            "large_alloc_bytes": 200000,
+        }
+        values.update(counters)
+        fields = " ".join(f"{key}={value}" for key, value in values.items())
+        return f"{self.PREFIX} source=app-core {fields}"
+
+    def failed(self, **counters):
+        run = run_gate(replace_line(self.PREFIX, self.line(**counters)))
+        self.assertEqual(run.code, 1, run.stderr)
+        return {check["counter"] for check in run.result["checks"] if not check["ok"]}
+
+    def test_tool_dispatch_section_missing_fails(self):
+        without = [line for line in HEALTHY_LINES if not line.startswith(self.PREFIX)]
+        run = run_gate(without)
+        self.assertEqual(run.code, 2, "a tool-dispatch section that did not run is not a pass")
+        self.assertEqual(run.result["missing"], ["tool_dispatch"])
+
+    def test_each_ceiling_fails_alone_one_request_over_it(self):
+        bounds = gate.load_budget(str(gate.BUDGET_FILE))
+        for size in ("small", "large"):
+            allocations = bounds[f"tool_dispatch_{size}_allocs_per_dispatch_max"] * 200 + 1
+            self.assertEqual(
+                self.failed(**{f"{size}_allocs": allocations, f"{size}_alloc_bytes": allocations}),
+                {f"{size}_allocs_per_dispatch"},
+                "one allocation over the ceiling across the whole run must fail",
+            )
+            requested = bounds[f"tool_dispatch_{size}_alloc_bytes_per_dispatch_max"] * 200 + 1
+            self.assertEqual(self.failed(**{f"{size}_alloc_bytes": requested}), {f"{size}_alloc_bytes_per_dispatch"})
+
+    def test_a_counter_that_recorded_nothing_fails_rather_than_passing_on_zeros(self):
+        self.assertEqual(self.failed(small_allocs=0, small_alloc_bytes=0), {"small_allocs"})
+        self.assertEqual(self.failed(large_allocs=0, large_alloc_bytes=0), {"large_allocs"})
+
+    def test_fewer_allocations_than_dispatches_is_not_a_measurement(self):
+        self.assertEqual(self.failed(small_allocs=199), {"small_allocs"})
+
+    def test_allocations_that_asked_for_no_bytes_fail(self):
+        self.assertEqual(self.failed(large_alloc_bytes=1999), {"large_alloc_bytes"})
+
+    def test_a_run_with_no_dispatch_fails(self):
+        self.assertEqual(
+            self.failed(dispatches=0, small_allocs=0, small_alloc_bytes=0, large_allocs=0, large_alloc_bytes=0),
+            {"dispatches"},
+        )
+
+    def test_note_lines_are_repeated_and_never_judged(self):
+        note = "STRUCTURAL_PERF_NOTE section=tool_dispatch stage=log_line calls=200 allocs=999999999 alloc_bytes=0"
+        run = run_gate([*HEALTHY_LINES, note])
+        self.assertEqual(run.code, 0, run.stderr)
+        self.assertIn(note, run.stdout.splitlines())
+        self.assertEqual(run.result, run_gate(HEALTHY_LINES).result, "a note changes no check")
+
+
 class MissingMeasurementTest(unittest.TestCase):
     def test_a_missing_section_fails_instead_of_passing_on_nothing(self):
         without_soak = [line for line in HEALTHY_LINES if not line.startswith("STRUCTURAL_PERF section=soak")]
@@ -748,6 +814,10 @@ class BudgetTest(unittest.TestCase):
             "session_context_git_spawns_outside_repo_max",
             "session_context_git_spawns_in_repo_max",
             "session_context_gpu_probe_spawns_without_display_max",
+            "tool_dispatch_small_allocs_per_dispatch_max",
+            "tool_dispatch_small_alloc_bytes_per_dispatch_max",
+            "tool_dispatch_large_allocs_per_dispatch_max",
+            "tool_dispatch_large_alloc_bytes_per_dispatch_max",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 
