@@ -20,10 +20,15 @@
 //! is dispatch overhead rather than the tool's own work.
 
 use async_trait::async_trait;
-use horon_agent_app_core::tool::{Registry, Tool, ToolContext, ToolExecutionMode, ToolOutput};
+use horon_agent_app_core::agent::Agent;
+use horon_agent_app_core::message::{Message, ToolDefinition};
+use horon_agent_app_core::provider::{EventStream, Provider};
+use horon_agent_app_core::session::Session;
+use horon_agent_app_core::tool::{Registry, Tool, ToolContext, ToolExecutionMode, ToolOutput, inflight};
 use serde_json::{Value, json};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -168,9 +173,12 @@ impl Drop for IsolatedEnv {
     }
 }
 
-fn context(call: &str, working_dir: &Path) -> ToolContext {
+/// The session of the bounded dispatch: no session policy, no SDK overlay.
+const SESSION_ID: &str = "tool-dispatch-perf";
+
+fn context(session: &str, call: &str, working_dir: &Path) -> ToolContext {
     ToolContext {
-        session_id: "tool-dispatch-perf".to_string(),
+        session_id: session.to_string(),
         message_id: "tool-dispatch-perf-message".to_string(),
         tool_call_id: call.to_string(),
         working_dir: Some(working_dir.to_path_buf()),
@@ -206,6 +214,7 @@ struct Cost {
 /// the caller owns them; the window covers `Registry::execute` only.
 async fn dispatch(
     registry: &Registry,
+    session: &str,
     label: &str,
     dispatches: usize,
     working_dir: &Path,
@@ -215,7 +224,7 @@ async fn dispatch(
     let bytes_before = ALLOCATED_BYTES.load(Ordering::Relaxed);
     for index in 0..dispatches {
         let input = input();
-        let ctx = context(&format!("{label}-{index}"), working_dir);
+        let ctx = context(session, &format!("{label}-{index}"), working_dir);
         COUNTING.with(|counting| counting.set(true));
         let result = registry.execute(TOOL_NAME, input, ctx).await;
         COUNTING.with(|counting| counting.set(false));
@@ -318,6 +327,158 @@ fn print_stage_breakdown() {
     }
 }
 
+/// A provider for building an `Agent`; no request is ever sent through it.
+struct StubProvider;
+
+#[async_trait]
+impl Provider for StubProvider {
+    async fn complete(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolDefinition],
+        _system: &str,
+        _resume_session_id: Option<&str>,
+    ) -> anyhow::Result<EventStream> {
+        Err(anyhow::anyhow!("the stub provider never completes a request"))
+    }
+
+    fn name(&self) -> &str {
+        "stub"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(StubProvider)
+    }
+}
+
+fn print_note(stage: &str, cost: &Cost) {
+    println!(
+        "STRUCTURAL_PERF_NOTE section=tool_dispatch stage={stage} calls={MEASURED_DISPATCHES} allocs={} alloc_bytes={}",
+        cost.allocations, cost.bytes
+    );
+}
+
+/// Print what the routes a daemon session takes cost beside the bounded one.
+///
+/// The bounded dispatch runs with no session policy and with crash bundles
+/// off, the cheapest route through `Registry::execute`. A daemon session has
+/// an allow-list, and the daemon records every call in the crash ring
+/// (`features.crash_bundles` is on by default). These rows count those
+/// routes. They are notes, not bounds, and they run after the bounded
+/// measurement so the process-wide bundle switch cannot touch it.
+async fn print_daemon_route_breakdown(registry: &Registry, working_dir: &Path) {
+    let in_flight = counted(MEASURED_DISPATCHES, || {
+        drop(std::hint::black_box(inflight::mark_tool_in_flight("small-0")));
+    });
+
+    // Building the agent registers the session's allow-list, exactly as a
+    // daemon session does; dropping it removes the policy again.
+    let provider: Arc<dyn Provider> = Arc::new(StubProvider);
+    let session = Session::create(None, Some("tool dispatch perf".to_string()));
+    let allowed = HashSet::from([TOOL_NAME.to_string()]);
+    let agent = Agent::new_with_session(provider, registry.clone(), session, Some(allowed));
+    let policy_registry = agent.registry();
+    let policy_session = agent.session_id().to_string();
+    dispatch(
+        &policy_registry,
+        &policy_session,
+        "policy-warmup",
+        WARMUP_DISPATCHES,
+        working_dir,
+        small_input,
+    )
+    .await;
+    let policy_small = dispatch(
+        &policy_registry,
+        &policy_session,
+        "policy-small",
+        MEASURED_DISPATCHES,
+        working_dir,
+        small_input,
+    )
+    .await;
+    let policy_large = dispatch(
+        &policy_registry,
+        &policy_session,
+        "policy-large",
+        MEASURED_DISPATCHES,
+        working_dir,
+        large_input,
+    )
+    .await;
+
+    horon_agent_app_core::crash::install_panic_hook_with_enabled(true);
+    dispatch(
+        registry,
+        SESSION_ID,
+        "bundles-warmup",
+        WARMUP_DISPATCHES,
+        working_dir,
+        large_input,
+    )
+    .await;
+    let small = small_input();
+    let ring_small = counted(MEASURED_DISPATCHES, || {
+        horon_agent_app_core::crash::record_tool_operation(TOOL_NAME, &small);
+    });
+    let large = large_input();
+    let ring_large = counted(MEASURED_DISPATCHES, || {
+        horon_agent_app_core::crash::record_tool_operation(TOOL_NAME, &large);
+    });
+    let bundles_small = dispatch(
+        registry,
+        SESSION_ID,
+        "bundles-small",
+        MEASURED_DISPATCHES,
+        working_dir,
+        small_input,
+    )
+    .await;
+    let bundles_large = dispatch(
+        registry,
+        SESSION_ID,
+        "bundles-large",
+        MEASURED_DISPATCHES,
+        working_dir,
+        large_input,
+    )
+    .await;
+    let daemon_small = dispatch(
+        &policy_registry,
+        &policy_session,
+        "daemon-small",
+        MEASURED_DISPATCHES,
+        working_dir,
+        small_input,
+    )
+    .await;
+    let daemon_large = dispatch(
+        &policy_registry,
+        &policy_session,
+        "daemon-large",
+        MEASURED_DISPATCHES,
+        working_dir,
+        large_input,
+    )
+    .await;
+    horon_agent_app_core::crash::install_panic_hook_with_enabled(false);
+    drop(agent);
+
+    for (stage, cost) in [
+        ("in_flight_mark", in_flight),
+        ("policy_dispatch_small", policy_small),
+        ("policy_dispatch_large", policy_large),
+        ("crash_ring_on_small", ring_small),
+        ("crash_ring_on_large", ring_large),
+        ("bundles_dispatch_small", bundles_small),
+        ("bundles_dispatch_large", bundles_large),
+        ("daemon_dispatch_small", daemon_small),
+        ("daemon_dispatch_large", daemon_large),
+    ] {
+        print_note(stage, &cost);
+    }
+}
+
 /// Reports what one dispatch allocates for a small and a 10 KB input.
 ///
 /// The bounds live in `scripts/perf/structural_budget.json`; this test only
@@ -333,11 +494,43 @@ async fn one_dispatch_allocates_a_bounded_amount() {
     let registry = Registry::empty();
     registry.register(TOOL_NAME.to_string(), Arc::new(FixtureTool)).await;
 
-    dispatch(&registry, "warmup-small", WARMUP_DISPATCHES, env.home(), small_input).await;
-    dispatch(&registry, "warmup-large", WARMUP_DISPATCHES, env.home(), large_input).await;
+    dispatch(
+        &registry,
+        SESSION_ID,
+        "warmup-small",
+        WARMUP_DISPATCHES,
+        env.home(),
+        small_input,
+    )
+    .await;
+    dispatch(
+        &registry,
+        SESSION_ID,
+        "warmup-large",
+        WARMUP_DISPATCHES,
+        env.home(),
+        large_input,
+    )
+    .await;
 
-    let small = dispatch(&registry, "small", MEASURED_DISPATCHES, env.home(), small_input).await;
-    let large = dispatch(&registry, "large", MEASURED_DISPATCHES, env.home(), large_input).await;
+    let small = dispatch(
+        &registry,
+        SESSION_ID,
+        "small",
+        MEASURED_DISPATCHES,
+        env.home(),
+        small_input,
+    )
+    .await;
+    let large = dispatch(
+        &registry,
+        SESSION_ID,
+        "large",
+        MEASURED_DISPATCHES,
+        env.home(),
+        large_input,
+    )
+    .await;
 
     let log_path = horon_agent_app_core::logging::log_path().expect("the logger resolved a log file");
     let contents =
@@ -374,4 +567,6 @@ async fn one_dispatch_allocates_a_bounded_amount() {
         "STRUCTURAL_PERF section=tool_dispatch source=app-core dispatches={MEASURED_DISPATCHES} small_allocs={} small_alloc_bytes={} large_allocs={} large_alloc_bytes={}",
         small.allocations, small.bytes, large.allocations, large.bytes
     );
+
+    print_daemon_route_breakdown(&registry, env.home()).await;
 }
