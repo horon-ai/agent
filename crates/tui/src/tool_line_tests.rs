@@ -385,3 +385,60 @@ fn a_call_left_running_ends_neutrally_when_the_turn_ends() {
     assert!(!text.contains("done"), "an unfinished call is not a success: {text:?}");
     assert!(text.contains(crate::transcript::TURN_ENDED), "{text:?}");
 }
+
+/// The sentence the approval gate writes into a refused call, request id and
+/// all: the id is how a parked prompt finds its own line.
+fn refusal(request: &str) -> String {
+    format!(
+        "Error: Tool 'write' needs approval before it runs: write mutates a file in write mode. Request {request} \
+         is queued; answer it through the approval surface. Nothing was executed."
+    )
+}
+
+fn drawn(rows: &[ratatui::text::Line<'static>]) -> String {
+    rows.iter()
+        .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn a_refused_call_is_drawn_as_one_short_phrase() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut refused = call(r#"{"file_path":"/tmp/x"}"#);
+    refused.name = "write".to_string();
+    refused.state = ToolState::Failed(refusal("r1"));
+    for width in [100, 40] {
+        let rows = lines(&refused, &theme, symbols, width);
+        assert_eq!(
+            rows.len(),
+            2,
+            "the refusal took {} rows at width {width}: {}",
+            rows.len(),
+            drawn(&rows)
+        );
+        let text = drawn(&rows);
+        assert!(text.contains("needs approval"), "{text}");
+        assert!(
+            !text.contains("is queued") && !text.contains("r1"),
+            "the gate's sentence is still drawn: {text}"
+        );
+    }
+}
+
+#[test]
+fn a_refused_call_still_stores_the_sentence_the_prompt_pairs_with() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut refused = call("");
+    refused.state = ToolState::Failed(refusal("req_42"));
+    let _ = lines(&refused, &theme, symbols, 80);
+    let ToolState::Failed(stored) = &refused.state else {
+        panic!("the call stopped being a failure");
+    };
+    assert!(
+        stored.contains("req_42"),
+        "the stored refusal lost its request id: {stored}"
+    );
+}

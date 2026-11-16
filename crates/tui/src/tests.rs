@@ -601,7 +601,7 @@ fn a_closed_bridge_shows_a_disconnection_and_leaves_on_ctrl_c() {
     // `Disconnected` exactly as it does when the bridge thread exits.
     let mut app = app_with(None);
     assert!(app.running);
-    drain_events(&mut app);
+    crate::loop_io::drain_events(&mut app);
     // The client stays up: the conversation is still worth reading, and the
     // banner explaining the loss would be wiped by the terminal restore if the
     // loop exited here.
@@ -621,8 +621,8 @@ fn a_closed_bridge_shows_a_disconnection_and_leaves_on_ctrl_c() {
     // the transcript on the passes that follow.
     let banner = app.banner.clone();
     let items = app.transcript.items().len();
-    drain_events(&mut app);
-    drain_events(&mut app);
+    crate::loop_io::drain_events(&mut app);
+    crate::loop_io::drain_events(&mut app);
     assert_eq!(app.banner, banner, "a later pass replaced the reason");
     assert_eq!(app.transcript.items().len(), items, "a later pass added a line");
 
@@ -631,4 +631,45 @@ fn a_closed_bridge_shows_a_disconnection_and_leaves_on_ctrl_c() {
         crossterm::event::KeyModifiers::CONTROL,
     );
     assert_eq!(app.on_key(quit), Some(Action::Quit), "Ctrl-C leaves an idle client");
+}
+
+#[test]
+fn a_tool_preview_wraps_under_its_own_column() {
+    let theme = crate::theme::Theme::default();
+    let look = item_lines::Look {
+        theme: &theme,
+        symbols: crate::theme::Symbols::default(),
+        width: 40,
+        markdown: false,
+    };
+    let call = crate::transcript::ToolCall {
+        call_id: "c1".to_string(),
+        name: "bash".to_string(),
+        state: ToolState::Done,
+        input: String::new(),
+        duration_ms: Some(120),
+        output: Some(crate::tool_line::OutputHead {
+            rows: vec!["a long output row that needs more than one row of the pane".to_string()],
+            total_rows: 1,
+        }),
+    };
+    let rows = item_lines::lines(&crate::transcript::Item::Tool(call), &look);
+    assert_eq!(rows.len(), 2, "the preview gained a row");
+    assert_eq!(rows[0].indent(), 0, "the head row starts at the first column");
+    assert_eq!(
+        rows[1].indent(),
+        2,
+        "a wrapped preview row does not keep the column of the preview's text"
+    );
+    // The visual rows the pane draws: the second one is the wrap, and it starts
+    // where the preview row's own text does.
+    let wrapped = wrap::wrap_rows(rows, 40);
+    assert!(wrapped.len() > 2, "the preview row did not wrap");
+    let second: String = wrapped[2].spans.iter().map(|span| span.content.as_ref()).collect();
+    assert_eq!(
+        second.len() - second.trim_start().len(),
+        2,
+        "the wrapped row slid back to the first column: {second:?}"
+    );
+    assert!(second.trim_start().starts_with("than"), "{second:?}");
 }

@@ -46,11 +46,15 @@ impl App {
     }
 
     /// Re-read the command files when a directory changed.
-    pub fn tick_commands(&mut self) {
-        if self.commands.tick() {
-            for warning in self.commands.take_warnings() {
-                self.warn(format!("commands: {warning}"));
-            }
+    /// Re-read the command directories when a file's stamp moved, reporting
+    /// whether anything reached the screen.
+    pub fn tick_commands(&mut self) -> bool {
+        if !self.commands.tick() {
+            return false;
         }
+        for warning in self.commands.take_warnings() {
+            self.warn(format!("commands: {warning}"));
+        }
+        true
     }
 }

@@ -532,3 +532,79 @@ fn a_path_is_a_prefix_with_no_commands_behind_it() {
     popup.sync(&state, "/tmp/htui");
     assert!(popup.is_empty(), "a path offered commands");
 }
+
+/// One listing row rendered at `width`, as the rows the pane would draw.
+fn listing_rows(line: &str, width: u16) -> Vec<String> {
+    let theme = Theme::default();
+    let look = item_lines::Look {
+        theme: &theme,
+        symbols: Symbols::default(),
+        width,
+        markdown: false,
+    };
+    wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look), width)
+        .iter()
+        .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+        .collect()
+}
+
+#[test]
+fn a_wrapped_key_row_hangs_under_its_description() {
+    let rows = listing_rows(
+        "  ctrl+u  delete from the start of the line to the cursor, which is a long sentence",
+        40,
+    );
+    assert!(rows.len() > 1, "the row did not wrap: {rows:?}");
+    let description = rows
+        .iter()
+        .position(|row| row.contains("delete from"))
+        .expect("the description row");
+    for row in rows.iter().skip(description + 1) {
+        assert_eq!(
+            row.len() - row.trim_start().len(),
+            12,
+            "a wrapped row did not hang under the description column: {row:?}"
+        );
+    }
+}
+
+#[test]
+fn a_key_row_too_wide_for_the_pane_hangs_under_the_keys() {
+    // The key column of the real listing is this wide, and at forty columns its
+    // description cannot have a column of its own.
+    let rows = listing_rows(
+        "  shift+enter, alt+enter, ctrl+j  start a new line without sending the draft",
+        40,
+    );
+    assert!(rows.len() > 1, "the row did not wrap: {rows:?}");
+    for row in rows.iter().skip(1) {
+        let indent = row.len() - row.trim_start().len();
+        assert!(
+            indent >= 4,
+            "a wrapped row slid back past the keys, which start at column 4: {row:?}"
+        );
+    }
+}
+
+#[test]
+fn escape_closes_the_popup_even_when_the_interrupt_key_moved() {
+    let mut app = app();
+    app.bindings = bindings_with(&[(ids::APP_INTERRUPT, &["ctrl+x"])]);
+    type_text(&mut app, "/re");
+    assert!(app.slash.is_open(), "the popup did not open");
+    assert_eq!(press(&mut app, KeyCode::Esc), None);
+    assert!(
+        !app.slash.is_open(),
+        "esc left the popup open after `app.interrupt` was moved to another key"
+    );
+
+    // The key the action moved to closes it as well: both mean "not this".
+    app.input.clear();
+    type_text(&mut app, "/re");
+    assert!(app.slash.is_open(), "the popup did not open again");
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+        None
+    );
+    assert!(!app.slash.is_open(), "the rebound interrupt key left the popup open");
+}

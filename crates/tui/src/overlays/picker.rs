@@ -17,14 +17,25 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{Symbols, Theme};
+use crate::tool_line::truncate_cells;
 
 /// Rows one page covers before the first frame has measured the list.
 ///
 /// A page key pressed before anything was drawn still has to move somewhere;
 /// the first draw replaces this with the rows the list actually got.
 const FIRST_PAGE: usize = 10;
+
+/// Cells between a row's name and its second column.
+const COLUMN_GAP: usize = 2;
+
+/// Cells a name keeps before the second column gives way to it.
+///
+/// A row whose name would be cut shorter than this says nothing about itself,
+/// so the time is dropped and the name takes the whole row instead.
+const MIN_LABEL: usize = 10;
 
 /// What the list is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +302,16 @@ pub fn panel(area: Rect, rows: usize) -> Rect {
 /// Draw the list over `area`.
 pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Theme, symbols: Symbols) {
     if area.width < 12 || area.height < 5 {
+        // No room for a border and one row. The list still owns every key, so
+        // it says it is there instead of disappearing and swallowing them.
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " list hidden: window too small, esc closes",
+                Style::default().fg(theme.core.muted),
+            ))),
+            area,
+        );
         return;
     }
     // The list is modal, so the conversation behind it is not being read: a
@@ -345,7 +366,13 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
             let Some(index) = picker.visible.get(start + offset).copied() else {
                 break;
             };
-            lines.push(picker.row_line(index, start + offset == picker.selected, theme, symbols));
+            lines.push(picker.row_line(
+                index,
+                start + offset == picker.selected,
+                theme,
+                symbols,
+                list_area.width,
+            ));
         }
         frame.render_widget(Paragraph::new(lines), list_area);
     }
@@ -367,9 +394,14 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
 
 impl Picker {
     /// One row as it is drawn: the label, the marker for the row in force, and
-    /// the second column. The paragraph clips whatever does not fit, so a long
-    /// title never pushes the border or wraps onto the next row.
-    fn row_line(&self, index: usize, chosen: bool, theme: &Theme, symbols: Symbols) -> Line<'static> {
+    /// the second column.
+    ///
+    /// The second column is flush with the row's right edge, so the times read
+    /// down the list instead of starting wherever the name before them ended;
+    /// the label is cut to leave it that room. A pane too narrow for both keeps
+    /// the name and drops the second column, because the name is what a row is
+    /// chosen by, and a clipped time says less than a clipped name.
+    fn row_line(&self, index: usize, chosen: bool, theme: &Theme, symbols: Symbols, width: u16) -> Line<'static> {
         let Some(row) = self.rows.get(index) else {
             return Line::default();
         };
@@ -390,20 +422,39 @@ impl Picker {
         } else {
             " ".repeat(symbols.prompt_marker.chars().count())
         };
+        let lead = format!(" {mark} ");
+        let lead_width = UnicodeWidthStr::width(lead.as_str());
+        let current = if row.current { " (current)" } else { "" };
+        let current_width = UnicodeWidthStr::width(current);
+        let available = usize::from(width).saturating_sub(lead_width);
+        let name_room = available.saturating_sub(current_width);
+        let detail_width = UnicodeWidthStr::width(row.detail.as_str());
+        let column = if detail_width > 0 && name_room > detail_width + COLUMN_GAP + MIN_LABEL {
+            Some(detail_width + COLUMN_GAP)
+        } else {
+            None
+        };
+        let label_room = column.map_or(name_room, |column| name_room - column);
+        let label = truncate_cells(&row.label, label_room);
         let mut spans = vec![
-            Span::styled(format!(" {mark} "), Style::default().fg(theme.core.accent)),
-            Span::styled(row.label.clone(), base),
+            Span::styled(lead, Style::default().fg(theme.core.accent)),
+            Span::styled(label.clone(), base),
         ];
         if row.current {
-            spans.push(Span::styled(" (current)", Style::default().fg(theme.core.accent)));
+            spans.push(Span::styled(current, Style::default().fg(theme.core.accent)));
         }
-        if !row.detail.is_empty() {
+        if column.is_some() {
+            // The pad is what puts the second column on the right edge; it
+            // carries the row's own style so a selected row stays one block.
+            let used = lead_width + UnicodeWidthStr::width(label.as_str()) + current_width + detail_width;
+            let pad = usize::from(width).saturating_sub(used);
+            spans.push(Span::styled(" ".repeat(pad), base));
             let detail = if chosen {
                 base
             } else {
                 Style::default().fg(theme.core.muted)
             };
-            spans.push(Span::styled(format!("  {}", row.detail), detail));
+            spans.push(Span::styled(row.detail.clone(), detail));
         }
         Line::from(spans)
     }

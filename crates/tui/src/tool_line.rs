@@ -210,6 +210,25 @@ pub fn truncate_cells(text: &str, width: usize) -> String {
     out
 }
 
+/// The wording the approval gate refuses a call with.
+///
+/// The request id in it is how a parked prompt pairs itself with this line, so
+/// the sentence is stored whole and cannot be shortened at the source.
+const GATE_REFUSAL: &str = "needs approval before it runs";
+/// What that refusal is drawn as: one phrase, because the prompt beside it
+/// already asks the question and three rows of the same words push the rest of
+/// the conversation off the pane.
+const GATE_REFUSAL_DISPLAY: &str = "needs approval";
+
+/// What a failure says on screen, which is not always what it stores.
+fn display_error(message: &str) -> &str {
+    if message.contains(GATE_REFUSAL) {
+        GATE_REFUSAL_DISPLAY
+    } else {
+        message
+    }
+}
+
 /// How long a call took, in the shortest form that stays readable.
 pub fn format_elapsed(millis: u64) -> String {
     if millis < 60_000 {
@@ -260,7 +279,7 @@ pub fn lines(call: &ToolCall, theme: &Theme, symbols: Symbols, width: u16) -> Ve
     if let ToolState::Failed(message) = &call.state {
         error_text = Some(message.as_str());
         rows.push(Line::from(Span::styled(
-            format!("  {}", truncate_cells(message, MAX_PREVIEW_CELLS)),
+            format!("  {}", truncate_cells(display_error(message), MAX_PREVIEW_CELLS)),
             Style::default().fg(color),
         )));
     }

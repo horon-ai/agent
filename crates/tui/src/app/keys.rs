@@ -108,27 +108,30 @@ impl App {
         // interrupting the turn, and `tab` fills the row it has chosen. Every
         // other key falls through to the editor, which is what keeps the draft
         // editable with the list on screen.
-        if self.slash.is_open()
-            && let Some(action) = bound
-        {
-            match action {
-                keys::ids::EDITOR_HISTORY_PREV => {
-                    self.slash.move_by(-1);
-                    return None;
+        if self.slash.is_open() {
+            // `esc` closes the list whatever `app.interrupt` is bound to: the
+            // list is the topmost surface, and a key that means "not this" must
+            // not leave it open because a file moved the interrupt key.
+            if key.code == KeyCode::Esc || bound == Some(keys::ids::APP_INTERRUPT) {
+                self.slash.dismiss();
+                return None;
+            }
+            if let Some(action) = bound {
+                match action {
+                    keys::ids::EDITOR_HISTORY_PREV => {
+                        self.slash.move_by(-1);
+                        return None;
+                    }
+                    keys::ids::EDITOR_HISTORY_NEXT => {
+                        self.slash.move_by(1);
+                        return None;
+                    }
+                    keys::ids::EDITOR_COMPLETE => {
+                        self.complete();
+                        return None;
+                    }
+                    _ => {}
                 }
-                keys::ids::EDITOR_HISTORY_NEXT => {
-                    self.slash.move_by(1);
-                    return None;
-                }
-                keys::ids::EDITOR_COMPLETE => {
-                    self.complete();
-                    return None;
-                }
-                keys::ids::APP_INTERRUPT => {
-                    self.slash.dismiss();
-                    return None;
-                }
-                _ => {}
             }
         }
         match bound {

@@ -365,7 +365,7 @@ fn a_request_that_never_leaves_the_client_closes_the_waiting_list() {
     submit(&mut app, "/model");
     assert!(app.picker.is_some());
 
-    crate::dispatch(&mut app, &sender, Action::Models);
+    crate::loop_io::dispatch(&mut app, &sender, Action::Models);
     assert!(
         app.picker.is_none(),
         "the list kept waiting for a request that never left"

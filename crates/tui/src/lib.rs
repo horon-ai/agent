@@ -16,6 +16,7 @@ pub mod history;
 pub mod input;
 mod item_lines;
 pub mod keys;
+mod loop_io;
 mod markdown;
 pub mod overlays;
 pub mod paste;
@@ -74,8 +75,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::{Action, App};
-use crate::sdk_bridge::{Command, Incoming, Runtime};
+use crate::app::App;
+use crate::sdk_bridge::{Command, Runtime};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -404,15 +405,23 @@ where
     // Whether the terminal is currently reporting the mouse, which follows the
     // `transcript.mouse_scroll` setting rather than being decided once.
     let mut mouse_captured = false;
+    // The screen is redrawn when something on it changed, not twenty times a
+    // second: a draw walks the visible conversation, and an idle client has
+    // nothing new to show. The frame below is the first one.
+    let mut redraw = true;
+    // The minute the status line's clock last showed, so the frame that turns
+    // it over is drawn and no other idle frame is.
+    let mut clock = statusline::local_minute();
     loop {
-        drain_events(app);
+        let mut changed = loop_io::drain_events(app);
         if !app.running {
             break;
         }
         // A message typed during a turn waits for that turn; this is the one
         // place it is sent, right after the event that ended the turn.
         if let Some(action) = app.take_queued() {
-            dispatch(app, commands, action);
+            loop_io::dispatch(app, commands, action);
+            changed = true;
         }
         // The reloader throttles itself to one file check per second; the
         // theme loader, the key bindings and the command directories share
@@ -422,6 +431,7 @@ where
                 app.warn(format!("settings: {warning}"));
             }
             apply_settings(app, &reload.settings, themes);
+            changed = true;
         }
         let theme_warnings = themes.tick();
         if !theme_warnings.is_empty() {
@@ -429,20 +439,34 @@ where
                 app.warn(format!("theme: {warning}"));
             }
             apply_settings(app, reloader.settings(), themes);
+            changed = true;
         }
         if let Some(reload) = keys.tick() {
             for warning in reload.warnings {
                 app.warn(format!("keys: {warning}"));
             }
             app.bindings = reload.bindings;
+            changed = true;
         }
         // Command directories are only stat-ed here; a file is re-read when its
         // own stamp moved.
-        app.tick_commands();
-        sync_mouse_capture(app, &mut mouse_captured);
-        if let Err(message) = draw(terminal, app) {
-            failure = Some(message);
-            break;
+        changed |= app.tick_commands();
+        if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
+            changed = true;
+        }
+        let minute = statusline::local_minute();
+        if minute != clock {
+            clock = minute;
+            changed = true;
+        }
+        // A turn in flight keeps drawing even while its events are quiet: its
+        // rows are where the elapsed time and the streaming text land.
+        if redraw || changed || app.pending_turn {
+            if let Err(message) = draw(terminal, app) {
+                failure = Some(message);
+                break;
+            }
+            redraw = false;
         }
         match crossterm::event::poll(Duration::from_millis(50)) {
             Ok(true) => {}
@@ -454,6 +478,10 @@ where
                 break;
             }
         }
+        // Every input event can change what is on screen: a key edits the
+        // draft or moves the selection, a paste inserts, the wheel scrolls and a
+        // resize remakes the whole layout.
+        redraw = true;
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting
@@ -462,7 +490,7 @@ where
                     continue;
                 }
                 if let Some(action) = app.on_key(key) {
-                    dispatch(app, commands, action);
+                    loop_io::dispatch(app, commands, action);
                 }
                 flush_setting_change(app, reloader, themes);
             }
@@ -484,100 +512,6 @@ where
         }
     }
     (if failure.is_some() { 1 } else { app.exit_code }, failure)
-}
-
-/// Keep the terminal's mouse capture in step with `transcript.mouse_scroll`.
-///
-/// Capture takes the wheel and the terminal's own text selection together, which
-/// is why it is a setting and why it is released the moment the setting goes off.
-/// A terminal that refuses the sequence is not a reason to stop: the wheel then
-/// does nothing and the pane still scrolls from the keyboard, so the refusal is
-/// reported once and the setting is turned back off.
-fn sync_mouse_capture(app: &mut App, captured: &mut bool) {
-    if *captured == app.mouse_scroll {
-        return;
-    }
-    if app.mouse_scroll {
-        match scroll::enable_mouse() {
-            Ok(()) => *captured = true,
-            Err(error) => {
-                app.mouse_scroll = false;
-                app.warn(format!("mouse: {error}"));
-            }
-        }
-        return;
-    }
-    if !scroll::disable_mouse() {
-        app.warn("mouse: the terminal did not take the release sequence");
-    }
-    *captured = false;
-}
-
-/// Move every buffered SDK delivery into the app state.
-///
-/// A closed bridge is a real end of the session, not an empty queue: the
-/// channel only reports it once, so treating it as "nothing yet" would leave
-/// the interface redrawing a dead connection forever.
-fn drain_events(app: &mut App) {
-    loop {
-        match app.events.try_recv() {
-            Ok(Incoming::Event(event)) => app.apply_event(&event),
-            Ok(Incoming::Notice(message)) => app.warn(message),
-            Ok(Incoming::SendFailed { text, message, lost }) => app.send_failed(&text, &message, lost),
-            Ok(Incoming::Info(message)) => app.transcript.push_notice(message),
-            Ok(Incoming::Models { models, current }) => app.show_models(models, current),
-            Ok(Incoming::Sessions(rows)) => app.show_sessions(rows),
-            Ok(Incoming::Attached(session)) => app.attach_session(*session),
-            Ok(Incoming::RequestFailed(message)) => app.request_failed(&message),
-            Ok(Incoming::Closed(message)) => app.disconnect(&message),
-            Err(std::sync::mpsc::TryRecvError::Empty) => break,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                // The first reason wins: a sentence about an unreachable
-                // daemon is more use than "the bridge stopped", and the banner
-                // is redrawn every frame, so it must not change under the user.
-                app.disconnect("the harness bridge stopped");
-                break;
-            }
-        }
-    }
-}
-
-/// Send one user action to the bridge thread.
-fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: Action) {
-    let command = match action {
-        Action::Send(text) => Command::Text(text),
-        Action::Cancel => Command::Cancel,
-        Action::Approval {
-            request_id,
-            approved,
-            always,
-        } => Command::Approval {
-            request_id,
-            approved,
-            always,
-        },
-        Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
-        Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
-        Action::Model(name) => Command::Model(name),
-        Action::Models => Command::Models,
-        // The directory is the one the client is working in, which is what
-        // makes the list the sessions of this project rather than of the
-        // daemon's whole history.
-        Action::Sessions => Command::Sessions {
-            working_dir: app.cwd.clone(),
-        },
-        Action::Attach(session_id) => Command::Attach(session_id),
-        Action::Quit => {
-            app.running = false;
-            return;
-        }
-    };
-    if let Err(error) = commands.send(command) {
-        // A request that never left the client has the same effect as one the
-        // harness refused: whatever was waiting for its answer has to stop
-        // waiting, and a list left on screen would swallow every key.
-        app.request_failed(&format!("the harness bridge stopped: {error}"));
-    }
 }
 
 /// Render one frame.
@@ -810,9 +744,10 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
 /// over the pane width occupies more than one row, so trimming logical lines
 /// first would push the newest rows off the bottom of the pane.
 ///
-/// Items are walked from the newest one so the work is bounded by the pane: an
-/// idle frame rebuilds at least twenty times a second, and wrapping the whole
-/// conversation each time would cost more as the session grows.
+/// Items are walked from the newest one so the work is bounded by the pane: a
+/// turn in flight redraws as its text arrives, and wrapping the whole
+/// conversation on every one of those frames would cost more as the session
+/// grows.
 ///
 /// A message that is still streaming is drawn first as the newest entry, so
 /// text appears while it arrives instead of all at once when the turn ends.

@@ -16,6 +16,7 @@ use ratatui::widgets::Paragraph;
 
 use super::picker::{Kind, Outcome, Picker, Row, draw, panel};
 use crate::theme::{SymbolPreset, Symbols, Theme};
+use unicode_width::UnicodeWidthStr;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -331,4 +332,89 @@ fn a_selected_row_is_drawn_with_the_selection_background() {
     let painted = (0..buffer.area.height)
         .any(|y| (0..buffer.area.width).any(|x| buffer.cell((x, y)).is_some_and(|cell| cell.bg == selected)));
     assert!(painted, "the selected row carries no selection background");
+}
+
+/// The text of one screen row, between two columns.
+fn row_text(buffer: &Buffer, y: u16, left: u16, right: u16) -> String {
+    let mut text = String::new();
+    for x in left..right {
+        if let Some(cell) = buffer.cell((x, y)) {
+            text.push_str(cell.symbol());
+        }
+    }
+    text
+}
+
+#[test]
+fn the_second_column_sits_on_the_rows_right_edge() {
+    let mut picker = Picker::new(
+        Kind::Sessions,
+        "Resume session",
+        vec![
+            Row::new("a session title long enough to need cutting", "one").with_detail("11-16 07:34"),
+            Row::new("short", "two").with_detail("11-16 09:00"),
+        ],
+        "no sessions",
+    );
+    let area = Rect::new(0, 0, 40, 12);
+    let buffer = screen(&mut picker, area.width, area.height, None);
+    let panel = panel(area, picker.len());
+    let inner = Rect {
+        x: panel.x + 1,
+        y: panel.y + 1,
+        width: panel.width - 2,
+        height: panel.height - 2,
+    };
+    let mut times = 0;
+    for y in inner.y..inner.bottom() {
+        let row = row_text(&buffer, y, inner.x, inner.right());
+        if !row.contains("11-16") {
+            continue;
+        }
+        times += 1;
+        assert!(
+            row.ends_with("07:34") || row.ends_with("09:00"),
+            "the time is not on the right edge: {row:?}"
+        );
+        assert_eq!(
+            UnicodeWidthStr::width(row.as_str()),
+            usize::from(inner.width),
+            "the second column did not reach the edge: {row:?}"
+        );
+    }
+    assert_eq!(times, 2, "a row lost its time:\n{}", buffer_text(&buffer));
+    // The long title was cut to leave the time its room, and says so.
+    assert!(
+        buffer_text(&buffer).contains('…'),
+        "the title was not cut:\n{}",
+        buffer_text(&buffer)
+    );
+}
+
+#[test]
+fn a_narrow_pane_keeps_the_name_and_drops_the_time() {
+    let mut picker = Picker::new(
+        Kind::Sessions,
+        "Resume session",
+        vec![Row::new("a session title", "one").with_detail("11-16 07:34")],
+        "no sessions",
+    );
+    let area = Rect::new(0, 0, 20, 10);
+    let buffer = screen(&mut picker, area.width, area.height, None);
+    let text = buffer_text(&buffer);
+    assert!(
+        !text.contains("07:34"),
+        "the time held on in a pane too narrow for it: {text}"
+    );
+    assert!(text.contains("a session"), "the name did not take the room: {text}");
+}
+
+#[test]
+fn a_pane_too_small_for_the_list_says_so_instead_of_hiding() {
+    let mut picker = list(&["alpha"]);
+    let area = Rect::new(0, 0, 10, 4);
+    let buffer = screen(&mut picker, area.width, area.height, Some(&"X".repeat(10)));
+    let text = buffer_text(&buffer);
+    assert!(text.contains("list hidd"), "the list hid itself: {text:?}");
+    assert!(!text.contains('X'), "the conversation shows through: {text:?}");
 }
