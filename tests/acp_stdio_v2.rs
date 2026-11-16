@@ -11,16 +11,15 @@
 //! every frame of the connection in both directions at the end and asserts
 //! zero violations. Every wait is for an exact frame with a bounded timeout.
 //!
-//! Two kinds of frame are accounted for by name rather than validated:
-//! requests this suite writes on purpose with params the schema refuses (the
-//! v1-only methods on a v2 connection, a `null` id, an `sse` MCP server), and
-//! the agent's `id: null` error answer to the `null`-id probe. The alpha.16
-//! `Error` response branch documents `null` as the id "only when the request's
+//! One kind of frame is accounted for by name rather than validated: requests
+//! this suite writes on purpose with params the schema refuses (the v1-only
+//! methods on a v2 connection, a `null` id, an `sse` MCP server). The agent's
+//! `id: null` error answer to the `null`-id probe is validated: the alpha.16
+//! `Error` response branch allows `null` as that id ("only when the request's
 //! id could not be determined, such as for a parse error or an invalid
-//! request", but its `anyOf` lists only the integer and string forms, so the
-//! one frame the description itself prescribes cannot pass the `$def`. That
-//! frame's `/id` finding is counted as `null_id_error_answers` and every
-//! other check still runs on it.
+//! request"), and the v2 `RequestId` `$def` binds a `result` response and a
+//! request, not an error, so the validator accepts the answer. Its count is
+//! still printed as `null_id_error_answers`.
 
 #[path = "support/acp_background_scenarios.rs"]
 mod acp_background_scenarios;
@@ -285,22 +284,17 @@ impl Conn {
         }
     }
 
-    /// The agent's answer to the `id: null` probe. The reader refuses it
-    /// (alpha.16's `RequestId` has no `null` form), so the refusal is checked
-    /// to be about `/id` and nothing else, and the error object is returned.
+    /// The agent's answer to the `id: null` probe: a JSON-RPC error whose `id`
+    /// is `null`. The v2 schema allows that id on an error response and the
+    /// reader accepts it, so the frame arrives already validated and its error
+    /// object is returned.
     fn read_null_id_error(&mut self) -> Value {
         let end = Instant::now() + WAIT;
         loop {
             match self.client.next_frame(end) {
-                Err(AcpClientError::Schema { line, violations }) => {
-                    assert!(
-                        violations.iter().all(|violation| violation.path == "/id"),
-                        "{}: the null-id answer breaks more than its id: {violations:?} in {line}",
-                        self.label
-                    );
-                    let frame: Value = serde_json::from_str(&line).expect("a JSON frame");
-                    assert_eq!(frame["id"], Value::Null, "{line}");
-                    return frame["error"].clone();
+                Ok(Frame::Response { id, result: Err(error) }) => {
+                    assert_eq!(id, Value::Null, "{}: the null-id answer carries another id", self.label);
+                    return error;
                 }
                 Ok(Frame::Notification { method, params }) => {
                     self.pulled.push(json!({"method": method, "params": params}));
@@ -341,16 +335,10 @@ impl Conn {
                 if let (Some(method), Some(id)) = (entry.get("method").and_then(Value::as_str), entry.get("id")) {
                     client.note_request(id, method);
                 }
-                let null_id_error = entry.get("id") == Some(&Value::Null) && entry.get("error").is_some();
-                let found: Vec<Violation> = agent
-                    .validate(entry)
-                    .into_iter()
-                    .filter(|violation| !(null_id_error && violation.path == "/id"))
-                    .collect();
-                if null_id_error {
+                if entry.get("id") == Some(&Value::Null) && entry.get("error").is_some() {
                     null_id_errors += 1;
                 }
-                for violation in found {
+                for violation in agent.validate(entry) {
                     violations += 1;
                     eprintln!("{}-VIOLATION agent->client {violation} in {line}", self.label);
                 }

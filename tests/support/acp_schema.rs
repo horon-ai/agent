@@ -34,7 +34,9 @@
 //!
 //! One envelope difference: a v1 request id may be `null`, and the v1
 //! `RequestId` `$def` says so. The v2 `RequestId` `$def` refuses `null`
-//! outright, so a v2 validator checks every id against that `$def` as well.
+//! outright, so a v2 validator checks every id against that `$def` as well,
+//! except on an `Error` response, whose `id` the v2 schema allows to be `null`
+//! "only when the request's id could not be determined".
 #![allow(dead_code)]
 
 use serde_json::{Map, Value};
@@ -710,6 +712,9 @@ impl FrameValidator {
     fn response_violations(&self, object: &Map<String, Value>) -> Vec<Violation> {
         let mut violations = Vec::new();
         match object.get("id") {
+            // A v2 `Error` response may carry a `null` id: the request's id
+            // could not be read, which is exactly what the `Error` branch says.
+            Some(id) if id.is_null() && object.contains_key("error") => {}
             Some(id) if request_id_is_valid(id) => violations.extend(self.set.v2_id_violations(id, "/id")),
             Some(id) => {
                 violations.push(Violation {
