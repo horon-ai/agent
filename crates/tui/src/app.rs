@@ -16,6 +16,7 @@ use crate::input::Input;
 use crate::keys::Bindings;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
+use crate::scroll::Scroll;
 use crate::sdk_bridge::Incoming;
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
@@ -122,6 +123,14 @@ pub struct App {
     pub resend_held: bool,
     /// Rows the transcript pane got last frame, used to keep the newest lines.
     pub viewport_height: Option<u16>,
+    /// Where the transcript view sits: at the newest rows, or held above them.
+    pub scroll: Scroll,
+    /// Whether `transcript.mouse_scroll` hands the wheel to the transcript.
+    ///
+    /// The setting is read here and acted on where the terminal is: capture
+    /// takes the terminal's own text selection away, so it is on only while the
+    /// setting says so.
+    pub mouse_scroll: bool,
     /// What the client is attached to, for the status line.
     pub description: String,
     /// Events from the bridge thread.
@@ -179,6 +188,8 @@ impl App {
             disconnected: false,
             resend_held: false,
             viewport_height: None,
+            scroll: Scroll::new(),
+            mouse_scroll: false,
             description,
             events,
             model: None,
@@ -219,6 +230,8 @@ impl App {
             disconnected: true,
             resend_held: false,
             viewport_height: None,
+            scroll: Scroll::new(),
+            mouse_scroll: false,
             description: "not connected".to_string(),
             events: receiver,
             model: None,

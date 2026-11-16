@@ -1,12 +1,13 @@
-//! Keystroke and paste handling: the key map in force decides what a key
+//! Keystroke, paste and mouse handling: the key map in force decides what a key
 //! means, a live prompt or overlay gets the key first, and nothing is swallowed.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 
 use super::{Action, App};
 use crate::keys::{self, Key};
 use crate::overlays::settings::Outcome;
 use crate::prompts::{Prompt, Response};
+use crate::scroll;
 
 impl App {
     /// Translate one keystroke into an action, if it produced one.
@@ -68,6 +69,14 @@ impl App {
                             return self.cancel_turn();
                         }
                         Some(keys::ids::APP_CANCEL | keys::ids::APP_QUIT) => return Some(Action::Quit),
+                        // The transcript still scrolls while a prompt waits:
+                        // reading further back neither answers the prompt nor
+                        // reaches the draft, and these keys are not in the
+                        // prompt's scope, so the prompt stays answerable.
+                        Some(action) => {
+                            self.apply_scroll(action);
+                            return None;
+                        }
                         _ => return None,
                     }
                 }
@@ -149,7 +158,14 @@ impl App {
             Some(keys::ids::EDITOR_NEWLINE) => self.input.newline(),
             Some(keys::ids::EDITOR_HISTORY_PREV) => self.history_previous(),
             Some(keys::ids::EDITOR_HISTORY_NEXT) => self.history_next(),
-            _ => {}
+            // Whatever else the map names is the transcript's own scrolling:
+            // the view moves and the draft, its history and the caret stay
+            // exactly where they were.
+            _ => {
+                if let Some(action) = bound {
+                    self.apply_scroll(action);
+                }
+            }
         }
         match key.code {
             KeyCode::Char(character) if !control => {
@@ -174,6 +190,49 @@ impl App {
         }
         self.history.reset();
         self.input.insert_text(text);
+    }
+
+    /// Move the transcript view for one of the scroll actions.
+    ///
+    /// Answers whether the action moved it, so a caller holding a key back can
+    /// tell a scroll key from one it has no use for. The offset is not bounded
+    /// here: the next frame measures the content and clamps it, which is what
+    /// makes a page past the first row stop at the first row.
+    fn apply_scroll(&mut self, action: &str) -> bool {
+        match action {
+            keys::ids::APP_SCROLL_PAGE_UP => self.scroll.up(self.page_rows()),
+            keys::ids::APP_SCROLL_PAGE_DOWN => self.scroll.down(self.page_rows()),
+            keys::ids::APP_SCROLL_UP => self.scroll.up(1),
+            keys::ids::APP_SCROLL_DOWN => self.scroll.down(1),
+            keys::ids::APP_SCROLL_BOTTOM => self.scroll.to_bottom(),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Rows one scroll page covers: the transcript pane as it was last drawn.
+    ///
+    /// A held view spends the pane's bottom row on the follow indicator, so a
+    /// page is never taller than the rows it can actually move.
+    fn page_rows(&self) -> usize {
+        usize::from(self.viewport_height.unwrap_or(24).saturating_sub(1).max(1))
+    }
+
+    /// Take a mouse event into the transcript view.
+    ///
+    /// Only the wheel is used, and only while `transcript.mouse_scroll` holds
+    /// the capture that makes the terminal report it: a client with no
+    /// focusable regions has nothing for a click to mean, and the settings
+    /// screen covers the pane the wheel would move.
+    pub fn on_mouse(&mut self, mouse: MouseEvent) {
+        if !self.mouse_scroll || self.overlay.is_some() {
+            return;
+        }
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.scroll.up(scroll::WHEEL_ROWS),
+            MouseEventKind::ScrollDown => self.scroll.down(scroll::WHEEL_ROWS),
+            _ => {}
+        }
     }
 
     /// Move up: through the lines of the draft, then back through the history.

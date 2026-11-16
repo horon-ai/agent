@@ -45,6 +45,7 @@ impl SymbolPreset {
                 tool_error: "✕",
                 tool_lead: "›",
                 prompt_marker: "❯",
+                more_below: "↓",
                 separator: "·",
             },
             Self::Nerd => Symbols {
@@ -54,6 +55,7 @@ impl SymbolPreset {
                 tool_error: "\u{f00d}",
                 tool_lead: "\u{f105}",
                 prompt_marker: "\u{f054}",
+                more_below: "\u{f063}",
                 separator: "\u{e0b1}",
             },
             Self::Ascii => Symbols {
@@ -63,6 +65,7 @@ impl SymbolPreset {
                 tool_error: "x",
                 tool_lead: ">",
                 prompt_marker: ">",
+                more_below: "v",
                 separator: "|",
             },
         }
@@ -84,6 +87,8 @@ pub struct Symbols {
     pub tool_lead: &'static str,
     /// The mark before the input line.
     pub prompt_marker: &'static str,
+    /// The mark before the count of rows hidden below a held transcript view.
+    pub more_below: &'static str,
     /// Joins the parts of the status line.
     pub separator: &'static str,
 }

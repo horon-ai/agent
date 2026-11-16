@@ -143,6 +143,11 @@ fn keys_defaults_reproduce_the_shipped_keys() {
         (ids::EDITOR_END, "ctrl+e"),
         (ids::EDITOR_LEFT, "ctrl+b"),
         (ids::EDITOR_RIGHT, "ctrl+f"),
+        (ids::APP_SCROLL_PAGE_UP, "pageup"),
+        (ids::APP_SCROLL_PAGE_DOWN, "pagedown"),
+        (ids::APP_SCROLL_UP, "shift+up"),
+        (ids::APP_SCROLL_DOWN, "shift+down"),
+        (ids::APP_SCROLL_BOTTOM, "ctrl+end"),
     ] {
         assert_eq!(editing(name), Some(id), "`{name}` is not bound to `{id}`");
         assert!(
@@ -219,6 +224,39 @@ fn keys_empty_array_disables_an_action() {
     assert!(app.running);
     // The other actions are untouched.
     assert_eq!(app.on_key(control('c')), Some(Action::Quit));
+}
+
+#[test]
+fn scroll_keys_are_not_taken_by_the_draft_or_its_history() {
+    let (bindings, warnings) = Bindings::from_table(&toml::Table::new());
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // Shift is never inferred: the shifted arrow scrolls while the plain one
+    // stays with the draft's history, so one modifier cannot mean two things.
+    assert_eq!(bindings.resolve_editing(&parse("shift+up")), Some(ids::APP_SCROLL_UP));
+    assert_eq!(
+        bindings.resolve_editing(&parse("shift+down")),
+        Some(ids::APP_SCROLL_DOWN)
+    );
+    assert_eq!(bindings.resolve_editing(&parse("up")), Some(ids::EDITOR_HISTORY_PREV));
+    assert_eq!(bindings.resolve_editing(&parse("down")), Some(ids::EDITOR_HISTORY_NEXT));
+    assert_eq!(
+        bindings.resolve_editing(&parse("pageup")),
+        Some(ids::APP_SCROLL_PAGE_UP)
+    );
+    assert_eq!(
+        bindings.resolve_editing(&parse("ctrl+end")),
+        Some(ids::APP_SCROLL_BOTTOM)
+    );
+
+    // A file that turns the scroll key off must not hand it to the history: an
+    // unshifted binding answers only an unshifted key.
+    let (_directory, loader) = loader_with("\"app.scroll_up\" = []\n");
+    assert!(loader.warnings().is_empty(), "{:?}", loader.warnings());
+    assert_eq!(loader.bindings().resolve_editing(&parse("shift+up")), None);
+    assert_eq!(
+        loader.bindings().resolve_editing(&parse("up")),
+        Some(ids::EDITOR_HISTORY_PREV)
+    );
 }
 
 #[test]

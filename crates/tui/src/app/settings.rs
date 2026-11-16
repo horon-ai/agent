@@ -1,4 +1,4 @@
-//! The settings screen and the two settings that change behavior as they are
+//! The settings screen and the settings that change behavior as they are
 //! applied, rather than on the next drawing call.
 
 use super::App;
@@ -20,9 +20,12 @@ impl App {
 
     /// Replace the settings snapshot the screen draws, keeping the selection.
     ///
-    /// The two settings that change behavior are applied to the parts that read
-    /// them here rather than in each drawing call: the transcript keeps or drops
-    /// reasoning as it streams, and the editor asks before it sends.
+    /// The settings that change behavior are applied to the parts that read them
+    /// here rather than in each drawing call: the transcript keeps or drops
+    /// reasoning as it streams, the editor asks before it sends, and the mouse
+    /// wheel belongs to the transcript only while `transcript.mouse_scroll`
+    /// says so. Whether the terminal is actually captured is the event loop's
+    /// decision, because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
@@ -35,6 +38,10 @@ impl App {
             None => crate::tool_line::DEFAULT_OUTPUT_LINES,
         };
         self.transcript.set_tool_output_lines(output_lines);
+        // A terminal that already reported the wheel keeps doing so until the
+        // loop releases the capture; the events are dropped here once the
+        // setting is off, so a stale report cannot scroll a captured terminal.
+        self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(false);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

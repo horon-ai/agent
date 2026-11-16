@@ -17,6 +17,7 @@ pub mod keys;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
+pub mod scroll;
 pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
@@ -48,6 +49,10 @@ mod input_tests;
 #[cfg(test)]
 #[path = "app_settings_tests.rs"]
 mod app_settings_tests;
+
+#[cfg(test)]
+#[path = "scroll_tests.rs"]
+mod scroll_tests;
 
 use std::time::Duration;
 
@@ -289,10 +294,11 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
             return 1;
         }
     };
-    // The restore hook knows nothing about the paste mode, so it is chained
-    // behind one that turns it off: a panic must not leave the mode on for the
-    // next program in this terminal.
+    // The restore hook knows nothing about the paste mode or the mouse mode, so
+    // it is chained behind hooks that turn them off: a panic must not leave
+    // either mode on for the next program in this terminal.
     paste::guard_panics();
+    scroll::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
@@ -300,6 +306,9 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     }
     let (code, failure) = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
     paste::disable();
+    // Released on the normal exit as well as the error one: a captured terminal
+    // does not hand a drag back to its own text selection.
+    scroll::disable_mouse();
     ratatui::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
@@ -377,6 +386,9 @@ where
     B::Error: std::fmt::Display,
 {
     let mut failure = None;
+    // Whether the terminal is currently reporting the mouse, which follows the
+    // `transcript.mouse_scroll` setting rather than being decided once.
+    let mut mouse_captured = false;
     loop {
         drain_events(app);
         if !app.running {
@@ -412,6 +424,7 @@ where
         // Command directories are only stat-ed here; a file is re-read when its
         // own stamp moved.
         app.tick_commands();
+        sync_mouse_capture(app, &mut mouse_captured);
         if let Err(message) = draw(terminal, app) {
             failure = Some(message);
             break;
@@ -444,6 +457,9 @@ where
                 app.on_paste(&text);
                 flush_setting_change(app, reloader, themes);
             }
+            // Only the wheel is acted on, and only while the setting holds the
+            // capture that makes the terminal report it at all.
+            Ok(crossterm::event::Event::Mouse(mouse)) => app.on_mouse(mouse),
             Ok(_) => {}
             Err(error) => {
                 failure = Some(format!("cannot read the keyboard: {error}"));
@@ -453,6 +469,33 @@ where
         }
     }
     (if failure.is_some() { 1 } else { app.exit_code }, failure)
+}
+
+/// Keep the terminal's mouse capture in step with `transcript.mouse_scroll`.
+///
+/// Capture takes the wheel and the terminal's own text selection together, which
+/// is why it is a setting and why it is released the moment the setting goes off.
+/// A terminal that refuses the sequence is not a reason to stop: the wheel then
+/// does nothing and the pane still scrolls from the keyboard, so the refusal is
+/// reported once and the setting is turned back off.
+fn sync_mouse_capture(app: &mut App, captured: &mut bool) {
+    if *captured == app.mouse_scroll {
+        return;
+    }
+    if app.mouse_scroll {
+        match scroll::enable_mouse() {
+            Ok(()) => *captured = true,
+            Err(error) => {
+                app.mouse_scroll = false;
+                app.warn(format!("mouse: {error}"));
+            }
+        }
+        return;
+    }
+    if !scroll::disable_mouse() {
+        app.warn("mouse: the terminal did not take the release sequence");
+    }
+    *captured = false;
 }
 
 /// Move every buffered SDK delivery into the app state.
@@ -595,7 +638,26 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 
     let transcript_area: Rect = areas[index];
     app.viewport_height = Some(transcript_area.height);
-    frame.render_widget(transcript_widget(app, transcript_area.width), transcript_area);
+    let pane = transcript_pane(app, transcript_area.width, transcript_area.height);
+    // The pane measured the scrollback through a mutable borrow; the rest of the
+    // frame reads the theme again from the app it was borrowed from.
+    let theme: &Theme = &app.theme;
+    let rows_height = transcript_area
+        .height
+        .saturating_sub(u16::from(pane.indicator.is_some()));
+    let rows_area = Rect {
+        height: rows_height,
+        ..transcript_area
+    };
+    frame.render_widget(Paragraph::new(pane.rows), rows_area);
+    if let Some(indicator) = pane.indicator {
+        let indicator_area = Rect {
+            y: transcript_area.y.saturating_add(rows_height),
+            height: transcript_area.height.saturating_sub(rows_height),
+            ..transcript_area
+        };
+        frame.render_widget(Paragraph::new(indicator), indicator_area);
+    }
     index += 1;
 
     if !prompt_rows.is_empty() {
@@ -671,12 +733,11 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
 }
 
-/// The transcript pane, scrolled to its last rows.
+/// The transcript pane: the rows on screen, and the follow-bottom indicator.
 ///
-/// Lines are wrapped here rather than by the widget: the pane keeps the newest
-/// rows, and a logical line that wraps over the pane width occupies more than
-/// one row. Trimming logical lines first would push the newest rows off the
-/// bottom of the pane.
+/// Lines are wrapped here rather than by the widget: a logical line that wraps
+/// over the pane width occupies more than one row, so trimming logical lines
+/// first would push the newest rows off the bottom of the pane.
 ///
 /// Items are walked from the newest one so the work is bounded by the pane: an
 /// idle frame rebuilds at least twenty times a second, and wrapping the whole
@@ -685,41 +746,233 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
 /// A message that is still streaming is drawn first as the newest entry, so
 /// text appears while it arrives instead of all at once when the turn ends.
 /// It is not also in `items`, and `finish_stream` moves it there exactly once.
-fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
-    let capacity = usize::from(app.viewport_height.unwrap_or(24).max(1));
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    // Reasoning being assembled is drawn above the answer it precedes, the same
-    // order the model produced it in.
+///
+/// A view held above the end is a different walk: the content is measured once,
+/// the rows below it are skipped by whole blocks, and only the block holding the
+/// bottom edge of the view is wrapped again. That is what keeps a frame's cost at
+/// the visible rows plus the scroll offset rather than the whole conversation.
+fn transcript_pane(app: &mut App, width: u16, height: u16) -> Pane {
+    // Noticed before anything is drawn: a delta that lands between two frames is
+    // what the indicator calls new output, whether or not it added a row.
+    let mark = scroll::Mark::new(
+        app.transcript.items().len(),
+        app.transcript.open_text().map_or(0, str::len),
+        app.transcript.open_reasoning().map_or(0, str::len),
+    );
+    app.scroll.observe(mark);
+    let view = usize::from(height.max(1));
+    // The indicator spends the pane's bottom row while it is drawn, so the
+    // content is measured against the rows it may actually fill.
+    let held_before = app.scroll.offset() > 0;
+    let measure_rows = if held_before {
+        view.saturating_sub(1).max(1)
+    } else {
+        view
+    };
+    if held_before {
+        measure_transcript(app, width, measure_rows);
+    }
+    let offset = app.scroll.offset();
+    let indicator = offset > 0 && view > 1;
+    let capacity = if indicator { view - 1 } else { view };
+    let rows = if offset > 0 {
+        held_rows(app, width, offset, capacity)
+    } else {
+        follow_rows(app, width, capacity)
+    };
+    let indicator = if offset > 0 && view > 1 {
+        Some(indicator_line(app, offset))
+    } else {
+        None
+    };
+    Pane { rows, indicator }
+}
+
+/// The rows the pane shows, and the line that says it is not at the end.
+struct Pane {
+    rows: Vec<Line<'static>>,
+    indicator: Option<Line<'static>>,
+}
+
+/// One block of the conversation, in the order the pane draws them.
+enum Block<'a> {
+    Item(&'a Item),
+    Reasoning(&'a str),
+    Answer(&'a str),
+}
+
+/// The conversation as the pane draws it, oldest first.
+///
+/// Reasoning being assembled sits above the answer it precedes, the same order
+/// the model produced it in, and both sit below everything already committed.
+fn blocks(app: &App) -> Vec<Block<'_>> {
+    let mut blocks: Vec<Block<'_>> = app.transcript.items().iter().map(Block::Item).collect();
     if let Some(text) = app.transcript.open_reasoning() {
-        rows.extend(wrapped_rows(reasoning_lines(text, &app.theme), width));
+        blocks.push(Block::Reasoning(text));
     }
     if let Some(text) = app.transcript.open_text() {
-        rows.extend(wrapped_rows(assistant_lines(text, &app.theme), width));
+        blocks.push(Block::Answer(text));
     }
-    if rows.len() < capacity {
-        for item in app.transcript.items().iter().rev() {
-            let item_rows = wrapped_rows(render_item(item, &app.theme, app.symbols, width), width);
-            rows.splice(0..0, item_rows);
+    blocks
+}
+
+/// The rows of one block, top to bottom, wrapped to the pane width.
+///
+/// The wrapped height is what the scrollback measures, so a block means the same
+/// thing here and in `measure_transcript`.
+fn block_rows(block: &Block<'_>, app: &App, width: u16) -> Vec<Line<'static>> {
+    let lines = match block {
+        Block::Item(item) => render_item(item, &app.theme, app.symbols, width),
+        Block::Reasoning(text) => reasoning_lines(text, &app.theme),
+        Block::Answer(text) => assistant_lines(text, &app.theme),
+    };
+    wrapped_rows(lines, width)
+}
+
+/// Count the conversation's rows so a held view knows how far it may move.
+///
+/// The measurement is kept between frames: only items the last one never saw are
+/// wrapped, so a view held during a long turn does not re-wrap the conversation.
+/// The block still streaming is counted every frame, because it is the one block
+/// whose height changes while the view is held.
+fn measure_transcript(app: &mut App, width: u16, view: usize) {
+    let items = app.transcript.items().len();
+    let open = [
+        open_rows(app.transcript.open_reasoning(), &app.theme, width, true),
+        open_rows(app.transcript.open_text(), &app.theme, width, false),
+    ];
+    let App {
+        scroll,
+        transcript,
+        theme,
+        symbols,
+        ..
+    } = app;
+    let theme = &*theme;
+    let symbols = *symbols;
+    scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
+        Some(item) => wrapped_rows(render_item(item, theme, symbols, width), width).len(),
+        None => 0,
+    });
+}
+
+/// Wrapped rows of one open buffer, as the pane would draw it.
+fn open_rows(text: Option<&str>, theme: &Theme, width: u16, reasoning: bool) -> usize {
+    match text {
+        Some(text) if reasoning => wrapped_rows(reasoning_lines(text, theme), width).len(),
+        Some(text) => wrapped_rows(assistant_lines(text, theme), width).len(),
+        None => 0,
+    }
+}
+
+/// The newest rows, following the end of the conversation.
+fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for block in blocks(app).iter().rev() {
+        for row in block_rows(block, app, width).into_iter().rev() {
+            rows.push(row);
             if rows.len() >= capacity {
                 break;
             }
         }
+        if rows.len() >= capacity {
+            break;
+        }
     }
-    if rows.is_empty() {
-        rows.extend(wrap::wrap_line(
-            &Line::from(Span::styled(
-                "Send a message to start. /help lists the commands; /quit leaves.",
-                Style::default().fg(app.theme.core.muted),
-            )),
-            usize::from(width),
-        ));
+    rows.reverse();
+    placeholder(app, rows, width)
+}
+
+/// The rows a view held `offset` rows above the end shows.
+///
+/// Blocks below the view are skipped by their measured height, so the rows the
+/// user scrolled past are not wrapped again. Only the block that holds the bottom
+/// edge of the view is wrapped, plus the blocks the pane actually fills with.
+fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
+    let blocks = blocks(app);
+    let measured = block_heights(app);
+    // A measurement taken before the block list changed says nothing about this
+    // one, so it is dropped rather than read against the wrong block.
+    let heights: &[usize] = if measured.len() == blocks.len() { &measured } else { &[] };
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut below = offset;
+    for (index, block) in blocks.iter().enumerate().rev() {
+        match heights.get(index) {
+            // Wholly below the view: its height is known, so it is skipped
+            // without wrapping a single line of it.
+            Some(&height) if below >= height && height > 0 => {
+                below -= height;
+                continue;
+            }
+            _ => {}
+        }
+        let block = block_rows(block, app, width);
+        let take_from = match heights.get(index) {
+            Some(&height) if below > 0 => height.saturating_sub(below),
+            _ => block.len(),
+        };
+        below = 0;
+        for row in block.into_iter().take(take_from).rev() {
+            rows.push(row);
+            if rows.len() >= capacity {
+                break;
+            }
+        }
+        if rows.len() >= capacity {
+            break;
+        }
     }
-    // Keep the newest rows: the pane has no scrollback yet, and the end of the
-    // conversation is the part a user is reading.
-    if rows.len() > capacity {
-        rows.drain(..rows.len() - capacity);
+    rows.reverse();
+    rows
+}
+
+/// The measured height of every block, in the order the pane draws them.
+///
+/// The committed items come from the scrollback's tally; the two open buffers
+/// are blocks only while they are being streamed, so their slots are added only
+/// then, and the list stays aligned with [`blocks`].
+fn block_heights(app: &App) -> Vec<usize> {
+    let mut heights = match app.scroll.heights() {
+        Some(items) => items.to_vec(),
+        None => Vec::new(),
+    };
+    let open = app.scroll.open_heights();
+    if app.transcript.open_reasoning().is_some() {
+        heights.push(open[0]);
     }
-    Paragraph::new(rows)
+    if app.transcript.open_text().is_some() {
+        heights.push(open[1]);
+    }
+    heights
+}
+
+/// The line a held view keeps in the pane's bottom row.
+fn indicator_line(app: &App, below: usize) -> Line<'static> {
+    let counted = if below == 1 {
+        "1 row".to_string()
+    } else {
+        format!("{below} rows")
+    };
+    let text = if app.scroll.has_fresh_output() {
+        format!("{} {counted} below · new output", app.symbols.more_below)
+    } else {
+        format!("{} {counted} below", app.symbols.more_below)
+    };
+    Line::from(Span::styled(text, Style::default().fg(app.theme.core.muted)))
+}
+
+/// What an empty transcript says instead of nothing.
+fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
+    if !rows.is_empty() {
+        return rows;
+    }
+    wrap::wrap_line(
+        &Line::from(Span::styled(
+            "Send a message to start. /help lists the commands; /quit leaves.",
+            Style::default().fg(app.theme.core.muted),
+        )),
+        usize::from(width),
+    )
 }
 
 /// Wrap a rendered item's lines to the pane width, keeping their styles.

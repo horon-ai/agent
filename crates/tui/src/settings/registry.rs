@@ -224,6 +224,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.mouse_scroll",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_MOUSE_SCROLL",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Keys",
+            label: "Wheel scrolls",
+            description: "Give the mouse wheel to the transcript; off keeps the terminal's own text selection.",
+        },
+    },
+    SettingSpec {
         id: "transcript.show_reasoning",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_SHOW_REASONING",

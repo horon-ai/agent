@@ -28,6 +28,16 @@ pub mod ids {
     pub const APP_INTERRUPT: &str = "app.interrupt";
     /// Leave.
     pub const APP_QUIT: &str = "app.quit";
+    /// Hold the transcript view one page higher.
+    pub const APP_SCROLL_PAGE_UP: &str = "app.scroll_page_up";
+    /// Move the transcript view one page back towards the end.
+    pub const APP_SCROLL_PAGE_DOWN: &str = "app.scroll_page_down";
+    /// Hold the transcript view one row higher.
+    pub const APP_SCROLL_UP: &str = "app.scroll_up";
+    /// Move the transcript view one row back towards the end.
+    pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
+    /// Follow the end of the conversation again.
+    pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -113,6 +123,13 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_CANCEL, Scope::App, &["ctrl+c"]),
     ActionSpec::new(ids::APP_INTERRUPT, Scope::App, &["esc"]),
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
+    // The transcript's own keys: `up` and `down` stay with the draft and its
+    // history, so the view moves on their shifted forms and on the page keys.
+    ActionSpec::new(ids::APP_SCROLL_PAGE_UP, Scope::App, &["pageup"]),
+    ActionSpec::new(ids::APP_SCROLL_PAGE_DOWN, Scope::App, &["pagedown"]),
+    ActionSpec::new(ids::APP_SCROLL_UP, Scope::App, &["shift+up"]),
+    ActionSpec::new(ids::APP_SCROLL_DOWN, Scope::App, &["shift+down"]),
+    ActionSpec::new(ids::APP_SCROLL_BOTTOM, Scope::App, &["ctrl+end"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
@@ -227,7 +244,7 @@ impl Bindings {
         }
         self.entries
             .iter()
-            .find(|entry| in_scope(entry) && entry.key.covers(key))
+            .find(|entry| in_scope(entry) && extends(entry.key, key))
             .map(|entry| entry.id)
     }
 
@@ -275,6 +292,16 @@ impl Bindings {
         }
         (Self { entries }, warnings)
     }
+}
+
+/// Whether `binding` answers `event` when neither names the same key exactly.
+///
+/// A terminal reports `alt+left` for a plain arrow the interface has always
+/// moved on, so control and alt are inferred. Shift is not: it arrives as its
+/// own key, and `shift+up` scrolls the transcript while `up` stays with the
+/// draft, so a binding answers a shifted event only when it named shift itself.
+fn extends(binding: Key, event: &Key) -> bool {
+    binding.covers(event) && (!event.shift || binding.shift)
 }
 
 impl Default for Bindings {
