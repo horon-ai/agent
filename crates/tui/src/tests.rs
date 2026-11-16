@@ -150,7 +150,12 @@ fn streams_text_and_finishes_turn() {
         screen.contains("Hello, world"),
         "assistant text missing from:\n{screen}"
     );
-    assert!(screen.contains("* bash"), "tool line missing from:\n{screen}");
+    // The lead mark is the theme's glyph now, not a hardcoded asterisk.
+    assert!(
+        screen.contains(&format!("{} bash", app.symbols.tool_lead)),
+        "tool line missing from:\n{screen}"
+    );
+    assert!(screen.contains("done"), "tool outcome missing from:\n{screen}");
     assert!(!app.pending_turn);
 }
 
@@ -242,12 +247,15 @@ fn tool_failure_is_visible() {
         error: Some("permission denied".into()),
         verdict: None,
     });
+    let items = app.transcript.items();
+    let Some(Item::Tool(call)) = items.last() else {
+        panic!("expected one tool line: {items:?}");
+    };
+    assert_eq!(call.name, "write");
     assert_eq!(
-        app.transcript.items().last(),
-        Some(&Item::Tool {
-            name: "write".into(),
-            state: ToolState::Failed("permission denied".into())
-        })
+        call.state,
+        ToolState::Failed("permission denied".into()),
+        "the failure text is what the user acts on"
     );
 }
 

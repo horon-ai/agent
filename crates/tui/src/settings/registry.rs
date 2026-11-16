@@ -212,6 +212,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.tool_output_lines",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES",
+        default: DefaultValue::Number(3),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Tool output lines",
+            description: "Rows of a finished tool call's output shown under its line; 0 hides the preview.",
+        },
+    },
+    SettingSpec {
         id: "transcript.show_reasoning",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_SHOW_REASONING",

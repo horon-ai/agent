@@ -263,13 +263,27 @@ impl App {
             ApiEvent::TextReplace { text, message_id, .. } => {
                 self.transcript.text_replace(message_id.as_deref(), text);
             }
-            ApiEvent::ToolStart { name, .. } => self.transcript.tool_start(name),
+            ApiEvent::ToolStart { call_id, name, .. } => {
+                self.transcript.tool_start(call_id, name);
+            }
+            // Input streams as JSON fragments, joined onto the call's own line:
+            // the id is what keeps two parallel calls from mixing arguments.
+            ApiEvent::ToolInputDelta { call_id, delta, .. } => {
+                self.transcript.tool_input(call_id, delta);
+            }
             // `ToolExec` follows `ToolStart` for the same call, so its line is
             // already in the transcript; a call that starts execution without
             // a start event still gets a line when it finishes.
             ApiEvent::ToolExec { .. } => {}
-            ApiEvent::ToolDone { name, error, .. } => {
-                self.transcript.tool_done(name, error.as_deref());
+            ApiEvent::ToolDone {
+                call_id,
+                name,
+                output,
+                error,
+                ..
+            } => {
+                self.transcript
+                    .tool_done(call_id, name, Some(output.as_str()), error.as_deref());
             }
             ApiEvent::TurnDone { .. } => {
                 self.transcript.text_done();
@@ -512,6 +526,11 @@ impl App {
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
         self.transcript.set_show_reasoning(show_reasoning);
+        let output_lines = settings
+            .number("transcript.tool_output_lines")
+            .and_then(|lines| usize::try_from(lines).ok())
+            .unwrap_or(crate::tool_line::DEFAULT_OUTPUT_LINES);
+        self.transcript.set_tool_output_lines(output_lines);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

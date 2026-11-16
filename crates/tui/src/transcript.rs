@@ -6,6 +6,10 @@
 //! replacement retracts text) are the same everywhere and are easy to get wrong
 //! at the call site.
 
+use std::time::Instant;
+
+use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
+
 /// What a tool call line says about its call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolState {
@@ -28,6 +32,49 @@ impl ToolState {
     }
 }
 
+/// One tool call, as far as the client knows it.
+///
+/// The call id is kept because parallel calls of the same tool are ordinary:
+/// two `bash` calls interleave their input and finish in either order, and only
+/// the id says which line a result belongs to. An empty id is what an older
+/// daemon sends, and it means "the call that started most recently".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCall {
+    /// The id the daemon gave this call, empty when it gave none.
+    pub call_id: String,
+    /// The tool's name.
+    pub name: String,
+    /// Where the call stands.
+    pub state: ToolState,
+    /// The argument JSON seen so far, capped at [`tool_line::MAX_INPUT_BYTES`].
+    pub input: String,
+    /// When the call finished and how long it took, in milliseconds.
+    pub duration_ms: Option<u64>,
+    /// The head of the call's output, kept only as far as the preview needs.
+    pub output: Option<OutputHead>,
+}
+
+impl ToolCall {
+    fn new(call_id: &str, name: &str) -> Self {
+        Self {
+            call_id: call_id.to_string(),
+            name: name.to_string(),
+            state: ToolState::Running,
+            input: String::new(),
+            duration_ms: None,
+            output: None,
+        }
+    }
+
+    /// Whether this is the call `call_id` names.
+    ///
+    /// An empty id matches nothing: with no id there is no identity, and the
+    /// caller falls back to "the oldest running call of this name".
+    fn is_call(&self, call_id: &str) -> bool {
+        !call_id.is_empty() && self.call_id == call_id
+    }
+}
+
 /// One line of conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
@@ -36,7 +83,7 @@ pub enum Item {
     /// A completed assistant message.
     Assistant(String),
     /// A tool call, addressed by its call id while it runs.
-    Tool { name: String, state: ToolState },
+    Tool(ToolCall),
     /// Session-level information, not model output.
     Notice(String),
     /// Something the user needs to see and act on.
@@ -66,7 +113,7 @@ struct Reasoned {
 }
 
 /// The transcript buffer.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Transcript {
     items: Vec<Item>,
     streaming: Streaming,
@@ -75,12 +122,51 @@ pub struct Transcript {
     /// `transcript.show_reasoning` resolves; the option is read at the event,
     /// so flipping it affects the next delta rather than only the next turn.
     show_reasoning: bool,
+    /// Rows of a finished call's output kept for the preview, as
+    /// `transcript.tool_output_lines` resolves. Zero hides the preview.
+    tool_output_lines: usize,
+    /// When each call started, keyed by call id and dropped when it ends.
+    starts: Vec<Start>,
+}
+
+/// When one call started.
+#[derive(Debug)]
+struct Start {
+    call_id: String,
+    name: String,
+    at: Instant,
+}
+
+impl Default for Transcript {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            streaming: Streaming::default(),
+            reasoned: Reasoned::default(),
+            show_reasoning: false,
+            tool_output_lines: DEFAULT_OUTPUT_LINES,
+            starts: Vec::new(),
+        }
+    }
 }
 
 impl Transcript {
     /// An empty transcript.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Keep at most `lines` rows of each finished call's output, or none.
+    ///
+    /// Applies to calls that finish from now on: the transcript holds only the
+    /// preview, so a smaller number cannot shorten a line already drawn.
+    pub fn set_tool_output_lines(&mut self, lines: usize) {
+        self.tool_output_lines = lines.min(tool_line::MAX_OUTPUT_LINES);
+    }
+
+    /// How many rows of a finished call's output the preview keeps.
+    pub fn tool_output_lines(&self) -> usize {
+        self.tool_output_lines
     }
 
     /// Keep, or stop keeping, the model's reasoning.
@@ -224,34 +310,133 @@ impl Transcript {
     }
 
     /// A tool call started.
-    pub fn tool_start(&mut self, name: &str) {
+    ///
+    /// `call_id` is how the result will find this line again; the start time
+    /// goes beside the items rather than into one, because an [`Item`] must stay
+    /// comparable and an [`Instant`] is not.
+    pub fn tool_start(&mut self, call_id: &str, name: &str) {
         self.finish_reasoning();
         self.finish_stream();
-        self.items.push(Item::Tool {
+        // A start can arrive after the result that ended it, when frames from a
+        // resumed stream are reordered. The line is already there and already
+        // says how the call ended, so this records nothing: a second line with
+        // the same id would show the same call twice.
+        let known = !call_id.is_empty()
+            && self
+                .items
+                .iter()
+                .any(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)));
+        if known {
+            return;
+        }
+        self.starts.push(Start {
+            call_id: call_id.to_string(),
             name: name.to_string(),
-            state: ToolState::Running,
+            at: Instant::now(),
         });
+        self.items.push(Item::Tool(ToolCall::new(call_id, name)));
     }
 
-    /// A tool call finished, with the error text when it failed.
-    pub fn tool_done(&mut self, name: &str, error: Option<&str>) {
+    /// Argument bytes arrived for a call still streaming its input.
+    ///
+    /// The delta is appended to the call's line rather than replacing it: input
+    /// streams as JSON fragments, and only the joined result parses. An empty
+    /// id means the call that started most recently, which is what the daemon
+    /// says when it sends no id.
+    pub fn tool_input(&mut self, call_id: &str, delta: &str) {
+        let target = if call_id.is_empty() {
+            self.starts.last().map(|start| start.call_id.clone())
+        } else {
+            Some(call_id.to_string())
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let Some(call) = self.items.iter_mut().find_map(|item| match item {
+            Item::Tool(call) if call.is_call(&target) => Some(call),
+            _ => None,
+        }) else {
+            return;
+        };
+        tool_line::append_input(&mut call.input, delta);
+    }
+
+    /// A tool call finished, with its output and the error text when it failed.
+    ///
+    /// The output is cut to the configured preview here, not at the renderer:
+    /// only the preview is ever kept, so a tool returning megabytes cannot grow
+    /// the transcript.
+    pub fn tool_done(&mut self, call_id: &str, name: &str, output: Option<&str>, error: Option<&str>) {
         let state = match error {
             Some(message) if !message.is_empty() => ToolState::Failed(message.to_string()),
             _ => ToolState::Done,
         };
-        if let Some(Item::Tool { state: slot, .. }) = self
-            .items
-            .iter_mut()
-            .rev()
-            .find(|item| matches!(item, Item::Tool { name: held, .. } if held == name))
-        {
-            *slot = state;
+        let elapsed = self.take_start(call_id, name);
+        let preview = output.and_then(|text| tool_line::cut_output(text, self.tool_output_lines));
+        let Some(call) = self.call_for(call_id, name) else {
+            let mut call = ToolCall::new(call_id, name);
+            call.state = state;
+            call.duration_ms = elapsed;
+            call.output = preview;
+            self.items.push(Item::Tool(call));
             return;
+        };
+        // A call finishes once, but the same result can reach the client twice
+        // (a reconnect replays it). The second one must not overwrite the first:
+        // it arrives after the start mark was taken, so its duration is empty,
+        // and a repeat of a success would erase a recorded failure.
+        let keep_failure = matches!(call.state, ToolState::Failed(_)) && !matches!(state, ToolState::Failed(_));
+        if !keep_failure {
+            call.state = state;
         }
-        self.items.push(Item::Tool {
-            name: name.to_string(),
-            state,
-        });
+        if call.duration_ms.is_none() {
+            call.duration_ms = elapsed;
+        }
+        if call.output.is_none() {
+            call.output = preview;
+        }
+    }
+
+    /// The call `call_id` names, or the oldest running call when there is no id.
+    ///
+    /// A daemon that sends no id still sends the name, and its calls are
+    /// sequential, so the oldest unfinished call of that name is the one the
+    /// result belongs to; the newest is wrong, because that is the call still
+    /// starting.
+    fn call_for(&mut self, call_id: &str, name: &str) -> Option<&mut ToolCall> {
+        let found = self
+            .items
+            .iter()
+            .position(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)));
+        let index: Option<usize> = match found {
+            Some(index) => Some(index),
+            // With no id there is no identity, and calls without ids are
+            // sequential, so the oldest unfinished call of that name is the one
+            // this result belongs to.
+            None if call_id.is_empty() => self.items.iter().position(|item| match item {
+                Item::Tool(call) => call.state == ToolState::Running && call.name == name,
+                _ => false,
+            }),
+            None => None,
+        };
+        let index = index?;
+        match self.items.get_mut(index) {
+            Some(Item::Tool(call)) => Some(call),
+            _ => None,
+        }
+    }
+
+    /// How long the call that just finished took, removing its start mark.
+    fn take_start(&mut self, call_id: &str, name: &str) -> Option<u64> {
+        let index = self.starts.iter().position(|start| {
+            if call_id.is_empty() {
+                start.name == name
+            } else {
+                start.call_id == call_id
+            }
+        })?;
+        let start = self.starts.remove(index);
+        tool_line::elapsed_since(Some(start.at))
     }
 
     /// Commit the open streaming message, dropping an empty one.
@@ -303,15 +488,15 @@ mod tests {
     #[test]
     fn tool_done_updates_the_running_line() {
         let mut transcript = Transcript::new();
-        transcript.tool_start("bash");
-        transcript.tool_done("bash", None);
-        assert_eq!(
-            transcript.items(),
-            &[Item::Tool {
-                name: "bash".to_string(),
-                state: ToolState::Done
-            }]
-        );
+        transcript.tool_start("c1", "bash");
+        transcript.tool_done("c1", "bash", None, None);
+        let items = transcript.items();
+        assert_eq!(items.len(), 1, "{items:?}");
+        let Item::Tool(call) = &items[0] else {
+            panic!("expected one tool line: {items:?}");
+        };
+        assert_eq!(call.name, "bash");
+        assert_eq!(call.state, ToolState::Done);
     }
 
     #[test]
@@ -398,7 +583,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.set_show_reasoning(true);
         transcript.reasoning_delta("I need to read the file");
-        transcript.tool_start("read");
+        transcript.tool_start("c1", "read");
         assert_eq!(transcript.open_reasoning(), None);
         assert_eq!(
             transcript.items().first(),
@@ -439,13 +624,13 @@ mod tests {
     #[test]
     fn tool_done_without_a_start_still_renders() {
         let mut transcript = Transcript::new();
-        transcript.tool_done("read", Some("no such file"));
-        assert_eq!(
-            transcript.items(),
-            &[Item::Tool {
-                name: "read".to_string(),
-                state: ToolState::Failed("no such file".to_string())
-            }]
-        );
+        transcript.tool_done("c1", "read", None, Some("no such file"));
+        let items = transcript.items();
+        assert_eq!(items.len(), 1, "{items:?}");
+        let Item::Tool(call) = &items[0] else {
+            panic!("expected one tool line: {items:?}");
+        };
+        assert_eq!(call.name, "read");
+        assert_eq!(call.state, ToolState::Failed("no such file".to_string()));
     }
 }

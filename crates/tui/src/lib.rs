@@ -19,12 +19,17 @@ pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
 pub mod theme;
+pub mod tool_line;
 pub mod transcript;
 mod wrap;
 
 #[cfg(test)]
 #[path = "streaming_tests.rs"]
 mod streaming_tests;
+
+#[cfg(test)]
+#[path = "tool_line_tests.rs"]
+mod tool_line_tests;
 
 use std::time::Duration;
 
@@ -38,7 +43,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::{Action, App};
 use crate::sdk_bridge::{Command, Incoming, Runtime};
 use crate::theme::{Symbols, Theme, ThemeLoader};
-use crate::transcript::{Item, ToolState};
+use crate::transcript::Item;
 
 /// Program usage, printed by `--help` and after an argument error.
 pub const USAGE: &str = "\
@@ -608,7 +613,7 @@ fn transcript_widget(app: &App, width: u16) -> Paragraph<'static> {
     }
     if rows.len() < capacity {
         for item in app.transcript.items().iter().rev() {
-            let item_rows = wrapped_rows(render_item(item, &app.theme, app.symbols), width);
+            let item_rows = wrapped_rows(render_item(item, &app.theme, app.symbols, width), width);
             rows.splice(0..0, item_rows);
             if rows.len() >= capacity {
                 break;
@@ -653,7 +658,7 @@ fn assistant_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static>> {
+fn render_item(item: &Item, theme: &Theme, symbols: Symbols, width: u16) -> Vec<Line<'static>> {
     match item {
         Item::User(text) => prefixed(
             Span::styled("> ", Style::default().fg(theme.core.accent)),
@@ -661,18 +666,7 @@ fn render_item(item: &Item, theme: &Theme, symbols: Symbols) -> Vec<Line<'static
             Style::default().fg(theme.transcript.user_text),
         ),
         Item::Assistant(text) => assistant_lines(text, theme),
-        Item::Tool { name, state } => {
-            let (glyph, color) = match state {
-                ToolState::Running => (symbols.tool_running, theme.transcript.tool_running),
-                ToolState::Done => (symbols.tool_done, theme.transcript.tool_done),
-                ToolState::Failed(_) => (symbols.tool_error, theme.transcript.tool_error),
-            };
-            vec![Line::from(vec![
-                Span::raw("* "),
-                Span::styled(name.clone(), Style::default().fg(theme.transcript.tool_title)),
-                Span::styled(format!(" {glyph} {}", state.label()), Style::default().fg(color)),
-            ])]
-        }
+        Item::Tool(call) => tool_line::lines(call, theme, symbols, width),
         Item::Notice(text) => prefixed(
             Span::styled(
                 format!("{} ", symbols.bullet),

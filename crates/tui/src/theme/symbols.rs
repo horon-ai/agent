@@ -43,6 +43,7 @@ impl SymbolPreset {
                 tool_running: "◐",
                 tool_done: "✓",
                 tool_error: "✕",
+                tool_lead: "›",
                 prompt_marker: "❯",
                 separator: "·",
             },
@@ -51,6 +52,7 @@ impl SymbolPreset {
                 tool_running: "\u{f110}",
                 tool_done: "\u{f00c}",
                 tool_error: "\u{f00d}",
+                tool_lead: "\u{f105}",
                 prompt_marker: "\u{f054}",
                 separator: "\u{e0b1}",
             },
@@ -59,6 +61,7 @@ impl SymbolPreset {
                 tool_running: "~",
                 tool_done: "+",
                 tool_error: "x",
+                tool_lead: ">",
                 prompt_marker: ">",
                 separator: "|",
             },
@@ -77,6 +80,8 @@ pub struct Symbols {
     pub tool_done: &'static str,
     /// A tool call that failed.
     pub tool_error: &'static str,
+    /// The mark before a tool call's name.
+    pub tool_lead: &'static str,
     /// The mark before the input line.
     pub prompt_marker: &'static str,
     /// Joins the parts of the status line.
