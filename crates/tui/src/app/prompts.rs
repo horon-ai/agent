@@ -1,6 +1,8 @@
 //! Prompts, approvals and questions: what is on screen, what waits behind
 //! it, and the words the status line uses for a pending decision.
 
+use crate::transcript::Decision;
+
 use super::App;
 use crate::prompts::Prompt;
 
@@ -94,8 +96,22 @@ impl App {
             return;
         }
         let shown = usize::from(self.prompt.is_some()) + self.waiting_prompts.len();
+        // A withdrawn approval was never answered, and its row has to say so:
+        // left waiting it would claim a decision that is never coming.
+        let withdrawn: Vec<String> = self
+            .prompt
+            .iter()
+            .chain(self.waiting_prompts.iter())
+            .filter_map(|prompt| match prompt {
+                Prompt::Approval(approval) => Some(approval.request_id.clone()),
+                Prompt::Ask(_) => None,
+            })
+            .collect();
         self.prompt = None;
         self.waiting_prompts.clear();
+        for request in withdrawn {
+            self.transcript.decide_request(&request, Decision::Unanswered);
+        }
         let plural = if shown == 1 { "" } else { "s" };
         self.transcript
             .push_notice(format!("{reason}; {shown} prompt{plural} withdrawn"));

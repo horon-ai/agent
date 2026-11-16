@@ -256,8 +256,11 @@ impl SettingsOverlay {
         match key.code {
             KeyCode::Up => self.step(-1),
             KeyCode::Down => self.step(1),
-            KeyCode::Left | KeyCode::Tab => self.left(),
-            KeyCode::Right | KeyCode::BackTab => self.right(),
+            // `tab` moves forward through the header and `shift+tab` back,
+            // which is the order the tabs are drawn in: the two arrow keys keep
+            // the same meaning.
+            KeyCode::Left | KeyCode::BackTab => self.left(),
+            KeyCode::Right | KeyCode::Tab => self.right(),
             _ => {}
         }
         Outcome::Handled

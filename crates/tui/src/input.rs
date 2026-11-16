@@ -453,16 +453,39 @@ fn char_width(character: char) -> usize {
     UnicodeWidthChar::width(character).unwrap_or(0)
 }
 
-/// Fingerprint of a draft, read one character at a time.
+/// Characters hashed before the scan stops.
+///
+/// The popup's matches depend on the first word of a one-line draft, so a
+/// prefix this long is more than any command name, and a pasted paragraph must
+/// not cost a pass per frame.
+const FINGERPRINT_CELLS: usize = 64;
+
+/// Fingerprint of a draft, read one character at a time and cut short.
 ///
 /// One definition for both sides of the comparison: the editor hashes the
 /// characters it holds, the popup hashes the text it was handed, and neither
-/// builds a string to find out that nothing changed.
+/// builds a string to find out that nothing changed. The length comes first, so
+/// a draft that grew or shrank is seen without hashing anything, and the scan
+/// stops at the first whitespace or at [`FINGERPRINT_CELLS`]: only the first
+/// word can change what the popup offers.
 pub fn fingerprint(characters: impl Iterator<Item = char>) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut length = 0u64;
+    let mut scanned = 0usize;
+    let mut first_word = true;
     for character in characters {
-        hash ^= u64::from(character as u32);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        length += 1;
+        if character.is_whitespace() {
+            first_word = false;
+            continue;
+        }
+        if first_word && scanned < FINGERPRINT_CELLS {
+            hash ^= u64::from(character as u32);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            scanned += 1;
+        }
     }
+    // Mixed in last so the two halves cannot cancel each other out.
+    hash ^= length.wrapping_mul(0x9e37_79b9_7f4a_7c15);
     hash
 }

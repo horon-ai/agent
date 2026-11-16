@@ -22,10 +22,41 @@ pub enum ToolState {
     /// Refused by the approval gate, with the decision still to come.
     ///
     /// The gate answers a call it may not run with a sentence naming the
-    /// request, and that sentence is kept here so the line can go back to being
-    /// a failure once the request is decided. Drawing it as a failure meanwhile
+    /// request, and that sentence is kept here so the line can say what the
+    /// request was about once it is decided. Drawing it as a failure meanwhile
     /// says the call ran and broke, which is not what happened.
     Waiting(String),
+    /// Refused by the approval gate, with the decision recorded on the row.
+    ///
+    /// This is not a failure: the gate held the call, and the model has to
+    /// issue it again. It is not a wait either: the prompt is gone, so nothing
+    /// will change the row again.
+    Settled(Decision, String),
+}
+
+/// What became of a request the approval gate refused a call with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    /// Answered yes for this call.
+    Allowed,
+    /// Answered yes, and for every later call like it.
+    AllowedAlways,
+    /// Denied, or the prompt was dismissed.
+    Denied,
+    /// The prompt went away without an answer.
+    Unanswered,
+}
+
+impl Decision {
+    /// The word the row wears for this outcome.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::AllowedAlways => "allowed always",
+            Self::Denied => "denied",
+            Self::Unanswered => "not answered",
+        }
+    }
 }
 
 impl ToolState {
@@ -36,6 +67,7 @@ impl ToolState {
             Self::Done => "done",
             Self::Failed(_) => "failed",
             Self::Waiting(_) => "needs approval",
+            Self::Settled(decision, _) => decision.label(),
         }
     }
 }
@@ -144,6 +176,12 @@ pub struct Transcript {
     tool_output_lines: usize,
     /// When each call started, keyed by call id and dropped when it ends.
     starts: Vec<Start>,
+    /// The requests this session has decided, newest last.
+    ///
+    /// A refusal can reach the client after its prompt was answered, and the
+    /// row still has to say what happened to the call. Bounded because it is
+    /// only ever read for the refusal in hand.
+    decided: Vec<(String, Decision)>,
 }
 
 /// When one call started.
@@ -163,6 +201,7 @@ impl Default for Transcript {
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
+            decided: Vec::new(),
         }
     }
 }
@@ -476,7 +515,7 @@ impl Transcript {
             // A parked line is drawn as waiting and still names its request,
             // which is what a prompt reads its arguments through.
             Item::Tool(call) => match &call.state {
-                ToolState::Failed(message) | ToolState::Waiting(message)
+                ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message)
                     if Self::names_request(message, request_id) =>
                 {
                     tool_line::summarize(&call.input)
@@ -490,9 +529,9 @@ impl Transcript {
     /// Draw the line naming `request_id` as waiting for its decision.
     ///
     /// The call was refused because the mode asks first, not because it broke,
-    /// so until the request is decided the line says it is waiting. Nothing
-    /// happens when no line names the id yet: the call then keeps the failure
-    /// the harness reported.
+    /// so until the request is decided the line says it is waiting. A line that
+    /// already carries its decision keeps it, and nothing happens when no line
+    /// names the id yet: `decide_request` settles a row that arrives later.
     pub fn park_request(&mut self, request_id: &str) {
         self.restate_request(request_id, |state| match state {
             ToolState::Failed(message) => Some(ToolState::Waiting(message)),
@@ -500,24 +539,55 @@ impl Transcript {
         });
     }
 
-    /// The decision is in, so the line goes back to what the harness said.
+    /// Record what became of `request_id` on every line that names it.
     ///
-    /// A denial keeps the failure text, which is the same thing the line showed
-    /// before the prompt appeared, and the transcript's own notice names the
-    /// answer; an approval leaves the line as it was for the same reason: the
-    /// call did not run, and the harness says so when the turn continues.
-    pub fn settle_request(&mut self, request_id: &str) {
+    /// This is the only way a gate line stops saying it is waiting: the three
+    /// outcomes say what happened to the request, and none of them is "failed",
+    /// because the call did not run. The decision is remembered for a line that
+    /// arrives after it.
+    pub fn decide_request(&mut self, request_id: &str, decision: Decision) {
+        if request_id.is_empty() {
+            return;
+        }
         self.restate_request(request_id, |state| match state {
-            ToolState::Waiting(message) => Some(ToolState::Failed(message)),
+            ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message) => {
+                Some(ToolState::Settled(decision, message))
+            }
             _ => None,
         });
+        // One entry per request: a second answer to the same request is refused
+        // by the daemon and must not reorder what the row says.
+        self.decided.retain(|(id, _)| id != request_id);
+        self.decided.push((request_id.to_string(), decision));
+        const KEPT: usize = 64;
+        if self.decided.len() > KEPT {
+            self.decided.remove(0);
+        }
+    }
+
+    /// The decision already recorded for the refusal in `state`, if any.
+    fn decided_for_name(&self, state: &ToolState) -> Option<Decision> {
+        match state {
+            ToolState::Failed(message) => self.decided_for(message),
+            _ => None,
+        }
+    }
+
+    /// The decision recorded for a request the message names, if any.
+    fn decided_for(&self, message: &str) -> Option<Decision> {
+        self.decided
+            .iter()
+            .rev()
+            .find(|(id, _)| Self::names_request(message, id))
+            .map(|(_, decision)| *decision)
     }
 
     /// Apply `restate` to every line naming `request_id`.
     fn restate_request(&mut self, request_id: &str, restate: impl Fn(ToolState) -> Option<ToolState>) {
         for item in &mut self.items {
             if let Item::Tool(call) = item
-                && let ToolState::Failed(message) | ToolState::Waiting(message) = &call.state
+                && let ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message) =
+                    &call.state
                 && Self::names_request(message, request_id)
             {
                 let state = call.state.clone();
@@ -564,6 +634,12 @@ impl Transcript {
         };
         let elapsed = self.take_start(call_id, name);
         let preview = output.and_then(|text| tool_line::cut_output(text, self.tool_output_lines));
+        // A refusal can arrive after its prompt was answered, and the row still
+        // has to say what happened to the request rather than that it failed.
+        let state = match (&state, self.decided_for_name(&state)) {
+            (ToolState::Failed(message), Some(decision)) => ToolState::Settled(decision, message.clone()),
+            _ => state,
+        };
         let Some(call) = self.call_for(call_id, name) else {
             let mut call = ToolCall::new(call_id, name);
             call.state = state;
@@ -576,8 +652,10 @@ impl Transcript {
         // (a reconnect replays it). The second one must not overwrite the first:
         // it arrives after the start mark was taken, so its duration is empty,
         // and a repeat of a success would erase a recorded failure.
-        let keep_failure = matches!(call.state, ToolState::Failed(_) | ToolState::Waiting(_))
-            && !matches!(state, ToolState::Failed(_));
+        let keep_failure = matches!(
+            call.state,
+            ToolState::Failed(_) | ToolState::Waiting(_) | ToolState::Settled(_, _)
+        ) && !matches!(state, ToolState::Failed(_));
         if !keep_failure {
             call.state = state;
         }

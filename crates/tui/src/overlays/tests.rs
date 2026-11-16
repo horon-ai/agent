@@ -596,3 +596,32 @@ fn a_pane_too_small_for_the_settings_panel_says_so() {
     assert!(text.contains("settings"), "the screen hid itself: {text:?}");
     assert!(!text.contains('X'), "the conversation shows through: {text:?}");
 }
+
+#[test]
+fn tab_walks_the_header_forwards_and_shift_tab_back() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    assert_eq!(
+        overlay(&app).tab_name(),
+        Some("Appearance"),
+        "the tabs do not start at the first one"
+    );
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(
+        overlay(&app).tab_name(),
+        Some("Status line"),
+        "tab did not move to the next tab in the header"
+    );
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(overlay(&app).tab_name(), Some("Editor"));
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(overlay(&app).tab_name(), Some("Transcript"));
+
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(overlay(&app).tab_name(), Some("Editor"), "shift+tab did not walk back");
+    press(&mut app, KeyCode::Left);
+    assert_eq!(overlay(&app).tab_name(), Some("Status line"));
+}

@@ -608,3 +608,40 @@ fn escape_closes_the_popup_even_when_the_interrupt_key_moved() {
     );
     assert!(!app.slash.is_open(), "the rebound interrupt key left the popup open");
 }
+
+#[test]
+fn a_long_multi_line_draft_never_opens_the_popup() {
+    let mut app = app();
+    let mut draft = String::from("/mo\n");
+    draft.push_str(&"a line of a long message\n".repeat(200));
+    app.input.set_text(&draft);
+    app.sync_slash();
+    assert!(
+        !app.slash.is_open(),
+        "a multi-line draft opened the popup after the first line"
+    );
+    // The next keystroke keeps it closed, and the draft is still whole: the
+    // popup's check reads no more of it than the first word.
+    type_text(&mut app, "!");
+    assert!(!app.slash.is_open());
+    assert!(app.input.text().starts_with("/mo\n"), "the draft was lost");
+
+    // A one-line draft that is a command opens it again.
+    app.input.set_text("/mo");
+    app.sync_slash();
+    assert!(app.slash.is_open(), "the popup did not come back");
+}
+
+#[test]
+fn the_fingerprint_reads_the_first_word_and_the_length() {
+    use crate::input::fingerprint;
+    // Only the first word can change what the popup offers, so a draft that
+    // differs after it hashes the same: that is what keeps the per-frame check
+    // from walking a pasted paragraph.
+    let one = format!("/command {}", "x".repeat(10_000));
+    let other = format!("/command {}", "y".repeat(10_000));
+    assert_eq!(fingerprint(one.chars()), fingerprint(other.chars()));
+    // A different first word, or a different length, is a different draft.
+    assert_ne!(fingerprint("/command".chars()), fingerprint("/commit".chars()));
+    assert_ne!(fingerprint("/mo".chars()), fingerprint("/mo ".chars()));
+}

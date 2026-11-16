@@ -651,8 +651,11 @@ fn a_parked_call_is_drawn_as_waiting_until_the_decision() {
     });
     let states = tool_states(&app);
     assert!(
-        matches!(states[0], crate::transcript::ToolState::Failed(_)),
-        "the decided call is not a failure again: {states:?}"
+        matches!(
+            states[0],
+            crate::transcript::ToolState::Settled(crate::transcript::Decision::Denied, _)
+        ),
+        "the decided call does not state the answer: {states:?}"
     );
 }
 
@@ -667,4 +670,143 @@ fn a_refusal_that_arrives_before_its_prompt_is_still_parked() {
         matches!(states[0], crate::transcript::ToolState::Waiting(_)),
         "a refusal that reached the client before its prompt was drawn as a failure: {states:?}"
     );
+}
+
+/// The whole screen, as the pane draws it.
+fn screen(app: &mut App) -> String {
+    let backend = ratatui::backend::TestBackend::new(100, 30);
+    let mut terminal = ratatui::Terminal::new(backend).expect("a test backend");
+    crate::draw(&mut terminal, app).expect("the frame did not draw");
+    format!("{}", terminal.backend())
+}
+
+/// A refused call whose prompt is on screen.
+fn parked_call(app: &mut App, call: &str, command: &str, request: &str) {
+    app.pending_turn = true;
+    refused_call(app, call, command, request);
+    app.apply_event(&approval_pending(request, "bash"));
+}
+
+#[test]
+fn each_answer_states_its_own_outcome_on_the_row() {
+    let cases = [
+        (key(KeyCode::Char('y')), "allowed", "allow once"),
+        (key(KeyCode::Char('a')), "allowed always", "allow always"),
+        (key(KeyCode::Char('n')), "denied", "deny"),
+        (esc(), "denied", "esc"),
+    ];
+    for (pressed, word, what) in cases {
+        let mut app = app();
+        parked_call(&mut app, "c1", "ls", "r1");
+        assert!(screen(&mut app).contains("needs approval"), "{what}: not parked first");
+        app.on_key(pressed);
+        let text = screen(&mut app);
+        assert!(text.contains(word), "{what} does not say `{word}`:\n{text}");
+        assert!(!text.contains("failed"), "{what} says it failed:\n{text}");
+        assert!(!text.contains("needs approval"), "{what} still waits:\n{text}");
+        assert!(!text.contains('◐'), "{what} still wears the waiting glyph:\n{text}");
+    }
+}
+
+#[test]
+fn a_withdrawn_prompt_says_not_answered() {
+    let mut app = app();
+    parked_call(&mut app, "c1", "ls", "r1");
+    app.disconnect("the connection was lost");
+
+    let text = screen(&mut app);
+    assert!(
+        text.contains("not answered"),
+        "a lost connection left the row waiting:\n{text}"
+    );
+    assert!(!text.contains("needs approval"), "{text}");
+    assert!(!text.contains('◐'), "{text}");
+}
+
+#[test]
+fn a_cancelled_turn_marks_its_parked_row_not_answered() {
+    let mut app = app();
+    parked_call(&mut app, "c1", "ls", "r1");
+    app.pending_turn = true;
+    app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+
+    let text = screen(&mut app);
+    assert!(text.contains("not answered"), "ctrl+c left the row waiting:\n{text}");
+    assert!(!text.contains("needs approval"), "{text}");
+}
+
+#[test]
+fn a_turn_that_stops_marks_its_parked_row_not_answered() {
+    let mut app = app();
+    parked_call(&mut app, "c1", "ls", "r1");
+    app.apply_event(&ApiEvent::TurnStopped {
+        session_id: "s1".to_string(),
+        reason: horon_agent_sdk::api::TurnStopReason::Interrupted,
+        message: "the turn was interrupted".to_string(),
+        provider_stop_reason: None,
+    });
+
+    let text = screen(&mut app);
+    assert!(
+        text.contains("not answered"),
+        "a stopped turn left the row waiting:\n{text}"
+    );
+    assert!(!text.contains("needs approval"), "{text}");
+}
+
+#[test]
+fn parallel_parked_calls_settle_independently() {
+    let mut app = app();
+    app.pending_turn = true;
+    refused_call(&mut app, "c1", "ls", "r1");
+    refused_call(&mut app, "c2", "pwd", "r2");
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.apply_event(&approval_pending("r2", "bash"));
+
+    app.on_key(key(KeyCode::Char('y')));
+    let text = screen(&mut app);
+    assert!(text.contains("allowed"), "the first answer is missing:\n{text}");
+    assert!(
+        text.matches("needs approval").count() >= 1,
+        "the second call settled with the first:\n{text}"
+    );
+
+    app.on_key(key(KeyCode::Char('n')));
+    let text = screen(&mut app);
+    assert!(text.contains("denied"), "the second answer is missing:\n{text}");
+    assert!(
+        !text.contains("needs approval"),
+        "a parked row was left behind:\n{text}"
+    );
+}
+
+#[test]
+fn a_real_failure_is_still_failed() {
+    let mut app = app();
+    app.apply_event(&tool_start("c1", "read"));
+    app.apply_event(&ApiEvent::ToolDone {
+        session_id: "s1".to_string(),
+        call_id: "c1".to_string(),
+        name: "read".to_string(),
+        output: String::new(),
+        error: Some("Error: read a.txt: no such file or directory".to_string()),
+        verdict: None,
+    });
+    let text = screen(&mut app);
+    assert!(text.contains("failed"), "{text}");
+    assert!(text.contains("no such file"), "{text}");
+    assert!(!text.contains("allowed") && !text.contains("denied"), "{text}");
+}
+
+#[test]
+fn clear_does_not_resurrect_a_parked_label() {
+    let mut app = app();
+    parked_call(&mut app, "c1", "ls", "r1");
+    app.run_local(crate::commands::Local::Clear, "");
+    let text = screen(&mut app);
+    assert!(
+        !text.contains("needs approval"),
+        "/clear left the parked label:\n{text}"
+    );
+    assert!(!text.contains("◐") || text.contains("prompt"), "{text}");
 }

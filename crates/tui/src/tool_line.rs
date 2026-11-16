@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme::{Symbols, Theme};
-use crate::transcript::{ToolCall, ToolState};
+use crate::transcript::{Decision, ToolCall, ToolState};
 
 /// Preview rows kept by default, as `transcript.tool_output_lines` resolves.
 pub const DEFAULT_OUTPUT_LINES: usize = 3;
@@ -246,17 +246,24 @@ pub fn format_elapsed(millis: u64) -> String {
 /// usually longer than the pane, and splicing it into the head would push the
 /// duration and the argument off the right edge where neither can be read.
 pub fn lines(call: &ToolCall, theme: &Theme, symbols: Symbols, width: u16) -> Vec<Line<'static>> {
-    // A parked call is not a failure: the approval gate refused it because the
-    // mode asks first, so it wears the in-progress glyph and its own word until
-    // the decision arrives. Nothing ran, so there is no duration to print.
+    // A call the approval gate refused never ran, so it is never drawn as a
+    // failure: it waits under the in-progress glyph, and once the request is
+    // decided it says what the answer was. The dot is the quietest marker the
+    // client has and it is not the tick of a call that ran.
     let (glyph, color) = match &call.state {
         ToolState::Running | ToolState::Waiting(_) => (symbols.tool_running, theme.transcript.tool_running),
         ToolState::Done => (symbols.tool_done, theme.transcript.tool_done),
         ToolState::Failed(_) => (symbols.tool_error, theme.transcript.tool_error),
+        ToolState::Settled(Decision::Allowed | Decision::AllowedAlways, _) => (symbols.bullet, theme.transcript.notice),
+        ToolState::Settled(Decision::Denied | Decision::Unanswered, _) => {
+            (symbols.tool_error, theme.transcript.tool_error)
+        }
     };
-    let waiting = matches!(call.state, ToolState::Waiting(_));
+    // Neither a parked call nor a decided one ran, so neither has a duration,
+    // and neither previews the refusal the harness echoed back as output.
+    let settled = matches!(call.state, ToolState::Waiting(_) | ToolState::Settled(_, _));
     let mut tail = format!(" {glyph} {}", call.state.label());
-    if !waiting && let Some(millis) = call.duration_ms {
+    if !settled && let Some(millis) = call.duration_ms {
         tail.push(' ');
         tail.push_str(&format_elapsed(millis));
     }
@@ -287,9 +294,7 @@ pub fn lines(call: &ToolCall, theme: &Theme, symbols: Symbols, width: u16) -> Ve
             Style::default().fg(color),
         )));
     }
-    // A waiting call's stored output is the gate's refusal echoed back by the
-    // harness, so the preview would print the sentence the head row replaced.
-    if let Some(output) = call.output.as_ref().filter(|_| !waiting) {
+    if let Some(output) = call.output.as_ref().filter(|_| !settled) {
         // A failed call's stored output is the failure text itself, so drawing
         // it again would say the same thing twice.
         // The head row is cut with a marker, so the marker comes off before the

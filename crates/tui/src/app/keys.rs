@@ -8,6 +8,7 @@ use crate::keys::{self, Key};
 use crate::overlays::settings::Outcome;
 use crate::prompts::{Prompt, Response};
 use crate::scroll;
+use crate::transcript::Decision;
 
 impl App {
     /// Translate one keystroke into an action, if it produced one.
@@ -59,10 +60,14 @@ impl App {
                     // daemon refuses a second answer to the same request, and a
                     // prompt still on screen invites one.
                     let covered = self.take_prompt();
-                    // The decision ends the wait here as well as in the event:
-                    // a call drawn as waiting goes back to the failure the
-                    // harness reported, whichever way it was answered.
-                    self.transcript.settle_request(&request_id);
+                    // The row says what the answer was; the event says the
+                    // same when it arrives, and deciding twice is harmless.
+                    let decision = match (approved, always) {
+                        (true, true) => Decision::AllowedAlways,
+                        (true, false) => Decision::Allowed,
+                        (false, _) => Decision::Denied,
+                    };
+                    self.transcript.decide_request(&request_id, decision);
                     self.transcript
                         .push_notice(approval_answer_line(&covered, approved, always));
                     return Some(Action::Approval {

@@ -10,7 +10,7 @@ use crate::tool_line::{
     DEFAULT_OUTPUT_LINES, MAX_INPUT_BYTES, MAX_OUTPUT_LINES, MAX_PREVIEW_CELLS, OutputHead, append_input, cut_output,
     format_elapsed, lines, summarize, truncate_cells,
 };
-use crate::transcript::{Item, ToolCall, ToolState, Transcript};
+use crate::transcript::{Decision, Item, ToolCall, ToolState, Transcript};
 
 fn call(input: &str) -> ToolCall {
     ToolCall {
@@ -465,7 +465,7 @@ fn a_parked_call_is_drawn_as_waiting_not_as_a_failure() {
 }
 
 #[test]
-fn a_real_failure_and_a_denial_are_still_drawn_as_failed() {
+fn a_real_failure_is_still_drawn_as_failed() {
     let theme = Theme::default();
     let symbols = Symbols::default();
     let mut failed = call("");
@@ -474,34 +474,43 @@ fn a_real_failure_and_a_denial_are_still_drawn_as_failed() {
     let text = drawn(&lines(&failed, &theme, symbols, 100));
     assert!(text.contains("failed"), "{text}");
     assert!(text.contains(symbols.tool_error), "{text}");
+    assert!(text.contains("no such file"), "{text}");
+}
 
-    // A denial ends the wait, so the line is the failure the harness reported
-    // and the refusal still names its request.
-    let mut transcript = Transcript::new();
-    transcript.tool_start("c1", "write");
-    transcript.tool_input("c1", r#"{"file_path":"/tmp/x"}"#);
-    transcript.tool_done("c1", "write", None, Some(&refusal("req_9")));
-    transcript.park_request("req_9");
-    let waiting = match &transcript.items()[0] {
-        Item::Tool(call) => call.state.clone(),
-        other => panic!("the call was not recorded: {other:?}"),
-    };
-    assert!(matches!(waiting, ToolState::Waiting(_)), "{waiting:?}");
-    transcript.settle_request("req_9");
-    let settled = match &transcript.items()[0] {
-        Item::Tool(call) => call.state.clone(),
-        other => panic!("the call was not recorded: {other:?}"),
-    };
-    assert!(matches!(settled, ToolState::Failed(_)), "{settled:?}");
-    assert!(
-        transcript.argument_summary_for_request("req_9").is_some(),
-        "a denied call stopped naming its request, so its prompt can no longer be paired"
-    );
-    let ToolState::Failed(message) = settled else {
-        unreachable!()
-    };
+#[test]
+fn a_decided_gate_call_states_the_answer_and_never_says_failed() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let cases = [
+        (Decision::Allowed, "allowed"),
+        (Decision::AllowedAlways, "allowed always"),
+        (Decision::Denied, "denied"),
+        (Decision::Unanswered, "not answered"),
+    ];
+    for (decision, word) in cases {
+        let mut settled = call(r#"{"file_path":"/tmp/x"}"#);
+        settled.name = "write".to_string();
+        settled.state = ToolState::Settled(decision, refusal("req_1"));
+        settled.duration_ms = Some(20);
+        let rows = lines(&settled, &theme, symbols, 100);
+        let text = drawn(&rows);
+        assert_eq!(rows.len(), 1, "the gate sentence is drawn again: {text}");
+        assert!(text.contains(word), "{decision:?} does not say `{word}`: {text}");
+        assert!(!text.contains("failed"), "{decision:?} says it failed: {text}");
+        assert!(!text.contains("needs approval"), "{decision:?} still waits: {text}");
+        if matches!(decision, Decision::Allowed | Decision::AllowedAlways) {
+            assert!(
+                !text.contains(symbols.tool_error),
+                "an allowed call wears the error glyph: {text}"
+            );
+        }
+        assert!(
+            !text.contains("0.0s") && !text.contains("0.2s"),
+            "{decision:?} kept a time: {text}"
+        );
+    }
+    // A denial is the one settled outcome allowed the error styling.
     let mut denied = call("");
-    denied.state = ToolState::Failed(message);
-    let text = drawn(&lines(&denied, &theme, symbols, 100));
-    assert!(text.contains("failed"), "a denial is not drawn as failed: {text}");
+    denied.state = ToolState::Settled(Decision::Denied, refusal("req_1"));
+    assert!(drawn(&lines(&denied, &theme, symbols, 100)).contains(symbols.tool_error));
 }

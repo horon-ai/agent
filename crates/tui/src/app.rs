@@ -22,6 +22,7 @@ use crate::sdk_bridge::Incoming;
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
+use crate::transcript::Decision;
 use crate::transcript::Transcript;
 
 mod commands;
@@ -480,9 +481,10 @@ impl App {
                         self.waiting_prompts.remove(index);
                     }
                 }
-                // The decision ends the wait: the line goes back to the failure
-                // the harness reported, whichever way it was answered.
-                self.transcript.settle_request(request_id);
+                // A decision made on another surface settles the row the same
+                // way one made here does.
+                self.transcript
+                    .decide_request(request_id, if *approved { Decision::Allowed } else { Decision::Denied });
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
@@ -559,12 +561,8 @@ impl App {
         Some(completion.matches.join("  "))
     }
 
-    /// Bring the slash popup in line with the draft.
-    ///
-    /// Called before the keys are read and before a frame is drawn: both need
-    /// the matches of the draft that is on screen, not of the one before it.
-    /// Draw the waiting line a refusal message names, when its request is
-    /// still parked.
+    /// Draw the waiting line a refusal message names, when its request is still
+    /// parked.
     fn park_line_naming(&mut self, message: &str) {
         let request = self
             .prompt
@@ -583,6 +581,10 @@ impl App {
         }
     }
 
+    /// Bring the slash popup in line with the draft.
+    ///
+    /// Called before the keys are read and before a frame is drawn: both need
+    /// the matches of the draft that is on screen, not of the one before it.
     pub fn sync_slash(&mut self) {
         // The list only ever offers the first word of a one-line draft, and a
         // message being written is neither. The fingerprint is what says the
