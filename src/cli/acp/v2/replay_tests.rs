@@ -338,6 +338,39 @@ async fn bad_cursor_invalid_params_without_replay() {
     client.close_stdin().await;
 }
 
+/// A `systemPrompt` is checked before `replayFrom`, so a resume that asks for
+/// a replay is refused with no update at all: no replayed message and no
+/// `replay_complete`.
+#[tokio::test]
+async fn system_prompt_invalid_params_without_replay() {
+    let (mut client, mut daemons) = v2_client().await;
+    let params = json!({"sessionId":SID,"cwd":CWD,"mcpServers":[],
+        "replayFrom":{"type":"start"},
+        "systemPrompt":{"mode":"append","content":[{"type":"text","text":"x"}]}});
+    let id = json!(1);
+    client.send(request(id.clone(), "session/resume", params.clone())).await;
+    let (before, response) = client.recv_response(id).await;
+    assert!(
+        before.is_empty(),
+        "{params}: a refused request emits nothing: {before:?}"
+    );
+    assert_eq!(updates(&before).len(), 0, "{params}: {before:?}");
+    assert_eq!(
+        response["error"]["code"], JSONRPC_INVALID_PARAMS,
+        "{params}: {response}"
+    );
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("systemPrompt"),
+        "{params}: {response}"
+    );
+    assert!(client.barrier("system-prompt").await.is_empty());
+    assert!(daemons.try_recv().is_err(), "a refused systemPrompt attaches nothing");
+    client.close_stdin().await;
+}
+
 /// The daemon end of one `session/new` up to its History: the Subscribe, then
 /// the History of the new session `new-1`.
 async fn serve_new_session(daemons: &mut mpsc::UnboundedReceiver<FakeDaemon>) -> FakeDaemon {

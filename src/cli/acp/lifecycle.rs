@@ -124,7 +124,26 @@ pub(super) struct SessionSetup {
     pub(super) mcp_servers: Vec<SessionMcpServer>,
 }
 
+/// Both schemas say an agent that cannot apply a request's `systemPrompt` must
+/// answer with an error instead of creating, loading or resuming the session
+/// (v1.32.0 `SystemPrompt`, alpha.16 `SystemPrompt`). This adapter advertises
+/// no `systemPrompt` capability and applies none, so every value except an
+/// omitted key or `null` is refused; both schemas treat those two as
+/// equivalent and they keep working as before.
+fn system_prompt_rejection(params: &Value) -> Option<String> {
+    match params.get("systemPrompt") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(
+            "systemPrompt is not supported: this agent cannot apply a system prompt, so omit it or send null"
+                .to_string(),
+        ),
+    }
+}
+
 pub(super) fn session_setup_from_params(params: &Value) -> std::result::Result<SessionSetup, String> {
+    if let Some(rejection) = system_prompt_rejection(params) {
+        return Err(rejection);
+    }
     Ok(SessionSetup {
         cwd: cwd_from_params(params)?,
         additional_dirs: additional_dirs_from_params(params)?,
@@ -1027,6 +1046,9 @@ impl AcpRuntime {
 /// `mcpServers` entries need a `type`, and `sse` is gone.
 fn session_setup_v2(params: &Value) -> std::result::Result<SessionSetup, RpcError> {
     let invalid = |message: String| RpcError::new(JSONRPC_INVALID_PARAMS, message);
+    if let Some(rejection) = system_prompt_rejection(params) {
+        return Err(invalid(rejection));
+    }
     Ok(SessionSetup {
         cwd: cwd_from_params(params).map_err(invalid)?,
         additional_dirs: additional_dirs_from_params(params).map_err(invalid)?,

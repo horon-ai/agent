@@ -88,17 +88,29 @@ struct Conn {
     client: AcpClient,
     label: String,
     sent: Vec<(Value, String)>,
+    /// The protocol version this connection negotiated, which its validator
+    /// checks every frame against.
+    version: u64,
 }
 
 impl Conn {
     fn v2(daemon: &AcpDaemon, label: &str) -> Self {
+        Self::for_version(daemon, label, 2)
+    }
+
+    fn v1(daemon: &AcpDaemon, label: &str) -> Self {
+        Self::for_version(daemon, label, 1)
+    }
+
+    fn for_version(daemon: &AcpDaemon, label: &str, version: u64) -> Self {
         let options = AcpClientOptions::new(daemon.env_pairs())
-            .protocol_version(2)
+            .protocol_version(version)
             .deadline(WAIT);
         Self {
             client: AcpClient::spawn(options),
             label: label.to_string(),
             sent: Vec::new(),
+            version,
         }
     }
 
@@ -106,7 +118,7 @@ impl Conn {
     fn initialize(&mut self) -> Value {
         let params = self.client.initialize_params();
         let result = self.ok("initialize", params);
-        assert_eq!(result["protocolVersion"], 2, "{}: {result}", self.label);
+        assert_eq!(result["protocolVersion"], self.version, "{}: {result}", self.label);
         result
     }
 
@@ -169,7 +181,7 @@ impl Conn {
     /// Every frame of this connection, in both directions, against the v2
     /// schema; prints the tally and returns the number of violations.
     fn schema_violations(&self) -> usize {
-        let mut agent = FrameValidator::for_version(2, Direction::AgentToClient);
+        let mut agent = FrameValidator::for_version(self.version, Direction::AgentToClient);
         for (id, method) in &self.sent {
             agent.note_request(id, method);
         }
@@ -181,7 +193,7 @@ impl Conn {
                     .unwrap_or_else(|error| panic!("{}: stdout line is not JSON ({error}): {line}", self.label))
             })
             .collect();
-        let mut client = FrameValidator::for_version(2, Direction::ClientToAgent);
+        let mut client = FrameValidator::for_version(self.version, Direction::ClientToAgent);
         for value in &parsed {
             for entry in entries(value) {
                 if let (Some(method), Some(id)) = (entry.get("method").and_then(Value::as_str), entry.get("id")) {
@@ -577,4 +589,118 @@ fn replay_absent_with_an_unsupported_cursor() {
         stream.kinds
     );
     second.assert_schema_clean();
+}
+
+/// One connection at `version`, from the same mock client the v2 tests use.
+fn system_prompt_conn(daemon: &AcpDaemon, label: &str, version: u64) -> Conn {
+    match version {
+        1 => Conn::v1(daemon, label),
+        _ => Conn::v2(daemon, label),
+    }
+}
+
+/// How many sessions `session/list` reports on this connection.
+fn session_count(conn: &mut Conn) -> usize {
+    let listed = conn.ok("session/list", json!({}));
+    listed["sessions"].as_array().map_or(0, Vec::len)
+}
+
+/// `system_prompt_null_` happy path on one protocol version: an omitted
+/// `systemPrompt` and an explicit `null` are the same request, so `session/new`
+/// answers with a session id for both, `initialize` advertises no capability
+/// for it, and every frame of the connection passes its schema.
+fn system_prompt_null_case(version: u64, label: &str) {
+    let daemon = AcpDaemon::start("acp");
+    let work = work_dir(&daemon);
+    let mut conn = system_prompt_conn(&daemon, label, version);
+    let initialize = conn.initialize();
+    let capabilities = match version {
+        1 => &initialize["agentCapabilities"]["sessionCapabilities"],
+        _ => &initialize["capabilities"]["session"],
+    };
+    eprintln!("SYSTEM-PROMPT-NULL {label} v={version} initialize_capabilities={capabilities}");
+    assert!(
+        capabilities.get("systemPrompt").is_none(),
+        "{label}: no systemPrompt capability is advertised: {capabilities}"
+    );
+    for (case, params) in [
+        ("omitted", json!({"cwd": cwd_str(&work), "mcpServers": []})),
+        (
+            "null",
+            json!({"cwd": cwd_str(&work), "mcpServers": [], "systemPrompt": Value::Null}),
+        ),
+    ] {
+        let id = conn.send("session/new", params);
+        let result = conn
+            .wait("session/new", &id)
+            .unwrap_or_else(|error| panic!("{label}: {case} session/new failed: {error}"));
+        let session = result["sessionId"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{label}: {case} session/new has no sessionId: {result}"))
+            .to_string();
+        eprintln!("SYSTEM-PROMPT-NULL {label} v={version} method=session/new systemPrompt={case} sessionId={session}");
+    }
+    conn.assert_schema_clean();
+    conn.client.close_stdin();
+    conn.client.wait_exit(WAIT).expect("the adapter exits on stdin EOF");
+}
+
+/// `system_prompt_rejected_` failure path on one protocol version: every
+/// lifecycle method that carries a `systemPrompt` this agent cannot apply is
+/// refused with `-32602`, and the session count `session/list` reports does not
+/// grow. Load and resume name a session that really exists, so the refusal
+/// comes from the `systemPrompt` and not from an unknown id.
+fn system_prompt_rejected_case(version: u64, label: &str) {
+    let daemon = AcpDaemon::start("acp");
+    let work = work_dir(&daemon);
+    let (session, _) = finished_turn(&daemon, &format!("{label}-setup"), "SP_REJECT hello", "sp reply", &work);
+    let mut conn = system_prompt_conn(&daemon, label, version);
+    conn.initialize();
+    let methods: &[&str] = if version == 1 {
+        &["session/new", "session/load", "session/resume"]
+    } else {
+        &["session/new", "session/resume"]
+    };
+    for method in methods {
+        let before = session_count(&mut conn);
+        let mut params = json!({
+            "cwd": cwd_str(&work),
+            "mcpServers": [],
+            "systemPrompt": {"mode": "append", "content": [{"type": "text", "text": "x"}]},
+        });
+        if *method != "session/new" {
+            params["sessionId"] = json!(session.as_str());
+        }
+        let error = conn.err(method, params);
+        let after = session_count(&mut conn);
+        eprintln!(
+            "SYSTEM-PROMPT-REJECTED {label} v={version} method={method} code={} sessions_before={before} sessions_after={after} message={}",
+            error["code"], error["message"]
+        );
+        assert_eq!(error["code"], -32602, "{label}: {method}: {error}");
+        assert_eq!(after, before, "{label}: a rejected {method} created no session");
+    }
+    conn.assert_schema_clean();
+    conn.client.close_stdin();
+    conn.client.wait_exit(WAIT).expect("the adapter exits on stdin EOF");
+}
+
+#[test]
+fn system_prompt_null_creates_the_session_v1() {
+    system_prompt_null_case(1, "sp-null-v1");
+}
+
+#[test]
+fn system_prompt_null_creates_the_session_v2() {
+    system_prompt_null_case(2, "sp-null-v2");
+}
+
+#[test]
+fn system_prompt_rejected_on_every_lifecycle_method_v1() {
+    system_prompt_rejected_case(1, "sp-reject-v1");
+}
+
+#[test]
+fn system_prompt_rejected_on_every_lifecycle_method_v2() {
+    system_prompt_rejected_case(2, "sp-reject-v2");
 }
