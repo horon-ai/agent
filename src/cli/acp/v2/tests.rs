@@ -1,4 +1,4 @@
-//! Every v2 builder is validated against the vendored `schema-v2.0.0-alpha.13`
+//! Every v2 builder is validated against the vendored `schema-v2.0.0-alpha.16`
 //! `$defs` entry it produces, plus the IS-1/IS-6/IS-12/IS-15 rules that schema
 //! validation cannot express.
 
@@ -9,9 +9,9 @@ use super::negotiate::{ACP_V2_PROTOCOL_VERSION, AcpVersion, InitError, select};
 use super::shapes::{
     ChunkKind, ConfigValue, MessageKind, ToolCallPatch, auth_methods, available_commands, command_subject,
     config_options, diff_content, initialize_response, mcp_servers, message_chunk, message_ids,
-    parse_set_config_option, permission_request, plan_update, session_info, state_idle, state_requires_action,
-    state_running, terminal_content, terminal_finished, terminal_output, terminal_started, tool_call_content_chunk,
-    tool_call_subject, tool_call_update, user_message, whole_message,
+    parse_set_config_option, permission_request, plan_update, replay_complete, session_info, state_idle,
+    state_requires_action, state_running, terminal_content, terminal_finished, terminal_output, terminal_started,
+    tool_call_content_chunk, tool_call_subject, tool_call_update, user_message, whole_message,
 };
 use crate::protocol::{FileDiffWire, PlanEntryWire, SessionMcpServer};
 use serde_json::{Value, json};
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-const SCHEMA_JSON: &str = include_str!("../../../../tests/fixtures/acp/schema-v2.0.0-alpha.13.json");
+const SCHEMA_JSON: &str = include_str!("../../../../tests/fixtures/acp/schema-v2.0.0-alpha.16.json");
 
 fn validator(def_name: &str) -> Arc<jsonschema::Validator> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> = OnceLock::new();
@@ -136,7 +136,7 @@ fn error_frames_match_schema() {
     assert_eq!(invalid.code, -32602);
     let not_found = RpcError::session_not_found("sess-1");
 
-    // alpha.13 names the `data` of the two data-carrying codes: `-32022` is an
+    // alpha.16 names the `data` of the two data-carrying codes: `-32022` is an
     // `UnsupportedProtocolVersionErrorData`, `-32002` a
     // `SessionNotFoundErrorData`. The plain errors carry none.
     let cases: [(&RpcError, i64, Option<&str>); 3] = [
@@ -314,7 +314,7 @@ fn config_options_matches_schema() {
         &json!({ "configOptions": config_options(v1_options.as_array().unwrap()) }),
     );
 
-    // alpha.13 requires `minItems: 1` for a select's values and for each
+    // alpha.16 requires `minItems: 1` for a select's values and for each
     // group's values, so anything that would publish an empty list is dropped
     // instead of sent as a frame the schema refuses.
     let empties = json!([
@@ -695,6 +695,14 @@ fn terminal_finished_matches_schema() {
         signalled["exitStatus"],
         json!({ "exitCode": null, "signal": "SIGTERM" })
     );
+}
+
+#[test]
+fn replay_complete_matches_schema() {
+    let update = replay_complete();
+    assert_matches("ReplayComplete", &update);
+    assert_update_matches(&update);
+    assert_eq!(update, json!({ "sessionUpdate": "replay_complete" }));
 }
 
 #[test]

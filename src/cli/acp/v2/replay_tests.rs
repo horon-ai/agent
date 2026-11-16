@@ -110,6 +110,14 @@ fn updates(lines: &[Value]) -> Vec<&Value> {
         .collect()
 }
 
+/// How many `replay_complete` updates `lines` carry.
+fn replay_completes(lines: &[Value]) -> usize {
+    kinds(lines)
+        .iter()
+        .filter(|kind| kind.as_str() == "replay_complete")
+        .count()
+}
+
 /// Every update is a valid v2 update, and none is a v1 `tool_call` or a
 /// `current_mode_update`.
 fn assert_v2_updates(lines: &[Value]) {
@@ -179,6 +187,11 @@ async fn resume_without_cursor_does_not_replay() {
             ["session_info_update", "state_update:idle"],
             "attached without replay: {before:?}"
         );
+        assert_eq!(
+            replay_completes(&before),
+            0,
+            "no replay, no replay_complete: {before:?}"
+        );
         assert_v2_updates(&before);
         assert_matches("ResumeSessionResponse", &response["result"]);
         client.close_stdin().await;
@@ -199,6 +212,7 @@ async fn resume_from_start_replays_upserts_then_snapshot_then_response() {
             "agent_message",
             "tool_call_update",
             "agent_message",
+            "replay_complete",
             "session_info_update",
             "state_update:idle"
         ],
@@ -226,11 +240,31 @@ async fn resume_from_start_replays_upserts_then_snapshot_then_response() {
             "locations":[{"path":"/work/a.rs"}],"rawInput":{"file_path":"a.rs"}})
     );
     assert_eq!(updates[4]["messageId"], "m1:a2");
+    assert_eq!(updates[5], &json!({"sessionUpdate":"replay_complete"}));
     assert!(
-        updates[6].get("stopReason").is_none(),
+        updates[7].get("stopReason").is_none(),
         "an idle snapshot reports no completion: {}",
-        updates[6]
+        updates[7]
     );
+    assert_matches("ResumeSessionResponse", &response["result"]);
+    client.close_stdin().await;
+}
+
+/// An empty history replays nothing, so `replay_complete` is the first update
+/// of the resume: the client still learns that the replay is over.
+#[tokio::test]
+async fn empty_history_replay_reports_complete() {
+    let (mut client, mut daemons) = v2_client().await;
+    client.send(resume(json!(1), Some(json!({"type":"start"})))).await;
+    let _daemon = serve_attach(&mut daemons, json!([]), vec![idle_snapshot()]).await;
+    let (before, response) = client.recv_response(json!(1)).await;
+    assert_eq!(
+        kinds(&before),
+        ["replay_complete", "session_info_update", "state_update:idle"],
+        "{before:?}"
+    );
+    assert_v2_updates(&before);
+    assert_eq!(updates(&before)[0], &json!({"sessionUpdate":"replay_complete"}));
     assert_matches("ResumeSessionResponse", &response["result"]);
     client.close_stdin().await;
 }
@@ -290,12 +324,50 @@ async fn bad_cursor_invalid_params_without_replay() {
         let (before, response) = client.recv_response(id).await;
         assert!(before.is_empty(), "{cursor}: {before:?}");
         assert_eq!(
+            replay_completes(&before),
+            0,
+            "a refused cursor replays nothing: {cursor}: {before:?}"
+        );
+        assert_eq!(
             response["error"]["code"], JSONRPC_INVALID_PARAMS,
             "{cursor}: {response}"
         );
     }
     assert!(client.barrier("cursors").await.is_empty());
     assert!(daemons.try_recv().is_err(), "a refused cursor attaches nothing");
+    client.close_stdin().await;
+}
+
+/// A `systemPrompt` is checked before `replayFrom`, so a resume that asks for
+/// a replay is refused with no update at all: no replayed message and no
+/// `replay_complete`.
+#[tokio::test]
+async fn system_prompt_invalid_params_without_replay() {
+    let (mut client, mut daemons) = v2_client().await;
+    let params = json!({"sessionId":SID,"cwd":CWD,"mcpServers":[],
+        "replayFrom":{"type":"start"},
+        "systemPrompt":{"mode":"append","content":[{"type":"text","text":"x"}]}});
+    let id = json!(1);
+    client.send(request(id.clone(), "session/resume", params.clone())).await;
+    let (before, response) = client.recv_response(id).await;
+    assert!(
+        before.is_empty(),
+        "{params}: a refused request emits nothing: {before:?}"
+    );
+    assert_eq!(updates(&before).len(), 0, "{params}: {before:?}");
+    assert_eq!(
+        response["error"]["code"], JSONRPC_INVALID_PARAMS,
+        "{params}: {response}"
+    );
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("systemPrompt"),
+        "{params}: {response}"
+    );
+    assert!(client.barrier("system-prompt").await.is_empty());
+    assert!(daemons.try_recv().is_err(), "a refused systemPrompt attaches nothing");
     client.close_stdin().await;
 }
 

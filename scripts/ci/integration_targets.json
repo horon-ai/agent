@@ -4,6 +4,11 @@
   "targets": [
     {
       "package": "horon-agent",
+      "target": "acp_conformance",
+      "min_passed": 11
+    },
+    {
+      "package": "horon-agent",
       "target": "acp_infra",
       "min_passed": 30,
       "skipped": [
@@ -65,6 +70,11 @@
       "package": "horon-agent",
       "target": "removed_panel_compat",
       "min_passed": 4
+    },
+    {
+      "package": "horon-agent",
+      "target": "sdk_reports",
+      "min_passed": 2
     },
     {
       "package": "horon-agent",
@@ -195,6 +205,11 @@
       "package": "horon-agent-sdk",
       "target": "message_modes_api",
       "min_passed": 4
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "reports_api",
+      "min_passed": 9
     },
     {
       "package": "horon-agent-sdk",

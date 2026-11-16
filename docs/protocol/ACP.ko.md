@@ -2,7 +2,7 @@
 
 언어: [English](ACP.md) | **한국어**
 
-horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent Client Protocol(ACP) v1과 v2를 한 엔드포인트에서 함께 지원한다. `horon acp`를 실행하면 표준 입출력으로 JSON-RPC 메시지를 주고받는 ACP 에이전트가 된다. v1은 안정판이고 메시지는 공식 `schema-v1.26.0`에 맞춘다. v2는 `schema-v2.0.0-alpha.13`의 안정(stable) 부분에 맞춘다. 이 문서의 v1 절은 v1 연결의 동작을 설명하고, v2 연결의 차이는 [ACP v2](#acp-v2) 절에 모았다.
+horon agent는 에디터에서 외부 에이전트로 붙을 수 있도록 Agent Client Protocol(ACP) v1과 v2를 한 엔드포인트에서 함께 지원한다. `horon acp`를 실행하면 표준 입출력으로 JSON-RPC 메시지를 주고받는 ACP 에이전트가 된다. v1은 안정판이고 메시지는 공식 `schema-v1.32.0`에 맞춘다. v2는 `schema-v2.0.0-alpha.16`의 안정(stable) 부분에 맞춘다. 이 문서의 v1 절은 v1 연결의 동작을 설명하고, v2 연결의 차이는 [ACP v2](#acp-v2) 절에 모았다.
 
 ## 실행
 
@@ -100,6 +100,8 @@ Neovim과 VS Code의 ACP 플러그인도 같은 두 값(command, args)을 받는
 | `session/delete` | 세션과 세션별 파일을 디스크에서 영구 삭제한다 |
 
 `session/list`는 `cwd`로 거를 수 있고, 한 번에 50개씩 돌려준다. 다음 페이지는 `nextCursor`로 받는다. 잘못된 cursor는 `-32602`이고, 결과가 없으면 빈 배열이다.
+
+**`systemPrompt`.** 에이전트는 요청의 시스템 프롬프트를 적용할 수 없으므로 `systemPrompt` 능력을 광고하지 않는다. v1 `initialize`의 `agentCapabilities.sessionCapabilities`에 `systemPrompt` 항목이 없다. 두 스키마 모두 적용할 수 없는 에이전트에게 세션을 만들거나 불러오거나 재개하는 대신 오류로 답하라고 요구하므로, `session/new`, `session/load`, `session/resume`에 `null`이 아닌 `systemPrompt`를 보내면 세션을 만들거나 붙이기 전에 `-32602`로 거절한다. 필드를 빼는 것과 `null`은 같으며 둘 다 이전처럼 동작한다.
 
 `session/delete`는 세션을 디스크에서 지운다. 대화 기록과 저널, 아티팩트, 그리고 세션 아이디로 이름 붙은 모든 파일(할 일, 목표 첨부, 소프트 인터럽트, 라이터 리스, 존재 표시, 노트, 런타임 저널, 수정 통계)을 함께 지운다. 지운 뒤에는 되살릴 수 없으므로 `session/close`와 다른 동작이고, 보관된 세션도 다른 세션과 똑같이 지운다. 이미 없는 세션에 다시 보내도 성공하므로 몇 번을 보내도 결과가 같다. 그 세션을 위해 턴이 돌고 있거나, 다른 프로세스가 스트리밍 중이거나, 클라이언트가 아직 붙어 있을 때만 `-32603`(다른 horon agent 클라이언트에서 열려 있음)으로 거절한다. 살아 있는 라이터 밑에서 지우면 그 라이터가 지운 파일에 다시 쓰는 경쟁이 생기기 때문이다. 이 연결이 로드한 세션은 먼저 닫고, 데몬이 재연결 유예로 유휴 상태로 들고 있는 세션도 닫는다. 둘 다 대화 기록에 덧붙일 수 없다. `session/close`는 응답하기 전에 데몬의 연결 등록을 해제하므로, 닫은 직후 다른 연결에서 보낸 삭제가 그 연결을 붙어 있는 것으로 보지 않는다.
 
@@ -290,7 +292,7 @@ v2 연결이 받는 메서드는 `initialize`, `auth/login`, `auth/logout`, `ses
 
 **설정 옵션과 슬래시 명령.** 옵션은 `configId`와 `groupId`를 쓰고 `mode`(category `mode`)가 항상 첫 번째다. `session/set_config_option`은 문자열 값을 가진 `type: "id"` 또는 boolean을 가진 `type: "boolean"`을 받고 전체 목록을 돌려준다. boolean 옵션이 없으므로 boolean 값은 `-32602`다. 변경은 `current_mode_update`가 아니라 `config_option_update`로 알린다. 슬래시 명령은 `type: "command"`와 `input: {type: "text", hint}`를 담는다. `session/new`와 `session/resume` 응답에는 `configOptions`와 `availableCommands`가 들어가며(비어 있으면 필드를 생략한다) `modes`는 없다.
 
-**세션 설정.** `session/new`와 `session/resume`은 절대 경로 `cwd`와 선택 항목 `additionalDirectories`(매번 전체 목록), `mcpServers`를 받는다. `mcpServers`의 각 항목은 `type`이 `stdio`나 `http`여야 한다. `sse`나 빠진 `type`, 광고하지 않은 `http`는 `-32602`다. `session/resume`에 `replayFrom`이 없거나 `null`이면 기록 없이 붙고, `{type: "start"}`이면 응답 전에 대화 전체를 `user_message`, `agent_thought`, `agent_message`, 완료 상태 `tool_call_update`로 다시 보낸다. 다른 cursor는 `-32602`다. `session/list`는 `{sessions: [{sessionId, cwd, title?, updatedAt?, additionalDirectories?}], nextCursor?}`를 돌려주고, 잘못된 cursor는 `-32602`다. `sessionId`를 받는 메서드에 모르는 세션을 보내면 `data.sessionId`를 담은 `-32002`다. v1 세션을 v2로 다시 열면 저장된 id로 재생한다. 이미 떠 있는 데몬이 v2를 모르는 이전 빌드면 `session/new`와 `session/resume`은 데몬을 재시작하라는 `-32603`으로 답한다. 다른 클라이언트가 쓰고 있을 수 있으므로 데몬을 직접 끄지는 않는다.
+**세션 설정.** `session/new`와 `session/resume`은 절대 경로 `cwd`와 선택 항목 `additionalDirectories`(매번 전체 목록), `mcpServers`를 받는다. `mcpServers`의 각 항목은 `type`이 `stdio`나 `http`여야 한다. `sse`나 빠진 `type`, 광고하지 않은 `http`는 `-32602`다. `null`이 아닌 `systemPrompt`는 v1과 같이 두 메서드 모두에서 `-32602`다. `capabilities.session`에 `systemPrompt`를 광고하지 않기 때문이다. `session/resume`에 `replayFrom`이 없거나 `null`이면 기록 없이 붙고, `{type: "start"}`이면 응답 전에 대화 전체를 `user_message`, `agent_thought`, `agent_message`, 완료 상태 `tool_call_update`로 다시 보낸다. cursor를 담은 재개는 그 뒤에 `replay_complete` 업데이트를 정확히 한 번 보내며, 마지막으로 재생한 업데이트 다음이고 `session_info_update`, `state_update`, 응답보다 앞이다. 기록이 비어 있어도 보내고, cursor가 없는 재개는 보내지 않는다. 다른 cursor는 `-32602`이고 아무것도 재생하지 않으므로 `replay_complete`도 따라오지 않는다. `session/list`는 `{sessions: [{sessionId, cwd, title?, updatedAt?, additionalDirectories?}], nextCursor?}`를 돌려주고, 잘못된 cursor는 `-32602`다. `sessionId`를 받는 메서드에 모르는 세션을 보내면 `data.sessionId`를 담은 `-32002`다. v1 세션을 v2로 다시 열면 저장된 id로 재생한다. 이미 떠 있는 데몬이 v2를 모르는 이전 빌드면 `session/new`와 `session/resume`은 데몬을 재시작하라는 `-32603`으로 답한다. 다른 클라이언트가 쓰고 있을 수 있으므로 데몬을 직접 끄지는 않는다.
 
 **요청 id.** 아직 답하지 않은 요청과 같은 id로 다시 요청하면 그 요청은 `-32600`이다. batch 안에서 id가 겹쳐도 같고, batch 응답 배열은 항목마다 답을 하나씩 담아 항상 나간다. `session/close`가 시작된 뒤 도착한 `session/prompt`는 데몬에 전달하지 않고 `-32603`으로 답한다.
 
@@ -325,7 +327,7 @@ bash scripts/test/acp_tck.sh --protocol-version 2               # 공식 acp-tck
 cargo test --locked -p horon-agent --test acp_tck -- --ignored --test-threads=1   # v1과 v2 TCK
 ```
 
-`tests/acp_stdio_v2.rs`는 v2 시나리오 IS-1부터 IS-21까지와 v1·v2 병행 시나리오를 돌리고, 프레임을 `tests/fixtures/acp/schema-v2.0.0-alpha.13.json`으로 검증한다. IS-16은 `tool_call/cancel`, IS-17은 `terminal/cancel`과 `background` 목록, IS-18은 `terminal_output_chunk`, IS-19는 오디오 prompt, IS-20은 실시간 소프트 인터럽트, IS-21은 작업 중 prompt 보류를 실제 데몬으로 확인한다. `scripts/test/acp_tck.sh`는 `--protocol-version 1|2`를 받고 기본값은 v1이다. 공식 acp-tck는 자체 v2 스키마 사본(alpha.9, unstable)으로 판정하므로 TCK 결과는 alpha.13 적합성의 근거가 아니다. alpha.13으로 바꾸기 전 통합 브랜치에서 TCK 테스트 두 개(v1, v2)가 모두 통과했고 판정은 둘 다 적합(conformant)이었다. 그때 v2 필수 항목은 24건 통과, 기능 항목은 49건 통과에 16건 건너뜀이며 실패는 없었다. v1 필수 항목은 31건 통과였다.
+`tests/acp_stdio_v2.rs`는 v2 시나리오 IS-1부터 IS-21까지와 v1·v2 병행 시나리오를 돌리고, 프레임을 `tests/fixtures/acp/schema-v2.0.0-alpha.16.json`으로 검증한다. IS-16은 `tool_call/cancel`, IS-17은 `terminal/cancel`과 `background` 목록, IS-18은 `terminal_output_chunk`, IS-19는 오디오 prompt, IS-20은 실시간 소프트 인터럽트, IS-21은 작업 중 prompt 보류를 실제 데몬으로 확인한다. `scripts/test/acp_tck.sh`는 `--protocol-version 1|2`를 받고 기본값은 v1이다. 공식 acp-tck는 자체 v2 스키마 사본(alpha.9, unstable)으로 판정하므로 TCK 결과는 alpha.16 적합성의 근거가 아니다. alpha.16으로 바꾸기 전 통합 브랜치에서 TCK 테스트 두 개(v1, v2)가 모두 통과했고 판정은 둘 다 적합(conformant)이었다. 그때 v2 필수 항목은 24건 통과, 기능 항목은 49건 통과에 16건 건너뜀이며 실패는 없었다. v1 필수 항목은 31건 통과였다.
 
 ## 설정
 
@@ -346,6 +348,7 @@ protocol_v2 = true     # false면 모든 클라이언트에 v1로만 답한다
 
 - v1 연결은 `logout`을 지원하지 않는다. v2 연결의 `auth/logout`은 [연결 단위 `auth/logout`](#연결-단위-authlogout)을 본다.
 - v1 연결은 `audio` 입력을 광고하지 않는다. `systemPrompt` 세션 기능은 v1과 v2 모두 광고하지 않는다.
+- 이전 빌드는 `systemPrompt`를 무시하고 세션을 만들었지만, 이제 `null`이 아닌 값을 보내면 `-32602`를 받는다. 필드를 빼거나 `null`을 보내야 한다.
 - v2의 한계는 [v2의 알려진 한계](#v2의-알려진-한계)에 따로 적었다.
 - URL 방식 elicitation은 쓰지 않는다.
 - 터미널 위임은 포그라운드, 비PTY, 비백그라운드 `bash` 호출에만 적용한다.
@@ -355,7 +358,7 @@ protocol_v2 = true     # false면 모든 클라이언트에 v1로만 답한다
 
 ## 적합성 검증
 
-`cargo test --locked -p horon-agent --test acp_stdio`는 통합 시나리오 IS-1부터 IS-15까지를 돌리고, v1 `authMethods` 프레임을 확인하는 골든 검사를 함께 돌린다. 모든 프레임은 `tests/fixtures/acp/schema-v1.26.0.json`으로 검증한다.
+`cargo test --locked -p horon-agent --test acp_stdio`는 통합 시나리오 IS-1부터 IS-15까지를 돌리고, v1 `authMethods` 프레임을 확인하는 골든 검사를 함께 돌린다. 모든 프레임은 `tests/fixtures/acp/schema-v1.32.0.json`으로 검증한다.
 
 ```bash
 # 공식 acp-tck v1 스위트 (고정 커밋, 격리된 데몬)
@@ -370,5 +373,7 @@ ACP_TCK_REQUIRE_PASS=<요구사항 id,...> bash scripts/test/acp_tck.sh
 ```bash
 cargo test --locked -p horon-agent --test acp_tck -- --ignored --nocapture
 ```
+
+`cargo test --locked -p horon-agent --test acp_conformance`는 `tests/acp_conformance.rs`의 시험 열한 개를 돌린다. 셋은 v2 스키마가 정한 프레임 수준 `id` 규칙을 확인한다. `Error` 응답은 `null`을 담을 수 있지만 `Result` 응답과 요청은 담을 수 없다. 넷은 `replay_complete`를 고정한다. cursor를 담은 재개가 끝난 턴 뒤에 보내는 업데이트 하나, 빈 기록이 보내는 업데이트 하나, cursor를 빼거나 쓸 수 없는 값을 보냈을 때 오지 않는다는 점이다. 넷은 `systemPrompt`를 고정한다. `null`은 v1과 v2에서 세션을 만들고, 그 밖의 값은 두 버전의 모든 생명주기 메서드에서 거절한다. v2 실행은 각자 데몬을 띄우고 모든 프레임을 `tests/fixtures/acp/schema-v2.0.0-alpha.16.json`으로 검증한다.
 
 세션 생명주기와 인증은 `tests/acp_lifecycle.rs`가, 테스트 지원 코드는 `tests/acp_infra.rs`가 다룬다. 공식 스키마 사본과 출처는 `tests/fixtures/acp/README.md`에 있다.

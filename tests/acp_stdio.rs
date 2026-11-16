@@ -5,7 +5,7 @@
 //! profile and a provider profile pointed at the scripted upstream) and drives the
 //! shipped `horon-agent acp` binary over stdio through the mock client. Each
 //! test then validates every frame in both directions against the vendored
-//! `schema-v1.26.0.json` and asserts zero violations. Frames a test writes on
+//! `schema-v1.32.0.json` and asserts zero violations. Frames a test writes on
 //! purpose to probe an error path are named as such and left out of the
 //! client-direction count; the agent's answers to them are still validated.
 
