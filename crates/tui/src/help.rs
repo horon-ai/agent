@@ -80,7 +80,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "approve this call and every later call like it",
     ),
     (ids::PROMPT_DENY, "deny the parked tool call"),
-    (ids::PROMPT_DISMISS, "close the prompt without answering"),
+    (ids::PROMPT_DISMISS, "deny the parked call; a question stays open"),
     (ids::PROMPT_CONFIRM, "confirm a multi-choice question"),
 ];
 

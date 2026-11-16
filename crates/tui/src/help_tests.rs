@@ -207,7 +207,7 @@ fn a_remapped_key_is_the_one_the_listing_shows() {
     // The key it moved off is still listed for the action that keeps it.
     let dismiss = rows
         .iter()
-        .find(|row| row.right == "close the prompt without answering")
+        .find(|row| row.right == "deny the parked call; a question stays open")
         .expect("the dismiss row");
     assert_eq!(dismiss.left, "esc");
 }

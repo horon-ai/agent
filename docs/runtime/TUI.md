@@ -196,7 +196,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.allow` | `y` | Approve the parked tool call once |
 | `prompt.allow_always` | `a` | Approve this call and every later call like it |
 | `prompt.deny` | `n` | Deny the parked tool call |
-| `prompt.dismiss` | `esc` | Close the prompt without answering; on an approval that answers it with a denial |
+| `prompt.dismiss` | `esc` | Deny the parked call; a question stays open |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
 The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: twenty-nine actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows.

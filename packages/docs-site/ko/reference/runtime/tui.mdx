@@ -199,7 +199,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |
 | `prompt.allow_always` | `a` | 이 호출과 이후 같은 호출을 승인한다 |
 | `prompt.deny` | `n` | 대기 중인 도구 호출을 거절한다 |
-| `prompt.dismiss` | `esc` | 프롬프트를 답하지 않고 닫는다. 승인 프롬프트에서는 거절로 답한다 |
+| `prompt.dismiss` | `esc` | 대기 중인 호출을 거절한다. 질문 프롬프트는 연 채로 둔다 |
 | `prompt.confirm` | `enter` | 여러 선택지 질문을 확정한다 |
 
 이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 스물아홉 동작에 각각이 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다.
