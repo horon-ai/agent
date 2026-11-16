@@ -148,6 +148,8 @@ pub struct App {
     pub model: Option<String>,
     /// Provider reported by the daemon.
     pub provider: Option<String>,
+    /// Reasoning effort the daemon reported for the model, e.g. `high`.
+    pub reasoning_effort: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
     /// Session the client is attached to, from the last event that named it.
@@ -210,6 +212,7 @@ impl App {
             events,
             model: None,
             provider: None,
+            reasoning_effort: None,
             session_status: None,
             session_id: None,
             cwd: None,
@@ -254,6 +257,7 @@ impl App {
             events: receiver,
             model: None,
             provider: None,
+            reasoning_effort: None,
             session_status: None,
             session_id: None,
             cwd: None,
@@ -351,6 +355,7 @@ impl App {
         StatusData {
             provider: self.provider.as_deref(),
             model: self.model.as_deref(),
+            effort: self.reasoning_effort.as_deref(),
             session_id: self.session_id.as_deref(),
             pending_turn: self.pending_turn,
             disconnected: self.disconnected,
@@ -495,6 +500,7 @@ impl App {
                 session_id,
                 provider,
                 model,
+                reasoning_effort,
                 ..
             } => {
                 self.session_id = Some(session_id.clone());
@@ -504,6 +510,14 @@ impl App {
                 if let Some(provider) = provider {
                     self.provider = Some(provider.clone());
                 }
+                // The effort describes the model this report names, so a
+                // report without one clears it rather than leaving the
+                // previous model's effort beside the new model.
+                self.reasoning_effort = reasoning_effort
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|effort| !effort.is_empty())
+                    .map(str::to_string);
             }
             ApiEvent::SessionStatus { session_id, status, .. } => {
                 self.session_id = Some(session_id.clone());
