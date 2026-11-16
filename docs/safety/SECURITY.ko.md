@@ -64,7 +64,7 @@
 
 ### 위치
 
-번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:121` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
+번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:180` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
 
 한 번들은 디렉터리 하나입니다.
 
@@ -96,7 +96,7 @@
 
 ### 리댁션
 
-번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:44`).
+번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:45`).
 
 - 패닉 메시지, 위치, 스레드 이름, 도구 이름, 도구 입력 JSON에 같은 패스를 적용합니다.
 - 필드마다 2048자에서 자르고 `[truncated]`를 붙입니다. 도구 이름은 128자입니다 (`crash.rs:241` `truncate_chars`).

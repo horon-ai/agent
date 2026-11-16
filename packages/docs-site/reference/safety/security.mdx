@@ -67,7 +67,7 @@ When a process panics, horon agent leaves a local diagnostic bundle. The bundle 
 
 ### Location
 
-The bundle is written under `crashes/` below the agent directory (`crates/base/src/crash.rs:121` `crash_root`). The agent directory defaults to `~/.horon` and can be changed with `HORON_HOME`.
+The bundle is written under `crashes/` below the agent directory (`crates/base/src/crash.rs:180` `crash_root`). The agent directory defaults to `~/.horon` and can be changed with `HORON_HOME`.
 
 One bundle is one directory.
 
@@ -99,7 +99,7 @@ The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:158` 
 
 ### Redaction
 
-Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:44`).
+Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:45`).
 
 - The same pass applies to the panic message, location, thread name, tool names, and tool input JSON.
 - Fields are truncated at 2048 characters with `[truncated]` appended. Tool names are truncated at 128 characters (`crash.rs:241` `truncate_chars`).

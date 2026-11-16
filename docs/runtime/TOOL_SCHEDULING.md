@@ -63,7 +63,7 @@ The tools that declare effects are below.
 The rest stay at the barrier default, namely `write`, `edit`, `replace`,
 `apply_patch`, `batch`, `mcp`, and `skill_manage`. Registry lookup resolves provider
 aliases and answers `ToolEffects::write()` for a name it does not know
-(`crates/app-core/src/tool/mod.rs:1320` `Registry::effects_for_call`).
+(`crates/app-core/src/tool/mod.rs:1332` `Registry::effects_for_call`).
 
 ## Two caps per group
 
@@ -105,7 +105,7 @@ Two failure rules hold inside a group.
 ## Context budget
 
 A tool that ran passes its output through the tool layer's overflow guard
-(`crates/app-core/src/tool/mod.rs:2295` `self.guard_context_overflow`, the checks
+(`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, the checks
 inside `guard_context_overflow`, `tool/mod.rs:2330` `guard_context_overflow`). That
 guard compares the output with `token_budget()` times `CONTEXT_GUARD_THRESHOLD` (0.90,
 `tool/mod.rs:1754` `CONTEXT_GUARD_THRESHOLD`, the comparison is `tool/mod.rs:2352`
