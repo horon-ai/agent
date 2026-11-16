@@ -103,6 +103,11 @@
     },
     {
       "package": "horon-agent-app-core",
+      "target": "tool_dispatch_boundaries",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-app-core",
       "target": "tool_dispatch_perf",
       "min_passed": 1
     },
