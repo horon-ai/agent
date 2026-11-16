@@ -44,6 +44,16 @@ pub fn is_socket_path(path: &Path) -> bool {
     path.exists()
 }
 
+/// Whether something answers on `path` right now.
+///
+/// Unlike [`is_socket_path`], which answers "does the node exist", this answers
+/// "would a connection be served": a socket file whose owner died stays on disk
+/// and still exists. A Unix socket accepts any number of connection attempts, so
+/// the probe costs a live server one connection that immediately reads EOF.
+pub fn socket_has_listener(path: &Path) -> bool {
+    SyncStream::connect(path).is_ok()
+}
+
 /// Remove a socket path, ignoring "already gone".
 ///
 /// A stale socket file blocks `bind`; the caller holds the instance lock, so no

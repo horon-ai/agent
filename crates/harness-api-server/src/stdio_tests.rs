@@ -88,6 +88,35 @@ async fn stdio_stream_rejects_bad_hello_without_dialing_daemon() {
     task.await.unwrap().unwrap();
 }
 
+/// A liveness probe connects and hangs up without a byte, so the bridge has to
+/// end that connection quietly: no error frame (the peer is already gone) and no
+/// `client ended` line, because every launch probes this socket. A non-empty
+/// frame that does not parse still gets its `InvalidRequest` reply above.
+#[tokio::test]
+async fn stale_socket_probe_closes_without_a_reply() {
+    let (client, bridge) = tokio::io::duplex(8192);
+    let (bridge_read, bridge_write) = tokio::io::split(bridge);
+    let task = tokio::spawn(run_bridge_stream_with_deadline(
+        bridge_read,
+        bridge_write,
+        PathBuf::from("/nonexistent-stale-probe.sock"),
+        std::time::Duration::from_secs(1),
+    ));
+    let (mut client_read, mut client_write) = tokio::io::split(client);
+    client_write.shutdown().await.unwrap();
+    // Everything the bridge wrote, read up to its EOF after it returns.
+    let mut answer = Vec::new();
+    tokio::io::AsyncReadExt::read_to_end(&mut client_read, &mut answer)
+        .await
+        .unwrap();
+    assert!(
+        answer.is_empty(),
+        "the bridge answered an empty first frame with {:?}",
+        String::from_utf8_lossy(&answer)
+    );
+    task.await.unwrap().expect("an empty first frame must close quietly");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn session_tools_negotiation_and_stream_translation() {
     use serde_json::json;
