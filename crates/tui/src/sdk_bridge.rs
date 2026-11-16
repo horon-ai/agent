@@ -910,29 +910,30 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_is_matched_through_a_symlink_and_only_then() {
+    fn a_directory_is_matched_through_another_spelling_and_only_then() {
         let temp = tempfile::tempdir().expect("a directory");
         let real = temp.path().join("work");
         std::fs::create_dir_all(&real).expect("create the directory");
-        let link = temp.path().join("link");
-        let linked = std::os::unix::fs::symlink(&real, &link).is_ok();
+        // The same directory under a different string, on every OS: only
+        // resolving both sides can tell that the two are one place.
+        let alias = real.join("..").join("work");
 
         assert!(same_path(
             real.to_str().expect("a path"),
             real.to_str().expect("a path")
         ));
         assert!(!same_path("/one/place", "/another/place"));
-        if linked {
-            assert!(
-                same_path(real.to_str().expect("a path"), link.to_str().expect("a path")),
-                "a symlinked working directory was treated as another one"
-            );
-        }
+        assert!(
+            same_path(real.to_str().expect("a path"), alias.to_str().expect("a path")),
+            "a working directory spelled another way was treated as another one"
+        );
 
-        let here = record(&format!(
-            r#"{{"session_id":"a","status":"idle","working_dir":"{}"}}"#,
-            real.display()
-        ));
+        let here: SessionInfo = serde_json::from_value(serde_json::json!({
+            "session_id": "a",
+            "status": "idle",
+            "working_dir": real.to_str().expect("a path"),
+        }))
+        .expect("a session record");
         let elsewhere = record(r#"{"session_id":"b","status":"idle","working_dir":"/somewhere/else"}"#);
         let wanted = real.to_str().expect("a path");
         assert!(in_directory(&here, Some(wanted)));

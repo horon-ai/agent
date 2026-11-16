@@ -193,6 +193,7 @@ fn sdk_client(api_socket: &Path) -> HoronAgentClient {
         request_timeout: Some(Duration::from_secs(30)),
         ensure_runtime: false,
         supports_user_response: false,
+        supports_ask_requests: false,
     })
     .expect("connect to the harness API bridge")
 }
