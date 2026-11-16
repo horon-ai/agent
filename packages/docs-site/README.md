@@ -44,17 +44,33 @@ extension) to a `pages` array when you add a file. When a page moves, add a
 
 ## How it is published
 
-Mintlify builds and deploys from the GitHub repository, not from CI. A push to
-`dev` rebuilds the site in a few minutes; the Publishes page
-(<https://app.mintlify.com/koo-d/koo-d/publishes/overview>) shows the build status.
-`main` is the release branch and is not the deployment branch.
+Mintlify builds and deploys from the GitHub repository, not from CI, and only
+from the branch `deploy/docs`. Its GitHub App rebuilds the site on every push to
+that branch and builds a preview for every pull request that targets it, with no
+path filter, so nothing but `.github/workflows/docs-site-deploy.yml` moves the
+branch:
+
+- A push to `main` that touches `packages/docs-site/`, a successful
+  `Benchmark docs` run on `main` (its `[skip ci]` commits rewrite the Reference
+  pages), or a manual dispatch starts the workflow.
+- The workflow compares `packages/docs-site/` on `main` with the copy on
+  `deploy/docs`. When they match it stops; otherwise it runs the same
+  validation as the `Documentation Site` CI job and fast-forwards `deploy/docs`
+  to `main` (never a force-push).
+- A push to `dev`, a pull request, or a `main` push that leaves the folder
+  unchanged deploys nothing. A documentation refresh of `main` is merged with
+  `[skip ci]` and starts no workflow; run
+  `gh workflow run docs-site-deploy.yml --ref main` after it.
+
+The Publishes page (<https://app.mintlify.com/koo-d/koo-d/publishes/overview>)
+shows the build status.
 
 The Mintlify side is already set up:
 
 - Organization `KooD` (slug `koo-d`), project name `Horon`. The default address,
   `https://koo-d.mintlify.site`, stays reachable beside the custom domain.
-- Git Settings: GitHub repository `horon-ai/agent`, branch `dev`, **docs.json is in
-  a subdirectory** set to `/packages/docs-site`.
+- Git Settings: GitHub repository `horon-ai/agent`, branch `deploy/docs`,
+  **docs.json is in a subdirectory** set to `/packages/docs-site`.
 - The Mintlify GitHub App is installed on `horon-ai`, restricted to the `agent`
   repository.
 
