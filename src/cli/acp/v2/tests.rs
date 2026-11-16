@@ -9,9 +9,9 @@ use super::negotiate::{ACP_V2_PROTOCOL_VERSION, AcpVersion, InitError, select};
 use super::shapes::{
     ChunkKind, ConfigValue, MessageKind, ToolCallPatch, auth_methods, available_commands, command_subject,
     config_options, diff_content, initialize_response, mcp_servers, message_chunk, message_ids,
-    parse_set_config_option, permission_request, plan_update, session_info, state_idle, state_requires_action,
-    state_running, terminal_content, terminal_finished, terminal_output, terminal_started, tool_call_content_chunk,
-    tool_call_subject, tool_call_update, user_message, whole_message,
+    parse_set_config_option, permission_request, plan_update, replay_complete, session_info, state_idle,
+    state_requires_action, state_running, terminal_content, terminal_finished, terminal_output, terminal_started,
+    tool_call_content_chunk, tool_call_subject, tool_call_update, user_message, whole_message,
 };
 use crate::protocol::{FileDiffWire, PlanEntryWire, SessionMcpServer};
 use serde_json::{Value, json};
@@ -695,6 +695,14 @@ fn terminal_finished_matches_schema() {
         signalled["exitStatus"],
         json!({ "exitCode": null, "signal": "SIGTERM" })
     );
+}
+
+#[test]
+fn replay_complete_matches_schema() {
+    let update = replay_complete();
+    assert_matches("ReplayComplete", &update);
+    assert_update_matches(&update);
+    assert_eq!(update, json!({ "sessionUpdate": "replay_complete" }));
 }
 
 #[test]

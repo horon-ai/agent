@@ -458,6 +458,15 @@ pub(crate) fn terminal_finished(
     })
 }
 
+/// IS-5, IS-6: the history replay a `session/resume` asked for is over.
+///
+/// Sent once per resume with a `replayFrom` cursor, after the last replayed
+/// update and before the response; an empty history sends it too. Every
+/// session update between the request and this one is replayed history.
+pub(crate) fn replay_complete() -> Value {
+    json!({ "sessionUpdate": "replay_complete" })
+}
+
 /// IS-5: foreground work started.
 pub(crate) fn state_running() -> Value {
     json!({ "sessionUpdate": "state_update", "state": "running" })

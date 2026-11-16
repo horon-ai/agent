@@ -488,7 +488,9 @@ impl AcpRuntime {
             },
         };
         let mut updates = if replay {
-            v2::replay::replay_updates(&attached.messages, &attached.images, &cwd)
+            let mut updates = v2::replay::replay_updates(&attached.messages, &attached.images, &cwd);
+            updates.push(v2::shapes::replay_complete());
+            updates
         } else {
             Vec::new()
         };
