@@ -54,8 +54,8 @@ pub enum Action {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
-    /// List the models, or switch to the one named.
-    Model(Option<String>),
+    /// Switch to the model named.
+    Model(String),
     /// Ask for the model list the picker offers.
     Models,
     /// Ask for the sessions stored for this working directory.
@@ -398,6 +398,14 @@ impl App {
             } => {
                 self.transcript
                     .tool_done(call_id, name, Some(output.as_str()), error.as_deref());
+                // A refusal can reach the client before the event that parks
+                // it, so the line is parked from this side too: any request
+                // already waiting that the message names makes the call a
+                // waiting one rather than a failed one. The prompt arriving
+                // later parks the same line, and parking twice changes nothing.
+                if let Some(message) = error {
+                    self.park_line_naming(message);
+                }
             }
             ApiEvent::TurnDone { .. } => {
                 self.transcript.text_done();
@@ -443,6 +451,10 @@ impl App {
                 // that line, so a decision can never be shown another call's
                 // arguments.
                 self.show_prompt(Prompt::approval(request_id.clone(), action.clone()));
+                // The call the request names is drawn as waiting from here on:
+                // it was refused because the mode asks first, and the failure
+                // wording is for a call that broke.
+                self.transcript.park_request(request_id);
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -468,6 +480,9 @@ impl App {
                         self.waiting_prompts.remove(index);
                     }
                 }
+                // The decision ends the wait: the line goes back to the failure
+                // the harness reported, whichever way it was answered.
+                self.transcript.settle_request(request_id);
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
@@ -548,7 +563,39 @@ impl App {
     ///
     /// Called before the keys are read and before a frame is drawn: both need
     /// the matches of the draft that is on screen, not of the one before it.
+    /// Draw the waiting line a refusal message names, when its request is
+    /// still parked.
+    fn park_line_naming(&mut self, message: &str) {
+        let request = self
+            .prompt
+            .iter()
+            .chain(self.waiting_prompts.iter())
+            .find_map(|prompt| match prompt {
+                Prompt::Approval(approval)
+                    if crate::transcript::Transcript::names_request(message, &approval.request_id) =>
+                {
+                    Some(approval.request_id.clone())
+                }
+                _ => None,
+            });
+        if let Some(request) = request {
+            self.transcript.park_request(&request);
+        }
+    }
+
     pub fn sync_slash(&mut self) {
+        // The list only ever offers the first word of a one-line draft, and a
+        // message being written is neither. The fingerprint is what says the
+        // draft is new: without it this built the whole draft twice on every
+        // keystroke, once before the key and once after, to learn nothing.
+        let fingerprint = self.input.fingerprint();
+        if self.slash.is_synced(fingerprint) {
+            return;
+        }
+        if !self.input.starts_with_slash() || self.input.line_count() != 1 {
+            self.slash.clear_for(fingerprint);
+            return;
+        }
         let text = self.input.text();
         self.slash.sync(&self.commands, &text);
     }

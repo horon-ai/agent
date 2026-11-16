@@ -20,11 +20,9 @@ use crossterm::execute;
 /// A terminal that does not support the mode answers nothing, which is not a
 /// reason to refuse to start: the editor still works, and a paste arrives as
 /// ordinary keystrokes.
-pub fn enable() -> Result<(), String> {
+pub fn enable() -> std::io::Result<()> {
     let mut output = std::io::stdout();
-    execute!(output, EnableBracketedPaste)
-        .and_then(|()| output.flush())
-        .map_err(|error| error.to_string())
+    execute!(output, EnableBracketedPaste).and_then(|()| output.flush())
 }
 
 /// Turn the mode off, and say whether the terminal took the sequence.

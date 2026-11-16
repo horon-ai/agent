@@ -60,6 +60,21 @@ impl Input {
         self.characters.iter().collect()
     }
 
+    /// A cheap fingerprint of the draft, for callers that only need to know
+    /// whether it changed.
+    ///
+    /// The popup compares the whole draft on every keystroke and every frame;
+    /// hashing it costs one pass and no allocation, where building the string
+    /// costs an allocation of the whole message.
+    pub fn fingerprint(&self) -> u64 {
+        fingerprint(self.characters.iter().copied())
+    }
+
+    /// Whether the draft starts with the command marker.
+    pub fn starts_with_slash(&self) -> bool {
+        matches!(self.characters.first(), Some('/'))
+    }
+
     /// Replace the whole draft, leaving the cursor at its end.
     pub fn set_text(&mut self, text: &str) {
         self.clear();
@@ -436,4 +451,18 @@ fn is_space(character: char) -> bool {
 /// The cells one character occupies, matching what the terminal draws.
 fn char_width(character: char) -> usize {
     UnicodeWidthChar::width(character).unwrap_or(0)
+}
+
+/// Fingerprint of a draft, read one character at a time.
+///
+/// One definition for both sides of the comparison: the editor hashes the
+/// characters it holds, the popup hashes the text it was handed, and neither
+/// builds a string to find out that nothing changed.
+pub fn fingerprint(characters: impl Iterator<Item = char>) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for character in characters {
+        hash ^= u64::from(character as u32);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }

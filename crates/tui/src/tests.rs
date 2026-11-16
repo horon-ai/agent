@@ -673,3 +673,30 @@ fn a_tool_preview_wraps_under_its_own_column() {
     );
     assert!(second.trim_start().starts_with("than"), "{second:?}");
 }
+
+#[test]
+fn clear_keeps_the_display_settings_the_transcript_owns() {
+    let mut app = app_with(None);
+    app.refresh_settings(&settings_with(&[
+        ("HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES", "10"),
+        ("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true"),
+    ]));
+    app.transcript.push_notice("a line that /clear has to remove");
+    assert!(
+        app.transcript.tool_output_lines() == 10,
+        "the setting did not reach the transcript"
+    );
+
+    app.run_local(crate::commands::Local::Clear, "");
+
+    assert_eq!(app.transcript.items().len(), 0, "/clear left a row behind");
+    assert_eq!(
+        app.transcript.tool_output_lines(),
+        10,
+        "/clear put the preview rows back to the default while /settings still shows the saved value"
+    );
+    assert!(
+        app.transcript.show_reasoning(),
+        "/clear turned reasoning off while /settings still shows it on"
+    );
+}

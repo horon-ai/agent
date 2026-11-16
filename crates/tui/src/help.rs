@@ -371,6 +371,8 @@ fn fit(text: &str, width: usize) -> String {
 pub struct SlashPopup {
     /// The draft the matches belong to.
     draft: String,
+    /// Fingerprint of that draft, so a caller can skip rebuilding it.
+    synced: Option<u64>,
     matches: Vec<Entry>,
     selected: usize,
     dismissed: bool,
@@ -387,17 +389,43 @@ impl SlashPopup {
     /// A new draft starts the selection over and brings back a popup `esc`
     /// closed: the dismissal belonged to the text that was there.
     pub fn sync(&mut self, registry: &Registry, draft: &str) {
+        let fingerprint = crate::input::fingerprint(draft.chars());
         if self.draft == draft {
+            self.synced = Some(fingerprint);
             return;
         }
         self.draft.clear();
         self.draft.push_str(draft);
+        self.synced = Some(fingerprint);
         self.selected = 0;
         self.dismissed = false;
         self.matches = match prefix(draft) {
             Some(prefix) => settled(popup_matches(&registry.entries(), prefix), prefix),
             None => Vec::new(),
         };
+    }
+
+    /// Whether the matches already belong to the draft with this fingerprint.
+    ///
+    /// The caller reads it before building the draft: a key that changed
+    /// nothing used to build the whole message a second time to find out.
+    pub fn is_synced(&self, fingerprint: u64) -> bool {
+        self.synced == Some(fingerprint)
+    }
+
+    /// Bring the popup in line with a draft that cannot open it.
+    ///
+    /// A message being written, or a line holding more than one, is not a
+    /// command: the list closes without the draft being built to prove it.
+    pub fn clear_for(&mut self, fingerprint: u64) {
+        self.synced = Some(fingerprint);
+        if self.matches.is_empty() && self.draft.is_empty() {
+            return;
+        }
+        self.draft.clear();
+        self.matches.clear();
+        self.selected = 0;
+        self.dismissed = false;
     }
 
     /// Whether the popup is on screen.

@@ -81,10 +81,7 @@ fn model_with_no_argument_opens_the_list_and_a_row_switches() {
     assert!(app.model.is_none(), "the client named a model the daemon never sent");
 
     assert_eq!(app.on_key(key(KeyCode::Down)), None);
-    assert_eq!(
-        app.on_key(key(KeyCode::Enter)),
-        Some(Action::Model(Some("beta".to_string())))
-    );
+    assert_eq!(app.on_key(key(KeyCode::Enter)), Some(Action::Model("beta".to_string())));
     assert!(app.picker.is_none(), "the list stayed open after a choice");
     assert!(app.model.is_none(), "the status line moved before the daemon answered");
 }
@@ -102,7 +99,7 @@ fn a_catalog_without_the_model_in_force_still_shows_it_marked() {
     assert!(!rows[1].current && !rows[2].current);
     assert_eq!(
         app.on_key(key(KeyCode::Enter)),
-        Some(Action::Model(Some("mock-model".to_string())))
+        Some(Action::Model("mock-model".to_string()))
     );
 }
 
@@ -111,7 +108,7 @@ fn model_with_a_name_still_switches_without_a_list() {
     let mut app = app();
     assert_eq!(
         submit(&mut app, "/model gamma"),
-        Some(Action::Model(Some("gamma".to_string())))
+        Some(Action::Model("gamma".to_string()))
     );
     assert!(app.picker.is_none(), "a named model opened the list");
 }

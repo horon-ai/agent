@@ -388,7 +388,7 @@ fn commands_model_maps_to_the_model_path() {
     assert!(app.picker.is_none(), "escape did not close the list");
     assert_eq!(
         type_line(&mut app, "/model gpt-5"),
-        Some(Action::Model(Some("gpt-5".to_string())))
+        Some(Action::Model("gpt-5".to_string()))
     );
 }
 

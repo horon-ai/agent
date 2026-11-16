@@ -59,6 +59,10 @@ impl App {
                     // daemon refuses a second answer to the same request, and a
                     // prompt still on screen invites one.
                     let covered = self.take_prompt();
+                    // The decision ends the wait here as well as in the event:
+                    // a call drawn as waiting goes back to the failure the
+                    // harness reported, whichever way it was answered.
+                    self.transcript.settle_request(&request_id);
                     self.transcript
                         .push_notice(approval_answer_line(&covered, approved, always));
                     return Some(Action::Approval {

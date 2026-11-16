@@ -19,6 +19,13 @@ pub enum ToolState {
     Done,
     /// Finished with an error the model will see.
     Failed(String),
+    /// Refused by the approval gate, with the decision still to come.
+    ///
+    /// The gate answers a call it may not run with a sentence naming the
+    /// request, and that sentence is kept here so the line can go back to being
+    /// a failure once the request is decided. Drawing it as a failure meanwhile
+    /// says the call ran and broke, which is not what happened.
+    Waiting(String),
 }
 
 impl ToolState {
@@ -28,6 +35,7 @@ impl ToolState {
             Self::Running => "running",
             Self::Done => "done",
             Self::Failed(_) => "failed",
+            Self::Waiting(_) => "needs approval",
         }
     }
 }
@@ -433,6 +441,17 @@ impl Transcript {
         self.items.push(Item::Tool(ToolCall::new(call_id, name)));
     }
 
+    /// Whether a refusal line names `request_id`.
+    ///
+    /// The approval gate writes the id into the sentence it refused the call
+    /// with, and that is the only link between a parked request and its line: a
+    /// prompt finds its arguments through it, and the line is drawn as waiting
+    /// for as long as it holds. One predicate, so the two can never disagree
+    /// about which call a request is about.
+    pub fn names_request(message: &str, request_id: &str) -> bool {
+        !request_id.is_empty() && message.contains(request_id)
+    }
+
     /// The argument summary of the call the request `request_id` is asking about.
     ///
     /// An approval arrives with the tool name alone, so a prompt that named only
@@ -454,12 +473,59 @@ impl Transcript {
             return None;
         }
         self.items.iter().find_map(|item| match item {
+            // A parked line is drawn as waiting and still names its request,
+            // which is what a prompt reads its arguments through.
             Item::Tool(call) => match &call.state {
-                ToolState::Failed(message) if message.contains(request_id) => tool_line::summarize(&call.input),
+                ToolState::Failed(message) | ToolState::Waiting(message)
+                    if Self::names_request(message, request_id) =>
+                {
+                    tool_line::summarize(&call.input)
+                }
                 _ => None,
             },
             _ => None,
         })
+    }
+
+    /// Draw the line naming `request_id` as waiting for its decision.
+    ///
+    /// The call was refused because the mode asks first, not because it broke,
+    /// so until the request is decided the line says it is waiting. Nothing
+    /// happens when no line names the id yet: the call then keeps the failure
+    /// the harness reported.
+    pub fn park_request(&mut self, request_id: &str) {
+        self.restate_request(request_id, |state| match state {
+            ToolState::Failed(message) => Some(ToolState::Waiting(message)),
+            _ => None,
+        });
+    }
+
+    /// The decision is in, so the line goes back to what the harness said.
+    ///
+    /// A denial keeps the failure text, which is the same thing the line showed
+    /// before the prompt appeared, and the transcript's own notice names the
+    /// answer; an approval leaves the line as it was for the same reason: the
+    /// call did not run, and the harness says so when the turn continues.
+    pub fn settle_request(&mut self, request_id: &str) {
+        self.restate_request(request_id, |state| match state {
+            ToolState::Waiting(message) => Some(ToolState::Failed(message)),
+            _ => None,
+        });
+    }
+
+    /// Apply `restate` to every line naming `request_id`.
+    fn restate_request(&mut self, request_id: &str, restate: impl Fn(ToolState) -> Option<ToolState>) {
+        for item in &mut self.items {
+            if let Item::Tool(call) = item
+                && let ToolState::Failed(message) | ToolState::Waiting(message) = &call.state
+                && Self::names_request(message, request_id)
+            {
+                let state = call.state.clone();
+                if let Some(next) = restate(state) {
+                    call.state = next;
+                }
+            }
+        }
     }
 
     /// Argument bytes arrived for a call still streaming its input.
@@ -510,7 +576,8 @@ impl Transcript {
         // (a reconnect replays it). The second one must not overwrite the first:
         // it arrives after the start mark was taken, so its duration is empty,
         // and a repeat of a success would erase a recorded failure.
-        let keep_failure = matches!(call.state, ToolState::Failed(_)) && !matches!(state, ToolState::Failed(_));
+        let keep_failure = matches!(call.state, ToolState::Failed(_) | ToolState::Waiting(_))
+            && !matches!(state, ToolState::Failed(_));
         if !keep_failure {
             call.state = state;
         }

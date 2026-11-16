@@ -269,11 +269,9 @@ impl Scroll {
 /// follows a setting rather than being always on. A terminal that does not
 /// support it answers nothing, which is not a reason to refuse to start: the
 /// pane still scrolls from the keyboard.
-pub fn enable_mouse() -> Result<(), String> {
+pub fn enable_mouse() -> std::io::Result<()> {
     let mut output = std::io::stdout();
-    execute!(output, EnableMouseCapture)
-        .and_then(|()| output.flush())
-        .map_err(|error| error.to_string())
+    execute!(output, EnableMouseCapture).and_then(|()| output.flush())
 }
 
 /// Turn the mouse mode off, and say whether the terminal took the sequence.

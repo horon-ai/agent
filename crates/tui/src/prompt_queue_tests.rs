@@ -608,3 +608,63 @@ fn a_prompt_on_its_own_never_invents_arguments() {
     let prompt = Prompt::approval("r1".to_string(), "bash".to_string());
     assert_eq!(prompt.lines()[0], "! approval needed: bash");
 }
+
+/// The state of every tool line in the transcript.
+fn tool_states(app: &App) -> Vec<crate::transcript::ToolState> {
+    app.transcript
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            crate::transcript::Item::Tool(call) => Some(call.state.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_parked_call_is_drawn_as_waiting_until_the_decision() {
+    let mut app = app();
+    refused_call(&mut app, "c1", "ls", "r1");
+    app.apply_event(&approval_pending("r1", "bash"));
+
+    let states = tool_states(&app);
+    assert_eq!(states.len(), 1, "the call was not recorded: {states:?}");
+    assert!(
+        matches!(states[0], crate::transcript::ToolState::Waiting(_)),
+        "a call waiting for its decision is drawn as a failure: {states:?}"
+    );
+    // The line still names its request, which is how the prompt found its
+    // arguments while it waited.
+    assert!(
+        app.transcript.argument_summary_for_request("r1").is_some(),
+        "the parked line stopped naming its request"
+    );
+
+    // The decision ends the wait, whichever way it went: the row goes back to
+    // the failure the harness reported, request id and all.
+    app.apply_event(&ApiEvent::ApprovalResolved {
+        session_id: "s1".to_string(),
+        request_id: "r1".to_string(),
+        approved: false,
+        via: "tui".to_string(),
+        resolved_by: "user".to_string(),
+    });
+    let states = tool_states(&app);
+    assert!(
+        matches!(states[0], crate::transcript::ToolState::Failed(_)),
+        "the decided call is not a failure again: {states:?}"
+    );
+}
+
+#[test]
+fn a_refusal_that_arrives_before_its_prompt_is_still_parked() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    refused_call(&mut app, "c1", "ls", "r1");
+
+    let states = tool_states(&app);
+    assert!(
+        matches!(states[0], crate::transcript::ToolState::Waiting(_)),
+        "a refusal that reached the client before its prompt was drawn as a failure: {states:?}"
+    );
+}

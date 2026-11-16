@@ -106,7 +106,7 @@ impl App {
             }
             Outcome::Closed => None,
             Outcome::Selected(value) => match picker.kind() {
-                Kind::Models => Some(Action::Model(Some(value))),
+                Kind::Models => Some(Action::Model(value)),
                 Kind::Sessions => {
                     let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
                     self.transcript.push_notice(format!("attaching to {label}"));

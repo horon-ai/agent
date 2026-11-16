@@ -3,7 +3,6 @@
 
 use super::{Action, App};
 use crate::commands::Local;
-use crate::transcript::Transcript;
 
 impl App {
     /// Answer a built-in command that the client owns.
@@ -18,14 +17,19 @@ impl App {
                 None
             }
             Local::Clear => {
-                self.transcript = Transcript::new();
+                // Cleared, not replaced: the transcript owns the display
+                // settings (`transcript.show_reasoning`,
+                // `transcript.tool_output_lines`), and a fresh one would put
+                // the defaults back while /settings kept showing the saved
+                // values. Picking a session already clears it this way.
+                self.transcript.clear();
                 None
             }
             // No argument asks for the list the picker draws; a name still
             // switches straight away, which is what a script or a habit uses.
             Local::Model => match arguments.trim() {
                 "" => self.open_models(),
-                name => Some(Action::Model(Some(name.to_string()))),
+                name => Some(Action::Model(name.to_string())),
             },
             Local::Settings => {
                 self.open_settings();

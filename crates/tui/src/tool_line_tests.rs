@@ -442,3 +442,66 @@ fn a_refused_call_still_stores_the_sentence_the_prompt_pairs_with() {
         "the stored refusal lost its request id: {stored}"
     );
 }
+
+#[test]
+fn a_parked_call_is_drawn_as_waiting_not_as_a_failure() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut parked = call(r#"{"file_path":"/tmp/x"}"#);
+    parked.name = "write".to_string();
+    // What a parked call looks like: the gate's sentence, no duration, no
+    // output, and the request still waiting for a decision.
+    parked.state = ToolState::Waiting(refusal("r1"));
+
+    let rows = lines(&parked, &theme, symbols, 100);
+    assert_eq!(rows.len(), 1, "a parked call is one row: {}", drawn(&rows));
+    let text = drawn(&rows);
+    assert!(text.contains("needs approval"), "{text}");
+    assert!(!text.contains("failed"), "a waiting call says it failed: {text}");
+    assert!(
+        text.contains(symbols.tool_running) && !text.contains(symbols.tool_error),
+        "a waiting call wears the failure glyph: {text}"
+    );
+}
+
+#[test]
+fn a_real_failure_and_a_denial_are_still_drawn_as_failed() {
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut failed = call("");
+    failed.state = ToolState::Failed("Error: read a.txt: no such file".to_string());
+    failed.duration_ms = Some(40);
+    let text = drawn(&lines(&failed, &theme, symbols, 100));
+    assert!(text.contains("failed"), "{text}");
+    assert!(text.contains(symbols.tool_error), "{text}");
+
+    // A denial ends the wait, so the line is the failure the harness reported
+    // and the refusal still names its request.
+    let mut transcript = Transcript::new();
+    transcript.tool_start("c1", "write");
+    transcript.tool_input("c1", r#"{"file_path":"/tmp/x"}"#);
+    transcript.tool_done("c1", "write", None, Some(&refusal("req_9")));
+    transcript.park_request("req_9");
+    let waiting = match &transcript.items()[0] {
+        Item::Tool(call) => call.state.clone(),
+        other => panic!("the call was not recorded: {other:?}"),
+    };
+    assert!(matches!(waiting, ToolState::Waiting(_)), "{waiting:?}");
+    transcript.settle_request("req_9");
+    let settled = match &transcript.items()[0] {
+        Item::Tool(call) => call.state.clone(),
+        other => panic!("the call was not recorded: {other:?}"),
+    };
+    assert!(matches!(settled, ToolState::Failed(_)), "{settled:?}");
+    assert!(
+        transcript.argument_summary_for_request("req_9").is_some(),
+        "a denied call stopped naming its request, so its prompt can no longer be paired"
+    );
+    let ToolState::Failed(message) = settled else {
+        unreachable!()
+    };
+    let mut denied = call("");
+    denied.state = ToolState::Failed(message);
+    let text = drawn(&lines(&denied, &theme, symbols, 100));
+    assert!(text.contains("failed"), "a denial is not drawn as failed: {text}");
+}

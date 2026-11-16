@@ -59,8 +59,12 @@ pub enum Command {
         command: RuntimeCommand,
         arguments: Vec<String>,
     },
-    /// List the models, or switch to the one named.
-    Model(Option<String>),
+    /// Switch to the model named.
+    ///
+    /// The list the picker shows is its own command: `/model` with no argument
+    /// asks for `Command::Models`, which `serve` answers with a structure, so a
+    /// name is the only thing this arm carries.
+    Model(String),
     /// List the models the picker offers, with the one in force.
     Models,
     /// List the sessions stored for a working directory.
@@ -441,23 +445,9 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Runtime { command, arguments } => client
             .runtime_command(session_id, command, arguments)
             .map(|output| Some(output.message)),
-        Command::Model(Some(name)) => client
+        Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
-        Command::Model(None) => client.list_models(session_id).map(|(models, current)| {
-            let mut message = String::from("models:");
-            if models.is_empty() {
-                message.push_str(" the harness reported none");
-            }
-            for model in &models {
-                message.push_str("\n  ");
-                message.push_str(model);
-                if current.as_deref() == Some(model.as_str()) {
-                    message.push_str(" (current)");
-                }
-            }
-            Some(message)
-        }),
         // Answered by `serve` before they reach this point: they carry a
         // structure rather than a line, and the attach moves the session the
         // thread follows.
@@ -486,8 +476,8 @@ fn describe(command: &Command) -> &'static str {
     match command {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
-        Command::Model(Some(_)) => "could not switch the model",
-        Command::Model(None) | Command::Models => "could not list the models",
+        Command::Model(_) => "could not switch the model",
+        Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
         Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",
