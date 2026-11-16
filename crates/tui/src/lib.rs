@@ -45,6 +45,10 @@ mod prompt_queue_tests;
 #[path = "input_tests.rs"]
 mod input_tests;
 
+#[cfg(test)]
+#[path = "app_settings_tests.rs"]
+mod app_settings_tests;
+
 use std::time::Duration;
 
 use ratatui::Terminal;
