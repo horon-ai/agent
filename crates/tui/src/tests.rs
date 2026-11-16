@@ -366,7 +366,7 @@ fn settings_with(env: &[(&str, &str)]) -> crate::settings::Settings {
 }
 
 #[test]
-fn enter_inserts_nothing_when_the_editor_does_not_submit_on_it() {
+fn enter_starts_a_new_line_when_the_editor_does_not_submit_on_it() {
     let mut app = app_with(None);
     app.refresh_settings(&settings_with(&[("HORON_TUI_EDITOR_SUBMIT_ON_ENTER", "false")]));
 
@@ -380,10 +380,11 @@ fn enter_inserts_nothing_when_the_editor_does_not_submit_on_it() {
     );
     assert_eq!(
         app.input.text(),
-        "hi",
-        "and the draft is kept, not cleared: {:?}",
+        "hi\n",
+        "the key builds the draft instead: {:?}",
         app.input.text()
     );
+    assert_eq!(app.input.line_count(), 2, "and the pane has a second row");
     assert!(!app.pending_turn, "no turn started");
 }
 

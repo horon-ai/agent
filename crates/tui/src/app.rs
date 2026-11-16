@@ -12,6 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
 use crate::commands::{Invocation, Local, Registry};
+use crate::history::History;
 use crate::input::Input;
 use crate::keys::{self, Bindings, Key};
 use crate::overlays::settings::{Outcome, SettingChange, SettingsOverlay};
@@ -77,6 +78,8 @@ pub struct App {
     pub transcript: Transcript,
     /// The line being edited.
     pub input: Input,
+    /// Drafts sent before this one, for `up` and `down`.
+    pub history: History,
     /// The prompt blocking the turn, if any.
     pub prompt: Option<Prompt>,
     /// Prompts that arrived while one was open, oldest first.
@@ -159,6 +162,7 @@ impl App {
         Self {
             transcript: Transcript::new(),
             input: Input::new(),
+            history: History::new(),
             prompt: None,
             waiting_prompts: VecDeque::new(),
             banner: None,
@@ -198,6 +202,7 @@ impl App {
         Self {
             transcript: Transcript::new(),
             input: Input::new(),
+            history: History::new(),
             prompt: None,
             waiting_prompts: VecDeque::new(),
             banner: Some(message.to_string()),
@@ -334,9 +339,7 @@ impl App {
     /// overwriting that: losing either one silently is worse than a queue.
     fn keep_text(&mut self, text: &str) {
         if self.input.is_empty() {
-            for character in text.chars() {
-                self.input.insert(character);
-            }
+            self.input.set_text(text);
             return;
         }
         self.transcript.push_queued(text);
@@ -725,18 +728,21 @@ impl App {
         let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
         match bound {
             Some(keys::ids::APP_SUBMIT) => {
-                // `editor.submit_on_enter = false` disconnects the send key.
-                // The editor is single-line, so there is nowhere to insert a
-                // newline: the key does nothing rather than sending, since
-                // sending is exactly what the user turned off.
+                // `editor.submit_on_enter = false` disconnects the send key, so
+                // the key that no longer sends builds the draft instead: that is
+                // how a multi-line message is typed without a paste.
                 let submits = self.settings.boolean("editor.submit_on_enter").unwrap_or(true);
                 if !submits {
+                    self.input.newline();
                     return None;
                 }
                 let text = self.input.take();
                 if text.trim().is_empty() {
                     return None;
                 }
+                // The draft is remembered before it is resolved: a slash line
+                // that turns out to be an error is still a line the user typed.
+                self.history.record(&text);
                 return self.submit(&text);
             }
             Some(keys::ids::EDITOR_COMPLETE) => {
@@ -761,19 +767,85 @@ impl App {
                 return None;
             }
             Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
-            Some(keys::ids::EDITOR_BACKSPACE) => self.input.backspace(),
-            Some(keys::ids::EDITOR_DELETE) => self.input.delete(),
+            // Every edit ends a walk through the history: the draft on screen
+            // is being changed, and a later `down` must not replace the change
+            // with the entry the walk started from.
+            Some(keys::ids::EDITOR_BACKSPACE) => {
+                self.history.reset();
+                self.input.backspace();
+            }
+            Some(keys::ids::EDITOR_DELETE) => {
+                self.history.reset();
+                self.input.delete();
+            }
+            Some(keys::ids::EDITOR_KILL_TO_START) => {
+                self.history.reset();
+                self.input.kill_to_start();
+            }
+            Some(keys::ids::EDITOR_KILL_TO_END) => {
+                self.history.reset();
+                self.input.kill_to_end();
+            }
+            Some(keys::ids::EDITOR_DELETE_WORD) => {
+                self.history.reset();
+                self.input.delete_word();
+            }
             Some(keys::ids::EDITOR_LEFT) => self.input.left(),
             Some(keys::ids::EDITOR_RIGHT) => self.input.right(),
             Some(keys::ids::EDITOR_HOME) => self.input.home(),
             Some(keys::ids::EDITOR_END) => self.input.end(),
+            Some(keys::ids::EDITOR_WORD_LEFT) => self.input.word_left(),
+            Some(keys::ids::EDITOR_WORD_RIGHT) => self.input.word_right(),
+            Some(keys::ids::EDITOR_NEWLINE) => self.input.newline(),
+            Some(keys::ids::EDITOR_HISTORY_PREV) => self.history_previous(),
+            Some(keys::ids::EDITOR_HISTORY_NEXT) => self.history_next(),
             _ => {}
         }
         match key.code {
-            KeyCode::Char(character) if !control => self.input.insert(character),
+            KeyCode::Char(character) if !control => {
+                self.history.reset();
+                self.input.insert(character);
+            }
             _ => {}
         }
         None
+    }
+
+    /// Take one paste into the draft.
+    ///
+    /// A paste never submits and never answers anything: pasted text arriving
+    /// at a prompt would let a copied `y` approve a tool call, so a paste while
+    /// a prompt or the settings screen is open is dropped, exactly as its
+    /// keystrokes would be. Otherwise the whole text lands in the draft as one
+    /// edit, with its line breaks kept.
+    pub fn on_paste(&mut self, text: &str) {
+        if self.prompt.is_some() || self.overlay.is_some() {
+            return;
+        }
+        self.history.reset();
+        self.input.insert_text(text);
+    }
+
+    /// Move up: through the lines of the draft, then back through the history.
+    fn history_previous(&mut self) {
+        if self.input.up() {
+            return;
+        }
+        let current = self.input.text();
+        if let Some(entry) = self.history.previous(&current) {
+            self.input.set_text(&entry);
+        }
+    }
+
+    /// Move down: through the lines of the draft, then forward through the
+    /// history and back to the draft the walk started from.
+    fn history_next(&mut self) {
+        if self.input.down() {
+            return;
+        }
+        if let Some(entry) = self.history.forward() {
+            self.input.set_text(&entry);
+        }
     }
 
     /// Resolve one submitted line and turn it into an action.
@@ -921,10 +993,8 @@ impl App {
         if completion.insert == text {
             return;
         }
-        self.input.clear();
-        for character in completion.insert.chars() {
-            self.input.insert(character);
-        }
+        self.history.reset();
+        self.input.set_text(&completion.insert);
     }
 
     /// Point the command registry at the working directory and read the files.

@@ -36,10 +36,26 @@ pub mod ids {
     pub const EDITOR_LEFT: &str = "editor.left";
     /// Move the cursor one character right.
     pub const EDITOR_RIGHT: &str = "editor.right";
-    /// Move the cursor to the start of the line.
+    /// Move the cursor to the start of its line.
     pub const EDITOR_HOME: &str = "editor.home";
-    /// Move the cursor to the end of the line.
+    /// Move the cursor to the end of its line.
     pub const EDITOR_END: &str = "editor.end";
+    /// Start a new line without sending the draft.
+    pub const EDITOR_NEWLINE: &str = "editor.newline";
+    /// Delete from the start of the line to the cursor.
+    pub const EDITOR_KILL_TO_START: &str = "editor.kill_to_start";
+    /// Delete from the cursor to the end of the line.
+    pub const EDITOR_KILL_TO_END: &str = "editor.kill_to_end";
+    /// Delete the word before the cursor.
+    pub const EDITOR_DELETE_WORD: &str = "editor.delete_word";
+    /// Move to the start of the word before the cursor.
+    pub const EDITOR_WORD_LEFT: &str = "editor.word_left";
+    /// Move past the word after the cursor.
+    pub const EDITOR_WORD_RIGHT: &str = "editor.word_right";
+    /// Step back through the drafts sent before this one.
+    pub const EDITOR_HISTORY_PREV: &str = "editor.history_prev";
+    /// Step forward, and back to the draft being typed.
+    pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
     /// Approve a parked tool call once.
@@ -99,10 +115,24 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
-    ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left"]),
-    ActionSpec::new(ids::EDITOR_RIGHT, Scope::Editor, &["right"]),
-    ActionSpec::new(ids::EDITOR_HOME, Scope::Editor, &["home"]),
-    ActionSpec::new(ids::EDITOR_END, Scope::Editor, &["end"]),
+    ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
+    ActionSpec::new(ids::EDITOR_RIGHT, Scope::Editor, &["right", "ctrl+f"]),
+    ActionSpec::new(ids::EDITOR_HOME, Scope::Editor, &["home", "ctrl+a"]),
+    ActionSpec::new(ids::EDITOR_END, Scope::Editor, &["end", "ctrl+e"]),
+    ActionSpec::new(ids::EDITOR_WORD_LEFT, Scope::Editor, &["alt+left"]),
+    ActionSpec::new(ids::EDITOR_WORD_RIGHT, Scope::Editor, &["alt+right"]),
+    // `up` and `down` move between the lines of a draft first; the app hands
+    // them to the history only at the first and last line.
+    ActionSpec::new(ids::EDITOR_HISTORY_PREV, Scope::Editor, &["up"]),
+    ActionSpec::new(ids::EDITOR_HISTORY_NEXT, Scope::Editor, &["down"]),
+    ActionSpec::new(
+        ids::EDITOR_NEWLINE,
+        Scope::Editor,
+        &["shift+enter", "alt+enter", "ctrl+j"],
+    ),
+    ActionSpec::new(ids::EDITOR_KILL_TO_START, Scope::Editor, &["ctrl+u"]),
+    ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
+    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),

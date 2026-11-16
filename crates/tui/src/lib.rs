@@ -11,9 +11,11 @@
 
 pub mod app;
 pub mod commands;
+pub mod history;
 pub mod input;
 pub mod keys;
 pub mod overlays;
+pub mod paste;
 pub mod prompts;
 pub mod sdk_bridge;
 pub mod settings;
@@ -38,6 +40,10 @@ mod turn_state_tests;
 #[cfg(test)]
 #[path = "prompt_queue_tests.rs"]
 mod prompt_queue_tests;
+
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod input_tests;
 
 use std::time::Duration;
 
@@ -236,12 +242,14 @@ fn show_failure(message: &str) {
     match ratatui::try_init() {
         Ok(mut terminal) => {
             let failure = draw(&mut terminal, &mut app).err();
+            paste::disable();
             ratatui::restore();
             if let Some(message) = failure {
                 eprintln!("horon-tui: {message}");
             }
         }
         Err(error) => {
+            paste::disable();
             ratatui::restore();
             eprintln!("horon-tui: cannot open a terminal: {error}");
         }
@@ -277,7 +285,17 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
             return 1;
         }
     };
+    // The restore hook knows nothing about the paste mode, so it is chained
+    // behind one that turns it off: a panic must not leave the mode on for the
+    // next program in this terminal.
+    paste::guard_panics();
+    // A terminal that refuses the mode is not a reason to stop: a paste then
+    // arrives as ordinary keystrokes, which the editor already handles.
+    if let Err(error) = paste::enable() {
+        app.warn(format!("paste: {error}"));
+    }
     let (code, failure) = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
+    paste::disable();
     ratatui::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
@@ -416,6 +434,12 @@ where
                 }
                 flush_setting_change(app, reloader, themes);
             }
+            // One paste is one edit of the draft and never a submission: a
+            // pasted newline must not send a message the user is still writing.
+            Ok(crossterm::event::Event::Paste(text)) => {
+                app.on_paste(&text);
+                flush_setting_change(app, reloader, themes);
+            }
             Ok(_) => {}
             Err(error) => {
                 failure = Some(format!("cannot read the keyboard: {error}"));
@@ -491,6 +515,12 @@ where
         .map_err(|error| error.to_string())
 }
 
+/// Rows the conversation keeps when a tall draft asks for more.
+const MIN_TRANSCRIPT_ROWS: u16 = 3;
+
+/// Rows the input pane grows to before the draft scrolls inside it.
+const MAX_INPUT_ROWS: u16 = 8;
+
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
@@ -517,7 +547,26 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         })
         .collect();
     let hint = app.completion_hint();
-    let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
+    // The input pane grows with the draft, but never past a cap and never at
+    // the transcript's expense: three rows of conversation stay readable on a
+    // short terminal, and a taller draft scrolls inside its own pane.
+    let marker_width = symbols.prompt_marker_width();
+    let text_width = frame.area().width.saturating_sub(marker_width).saturating_sub(1);
+    let reserved = u16::from(app.banner.is_some())
+        .saturating_add(u16::try_from(prompt_rows.len()).unwrap_or(u16::MAX))
+        .saturating_add(u16::from(hint.is_some()))
+        .saturating_add(1);
+    let input_rows = frame
+        .area()
+        .height
+        .saturating_sub(reserved.saturating_add(MIN_TRANSCRIPT_ROWS))
+        .clamp(1, MAX_INPUT_ROWS);
+    let view = app.input.view(text_width, input_rows);
+    let mut constraints = vec![
+        Constraint::Min(MIN_TRANSCRIPT_ROWS),
+        Constraint::Length(1),
+        Constraint::Length(u16::try_from(view.rows.len()).unwrap_or(1)),
+    ];
     if hint.is_some() {
         constraints.push(Constraint::Length(1));
     }
@@ -555,19 +604,24 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     index += 1;
 
     let input_area = areas[index];
-    // The pane is one line high, so the line scrolls under the prompt marker
-    // instead of growing: a long message keeps the caret on screen.
-    let marker_width = symbols.prompt_marker_width();
-    let text_width = input_area.width.saturating_sub(marker_width).saturating_sub(1);
-    let (visible, cursor_cell) = app.input.window(text_width);
-    let input = Line::from(vec![
-        Span::styled(
-            format!("{} ", symbols.prompt_marker),
-            Style::default().fg(theme.core.accent),
-        ),
-        Span::styled(visible, Style::default().fg(theme.prompt.prompt_text)),
-    ]);
-    frame.render_widget(Paragraph::new(input), input_area);
+    // One row per visible line of the draft. Only the first carries the prompt
+    // marker; the rest are padded to the same column so the text lines up under
+    // itself instead of under the marker.
+    let marker = format!("{} ", symbols.prompt_marker);
+    let padding = " ".repeat(usize::from(marker_width) + 1);
+    let rows: Vec<Line<'static>> = view
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(row, text)| {
+            let lead = if row == 0 { marker.clone() } else { padding.clone() };
+            Line::from(vec![
+                Span::styled(lead, Style::default().fg(theme.core.accent)),
+                Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
+            ])
+        })
+        .collect();
+    frame.render_widget(Paragraph::new(rows), input_area);
     if let Some(hint) = hint {
         index += 1;
         frame.render_widget(
@@ -589,13 +643,17 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 .x
                 .saturating_add(marker_width)
                 .saturating_add(1)
-                .saturating_add(cursor_cell);
+                .saturating_add(view.cursor_cell);
             if input_area.width > 0 {
                 // The caret never paints past the pane, and the terminal cannot
                 // place it at the cell after the last column.
                 cursor_x = cursor_x.min(input_area.right().saturating_sub(1));
             }
-            frame.set_cursor_position((cursor_x, input_area.y));
+            let cursor_y = input_area
+                .y
+                .saturating_add(u16::try_from(view.cursor_row).unwrap_or(0))
+                .min(input_area.bottom().saturating_sub(1));
+            frame.set_cursor_position((cursor_x, cursor_y));
         }
     }
 }
