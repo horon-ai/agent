@@ -182,9 +182,9 @@ fn reports_round_trip() {
 
     let working_dir = instance.home.display().to_string();
     let session = client
-        .create_session(Some(working_dir.clone()))
+        .create_session(Some(working_dir))
         .unwrap_or_else(|error| panic!("create_session: {error}\n{}", instance.logs()));
-    let id = session.session_id.clone();
+    let id = session.session_id;
     client
         .send_context_message(&id, "reports fixture message")
         .unwrap_or_else(|error| panic!("send_context_message: {error}\n{}", instance.logs()));
@@ -196,6 +196,11 @@ fn reports_round_trip() {
     for hit in hits.iter().take(3) {
         println!("  hit {} role={} preview={:?}", hit.session_id, hit.role, hit.preview);
     }
+    assert!(
+        hits.iter()
+            .any(|hit| hit.session_id == id && hit.preview.contains("reports fixture message")),
+        "searching \"fixture\" must return the message just sent to session {id}: {hits:?}"
+    );
 
     let report = client
         .usage_report(None)
@@ -228,9 +233,6 @@ fn reports_round_trip() {
         .ack_failover(&id, "chain", "a", "b", 1)
         .unwrap_or_else(|error| panic!("ack_failover: {error}\n{}", instance.logs()));
     println!("ack_failover({id}, \"chain\", \"a\", \"b\", 1): ok");
-
-    assert_eq!(session.session_id, id);
-    assert_eq!(working_dir, instance.home.display().to_string());
 }
 
 #[test]

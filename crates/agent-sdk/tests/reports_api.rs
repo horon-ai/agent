@@ -14,7 +14,7 @@ use horon_agent_harness_api::{
     API_VERSION_MAJOR, ApiEvent, ApiRequest, ArtifactEntry, ArtifactKind, ClientFrame, ErrorCode, ServerFrame,
     SessionSearchHit, UsageLimitInfo, UsageModel, UsageSession, UsageTotals, read_frame, write_frame,
 };
-use horon_agent_sdk::{ConnectOptions, HoronAgentClient, Transport};
+use horon_agent_sdk::{ConnectOptions, ErrorKind, HoronAgentClient, Transport};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
@@ -344,9 +344,9 @@ fn an_event_reply_is_an_error_not_a_silent_ack() {
         .ack_approval("s1", "req-1")
         .expect_err("an ack event is not the reply to the ack; only `ok` is");
 
-    assert!(
-        error.message.contains("ok"),
-        "the error must name the reply it expected: {}",
-        error.message
+    assert_eq!(
+        error.kind,
+        ErrorKind::UnexpectedReply,
+        "an approval ack answered by an event must be a typed unexpected reply: {error:?}"
     );
 }
