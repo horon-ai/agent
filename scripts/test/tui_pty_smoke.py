@@ -65,6 +65,9 @@ APPROVAL_PROMPT = "approval needed"
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
 APPROVAL_RESOLVED = "approval approved"
+# The status line names the model and the session only once the client has the
+# reply that identifies its session, which is the state a submitted line needs.
+SESSION_READY = "mock/mock-model"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
 
@@ -458,6 +461,30 @@ def wait_for_case_bridges(case_root: str, expected: int, timeout: float, what: s
     raise Failure(f"{what}: expected {expected} api-bridge processes, found {case_bridge_pids(case_root)}")
 
 
+def wait_for_refused_connect(path: str, timeout: float, what: str) -> None:
+    """Wait until a connect to `path` is refused, or fail.
+
+    Only `ConnectionRefusedError` is the dead state; every other exception keeps
+    propagating, so a probe that fails for any other reason is a failure, not a
+    pass. The wait exists because a killed server's last descriptor can outlive
+    its process entry: a process-count check reaching zero says nothing about
+    the listening socket still accepting one more connect.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(5.0)
+            probe.connect(path)
+        except ConnectionRefusedError:
+            return
+        finally:
+            probe.close()
+        if time.monotonic() >= deadline:
+            raise Failure(what)
+        time.sleep(0.05)
+
+
 def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript: str | None) -> str:
     """A relaunch over the socket file a killed bridge left behind (#363).
 
@@ -508,19 +535,25 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
         # without reproducing the defect it guards.
         if not os.path.exists(api_socket):
             raise Failure(f"{api_socket} went away with its bridge: the stale state was not reproduced")
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
-                probe.settimeout(5.0)
-                probe.connect(api_socket)
-        except ConnectionRefusedError:
-            pass
-        else:
-            raise Failure(f"{api_socket} still answered after its bridge died: the stale state was not reproduced")
+        # A live bridge keeps answering, so this raises; the stale state only
+        # passes once the endpoint really refuses.
+        wait_for_refused_connect(
+            api_socket,
+            STEP_TIMEOUT,
+            f"{api_socket} still answered after its bridge died: the stale state was not reproduced",
+        )
         note(f"stale socket reproduced: {api_socket} exists and refuses a connect")
 
         relaunch = Terminal([launch.argv0], cwd=case_root, env=env)
         try:
             relaunch.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen after the stale socket")
+            # The first screen is drawn before the client has the reply that
+            # identifies its session. A key sent into that gap lands in a client
+            # whose draft and slash list are then replaced by the attach, so the
+            # line submitted is not the one typed; `/quit` never leaves and the
+            # case hangs. The status line carries the model only once that reply
+            # has landed, so it is the observable "the client is settled" state.
+            relaunch.read_until(SESSION_READY, STEP_TIMEOUT, "session ready after the stale socket")
             relaunch.send("/quit\r")
             code = relaunch.wait(STEP_TIMEOUT)
             if code != 0:
