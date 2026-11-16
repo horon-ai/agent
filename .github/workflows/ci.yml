@@ -2087,10 +2087,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `packages/docs-site` is the Mintlify project served at agent.horon.ai.
-    # Mintlify builds and deploys it from the connected GitHub repository, so
-    # nothing deploys from CI: this job fails when the project no longer
-    # validates, contains a broken internal link, or when its Reference pages
-    # are stale against `docs/` (`scripts/ci/sync_docs_site.py --check`).
+    # Mintlify deploys it from the `deploy/docs` branch, which only
+    # `docs-site-deploy.yml` moves (from `main`), so this job deploys nothing:
+    # it fails when the project no longer validates, contains a broken internal
+    # link, or when its Reference pages are stale against `docs/`
+    # (`scripts/ci/sync_docs_site.py --check`).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 

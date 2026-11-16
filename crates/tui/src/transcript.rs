@@ -6,6 +6,10 @@
 //! replacement retracts text) are the same everywhere and are easy to get wrong
 //! at the call site.
 
+use std::time::Instant;
+
+use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
+
 /// What a tool call line says about its call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolState {
@@ -15,6 +19,44 @@ pub enum ToolState {
     Done,
     /// Finished with an error the model will see.
     Failed(String),
+    /// Refused by the approval gate, with the decision still to come.
+    ///
+    /// The gate answers a call it may not run with a sentence naming the
+    /// request, and that sentence is kept here so the line can say what the
+    /// request was about once it is decided. Drawing it as a failure meanwhile
+    /// says the call ran and broke, which is not what happened.
+    Waiting(String),
+    /// Refused by the approval gate, with the decision recorded on the row.
+    ///
+    /// This is not a failure: the gate held the call, and the model has to
+    /// issue it again. It is not a wait either: the prompt is gone, so nothing
+    /// will change the row again.
+    Settled(Decision, String),
+}
+
+/// What became of a request the approval gate refused a call with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    /// Answered yes for this call.
+    Allowed,
+    /// Answered yes, and for every later call like it.
+    AllowedAlways,
+    /// Denied, or the prompt was dismissed.
+    Denied,
+    /// The prompt went away without an answer.
+    Unanswered,
+}
+
+impl Decision {
+    /// The word the row wears for this outcome.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Allowed => "allowed",
+            Self::AllowedAlways => "allowed always",
+            Self::Denied => "denied",
+            Self::Unanswered => "not answered",
+        }
+    }
 }
 
 impl ToolState {
@@ -24,7 +66,58 @@ impl ToolState {
             Self::Running => "running",
             Self::Done => "done",
             Self::Failed(_) => "failed",
+            Self::Waiting(_) => "needs approval",
+            Self::Settled(decision, _) => decision.label(),
         }
+    }
+}
+
+/// What a tool line says when the turn ended before its result arrived.
+///
+/// Neutral on purpose: a cancelled turn and a dead connection end calls the
+/// same way, and neither says anything about the tool itself.
+pub const TURN_ENDED: &str = "the turn ended before this call reported";
+
+/// One tool call, as far as the client knows it.
+///
+/// The call id is kept because parallel calls of the same tool are ordinary:
+/// two `bash` calls interleave their input and finish in either order, and only
+/// the id says which line a result belongs to. An empty id is what an older
+/// daemon sends, and it means "the call that started most recently".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCall {
+    /// The id the daemon gave this call, empty when it gave none.
+    pub call_id: String,
+    /// The tool's name.
+    pub name: String,
+    /// Where the call stands.
+    pub state: ToolState,
+    /// The argument JSON seen so far, capped at [`tool_line::MAX_INPUT_BYTES`].
+    pub input: String,
+    /// When the call finished and how long it took, in milliseconds.
+    pub duration_ms: Option<u64>,
+    /// The head of the call's output, kept only as far as the preview needs.
+    pub output: Option<OutputHead>,
+}
+
+impl ToolCall {
+    fn new(call_id: &str, name: &str) -> Self {
+        Self {
+            call_id: call_id.to_string(),
+            name: name.to_string(),
+            state: ToolState::Running,
+            input: String::new(),
+            duration_ms: None,
+            output: None,
+        }
+    }
+
+    /// Whether this is the call `call_id` names.
+    ///
+    /// An empty id matches nothing: with no id there is no identity, and the
+    /// caller falls back to "the oldest running call of this name".
+    fn is_call(&self, call_id: &str) -> bool {
+        !call_id.is_empty() && self.call_id == call_id
     }
 }
 
@@ -33,10 +126,13 @@ impl ToolState {
 pub enum Item {
     /// A message the user sent.
     User(String),
+    /// A message typed while a turn was running: kept, drawn, and sent when
+    /// the turn ends.
+    Queued(String),
     /// A completed assistant message.
     Assistant(String),
     /// A tool call, addressed by its call id while it runs.
-    Tool { name: String, state: ToolState },
+    Tool(ToolCall),
     /// Session-level information, not model output.
     Notice(String),
     /// Something the user needs to see and act on.
@@ -66,7 +162,7 @@ struct Reasoned {
 }
 
 /// The transcript buffer.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Transcript {
     items: Vec<Item>,
     streaming: Streaming,
@@ -75,12 +171,58 @@ pub struct Transcript {
     /// `transcript.show_reasoning` resolves; the option is read at the event,
     /// so flipping it affects the next delta rather than only the next turn.
     show_reasoning: bool,
+    /// Rows of a finished call's output kept for the preview, as
+    /// `transcript.tool_output_lines` resolves. Zero hides the preview.
+    tool_output_lines: usize,
+    /// When each call started, keyed by call id and dropped when it ends.
+    starts: Vec<Start>,
+    /// The requests this session has decided, newest last.
+    ///
+    /// A refusal can reach the client after its prompt was answered, and the
+    /// row still has to say what happened to the call. Bounded because it is
+    /// only ever read for the refusal in hand.
+    decided: Vec<(String, Decision)>,
+}
+
+/// When one call started.
+#[derive(Debug)]
+struct Start {
+    call_id: String,
+    name: String,
+    at: Instant,
+}
+
+impl Default for Transcript {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            streaming: Streaming::default(),
+            reasoned: Reasoned::default(),
+            show_reasoning: false,
+            tool_output_lines: DEFAULT_OUTPUT_LINES,
+            starts: Vec::new(),
+            decided: Vec::new(),
+        }
+    }
 }
 
 impl Transcript {
     /// An empty transcript.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Keep at most `lines` rows of each finished call's output, or none.
+    ///
+    /// Applies to calls that finish from now on: the transcript holds only the
+    /// preview, so a smaller number cannot shorten a line already drawn.
+    pub fn set_tool_output_lines(&mut self, lines: usize) {
+        self.tool_output_lines = lines.min(tool_line::MAX_OUTPUT_LINES);
+    }
+
+    /// How many rows of a finished call's output the preview keeps.
+    pub fn tool_output_lines(&self) -> usize {
+        self.tool_output_lines
     }
 
     /// Keep, or stop keeping, the model's reasoning.
@@ -125,6 +267,27 @@ impl Transcript {
         self.items.push(Item::User(text.into()));
     }
 
+    /// Record a completed assistant message that was not streamed here.
+    ///
+    /// Reading a stored session back goes through this: the daemon hands over
+    /// whole messages, so there are no deltas to accumulate.
+    pub fn push_assistant(&mut self, text: impl Into<String>) {
+        self.finish_stream();
+        self.items.push(Item::Assistant(text.into()));
+    }
+
+    /// Empty the conversation, keeping the display settings.
+    ///
+    /// Resuming another session replaces the conversation rather than the
+    /// reader's settings: the output preview length and the reasoning switch
+    /// were chosen for this terminal, not for the session that was open.
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.streaming = Streaming::default();
+        self.reasoned = Reasoned::default();
+        self.starts.clear();
+    }
+
     /// Record an informational line.
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.finish_stream();
@@ -135,6 +298,72 @@ impl Transcript {
     pub fn push_warning(&mut self, text: impl Into<String>) {
         self.finish_stream();
         self.items.push(Item::Warning(text.into()));
+    }
+
+    /// Record a message waiting for the running turn to end.
+    ///
+    /// It is a line of its own rather than a warning, because it is not a
+    /// problem: the text is already accepted and will be sent.
+    pub fn push_queued(&mut self, text: impl Into<String>) {
+        self.finish_stream();
+        self.items.push(Item::Queued(text.into()));
+    }
+
+    /// Turn the oldest queued line for `text` into the message that was sent.
+    ///
+    /// The queued line is promoted rather than replaced, so the conversation
+    /// keeps the order the messages were typed in.
+    pub fn promote_queued(&mut self, text: &str) {
+        let found = self
+            .items
+            .iter()
+            .position(|item| matches!(item, Item::Queued(queued) if queued == text));
+        if let Some(index) = found {
+            self.items[index] = Item::User(text.to_string());
+        }
+    }
+
+    /// Take back the line drawn for a message the harness refused.
+    ///
+    /// The newest line with this text is the one the failed send drew: one
+    /// message is in flight at a time, and a submit during a turn draws a
+    /// waiting line rather than a sent one, so retrying cannot stack a second
+    /// copy of a line that was never delivered. A waiting line for another
+    /// message with the same text is left alone.
+    pub fn retract_user(&mut self, text: &str) {
+        let found = self
+            .items
+            .iter()
+            .rposition(|item| matches!(item, Item::User(sent) if sent == text));
+        if let Some(index) = found {
+            self.items.remove(index);
+        }
+    }
+
+    /// End every tool line that never reported a result.
+    ///
+    /// A turn can end while a call is still running: it was cancelled, the
+    /// provider failed, or the connection died. The line would then say
+    /// `running` for the rest of the session, so it is closed here with a
+    /// sentence that blames neither the tool nor the model.
+    pub fn end_running_tools(&mut self) {
+        for item in &mut self.items {
+            if let Item::Tool(call) = item
+                && call.state == ToolState::Running
+            {
+                call.state = ToolState::Failed(TURN_ENDED.to_string());
+            }
+        }
+        // The call can never finish now, so its start mark is dead weight; a
+        // late replay of its result must not invent a duration either.
+        let items = &self.items;
+        self.starts.retain(|start| {
+            items.iter().any(|item| {
+                matches!(item, Item::Tool(call) if call.state == ToolState::Running
+                    && ((!start.call_id.is_empty() && call.call_id == start.call_id)
+                        || (start.call_id.is_empty() && call.name == start.name)))
+            })
+        });
     }
 
     /// Append streamed assistant text.
@@ -224,34 +453,276 @@ impl Transcript {
     }
 
     /// A tool call started.
-    pub fn tool_start(&mut self, name: &str) {
+    ///
+    /// `call_id` is how the result will find this line again; the start time
+    /// goes beside the items rather than into one, because an [`Item`] must stay
+    /// comparable and an [`Instant`] is not.
+    pub fn tool_start(&mut self, call_id: &str, name: &str) {
         self.finish_reasoning();
         self.finish_stream();
-        self.items.push(Item::Tool {
+        // A start can arrive after the result that ended it, when frames from a
+        // resumed stream are reordered. The line is already there and already
+        // says how the call ended, so this records nothing: a second line with
+        // the same id would show the same call twice.
+        let known = !call_id.is_empty()
+            && self
+                .items
+                .iter()
+                .any(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)));
+        if known {
+            return;
+        }
+        self.starts.push(Start {
+            call_id: call_id.to_string(),
             name: name.to_string(),
-            state: ToolState::Running,
+            at: Instant::now(),
+        });
+        self.items.push(Item::Tool(ToolCall::new(call_id, name)));
+    }
+
+    /// Whether a refusal line names `request_id`.
+    ///
+    /// The approval gate writes the id into the sentence it refused the call
+    /// with, and that is the only link between a parked request and its line: a
+    /// prompt finds its arguments through it, and the line is drawn as waiting
+    /// for as long as it holds. One predicate, so the two can never disagree
+    /// about which call a request is about.
+    pub fn names_request(message: &str, request_id: &str) -> bool {
+        !request_id.is_empty() && message.contains(request_id)
+    }
+
+    /// The argument summary of the call the request `request_id` is asking about.
+    ///
+    /// An approval arrives with the tool name alone, so a prompt that named only
+    /// the name could not tell two parallel `bash` calls apart — and pairing by
+    /// name alone showed a prompt the arguments of an unrelated call from an
+    /// earlier turn, which is worse than showing nothing. The refusal the gate
+    /// writes into the tool line carries the request id
+    /// (`crates/app-core/src/tool/mod.rs`, `Registry::approval_refusal`: "... .
+    /// Request {request_id} is queued; answer it through the approval surface.
+    /// Nothing was executed."), and that id is unique to one call, so the line
+    /// whose failure text names this request is the one this prompt covers.
+    ///
+    /// Every other line is excluded by construction: a call that ran without a
+    /// prompt has a result that names something else, a line from an earlier
+    /// turn names an earlier request, and a call still streaming its input names
+    /// no request yet. `None` means the prompt shows the action alone.
+    pub fn argument_summary_for_request(&self, request_id: &str) -> Option<String> {
+        if request_id.is_empty() {
+            return None;
+        }
+        self.items.iter().find_map(|item| match item {
+            // A parked line is drawn as waiting and still names its request,
+            // which is what a prompt reads its arguments through.
+            Item::Tool(call) => match &call.state {
+                ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message)
+                    if Self::names_request(message, request_id) =>
+                {
+                    tool_line::summarize(&call.input)
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
+    /// Draw the line naming `request_id` as waiting for its decision.
+    ///
+    /// The call was refused because the mode asks first, not because it broke,
+    /// so until the request is decided the line says it is waiting. A line that
+    /// already carries its decision keeps it, and nothing happens when no line
+    /// names the id yet: `decide_request` settles a row that arrives later.
+    pub fn park_request(&mut self, request_id: &str) {
+        self.restate_request(request_id, |state| match state {
+            ToolState::Failed(message) => Some(ToolState::Waiting(message)),
+            _ => None,
         });
     }
 
-    /// A tool call finished, with the error text when it failed.
-    pub fn tool_done(&mut self, name: &str, error: Option<&str>) {
+    /// Record what became of `request_id` on every line that names it.
+    ///
+    /// This is the only way a gate line stops saying it is waiting: the three
+    /// outcomes say what happened to the request, and none of them is "failed",
+    /// because the call did not run. The decision is remembered for a line that
+    /// arrives after it.
+    pub fn decide_request(&mut self, request_id: &str, decision: Decision) {
+        if request_id.is_empty() {
+            return;
+        }
+        // The daemon's resolved event carries `approved` alone, so it cannot say
+        // whether the answer was `a` or `y`: the "always" the local key recorded
+        // must not be weakened by the event that merely confirms it.
+        let decision = match (self.decided_decision(request_id), decision) {
+            (Some(Decision::AllowedAlways), Decision::Allowed) => Decision::AllowedAlways,
+            _ => decision,
+        };
+        self.restate_request(request_id, |state| match state {
+            ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message) => {
+                Some(ToolState::Settled(decision, message))
+            }
+            _ => None,
+        });
+        // One entry per request: a second answer to the same request is refused
+        // by the daemon and must not reorder what the row says.
+        self.decided.retain(|(id, _)| id != request_id);
+        self.decided.push((request_id.to_string(), decision));
+        const KEPT: usize = 64;
+        if self.decided.len() > KEPT {
+            self.decided.remove(0);
+        }
+    }
+
+    /// The decision already recorded for `request_id`, if any.
+    fn decided_decision(&self, request_id: &str) -> Option<Decision> {
+        self.decided
+            .iter()
+            .rev()
+            .find(|(id, _)| id == request_id)
+            .map(|(_, decision)| *decision)
+    }
+
+    /// The decision already recorded for the refusal in `state`, if any.
+    fn decided_for_name(&self, state: &ToolState) -> Option<Decision> {
+        match state {
+            ToolState::Failed(message) => self.decided_for(message),
+            _ => None,
+        }
+    }
+
+    /// The decision recorded for a request the message names, if any.
+    fn decided_for(&self, message: &str) -> Option<Decision> {
+        self.decided
+            .iter()
+            .rev()
+            .find(|(id, _)| Self::names_request(message, id))
+            .map(|(_, decision)| *decision)
+    }
+
+    /// Apply `restate` to every line naming `request_id`.
+    fn restate_request(&mut self, request_id: &str, restate: impl Fn(ToolState) -> Option<ToolState>) {
+        for item in &mut self.items {
+            if let Item::Tool(call) = item
+                && let ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message) =
+                    &call.state
+                && Self::names_request(message, request_id)
+            {
+                let state = call.state.clone();
+                if let Some(next) = restate(state) {
+                    call.state = next;
+                }
+            }
+        }
+    }
+
+    /// Argument bytes arrived for a call still streaming its input.
+    ///
+    /// The delta is appended to the call's line rather than replacing it: input
+    /// streams as JSON fragments, and only the joined result parses. An empty
+    /// id means the call that started most recently, which is what the daemon
+    /// says when it sends no id.
+    pub fn tool_input(&mut self, call_id: &str, delta: &str) {
+        let target = if call_id.is_empty() {
+            self.starts.last().map(|start| start.call_id.clone())
+        } else {
+            Some(call_id.to_string())
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let Some(call) = self.items.iter_mut().find_map(|item| match item {
+            Item::Tool(call) if call.is_call(&target) => Some(call),
+            _ => None,
+        }) else {
+            return;
+        };
+        tool_line::append_input(&mut call.input, delta);
+    }
+
+    /// A tool call finished, with its output and the error text when it failed.
+    ///
+    /// The output is cut to the configured preview here, not at the renderer:
+    /// only the preview is ever kept, so a tool returning megabytes cannot grow
+    /// the transcript.
+    pub fn tool_done(&mut self, call_id: &str, name: &str, output: Option<&str>, error: Option<&str>) {
         let state = match error {
             Some(message) if !message.is_empty() => ToolState::Failed(message.to_string()),
             _ => ToolState::Done,
         };
-        if let Some(Item::Tool { state: slot, .. }) = self
-            .items
-            .iter_mut()
-            .rev()
-            .find(|item| matches!(item, Item::Tool { name: held, .. } if held == name))
-        {
-            *slot = state;
+        let elapsed = self.take_start(call_id, name);
+        let preview = output.and_then(|text| tool_line::cut_output(text, self.tool_output_lines));
+        // A refusal can arrive after its prompt was answered, and the row still
+        // has to say what happened to the request rather than that it failed.
+        let state = match (&state, self.decided_for_name(&state)) {
+            (ToolState::Failed(message), Some(decision)) => ToolState::Settled(decision, message.clone()),
+            _ => state,
+        };
+        let Some(call) = self.call_for(call_id, name) else {
+            let mut call = ToolCall::new(call_id, name);
+            call.state = state;
+            call.duration_ms = elapsed;
+            call.output = preview;
+            self.items.push(Item::Tool(call));
             return;
+        };
+        // A call finishes once, but the same result can reach the client twice
+        // (a reconnect replays it). The second one must not overwrite the first:
+        // it arrives after the start mark was taken, so its duration is empty,
+        // and a repeat of a success would erase a recorded failure.
+        let keep_failure = matches!(
+            call.state,
+            ToolState::Failed(_) | ToolState::Waiting(_) | ToolState::Settled(_, _)
+        ) && !matches!(state, ToolState::Failed(_));
+        if !keep_failure {
+            call.state = state;
         }
-        self.items.push(Item::Tool {
-            name: name.to_string(),
-            state,
-        });
+        if call.duration_ms.is_none() {
+            call.duration_ms = elapsed;
+        }
+        if call.output.is_none() {
+            call.output = preview;
+        }
+    }
+
+    /// The call `call_id` names, or the oldest running call when there is no id.
+    ///
+    /// A daemon that sends no id still sends the name, and its calls are
+    /// sequential, so the oldest unfinished call of that name is the one the
+    /// result belongs to; the newest is wrong, because that is the call still
+    /// starting.
+    fn call_for(&mut self, call_id: &str, name: &str) -> Option<&mut ToolCall> {
+        let found = self
+            .items
+            .iter()
+            .position(|item| matches!(item, Item::Tool(call) if call.is_call(call_id)));
+        let index: Option<usize> = match found {
+            Some(index) => Some(index),
+            // With no id there is no identity, and calls without ids are
+            // sequential, so the oldest unfinished call of that name is the one
+            // this result belongs to.
+            None if call_id.is_empty() => self.items.iter().position(|item| match item {
+                Item::Tool(call) => call.state == ToolState::Running && call.name == name,
+                _ => false,
+            }),
+            None => None,
+        };
+        let index = index?;
+        match self.items.get_mut(index) {
+            Some(Item::Tool(call)) => Some(call),
+            _ => None,
+        }
+    }
+
+    /// How long the call that just finished took, removing its start mark.
+    fn take_start(&mut self, call_id: &str, name: &str) -> Option<u64> {
+        let index = self.starts.iter().position(|start| {
+            if call_id.is_empty() {
+                start.name == name
+            } else {
+                start.call_id == call_id
+            }
+        })?;
+        let start = self.starts.remove(index);
+        tool_line::elapsed_since(Some(start.at))
     }
 
     /// Commit the open streaming message, dropping an empty one.
@@ -303,15 +774,15 @@ mod tests {
     #[test]
     fn tool_done_updates_the_running_line() {
         let mut transcript = Transcript::new();
-        transcript.tool_start("bash");
-        transcript.tool_done("bash", None);
-        assert_eq!(
-            transcript.items(),
-            &[Item::Tool {
-                name: "bash".to_string(),
-                state: ToolState::Done
-            }]
-        );
+        transcript.tool_start("c1", "bash");
+        transcript.tool_done("c1", "bash", None, None);
+        let items = transcript.items();
+        assert_eq!(items.len(), 1, "{items:?}");
+        let Item::Tool(call) = &items[0] else {
+            panic!("expected one tool line: {items:?}");
+        };
+        assert_eq!(call.name, "bash");
+        assert_eq!(call.state, ToolState::Done);
     }
 
     #[test]
@@ -398,7 +869,7 @@ mod tests {
         let mut transcript = Transcript::new();
         transcript.set_show_reasoning(true);
         transcript.reasoning_delta("I need to read the file");
-        transcript.tool_start("read");
+        transcript.tool_start("c1", "read");
         assert_eq!(transcript.open_reasoning(), None);
         assert_eq!(
             transcript.items().first(),
@@ -439,13 +910,13 @@ mod tests {
     #[test]
     fn tool_done_without_a_start_still_renders() {
         let mut transcript = Transcript::new();
-        transcript.tool_done("read", Some("no such file"));
-        assert_eq!(
-            transcript.items(),
-            &[Item::Tool {
-                name: "read".to_string(),
-                state: ToolState::Failed("no such file".to_string())
-            }]
-        );
+        transcript.tool_done("c1", "read", None, Some("no such file"));
+        let items = transcript.items();
+        assert_eq!(items.len(), 1, "{items:?}");
+        let Item::Tool(call) = &items[0] else {
+            panic!("expected one tool line: {items:?}");
+        };
+        assert_eq!(call.name, "read");
+        assert_eq!(call.state, ToolState::Failed("no such file".to_string()));
     }
 }

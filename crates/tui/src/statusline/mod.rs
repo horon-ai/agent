@@ -11,9 +11,10 @@
 //! is dropped first. A misspelled segment is reported once and skipped instead
 //! of hiding the rest of the line.
 
-use chrono::NaiveTime;
+use chrono::{NaiveTime, Timelike};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
@@ -135,6 +136,8 @@ pub struct StatusData<'a> {
     pub session_id: Option<&'a str>,
     /// Whether a turn is in flight.
     pub pending_turn: bool,
+    /// Whether the client lost its harness connection.
+    pub disconnected: bool,
     /// Latest session status word, e.g. `idle` or `generating`.
     pub session_status: Option<&'a str>,
     /// A parked approval or question, already worded for the line.
@@ -290,6 +293,16 @@ pub fn local_now() -> NaiveTime {
     chrono::Local::now().time()
 }
 
+/// The clock the status line shows, to the minute.
+///
+/// The minutes are what the line prints, and they are the one thing on screen
+/// that moves with no input at all: the idle loop reads them to know when a
+/// frame is due.
+pub fn local_minute() -> (u32, u32) {
+    let now = chrono::Local::now().time();
+    (now.hour(), now.minute())
+}
+
 /// One visible segment: its id, its text and its colour.
 #[derive(Debug, Clone)]
 struct Entry {
@@ -395,6 +408,11 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout) -> String
 
 /// What the turn is doing, in the vocabulary the status segment uses.
 fn status_word<'a>(data: &StatusData<'a>) -> &'a str {
+    // A lost connection outranks the turn: whatever the turn was doing, it is
+    // not doing it any more, and nothing the user types will reach the harness.
+    if data.disconnected {
+        return "disconnected";
+    }
     if data.prompt.is_some() {
         return "requires_action";
     }
@@ -413,7 +431,9 @@ fn segment_style(id: SegmentId, data: &StatusData<'_>, theme: &Theme) -> Style {
     match id {
         SegmentId::Model => Style::default().fg(theme.status.status_accent),
         SegmentId::Status | SegmentId::Pending => {
-            if data.prompt.is_some() || data.pending_turn {
+            if data.disconnected {
+                Style::default().fg(theme.core.error)
+            } else if data.prompt.is_some() || data.pending_turn {
                 Style::default().fg(theme.core.warning)
             } else {
                 Style::default().fg(theme.core.success)
@@ -435,10 +455,20 @@ fn short_id(id: &str) -> String {
     id.chars().take(SHORT).collect()
 }
 
-/// A path with the home directory replaced by `~` and a length limit applied
+/// The mark a cut path starts with, before the segments that are kept whole.
+const ELLIPSIS: &str = "…";
+
+/// A path with the home directory replaced by `~` and a width limit applied
 /// from the left, so the leaf stays visible.
+///
+/// The cut lands on a segment boundary: what follows the ellipsis is a whole
+/// directory name rather than the tail of one, which is the difference between
+/// a path that can be read and a string of letters. A single name longer than
+/// the room left is cut inside itself, on a character boundary, with the
+/// ellipsis kept; `max = 0` keeps the path whole. The width is counted in cells,
+/// so a name of wide characters costs what it draws.
 fn shorten_path(path: &str, home: Option<&str>, max: usize) -> String {
-    let mut text = match home {
+    let text = match home {
         Some(home) if !home.is_empty() => {
             if path == home {
                 "~".to_string()
@@ -453,15 +483,51 @@ fn shorten_path(path: &str, home: Option<&str>, max: usize) -> String {
         }
         Some(_) | None => path.to_string(),
     };
-    if max == 0 {
+    if max == 0 || text.width() <= max {
         return text;
     }
-    let count = text.chars().count();
-    if count > max {
-        let tail: String = text.chars().skip(count - max.saturating_sub(1)).collect();
-        text = format!("…{tail}");
+    // A separator in the path is what makes `…/` honest: the marker then stands
+    // for the directories left out. A lone name is marked with the ellipsis
+    // alone, because there is no boundary it could have been cut at, and so is
+    // a path with no room for the second cell.
+    let marked = text.contains(['/', '\\']) && max > ELLIPSIS.width();
+    let marker = if marked { "…/" } else { ELLIPSIS };
+    let budget = max.saturating_sub(marker.width());
+    let segments: Vec<&str> = text.split(['/', '\\']).filter(|segment| !segment.is_empty()).collect();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut used = 0;
+    for segment in segments.iter().rev() {
+        let cells = segment.width();
+        let cost = if kept.is_empty() { cells } else { cells + 1 };
+        if used + cost > budget {
+            break;
+        }
+        used += cost;
+        kept.push(segment);
     }
-    text
+    if kept.is_empty() {
+        // Not even the last name fits whole: its tail is worth more than its
+        // head, since the leaf is what says where the client is working.
+        let last = segments.last().copied().unwrap_or("");
+        return format!("{marker}{}", tail_cells(last, budget));
+    }
+    kept.reverse();
+    format!("{marker}{}", kept.join("/"))
+}
+
+/// The last `budget` cells of `text`, starting at a character boundary.
+fn tail_cells(text: &str, budget: usize) -> String {
+    let mut used = 0;
+    let mut start = text.len();
+    for (index, character) in text.char_indices().rev() {
+        let cells = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + cells > budget {
+            break;
+        }
+        used += cells;
+        start = index;
+    }
+    text[start..].to_string()
 }
 
 /// A token count in a compact form, e.g. `12.3k`.

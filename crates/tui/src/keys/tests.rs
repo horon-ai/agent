@@ -88,6 +88,10 @@ fn keys_defaults_reproduce_the_shipped_keys() {
     assert_eq!(editing("enter"), Some(ids::APP_SUBMIT));
     assert_eq!(editing("ctrl+c"), Some(ids::APP_CANCEL));
     assert_eq!(editing("ctrl+d"), Some(ids::APP_QUIT));
+    // `esc` interrupts a turn in the app and dismisses a prompt: the same key
+    // in two scopes is not a conflict, which is why the defaults warn about
+    // nothing.
+    assert_eq!(editing("esc"), Some(ids::APP_INTERRUPT));
     assert_eq!(editing("backspace"), Some(ids::EDITOR_BACKSPACE));
     assert_eq!(editing("delete"), Some(ids::EDITOR_DELETE));
     assert_eq!(editing("left"), Some(ids::EDITOR_LEFT));
@@ -115,8 +119,42 @@ fn keys_defaults_reproduce_the_shipped_keys() {
     assert_eq!(bindings.resolve(Scope::Prompt, &parse("ctrl+d")), None);
 
     // An extra modifier answers the binding that names the key alone, which is
-    // how alt+left kept moving the cursor before the map existed.
-    assert_eq!(bindings.resolve_editing(&parse("alt+left")), Some(ids::EDITOR_LEFT));
+    // why `ctrl+left` still moves one character; `alt+left` is spelled out now
+    // and moves by a word instead.
+    assert_eq!(bindings.resolve_editing(&parse("ctrl+left")), Some(ids::EDITOR_LEFT));
+    assert_eq!(
+        bindings.resolve_editing(&parse("alt+left")),
+        Some(ids::EDITOR_WORD_LEFT)
+    );
+
+    // The keys the editor grew, and the ones the shipped actions gained.
+    for (id, name) in [
+        (ids::EDITOR_NEWLINE, "shift+enter"),
+        (ids::EDITOR_NEWLINE, "alt+enter"),
+        (ids::EDITOR_NEWLINE, "ctrl+j"),
+        (ids::EDITOR_KILL_TO_START, "ctrl+u"),
+        (ids::EDITOR_KILL_TO_END, "ctrl+k"),
+        (ids::EDITOR_DELETE_WORD, "ctrl+w"),
+        (ids::EDITOR_WORD_LEFT, "alt+left"),
+        (ids::EDITOR_WORD_RIGHT, "alt+right"),
+        (ids::EDITOR_HISTORY_PREV, "up"),
+        (ids::EDITOR_HISTORY_NEXT, "down"),
+        (ids::EDITOR_HOME, "ctrl+a"),
+        (ids::EDITOR_END, "ctrl+e"),
+        (ids::EDITOR_LEFT, "ctrl+b"),
+        (ids::EDITOR_RIGHT, "ctrl+f"),
+        (ids::APP_SCROLL_PAGE_UP, "pageup"),
+        (ids::APP_SCROLL_PAGE_DOWN, "pagedown"),
+        (ids::APP_SCROLL_UP, "shift+up"),
+        (ids::APP_SCROLL_DOWN, "shift+down"),
+        (ids::APP_SCROLL_BOTTOM, "ctrl+end"),
+    ] {
+        assert_eq!(editing(name), Some(id), "`{name}` is not bound to `{id}`");
+        assert!(
+            bindings.keys_for(id).contains(&parse(name)),
+            "`{name}` is missing from the keys `{id}` answers to"
+        );
+    }
 }
 
 #[test]
@@ -189,6 +227,39 @@ fn keys_empty_array_disables_an_action() {
 }
 
 #[test]
+fn scroll_keys_are_not_taken_by_the_draft_or_its_history() {
+    let (bindings, warnings) = Bindings::from_table(&toml::Table::new());
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // Shift is never inferred: the shifted arrow scrolls while the plain one
+    // stays with the draft's history, so one modifier cannot mean two things.
+    assert_eq!(bindings.resolve_editing(&parse("shift+up")), Some(ids::APP_SCROLL_UP));
+    assert_eq!(
+        bindings.resolve_editing(&parse("shift+down")),
+        Some(ids::APP_SCROLL_DOWN)
+    );
+    assert_eq!(bindings.resolve_editing(&parse("up")), Some(ids::EDITOR_HISTORY_PREV));
+    assert_eq!(bindings.resolve_editing(&parse("down")), Some(ids::EDITOR_HISTORY_NEXT));
+    assert_eq!(
+        bindings.resolve_editing(&parse("pageup")),
+        Some(ids::APP_SCROLL_PAGE_UP)
+    );
+    assert_eq!(
+        bindings.resolve_editing(&parse("ctrl+end")),
+        Some(ids::APP_SCROLL_BOTTOM)
+    );
+
+    // A file that turns the scroll key off must not hand it to the history: an
+    // unshifted binding answers only an unshifted key.
+    let (_directory, loader) = loader_with("\"app.scroll_up\" = []\n");
+    assert!(loader.warnings().is_empty(), "{:?}", loader.warnings());
+    assert_eq!(loader.bindings().resolve_editing(&parse("shift+up")), None);
+    assert_eq!(
+        loader.bindings().resolve_editing(&parse("up")),
+        Some(ids::EDITOR_HISTORY_PREV)
+    );
+}
+
+#[test]
 fn keys_conflict_reports_both_actions_and_keeps_running() {
     let (_directory, loader) = loader_with("\"prompt.deny\" = [\"y\"]\n");
     let warnings = loader.warnings();
@@ -248,7 +319,12 @@ fn keys_reload_picks_up_a_file_change() {
     let reload = loader.check_now().expect("the changed file reloads");
     assert!(reload.warnings.is_empty(), "{:?}", reload.warnings);
     assert_eq!(reload.bindings.resolve_editing(&parse("ctrl+i")), Some(ids::APP_SUBMIT));
-    assert_eq!(reload.bindings.resolve_editing(&parse("ctrl+j")), None);
+    // `ctrl+j` no longer sends: it falls back to the default that starts a new
+    // line, which is what an unbound submit leaves in its place.
+    assert_eq!(
+        reload.bindings.resolve_editing(&parse("ctrl+j")),
+        Some(ids::EDITOR_NEWLINE)
+    );
     assert_eq!(
         loader.bindings().resolve_editing(&parse("ctrl+i")),
         Some(ids::APP_SUBMIT)
@@ -303,4 +379,147 @@ fn keys_editor_keys_can_be_remapped() {
     app.on_key(key(KeyCode::Char('X')));
     assert_eq!(app.input.text(), "Xab");
     assert_eq!(app.input.cursor(), 1);
+}
+
+fn typed(app: &mut App, text: &str) {
+    for character in text.chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+}
+
+#[test]
+fn editor_keys_build_and_cut_a_multi_line_draft() {
+    let mut app = app();
+    typed(&mut app, "one");
+    // `alt+enter` is the newline a terminal can deliver: plain shift+enter
+    // arrives as a bare Enter from most of them.
+    assert_eq!(app.on_key(modified(KeyCode::Enter, KeyModifiers::ALT)), None);
+    typed(&mut app, "two");
+    assert_eq!(app.input.text(), "one\ntwo");
+
+    // `up` walks the draft's own lines before the history is asked.
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(app.input.line_of_cursor(), 0);
+    assert_eq!(app.input.cursor(), 3, "the caret keeps its column");
+
+    // `ctrl+u` cuts the line under the caret and leaves the other one.
+    app.on_key(control('u'));
+    assert_eq!(app.input.text(), "\ntwo");
+    // At the end of what is left, `ctrl+k` joins the two lines.
+    app.on_key(key(KeyCode::End));
+    app.on_key(control('k'));
+    assert_eq!(app.input.text(), "two");
+}
+
+#[test]
+fn ctrl_a_and_ctrl_e_move_within_the_line() {
+    let mut app = app();
+    typed(&mut app, "abc");
+    app.on_key(control('a'));
+    assert_eq!(app.input.cursor(), 0);
+    app.on_key(control('e'));
+    assert_eq!(app.input.cursor(), 3);
+    app.on_key(control('b'));
+    app.on_key(control('b'));
+    assert_eq!(app.input.cursor(), 1);
+    app.on_key(control('f'));
+    assert_eq!(app.input.cursor(), 2);
+}
+
+#[test]
+fn ctrl_w_deletes_a_word_and_alt_arrows_move_by_word() {
+    let mut app = app();
+    typed(&mut app, "two words here");
+    app.on_key(control('w'));
+    assert_eq!(app.input.text(), "two words ");
+    app.on_key(modified(KeyCode::Left, KeyModifiers::ALT));
+    assert_eq!(app.input.cursor(), 4);
+    app.on_key(modified(KeyCode::Right, KeyModifiers::ALT));
+    assert_eq!(app.input.cursor(), 10);
+}
+
+#[test]
+fn history_returns_the_line_the_user_was_typing() {
+    let mut app = app();
+    typed(&mut app, "first");
+    assert_eq!(app.on_key(key(KeyCode::Enter)), Some(Action::Send("first".into())));
+    app.pending_turn = false;
+    typed(&mut app, "half-typed");
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(app.input.text(), "first", "up recalls the sent draft");
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(app.input.text(), "half-typed", "down gives the typing back");
+}
+
+#[test]
+fn up_and_down_do_nothing_with_an_empty_history() {
+    let mut app = app();
+    app.on_key(key(KeyCode::Up));
+    app.on_key(key(KeyCode::Down));
+    assert!(app.input.text().is_empty());
+    assert_eq!(app.input.cursor(), 0);
+}
+
+#[test]
+fn a_sent_draft_leaves_no_walk_behind() {
+    let mut app = app();
+    typed(&mut app, "one");
+    app.on_key(key(KeyCode::Enter));
+    app.pending_turn = false;
+    // An empty submission changes nothing, and the next walk starts at the
+    // newest draft rather than at the position the last one stopped on.
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+    typed(&mut app, "two");
+    app.on_key(key(KeyCode::Up));
+    assert_eq!(app.input.text(), "one");
+}
+
+#[test]
+fn a_paste_is_one_draft_and_never_a_submission() {
+    let mut app = app();
+    app.on_paste("a\nb\nc");
+    assert_eq!(app.input.text(), "a\nb\nc");
+    assert_eq!(app.input.line_count(), 3);
+    assert!(!app.pending_turn, "a paste must not start a turn");
+    assert_eq!(app.on_key(key(KeyCode::Enter)), Some(Action::Send("a\nb\nc".into())));
+}
+
+#[test]
+fn a_paste_does_not_answer_a_prompt() {
+    let mut app = app();
+    app.prompt = Some(Prompt::approval("r1".into(), "bash".into()));
+    app.on_paste("y");
+    assert!(app.prompt.is_some(), "the pasted letter must not approve anything");
+    assert!(app.input.text().is_empty(), "and it must not reach the draft");
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('y'))),
+        Some(Action::Approval {
+            request_id: "r1".into(),
+            approved: true,
+            always: false
+        }),
+        "the prompt still answers its own key"
+    );
+}
+
+#[test]
+fn a_multi_line_draft_is_queued_whole_during_a_turn() {
+    let mut app = app();
+    app.pending_turn = true;
+    app.on_paste("first\nsecond");
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.input.text().is_empty(), "the draft left the editor");
+    assert_eq!(app.queue.len(), 1);
+    assert_eq!(app.queue[0].text, "first\nsecond", "and it is queued whole");
+}
+
+#[test]
+fn a_refused_send_restores_the_whole_multi_line_draft() {
+    let mut app = app();
+    app.on_paste("line one\nline two");
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.in_flight.is_some());
+    app.send_failed("line one\nline two", "the harness refused it", false);
+    assert_eq!(app.input.text(), "line one\nline two", "every line comes back");
+    assert_eq!(app.input.line_count(), 2);
 }

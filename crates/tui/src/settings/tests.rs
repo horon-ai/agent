@@ -178,6 +178,31 @@ fn settings_env_override_files_and_parse_shapes() {
 }
 
 #[test]
+fn settings_mouse_scroll_is_off_until_a_layer_asks_for_it() {
+    let fixture = Fixture::new();
+    let (settings, warnings) = fixture.resolve(&fixture.sources(), &[]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // Capturing the mouse takes the terminal's own selection away, so the
+    // shipped default leaves the wheel to the terminal.
+    assert_eq!(settings.boolean("transcript.mouse_scroll"), Some(false));
+
+    fixture.write(&fixture.global(), "[transcript]\nmouse_scroll = true\n");
+    let (settings, warnings) = fixture.resolve(&fixture.sources(), &[]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(settings.boolean("transcript.mouse_scroll"), Some(true));
+
+    let (settings, _) = fixture.resolve(&fixture.sources(), &[("HORON_TUI_TRANSCRIPT_MOUSE_SCROLL", "off")]);
+    assert_eq!(settings.boolean("transcript.mouse_scroll"), Some(false));
+    assert_eq!(
+        settings
+            .provenance("transcript.mouse_scroll")
+            .map(Provenance::label)
+            .as_deref(),
+        Some("env HORON_TUI_TRANSCRIPT_MOUSE_SCROLL")
+    );
+}
+
+#[test]
 fn settings_unknown_key_warns_and_is_ignored() {
     let fixture = Fixture::new();
     fixture.write(

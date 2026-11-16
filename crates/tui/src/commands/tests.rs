@@ -205,8 +205,12 @@ fn commands_shadowed_file_is_listed_as_shadowed() {
     write_command(user.path(), "help", "a file the built-in hides");
     state.load();
     let help = state.help();
+    // The name and the description sit in one aligned column, so the row is
+    // read off the line that starts with `/help` rather than by spacing.
     assert!(
-        help.contains("/help  a file the built-in hides  (shadowed by the built-in)"),
+        help.lines().any(|line| line.trim_start().starts_with("/help ")
+            && line.contains("a file the built-in hides")
+            && line.contains("(shadowed by the built-in)")),
         "shadowing is not reported:\n{help}"
     );
     // The built-in still answers, and the file never runs.
@@ -374,11 +378,17 @@ fn commands_typed_lines_become_actions() {
 #[test]
 fn commands_model_maps_to_the_model_path() {
     let (_user, _project, mut app) = app_fixture();
-    // `/model` with no argument asks for the list; a name switches.
-    assert_eq!(type_line(&mut app, "/model"), Some(Action::Model(None)));
+    // `/model` with no argument opens the list the picker draws; a name
+    // switches straight away.
+    assert_eq!(type_line(&mut app, "/model"), Some(Action::Models));
+    assert!(app.picker.is_some(), "/model did not open the picker");
+    // The open list owns every key, so it is closed before the next line is
+    // typed; closing it changes nothing, which is what `esc` promises.
+    app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.picker.is_none(), "escape did not close the list");
     assert_eq!(
         type_line(&mut app, "/model gpt-5"),
-        Some(Action::Model(Some("gpt-5".to_string())))
+        Some(Action::Model("gpt-5".to_string()))
     );
 }
 
@@ -415,10 +425,10 @@ fn commands_tab_completes_the_typed_prefix() {
     assert_eq!(app.input.text(), "/al");
     assert_eq!(app.completion_hint().as_deref(), Some("alpha  alpine  alps"));
 
-    // Tab inserts the longest common prefix and keeps the line editable.
+    // Tab fills the command the popup has selected, which is the first match.
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/alp");
-    assert_eq!(app.completion_hint().as_deref(), Some("alpha  alpine  alps"));
+    assert_eq!(app.input.text(), "/alpha");
+    assert_eq!(app.completion_hint(), None, "a finished name has nothing to complete");
 
     // A unique match completes whole, and prose gets no hint.
     app.input.clear();

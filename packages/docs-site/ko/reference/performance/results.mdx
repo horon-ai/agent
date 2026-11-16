@@ -723,17 +723,17 @@ Linux 스킬 호출은 범위가 겹치지 않아 jcode보다 빠르게 되었�
 
 이 구간은 `.github/workflows/benchmark-docs.yml` 이 자동으로 다시 씁니다. 손으로 고치지 않습니다.
 
-- 커밋: `cdc8cb87238fdd8433dcf87824f9cca449d230ab`
-- 측정 시각: 2026-11-15 17:30 UTC
-- 실행: [https://github.com/horon-ai/agent/actions/runs/43736928002](https://github.com/horon-ai/agent/actions/runs/43736928002) (원본 JSON 은 OS별 `benchmark-<os>-<run_id>` 아티팩트)
+- 커밋: `ef9339c47712ca7a4f1963e06f1b3e73e10dc850`
+- 측정 시각: 2026-11-16 12:13 UTC
+- 실행: [https://github.com/horon-ai/agent/actions/runs/43856404791](https://github.com/horon-ai/agent/actions/runs/43856404791) (원본 JSON 은 OS별 `benchmark-<os>-<run_id>` 아티팩트)
 
 OS마다 다른 GitHub 호스티드 러너에서 따로 잽니다. 기계가 다르므로 OS끼리 절대값을 비교하지 않고, 같은 OS 안의 상대 비교(horon 대비 배수)와 커밋 사이의 추세만 읽습니다.
 
 | OS | 러너 | 바이너리 | 상태 |
 | --- | --- | --- | --- |
-| Linux | `ubuntu-24.04` | `horon-agent v0.1.0-dev (cdc8cb8)` | 성공 |
-| macOS | `macos-latest` | `horon-agent v0.1.0-dev (cdc8cb8)` | 성공 |
-| Windows | `windows-latest` | `horon-agent v0.1.0-dev (cdc8cb8)` | 성공 |
+| Linux | `ubuntu-24.04` | `horon-agent v0.1.0-dev (ef9339c)` | 성공 |
+| macOS | `macos-latest` | `horon-agent v0.1.0-dev (ef9339c)` | 성공 |
+| Windows | `windows-latest` | `horon-agent v0.1.0-dev (ef9339c)` | 성공 |
 
 ### Linux
 
@@ -743,27 +743,27 @@ Host: linux/x86_64, 4 CPUs, Python 3.12.16. Baseline: **horon**. Samples per one
 
 | Tool | Version | `--version` (median) | Install size |
 |---|---|---|---|
-| horon | horon-agent v0.1.0-dev (cdc8cb8) | 4.0 ms | 115.7 MB |
-| jcode | jcode v0.99.1 (7206efd0c) | 10.6 ms | 163.4 MB |
-| Claude Code | 2.1.317 (Claude Code) | 10.6 ms | 632.2 MB |
-| Codex CLI | codex-cli 0.166.0 | 43.9 ms | 435.0 MB |
-| OpenCode | 1.19.5 | 466.2 ms | 613.4 MB |
-| pi | 1.5.0 | 236.8 ms | 108.9 MB |
-| oh-my-pi (omp) | omp/18.18.0 | 647.5 ms | 413.1 MB |
-| oh-my-openagent (omo) | omo 5.1.64 (engine: senpi 2026.11.5-1) | 119.3 ms | 520.6 MB |
+| horon | horon-agent v0.1.0-dev (ef9339c) | 5.2 ms | 115.7 MB |
+| jcode | jcode v0.99.1 (7206efd0c) | 12.6 ms | 163.4 MB |
+| Claude Code | 2.1.317 (Claude Code) | 12.9 ms | 632.2 MB |
+| Codex CLI | codex-cli 0.166.0 | 48.4 ms | 435.0 MB |
+| OpenCode | 1.19.5 | 496.3 ms | 613.4 MB |
+| pi | 1.5.0 | 256.1 ms | 108.9 MB |
+| oh-my-pi (omp) | omp/18.18.0 | 704.3 ms | 413.1 MB |
+| oh-my-openagent (omo) | omo 5.1.64 (engine: senpi 2026.11.5-1) | 129.4 ms | 520.6 MB |
 
 **One-shot headless prompt** (includes startup, one `ls` tool call, final answer)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Tool round-trip | fsync calls | request bytes | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 53.5 ms | 40.5 ms–63.2 ms | baseline | 39.8 MB | baseline | yes | 10 | 3,731 / 2,390 (1 tools) | — |
-| jcode | 143.8 ms | 143.6 ms–242.8 ms | 2.69× more | 38.8 MB | 1.03× less | yes | 5 | 3,245 / 1,433 (1 tools) | — |
-| Claude Code | 440.5 ms | 425.4 ms–476.4 ms | 8.23× more | 206.8 MB | 5.19× more | yes | — | 45,782 / 29,653 (12 tools) | — |
-| Codex CLI | 497.0 ms | 471.6 ms–517.7 ms | 9.29× more | 203.6 MB | 5.11× more | yes | 6 | 39,432 / 17,271 (9 tools) | — |
-| OpenCode | 2.68 s | 2.62 s–2.89 s | 50.13× more | 569.5 MB | 14.30× more | yes | 4 | 2,659 / 0 (0 tools) | — |
-| pi | 417.2 ms | 392.5 ms–425.7 ms | 7.80× more | 115.2 MB | 2.89× more | yes | — | 5,502 / 2,841 (4 tools) | — |
-| oh-my-pi (omp) | 2.02 s | 1.80 s–2.26 s | 37.71× more | 395.6 MB | 9.94× more | yes | 71 | 29,860 / 18,533 (11 tools) | — |
-| oh-my-openagent (omo) | 6.07 s | 5.94 s–6.52 s | 113.37× more | 667.2 MB | 16.76× more | yes | 36 | 27,452 / 2,424 (2 tools) | — |
+| horon | 44.2 ms | 43.9 ms–91.2 ms | baseline | 39.9 MB | baseline | yes | 10 | 3,731 / 2,390 (1 tools) | — |
+| jcode | 153.5 ms | 151.1 ms–206.3 ms | 3.47× more | 39.9 MB | same | yes | 5 | 3,245 / 1,433 (1 tools) | — |
+| Claude Code | 584.4 ms | 575.8 ms–617.4 ms | 13.21× more | 206.0 MB | 5.17× more | yes | — | 45,782 / 29,653 (12 tools) | — |
+| Codex CLI | 526.3 ms | 509.9 ms–572.9 ms | 11.89× more | 190.4 MB | 4.77× more | yes | 6 | 39,432 / 17,271 (9 tools) | — |
+| OpenCode | 3.19 s | 2.91 s–3.35 s | 72.20× more | 579.4 MB | 14.53× more | yes | 4 | 2,659 / 0 (0 tools) | — |
+| pi | 446.7 ms | 430.2 ms–459.4 ms | 10.10× more | 114.2 MB | 2.86× more | yes | — | 5,502 / 2,841 (4 tools) | — |
+| oh-my-pi (omp) | 2.18 s | 1.88 s–2.23 s | 49.22× more | 391.6 MB | 9.82× more | yes | 71 | 29,860 / 18,533 (11 tools) | — |
+| oh-my-openagent (omo) | 6.59 s | 6.41 s–7.02 s | 148.99× more | 665.2 MB | 16.68× more | yes | 36 | 27,452 / 2,424 (2 tools) | — |
 
 `request bytes` is the first model request of the first run as the mock server received it: JSON body bytes / tool catalog bytes (tools offered).
 
@@ -771,7 +771,7 @@ Host: linux/x86_64, 4 CPUs, Python 3.12.16. Baseline: **horon**. Samples per one
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | Note | request bytes |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 43.9 ms | 43.2 ms–44.5 ms | baseline | 42.0 MB | baseline | — | yes | — | 11,254 / 9,255 (8 tools) |
+| horon | 49.0 ms | 48.3 ms–49.4 ms | baseline | 41.9 MB | baseline | — | yes | — | 11,254 / 9,255 (8 tools) |
 | jcode | — | — | — | — | — | — | — | skipped: jcode has no core tool profile | — |
 | Claude Code | — | — | — | — | — | — | — | skipped: Claude Code has no core tool profile | — |
 | Codex CLI | — | — | — | — | — | — | — | skipped: Codex CLI has no core tool profile | — |
@@ -784,40 +784,40 @@ Host: linux/x86_64, 4 CPUs, Python 3.12.16. Baseline: **horon**. Samples per one
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | Note |
 |---|---|---|---|---|---|---|---|---|
-| horon | 36.8 ms | 36.2 ms–37.3 ms | baseline | 18.3 MB | baseline | skill-uri | yes | — |
-| jcode | 57.3 ms | 56.3 ms–57.8 ms | 1.56× more | 40.6 MB | 2.22× more | skill-tool | yes | — |
-| Claude Code | 433.3 ms | 422.3 ms–457.7 ms | 11.77× more | 207.8 MB | 11.35× more | skill-tool | yes | — |
-| Codex CLI | 580.0 ms | 471.4 ms–592.1 ms | 15.75× more | 191.3 MB | 10.45× more | file-read | yes | — |
-| OpenCode | 3.15 s | 3.09 s–3.18 s | 85.43× more | 596.1 MB | 32.55× more | skill-tool | yes | — |
-| pi | 518.1 ms | 514.4 ms–528.9 ms | 14.07× more | 125.6 MB | 6.86× more | file-read | yes | — |
-| oh-my-pi (omp) | 1.99 s | 1.98 s–2.05 s | 54.15× more | 377.6 MB | 20.62× more | file-read | yes | — |
-| oh-my-openagent (omo) | 6.63 s | 6.44 s–6.84 s | 179.99× more | 672.2 MB | 36.71× more | file-read | yes | — |
+| horon | 42.7 ms | 41.8 ms–43.1 ms | baseline | 16.7 MB | baseline | skill-uri | yes | — |
+| jcode | 68.2 ms | 65.0 ms–71.3 ms | 1.60× more | 37.8 MB | 2.26× more | skill-tool | yes | — |
+| Claude Code | 515.2 ms | 502.7 ms–535.9 ms | 12.06× more | 207.5 MB | 12.40× more | skill-tool | yes | — |
+| Codex CLI | 608.4 ms | 500.9 ms–619.5 ms | 14.24× more | 191.1 MB | 11.42× more | file-read | yes | — |
+| OpenCode | 3.48 s | 3.38 s–3.62 s | 81.36× more | 594.6 MB | 35.54× more | skill-tool | yes | — |
+| pi | 552.5 ms | 545.0 ms–555.0 ms | 12.93× more | 125.0 MB | 7.47× more | file-read | yes | — |
+| oh-my-pi (omp) | 2.20 s | 1.94 s–2.38 s | 51.49× more | 375.5 MB | 22.44× more | file-read | yes | — |
+| oh-my-openagent (omo) | 7.29 s | 7.09 s–7.42 s | 170.61× more | 664.0 MB | 39.69× more | file-read | yes | — |
 
 **MCP tool call** (process start to final answer, including starting the fixture stdio MCP server and one `bench_echo` call)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | MCP ready | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 63.2 ms | 62.4 ms–64.1 ms | baseline | 45.3 MB | baseline | mcp-call | yes | 46.7 ms | — |
-| jcode | 176.4 ms | 175.6 ms–189.8 ms | 2.79× more | 56.4 MB | 1.24× more | mcp-action | yes | 143.8 ms | — |
-| Claude Code | 533.5 ms | 525.6 ms–552.6 ms | 8.44× more | 226.7 MB | 5.00× more | mcp-tool | yes | 390.3 ms | — |
-| Codex CLI | 534.5 ms | 499.6 ms–616.9 ms | 8.46× more | 194.1 MB | 4.28× more | mcp-tool | yes | 360.5 ms | — |
-| OpenCode | 2.93 s | 2.92 s–3.00 s | 46.33× more | 569.1 MB | 12.55× more | mcp-tool | yes | 2.67 s | — |
-| pi | 574.9 ms | 556.4 ms–591.7 ms | 9.10× more | 138.9 MB | 3.06× more | mcp-tool | yes | 511.4 ms | — |
-| oh-my-pi (omp) | 2.03 s | 2.00 s–2.08 s | 32.07× more | 393.2 MB | 8.67× more | mcp-route | yes | 1.70 s | — |
+| horon | 67.8 ms | 66.8 ms–71.2 ms | baseline | 43.9 MB | baseline | mcp-call | yes | 49.2 ms | — |
+| jcode | 193.8 ms | 192.9 ms–196.9 ms | 2.86× more | 55.8 MB | 1.27× more | mcp-action | yes | 155.2 ms | — |
+| Claude Code | 625.9 ms | 613.5 ms–642.3 ms | 9.22× more | 225.1 MB | 5.12× more | mcp-tool | yes | 464.9 ms | — |
+| Codex CLI | 517.4 ms | 485.3 ms–572.7 ms | 7.62× more | 194.9 MB | 4.44× more | mcp-tool | yes | 360.6 ms | — |
+| OpenCode | 3.23 s | 3.15 s–3.39 s | 47.67× more | 566.7 MB | 12.89× more | mcp-tool | yes | 2.93 s | — |
+| pi | 616.3 ms | 595.2 ms–626.5 ms | 9.08× more | 138.2 MB | 3.14× more | mcp-tool | yes | 542.1 ms | — |
+| oh-my-pi (omp) | 2.29 s | 2.28 s–2.60 s | 33.78× more | 408.3 MB | 9.29× more | mcp-route | yes | 1.88 s | — |
 | oh-my-openagent (omo) | — | — | — | — | — | mcp-tool | no | — | failed: the fixture sentinel never came back |
 
 **Session memory** (idle after 3 turn(s) per session; sizes are process-tree sums, RSS; PSS also recorded on Linux). "Each additional" is the least-squares slope across the measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and descriptors come from the daemon's own `server:memory` after the turns.
 
 | Tool | First session | Each additional | vs horon (additional) | Threads/session | FDs/session | First (post-turn) | Each additional (post-turn) |
 |---|---|---|---|---|---|---|---|
-| horon | 37.3 MB | 204.7 KB | baseline | 0.45 | 1.00 | 44.8 MB | 509.6 KB |
-| jcode | 42.6 MB | 91.4 KB | 2.24× less | 0.12 | — | 46.1 MB | 266.4 KB |
-| Claude Code | 150.1 MB | 149.5 MB | 747.82× more | — | — | 186.0 MB | 181.2 MB |
-| Codex CLI | 128.5 MB | 132.3 MB | 661.95× more | — | — | 160.7 MB | 164.3 MB |
-| OpenCode | 243.7 MB | 526.6 KB | 2.57× more | — | — | 450.6 MB | 6.5 MB |
-| pi | 106.4 MB | 108.6 MB | 543.33× more | — | — | 130.2 MB | 123.2 MB |
-| oh-my-pi (omp) | 335.3 MB | 74.0 MB | 370.09× more | — | — | 365.3 MB | 357.5 MB |
-| oh-my-openagent (omo) | 293.0 MB | 35.2 MB | 175.88× more | — | — | 586.6 MB | 579.4 MB |
+| horon | 36.9 MB | 210.7 KB | baseline | 0.70 | 1.00 | 44.4 MB | 495.1 KB |
+| jcode | 43.1 MB | 25.0 KB | 8.45× less | 0.11 | — | 46.6 MB | 191.4 KB |
+| Claude Code | 149.6 MB | 147.3 MB | 715.62× more | — | — | 185.3 MB | 180.7 MB |
+| Codex CLI | 129.0 MB | 132.5 MB | 643.74× more | — | — | 162.3 MB | 163.5 MB |
+| OpenCode | 243.4 MB | 761.8 KB | 3.62× more | — | — | 461.6 MB | 8.9 MB |
+| pi | 110.0 MB | 107.2 MB | 520.87× more | — | — | 132.3 MB | 128.1 MB |
+| oh-my-pi (omp) | 338.2 MB | 60.6 MB | 294.64× more | — | — | 368.5 MB | 358.6 MB |
+| oh-my-openagent (omo) | 377.7 MB | 25.0 MB | 121.50× more | — | — | 607.4 MB | 575.5 MB |
 
 Threads/descriptors unavailable: jcode (server:memory did not report fd_count)
 
@@ -825,14 +825,14 @@ Threads/descriptors unavailable: jcode (server:memory did not report fd_count)
 
 | Tool | 1 session(s) | 5 session(s) | 10 session(s) |
 |---|---|---|---|
-| horon | 44.8 MB | 47.1 MB | 49.3 MB |
-| jcode | 46.1 MB | 47.3 MB | 48.5 MB |
-| Claude Code | 186.0 MB | 918.2 MB | 1.8 GB |
-| Codex CLI | 160.7 MB | 812.4 MB | 1.6 GB |
-| OpenCode | 450.6 MB | 475.4 MB | 509.1 MB |
-| pi | 130.2 MB | 627.2 MB | 1.2 GB |
-| oh-my-pi (omp) | 365.3 MB | 1.8 GB | 3.5 GB |
-| oh-my-openagent (omo) | 586.6 MB | 2.9 GB | 5.7 GB |
+| horon | 44.4 MB | 47.1 MB | 48.8 MB |
+| jcode | 46.6 MB | 47.6 MB | 48.3 MB |
+| Claude Code | 185.3 MB | 911.3 MB | 1.8 GB |
+| Codex CLI | 162.3 MB | 812.4 MB | 1.6 GB |
+| OpenCode | 461.6 MB | 523.5 MB | 543.6 MB |
+| pi | 132.3 MB | 623.9 MB | 1.3 GB |
+| oh-my-pi (omp) | 368.5 MB | 1.8 GB | 3.5 GB |
+| oh-my-openagent (omo) | 607.4 MB | 2.9 GB | 5.7 GB |
 
 #### 기동
 
@@ -841,72 +841,72 @@ Benchmarking: /home/runner/work/agent/agent/bench-bin/horon-agent
 ============================================================
 
 --help (binary load):
-  Min:    3.26 ms
-  Max:    3.70 ms
-  Mean:   3.46 ms
-  Median: 3.42 ms
-  Stdev:  0.14 ms
+  Min:    2.73 ms
+  Max:    3.17 ms
+  Mean:   2.87 ms
+  Median: 2.84 ms
+  Stdev:  0.13 ms
 
 --version:
-  Min:    3.18 ms
-  Max:    3.43 ms
-  Mean:   3.27 ms
-  Median: 3.26 ms
-  Stdev:  0.08 ms
+  Min:    2.56 ms
+  Max:    2.86 ms
+  Mean:   2.67 ms
+  Median: 2.61 ms
+  Stdev:  0.11 ms
 
 Measuring isolated server startup (10 runs)...
 
 Server ready (isolated socket connectable):
-  Min:    20.48 ms
-  Max:    20.70 ms
-  Mean:   20.55 ms
-  Median: 20.54 ms
-  Stdev:  0.06 ms
+  Min:    20.46 ms
+  Max:    20.69 ms
+  Mean:   20.53 ms
+  Median: 20.49 ms
+  Stdev:  0.09 ms
 
 Server startup stages (one extra run with HORON_AGENT_STARTUP_PROFILE=1, not timed):
   stage             at ms  delta ms   share
-  panic_hook          0.0       0.0    0.3%
-  logging_init        0.2       0.2   19.5%
-  nofile_limit        0.5       0.2   22.6%
-  perm_harden         0.5       0.0    1.3%
+  panic_hook          0.0       0.0    0.2%
+  logging_init        0.2       0.2   20.3%
+  nofile_limit        0.4       0.2   24.9%
+  perm_harden         0.5       0.0    0.8%
   args_parse          0.5       0.0    0.1%
-  config_loaded       0.6       0.1   12.9%
-  server_new          1.0       0.4   34.7%
-  socket_bound        1.1       0.1    8.6%
+  config_loaded       0.6       0.1   12.8%
+  server_new          0.9       0.3   34.2%
+  socket_bound        1.0       0.1    6.6%
 
 Measuring harness bridge readiness (10 runs)...
 
 Bridge stage: api socket connectable:
-  Min:    20.59 ms
-  Max:    20.70 ms
-  Mean:   20.66 ms
-  Median: 20.67 ms
-  Stdev:  0.04 ms
+  Min:    20.55 ms
+  Max:    20.79 ms
+  Mean:   20.68 ms
+  Median: 20.66 ms
+  Stdev:  0.07 ms
 
 Bridge stage: hello_ok:
-  Min:    21.17 ms
-  Max:    21.45 ms
-  Mean:   21.27 ms
-  Median: 21.24 ms
-  Stdev:  0.08 ms
+  Min:    21.15 ms
+  Max:    21.66 ms
+  Mean:   21.32 ms
+  Median: 21.25 ms
+  Stdev:  0.17 ms
 
 Bridge stage: no-op reply:
-  Min:    21.57 ms
-  Max:    21.85 ms
-  Mean:   21.65 ms
+  Min:    21.49 ms
+  Max:    22.08 ms
+  Mean:   21.70 ms
   Median: 21.62 ms
-  Stdev:  0.09 ms
+  Stdev:  0.19 ms
 
 Bridge total (socket -> no-op):
-  Min:    21.57 ms
-  Max:    21.85 ms
-  Mean:   21.65 ms
+  Min:    21.49 ms
+  Max:    22.08 ms
+  Mean:   21.70 ms
   Median: 21.62 ms
-  Stdev:  0.09 ms
+  Stdev:  0.19 ms
 
 ============================================================
 Summary:
-  Binary load median:      ~3.4 ms
+  Binary load median:      ~2.8 ms
   Server ready median:     ~20.5 ms
   Bridge total median:     ~21.6 ms
 ```
@@ -914,97 +914,97 @@ Summary:
 #### 세션 로딩 (COLD)
 
 ```text
-binary   /home/runner/work/agent/agent/bench-bin/examples/loading_probe (eb44aea698aa)
+binary   /home/runner/work/agent/agent/bench-bin/examples/loading_probe (072398c7b9d4)
 mode     cold
 protocol COLD: every measured run gets its own freshly copied HOME; no derived cache from an earlier run exists, so each sample is a first load of the fixture.
-fixtures /tmp/horon-loading-bench-n9en460v
+fixtures /tmp/horon-loading-bench-867b6mbo
 note     --warmup 3 is ignored in cold mode: every sample gets a fresh HOME
 fixture events=0 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
-  skill_catalog     p50    0.007/0.007    p95    0.007/0.008    delta  -0.000 ms  control-no-change
-  skill_request_overlay p50    0.039/0.039    p95    0.040/0.040    delta  -0.000 ms  control-no-change
-  mcp_config_load   p50    0.053/0.053    p95    0.055/0.055    delta  +0.000 ms  control-no-change
-  attach_history    p50    0.000/0.000    p95    0.000/0.000    delta  -0.000 ms  control-no-change
+  skill_catalog     p50    0.006/0.006    p95    0.007/0.007    delta  -0.000 ms  control-no-change
+  skill_request_overlay p50    0.038/0.039    p95    0.048/0.039    delta  +0.000 ms  control-no-change
+  mcp_config_load   p50    0.053/0.053    p95    0.054/0.053    delta  +0.000 ms  control-no-change
+  attach_history    p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
   resume_ready      p50    0.000/0.000    p95    0.000/0.000    delta  -0.000 ms  control-no-change
   provider_dispatch p50    0.000/0.000    p95    0.000/0.000    delta  -0.000 ms  control-no-change
-  session_save      p50    4.577/4.560    p95    6.460/4.705    delta  -0.017 ms  control-no-change
-  total store_read_bytes p50 23080  full_source_hashes p50 1  skill_dir_reads p50 1
+  session_save      p50    4.545/4.550    p95    6.195/4.742    delta  +0.005 ms  control-no-change
+  total store_read_bytes p50 23078  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 23060..23084 (5 distinct values)
-  SPREAD   b session_save store_read_bytes 23068..23084 (4 distinct values)
+  SPREAD   a session_save store_read_bytes 23064..23088 (6 distinct values)
+  SPREAD   b session_save store_read_bytes 23060..23084 (6 distinct values)
 fixture events=0 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
-  skill_catalog     p50    1.196/1.196    p95    1.294/1.215    delta  -0.000 ms  control-no-change
-  skill_request_overlay p50    1.869/1.880    p95    1.907/1.933    delta  +0.011 ms  control-no-change
-  mcp_config_load   p50    0.058/0.058    p95    0.061/0.060    delta  -0.000 ms  control-no-change
-  attach_history    p50    0.000/0.000    p95    0.001/0.000    delta  -0.000 ms  control-no-change
+  skill_catalog     p50    1.200/1.186    p95    1.218/1.205    delta  -0.014 ms  control-no-change
+  skill_request_overlay p50    1.829/1.832    p95    1.854/1.851    delta  +0.003 ms  control-no-change
+  mcp_config_load   p50    0.058/0.058    p95    0.069/0.068    delta  +0.000 ms  control-no-change
+  attach_history    p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
   resume_ready      p50    0.000/0.000    p95    0.000/0.000    delta  -0.000 ms  control-no-change
   provider_dispatch p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
-  session_save      p50    6.043/6.109    p95    6.665/7.632    delta  +0.066 ms  control-no-change
-  total store_read_bytes p50 23074  full_source_hashes p50 1  skill_dir_reads p50 1
+  session_save      p50    5.537/5.589    p95    6.248/6.812    delta  +0.051 ms  control-no-change
+  total store_read_bytes p50 23072  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 23060..23088 (6 distinct values)
-  SPREAD   b session_save store_read_bytes 23068..23084 (4 distinct values)
+  SPREAD   a session_save store_read_bytes 23056..23088 (6 distinct values)
+  SPREAD   b session_save store_read_bytes 23052..23092 (6 distinct values)
 fixture events=1000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    0.006/0.006    p95    0.008/0.006    delta  -0.001 ms  control-no-change
-  skill_request_overlay p50    0.038/0.038    p95    0.040/0.040    delta  -0.000 ms  control-no-change
-  mcp_config_load   p50    0.054/0.054    p95    0.067/0.064    delta  +0.000 ms  control-no-change
-  attach_history    p50  189.888/189.412  p95  191.745/191.246  delta  -0.476 ms  control-no-change
-  resume_ready      p50   27.242/27.197   p95   27.365/27.370   delta  -0.045 ms  control-no-change
-  provider_dispatch p50    0.937/0.940    p95    0.956/0.957    delta  +0.003 ms  control-no-change
-  session_save      p50    4.601/4.463    p95    5.144/4.680    delta  -0.138 ms  control-no-change
-  total store_read_bytes p50 5311403  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50    0.005/0.005    p95    0.006/0.007    delta  -0.000 ms  control-no-change
+  skill_request_overlay p50    0.038/0.038    p95    0.039/0.055    delta  +0.000 ms  control-no-change
+  mcp_config_load   p50    0.053/0.054    p95    0.065/0.054    delta  +0.000 ms  control-no-change
+  attach_history    p50  190.983/191.859  p95  194.346/193.067  delta  +0.876 ms  control-no-change
+  resume_ready      p50   27.248/27.329   p95   27.378/27.622   delta  +0.081 ms  control-no-change
+  provider_dispatch p50    0.914/0.919    p95    0.923/0.928    delta  +0.005 ms  control-no-change
+  session_save      p50    4.126/4.173    p95    4.609/4.603    delta  +0.047 ms  control-no-change
+  total store_read_bytes p50 5311409  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
   SPREAD   a attach_history store_read_bytes 4189191..4189195 (3 distinct values)
   SPREAD   a resume_ready store_read_bytes 1099132..1099136 (3 distinct values)
-  SPREAD   a session_save store_read_bytes 23060..23082 (6 distinct values)
-  SPREAD   b attach_history store_read_bytes 4189189..4189195 (3 distinct values)
-  SPREAD   b resume_ready store_read_bytes 1099132..1099136 (3 distinct values)
-  SPREAD   b session_save store_read_bytes 23070..23090 (6 distinct values)
+  SPREAD   a session_save store_read_bytes 23077..23086 (4 distinct values)
+  SPREAD   b attach_history store_read_bytes 4189191..4189195 (2 distinct values)
+  SPREAD   b resume_ready store_read_bytes 1099132..1099136 (2 distinct values)
+  SPREAD   b session_save store_read_bytes 23062..23086 (6 distinct values)
 fixture events=1000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    1.199/1.200    p95    1.220/1.244    delta  +0.001 ms  control-no-change
-  skill_request_overlay p50    1.871/1.883    p95    1.899/1.926    delta  +0.012 ms  control-no-change
-  mcp_config_load   p50    0.059/0.059    p95    0.066/0.061    delta  -0.001 ms  control-no-change
-  attach_history    p50  192.895/192.808  p95  194.607/193.292  delta  -0.087 ms  control-no-change
-  resume_ready      p50   27.379/27.398   p95   27.685/27.627   delta  +0.019 ms  control-no-change
-  provider_dispatch p50    0.944/0.961    p95    0.966/0.978    delta  +0.018 ms  control-no-change
-  session_save      p50    4.646/4.760    p95    5.063/4.945    delta  +0.114 ms  control-no-change
-  total store_read_bytes p50 5311411  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50    1.189/1.186    p95    1.202/1.201    delta  -0.003 ms  control-no-change
+  skill_request_overlay p50    1.841/1.835    p95    1.872/1.860    delta  -0.005 ms  control-no-change
+  mcp_config_load   p50    0.058/0.057    p95    0.058/0.065    delta  -0.000 ms  control-no-change
+  attach_history    p50  192.760/193.058  p95  194.397/193.848  delta  +0.298 ms  control-no-change
+  resume_ready      p50   27.316/27.344   p95   27.488/27.399   delta  +0.027 ms  control-no-change
+  provider_dispatch p50    0.913/0.915    p95    0.926/0.936    delta  +0.002 ms  control-no-change
+  session_save      p50    4.246/4.236    p95    4.565/4.879    delta  -0.010 ms  control-no-change
+  total store_read_bytes p50 5311406  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 4189191..4189195 (3 distinct values)
-  SPREAD   a resume_ready store_read_bytes 1099132..1099136 (3 distinct values)
-  SPREAD   a session_save store_read_bytes 23066..23089 (7 distinct values)
-  SPREAD   b session_save store_read_bytes 23068..23090 (8 distinct values)
+  SPREAD   a attach_history store_read_bytes 4189191..4189195 (2 distinct values)
+  SPREAD   a resume_ready store_read_bytes 1099132..1099136 (2 distinct values)
+  SPREAD   a session_save store_read_bytes 23062..23084 (6 distinct values)
+  SPREAD   b attach_history store_read_bytes 4189191..4189195 (3 distinct values)
+  SPREAD   b resume_ready store_read_bytes 1099134..1099136 (3 distinct values)
+  SPREAD   b session_save store_read_bytes 23070..23086 (6 distinct values)
 fixture events=10000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    0.006/0.006    p95    0.007/0.007    delta  -0.000 ms  control-no-change
-  skill_request_overlay p50    0.038/0.038    p95    0.039/0.052    delta  +0.000 ms  control-no-change
-  mcp_config_load   p50    0.055/0.054    p95    0.056/0.058    delta  -0.001 ms  control-no-change
-  attach_history    p50 2444.677/2446.968 p95 2488.196/2485.743 delta  +2.291 ms  control-no-change
-  resume_ready      p50  325.747/325.300  p95  329.878/329.312  delta  -0.447 ms  control-no-change
-  provider_dispatch p50   11.207/11.225   p95   11.453/11.335   delta  +0.018 ms  control-no-change
-  session_save      p50    4.956/4.830    p95    5.198/5.013    delta  -0.126 ms  control-no-change
+  skill_catalog     p50    0.005/0.006    p95    0.006/0.007    delta  +0.000 ms  control-no-change
+  skill_request_overlay p50    0.038/0.038    p95    0.043/0.053    delta  +0.000 ms  control-no-change
+  mcp_config_load   p50    0.054/0.054    p95    0.069/0.062    delta  +0.000 ms  control-no-change
+  attach_history    p50 2355.594/2360.519 p95 2375.706/2433.601 delta  +4.925 ms  control-no-change
+  resume_ready      p50  315.484/316.109  p95  321.533/319.420  delta  +0.624 ms  control-no-change
+  provider_dispatch p50   10.594/10.606   p95   10.846/10.784   delta  +0.013 ms  control-no-change
+  session_save      p50    4.765/4.747    p95    4.949/5.183    delta  -0.019 ms  control-no-change
   total store_read_bytes p50 53417616  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
   SPREAD   a attach_history store_read_bytes 42184289..42184293 (3 distinct values)
   SPREAD   a resume_ready store_read_bytes 11210242..11210246 (3 distinct values)
-  SPREAD   a session_save store_read_bytes 23075..23093 (7 distinct values)
-  SPREAD   b attach_history store_read_bytes 42184289..42184293 (2 distinct values)
-  SPREAD   b resume_ready store_read_bytes 11210242..11210246 (2 distinct values)
-  SPREAD   b session_save store_read_bytes 23065..23085 (5 distinct values)
+  SPREAD   a session_save store_read_bytes 23069..23089 (7 distinct values)
+  SPREAD   b session_save store_read_bytes 23071..23089 (6 distinct values)
 fixture events=10000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    1.195/1.203    p95    1.228/1.215    delta  +0.008 ms  control-no-change
-  skill_request_overlay p50    1.836/1.857    p95    1.877/1.870    delta  +0.020 ms  control-no-change
-  mcp_config_load   p50    0.059/0.059    p95    0.071/0.069    delta  +0.000 ms  control-no-change
-  attach_history    p50 2408.976/2408.600 p95 2437.541/2445.675 delta  -0.376 ms  control-no-change
-  resume_ready      p50  322.861/321.503  p95  325.835/325.520  delta  -1.358 ms  control-no-change
-  provider_dispatch p50   11.108/11.116   p95   11.419/11.559   delta  +0.008 ms  control-no-change
-  session_save      p50    4.795/4.847    p95    5.058/5.140    delta  +0.052 ms  control-no-change
-  total store_read_bytes p50 53417618  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50    1.193/1.191    p95    1.212/1.213    delta  -0.002 ms  control-no-change
+  skill_request_overlay p50    1.801/1.805    p95    1.835/1.828    delta  +0.004 ms  control-no-change
+  mcp_config_load   p50    0.058/0.058    p95    0.063/0.061    delta  +0.000 ms  control-no-change
+  attach_history    p50 2342.191/2341.531 p95 2386.219/2374.947 delta  -0.661 ms  control-no-change
+  resume_ready      p50  312.115/314.809  p95  317.385/316.618  delta  +2.694 ms  control-no-change
+  provider_dispatch p50   10.721/10.575   p95   10.901/10.867   delta  -0.146 ms  control-no-change
+  session_save      p50    4.797/4.634    p95    4.950/4.804    delta  -0.162 ms  control-no-change
+  total store_read_bytes p50 53417616  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 42184287..42184293 (2 distinct values)
-  SPREAD   a resume_ready store_read_bytes 11210240..11210246 (2 distinct values)
-  SPREAD   a session_save store_read_bytes 23073..23093 (7 distinct values)
-  SPREAD   b attach_history store_read_bytes 42184289..42184293 (3 distinct values)
-  SPREAD   b resume_ready store_read_bytes 11210242..11210246 (3 distinct values)
-  SPREAD   b session_save store_read_bytes 23065..23093 (7 distinct values)
+  SPREAD   a attach_history store_read_bytes 42184289..42184293 (3 distinct values)
+  SPREAD   a resume_ready store_read_bytes 11210242..11210246 (4 distinct values)
+  SPREAD   a session_save store_read_bytes 23071..23085 (7 distinct values)
+  SPREAD   b attach_history store_read_bytes 42184291..42184293 (2 distinct values)
+  SPREAD   b resume_ready store_read_bytes 11210245..11210246 (2 distinct values)
+  SPREAD   b session_save store_read_bytes 23067..23089 (8 distinct values)
 report   bench-results/loading-cold.json
 mode cold, fixtures 6, measurement failures 0, unstable fixtures 0, verdict control-no-change
 ```
@@ -1012,94 +1012,94 @@ mode cold, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 #### 세션 로딩 (WARM)
 
 ```text
-binary   /home/runner/work/agent/agent/bench-bin/examples/loading_probe (eb44aea698aa)
+binary   /home/runner/work/agent/agent/bench-bin/examples/loading_probe (072398c7b9d4)
 mode     warm
 protocol WARM: one HOME per side, --warmup discarded runs per side, then measured runs alternate between the two sides on those same HOMEs.
-fixtures /tmp/horon-loading-bench-n85dep3_
+fixtures /tmp/horon-loading-bench-jrii4wd3
 fixture events=0 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
-  skill_catalog     p50    0.008/0.008    p95    0.009/0.009    delta  +0.000 ms  control-no-change
-  skill_request_overlay p50    0.051/0.051    p95    0.071/0.052    delta  -0.000 ms  control-no-change
-  mcp_config_load   p50    0.073/0.074    p95    0.089/0.104    delta  +0.001 ms  control-no-change
-  attach_history    p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
-  resume_ready      p50    0.000/0.000    p95    0.000/0.000    delta  -0.000 ms  control-no-change
-  provider_dispatch p50    0.000/0.000    p95    0.000/0.001    delta  -0.000 ms  control-no-change
-  session_save      p50    6.140/6.270    p95    7.782/7.010    delta  +0.129 ms  control-no-change
-  total store_read_bytes p50 23791  full_source_hashes p50 1  skill_dir_reads p50 1
-  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23069, 23077, 23081, 23787, 23791, 24501, 24513, 24517]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23065, 23073, 23787, 23799, 24505, 24509, 24517]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23069..24517 (8 distinct values)
-  SPREAD   b session_save store_read_bytes 23065..24517 (7 distinct values)
-fixture events=0 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
-  skill_catalog     p50    1.712/1.723    p95    2.323/2.031    delta  +0.011 ms  control-no-change
-  skill_request_overlay p50    2.484/2.461    p95    2.608/2.632    delta  -0.023 ms  control-no-change
-  mcp_config_load   p50    0.079/0.079    p95    0.082/0.098    delta  -0.001 ms  control-no-change
+  skill_catalog     p50    0.013/0.013    p95    0.016/0.015    delta  +0.000 ms  control-no-change
+  skill_request_overlay p50    0.093/0.094    p95    0.111/0.101    delta  +0.001 ms  control-no-change
+  mcp_config_load   p50    0.126/0.128    p95    0.138/0.134    delta  +0.003 ms  control-no-change
   attach_history    p50    0.000/0.000    p95    0.001/0.000    delta  +0.000 ms  control-no-change
   resume_ready      p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
-  provider_dispatch p50    0.000/0.000    p95    0.000/0.001    delta  +0.000 ms  control-no-change
-  session_save      p50    7.736/7.961    p95    8.677/8.387    delta  +0.225 ms  control-no-change
-  total store_read_bytes p50 23799  full_source_hashes p50 1  skill_dir_reads p50 1
+  provider_dispatch p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
+  session_save      p50    6.941/7.005    p95    8.470/19.028   delta  +0.064 ms  control-no-change
+  total store_read_bytes p50 23800  full_source_hashes p50 1  skill_dir_reads p50 1
+  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
+  DRIFT    a session_save {'store_read_bytes': [23069, 23081, 23085, 23784, 23796, 23804, 24507, 24515, 24519]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23073, 23077, 23085, 23788, 23796, 23800, 24511, 24515, 24519, 24523]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23069..24519 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 23073..24523 (10 distinct values)
+fixture events=0 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
+  skill_catalog     p50    2.417/2.371    p95    2.520/2.493    delta  -0.046 ms  control-no-change
+  skill_request_overlay p50    3.947/3.939    p95    4.039/4.262    delta  -0.008 ms  control-no-change
+  mcp_config_load   p50    0.136/0.136    p95    0.143/0.151    delta  -0.000 ms  control-no-change
+  attach_history    p50    0.000/0.000    p95    0.000/0.000    delta  -0.000 ms  control-no-change
+  resume_ready      p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
+  provider_dispatch p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
+  session_save      p50   12.434/11.692   p95   15.829/14.881   delta  -0.742 ms  control-no-change
+  total store_read_bytes p50 23795  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23075, 23077, 23085, 23789, 23795, 23803, 24495, 24505, 24507, 24517]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23053, 23069, 23073, 23787, 23791, 24497, 24505, 24511, 24521]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23075..24517 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23053..24521 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23069, 23071, 23077, 23079, 23792, 23798, 23804, 24507, 24509]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23077, 23081, 23085, 23792, 23800, 24507, 24513, 24515]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23069..24509 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 23077..24515 (8 distinct values)
 fixture events=1000 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    0.008/0.008    p95    0.010/0.009    delta  -0.000 ms  control-no-change
-  skill_request_overlay p50    0.052/0.052    p95    0.069/0.066    delta  +0.000 ms  control-no-change
-  mcp_config_load   p50    0.073/0.072    p95    0.105/0.074    delta  -0.001 ms  control-no-change
-  attach_history    p50   76.474/76.569   p95   77.403/79.047   delta  +0.096 ms  control-no-change
-  resume_ready      p50   37.206/37.106   p95   37.579/37.418   delta  -0.100 ms  control-no-change
-  provider_dispatch p50    1.216/1.214    p95    1.249/1.236    delta  -0.001 ms  control-no-change
-  session_save      p50    6.622/7.165    p95    7.014/14.778   delta  +0.543 ms  control-no-change
-  total store_read_bytes p50 2841355  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    0.013/0.013    p95    0.016/0.014    delta  -0.000 ms  control-no-change
+  skill_request_overlay p50    0.093/0.094    p95    0.097/0.104    delta  +0.001 ms  control-no-change
+  mcp_config_load   p50    0.124/0.126    p95    0.128/0.135    delta  +0.002 ms  control-no-change
+  attach_history    p50   81.900/81.775   p95   82.454/83.287   delta  -0.125 ms  control-no-change
+  resume_ready      p50   44.523/44.439   p95   45.096/45.152   delta  -0.084 ms  control-no-change
+  provider_dispatch p50    1.057/1.051    p95    1.091/1.081    delta  -0.006 ms  control-no-change
+  session_save      p50    7.079/7.097    p95   22.499/61.636   delta  +0.017 ms  control-no-change
+  total store_read_bytes p50 2841370  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23772, 23788, 24518, 25218, 25224, 25940, 25942, 26654, 26664]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23792, 23794, 24496, 24516, 25220, 25226, 25936, 25938, 26658, 26660]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23772..26664 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 23792..26660 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23799, 23801, 24510, 24512, 25229, 25231, 25950, 25960, 26661, 26667]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23787, 23801, 24516, 24522, 25235, 25239, 25241, 25940, 25948, 26663]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23799..26667 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23787..26663 (10 distinct values)
 fixture events=1000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    1.717/1.716    p95    1.740/1.731    delta  -0.000 ms  control-no-change
-  skill_request_overlay p50    2.451/2.430    p95    2.508/2.466    delta  -0.021 ms  control-no-change
-  mcp_config_load   p50    0.077/0.078    p95    0.078/0.084    delta  +0.000 ms  control-no-change
-  attach_history    p50   76.003/76.914   p95   76.975/77.791   delta  +0.911 ms  control-no-change
-  resume_ready      p50   37.045/37.072   p95   37.502/37.368   delta  +0.027 ms  control-no-change
-  provider_dispatch p50    1.192/1.203    p95    1.224/1.279    delta  +0.011 ms  control-no-change
-  session_save      p50    8.032/8.031    p95    8.609/8.507    delta  -0.001 ms  control-no-change
-  total store_read_bytes p50 2841358  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    2.364/2.356    p95    2.470/2.437    delta  -0.008 ms  control-no-change
+  skill_request_overlay p50    3.905/3.899    p95    3.969/4.138    delta  -0.006 ms  control-no-change
+  mcp_config_load   p50    0.134/0.132    p95    0.143/0.138    delta  -0.002 ms  control-no-change
+  attach_history    p50   80.934/81.062   p95   82.290/83.062   delta  +0.129 ms  control-no-change
+  resume_ready      p50   44.531/44.356   p95   45.909/44.795   delta  -0.175 ms  control-no-change
+  provider_dispatch p50    1.043/1.026    p95    1.090/1.055    delta  -0.016 ms  control-no-change
+  session_save      p50    9.983/10.089   p95   71.395/60.583   delta  +0.106 ms  control-no-change
+  total store_read_bytes p50 2841375  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23796, 24514, 24522, 25220, 25228, 25950, 25954, 26660, 26664]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23792, 23796, 24514, 24518, 25232, 25244, 25930, 25938, 26668]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23796..26664 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 23792..26668 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23789, 23791, 24502, 24520, 25235, 25950, 25954, 26667, 26669]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23793, 24516, 24528, 25233, 25239, 25946, 25956, 26667, 26669]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23789..26669 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 23793..26669 (9 distinct values)
 fixture events=10000 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    0.008/0.008    p95    0.010/0.009    delta  -0.000 ms  control-no-change
-  skill_request_overlay p50    0.053/0.052    p95    0.077/0.076    delta  -0.000 ms  control-no-change
-  mcp_config_load   p50    0.073/0.072    p95    0.074/0.075    delta  -0.001 ms  control-no-change
-  attach_history    p50  856.072/851.085  p95  859.650/862.664  delta  -4.987 ms  control-no-change
-  resume_ready      p50  437.438/436.177  p95  446.950/439.177  delta  -1.261 ms  control-no-change
-  provider_dispatch p50   14.302/14.297   p95   14.833/14.776   delta  -0.005 ms  control-no-change
-  session_save      p50    6.654/6.690    p95    7.217/6.978    delta  +0.035 ms  control-no-change
-  total store_read_bytes p50 28640392  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    0.013/0.013    p95    0.016/0.016    delta  -0.000 ms  control-no-change
+  skill_request_overlay p50    0.096/0.094    p95    0.123/0.100    delta  -0.002 ms  control-no-change
+  mcp_config_load   p50    0.129/0.129    p95    0.157/0.154    delta  -0.000 ms  control-no-change
+  attach_history    p50  954.994/952.427  p95  978.663/987.815  delta  -2.567 ms  control-no-change
+  resume_ready      p50  507.897/518.368  p95  550.019/547.639  delta +10.470 ms  control-no-change
+  provider_dispatch p50   12.937/12.827   p95   14.482/14.481   delta  -0.110 ms  control-no-change
+  session_save      p50    6.922/6.953    p95  146.040/24.095   delta  +0.031 ms  control-no-change
+  total store_read_bytes p50 28640394  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23799, 24517, 24525, 25239, 25243, 25957, 25961, 26667, 26679]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23787, 23803, 24513, 24517, 25231, 25235, 25937, 25965, 26667]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23799..26679 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 23787..26667 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23794, 23797, 24511, 24514, 25237, 25238, 25944, 25957, 26651, 26671]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23796, 23802, 24509, 24511, 25238, 25246, 25941, 25953, 26678, 26680]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23794..26671 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23796..26680 (10 distinct values)
 fixture events=10000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    1.741/1.695    p95    1.808/1.729    delta  -0.046 ms  control-no-change
-  skill_request_overlay p50    2.425/2.430    p95    2.462/2.563    delta  +0.006 ms  control-no-change
-  mcp_config_load   p50    0.077/0.078    p95    0.079/0.083    delta  +0.001 ms  control-no-change
-  attach_history    p50  857.397/853.750  p95  864.692/864.272  delta  -3.647 ms  control-no-change
-  resume_ready      p50  443.696/446.835  p95  451.232/450.961  delta  +3.140 ms  control-no-change
-  provider_dispatch p50   14.621/14.285   p95   16.448/14.951   delta  -0.336 ms  control-no-change
-  session_save      p50    8.281/8.129    p95    9.174/8.731    delta  -0.152 ms  control-no-change
-  total store_read_bytes p50 28640378  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    2.392/2.389    p95    2.482/2.515    delta  -0.002 ms  control-no-change
+  skill_request_overlay p50    3.908/3.904    p95    3.976/4.115    delta  -0.003 ms  control-no-change
+  mcp_config_load   p50    0.133/0.133    p95    0.143/0.143    delta  -0.001 ms  control-no-change
+  attach_history    p50  936.624/941.852  p95  958.608/957.831  delta  +5.229 ms  control-no-change
+  resume_ready      p50  513.764/511.729  p95  530.594/542.797  delta  -2.035 ms  control-no-change
+  provider_dispatch p50   12.653/12.619   p95   13.871/13.533   delta  -0.035 ms  control-no-change
+  session_save      p50   10.134/10.208   p95   10.969/21.516   delta  +0.074 ms  control-no-change
+  total store_read_bytes p50 28640392  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23789, 23797, 24511, 24519, 25225, 25229, 25947, 25951, 26657, 26677]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23795, 24517, 24521, 25231, 25239, 25945, 25957, 26663, 26667]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23789..26677 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23795..26667 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23795, 23799, 24514, 24526, 25233, 25241, 25956, 25960, 26679]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23779, 23781, 24520, 24530, 25221, 25247, 25950, 25968, 26669, 26671]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23795..26679 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 23779..26671 (10 distinct values)
 report   bench-results/loading-warm.json
 mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict control-no-change
 ```
@@ -1108,20 +1108,39 @@ mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 
 | Tool case | median | p95 | min | max | samples |
 |---|---|---|---|---|---|
-| read (tiny file) | 0.2 ms | 0.3 ms | 0.2 ms | 0.3 ms | 5 |
-| read (1000 lines) | 0.3 ms | 0.3 ms | 0.2 ms | 0.3 ms | 5 |
+| read (tiny file) | 0.2 ms | 0.2 ms | 0.2 ms | 0.2 ms | 5 |
+| read (1000 lines) | 0.3 ms | 0.3 ms | 0.3 ms | 0.3 ms | 5 |
 | read (10 lines @ offset) | 0.3 ms | 0.3 ms | 0.2 ms | 0.3 ms | 5 |
 | read (repo Cargo.toml) | 0.2 ms | 0.3 ms | 0.2 ms | 0.3 ms | 5 |
-| write (small) | 0.6 ms | 0.7 ms | 0.6 ms | 0.7 ms | 5 |
-| write (10KB) | 0.8 ms | 0.9 ms | 0.8 ms | 0.9 ms | 5 |
-| edit (simple replace) | 0.7 ms | 0.9 ms | 0.6 ms | 0.9 ms | 5 |
-| ls (scripts dir) | 0.5 ms | 0.7 ms | 0.5 ms | 0.7 ms | 5 |
-| agentgrep (grep in tree) | 1.2 ms | 1.3 ms | 1.2 ms | 1.3 ms | 5 |
-| agentgrep (find **/*.rs) | 1.0 ms | 1.0 ms | 0.9 ms | 1.0 ms | 5 |
-| bash (true) | 1.3 ms | 1.7 ms | 1.3 ms | 1.7 ms | 5 |
-| bash (echo hello) | 1.4 ms | 1.5 ms | 1.4 ms | 1.5 ms | 5 |
-| bash (ls fixture tree) | 2.3 ms | 2.3 ms | 2.2 ms | 2.3 ms | 5 |
-| invalid tool (dispatch only) | 0.1 ms | 0.1 ms | 0.0 ms | 0.1 ms | 5 |
+| write (small) | 1.0 ms | 1.1 ms | 1.0 ms | 1.1 ms | 5 |
+| write (10KB) | 1.1 ms | 1.3 ms | 1.1 ms | 1.3 ms | 5 |
+| edit (simple replace) | 1.0 ms | 1.0 ms | 1.0 ms | 1.0 ms | 5 |
+| ls (scripts dir) | 0.6 ms | 0.6 ms | 0.5 ms | 0.6 ms | 5 |
+| agentgrep (grep in tree) | 1.3 ms | 1.3 ms | 1.2 ms | 1.3 ms | 5 |
+| agentgrep (find **/*.rs) | 1.1 ms | 1.2 ms | 1.1 ms | 1.2 ms | 5 |
+| bash (true) | 1.6 ms | 1.7 ms | 1.5 ms | 1.7 ms | 5 |
+| bash (echo hello) | 1.5 ms | 1.6 ms | 1.5 ms | 1.6 ms | 5 |
+| bash (ls fixture tree) | 2.7 ms | 2.8 ms | 2.7 ms | 2.8 ms | 5 |
+| invalid tool (dispatch only) | 0.1 ms | 0.1 ms | 0.1 ms | 0.1 ms | 5 |
+
+#### Tool CPU per call
+
+| Tool case | daemon cpu median | min | max | child cpu median | voluntary switches | involuntary switches | windows × calls | source |
+|---|---|---|---|---|---|---|---|---|
+| read (tiny file) | 0.175 ms | 0.165 ms | 0.183 ms | 0.000 ms | 5.98 | 0.00 | 5 × 50 | schedstat |
+| read (1000 lines) | 0.254 ms | 0.248 ms | 0.263 ms | 0.000 ms | 6.00 | 0.00 | 5 × 50 | schedstat |
+| read (10 lines @ offset) | 0.243 ms | 0.242 ms | 0.267 ms | 0.000 ms | 5.94 | 0.00 | 5 × 50 | schedstat |
+| read (repo Cargo.toml) | 0.198 ms | 0.188 ms | 0.203 ms | 0.000 ms | 6.00 | 0.00 | 5 × 50 | schedstat |
+| write (small) | 0.528 ms | 0.506 ms | 0.624 ms | 0.000 ms | 19.04 | 0.00 | 5 × 50 | schedstat |
+| write (10KB) | 0.656 ms | 0.652 ms | 0.704 ms | 0.000 ms | 20.12 | 0.00 | 5 × 50 | schedstat |
+| edit (simple replace) | 0.582 ms | 0.532 ms | 0.626 ms | 0.000 ms | 19.14 | 0.00 | 5 × 50 | schedstat |
+| ls (scripts dir) | 0.501 ms | 0.498 ms | 0.505 ms | 0.000 ms | 6.00 | 0.00 | 5 × 50 | schedstat |
+| agentgrep (grep in tree) | 0.858 ms | 0.856 ms | 0.863 ms | 0.000 ms | 10.96 | 0.08 | 5 × 50 | schedstat |
+| agentgrep (find **/*.rs) | 1.103 ms | 1.094 ms | 1.129 ms | 0.000 ms | 6.00 | 0.00 | 5 × 50 | schedstat |
+| bash (true) | 0.422 ms | 0.418 ms | 0.436 ms | 1.200 ms | 7.22 | 0.00 | 5 × 50 | schedstat |
+| bash (echo hello) | 0.436 ms | 0.433 ms | 0.438 ms | 1.200 ms | 8.34 | 0.00 | 5 × 50 | schedstat |
+| bash (ls fixture tree) | 0.482 ms | 0.478 ms | 0.485 ms | 2.200 ms | 8.52 | 0.00 | 5 × 50 | schedstat |
+| invalid tool (dispatch only) | 0.044 ms | 0.040 ms | 0.071 ms | 0.000 ms | 3.00 | 0.00 | 5 × 50 | schedstat |
 
 #### Reload storm
 
@@ -1129,18 +1148,18 @@ mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 
 | Concurrent resumes | history median | p95 | max | storm wall | failures |
 |---|---|---|---|---|---|
-| 1 | 76.6 ms | 76.6 ms | 76.6 ms | 76.8 ms | 0 |
-| 10 | 250.1 ms | 256.4 ms | 256.4 ms | 256.8 ms | 0 |
-| 40 | 845.5 ms | 923.7 ms | 924.8 ms | 926.0 ms | 0 |
+| 1 | 55.1 ms | 55.1 ms | 55.1 ms | 55.3 ms | 0 |
+| 10 | 182.8 ms | 211.7 ms | 211.7 ms | 212.5 ms | 0 |
+| 40 | 937.6 ms | 975.1 ms | 977.2 ms | 979.3 ms | 0 |
 
 #### Compile loop
 
 | Checkpoint | Touched | median | min | max | samples |
 |---|---|---|---|---|---|
-| warm_noop | — | 264.0 ms | 264.0 ms | 264.0 ms | 1 |
-| leaf_touch | src/main.rs | 407.1 ms | 407.1 ms | 407.1 ms | 1 |
-| core_touch | crates/app-core/src/lib.rs | 19.80 s | 19.80 s | 19.80 s | 1 |
-| build_meta_touch | crates/build-meta/src/lib.rs | 27.00 s | 27.00 s | 27.00 s | 1 |
+| warm_noop | — | 294.5 ms | 294.5 ms | 294.5 ms | 1 |
+| leaf_touch | src/main.rs | 449.9 ms | 449.9 ms | 449.9 ms | 1 |
+| core_touch | crates/app-core/src/lib.rs | 21.25 s | 21.25 s | 21.25 s | 1 |
+| build_meta_touch | crates/build-meta/src/lib.rs | 30.34 s | 30.34 s | 30.34 s | 1 |
 
 ### macOS
 
@@ -1152,27 +1171,27 @@ Skipped: syscalls (strace not available)
 
 | Tool | Version | `--version` (median) | Install size |
 |---|---|---|---|
-| horon | horon-agent v0.1.0-dev (cdc8cb8) | 11.2 ms | 97.3 MB |
-| jcode | jcode v0.99.1 (7206efd0c) | 16.4 ms | 136.3 MB |
-| Claude Code | 2.1.317 (Claude Code) | 30.6 ms | 596.8 MB |
-| Codex CLI | codex-cli 0.166.0 | 94.5 ms | 346.5 MB |
-| OpenCode | 1.19.5 | 525.3 ms | 344.6 MB |
-| pi | 1.5.0 | 378.0 ms | 108.9 MB |
-| oh-my-pi (omp) | omp/18.18.0 | 1.08 s | 273.5 MB |
-| oh-my-openagent (omo) | omo 5.1.64 (engine: senpi 2026.11.5-1) | 198.4 ms | 502.3 MB |
+| horon | horon-agent v0.1.0-dev (ef9339c) | 10.6 ms | 97.3 MB |
+| jcode | jcode v0.99.1 (7206efd0c) | 12.1 ms | 136.3 MB |
+| Claude Code | 2.1.317 (Claude Code) | 26.8 ms | 596.8 MB |
+| Codex CLI | codex-cli 0.166.0 | 67.7 ms | 346.5 MB |
+| OpenCode | 1.19.5 | 492.3 ms | 344.6 MB |
+| pi | 1.5.0 | 325.2 ms | 108.9 MB |
+| oh-my-pi (omp) | omp/18.18.0 | 846.1 ms | 273.5 MB |
+| oh-my-openagent (omo) | omo 5.1.64 (engine: senpi 2026.11.5-1) | 159.2 ms | 502.3 MB |
 
 **One-shot headless prompt** (includes startup, one `ls` tool call, final answer)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Tool round-trip | request bytes | Note |
 |---|---|---|---|---|---|---|---|---|
-| horon | 92.2 ms | 81.3 ms–441.9 ms | baseline | 30.0 MB | baseline | yes | 3,619 / 2,390 (1 tools) | — |
-| jcode | 516.6 ms | 469.0 ms–957.5 ms | 5.60× more | 34.0 MB | 1.13× more | yes | 3,133 / 1,433 (1 tools) | — |
-| Claude Code | 773.9 ms | 597.6 ms–1.20 s | 8.39× more | 202.7 MB | 6.76× more | yes | 45,798 / 29,653 (12 tools) | — |
-| Codex CLI | 584.7 ms | 454.6 ms–1.80 s | 6.34× more | 127.6 MB | 4.25× more | yes | 39,453 / 17,271 (9 tools) | — |
-| OpenCode | 3.20 s | 2.71 s–7.24 s | 34.73× more | 746.0 MB | 24.87× more | yes | 2,659 / 0 (0 tools) | — |
-| pi | 580.4 ms | 527.3 ms–738.7 ms | 6.29× more | 122.9 MB | 4.10× more | yes | 5,513 / 2,841 (4 tools) | — |
-| oh-my-pi (omp) | 2.34 s | 2.25 s–4.33 s | 25.42× more | 441.2 MB | 14.71× more | yes | 29,853 / 18,533 (11 tools) | — |
-| oh-my-openagent (omo) | 13.11 s | 11.98 s–14.18 s | 142.18× more | 908.8 MB | 30.29× more | yes | 27,493 / 2,424 (2 tools) | — |
+| horon | 93.5 ms | 72.3 ms–399.0 ms | baseline | 30.9 MB | baseline | yes | 3,619 / 2,390 (1 tools) | — |
+| jcode | 339.4 ms | 333.9 ms–696.2 ms | 3.63× more | 34.0 MB | 1.10× more | yes | 3,133 / 1,433 (1 tools) | — |
+| Claude Code | 451.7 ms | 415.8 ms–871.5 ms | 4.83× more | 194.2 MB | 6.29× more | yes | 45,798 / 29,653 (12 tools) | — |
+| Codex CLI | 407.7 ms | 372.4 ms–1.55 s | 4.36× more | 143.3 MB | 4.64× more | yes | 39,453 / 17,271 (9 tools) | — |
+| OpenCode | 2.87 s | 2.25 s–4.51 s | 30.67× more | 753.3 MB | 24.38× more | yes | 2,659 / 0 (0 tools) | — |
+| pi | 583.0 ms | 460.7 ms–631.0 ms | 6.23× more | 126.1 MB | 4.08× more | yes | 5,513 / 2,841 (4 tools) | — |
+| oh-my-pi (omp) | 2.43 s | 2.19 s–4.06 s | 25.94× more | 452.7 MB | 14.65× more | yes | 29,853 / 18,533 (11 tools) | — |
+| oh-my-openagent (omo) | 8.74 s | 8.57 s–11.32 s | 93.44× more | 867.3 MB | 28.08× more | yes | 27,493 / 2,424 (2 tools) | — |
 
 `request bytes` is the first model request of the first run as the mock server received it: JSON body bytes / tool catalog bytes (tools offered).
 
@@ -1180,7 +1199,7 @@ Skipped: syscalls (strace not available)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | Note | request bytes |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 95.2 ms | 74.1 ms–181.2 ms | baseline | 31.2 MB | baseline | — | yes | — | 11,142 / 9,255 (8 tools) |
+| horon | 76.9 ms | 72.7 ms–81.9 ms | baseline | 27.6 MB | baseline | — | yes | — | 11,142 / 9,255 (8 tools) |
 | jcode | — | — | — | — | — | — | — | skipped: jcode has no core tool profile | — |
 | Claude Code | — | — | — | — | — | — | — | skipped: Claude Code has no core tool profile | — |
 | Codex CLI | — | — | — | — | — | — | — | skipped: Codex CLI has no core tool profile | — |
@@ -1193,40 +1212,40 @@ Skipped: syscalls (strace not available)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | Note |
 |---|---|---|---|---|---|---|---|---|
-| horon | 90.6 ms | 73.4 ms–152.8 ms | baseline | 30.1 MB | baseline | skill-uri | yes | — |
-| jcode | 482.5 ms | 449.9 ms–659.7 ms | 5.33× more | 37.4 MB | 1.24× more | skill-tool | yes | — |
-| Claude Code | 764.3 ms | 660.5 ms–875.1 ms | 8.44× more | 185.0 MB | 6.14× more | skill-tool | yes | — |
-| Codex CLI | 676.4 ms | 631.8 ms–766.4 ms | 7.47× more | 144.2 MB | 4.79× more | file-read | yes | — |
-| OpenCode | 5.41 s | 4.64 s–7.19 s | 59.74× more | 798.2 MB | 26.50× more | skill-tool | yes | — |
-| pi | 902.0 ms | 730.0 ms–928.0 ms | 9.96× more | 134.0 MB | 4.45× more | file-read | yes | — |
-| oh-my-pi (omp) | 3.06 s | 2.54 s–3.47 s | 33.75× more | 456.9 MB | 15.17× more | file-read | yes | — |
-| oh-my-openagent (omo) | 13.04 s | 12.77 s–17.26 s | 143.94× more | 875.2 MB | 29.05× more | file-read | yes | — |
+| horon | 84.4 ms | 75.0 ms–121.2 ms | baseline | 30.6 MB | baseline | skill-uri | yes | — |
+| jcode | 278.5 ms | 264.8 ms–343.6 ms | 3.30× more | 36.1 MB | 1.18× more | skill-tool | yes | — |
+| Claude Code | 619.3 ms | 555.0 ms–860.0 ms | 7.34× more | 203.0 MB | 6.64× more | skill-tool | yes | — |
+| Codex CLI | 516.8 ms | 435.0 ms–1.12 s | 6.13× more | 144.1 MB | 4.72× more | file-read | yes | — |
+| OpenCode | 7.89 s | 6.30 s–8.48 s | 93.49× more | 774.4 MB | 25.34× more | skill-tool | yes | — |
+| pi | 791.0 ms | 656.2 ms–863.9 ms | 9.37× more | 150.8 MB | 4.93× more | file-read | yes | — |
+| oh-my-pi (omp) | 2.12 s | 2.02 s–2.67 s | 25.19× more | 409.3 MB | 13.39× more | file-read | yes | — |
+| oh-my-openagent (omo) | 9.06 s | 8.30 s–11.48 s | 107.38× more | 898.9 MB | 29.41× more | file-read | yes | — |
 
 **MCP tool call** (process start to final answer, including starting the fixture stdio MCP server and one `bench_echo` call)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | MCP ready | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 151.4 ms | 120.8 ms–221.9 ms | baseline | 39.7 MB | baseline | mcp-call | yes | 108.6 ms | — |
-| jcode | 557.3 ms | 510.3 ms–658.5 ms | 3.68× more | 52.4 MB | 1.32× more | mcp-action | yes | 493.6 ms | — |
-| Claude Code | 710.1 ms | 565.2 ms–1.27 s | 4.69× more | 214.7 MB | 5.41× more | mcp-tool | yes | 561.8 ms | — |
-| Codex CLI | 688.4 ms | 395.3 ms–839.1 ms | 4.55× more | 142.4 MB | 3.59× more | mcp-tool | yes | 533.6 ms | — |
-| OpenCode | 5.16 s | 4.85 s–5.79 s | 34.06× more | 734.2 MB | 18.50× more | mcp-tool | yes | 4.39 s | — |
-| pi | 940.3 ms | 809.2 ms–1.29 s | 6.21× more | 131.6 MB | 3.32× more | mcp-tool | yes | 825.5 ms | — |
-| oh-my-pi (omp) | 3.57 s | 2.61 s–3.81 s | 23.57× more | 467.2 MB | 11.77× more | mcp-route | yes | 2.62 s | — |
+| horon | 100.1 ms | 90.4 ms–143.9 ms | baseline | 39.3 MB | baseline | mcp-call | yes | 75.2 ms | — |
+| jcode | 408.9 ms | 362.1 ms–457.4 ms | 4.09× more | 51.5 MB | 1.31× more | mcp-action | yes | 370.8 ms | — |
+| Claude Code | 864.0 ms | 711.2 ms–971.5 ms | 8.63× more | 223.3 MB | 5.68× more | mcp-tool | yes | 696.2 ms | — |
+| Codex CLI | 534.0 ms | 405.5 ms–637.2 ms | 5.34× more | 142.1 MB | 3.61× more | mcp-tool | yes | 362.0 ms | — |
+| OpenCode | 5.99 s | 5.21 s–7.19 s | 59.88× more | 777.1 MB | 19.77× more | mcp-tool | yes | 4.87 s | — |
+| pi | 667.2 ms | 606.8 ms–693.7 ms | 6.67× more | 149.7 MB | 3.81× more | mcp-tool | yes | 558.4 ms | — |
+| oh-my-pi (omp) | 2.03 s | 1.83 s–2.49 s | 20.25× more | 422.0 MB | 10.73× more | mcp-route | yes | 1.71 s | — |
 | oh-my-openagent (omo) | — | — | — | — | — | mcp-tool | no | — | failed: the fixture sentinel never came back |
 
 **Session memory** (idle after 3 turn(s) per session; sizes are process-tree sums, RSS; PSS also recorded on Linux). "Each additional" is the least-squares slope across the measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and descriptors come from the daemon's own `server:memory` after the turns.
 
 | Tool | First session | Each additional | vs horon (additional) | Threads/session | FDs/session | First (post-turn) | Each additional (post-turn) |
 |---|---|---|---|---|---|---|---|
-| horon | 28.7 MB | 136.5 KB | baseline | 0.34 | 1.00 | 35.0 MB | 354.2 KB |
-| jcode | 36.5 MB | 186.0 KB | 1.36× more | — | — | 40.2 MB | 342.3 KB |
-| Claude Code | 158.8 MB | 142.4 MB | 1,068× more | — | — | 186.9 MB | 181.4 MB |
-| Codex CLI | 113.5 MB | 78.7 MB | 590.17× more | — | — | 107.4 MB | 107.4 MB |
-| OpenCode | 261.4 MB | 910.8 KB | 6.67× more | — | — | 576.6 MB | 11.6 MB |
-| pi | 118.7 MB | 116.8 MB | 875.75× more | — | — | 148.5 MB | 148.5 MB |
-| oh-my-pi (omp) | 381.0 MB | 56.0 MB | 419.81× more | — | — | 450.0 MB | 317.9 MB |
-| oh-my-openagent (omo) | 56.6 MB | 41.4 MB | 310.49× more | — | — | 784.4 MB | 328.6 MB |
+| horon | 28.8 MB | 128.7 KB | baseline | 0.57 | 1.00 | 34.9 MB | 384.9 KB |
+| jcode | 36.6 MB | 182.0 KB | 1.41× more | — | — | 40.2 MB | 297.8 KB |
+| Claude Code | 157.4 MB | 152.3 MB | 1,212× more | — | — | 189.7 MB | 182.7 MB |
+| Codex CLI | 110.9 MB | 80.3 MB | 638.78× more | — | — | 137.1 MB | 104.1 MB |
+| OpenCode | 264.1 MB | 0.0 B | — | — | — | 563.7 MB | 8.3 MB |
+| pi | 119.5 MB | 115.3 MB | 918.04× more | — | — | 148.9 MB | 147.9 MB |
+| oh-my-pi (omp) | 385.7 MB | 106.8 MB | 850.22× more | — | — | 468.5 MB | 316.2 MB |
+| oh-my-openagent (omo) | 57.5 MB | 44.5 MB | 353.80× more | — | — | 824.9 MB | 324.1 MB |
 
 Threads/descriptors unavailable: jcode (server:memory did not report thread_count, fd_count)
 
@@ -1234,14 +1253,14 @@ Threads/descriptors unavailable: jcode (server:memory did not report thread_coun
 
 | Tool | 1 session(s) | 5 session(s) | 10 session(s) |
 |---|---|---|---|
-| horon | 35.0 MB | 36.5 MB | 38.1 MB |
-| jcode | 40.2 MB | 41.2 MB | 43.2 MB |
-| Claude Code | 186.9 MB | 920.5 MB | 1.8 GB |
-| Codex CLI | 107.4 MB | 536.0 MB | 1.0 GB |
-| OpenCode | 576.6 MB | 604.7 MB | 679.4 MB |
-| pi | 148.5 MB | 740.0 MB | 1.4 GB |
-| oh-my-pi (omp) | 450.0 MB | 1.8 GB | 3.2 GB |
-| oh-my-openagent (omo) | 784.4 MB | 3.2 GB | 3.7 GB |
+| horon | 34.9 MB | 36.3 MB | 38.3 MB |
+| jcode | 40.2 MB | 41.5 MB | 42.8 MB |
+| Claude Code | 189.7 MB | 926.6 MB | 1.8 GB |
+| Codex CLI | 137.1 MB | 542.5 MB | 1.0 GB |
+| OpenCode | 563.7 MB | 608.0 MB | 639.3 MB |
+| pi | 148.9 MB | 741.9 MB | 1.4 GB |
+| oh-my-pi (omp) | 468.5 MB | 1.8 GB | 3.2 GB |
+| oh-my-openagent (omo) | 824.9 MB | 2.8 GB | 3.7 GB |
 
 #### 기동
 
@@ -1250,168 +1269,170 @@ Benchmarking: /Users/runner/work/agent/agent/bench-bin/horon-agent
 ============================================================
 
 --help (binary load):
-  Min:    9.27 ms
-  Max:    61.30 ms
-  Mean:   19.53 ms
-  Median: 16.01 ms
-  Stdev:  15.12 ms
+  Min:    10.73 ms
+  Max:    19.96 ms
+  Mean:   14.60 ms
+  Median: 14.40 ms
+  Stdev:  3.34 ms
 
 --version:
-  Min:    11.80 ms
-  Max:    27.24 ms
-  Mean:   18.53 ms
-  Median: 17.80 ms
-  Stdev:  4.21 ms
+  Min:    14.23 ms
+  Max:    22.96 ms
+  Mean:   18.27 ms
+  Median: 18.00 ms
+  Stdev:  3.16 ms
 
 Measuring isolated server startup (10 runs)...
 
 Server ready (isolated socket connectable):
-  Min:    34.56 ms
-  Max:    104.76 ms
-  Mean:   73.61 ms
-  Median: 83.26 ms
-  Stdev:  27.50 ms
+  Min:    27.50 ms
+  Max:    98.81 ms
+  Mean:   78.59 ms
+  Median: 92.87 ms
+  Stdev:  28.18 ms
 
 Server startup stages (one extra run with HORON_AGENT_STARTUP_PROFILE=1, not timed):
   stage             at ms  delta ms   share
-  panic_hook          0.0       0.0    0.1%
-  logging_init        0.6       0.5    6.4%
-  nofile_limit        1.5       1.0   11.7%
-  perm_harden         1.7       0.1    1.8%
-  args_parse          1.7       0.0    0.4%
-  config_loaded       7.5       5.7   67.5%
-  server_new          8.1       0.6    6.9%
-  socket_bound        8.5       0.5    5.3%
+  panic_hook          0.0       0.0    0.0%
+  logging_init        0.3       0.3    2.1%
+  nofile_limit        0.5       0.2    1.7%
+  perm_harden         0.6       0.1    0.5%
+  args_parse          0.6       0.0    0.0%
+  config_loaded      12.6      12.0   89.4%
+  server_new         13.2       0.6    4.1%
+  socket_bound       13.4       0.3    2.0%
 
 Measuring harness bridge readiness (10 runs)...
 
 Bridge stage: api socket connectable:
-  Min:    22.81 ms
-  Max:    128.20 ms
-  Mean:   57.24 ms
-  Median: 48.38 ms
-  Stdev:  33.63 ms
+  Min:    54.07 ms
+  Max:    107.22 ms
+  Mean:   82.78 ms
+  Median: 82.94 ms
+  Stdev:  18.00 ms
 
 Bridge stage: hello_ok:
-  Min:    23.49 ms
-  Max:    129.39 ms
-  Mean:   58.25 ms
-  Median: 49.88 ms
-  Stdev:  33.74 ms
+  Min:    55.01 ms
+  Max:    109.22 ms
+  Mean:   83.82 ms
+  Median: 83.88 ms
+  Stdev:  18.14 ms
 
 Bridge stage: no-op reply:
-  Min:    23.93 ms
-  Max:    129.99 ms
-  Mean:   58.85 ms
-  Median: 50.70 ms
-  Stdev:  33.77 ms
+  Min:    55.42 ms
+  Max:    110.43 ms
+  Mean:   84.57 ms
+  Median: 84.63 ms
+  Stdev:  18.28 ms
 
 Bridge total (socket -> no-op):
-  Min:    23.93 ms
-  Max:    129.99 ms
-  Mean:   58.85 ms
-  Median: 50.70 ms
-  Stdev:  33.77 ms
+  Min:    55.42 ms
+  Max:    110.43 ms
+  Mean:   84.57 ms
+  Median: 84.63 ms
+  Stdev:  18.28 ms
 
 ============================================================
 Summary:
-  Binary load median:      ~16.0 ms
-  Server ready median:     ~83.3 ms
-  Bridge total median:     ~50.7 ms
+  Binary load median:      ~14.4 ms
+  Server ready median:     ~92.9 ms
+  Bridge total median:     ~84.6 ms
 ```
 
 #### 세션 로딩 (COLD)
 
 ```text
-binary   /Users/runner/work/agent/agent/bench-bin/examples/loading_probe (d3aa68ac9905)
+binary   /Users/runner/work/agent/agent/bench-bin/examples/loading_probe (c86073d131a4)
 mode     cold
 protocol COLD: every measured run gets its own freshly copied HOME; no derived cache from an earlier run exists, so each sample is a first load of the fixture.
-fixtures /var/folders/h5/t85nd63d71x27_8gl5gw3l_w0000gn/T/horon-loading-bench-8pebf7yk
+fixtures /var/folders/h5/t85nd63d71x27_8gl5gw3l_w0000gn/T/horon-loading-bench-aggkzx8m
 note     --warmup 3 is ignored in cold mode: every sample gets a fresh HOME
 fixture events=0 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
-  skill_catalog     p50    0.029/0.032    p95    0.082/0.072    delta  +0.003 ms  control-no-change
-  skill_request_overlay p50    0.254/0.291    p95    0.850/0.902    delta  +0.037 ms  control-no-change
-  mcp_config_load   p50    0.310/0.290    p95    0.753/0.850    delta  -0.019 ms  control-no-change
-  attach_history    p50    0.000/0.000    p95    0.001/0.000    delta  +0.000 ms  control-drift
-  resume_ready      p50    0.000/0.000    p95    0.001/0.000    delta  -0.000 ms  control-no-change
-  provider_dispatch p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
-  session_save      p50   27.188/24.992   p95   38.415/34.700   delta  -2.197 ms  control-no-change
-  total store_read_bytes p50 22946  full_source_hashes p50 1  skill_dir_reads p50 1
-  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 22926..22954 (7 distinct values)
-  SPREAD   b session_save store_read_bytes 22930..22954 (7 distinct values)
-fixture events=0 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
-  skill_catalog     p50    5.375/5.506    p95    7.596/8.654    delta  +0.131 ms  control-no-change
-  skill_request_overlay p50    7.407/6.022    p95   10.268/11.776   delta  -1.385 ms  control-no-change
-  mcp_config_load   p50    0.315/0.295    p95    0.718/0.550    delta  -0.020 ms  control-no-change
-  attach_history    p50    0.000/0.000    p95    0.001/0.001    delta  -0.000 ms  control-no-change
-  resume_ready      p50    0.000/0.000    p95    0.001/0.000    delta  -0.000 ms  control-no-change
-  provider_dispatch p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
-  session_save      p50   21.545/28.652   p95   48.492/63.355   delta  +7.106 ms  control-no-change
+  skill_catalog     p50    0.040/0.039    p95    0.077/0.093    delta  -0.002 ms  control-no-change
+  skill_request_overlay p50    0.295/0.270    p95    1.194/0.600    delta  -0.025 ms  control-no-change
+  mcp_config_load   p50    0.344/0.290    p95    0.695/0.629    delta  -0.054 ms  control-no-change
+  attach_history    p50    0.000/0.000    p95    0.001/0.000    delta  -0.000 ms  control-no-change
+  resume_ready      p50    0.000/0.000    p95    0.001/0.001    delta  -0.000 ms  control-no-change
+  provider_dispatch p50    0.000/0.000    p95    0.001/0.000    delta  -0.000 ms  control-no-change
+  session_save      p50   25.070/23.960   p95   48.656/38.254   delta  -1.110 ms  control-no-change
   total store_read_bytes p50 22942  full_source_hashes p50 1  skill_dir_reads p50 1
-  total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 22934..22954 (6 distinct values)
-  SPREAD   b session_save store_read_bytes 22934..22954 (5 distinct values)
-fixture events=1000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    0.032/0.031    p95    0.083/0.431    delta  -0.001 ms  control-no-change
-  skill_request_overlay p50    0.268/0.229    p95    0.553/0.772    delta  -0.039 ms  control-no-change
-  mcp_config_load   p50    0.299/0.288    p95    0.388/0.610    delta  -0.011 ms  control-no-change
-  attach_history    p50  363.879/389.337  p95  429.791/450.669  delta +25.458 ms  control-no-change
-  resume_ready      p50   77.963/86.094   p95  101.758/97.777   delta  +8.131 ms  control-no-change
-  provider_dispatch p50    1.102/1.165    p95    1.835/1.691    delta  +0.063 ms  control-no-change
-  session_save      p50   19.640/22.529   p95   23.871/30.379   delta  +2.890 ms  control-no-change
-  total store_read_bytes p50 5311308  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 4189203..4189207 (3 distinct values)
-  SPREAD   a resume_ready store_read_bytes 1099141..1099145 (4 distinct values)
-  SPREAD   a session_save store_read_bytes 22952..22972 (8 distinct values)
-  SPREAD   b attach_history store_read_bytes 4189203..4189207 (2 distinct values)
-  SPREAD   b resume_ready store_read_bytes 1099141..1099145 (2 distinct values)
-  SPREAD   b session_save store_read_bytes 22948..22972 (5 distinct values)
-fixture events=1000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    3.934/4.078    p95    6.029/5.976    delta  +0.144 ms  control-no-change
-  skill_request_overlay p50    4.980/5.124    p95    7.158/6.795    delta  +0.145 ms  control-no-change
-  mcp_config_load   p50    0.264/0.265    p95    0.301/0.396    delta  +0.001 ms  control-no-change
-  attach_history    p50  275.377/283.181  p95  392.095/434.773  delta  +7.804 ms  control-no-change
-  resume_ready      p50   59.517/58.971   p95   95.546/105.513  delta  -0.546 ms  control-no-change
-  provider_dispatch p50    1.010/0.994    p95    1.097/3.239    delta  -0.015 ms  control-no-change
-  session_save      p50   17.383/16.431   p95   38.165/76.452   delta  -0.953 ms  control-no-change
-  total store_read_bytes p50 5311307  full_source_hashes p50 2  skill_dir_reads p50 1
+  SPREAD   a session_save store_read_bytes 22938..22950 (3 distinct values)
+  SPREAD   b session_save store_read_bytes 22930..22958 (7 distinct values)
+fixture events=0 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
+  skill_catalog     p50    7.152/5.905    p95    9.784/16.070   delta  -1.247 ms  control-no-change
+  skill_request_overlay p50   10.384/8.938    p95   16.599/16.020   delta  -1.447 ms  control-no-change
+  mcp_config_load   p50    0.410/0.403    p95    1.126/1.592    delta  -0.006 ms  control-no-change
+  attach_history    p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
+  resume_ready      p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
+  provider_dispatch p50    0.000/0.000    p95    0.001/0.001    delta  -0.000 ms  control-no-change
+  session_save      p50   34.138/32.874   p95  165.900/61.855   delta  -1.264 ms  control-no-change
+  total store_read_bytes p50 22946  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
+  SPREAD   a session_save store_read_bytes 22930..22958 (4 distinct values)
+  SPREAD   b session_save store_read_bytes 22938..22954 (5 distinct values)
+fixture events=1000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
+  skill_catalog     p50    0.037/0.032    p95    0.143/0.060    delta  -0.005 ms  control-no-change
+  skill_request_overlay p50    0.247/0.255    p95    0.591/0.641    delta  +0.008 ms  control-no-change
+  mcp_config_load   p50    0.293/0.276    p95    0.668/0.707    delta  -0.017 ms  control-no-change
+  attach_history    p50  414.254/468.758  p95  558.050/608.940  delta +54.504 ms  control-no-change
+  resume_ready      p50   95.015/112.214  p95  126.519/127.438  delta +17.199 ms  control-no-change
+  provider_dispatch p50    1.304/1.743    p95    2.590/2.439    delta  +0.439 ms  control-no-change
+  session_save      p50   26.340/25.590   p95   54.734/42.099   delta  -0.750 ms  control-no-change
+  total store_read_bytes p50 5311305  full_source_hashes p50 2  skill_dir_reads p50 1
+  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
   SPREAD   a attach_history store_read_bytes 4189203..4189207 (3 distinct values)
   SPREAD   a resume_ready store_read_bytes 1099141..1099145 (3 distinct values)
-  SPREAD   a session_save store_read_bytes 22946..22968 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 22948..22972 (7 distinct values)
-fixture events=10000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    0.027/0.030    p95    0.032/0.059    delta  +0.003 ms  control-no-change
-  skill_request_overlay p50    0.247/0.234    p95    0.931/0.443    delta  -0.013 ms  control-no-change
-  mcp_config_load   p50    0.281/0.275    p95    0.487/0.523    delta  -0.006 ms  control-no-change
-  attach_history    p50 3658.807/4282.357 p95 4444.951/4679.815 delta +623.550 ms  control-no-change
-  resume_ready      p50  741.936/756.099  p95 1058.313/927.943  delta +14.163 ms  control-no-change
-  provider_dispatch p50   11.563/11.387   p95   16.070/17.825   delta  -0.175 ms  control-no-change
-  session_save      p50   26.965/22.697   p95   51.671/54.265   delta  -4.268 ms  control-no-change
-  total store_read_bytes p50 53417517  full_source_hashes p50 2  skill_dir_reads p50 1
-  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 42184301..42184305 (2 distinct values)
-  SPREAD   a resume_ready store_read_bytes 11210251..11210255 (3 distinct values)
-  SPREAD   a session_save store_read_bytes 22949..22975 (7 distinct values)
-  SPREAD   b attach_history store_read_bytes 42184303..42184305 (2 distinct values)
-  SPREAD   b resume_ready store_read_bytes 11210254..11210255 (2 distinct values)
-  SPREAD   b session_save store_read_bytes 22942..22966 (6 distinct values)
-fixture events=10000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    4.015/4.802    p95    5.182/7.132    delta  +0.787 ms  control-no-change
-  skill_request_overlay p50    5.025/6.143    p95   10.171/8.557    delta  +1.118 ms  control-drift
-  mcp_config_load   p50    0.273/0.319    p95    0.375/0.554    delta  +0.046 ms  control-no-change
-  attach_history    p50 3323.214/3512.878 p95 3745.697/4059.582 delta +189.664 ms  control-no-change
-  resume_ready      p50  688.569/672.233  p95 1003.910/781.887  delta -16.336 ms  control-no-change
-  provider_dispatch p50   10.804/9.716    p95   18.724/12.554   delta  -1.088 ms  control-no-change
-  session_save      p50   23.748/22.040   p95   58.133/48.146   delta  -1.708 ms  control-no-change
-  total store_read_bytes p50 53417513  full_source_hashes p50 2  skill_dir_reads p50 1
+  SPREAD   a session_save store_read_bytes 22944..22970 (9 distinct values)
+  SPREAD   b attach_history store_read_bytes 4189205..4189207 (2 distinct values)
+  SPREAD   b resume_ready store_read_bytes 1099144..1099145 (2 distinct values)
+  SPREAD   b session_save store_read_bytes 22940..22964 (8 distinct values)
+fixture events=1000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
+  skill_catalog     p50    4.365/4.591    p95    9.544/6.992    delta  +0.226 ms  control-no-change
+  skill_request_overlay p50    6.120/6.071    p95    8.248/8.287    delta  -0.049 ms  control-no-change
+  mcp_config_load   p50    0.293/0.271    p95    0.525/0.356    delta  -0.022 ms  control-no-change
+  attach_history    p50  312.973/316.955  p95  438.292/399.444  delta  +3.982 ms  control-no-change
+  resume_ready      p50   73.062/61.141   p95   99.386/116.349  delta -11.920 ms  control-no-change
+  provider_dispatch p50    1.048/1.009    p95    1.327/1.386    delta  -0.039 ms  control-no-change
+  session_save      p50   17.694/16.427   p95   26.144/23.418   delta  -1.267 ms  control-no-change
+  total store_read_bytes p50 5311310  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 42184299..42184305 (4 distinct values)
-  SPREAD   a resume_ready store_read_bytes 11210250..11210255 (4 distinct values)
-  SPREAD   a session_save store_read_bytes 22951..22967 (7 distinct values)
-  SPREAD   b session_save store_read_bytes 22938..22967 (6 distinct values)
+  SPREAD   a attach_history store_read_bytes 4189205..4189207 (2 distinct values)
+  SPREAD   a resume_ready store_read_bytes 1099144..1099145 (2 distinct values)
+  SPREAD   a session_save store_read_bytes 22948..22968 (6 distinct values)
+  SPREAD   b session_save store_read_bytes 22944..22964 (6 distinct values)
+fixture events=10000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
+  skill_catalog     p50    0.027/0.028    p95    0.031/0.068    delta  +0.001 ms  control-no-change
+  skill_request_overlay p50    0.225/0.231    p95    0.526/0.592    delta  +0.006 ms  control-no-change
+  mcp_config_load   p50    0.251/0.265    p95    0.300/0.778    delta  +0.014 ms  control-no-change
+  attach_history    p50 4279.165/3979.964 p95 4530.956/5533.180 delta -299.201 ms  control-no-change
+  resume_ready      p50  848.191/849.646  p95 1069.023/1098.774 delta  +1.455 ms  control-no-change
+  provider_dispatch p50   10.453/10.575   p95   19.658/15.567   delta  +0.122 ms  control-no-change
+  session_save      p50   22.548/22.842   p95  138.636/63.483   delta  +0.294 ms  control-no-change
+  total store_read_bytes p50 53417520  full_source_hashes p50 2  skill_dir_reads p50 1
+  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
+  SPREAD   a attach_history store_read_bytes 42184303..42184305 (2 distinct values)
+  SPREAD   a resume_ready store_read_bytes 11210254..11210255 (2 distinct values)
+  SPREAD   a session_save store_read_bytes 22949..22969 (7 distinct values)
+  SPREAD   b attach_history store_read_bytes 42184299..42184305 (3 distinct values)
+  SPREAD   b resume_ready store_read_bytes 11210250..11210255 (3 distinct values)
+  SPREAD   b session_save store_read_bytes 22943..22971 (6 distinct values)
+fixture events=10000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
+  skill_catalog     p50    4.839/4.206    p95    8.319/13.429   delta  -0.633 ms  control-no-change
+  skill_request_overlay p50    7.104/5.566    p95   10.950/11.101   delta  -1.539 ms  control-no-change
+  mcp_config_load   p50    0.279/0.264    p95    0.524/0.676    delta  -0.015 ms  control-no-change
+  attach_history    p50 4129.955/4212.060 p95 5843.188/5749.831 delta +82.105 ms  control-no-change
+  resume_ready      p50  887.077/932.206  p95 1003.115/1032.908 delta +45.130 ms  control-no-change
+  provider_dispatch p50   11.367/11.582   p95   21.217/20.851   delta  +0.215 ms  control-no-change
+  session_save      p50   33.034/30.131   p95   90.494/86.149   delta  -2.903 ms  control-no-change
+  total store_read_bytes p50 53417517  full_source_hashes p50 2  skill_dir_reads p50 1
+  total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
+  SPREAD   a attach_history store_read_bytes 42184301..42184305 (3 distinct values)
+  SPREAD   a resume_ready store_read_bytes 11210251..11210255 (3 distinct values)
+  SPREAD   a session_save store_read_bytes 22951..22966 (7 distinct values)
+  SPREAD   b attach_history store_read_bytes 42184301..42184305 (2 distinct values)
+  SPREAD   b resume_ready store_read_bytes 11210251..11210255 (2 distinct values)
+  SPREAD   b session_save store_read_bytes 22959..22971 (5 distinct values)
 report   bench-results/loading-cold.json
 mode cold, fixtures 6, measurement failures 0, unstable fixtures 0, verdict control-no-change
 ```
@@ -1419,94 +1440,94 @@ mode cold, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 #### 세션 로딩 (WARM)
 
 ```text
-binary   /Users/runner/work/agent/agent/bench-bin/examples/loading_probe (d3aa68ac9905)
+binary   /Users/runner/work/agent/agent/bench-bin/examples/loading_probe (c86073d131a4)
 mode     warm
 protocol WARM: one HOME per side, --warmup discarded runs per side, then measured runs alternate between the two sides on those same HOMEs.
-fixtures /var/folders/h5/t85nd63d71x27_8gl5gw3l_w0000gn/T/horon-loading-bench-8fr0m2ze
+fixtures /var/folders/h5/t85nd63d71x27_8gl5gw3l_w0000gn/T/horon-loading-bench-3sma7g0k
 fixture events=0 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
-  skill_catalog     p50    0.025/0.027    p95    0.058/0.102    delta  +0.002 ms  control-no-change
-  skill_request_overlay p50    0.239/0.245    p95    0.462/0.693    delta  +0.006 ms  control-no-change
-  mcp_config_load   p50    0.264/0.269    p95    0.298/1.171    delta  +0.005 ms  control-no-change
+  skill_catalog     p50    0.032/0.033    p95    0.080/0.066    delta  +0.001 ms  control-no-change
+  skill_request_overlay p50    0.279/0.245    p95    0.603/0.668    delta  -0.034 ms  control-no-change
+  mcp_config_load   p50    0.306/0.465    p95    0.688/0.982    delta  +0.160 ms  control-no-change
   attach_history    p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
-  resume_ready      p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
-  provider_dispatch p50    0.000/0.000    p95    0.000/0.003    delta  +0.000 ms  control-no-change
-  session_save      p50   15.897/18.367   p95   21.652/23.721   delta  +2.470 ms  control-no-change
-  total store_read_bytes p50 23661  full_source_hashes p50 1  skill_dir_reads p50 1
+  resume_ready      p50    0.000/0.000    p95    0.001/0.001    delta  -0.000 ms  control-no-change
+  provider_dispatch p50    0.000/0.000    p95    0.001/0.001    delta  +0.000 ms  control-no-change
+  session_save      p50   19.247/17.525   p95   43.782/40.268   delta  -1.722 ms  control-no-change
+  total store_read_bytes p50 23654  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [22947, 22957, 23661, 23667, 24375, 24379]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [22937, 22939, 22941, 22951, 23649, 23661, 23669, 24375, 24391]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 22947..24379 (6 distinct values)
-  SPREAD   b session_save store_read_bytes 22937..24391 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [22931, 22935, 22943, 22951, 23651, 23657, 23661, 24371, 24387]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [22943, 22947, 22959, 23657, 23661, 24363, 24365, 24375, 24383]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 22931..24387 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 22943..24383 (9 distinct values)
 fixture events=0 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
-  skill_catalog     p50    6.284/5.346    p95   15.755/12.007   delta  -0.938 ms  control-no-change
-  skill_request_overlay p50    8.042/6.570    p95   12.388/11.309   delta  -1.472 ms  control-no-change
-  mcp_config_load   p50    0.296/0.298    p95    0.615/0.907    delta  +0.002 ms  control-no-change
-  attach_history    p50    0.000/0.000    p95    0.001/0.001    delta  -0.000 ms  control-no-change
+  skill_catalog     p50    4.830/6.476    p95    7.218/11.557   delta  +1.646 ms  control-no-change
+  skill_request_overlay p50    6.288/6.602    p95   10.902/13.638   delta  +0.315 ms  control-no-change
+  mcp_config_load   p50    0.292/0.294    p95    0.366/0.769    delta  +0.002 ms  control-no-change
+  attach_history    p50    0.000/0.000    p95    0.000/0.001    delta  +0.000 ms  control-no-change
   resume_ready      p50    0.000/0.000    p95    0.000/0.000    delta  +0.000 ms  control-no-change
-  provider_dispatch p50    0.000/0.000    p95    0.002/0.003    delta  -0.000 ms  control-no-change
-  session_save      p50   22.999/24.627   p95   56.092/37.758   delta  +1.628 ms  control-no-change
-  total store_read_bytes p50 23658  full_source_hashes p50 1  skill_dir_reads p50 1
+  provider_dispatch p50    0.000/0.000    p95    0.000/0.001    delta  -0.000 ms  control-no-change
+  session_save      p50   19.625/18.969   p95   31.915/65.035   delta  -0.656 ms  control-no-change
+  total store_read_bytes p50 23660  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [22939, 22941, 22951, 23655, 23661, 23665, 24373, 24375, 24383]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [22943, 22945, 22947, 22957, 23655, 23657, 23663, 24373, 24379, 24387]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 22939..24383 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 22943..24387 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [22943, 22947, 22949, 22951, 23657, 23663, 24357, 24379, 24387]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [22943, 22947, 22951, 23653, 23657, 24367, 24375, 24383]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 22943..24387 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 22943..24383 (8 distinct values)
 fixture events=1000 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    0.028/0.031    p95    0.041/0.103    delta  +0.003 ms  control-no-change
-  skill_request_overlay p50    0.231/0.252    p95    0.243/0.462    delta  +0.021 ms  control-no-change
-  mcp_config_load   p50    0.258/0.284    p95    0.276/0.504    delta  +0.026 ms  control-no-change
-  attach_history    p50  121.948/127.216  p95  140.973/144.460  delta  +5.268 ms  control-no-change
-  resume_ready      p50   70.974/75.760   p95   76.108/94.791   delta  +4.786 ms  control-no-change
-  provider_dispatch p50    1.088/1.156    p95    1.483/2.318    delta  +0.068 ms  control-no-change
-  session_save      p50   20.011/20.679   p95   23.820/59.566   delta  +0.669 ms  control-no-change
-  total store_read_bytes p50 2841251  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    0.031/0.030    p95    0.088/0.115    delta  -0.001 ms  control-no-change
+  skill_request_overlay p50    0.291/0.254    p95    0.682/0.747    delta  -0.037 ms  control-no-change
+  mcp_config_load   p50    0.362/0.283    p95    0.797/0.624    delta  -0.079 ms  control-no-change
+  attach_history    p50  169.733/156.289  p95  226.404/192.219  delta -13.444 ms  control-no-change
+  resume_ready      p50   98.561/94.663   p95  147.370/121.230  delta  -3.897 ms  control-no-change
+  provider_dispatch p50    1.136/1.114    p95    2.603/3.161    delta  -0.022 ms  control-no-change
+  session_save      p50   29.099/24.700   p95   60.437/47.137   delta  -4.400 ms  control-no-change
+  total store_read_bytes p50 2841253  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23662, 23668, 24378, 24384, 25090, 25096, 25818, 25824, 26512, 26532]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23666, 23678, 24380, 24388, 25090, 25092, 25806, 25808, 26520, 26522]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23662..26532 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23666..26522 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23670, 23682, 24382, 24386, 25092, 25098, 25808, 25810, 26524, 26534]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23662, 23678, 24388, 24392, 25080, 25102, 25804, 25810, 26520, 26538]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23670..26534 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23662..26538 (10 distinct values)
 fixture events=1000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    4.419/5.046    p95    7.611/7.471    delta  +0.627 ms  control-no-change
-  skill_request_overlay p50    5.370/6.007    p95    5.900/8.910    delta  +0.637 ms  control-no-change
-  mcp_config_load   p50    0.274/0.283    p95    0.402/0.301    delta  +0.009 ms  control-no-change
-  attach_history    p50  110.386/108.742  p95  141.105/123.595  delta  -1.644 ms  control-no-change
-  resume_ready      p50   68.577/61.680   p95   90.244/89.996   delta  -6.897 ms  control-no-change
-  provider_dispatch p50    1.089/1.165    p95    1.521/1.575    delta  +0.076 ms  control-no-change
-  session_save      p50   17.575/18.612   p95   31.159/25.181   delta  +1.037 ms  control-no-change
-  total store_read_bytes p50 2841260  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    5.004/4.814    p95    8.425/7.701    delta  -0.190 ms  control-no-change
+  skill_request_overlay p50    6.854/7.435    p95   13.130/11.325   delta  +0.581 ms  control-no-change
+  mcp_config_load   p50    0.306/0.318    p95    0.780/0.926    delta  +0.012 ms  control-no-change
+  attach_history    p50  119.068/140.017  p95  151.697/161.707  delta +20.949 ms  control-no-change
+  resume_ready      p50   81.400/78.557   p95  109.209/98.079   delta  -2.843 ms  control-no-change
+  provider_dispatch p50    1.072/1.098    p95    1.805/2.132    delta  +0.026 ms  control-no-change
+  session_save      p50   21.544/22.624   p95   26.137/29.505   delta  +1.080 ms  control-no-change
+  total store_read_bytes p50 2841258  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23658, 23674, 24384, 24392, 25102, 25812, 25816, 26518, 26526]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23654, 23678, 24384, 24396, 25098, 25106, 25800, 25806, 26522, 26532]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23658..26526 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 23654..26532 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23670, 23682, 24388, 24392, 25094, 25106, 25812, 25816, 26526, 26534]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23664, 23668, 24374, 24386, 25100, 25102, 25800, 25818, 26508, 26518]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23670..26534 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23664..26518 (10 distinct values)
 fixture events=10000 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    0.035/0.032    p95    0.068/0.045    delta  -0.003 ms  control-no-change
-  skill_request_overlay p50    0.245/0.227    p95    0.583/0.327    delta  -0.018 ms  control-no-change
-  mcp_config_load   p50    0.286/0.262    p95    0.654/0.354    delta  -0.023 ms  control-no-change
-  attach_history    p50 1337.974/1406.527 p95 1545.544/1591.726 delta +68.553 ms  control-no-change
-  resume_ready      p50  873.576/850.192  p95  917.134/890.752  delta -23.385 ms  control-no-change
-  provider_dispatch p50   11.975/11.944   p95   16.348/18.448   delta  -0.032 ms  control-no-change
-  session_save      p50   19.349/18.483   p95   24.322/30.223   delta  -0.866 ms  control-no-change
-  total store_read_bytes p50 28640290  full_source_hashes p50 1  skill_dir_reads p50 1
-  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23677, 23685, 24375, 24391, 25113, 25117, 25807, 25815, 26529, 26533]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23663, 23667, 24385, 24389, 25101, 25811, 25815, 26517, 26529]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23677..26533 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23663..26529 (9 distinct values)
-fixture events=10000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    4.530/4.389    p95    5.773/11.557   delta  -0.141 ms  control-no-change
-  skill_request_overlay p50    5.515/6.072    p95    6.788/10.767   delta  +0.557 ms  control-no-change
-  mcp_config_load   p50    0.281/0.306    p95    0.694/0.939    delta  +0.025 ms  control-no-change
-  attach_history    p50 1231.209/1255.346 p95 1483.173/1559.813 delta +24.137 ms  control-no-change
-  resume_ready      p50  793.989/814.290  p95  957.775/1032.826 delta +20.301 ms  control-no-change
-  provider_dispatch p50   12.495/10.790   p95   16.305/17.981   delta  -1.704 ms  control-no-change
-  session_save      p50   24.281/22.186   p95   42.511/77.513   delta  -2.095 ms  control-no-change
+  skill_catalog     p50    0.035/0.030    p95    0.083/0.065    delta  -0.005 ms  control-no-change
+  skill_request_overlay p50    0.335/0.251    p95    0.902/0.780    delta  -0.083 ms  control-no-change
+  mcp_config_load   p50    0.348/0.314    p95    0.995/0.872    delta  -0.033 ms  control-no-change
+  attach_history    p50 1632.331/1660.022 p95 1842.503/1787.893 delta +27.691 ms  control-no-change
+  resume_ready      p50 1084.480/1011.157 p95 1282.456/1187.024 delta -73.323 ms  control-no-change
+  provider_dispatch p50   13.040/12.246   p95   17.730/20.594   delta  -0.794 ms  control-no-change
+  session_save      p50   25.922/28.228   p95   33.213/45.676   delta  +2.306 ms  control-no-change
   total store_read_bytes p50 28640284  full_source_hashes p50 1  skill_dir_reads p50 1
+  total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
+  DRIFT    a session_save {'store_read_bytes': [23677, 23685, 24375, 24395, 25105, 25113, 25799, 25803, 26517, 26525]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23673, 23685, 24375, 24399, 25101, 25105, 25811, 25815, 26521, 26529]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23677..26525 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23673..26529 (10 distinct values)
+fixture events=10000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
+  skill_catalog     p50    4.864/5.177    p95   36.774/9.733    delta  +0.313 ms  control-no-change
+  skill_request_overlay p50    7.585/7.705    p95   54.288/11.229   delta  +0.120 ms  control-no-change
+  mcp_config_load   p50    0.326/0.311    p95    0.642/0.756    delta  -0.015 ms  control-no-change
+  attach_history    p50 1494.826/1500.153 p95 1767.452/1744.991 delta  +5.327 ms  control-no-change
+  resume_ready      p50  988.164/982.877  p95 1561.017/1174.780 delta  -5.286 ms  control-no-change
+  provider_dispatch p50   14.916/12.887   p95   26.066/25.485   delta  -2.028 ms  control-no-change
+  session_save      p50   34.937/31.678   p95  143.266/38.498   delta  -3.259 ms  control-no-change
+  total store_read_bytes p50 28640273  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 23490  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23665, 23681, 24387, 24391, 25105, 25113, 25807, 25819, 26521, 26529]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23672, 23684, 24386, 24390, 25096, 25104, 25818, 25822, 26524]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23665..26529 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23672..26524 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23677, 23681, 24391, 24403, 25087, 25109, 25807, 25817, 26527, 26529]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23672, 23676, 24378, 24392, 25074, 25102, 25808, 25812, 26522, 26530]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23677..26529 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23672..26530 (10 distinct values)
 report   bench-results/loading-warm.json
 mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict control-no-change
 ```
@@ -1515,20 +1536,41 @@ mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 
 | Tool case | median | p95 | min | max | samples |
 |---|---|---|---|---|---|
-| read (tiny file) | 0.3 ms | 0.4 ms | 0.2 ms | 0.4 ms | 5 |
-| read (1000 lines) | 0.5 ms | 0.5 ms | 0.4 ms | 0.5 ms | 5 |
-| read (10 lines @ offset) | 0.5 ms | 0.6 ms | 0.5 ms | 0.6 ms | 5 |
-| read (repo Cargo.toml) | 0.3 ms | 0.4 ms | 0.3 ms | 0.4 ms | 5 |
-| write (small) | 2.0 ms | 2.1 ms | 1.7 ms | 2.1 ms | 5 |
-| write (10KB) | 2.1 ms | 2.4 ms | 2.0 ms | 2.4 ms | 5 |
-| edit (simple replace) | 1.9 ms | 2.2 ms | 1.7 ms | 2.2 ms | 5 |
-| ls (scripts dir) | 0.9 ms | 1.2 ms | 0.8 ms | 1.2 ms | 5 |
-| agentgrep (grep in tree) | 2.8 ms | 2.9 ms | 2.7 ms | 2.9 ms | 5 |
-| agentgrep (find **/*.rs) | 1.6 ms | 1.7 ms | 1.5 ms | 1.7 ms | 5 |
-| bash (true) | 3.9 ms | 4.3 ms | 3.8 ms | 4.3 ms | 5 |
-| bash (echo hello) | 3.9 ms | 4.4 ms | 3.7 ms | 4.4 ms | 5 |
-| bash (ls fixture tree) | 6.6 ms | 6.7 ms | 6.4 ms | 6.7 ms | 5 |
-| invalid tool (dispatch only) | 0.1 ms | 0.1 ms | 0.1 ms | 0.1 ms | 5 |
+| read (tiny file) | 0.3 ms | 0.5 ms | 0.2 ms | 0.5 ms | 5 |
+| read (1000 lines) | 1.0 ms | 2.1 ms | 0.8 ms | 2.1 ms | 5 |
+| read (10 lines @ offset) | 0.7 ms | 1.0 ms | 0.5 ms | 1.0 ms | 5 |
+| read (repo Cargo.toml) | 1.4 ms | 1.8 ms | 1.0 ms | 1.8 ms | 5 |
+| write (small) | 7.9 ms | 14.9 ms | 4.5 ms | 14.9 ms | 5 |
+| write (10KB) | 3.2 ms | 7.7 ms | 2.4 ms | 7.7 ms | 5 |
+| edit (simple replace) | 2.7 ms | 3.7 ms | 2.3 ms | 3.7 ms | 5 |
+| ls (scripts dir) | 2.2 ms | 2.7 ms | 1.1 ms | 2.7 ms | 5 |
+| agentgrep (grep in tree) | 5.7 ms | 8.4 ms | 5.0 ms | 8.4 ms | 5 |
+| agentgrep (find **/*.rs) | 3.5 ms | 5.7 ms | 2.5 ms | 5.7 ms | 5 |
+| bash (true) | 9.4 ms | 14.2 ms | 8.9 ms | 14.2 ms | 5 |
+| bash (echo hello) | 8.7 ms | 14.7 ms | 6.4 ms | 14.7 ms | 5 |
+| bash (ls fixture tree) | 14.3 ms | 21.8 ms | 13.8 ms | 21.8 ms | 5 |
+| invalid tool (dispatch only) | 0.2 ms | 0.7 ms | 0.1 ms | 0.7 ms | 5 |
+
+#### Tool CPU per call
+
+| Tool case | daemon cpu median | min | max | child cpu median | voluntary switches | involuntary switches | windows × calls | source |
+|---|---|---|---|---|---|---|---|---|
+| read (tiny file) | — | — | — | — | — | — | 0 | — |
+| read (1000 lines) | — | — | — | — | — | — | 0 | — |
+| read (10 lines @ offset) | — | — | — | — | — | — | 0 | — |
+| read (repo Cargo.toml) | — | — | — | — | — | — | 0 | — |
+| write (small) | — | — | — | — | — | — | 0 | — |
+| write (10KB) | — | — | — | — | — | — | 0 | — |
+| edit (simple replace) | — | — | — | — | — | — | 0 | — |
+| ls (scripts dir) | — | — | — | — | — | — | 0 | — |
+| agentgrep (grep in tree) | — | — | — | — | — | — | 0 | — |
+| agentgrep (find **/*.rs) | — | — | — | — | — | — | 0 | — |
+| bash (true) | — | — | — | — | — | — | 0 | — |
+| bash (echo hello) | — | — | — | — | — | — | 0 | — |
+| bash (ls fixture tree) | — | — | — | — | — | — | 0 | — |
+| invalid tool (dispatch only) | — | — | — | — | — | — | 0 | — |
+
+CPU unmeasured: no /proc CPU counters for the daemon on this system
 
 #### Reload storm
 
@@ -1536,18 +1578,18 @@ mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 
 | Concurrent resumes | history median | p95 | max | storm wall | failures |
 |---|---|---|---|---|---|
-| 1 | 136.8 ms | 136.8 ms | 136.8 ms | 137.0 ms | 0 |
-| 10 | 440.5 ms | 441.3 ms | 441.3 ms | 441.8 ms | 0 |
-| 40 | 2.36 s | 2.36 s | 2.36 s | 2.36 s | 0 |
+| 1 | 56.6 ms | 56.6 ms | 56.6 ms | 56.7 ms | 0 |
+| 10 | 192.6 ms | 193.6 ms | 193.6 ms | 193.9 ms | 0 |
+| 40 | 1.23 s | 1.23 s | 1.23 s | 1.23 s | 0 |
 
 #### Compile loop
 
 | Checkpoint | Touched | median | min | max | samples |
 |---|---|---|---|---|---|
-| warm_noop | — | 2.18 s | 2.18 s | 2.18 s | 1 |
-| leaf_touch | src/main.rs | 1.32 s | 1.32 s | 1.32 s | 1 |
-| core_touch | crates/app-core/src/lib.rs | 39.06 s | 39.06 s | 39.06 s | 1 |
-| build_meta_touch | crates/build-meta/src/lib.rs | 54.39 s | 54.39 s | 54.39 s | 1 |
+| warm_noop | — | 1.52 s | 1.52 s | 1.52 s | 1 |
+| leaf_touch | src/main.rs | 717.8 ms | 717.8 ms | 717.8 ms | 1 |
+| core_touch | crates/app-core/src/lib.rs | 40.27 s | 40.27 s | 40.27 s | 1 |
+| build_meta_touch | crates/build-meta/src/lib.rs | 50.15 s | 50.15 s | 50.15 s | 1 |
 
 ### Windows
 
@@ -1559,27 +1601,27 @@ Skipped: syscalls (strace not available)
 
 | Tool | Version | `--version` (median) | Install size |
 |---|---|---|---|
-| horon | horon-agent v0.1.0-dev (cdc8cb8) | 13.7 ms | 97.0 MB |
-| jcode | jcode v0.99.1 (7206efd0c) | 16.0 ms | 128.4 MB |
-| Claude Code | 2.1.317 (Claude Code) | 39.9 ms | 645.2 MB |
-| Codex CLI | codex-cli 0.166.0 | 97.7 ms | 479.4 MB |
-| OpenCode | 1.19.5 | 468.3 ms | 605.3 MB |
-| pi | 1.5.0 | 253.0 ms | 108.9 MB |
-| oh-my-pi (omp) | omp/18.18.0 | 637.9 ms | 291.7 MB |
-| oh-my-openagent (omo) | omo 5.1.64 (engine: senpi 2026.11.5-1) | 187.5 ms | 514.8 MB |
+| horon | horon-agent v0.1.0-dev (ef9339c) | 12.2 ms | 97.0 MB |
+| jcode | jcode v0.99.1 (7206efd0c) | 13.5 ms | 128.4 MB |
+| Claude Code | 2.1.317 (Claude Code) | 37.4 ms | 645.2 MB |
+| Codex CLI | codex-cli 0.166.0 | 95.0 ms | 479.4 MB |
+| OpenCode | 1.19.5 | 459.6 ms | 605.3 MB |
+| pi | 1.5.0 | 254.5 ms | 108.9 MB |
+| oh-my-pi (omp) | omp/18.18.0 | 626.2 ms | 291.7 MB |
+| oh-my-openagent (omo) | omo 5.1.64 (engine: senpi 2026.11.5-1) | 176.0 ms | 514.8 MB |
 
 **One-shot headless prompt** (includes startup, one `ls` tool call, final answer)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Tool round-trip | request bytes | Note |
 |---|---|---|---|---|---|---|---|---|
-| horon | 206.5 ms | 155.6 ms–264.0 ms | baseline | 36.5 MB | baseline | yes | 3,686 / 2,390 (1 tools) | — |
-| jcode | 161.8 ms | 136.0 ms–234.0 ms | 1.28× less | 28.2 MB | 1.29× less | yes | 3,105 / 1,312 (1 tools) | — |
-| Claude Code | 1.23 s | 1.23 s–1.86 s | 5.97× more | 273.2 MB | 7.49× more | yes | 50,067 / 33,795 (14 tools) | — |
-| Codex CLI | 1.88 s | 1.39 s–3.35 s | 9.09× more | 262.7 MB | 7.21× more | yes | 41,028 / 18,342 (9 tools) | — |
-| OpenCode | 4.53 s | 4.43 s–6.92 s | 21.93× more | 865.3 MB | 23.74× more | yes | 2,659 / 0 (0 tools) | — |
-| pi | 431.4 ms | 430.1 ms–472.6 ms | 2.09× more | 125.6 MB | 3.44× more | yes | 5,522 / 2,841 (4 tools) | — |
-| oh-my-pi (omp) | 2.69 s | 2.63 s–3.06 s | 13.02× more | 413.6 MB | 11.35× more | yes | 29,889 / 18,533 (11 tools) | — |
-| oh-my-openagent (omo) | 19.34 s | 18.78 s–26.61 s | 93.63× more | 546.3 MB | 14.99× more | yes | 29,467 / 2,424 (2 tools) | — |
+| horon | 182.7 ms | 159.2 ms–590.7 ms | baseline | 31.2 MB | baseline | yes | 3,686 / 2,390 (1 tools) | — |
+| jcode | 128.6 ms | 118.5 ms–258.3 ms | 1.42× less | 32.9 MB | 1.06× more | yes | 3,105 / 1,312 (1 tools) | — |
+| Claude Code | 1.19 s | 1.15 s–3.80 s | 6.51× more | 272.6 MB | 8.75× more | yes | 50,067 / 33,795 (14 tools) | — |
+| Codex CLI | 1.69 s | 1.34 s–1.78 s | 9.25× more | 266.0 MB | 8.54× more | yes | 41,028 / 18,342 (9 tools) | — |
+| OpenCode | 4.88 s | 4.46 s–7.68 s | 26.70× more | 3.3 GB | 107.89× more | yes | 2,659 / 0 (0 tools) | — |
+| pi | 439.8 ms | 438.4 ms–483.9 ms | 2.41× more | 124.2 MB | 3.99× more | yes | 5,522 / 2,841 (4 tools) | — |
+| oh-my-pi (omp) | 3.17 s | 2.15 s–3.60 s | 17.36× more | 409.5 MB | 13.14× more | yes | 29,889 / 18,533 (11 tools) | — |
+| oh-my-openagent (omo) | 19.19 s | 14.10 s–59.73 s | 105.05× more | 547.5 MB | 17.57× more | yes | 29,467 / 2,424 (2 tools) | — |
 
 `request bytes` is the first model request of the first run as the mock server received it: JSON body bytes / tool catalog bytes (tools offered).
 
@@ -1587,7 +1629,7 @@ Skipped: syscalls (strace not available)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | Note | request bytes |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 172.9 ms | 161.2 ms–218.6 ms | baseline | 33.6 MB | baseline | — | yes | — | 11,209 / 9,255 (8 tools) |
+| horon | 151.3 ms | 147.9 ms–177.8 ms | baseline | 32.8 MB | baseline | — | yes | — | 11,209 / 9,255 (8 tools) |
 | jcode | — | — | — | — | — | — | — | skipped: jcode has no core tool profile | — |
 | Claude Code | — | — | — | — | — | — | — | skipped: Claude Code has no core tool profile | — |
 | Codex CLI | — | — | — | — | — | — | — | skipped: Codex CLI has no core tool profile | — |
@@ -1600,40 +1642,40 @@ Skipped: syscalls (strace not available)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | Note |
 |---|---|---|---|---|---|---|---|---|
-| horon | 169.3 ms | 155.9 ms–305.4 ms | baseline | 24.9 MB | baseline | skill-uri | yes | — |
-| jcode | 213.8 ms | 188.6 ms–386.5 ms | 1.26× more | 23.6 MB | 1.05× less | skill-tool | yes | — |
-| Claude Code | 946.2 ms | 828.4 ms–1.23 s | 5.59× more | 240.5 MB | 9.66× more | skill-tool | yes | — |
-| Codex CLI | 1.98 s | 1.86 s–3.33 s | 11.71× more | 264.1 MB | 10.61× more | file-read | yes | — |
-| OpenCode | 7.11 s | 6.73 s–7.36 s | 41.98× more | 739.9 MB | 29.73× more | skill-tool | yes | — |
-| pi | 587.9 ms | 578.0 ms–606.6 ms | 3.47× more | 97.7 MB | 3.92× more | file-read | yes | — |
-| oh-my-pi (omp) | 12.96 s | 3.52 s–13.69 s | 76.57× more | 409.2 MB | 16.44× more | file-read | yes | — |
-| oh-my-openagent (omo) | 21.11 s | 17.54 s–29.50 s | 124.70× more | 540.3 MB | 21.71× more | file-read | yes | — |
+| horon | 153.6 ms | 141.7 ms–193.5 ms | baseline | 26.0 MB | baseline | skill-uri | yes | — |
+| jcode | 271.6 ms | 194.2 ms–680.0 ms | 1.77× more | 24.0 MB | 1.08× less | skill-tool | yes | — |
+| Claude Code | 875.4 ms | 803.1 ms–959.2 ms | 5.70× more | 239.3 MB | 9.21× more | skill-tool | yes | — |
+| Codex CLI | 2.13 s | 1.77 s–2.78 s | 13.86× more | 263.9 MB | 10.15× more | file-read | yes | — |
+| OpenCode | 7.46 s | 6.88 s–7.87 s | 48.58× more | 3.2 GB | 125.44× more | skill-tool | yes | — |
+| pi | 569.9 ms | 561.7 ms–587.8 ms | 3.71× more | 97.9 MB | 3.77× more | file-read | yes | — |
+| oh-my-pi (omp) | 3.02 s | 2.59 s–3.47 s | 19.66× more | 361.8 MB | 13.92× more | file-read | yes | — |
+| oh-my-openagent (omo) | 19.15 s | 15.56 s–21.16 s | 124.67× more | 545.7 MB | 20.99× more | file-read | yes | — |
 
 **MCP tool call** (process start to final answer, including starting the fixture stdio MCP server and one `bench_echo` call)
 
 | Tool | Time (median) | Min–max | vs horon | Peak tree RSS | vs horon | Via | Tool round-trip | MCP ready | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| horon | 241.2 ms | 189.2 ms–362.3 ms | baseline | 37.4 MB | baseline | mcp-call | yes | 149.7 ms | — |
-| jcode | 318.1 ms | 305.4 ms–779.2 ms | 1.32× more | 36.6 MB | 1.02× less | mcp-action | yes | 220.4 ms | — |
-| Claude Code | 1.24 s | 998.1 ms–2.27 s | 5.15× more | 271.2 MB | 7.26× more | mcp-tool | yes | 1.10 s | — |
-| Codex CLI | 1.02 s | 735.5 ms–2.08 s | 4.24× more | 179.1 MB | 4.79× more | mcp-tool | yes | 790.0 ms | — |
-| OpenCode | 6.39 s | 5.99 s–7.13 s | 26.47× more | 3.2 GB | 87.37× more | mcp-tool | yes | 5.00 s | — |
-| pi | 645.0 ms | 626.2 ms–1.58 s | 2.67× more | 119.0 MB | 3.18× more | mcp-tool | yes | 516.7 ms | — |
-| oh-my-pi (omp) | 3.55 s | 3.21 s–3.72 s | 14.71× more | 439.3 MB | 11.75× more | mcp-route | yes | 2.66 s | — |
-| oh-my-openagent (omo) | 22.20 s | 17.49 s–29.16 s | 92.03× more | 566.9 MB | 15.16× more | mcp-tool | yes | 19.01 s | — |
+| horon | 218.3 ms | 168.2 ms–366.4 ms | baseline | 37.5 MB | baseline | mcp-call | yes | 127.2 ms | — |
+| jcode | 426.5 ms | 286.0 ms–647.2 ms | 1.95× more | 36.1 MB | 1.04× less | mcp-action | yes | 279.8 ms | — |
+| Claude Code | 1.01 s | 879.8 ms–1.19 s | 4.60× more | 273.4 MB | 7.30× more | mcp-tool | yes | 771.0 ms | — |
+| Codex CLI | 831.0 ms | 708.5 ms–1.85 s | 3.81× more | 177.7 MB | 4.74× more | mcp-tool | yes | 641.5 ms | — |
+| OpenCode | 7.11 s | 6.81 s–7.64 s | 32.57× more | 854.4 MB | 22.81× more | mcp-tool | yes | 5.84 s | — |
+| pi | 671.8 ms | 659.7 ms–1.14 s | 3.08× more | 118.7 MB | 3.17× more | mcp-tool | yes | 517.1 ms | — |
+| oh-my-pi (omp) | 2.99 s | 2.95 s–3.02 s | 13.71× more | 379.1 MB | 10.12× more | mcp-route | yes | 2.44 s | — |
+| oh-my-openagent (omo) | — | — | — | — | — | mcp-tool | no | — | failed: the fixture sentinel never came back |
 
 **Session memory** (idle after 3 turn(s) per session; sizes are process-tree sums, RSS; PSS also recorded on Linux). "Each additional" is the least-squares slope across the measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and descriptors come from the daemon's own `server:memory` after the turns.
 
 | Tool | First session | Each additional | vs horon (additional) | Threads/session | FDs/session | First (post-turn) | Each additional (post-turn) |
 |---|---|---|---|---|---|---|---|
-| horon | 22.5 MB | 133.3 KB | baseline | — | — | 30.2 MB | 277.7 KB |
-| jcode | 22.0 MB | 84.6 KB | 1.57× less | — | — | 26.6 MB | 401.1 KB |
-| Claude Code | 154.8 MB | 171.0 MB | 1,313× more | — | — | 187.8 MB | 189.7 MB |
-| Codex CLI | 124.7 MB | 97.5 MB | 749.14× more | — | — | 162.9 MB | 116.5 MB |
-| OpenCode | 246.7 MB | 15.8 MB | 121.74× more | — | — | 436.9 MB | 17.8 MB |
-| pi | 90.8 MB | 90.6 MB | 696.21× more | — | — | 100.5 MB | 101.0 MB |
-| oh-my-pi (omp) | 322.0 MB | 130.5 MB | 1,003× more | — | — | 335.6 MB | 340.4 MB |
-| oh-my-openagent (omo) | 145.3 MB | 130.3 MB | 1,001× more | — | — | 411.7 MB | 403.4 MB |
+| horon | 22.4 MB | 140.7 KB | baseline | — | — | 30.0 MB | 455.9 KB |
+| jcode | 21.9 MB | 71.9 KB | 1.96× less | — | — | 26.9 MB | 365.6 KB |
+| Claude Code | 154.0 MB | 170.8 MB | 1,243× more | — | — | 185.7 MB | 190.4 MB |
+| Codex CLI | 123.6 MB | 119.5 MB | 869.76× more | — | — | 163.4 MB | 119.1 MB |
+| OpenCode | 246.2 MB | 17.9 MB | 130.04× more | — | — | 436.2 MB | 24.1 MB |
+| pi | 90.6 MB | 90.7 MB | 660.08× more | — | — | 101.0 MB | 100.9 MB |
+| oh-my-pi (omp) | 330.3 MB | 110.9 MB | 806.69× more | — | — | 349.2 MB | 338.3 MB |
+| oh-my-openagent (omo) | 149.3 MB | 130.0 MB | 945.93× more | — | — | 415.4 MB | 393.8 MB |
 
 Threads/descriptors unavailable: horon (server:memory did not report thread_count, fd_count), jcode (server:memory did not report thread_count, fd_count)
 
@@ -1641,14 +1683,14 @@ Threads/descriptors unavailable: horon (server:memory did not report thread_coun
 
 | Tool | 1 session(s) | 5 session(s) | 10 session(s) |
 |---|---|---|---|
-| horon | 30.2 MB | 32.4 MB | 32.7 MB |
-| jcode | 26.6 MB | 28.8 MB | 30.2 MB |
-| Claude Code | 187.8 MB | 950.3 MB | 1.9 GB |
-| Codex CLI | 162.9 MB | 648.1 MB | 1.2 GB |
-| OpenCode | 436.9 MB | 458.2 MB | 593.8 MB |
-| pi | 100.5 MB | 504.6 MB | 1009.4 MB |
-| oh-my-pi (omp) | 335.6 MB | 1.7 GB | 3.3 GB |
-| oh-my-openagent (omo) | 411.7 MB | 2.1 GB | 4.0 GB |
+| horon | 30.0 MB | 32.2 MB | 34.1 MB |
+| jcode | 26.9 MB | 29.1 MB | 30.2 MB |
+| Claude Code | 185.7 MB | 945.3 MB | 1.9 GB |
+| Codex CLI | 163.4 MB | 645.7 MB | 1.2 GB |
+| OpenCode | 436.2 MB | 462.2 MB | 647.8 MB |
+| pi | 101.0 MB | 505.3 MB | 1008.9 MB |
+| oh-my-pi (omp) | 349.2 MB | 1.7 GB | 3.3 GB |
+| oh-my-openagent (omo) | 415.4 MB | 2.2 GB | 3.9 GB |
 
 #### 기동
 
@@ -1657,38 +1699,38 @@ Benchmarking: D:/a/agent/agent/bench-bin/horon-agent.exe
 ============================================================
 
 --help (binary load):
-  Min:    11.01 ms
-  Max:    11.62 ms
-  Mean:   11.19 ms
-  Median: 11.12 ms
-  Stdev:  0.20 ms
+  Min:    10.22 ms
+  Max:    11.45 ms
+  Mean:   10.72 ms
+  Median: 10.61 ms
+  Stdev:  0.39 ms
 
 --version:
-  Min:    10.73 ms
-  Max:    13.90 ms
-  Mean:   12.03 ms
-  Median: 11.74 ms
-  Stdev:  1.14 ms
+  Min:    10.29 ms
+  Max:    11.27 ms
+  Mean:   10.64 ms
+  Median: 10.54 ms
+  Stdev:  0.35 ms
 
 Measuring isolated server startup (10 runs)...
 
 Server ready (isolated socket connectable):
-  Min:    21.76 ms
-  Max:    27.77 ms
-  Mean:   22.51 ms
-  Median: 21.94 ms
-  Stdev:  1.86 ms
+  Min:    16.45 ms
+  Max:    23.32 ms
+  Mean:   21.88 ms
+  Median: 22.32 ms
+  Stdev:  1.96 ms
 
 Server startup stages (one extra run with HORON_AGENT_STARTUP_PROFILE=1, not timed):
   stage             at ms  delta ms   share
   panic_hook          0.0       0.0    0.1%
-  logging_init        1.3       1.3   23.7%
-  nofile_limit        1.7       0.4    7.4%
-  perm_harden         3.7       1.9   34.3%
-  args_parse          3.7       0.0    0.0%
-  config_loaded       4.5       0.8   14.7%
-  server_new          5.3       0.8   14.4%
-  socket_bound        5.6       0.3    5.5%
+  logging_init        1.5       1.5   22.7%
+  nofile_limit        1.9       0.5    7.2%
+  perm_harden         4.4       2.5   38.1%
+  args_parse          4.4       0.0    0.0%
+  config_loaded       5.3       0.9   13.9%
+  server_new          6.1       0.8   12.2%
+  socket_bound        6.5       0.4    5.8%
 
 Measuring harness bridge readiness (10 runs)...
   skipped: api-bridge is Unix-only, so Windows has no harness bridge to time
@@ -1703,103 +1745,107 @@ Bridge total (socket -> no-op): No successful runs
 
 ============================================================
 Summary:
-  Binary load median:      ~11.1 ms
-  Server ready median:     ~21.9 ms
+  Binary load median:      ~10.6 ms
+  Server ready median:     ~22.3 ms
   Bridge total median:     n/a
 ```
 
 #### 세션 로딩 (COLD)
 
 ```text
-binary   D:\a\agent\agent\bench-bin\examples\loading_probe.exe (bd20c45db24b)
+binary   D:\a\agent\agent\bench-bin\examples\loading_probe.exe (fb8dc412fbe6)
 mode     cold
 protocol COLD: every measured run gets its own freshly copied HOME; no derived cache from an earlier run exists, so each sample is a first load of the fixture.
-fixtures C:\Users\RUNNER~1\AppData\Local\Temp\horon-loading-bench-nngru5v_
+fixtures C:\Users\RUNNER~1\AppData\Local\Temp\horon-loading-bench-lll365np
 note     --warmup 3 is ignored in cold mode: every sample gets a fresh HOME
 fixture events=0 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
-  skill_catalog     p50    0.155/0.155    p95    0.213/0.213    delta  -0.001 ms  control-no-change
-  skill_request_overlay p50    1.179/1.192    p95    1.279/1.235    delta  +0.013 ms  control-no-change
-  mcp_config_load   p50    1.410/1.410    p95    1.543/1.447    delta  -0.001 ms  control-no-change
-  attach_history    p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-no-change
-  resume_ready      p50    0.002/0.002    p95    0.002/0.003    delta  +0.000 ms  control-no-change
+  skill_catalog     p50    0.101/0.101    p95    0.119/0.120    delta  -0.000 ms  control-no-change
+  skill_request_overlay p50    0.787/0.780    p95    0.853/0.862    delta  -0.007 ms  control-no-change
+  mcp_config_load   p50    0.974/1.005    p95    1.067/1.086    delta  +0.031 ms  control-no-change
+  attach_history    p50    0.001/0.001    p95    0.002/0.002    delta  +0.000 ms  control-no-change
+  resume_ready      p50    0.001/0.001    p95    0.002/0.002    delta  +0.000 ms  control-no-change
   provider_dispatch p50    0.002/0.001    p95    0.002/0.002    delta  -0.000 ms  control-no-change
-  session_save      p50   54.304/55.576   p95   63.361/65.912   delta  +1.272 ms  control-no-change
-  total store_read_bytes p50 22942  full_source_hashes p50 1  skill_dir_reads p50 1
+  session_save      p50   70.589/61.310   p95   84.387/105.412  delta  -9.280 ms  control-no-change
+  total store_read_bytes p50 22934  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 22920..22960 (8 distinct values)
-  SPREAD   b session_save store_read_bytes 22916..22964 (7 distinct values)
+  SPREAD   a session_save store_read_bytes 22916..22968 (7 distinct values)
+  SPREAD   b session_save store_read_bytes 22900..22964 (8 distinct values)
 fixture events=0 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median - vacuous, this fixture has no session)
-  skill_catalog     p50   23.202/23.483   p95   33.191/35.470   delta  +0.281 ms  control-no-change
-  skill_request_overlay p50   53.020/53.368   p95   58.012/57.962   delta  +0.348 ms  control-no-change
-  mcp_config_load   p50    1.467/1.465    p95    1.593/1.672    delta  -0.002 ms  control-no-change
-  attach_history    p50    0.002/0.002    p95    0.005/0.005    delta  +0.000 ms  control-no-change
-  resume_ready      p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-no-change
-  provider_dispatch p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-no-change
-  session_save      p50   61.386/62.669   p95   69.989/74.017   delta  +1.283 ms  control-no-change
-  total store_read_bytes p50 22956  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50   13.827/14.149   p95   14.773/14.517   delta  +0.322 ms  control-no-change
+  skill_request_overlay p50   36.667/36.797   p95   39.480/37.608   delta  +0.130 ms  control-no-change
+  mcp_config_load   p50    0.941/0.949    p95    1.010/1.054    delta  +0.008 ms  control-no-change
+  attach_history    p50    0.002/0.002    p95    0.005/0.002    delta  +0.000 ms  control-no-change
+  resume_ready      p50    0.001/0.001    p95    0.002/0.002    delta  +0.000 ms  control-no-change
+  provider_dispatch p50    0.002/0.002    p95    0.002/0.002    delta  -0.000 ms  control-no-change
+  session_save      p50   72.852/80.418   p95  116.520/144.092  delta  +7.567 ms  control-no-change
+  total store_read_bytes p50 22940  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 24690  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 22910..22964 (6 distinct values)
-  SPREAD   b session_save store_read_bytes 22926..22960 (8 distinct values)
+  SPREAD   a session_save store_read_bytes 22918..22956 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 22916..22964 (8 distinct values)
 fixture events=1000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    0.155/0.150    p95    0.253/0.155    delta  -0.005 ms  control-no-change
-  skill_request_overlay p50    1.213/1.202    p95    1.460/1.268    delta  -0.011 ms  control-no-change
-  mcp_config_load   p50    1.429/1.409    p95    1.795/1.497    delta  -0.021 ms  control-no-change
-  attach_history    p50  556.363/559.558  p95  562.346/567.784  delta  +3.196 ms  control-no-change
-  resume_ready      p50  225.802/227.612  p95  232.395/235.091  delta  +1.810 ms  control-no-change
-  provider_dispatch p50    1.718/1.748    p95    1.796/2.024    delta  +0.030 ms  control-no-change
-  session_save      p50   46.892/46.494   p95   59.466/109.512  delta  -0.398 ms  control-no-change
-  total store_read_bytes p50 5311217  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50    0.094/0.098    p95    0.098/0.138    delta  +0.003 ms  control-no-change
+  skill_request_overlay p50    0.775/0.774    p95    0.848/0.963    delta  -0.001 ms  control-no-change
+  mcp_config_load   p50    0.925/0.944    p95    0.978/1.141    delta  +0.019 ms  control-no-change
+  attach_history    p50  422.463/413.279  p95  439.401/427.349  delta  -9.184 ms  control-no-change
+  resume_ready      p50  147.736/146.577  p95  167.283/157.795  delta  -1.159 ms  control-no-change
+  provider_dispatch p50    1.497/1.486    p95    1.535/1.549    delta  -0.010 ms  control-no-change
+  session_save      p50   77.877/52.780   p95  129.678/95.429   delta -25.097 ms  control-no-change
+  total store_read_bytes p50 5311213  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 4189149..4189155 (2 distinct values)
-  SPREAD   a resume_ready store_read_bytes 1099100..1099106 (2 distinct values)
-  SPREAD   a session_save store_read_bytes 22907..22972 (7 distinct values)
-  SPREAD   b attach_history store_read_bytes 4189151..4189155 (3 distinct values)
-  SPREAD   b resume_ready store_read_bytes 1099102..1099106 (3 distinct values)
-  SPREAD   b session_save store_read_bytes 22912..22976 (8 distinct values)
+  SPREAD   a attach_history store_read_bytes 4189151..4189155 (3 distinct values)
+  SPREAD   a resume_ready store_read_bytes 1099102..1099106 (3 distinct values)
+  SPREAD   a session_save store_read_bytes 22936..22975 (9 distinct values)
+  SPREAD   b attach_history store_read_bytes 4189151..4189155 (2 distinct values)
+  SPREAD   b resume_ready store_read_bytes 1099102..1099106 (2 distinct values)
+  SPREAD   b session_save store_read_bytes 22930..22976 (7 distinct values)
 fixture events=1000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50   23.704/23.998   p95   26.049/27.277   delta  +0.294 ms  control-no-change
-  skill_request_overlay p50   52.388/52.674   p95   58.730/55.569   delta  +0.285 ms  control-no-change
-  mcp_config_load   p50    1.436/1.461    p95    1.621/2.001    delta  +0.025 ms  control-no-change
-  attach_history    p50  554.105/556.213  p95  568.980/570.666  delta  +2.108 ms  control-no-change
-  resume_ready      p50  227.900/225.849  p95  235.897/237.280  delta  -2.051 ms  control-no-change
-  provider_dispatch p50    1.707/1.681    p95    1.735/1.735    delta  -0.026 ms  control-no-change
-  session_save      p50   49.532/46.547   p95   61.579/55.355   delta  -2.985 ms  control-no-change
-  total store_read_bytes p50 5311226  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50   14.976/14.755   p95   15.439/15.121   delta  -0.221 ms  control-no-change
+  skill_request_overlay p50   37.281/36.890   p95   39.389/41.657   delta  -0.391 ms  control-no-change
+  mcp_config_load   p50    0.976/1.003    p95    1.026/1.033    delta  +0.027 ms  control-no-change
+  attach_history    p50  419.450/416.852  p95  423.319/443.932  delta  -2.598 ms  control-no-change
+  resume_ready      p50  146.281/146.520  p95  166.872/168.022  delta  +0.239 ms  control-no-change
+  provider_dispatch p50    1.453/1.436    p95    1.526/1.544    delta  -0.017 ms  control-no-change
+  session_save      p50   69.335/81.554   p95   84.555/121.155  delta +12.218 ms  control-no-change
+  total store_read_bytes p50 5311213  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 24690  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 22944..22976 (6 distinct values)
-  SPREAD   b attach_history store_read_bytes 4189151..4189155 (3 distinct values)
-  SPREAD   b resume_ready store_read_bytes 1099102..1099106 (3 distinct values)
-  SPREAD   b session_save store_read_bytes 22940..22976 (8 distinct values)
+  SPREAD   a attach_history store_read_bytes 4189145..4189155 (3 distinct values)
+  SPREAD   a resume_ready store_read_bytes 1099096..1099106 (3 distinct values)
+  SPREAD   a session_save store_read_bytes 22888..22983 (8 distinct values)
+  SPREAD   b attach_history store_read_bytes 4189147..4189155 (3 distinct values)
+  SPREAD   b resume_ready store_read_bytes 1099098..1099106 (3 distinct values)
+  SPREAD   b session_save store_read_bytes 22935..22968 (8 distinct values)
 fixture events=10000 skills=0 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50    0.151/0.155    p95    0.166/0.218    delta  +0.003 ms  control-no-change
-  skill_request_overlay p50    1.229/1.234    p95    1.318/1.861    delta  +0.005 ms  control-no-change
-  mcp_config_load   p50    1.436/1.420    p95    1.496/2.157    delta  -0.016 ms  control-no-change
-  attach_history    p50 6316.728/6334.928 p95 8243.767/6677.237 delta +18.200 ms  control-no-change
-  resume_ready      p50 2387.696/2382.965 p95 2562.764/2456.150 delta  -4.731 ms  control-no-change
-  provider_dispatch p50   17.956/18.297   p95   21.763/23.116   delta  +0.341 ms  control-no-change
-  session_save      p50   51.686/52.347   p95   98.799/271.147  delta  +0.661 ms  control-no-change
-  total store_read_bytes p50 53417418  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50    0.103/0.099    p95    0.145/0.149    delta  -0.004 ms  control-no-change
+  skill_request_overlay p50    0.780/0.789    p95    1.040/0.802    delta  +0.009 ms  control-no-change
+  mcp_config_load   p50    0.925/0.919    p95    1.046/0.996    delta  -0.006 ms  control-no-change
+  attach_history    p50 4812.511/4810.719 p95 4890.158/4874.619 delta  -1.792 ms  control-no-change
+  resume_ready      p50 1540.991/1543.595 p95 1557.503/1554.152 delta  +2.604 ms  control-no-change
+  provider_dispatch p50   16.666/16.130   p95   17.572/17.790   delta  -0.536 ms  control-no-change
+  session_save      p50   68.857/52.511   p95  105.337/151.425  delta -16.347 ms  control-no-change
+  total store_read_bytes p50 53417439  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a attach_history store_read_bytes 42184249..42184253 (2 distinct values)
-  SPREAD   a resume_ready store_read_bytes 11210212..11210216 (2 distinct values)
-  SPREAD   a session_save store_read_bytes 22927..22963 (9 distinct values)
+  SPREAD   a attach_history store_read_bytes 42184252..42184253 (2 distinct values)
+  SPREAD   a resume_ready store_read_bytes 11210215..11210216 (2 distinct values)
+  SPREAD   a session_save store_read_bytes 22961..22979 (5 distinct values)
   SPREAD   b attach_history store_read_bytes 42184251..42184253 (2 distinct values)
   SPREAD   b resume_ready store_read_bytes 11210215..11210216 (2 distinct values)
-  SPREAD   b session_save store_read_bytes 22930..22970 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 22943..22978 (9 distinct values)
 fixture events=10000 skills=200 body=0 mcp=0 mode=cold -> measured (fixture-stage counters stable: True, criterion within 1% of the median)
-  skill_catalog     p50   23.611/23.534   p95   24.354/24.669   delta  -0.078 ms  control-no-change
-  skill_request_overlay p50   52.473/52.591   p95   54.394/58.076   delta  +0.118 ms  control-no-change
-  mcp_config_load   p50    1.476/1.478    p95    1.511/1.534    delta  +0.001 ms  control-no-change
-  attach_history    p50 6310.731/6312.044 p95 6353.843/6332.412 delta  +1.313 ms  control-no-change
-  resume_ready      p50 2385.441/2372.398 p95 2405.375/2397.799 delta -13.043 ms  control-no-change
-  provider_dispatch p50   17.441/18.042   p95   18.323/25.058   delta  +0.601 ms  control-drift
-  session_save      p50   45.811/48.499   p95   61.327/55.241   delta  +2.688 ms  control-no-change
-  total store_read_bytes p50 53417423  full_source_hashes p50 2  skill_dir_reads p50 1
+  skill_catalog     p50   14.364/14.730   p95   15.063/15.712   delta  +0.366 ms  control-no-change
+  skill_request_overlay p50   37.227/37.095   p95   39.965/40.066   delta  -0.132 ms  control-no-change
+  mcp_config_load   p50    0.994/1.012    p95    1.108/1.388    delta  +0.018 ms  control-no-change
+  attach_history    p50 4804.463/4820.813 p95 4904.130/4866.154 delta +16.349 ms  control-no-change
+  resume_ready      p50 1527.567/1540.279 p95 1550.013/1562.739 delta +12.712 ms  control-no-change
+  provider_dispatch p50   15.869/16.806   p95   18.229/17.563   delta  +0.936 ms  control-no-change
+  session_save      p50   45.749/47.038   p95   92.112/98.338   delta  +1.290 ms  control-no-change
+  total store_read_bytes p50 53417410  full_source_hashes p50 2  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 24690  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  SPREAD   a session_save store_read_bytes 22926..22969 (9 distinct values)
+  SPREAD   a attach_history store_read_bytes 42184249..42184253 (3 distinct values)
+  SPREAD   a resume_ready store_read_bytes 11210212..11210216 (3 distinct values)
+  SPREAD   a session_save store_read_bytes 22911..22975 (9 distinct values)
   SPREAD   b attach_history store_read_bytes 42184249..42184253 (3 distinct values)
   SPREAD   b resume_ready store_read_bytes 11210212..11210216 (3 distinct values)
-  SPREAD   b session_save store_read_bytes 22938..22971 (9 distinct values)
+  SPREAD   b session_save store_read_bytes 22942..22979 (8 distinct values)
 report   bench-results\loading-cold.json
 mode cold, fixtures 6, measurement failures 0, unstable fixtures 0, verdict control-no-change
 ```
@@ -1807,94 +1853,94 @@ mode cold, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 #### 세션 로딩 (WARM)
 
 ```text
-binary   D:\a\agent\agent\bench-bin\examples\loading_probe.exe (bd20c45db24b)
+binary   D:\a\agent\agent\bench-bin\examples\loading_probe.exe (fb8dc412fbe6)
 mode     warm
 protocol WARM: one HOME per side, --warmup discarded runs per side, then measured runs alternate between the two sides on those same HOMEs.
-fixtures C:\Users\RUNNER~1\AppData\Local\Temp\horon-loading-bench-coeskliq
+fixtures C:\Users\RUNNER~1\AppData\Local\Temp\horon-loading-bench-x3as8qv_
 fixture events=0 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
-  skill_catalog     p50    0.106/0.098    p95    0.130/0.099    delta  -0.008 ms  control-no-change
-  skill_request_overlay p50    0.744/0.753    p95    0.769/0.831    delta  +0.008 ms  control-no-change
-  mcp_config_load   p50    0.871/0.934    p95    1.006/0.993    delta  +0.064 ms  control-no-change
-  attach_history    p50    0.002/0.001    p95    0.002/0.002    delta  -0.000 ms  control-no-change
-  resume_ready      p50    0.001/0.001    p95    0.002/0.001    delta  +0.000 ms  control-no-change
-  provider_dispatch p50    0.001/0.001    p95    0.002/0.002    delta  +0.000 ms  control-no-change
-  session_save      p50   39.197/41.553   p95   56.156/53.646   delta  +2.355 ms  control-no-change
-  total store_read_bytes p50 23655  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    0.154/0.172    p95    0.235/0.222    delta  +0.017 ms  control-drift
+  skill_request_overlay p50    1.240/1.248    p95    1.318/1.594    delta  +0.008 ms  control-no-change
+  mcp_config_load   p50    1.449/1.446    p95    1.586/1.920    delta  -0.003 ms  control-no-change
+  attach_history    p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-no-change
+  resume_ready      p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-drift
+  provider_dispatch p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-no-change
+  session_save      p50   51.645/51.790   p95   55.350/58.566   delta  +0.145 ms  control-no-change
+  total store_read_bytes p50 23632  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [22933, 22943, 22951, 23630, 23654, 23656, 24319, 24321, 24339]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [22927, 22933, 22957, 23616, 23656, 24306, 24332, 24339]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 22933..24339 (9 distinct values)
-  SPREAD   b session_save store_read_bytes 22927..24339 (8 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [22933, 22937, 22941, 22949, 23620, 23644, 23664, 24343, 24351, 24363]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [22892, 22901, 22922, 22945, 23619, 23652, 23656, 24335, 24343]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 22933..24363 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 22892..24343 (9 distinct values)
 fixture events=0 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical - vacuous, this fixture has no session)
-  skill_catalog     p50   15.158/15.324   p95   15.313/20.521   delta  +0.166 ms  control-no-change
-  skill_request_overlay p50   40.666/40.878   p95   41.740/43.536   delta  +0.211 ms  control-no-change
-  mcp_config_load   p50    1.002/1.024    p95    1.079/1.104    delta  +0.021 ms  control-no-change
-  attach_history    p50    0.002/0.002    p95    0.005/0.004    delta  +0.000 ms  control-no-change
-  resume_ready      p50    0.001/0.001    p95    0.002/0.002    delta  -0.000 ms  control-no-change
-  provider_dispatch p50    0.001/0.001    p95    0.002/0.002    delta  +0.000 ms  control-drift
-  session_save      p50   66.555/47.611   p95  164.102/171.072  delta -18.944 ms  control-no-change
-  total store_read_bytes p50 23615  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50   24.199/24.483   p95   26.006/28.480   delta  +0.285 ms  control-no-change
+  skill_request_overlay p50   55.383/54.927   p95   66.121/55.717   delta  -0.456 ms  control-no-change
+  mcp_config_load   p50    1.486/1.444    p95    1.547/1.533    delta  -0.042 ms  control-no-change
+  attach_history    p50    0.002/0.005    p95    0.008/0.007    delta  +0.003 ms  control-drift
+  resume_ready      p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-no-change
+  provider_dispatch p50    0.002/0.002    p95    0.002/0.002    delta  +0.000 ms  control-drift
+  session_save      p50   56.684/54.318   p95   59.138/56.748   delta  -2.366 ms  control-no-change
+  total store_read_bytes p50 23656  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 24690  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [22929, 22931, 22941, 22953, 23612, 23618, 23640, 23660, 24347, 24359]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [22931, 22933, 22949, 22957, 23630, 23632, 23658, 24349, 24351, 24355]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 22929..24359 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 22931..24355 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [22949, 22953, 23628, 23648, 23664, 24311, 24343, 24355]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [22922, 22925, 22941, 22965, 23598, 23636, 23642, 24325, 24351, 24359]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 22949..24355 (8 distinct values)
+  SPREAD   b session_save store_read_bytes 22922..24359 (10 distinct values)
 fixture events=1000 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    0.102/0.102    p95    0.109/0.146    delta  +0.001 ms  control-no-change
-  skill_request_overlay p50    0.781/0.779    p95    0.885/0.863    delta  -0.001 ms  control-no-change
-  mcp_config_load   p50    0.940/0.946    p95    1.002/0.993    delta  +0.005 ms  control-no-change
-  attach_history    p50  205.947/206.107  p95  220.144/209.566  delta  +0.160 ms  control-no-change
-  resume_ready      p50  155.807/154.881  p95  167.307/157.816  delta  -0.925 ms  control-no-change
-  provider_dispatch p50    1.534/1.538    p95    2.263/1.636    delta  +0.004 ms  control-no-change
-  session_save      p50   38.445/67.018   p95   45.964/177.095  delta +28.573 ms  control-drift
-  total store_read_bytes p50 2841142  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    0.156/0.158    p95    0.162/0.172    delta  +0.002 ms  control-no-change
+  skill_request_overlay p50    1.255/1.243    p95    1.280/1.305    delta  -0.012 ms  control-no-change
+  mcp_config_load   p50    1.443/1.482    p95    1.494/1.618    delta  +0.039 ms  control-no-change
+  attach_history    p50  300.536/296.484  p95  310.021/302.917  delta  -4.053 ms  control-no-change
+  resume_ready      p50  237.246/236.246  p95  242.656/244.168  delta  -1.001 ms  control-no-change
+  provider_dispatch p50    1.815/1.809    p95    1.886/1.929    delta  -0.006 ms  control-no-change
+  session_save      p50   50.306/50.300   p95   52.413/55.254   delta  -0.006 ms  control-no-change
+  total store_read_bytes p50 2841098  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23647, 23649, 24335, 24366, 25053, 25072, 25741, 25756, 26451, 26462]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23663, 23671, 24321, 24358, 25026, 25070, 25725, 25729, 26426, 26452]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23647..26462 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23663..26452 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23657, 23675, 24306, 24350, 25011, 25025, 25728, 25758, 26423, 26441]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23619, 23649, 24320, 24360, 25039, 25063, 25758, 25766, 26437, 26449]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23657..26441 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23619..26449 (10 distinct values)
 fixture events=1000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50   15.527/15.468   p95   18.768/17.021   delta  -0.059 ms  control-no-change
-  skill_request_overlay p50   42.022/40.615   p95   48.031/45.098   delta  -1.407 ms  control-no-change
-  mcp_config_load   p50    1.013/1.012    p95    1.098/1.104    delta  -0.002 ms  control-no-change
-  attach_history    p50  203.305/204.596  p95  208.143/213.421  delta  +1.291 ms  control-no-change
-  resume_ready      p50  155.189/154.415  p95  162.616/160.743  delta  -0.774 ms  control-no-change
-  provider_dispatch p50    1.536/1.548    p95    1.840/1.990    delta  +0.013 ms  control-no-change
-  session_save      p50   39.757/44.051   p95   45.435/144.915  delta  +4.294 ms  control-no-change
-  total store_read_bytes p50 2841134  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50   25.147/24.391   p95   27.017/25.479   delta  -0.756 ms  control-no-change
+  skill_request_overlay p50   57.182/56.731   p95   61.800/62.108   delta  -0.451 ms  control-no-change
+  mcp_config_load   p50    1.523/1.503    p95    1.659/1.860    delta  -0.020 ms  control-no-change
+  attach_history    p50  300.108/300.531  p95  307.973/306.021  delta  +0.422 ms  control-no-change
+  resume_ready      p50  236.704/236.437  p95  249.990/239.918  delta  -0.267 ms  control-no-change
+  provider_dispatch p50    1.794/1.819    p95    2.156/2.394    delta  +0.025 ms  control-no-change
+  session_save      p50   54.924/51.330   p95   73.091/64.987   delta  -3.594 ms  control-no-change
+  total store_read_bytes p50 2841142  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 24690  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23635, 23663, 24331, 24362, 25052, 25056, 25739, 25763, 26438, 26462]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23639, 23642, 24319, 24330, 25025, 25048, 25731, 25754, 26434, 26465]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23635..26462 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23639..26465 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23635, 23655, 24354, 24366, 25059, 25065, 25764, 25766, 26443, 26453]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23657, 23663, 24343, 24350, 25041, 25061, 25724, 25748, 26387, 26441]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23635..26453 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23657..26441 (10 distinct values)
 fixture events=10000 skills=0 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50    0.099/0.098    p95    0.122/0.105    delta  -0.002 ms  control-no-change
-  skill_request_overlay p50    0.779/0.757    p95    0.979/0.823    delta  -0.022 ms  control-no-change
-  mcp_config_load   p50    0.935/0.933    p95    1.276/1.012    delta  -0.003 ms  control-no-change
-  attach_history    p50 2188.091/2202.699 p95 2241.224/2228.971 delta +14.608 ms  control-no-change
-  resume_ready      p50 1639.350/1633.845 p95 1648.391/1678.293 delta  -5.505 ms  control-no-change
-  provider_dispatch p50   19.286/19.577   p95   19.889/20.576   delta  +0.291 ms  control-no-change
-  session_save      p50   38.623/38.499   p95  216.703/48.126   delta  -0.124 ms  control-no-change
-  total store_read_bytes p50 28640159  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50    0.160/0.155    p95    0.247/0.197    delta  -0.005 ms  control-no-change
+  skill_request_overlay p50    1.278/1.231    p95    1.653/1.267    delta  -0.048 ms  control-no-change
+  mcp_config_load   p50    1.480/1.415    p95    1.787/1.535    delta  -0.065 ms  control-no-change
+  attach_history    p50 3078.012/3085.252 p95 3099.224/3123.189 delta  +7.239 ms  control-no-change
+  resume_ready      p50 2441.105/2467.634 p95 2475.137/2484.414 delta +26.528 ms  control-no-change
+  provider_dispatch p50   18.496/19.934   p95   20.043/21.151   delta  +1.438 ms  control-no-change
+  session_save      p50   50.780/51.939   p95   60.132/56.111   delta  +1.159 ms  control-no-change
+  total store_read_bytes p50 28640136  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 0  skill_bytes_read p50 0  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23658, 23674, 24327, 24333, 25056, 25068, 25759, 25779, 26426, 26474]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23638, 23674, 24353, 24377, 25011, 25044, 25756, 25763, 26434, 26447]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23658..26474 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23638..26447 (10 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23654, 23662, 24341, 24365, 25035, 25044, 25750, 25757, 26429, 26464]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23642, 23644, 24323, 24357, 25039, 25064, 25738, 25763, 26409, 26430]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23654..26464 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23642..26430 (10 distinct values)
 fixture events=10000 skills=200 body=0 mcp=0 mode=warm -> measured (fixture-stage counters stable: True, criterion identical)
-  skill_catalog     p50   14.939/15.041   p95   16.680/15.734   delta  +0.102 ms  control-no-change
-  skill_request_overlay p50   40.891/41.863   p95   50.506/52.536   delta  +0.972 ms  control-no-change
-  mcp_config_load   p50    1.026/1.065    p95    1.144/1.166    delta  +0.040 ms  control-no-change
-  attach_history    p50 2171.594/2180.637 p95 2208.250/2192.909 delta  +9.043 ms  control-no-change
-  resume_ready      p50 1610.340/1609.501 p95 1618.371/1624.595 delta  -0.839 ms  control-no-change
-  provider_dispatch p50   18.173/17.819   p95   19.259/19.788   delta  -0.354 ms  control-no-change
-  session_save      p50   42.346/38.917   p95  110.871/75.029   delta  -3.428 ms  control-no-change
-  total store_read_bytes p50 28640138  full_source_hashes p50 1  skill_dir_reads p50 1
+  skill_catalog     p50   23.534/23.852   p95   24.845/24.973   delta  +0.318 ms  control-no-change
+  skill_request_overlay p50   54.491/54.007   p95   56.546/59.436   delta  -0.484 ms  control-no-change
+  mcp_config_load   p50    1.538/1.502    p95    1.580/1.560    delta  -0.036 ms  control-no-change
+  attach_history    p50 3054.648/3071.271 p95 3101.236/3114.167 delta +16.623 ms  control-no-change
+  resume_ready      p50 2429.708/2427.986 p95 2467.493/2466.425 delta  -1.723 ms  control-no-change
+  provider_dispatch p50   18.580/18.414   p95   20.114/20.507   delta  -0.166 ms  control-no-change
+  session_save      p50   49.033/49.553   p95   56.092/56.372   delta  +0.520 ms  control-no-change
+  total store_read_bytes p50 28640160  full_source_hashes p50 1  skill_dir_reads p50 1
   total skill_file_reads p50 200  skill_bytes_read p50 24690  mcp_config_reads p50 0  mcp_config_bytes p50 0
-  DRIFT    a session_save {'store_read_bytes': [23636, 23638, 24355, 24375, 25015, 25066, 25748, 25753, 26427, 26451]} (outside the stability claim)
-  DRIFT    b session_save {'store_read_bytes': [23650, 23670, 24365, 25064, 25066, 25731, 25745, 26440, 26460]} (outside the stability claim)
-  SPREAD   a session_save store_read_bytes 23636..26451 (10 distinct values)
-  SPREAD   b session_save store_read_bytes 23650..26460 (9 distinct values)
+  DRIFT    a session_save {'store_read_bytes': [23654, 23657, 24324, 24366, 25057, 25068, 25732, 25747, 26455, 26460]} (outside the stability claim)
+  DRIFT    b session_save {'store_read_bytes': [23647, 23655, 24319, 24358, 25061, 25065, 25751, 25772, 26456, 26461]} (outside the stability claim)
+  SPREAD   a session_save store_read_bytes 23654..26460 (10 distinct values)
+  SPREAD   b session_save store_read_bytes 23647..26461 (10 distinct values)
 report   bench-results\loading-warm.json
 mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict control-no-change
 ```
@@ -1903,20 +1949,41 @@ mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 
 | Tool case | median | p95 | min | max | samples |
 |---|---|---|---|---|---|
-| read (tiny file) | 2.6 ms | 2.7 ms | 2.2 ms | 2.7 ms | 5 |
-| read (1000 lines) | 2.7 ms | 2.7 ms | 2.6 ms | 2.7 ms | 5 |
-| read (10 lines @ offset) | 2.7 ms | 2.7 ms | 2.1 ms | 2.7 ms | 5 |
-| read (repo Cargo.toml) | 2.7 ms | 2.7 ms | 2.6 ms | 2.7 ms | 5 |
-| write (small) | 10.4 ms | 12.4 ms | 10.3 ms | 12.4 ms | 5 |
-| write (10KB) | 10.4 ms | 12.9 ms | 9.8 ms | 12.9 ms | 5 |
-| edit (simple replace) | 10.3 ms | 20.1 ms | 9.8 ms | 20.1 ms | 5 |
-| ls (scripts dir) | 2.7 ms | 2.7 ms | 2.7 ms | 2.7 ms | 5 |
-| agentgrep (grep in tree) | 4.7 ms | 5.2 ms | 4.2 ms | 5.2 ms | 5 |
-| agentgrep (find **/*.rs) | 5.2 ms | 5.2 ms | 4.7 ms | 5.2 ms | 5 |
-| bash (true) | 7.8 ms | 7.8 ms | 7.3 ms | 7.8 ms | 5 |
-| bash (echo hello) | 7.8 ms | 7.8 ms | 7.3 ms | 7.8 ms | 5 |
-| bash (ls fixture tree) | 10.4 ms | 12.5 ms | 9.9 ms | 12.5 ms | 5 |
-| invalid tool (dispatch only) | 2.6 ms | 2.6 ms | 2.1 ms | 2.6 ms | 5 |
+| read (tiny file) | 2.7 ms | 2.8 ms | 2.2 ms | 2.8 ms | 5 |
+| read (1000 lines) | 2.7 ms | 2.8 ms | 2.2 ms | 2.8 ms | 5 |
+| read (10 lines @ offset) | 2.7 ms | 2.8 ms | 2.7 ms | 2.8 ms | 5 |
+| read (repo Cargo.toml) | 2.7 ms | 2.8 ms | 2.3 ms | 2.8 ms | 5 |
+| write (small) | 13.1 ms | 23.4 ms | 10.5 ms | 23.4 ms | 5 |
+| write (10KB) | 14.6 ms | 27.5 ms | 10.0 ms | 27.5 ms | 5 |
+| edit (simple replace) | 12.5 ms | 40.8 ms | 9.9 ms | 40.8 ms | 5 |
+| ls (scripts dir) | 2.7 ms | 2.8 ms | 2.2 ms | 2.8 ms | 5 |
+| agentgrep (grep in tree) | 7.9 ms | 8.0 ms | 7.4 ms | 8.0 ms | 5 |
+| agentgrep (find **/*.rs) | 5.3 ms | 7.3 ms | 5.3 ms | 7.3 ms | 5 |
+| bash (true) | 10.5 ms | 10.5 ms | 9.9 ms | 10.5 ms | 5 |
+| bash (echo hello) | 10.5 ms | 10.6 ms | 10.0 ms | 10.6 ms | 5 |
+| bash (ls fixture tree) | 12.6 ms | 13.1 ms | 12.6 ms | 13.1 ms | 5 |
+| invalid tool (dispatch only) | 2.7 ms | 2.7 ms | 2.2 ms | 2.7 ms | 5 |
+
+#### Tool CPU per call
+
+| Tool case | daemon cpu median | min | max | child cpu median | voluntary switches | involuntary switches | windows × calls | source |
+|---|---|---|---|---|---|---|---|---|
+| read (tiny file) | — | — | — | — | — | — | 0 | — |
+| read (1000 lines) | — | — | — | — | — | — | 0 | — |
+| read (10 lines @ offset) | — | — | — | — | — | — | 0 | — |
+| read (repo Cargo.toml) | — | — | — | — | — | — | 0 | — |
+| write (small) | — | — | — | — | — | — | 0 | — |
+| write (10KB) | — | — | — | — | — | — | 0 | — |
+| edit (simple replace) | — | — | — | — | — | — | 0 | — |
+| ls (scripts dir) | — | — | — | — | — | — | 0 | — |
+| agentgrep (grep in tree) | — | — | — | — | — | — | 0 | — |
+| agentgrep (find **/*.rs) | — | — | — | — | — | — | 0 | — |
+| bash (true) | — | — | — | — | — | — | 0 | — |
+| bash (echo hello) | — | — | — | — | — | — | 0 | — |
+| bash (ls fixture tree) | — | — | — | — | — | — | 0 | — |
+| invalid tool (dispatch only) | — | — | — | — | — | — | 0 | — |
+
+CPU unmeasured: no /proc CPU counters for the daemon on this system
 
 #### Reload storm
 
@@ -1924,18 +1991,18 @@ mode warm, fixtures 6, measurement failures 0, unstable fixtures 0, verdict cont
 
 | Concurrent resumes | history median | p95 | max | storm wall | failures |
 |---|---|---|---|---|---|
-| 1 | 198.3 ms | 198.3 ms | 198.3 ms | 198.4 ms | 0 |
-| 10 | 531.1 ms | 532.0 ms | 532.0 ms | 533.9 ms | 0 |
-| 40 | 2.03 s | 2.04 s | 2.04 s | 2.04 s | 0 |
+| 1 | 234.6 ms | 234.6 ms | 234.6 ms | 234.8 ms | 0 |
+| 10 | 863.3 ms | 867.8 ms | 867.8 ms | 867.9 ms | 0 |
+| 40 | 2.51 s | 3.19 s | 3.22 s | 3.22 s | 0 |
 
 #### Compile loop
 
 | Checkpoint | Touched | median | min | max | samples |
 |---|---|---|---|---|---|
-| warm_noop | — | 792.9 ms | 792.9 ms | 792.9 ms | 1 |
-| leaf_touch | src\main.rs | 1.02 s | 1.02 s | 1.02 s | 1 |
-| core_touch | crates\app-core\src\lib.rs | 29.33 s | 29.33 s | 29.33 s | 1 |
-| build_meta_touch | crates\build-meta\src\lib.rs | 40.08 s | 40.08 s | 40.08 s | 1 |
+| warm_noop | — | 455.1 ms | 455.1 ms | 455.1 ms | 1 |
+| leaf_touch | src\main.rs | 619.4 ms | 619.4 ms | 619.4 ms | 1 |
+| core_touch | crates\app-core\src\lib.rs | 19.40 s | 19.40 s | 19.40 s | 1 |
+| build_meta_touch | crates\build-meta\src\lib.rs | 27.77 s | 27.77 s | 27.77 s | 1 |
 
 ## TUI (`horon-tui`)
 
@@ -1953,12 +2020,12 @@ Measured version: the interactive client `horon-tui`. The headless `horon-agent`
 
 | Metric | Median | Min–max | Samples |
 | --- | --- | --- | --- |
-| First frame (bare `horon-agent`) | 36.8 ms | 35.7 ms–176.4 ms | 5 |
-| First frame (direct `horon-tui`) | 39.9 ms | 39.3 ms–41.3 ms | 5 |
-| TTY handoff cost | -2.9 ms | -4.2 ms–135.1 ms | 5 |
-| Key press to echo (p95) | 0.1 ms | 0.1 ms–0.9 ms | 50 |
-| Idle RSS after 5 s | 5.4 MB | 5.4 MB–5.5 MB | 5 |
-| RSS after one turn | 5.7 MB | 5.6 MB–5.8 MB | 5 |
+| First frame (bare `horon-agent`) | 36.6 ms | 35.1 ms–132.9 ms | 5 |
+| First frame (direct `horon-tui`) | 39.8 ms | 39.0 ms–40.7 ms | 5 |
+| TTY handoff cost | -3.1 ms | -5.6 ms–92.8 ms | 5 |
+| Key press to echo (p95) | 0.1 ms | 0.1 ms–0.3 ms | 50 |
+| Idle RSS after 5 s | 5.5 MB | 5.4 MB–5.6 MB | 5 |
+| RSS after one turn | 5.7 MB | 5.7 MB–5.8 MB | 5 |
 | Frame draw time (p50) | 1.3 ms | 1.3 ms–1.3 ms | 5 |
 | Frame draw time (p95) | 1.4 ms | 1.4 ms–1.4 ms | 5 |
 | Install size (`horon-tui`) | 6.0 MB | — | 1 |
@@ -1975,14 +2042,14 @@ Measured version: the interactive client `horon-tui`. The headless `horon-agent`
 
 | Metric | Median | Min–max | Samples |
 | --- | --- | --- | --- |
-| First frame (bare `horon-agent`) | 53.1 ms | 34.6 ms–98.9 ms | 5 |
-| First frame (direct `horon-tui`) | 49.5 ms | 41.5 ms–68.2 ms | 5 |
-| TTY handoff cost | 2.0 ms | -33.5 ms–49.4 ms | 5 |
-| Key press to echo (p95) | 0.2 ms | 0.1 ms–0.4 ms | 50 |
-| Idle RSS after 5 s | 8.9 MB | 8.9 MB–8.9 MB | 5 |
-| RSS after one turn | 9.1 MB | 9.0 MB–9.1 MB | 5 |
-| Frame draw time (p50) | 1.0 ms | 0.9 ms–1.0 ms | 5 |
-| Frame draw time (p95) | 1.1 ms | 1.1 ms–1.1 ms | 5 |
+| First frame (bare `horon-agent`) | 53.8 ms | 49.5 ms–296.5 ms | 5 |
+| First frame (direct `horon-tui`) | 47.0 ms | 38.1 ms–56.6 ms | 5 |
+| TTY handoff cost | 4.5 ms | -7.1 ms–253.2 ms | 5 |
+| Key press to echo (p95) | 0.2 ms | 0.1 ms–0.5 ms | 50 |
+| Idle RSS after 5 s | 8.8 MB | 8.8 MB–8.9 MB | 5 |
+| RSS after one turn | 9.0 MB | 9.0 MB–9.1 MB | 5 |
+| Frame draw time (p50) | 1.1 ms | 1.1 ms–1.2 ms | 5 |
+| Frame draw time (p95) | 1.4 ms | 1.3 ms–2.2 ms | 5 |
 | Install size (`horon-tui`) | 5.0 MB | — | 1 |
 
 Handoff: median first-frame time of a bare `horon-agent` launch (no arguments, on a PTY) minus the median first-frame time of a direct `horon-tui` launch against an already-running daemon, both on the same machine and build. The bare path also starts the daemon, so the number covers that startup, the sibling lookup and the `exec`; it is the extra cost of the handoff over launching the client itself.
@@ -2003,8 +2070,8 @@ Measured version: the interactive client `horon-tui`. The headless `horon-agent`
 | Key press to echo (p95) | — | — | — |
 | Idle RSS after 5 s | — | — | — |
 | RSS after one turn | — | — | — |
-| Frame draw time (p50) | 3.0 ms | 2.9 ms–3.1 ms | 5 |
-| Frame draw time (p95) | 3.2 ms | 3.0 ms–3.3 ms | 5 |
+| Frame draw time (p50) | 3.3 ms | 3.3 ms–3.3 ms | 5 |
+| Frame draw time (p95) | 3.5 ms | 3.4 ms–4.7 ms | 5 |
 | Install size (`horon-tui`) | 5.0 MB | — | 1 |
 
 Handoff: median first-frame time of a bare `horon-agent` launch (no arguments, on a PTY) minus the median first-frame time of a direct `horon-tui` launch against an already-running daemon, both on the same machine and build. The bare path also starts the daemon, so the number covers that startup, the sibling lookup and the `exec`; it is the extra cost of the handoff over launching the client itself.
