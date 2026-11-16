@@ -2,9 +2,9 @@
 //! conversation produced, read token usage, and retire the daemon's durable
 //! copy of an approval or failover announcement.
 //!
-//! The two acks answer with a bare `ok`; the event they retire reaches every
-//! attached client on the event stream, so a caller that wants to observe the
-//! echo subscribes to [`HoronAgentClient::events`] instead of reading a reply.
+//! The two acks answer with a bare `ok` and no event follows it: an ack is a
+//! message a client sends, and the daemon never emits `approval_ack` or
+//! `failover_ack` itself, so both methods return `()` once the `ok` arrives.
 //! None of the five methods is gated by a capability: the requests carry
 //! nothing a client must negotiate first, and a daemon that does not serve one
 //! answers with a structured error, which these methods surface unchanged.

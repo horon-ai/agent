@@ -128,9 +128,9 @@ async def start_fixture(
             send(frame)
         elif tag in ("approval_ack", "failover_ack"):
             # An ack is a message a client sends, so the bridge confirms it with
-            # a bare `ok` and broadcasts the typed event to attached clients
-            # separately. Answering with the event would pass here and fail
-            # against the daemon.
+            # a bare `ok` and the daemon emits no ack event afterwards. A mock
+            # that answered with the event would pass here and fail against
+            # the daemon.
             send({"v": 1, "reply_to": request["id"], "ev": "ok"})
         elif tag == "send_message":
             send({"v": 1, "reply_to": request["id"], "ev": "ok"})

@@ -5,7 +5,7 @@
 //! one the wire contract names, including an absent `limit` and an absent
 //! `session_id` staying absent rather than becoming a default, and the reply
 //! must reach the caller as the typed payload. The two acks answer with a bare
-//! `ok`, so a server that echoes the retired event instead is an error rather
+//! `ok`, so a server that answers with the ack event instead is an error rather
 //! than a success the caller cannot distinguish from a real acknowledgement.
 
 #![cfg(unix)]
@@ -329,7 +329,7 @@ fn a_structured_error_keeps_its_code() {
 }
 
 #[test]
-fn an_echoed_event_is_an_error_not_a_silent_ack() {
+fn an_event_reply_is_an_error_not_a_silent_ack() {
     let (client, _log) = harness(|frame, writer| {
         reply(
             frame,
@@ -342,7 +342,7 @@ fn an_echoed_event_is_an_error_not_a_silent_ack() {
 
     let error = client
         .ack_approval("s1", "req-1")
-        .expect_err("the broadcast echo is not the reply to the ack");
+        .expect_err("an ack event is not the reply to the ack; only `ok` is");
 
     assert!(
         error.message.contains("ok"),

@@ -1857,10 +1857,10 @@ class HoronAgentClient:
         success. The daemon only accepts the ack on a connection attached to
         ``session_id``.
 
-        The reply is a bare ``ok``: an acknowledgement is a message a client
-        sends, so the server never answers with the ``approval_ack`` event it
-        broadcasts to every attached client afterwards. :meth:`events` surfaces
-        that echo.
+        The reply is a bare ``ok`` and no event follows it: an acknowledgement
+        is a message a client sends, so the daemon never emits an
+        ``approval_ack`` event itself. The returned receipt is built from the
+        values that were sent.
         """
         await self._expect_reply(
             {"req": "approval_ack", "session_id": session_id, "request_id": request_id},
@@ -1887,8 +1887,8 @@ class HoronAgentClient:
         ``from_`` is the argument spelling because ``from`` is a keyword; the
         wire key is ``from``, and the receipt carries it back as ``from_``.
 
-        Like :meth:`ack_approval`, the reply is a bare ``ok`` and the
-        ``failover_ack`` event reaches attached clients separately.
+        Like :meth:`ack_approval`, the reply is a bare ``ok``, no
+        ``failover_ack`` event follows it, and the receipt echoes what was sent.
         """
         await self._expect_reply(
             {

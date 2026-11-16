@@ -1174,9 +1174,9 @@ export class HoronAgentClient extends EventEmitter {
    * success. The daemon only accepts the ack on a connection attached to
    * `sessionId`.
    *
-   * The reply is a bare `ok`: an acknowledgement is a message a client sends,
-   * so the server never answers with the `approval_ack` event it broadcasts to
-   * every attached client afterwards. `events()` surfaces that echo.
+   * The reply is a bare `ok` and no event follows it: an acknowledgement is a
+   * message a client sends, so the daemon never emits an `approval_ack` event
+   * itself. The returned receipt is built from the values that were sent.
    */
   async ackApproval(sessionId: string, requestId: string): Promise<ApprovalAckReceipt> {
     await this.expectReply({ req: "approval_ack", session_id: sessionId, request_id: requestId }, "ok");
@@ -1191,8 +1191,8 @@ export class HoronAgentClient extends EventEmitter {
    * different switch. Empty strings reject with `invalid_request`, and the
    * daemon only accepts the ack on a connection attached to `sessionId`.
    *
-   * Like `ackApproval`, the reply is a bare `ok` and the `failover_ack` event
-   * reaches attached clients separately.
+   * Like `ackApproval`, the reply is a bare `ok`, no `failover_ack` event
+   * follows it, and the receipt is built from the values that were sent.
    */
   async ackFailover(
     sessionId: string,

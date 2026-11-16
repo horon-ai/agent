@@ -293,14 +293,14 @@ client acks them, so a resolution that lands out of band is not lost.
 `ack_approval(id, request_id)` and `ack_failover(id, chain_id, from_, to, attempt)`
 retire those records. An acknowledgement is a message a client sends, so the
 bridge confirms it with a bare `ok` — that `ok` is what these methods wait for —
-and the daemon then broadcasts the typed `approval_ack` / `failover_ack` event
-to every attached client, which `events()` surfaces. Each method returns a
-receipt echoing what it sent. Echo the whole failover key, `attempt` included: a
-partial key would either clear nothing or read as a different switch. An empty
-id or name rejects with `invalid_request`, and the daemon only accepts either
-ack on a connection attached to that session. `from_` is the argument spelling
-because `from` is a keyword; the wire key is `from`, and `FailoverAckReceipt`
-carries it back as `from_`.
+and no event follows: the daemon never emits `approval_ack` / `failover_ack`
+itself. Each method returns a receipt built from the values it sent. Echo the
+whole failover key, `attempt` included: a partial key would either clear
+nothing or read as a different switch. An empty id or name rejects with
+`invalid_request`, and the daemon only accepts either ack on a connection
+attached to that session. `from_` is the argument spelling because `from` is a
+keyword; the wire key is `from`, and `FailoverAckReceipt` carries it back as
+`from_`.
 
 Three reply shapes carry fields they used to drop: a `list_sessions()` row keeps
 `saved`, `save_label`, `updated_at_ms` and `last_active_at_ms` when the daemon

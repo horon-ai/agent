@@ -464,9 +464,10 @@ price table.
 `approval_pending` and `failover_switched` stay parked in the daemon until a
 client acks them, so a resolution that lands out of band is not lost.
 `ackApproval(id, requestId)` and `ackFailover(id, chainId, from, to, attempt)`
-retire those records: the bridge confirms with a bare `ok` and the daemon then
-broadcasts the typed `approval_ack` / `failover_ack` event to every attached
-client, which `events()` surfaces. Echo the whole failover key, `attempt`
+retire those records. An acknowledgement is a message a client sends, so the
+bridge confirms it with a bare `ok` and no event follows: the daemon never
+emits `approval_ack` / `failover_ack` itself. Each method returns a receipt
+built from the values it sent. Echo the whole failover key, `attempt`
 included: a partial key would either clear nothing or read as a different
 switch. An empty id or name rejects with `invalid_request`, and the daemon only
 accepts either ack on a connection attached to that session.
