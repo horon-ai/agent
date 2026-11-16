@@ -30,6 +30,13 @@ const MIN_LABEL: usize = 10;
 /// Preview rows the pane shows before it says there is more.
 const PREVIEW_MAX: usize = 8;
 
+/// Cells the preview body keeps clear on its left.
+///
+/// The list rows above it carry a one-cell margin before their marker, and a
+/// body that started against the border would read as a second panel rather than
+/// as the selected row's text.
+const PREVIEW_INDENT: u16 = 1;
+
 /// List rows the panel keeps when the preview wants the same space.
 ///
 /// The panel rule clamps the row count to `1..=MIN_LIST_ROWS`, so this must
@@ -235,6 +242,9 @@ fn wanted_preview(picker: &Picker) -> usize {
 }
 
 /// The rule line and the selected row's body, wrapped to the pane's width.
+///
+/// The body keeps the list rows' one-cell left margin, so its text lines up
+/// under theirs instead of starting against the border.
 fn render_preview(frame: &mut Frame<'_>, area: Rect, picker: &Picker, theme: &Theme, symbols: Symbols) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -252,7 +262,16 @@ fn render_preview(frame: &mut Frame<'_>, area: Rect, picker: &Picker, theme: &Th
     if row.preview.is_empty() || area.height < 2 {
         return;
     }
-    let body = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+    // The body is inset by the same margin the list rows use, so its first
+    // column lines up under theirs and the wrap width is what is left inside
+    // the panel rather than the full border-to-border width.
+    let inset = PREVIEW_INDENT.min(area.width);
+    let body = Rect::new(
+        area.x.saturating_add(inset),
+        area.y + 1,
+        area.width.saturating_sub(inset),
+        area.height - 1,
+    );
     let style = Style::default().fg(theme.core.muted);
     let width = usize::from(body.width);
     let mut rows: Vec<Line<'static>> = Vec::new();

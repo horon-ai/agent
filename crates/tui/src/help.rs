@@ -74,6 +74,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::EDITOR_COMPLETE,
         "fill the popup's selected command, or complete the prefix",
     ),
+    (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),
     (
         ids::PROMPT_ALLOW_ALWAYS,

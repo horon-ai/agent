@@ -1,10 +1,10 @@
 //! A filterable list drawn over the conversation.
 //!
-//! `/model` and `/resume` both ask the user to pick one row out of a list the
-//! daemon owns, so this screen knows nothing about models or sessions: it holds
-//! rows, the filter the user typed, and the row the selection is on. The caller
-//! decides what a chosen row means, which is what keeps the keys and the drawing
-//! identical for both lists.
+//! `/model`, `/resume` and the history search all ask the user to pick one row
+//! out of a list, so this screen knows nothing about models, sessions or drafts:
+//! it holds rows, the filter the user typed, and the row the selection is on.
+//! The caller decides what a chosen row means, which is what keeps the keys and
+//! the drawing identical for every list.
 //!
 //! Every key that arrives while the list is open is consumed here, including a
 //! plain letter: a filter that let characters through would type into the
@@ -33,6 +33,8 @@ pub enum Kind {
     Models,
     /// The sessions stored for this working directory.
     Sessions,
+    /// The drafts sent before this one.
+    History,
 }
 
 /// One row of the list.

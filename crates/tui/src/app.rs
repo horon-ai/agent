@@ -26,11 +26,15 @@ use crate::transcript::Decision;
 use crate::transcript::Transcript;
 
 mod commands;
+mod history_search;
 mod keys;
 mod picker;
 mod prompts;
 mod sending;
 mod settings;
+
+#[cfg(test)]
+mod history_search_tests;
 
 /// What the UI asks the bridge to do after a keystroke.
 ///

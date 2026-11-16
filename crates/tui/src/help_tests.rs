@@ -163,6 +163,7 @@ fn the_key_list_is_the_map_in_force() {
         "ctrl+c",
         "esc",
         "tab",
+        "ctrl+r",
         "ctrl+u",
         "ctrl+k",
         "ctrl+w",

@@ -1,5 +1,5 @@
-//! The model and session pickers: opening them, filling them from what the
-//! bridge reported, and turning a chosen row into the action it means.
+//! The pickers: the model and session lists the harness owns, the search over
+//! this client's own drafts, and what a chosen row of any of them means.
 //!
 //! The screen itself ([`crate::overlays::picker`]) knows only rows; the meaning
 //! of a row is decided here, where the rest of the client state is. A session
@@ -112,6 +112,12 @@ impl App {
                     self.transcript.push_notice(format!("attaching to {label}"));
                     Some(Action::Attach(value))
                 }
+                // A recalled draft is an edit, not a send: the picker closes and
+                // the editor holds the text, and no action leaves the client.
+                Kind::History => {
+                    self.recall_draft(&value);
+                    None
+                }
             },
         }
     }
@@ -136,6 +142,9 @@ impl App {
         self.resend_held = false;
         self.session_status = Some(session.status);
         self.model = session.model;
+        // The effort belongs to the model that reported it, and a resumed
+        // session may be served by another one: the next ModelInfo fills it in.
+        self.reasoning_effort = None;
         self.provider = None;
         self.tokens = None;
         self.scroll = Scroll::new();

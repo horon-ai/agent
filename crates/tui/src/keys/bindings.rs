@@ -68,6 +68,8 @@ pub mod ids {
     pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
+    /// Search the drafts sent before this one.
+    pub const EDITOR_HISTORY_SEARCH: &str = "editor.history_search";
     /// Approve a parked tool call once.
     pub const PROMPT_ALLOW: &str = "prompt.allow";
     /// Approve a parked tool call and every later call like it.
@@ -151,6 +153,7 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
     ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
+    ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
     ActionSpec::new(ids::PROMPT_DENY, Scope::Prompt, &["n"]),

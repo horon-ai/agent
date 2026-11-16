@@ -154,6 +154,15 @@ impl App {
                     return None;
                 }
                 let text = self.input.take();
+                // A backslash at the end of the draft asks for another line
+                // rather than a send: the escape comes off and the draft breaks
+                // there. Nothing is remembered or queued, because the message
+                // is not finished and the next Enter is the one that sends it.
+                if let Some(kept) = continued_draft(&text) {
+                    self.input.set_text(&kept);
+                    self.input.newline();
+                    return None;
+                }
                 if text.trim().is_empty() {
                     return None;
                 }
@@ -164,6 +173,10 @@ impl App {
             }
             Some(keys::ids::EDITOR_COMPLETE) => {
                 self.complete();
+                return None;
+            }
+            Some(keys::ids::EDITOR_HISTORY_SEARCH) => {
+                self.open_history_search();
                 return None;
             }
             Some(keys::ids::APP_CANCEL) => {
@@ -314,6 +327,21 @@ impl App {
             self.input.set_text(&entry);
         }
     }
+}
+
+/// The draft with the backslash that asks for another line taken off.
+///
+/// A draft ends in a continuation when its last character is a backslash that is
+/// not itself escaped, so an odd run of trailing backslashes breaks the line and
+/// an even run is that many literal backslashes and sends the draft as typed. A
+/// backslash anywhere else is text, and so is a space after the last backslash:
+/// the run has to reach the end of the draft.
+fn continued_draft(draft: &str) -> Option<String> {
+    let trailing = draft.chars().rev().take_while(|character| *character == '\\').count();
+    if trailing.is_multiple_of(2) {
+        return None;
+    }
+    draft.strip_suffix('\\').map(str::to_string)
 }
 
 /// The line the transcript keeps after an approval is answered.
