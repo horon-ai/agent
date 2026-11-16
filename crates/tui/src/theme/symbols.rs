@@ -47,6 +47,8 @@ impl SymbolPreset {
                 prompt_marker: "❯",
                 more_below: "↓",
                 separator: "·",
+                quote: "│",
+                rule: "─",
             },
             Self::Nerd => Symbols {
                 bullet: "\u{f111}",
@@ -57,6 +59,8 @@ impl SymbolPreset {
                 prompt_marker: "\u{f054}",
                 more_below: "\u{f063}",
                 separator: "\u{e0b1}",
+                quote: "\u{2502}",
+                rule: "\u{2500}",
             },
             Self::Ascii => Symbols {
                 bullet: "*",
@@ -67,6 +71,8 @@ impl SymbolPreset {
                 prompt_marker: ">",
                 more_below: "v",
                 separator: "|",
+                quote: "|",
+                rule: "-",
             },
         }
     }
@@ -91,6 +97,10 @@ pub struct Symbols {
     pub more_below: &'static str,
     /// Joins the parts of the status line.
     pub separator: &'static str,
+    /// The bar before a block quote, repeated once per level of nesting.
+    pub quote: &'static str,
+    /// The mark a horizontal rule is drawn with, repeated across the pane.
+    pub rule: &'static str,
 }
 
 impl Default for Symbols {

@@ -13,7 +13,9 @@ pub mod app;
 pub mod commands;
 pub mod history;
 pub mod input;
+mod item_lines;
 pub mod keys;
+mod markdown;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
@@ -54,6 +56,10 @@ mod app_settings_tests;
 #[path = "scroll_tests.rs"]
 mod scroll_tests;
 
+#[cfg(test)]
+#[path = "markdown_tests.rs"]
+mod markdown_tests;
+
 use std::time::Duration;
 
 use ratatui::Terminal;
@@ -65,7 +71,11 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::{Action, App};
 use crate::sdk_bridge::{Command, Incoming, Runtime};
-use crate::theme::{Symbols, Theme, ThemeLoader};
+use crate::theme::{Theme, ThemeLoader};
+// The test modules reach this through `use super::*`; production code draws
+// through `item_lines`, which takes the glyph set from the app itself.
+#[cfg(test)]
+use crate::theme::Symbols;
 use crate::transcript::Item;
 
 /// Program usage, printed by `--help` and after an argument error.
@@ -824,14 +834,21 @@ fn blocks(app: &App) -> Vec<Block<'_>> {
 /// The rows of one block, top to bottom, wrapped to the pane width.
 ///
 /// The wrapped height is what the scrollback measures, so a block means the same
-/// thing here and in `measure_transcript`.
-fn block_rows(block: &Block<'_>, app: &App, width: u16) -> Vec<Line<'static>> {
+/// thing here and in `measure_transcript`. `first` is the oldest block, which has
+/// nothing above it to be separated from.
+fn block_rows(block: &Block<'_>, look: &item_lines::Look<'_>, first: bool) -> Vec<Line<'static>> {
     let lines = match block {
-        Block::Item(item) => render_item(item, &app.theme, app.symbols, width),
-        Block::Reasoning(text) => reasoning_lines(text, &app.theme),
-        Block::Answer(text) => assistant_lines(text, &app.theme),
+        Block::Item(item) => item_lines::lines(item, look),
+        Block::Reasoning(text) => item_lines::reasoning(text, look),
+        Block::Answer(text) => item_lines::answer(text, look),
     };
-    wrapped_rows(lines, width)
+    let mut rows = wrap::wrap_rows(lines, look.width);
+    // A turn starts one blank row below the previous one, so a new message is
+    // not read as more of the answer above it.
+    if !first && matches!(block, Block::Item(Item::User(_))) {
+        rows.insert(0, Line::default());
+    }
+    rows
 }
 
 /// Count the conversation's rows so a held view knows how far it may move.
@@ -842,39 +859,46 @@ fn block_rows(block: &Block<'_>, app: &App, width: u16) -> Vec<Line<'static>> {
 /// whose height changes while the view is held.
 fn measure_transcript(app: &mut App, width: u16, view: usize) {
     let items = app.transcript.items().len();
-    let open = [
-        open_rows(app.transcript.open_reasoning(), &app.theme, width, true),
-        open_rows(app.transcript.open_text(), &app.theme, width, false),
-    ];
     let App {
         scroll,
         transcript,
         theme,
         symbols,
+        settings,
         ..
     } = app;
-    let theme = &*theme;
-    let symbols = *symbols;
+    let look = item_lines::Look {
+        theme,
+        symbols: *symbols,
+        width,
+        markdown: item_lines::markdown_enabled(settings),
+    };
+    let open = [
+        open_rows(transcript.open_reasoning(), &look, true),
+        open_rows(transcript.open_text(), &look, false),
+    ];
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        Some(item) => wrapped_rows(render_item(item, theme, symbols, width), width).len(),
+        Some(item) => block_rows(&Block::Item(item), &look, index == 0).len(),
         None => 0,
     });
 }
 
 /// Wrapped rows of one open buffer, as the pane would draw it.
-fn open_rows(text: Option<&str>, theme: &Theme, width: u16, reasoning: bool) -> usize {
+fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -> usize {
     match text {
-        Some(text) if reasoning => wrapped_rows(reasoning_lines(text, theme), width).len(),
-        Some(text) => wrapped_rows(assistant_lines(text, theme), width).len(),
+        Some(text) if reasoning => wrap::wrap_rows(item_lines::reasoning(text, look), look.width).len(),
+        Some(text) => wrap::wrap_rows(item_lines::answer(text, look), look.width).len(),
         None => 0,
     }
 }
 
 /// The newest rows, following the end of the conversation.
 fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
+    let look = item_lines::Look::new(app, width);
     let mut rows: Vec<Line<'static>> = Vec::new();
-    for block in blocks(app).iter().rev() {
-        for row in block_rows(block, app, width).into_iter().rev() {
+    let blocks = blocks(app);
+    for (index, block) in blocks.iter().enumerate().rev() {
+        for row in block_rows(block, &look, index == 0).into_iter().rev() {
             rows.push(row);
             if rows.len() >= capacity {
                 break;
@@ -894,6 +918,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 /// user scrolled past are not wrapped again. Only the block that holds the bottom
 /// edge of the view is wrapped, plus the blocks the pane actually fills with.
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
+    let look = item_lines::Look::new(app, width);
     let blocks = blocks(app);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
@@ -911,7 +936,7 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
             }
             _ => {}
         }
-        let block = block_rows(block, app, width);
+        let block = block_rows(block, &look, index == 0);
         let take_from = match heights.get(index) {
             Some(&height) if below > 0 => height.saturating_sub(below),
             _ => block.len(),
@@ -978,88 +1003,6 @@ fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'sta
         )),
         usize::from(width),
     )
-}
-
-/// Wrap a rendered item's lines to the pane width, keeping their styles.
-fn wrapped_rows(lines: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for line in lines {
-        rows.extend(wrap::wrap_line(&line, usize::from(width)));
-    }
-    rows
-}
-
-/// The rows of one assistant message, committed or still streaming.
-fn assistant_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
-    text.lines()
-        .map(|line| {
-            Line::from(Span::styled(
-                line.to_string(),
-                Style::default().fg(theme.transcript.assistant_text),
-            ))
-        })
-        .collect()
-}
-
-fn render_item(item: &Item, theme: &Theme, symbols: Symbols, width: u16) -> Vec<Line<'static>> {
-    match item {
-        Item::User(text) => prefixed(
-            Span::styled("> ", Style::default().fg(theme.core.accent)),
-            text,
-            Style::default().fg(theme.transcript.user_text),
-        ),
-        // A queued message is accepted but not sent yet, so it is drawn dim
-        // and worded as waiting: the same color as a notice, because nothing
-        // is wrong with it.
-        Item::Queued(text) => prefixed(
-            Span::styled("queued: ", Style::default().fg(theme.transcript.notice)),
-            text,
-            Style::default()
-                .fg(theme.transcript.user_text)
-                .add_modifier(Modifier::DIM),
-        ),
-        Item::Assistant(text) => assistant_lines(text, theme),
-        Item::Tool(call) => tool_line::lines(call, theme, symbols, width),
-        Item::Notice(text) => prefixed(
-            Span::styled(
-                format!("{} ", symbols.bullet),
-                Style::default().fg(theme.transcript.notice),
-            ),
-            text,
-            Style::default().fg(theme.transcript.notice),
-        ),
-        Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(theme.core.error)),
-        // Reasoning is drawn dimmed and indented, and the theme gains no token:
-        // a new required token would reject every theme file already written,
-        // and the notice color is already the dimmest text the client has.
-        Item::Reasoning(text) => reasoning_lines(text, theme),
-    }
-}
-
-fn reasoning_lines(text: &str, theme: &Theme) -> Vec<Line<'static>> {
-    text.lines()
-        .map(|line| {
-            Line::from(Span::styled(
-                format!("  {line}"),
-                Style::default()
-                    .fg(theme.transcript.notice)
-                    .add_modifier(Modifier::ITALIC),
-            ))
-        })
-        .collect()
-}
-
-fn prefixed(prefix: Span<'static>, text: &str, style: Style) -> Vec<Line<'static>> {
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            if index == 0 {
-                Line::from(vec![prefix.clone(), Span::styled(line.to_string(), style)])
-            } else {
-                Line::from(Span::styled(format!("  {line}"), style))
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]

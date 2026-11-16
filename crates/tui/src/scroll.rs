@@ -116,6 +116,16 @@ impl Scroll {
         self.tally.as_ref().map_or([0, 0], |tally| tally.open)
     }
 
+    /// Forget the counted heights.
+    ///
+    /// Called when something other than the width changes how many rows a block
+    /// takes, such as the Markdown renderer being switched off: the next held
+    /// frame recounts the conversation rather than moving the view against
+    /// heights that no longer describe what is drawn.
+    pub fn invalidate(&mut self) {
+        self.tally = None;
+    }
+
     /// Hold the view `rows` higher.
     ///
     /// The caller does not have to know how tall the content is: the next

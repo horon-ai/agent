@@ -27,6 +27,12 @@ impl App {
     /// says so. Whether the terminal is actually captured is the event loop's
     /// decision, because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
+        // Markdown changes how many rows an item takes, and the scrollback keeps
+        // the counts it measured: a view held across the switch would be moved
+        // against heights that no longer describe what is drawn.
+        if crate::item_lines::markdown_enabled(&self.settings) != crate::item_lines::markdown_enabled(settings) {
+            self.scroll.invalidate();
+        }
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
         self.transcript.set_show_reasoning(show_reasoning);

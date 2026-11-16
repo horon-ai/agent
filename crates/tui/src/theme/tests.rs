@@ -264,6 +264,8 @@ fn theme_symbol_presets_are_distinct_and_ascii_is_plain() {
         ascii.prompt_marker,
         ascii.more_below,
         ascii.separator,
+        ascii.quote,
+        ascii.rule,
     ] {
         assert!(mark.is_ascii(), "{mark:?} is not ASCII");
     }

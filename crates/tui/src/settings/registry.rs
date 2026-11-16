@@ -247,6 +247,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             description: "Keep the model's reasoning lines in the transcript.",
         },
     },
+    SettingSpec {
+        id: "transcript.markdown",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_MARKDOWN",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Markdown",
+            description: "Render the model's Markdown; off draws its text with the markers as typed.",
+        },
+    },
 ];
 
 /// The spec for `id`, or `None` when the key is not declared.
