@@ -227,8 +227,9 @@ because they cannot be cloned into per-session connections.
 
 Every method mirrors the Rust SDK's name exactly:
 
-- Sessions: `list_sessions`, `list_sessions_limited`, `archive_session`,
-  `restore_session`, `set_retention_policy`, `create_session`,
+- Sessions: `list_sessions`, `list_sessions_limited`, `search_sessions`,
+  `archive_session`, `restore_session`, `delete_session`,
+  `set_retention_policy`, `create_session`,
   `create_session_with_options`, `attach_session`, `fork_session`,
   `transfer_session`, `detach_session`, `rename_session`, `set_session_saved`,
   `clear`, `rewind`, `rewind_undo`, `compact`.
@@ -238,11 +239,12 @@ Every method mirrors the Rust SDK's name exactly:
   `cancel_soft_interrupts`, `cancel_soft_interrupts_by_id`,
   `cancel_soft_interrupt`, `background_tool`, `background_tool_result`.
 - Interaction: `respond_to_permission`, `respond_to_ask`,
-  `respond_to_ask_with_id`.
+  `respond_to_ask_with_id`, `ack_approval`, `ack_failover`.
 - Reads: `get_history`, `get_history_with_images`, `peek_session`,
   `list_models`, `get_runtime_info`, `runtime_command`, `read_file`,
-  `find_files`, `search_text`, `file_status`, `todo_state`,
+  `find_files`, `search_text`, `list_artifacts`, `file_status`, `todo_state`,
   `ack_todo_follow_up`.
+- Usage: `usage_report`.
 - Tools: `configure_tools`, `list_tools`, `submit_tool_result`.
 - Runtime: `get_runtime_state`, `apply_control`, `get_control_receipt`,
   `get_snapshot`, `snapshot_with_buffered_events`.
@@ -259,6 +261,58 @@ Every method mirrors the Rust SDK's name exactly:
 Capabilities: `client.supports("session_tools")` answers whether the connected
 server advertises a capability. Methods that require one raise `unsupported`
 before anything reaches the wire.
+
+## Session deletion, search, artifacts, usage, and acks
+
+`delete_session(id)` is the one irreversible operation in this surface: it
+removes the transcript and every file keyed by the id, and nothing restores it
+afterwards. `archive_session(id)` is the reversible alternative. The daemon
+refuses a session that is loaded, streaming, or attached to a client, so detach
+before deleting.
+
+`search_sessions(query, limit=None)` scans every stored transcript, attached or
+not, through the daemon's own session index, so a client ranks hits exactly as
+the agent's search tool does. An empty query rejects with `invalid_request`
+instead of returning everything:
+
+```python
+hits = await client.search_sessions("flaky test", 20)
+for hit in hits:
+    print(hit["session_id"], hit["role"], hit["preview"])
+```
+
+`list_artifacts(id)` lists the HTML pages and images a session produced, as
+paths relative to its working directory. It is metadata only; pass a path to
+`read_file()` for the bytes. A session with no stored transcript answers
+`unknown_session`.
+
+`usage_report(session_id=None)` returns durable per-request token totals,
+per-model aggregates, the active context window, and any subscription limits the
+daemon published. Omit the id for the whole account. A metric no request
+recorded is `None` rather than `0`, because "the provider did not report cache
+tokens" and "the provider reported no cache tokens" are different facts.
+`pricing` is always `"unknown"` and `estimated_cost` always `None`: this harness
+carries no price table.
+
+`approval_pending` and `failover_switched` stay parked in the daemon until a
+client acks them, so a resolution that lands out of band is not lost.
+`ack_approval(id, request_id)` and `ack_failover(id, chain_id, from_, to, attempt)`
+retire those records. An acknowledgement is a message a client sends, so the
+bridge confirms it with a bare `ok` — that `ok` is what these methods wait for —
+and no event follows: the daemon never emits `approval_ack` / `failover_ack`
+itself. Each method returns a receipt built from the values it sent. Echo the
+whole failover key, `attempt` included: a partial key would either clear
+nothing or read as a different switch. An empty id or name rejects with
+`invalid_request`, and the daemon only accepts either ack on a connection
+attached to that session. `from_` is the argument spelling because `from` is a
+keyword; the wire key is `from`, and `FailoverAckReceipt` carries it back as
+`from_`.
+
+Three reply shapes carry fields they used to drop: a `list_sessions()` row keeps
+`saved`, `save_label`, `updated_at_ms` and `last_active_at_ms` when the daemon
+reports them, `get_runtime_info()` keeps `reasoning_effort` and `auth_method`,
+and a turn's `usage` keeps `cache_creation_input`. A field the wire omits stays
+absent from the mapping, or `None` on `TurnUsage`; an omitted count is not zero.
 
 ## Binary resolution order
 

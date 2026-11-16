@@ -349,45 +349,51 @@ discovery pass only.
 
 ## API surface
 
-| Method | Purpose |
-| --- | --- |
-| `HoronAgentClient.launch(options)` | Start a private instance and connect to it |
-| `HoronAgentClient.connect(options)` | Attach to the horon-agent already running on this machine |
-| `listSessions({ includeArchived? })` | Every persisted session, optionally including archived sessions |
-| `archiveSession(id)` / `restoreSession(id)` | Reversibly hide or restore a session |
-| `setRetentionPolicy(days?)` | Auto-archive inactive sessions, or disable retention |
-| `createSession(workingDirOrOptions?)` | Create and attach, optionally overriding the full system prompt |
-| `attachSession(id)` / `detachSession(id)` | Subscribe / unsubscribe |
-| `sendMessage(id, content, images?)` | Send a user message (awaits `message_accepted`) |
-| `run(id, content, options?)` | Send and collect one full turn |
-| `runStructured(id, content, options)` | Send, validate JSON Schema output, and retry corrections |
-| `events(sessionId?)` | Async iterator over stream events |
-| `globalEvents(options?)` | Bounded fan-in stream over all persisted and newly created sessions |
-| `cancel(id)` / `softInterrupt(id, content, urgent?)` | Interrupt a turn |
-| `getHistory(id)` / `peekSession(id, limit?)` | Read a transcript (peek works unattached) |
-| `clear(id)` / `rewind(id, index)` | Edit history |
-| `respondToPermission(id, requestId, decision)` | Answer a permission prompt |
-| `listModels(id)` / `setModel(id, model)` | List and choose the session's model |
-| `getRuntimeInfo(id)` | Provider, model route, protocol, capability, and health metadata |
-| `setApiKey(provider, key)` / `clearApiKey(provider)` | Atomically provision or remove owner-only API-key files |
-| `readFile(id, path, maxBytes?)` | Read bounded UTF-8 text under the session root |
-| `findFiles(id, query, limit?)` | Find rooted files by path substring |
-| `searchText(id, query, options?)` | Bounded rooted literal text search |
-| `fileStatus(id, path)` | Read safe rooted file metadata |
-| `setReasoningEffort(id, effort)` | Set the cost/quality dial |
-| `compact(id)` | Schedule transcript compaction to free context |
-| `renameSession(id, title?)` | Set a session title, or clear it |
-| `rewindUndo(id)` | Restore what the last `rewind` removed |
-| `cancelSoftInterrupts(id)` | Retract queued soft interrupts |
-| `softInterruptWithId(id, content, { clientId, images?, urgent? })` | Queue a mid-turn message you can track and retract |
-| `cancelSoftInterruptsById(id, clientIds)` / `cancelSoftInterrupt(id, clientId)` | Retract specific queued messages, with an exact "too late?" answer |
-| `backgroundTool(id)` / `backgroundToolResult(id)` | Move the running tool call to the background, optionally reporting what moved |
-| `listSessionHeads(id)` / `selectSessionHead(id, headEventId)` | Durable heads and the host-local selection (`session_event_store_v1`) |
-| `getHistoryPage(id, { headEventId?, beforeEventId?, limit? })` | One bounded page of history on a fixed head (`session_history_cursor_v1`) |
-| `exportSessionEvents(id, { heads?, knownIds?, cursor? })` / `importSessionEvents(page, retryCursor?)` | Exchange one bounded page of original events (`session_replication_v1`) |
-| `exportSessionBlob(...)` / `importSessionBlob(chunk)` / `sessionBlobStatus(...)` | Move original blobs in verified 1 MiB chunks (`session_replication_v1`) |
-| `exportSessionRecordBlob(...)` / `importSessionRecordBlob(chunk)` / `sessionRecordBlobStatus(...)` | Move a whole canonical record the page carried by reference |
-| `ping()` | Liveness |
+| Method                                                                                                | Purpose                                                                       |
+| ----------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `HoronAgentClient.launch(options)`                                                                    | Start a private instance and connect to it                                    |
+| `HoronAgentClient.connect(options)`                                                                   | Attach to the horon-agent already running on this machine                     |
+| `listSessions({ includeArchived? })`                                                                  | Every persisted session, optionally including archived sessions               |
+| `archiveSession(id)` / `restoreSession(id)`                                                           | Reversibly hide or restore a session                                          |
+| `deleteSession(id)`                                                                                   | Permanently delete a session and every file keyed by its id                   |
+| `searchSessions(query, limit?)`                                                                       | Search every stored transcript by text                                        |
+| `listArtifacts(id)`                                                                                   | HTML pages and images the session produced                                    |
+| `setRetentionPolicy(days?)`                                                                           | Auto-archive inactive sessions, or disable retention                          |
+| `createSession(workingDirOrOptions?)`                                                                 | Create and attach, optionally overriding the full system prompt               |
+| `attachSession(id)` / `detachSession(id)`                                                             | Subscribe / unsubscribe                                                       |
+| `sendMessage(id, content, images?)`                                                                   | Send a user message (awaits `message_accepted`)                               |
+| `run(id, content, options?)`                                                                          | Send and collect one full turn                                                |
+| `runStructured(id, content, options)`                                                                 | Send, validate JSON Schema output, and retry corrections                      |
+| `events(sessionId?)`                                                                                  | Async iterator over stream events                                             |
+| `globalEvents(options?)`                                                                              | Bounded fan-in stream over all persisted and newly created sessions           |
+| `cancel(id)` / `softInterrupt(id, content, urgent?)`                                                  | Interrupt a turn                                                              |
+| `getHistory(id)` / `peekSession(id, limit?)`                                                          | Read a transcript (peek works unattached)                                     |
+| `clear(id)` / `rewind(id, index)`                                                                     | Edit history                                                                  |
+| `respondToPermission(id, requestId, decision)`                                                        | Answer a permission prompt                                                    |
+| `listModels(id)` / `setModel(id, model)`                                                              | List and choose the session's model                                           |
+| `getRuntimeInfo(id)`                                                                                  | Provider, model route, protocol, capability, and health metadata              |
+| `setApiKey(provider, key)` / `clearApiKey(provider)`                                                  | Atomically provision or remove owner-only API-key files                       |
+| `usageReport(sessionId?)`                                                                             | Token totals, per-model aggregates, context window, and subscription limits   |
+| `ackApproval(id, requestId)`                                                                          | Retire the daemon's durable copy of a resolved approval                       |
+| `ackFailover(id, chainId, from, to, attempt)`                                                         | Retire the daemon's durable copy of a failover switch                         |
+| `readFile(id, path, maxBytes?)`                                                                       | Read bounded UTF-8 text under the session root                                |
+| `findFiles(id, query, limit?)`                                                                        | Find rooted files by path substring                                           |
+| `searchText(id, query, options?)`                                                                     | Bounded rooted literal text search                                            |
+| `fileStatus(id, path)`                                                                                | Read safe rooted file metadata                                                |
+| `setReasoningEffort(id, effort)`                                                                      | Set the cost/quality dial                                                     |
+| `compact(id)`                                                                                         | Schedule transcript compaction to free context                                |
+| `renameSession(id, title?)`                                                                           | Set a session title, or clear it                                              |
+| `rewindUndo(id)`                                                                                      | Restore what the last `rewind` removed                                        |
+| `cancelSoftInterrupts(id)`                                                                            | Retract queued soft interrupts                                                |
+| `softInterruptWithId(id, content, { clientId, images?, urgent? })`                                    | Queue a mid-turn message you can track and retract                            |
+| `cancelSoftInterruptsById(id, clientIds)` / `cancelSoftInterrupt(id, clientId)`                       | Retract specific queued messages, with an exact "too late?" answer            |
+| `backgroundTool(id)` / `backgroundToolResult(id)`                                                     | Move the running tool call to the background, optionally reporting what moved |
+| `listSessionHeads(id)` / `selectSessionHead(id, headEventId)`                                         | Durable heads and the host-local selection (`session_event_store_v1`)         |
+| `getHistoryPage(id, { headEventId?, beforeEventId?, limit? })`                                        | One bounded page of history on a fixed head (`session_history_cursor_v1`)     |
+| `exportSessionEvents(id, { heads?, knownIds?, cursor? })` / `importSessionEvents(page, retryCursor?)` | Exchange one bounded page of original events (`session_replication_v1`)       |
+| `exportSessionBlob(...)` / `importSessionBlob(chunk)` / `sessionBlobStatus(...)`                      | Move original blobs in verified 1 MiB chunks (`session_replication_v1`)       |
+| `exportSessionRecordBlob(...)` / `importSessionRecordBlob(chunk)` / `sessionRecordBlobStatus(...)`    | Move a whole canonical record the page carried by reference                   |
+| `ping()`                                                                                              | Liveness                                                                      |
 
 ## Models
 
@@ -431,18 +437,59 @@ Pass `includeArchived: true` to display and restore archived sessions.
 inactive persisted sessions when sessions are listed. Omit `days` to disable
 automatic retention.
 
+`deleteSession(id)` is the one irreversible operation in this surface: it
+removes the transcript and every file keyed by the id, and nothing restores it
+afterwards. Archive first when the intent is only to get a session out of the
+way.
+
+## Transcript search, artifacts, usage, and acks
+
+`searchSessions(query, limit?)` scans every stored transcript, attached or not,
+through the daemon's own session index, so a client ranks hits exactly as the
+agent's search tool does. An empty query rejects with `invalid_request` instead
+of returning everything:
+
+```ts
+const hits = await client.searchSessions("flaky test", 20);
+for (const hit of hits) console.log(hit.session_id, hit.role, hit.preview);
+```
+
+`listArtifacts(id)` lists the HTML pages and images a session produced, as
+paths relative to its working directory. It is metadata only; pass a path to
+`readFile()` for the bytes. A session with no stored transcript answers
+`unknown_session`.
+
+`usageReport(sessionId?)` returns durable per-request token totals, per-model
+aggregates, the active context window, and any subscription limits the daemon
+published. Omit the id for the whole account. A metric no request recorded is
+`null` rather than `0`, because "the provider did not report cache tokens" and
+"the provider reported no cache tokens" are different facts. `pricing` is
+always `"unknown"` and `estimated_cost` always `null`: this harness carries no
+price table.
+
+`approval_pending` and `failover_switched` stay parked in the daemon until a
+client acks them, so a resolution that lands out of band is not lost.
+`ackApproval(id, requestId)` and `ackFailover(id, chainId, from, to, attempt)`
+retire those records. An acknowledgement is a message a client sends, so the
+bridge confirms it with a bare `ok` and no event follows: the daemon never
+emits `approval_ack` / `failover_ack` itself. Each method returns a receipt
+built from the values it sent. Echo the whole failover key, `attempt`
+included: a partial key would either clear nothing or read as a different
+switch. An empty id or name rejects with `invalid_request`, and the daemon only
+accepts either ack on a connection attached to that session.
+
 ## Session event store, heads, and replication
 
 The daemon keeps each session as an append-only event log. Four capabilities gate
 the surface that reads and exchanges it; check them with `client.supports(...)`
 before calling, because a missing capability answers `unsupported` naming it:
 
-| capability | gates |
-| --- | --- |
-| `session_event_store_v1` | `listSessionHeads`, `selectSessionHead` |
-| `session_replication_v1` | `exportSessionEvents`, `importSessionEvents`, the blob methods, and the whole-record blob pair |
-| `session_history_cursor_v1` | `getHistoryPage` |
-| `structured_compaction_v1` | nothing in this SDK; read it with `supports()` before interpreting a `compacted` record's structured summary fields |
+| capability                  | gates                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `session_event_store_v1`    | `listSessionHeads`, `selectSessionHead`                                                                             |
+| `session_replication_v1`    | `exportSessionEvents`, `importSessionEvents`, the blob methods, and the whole-record blob pair                      |
+| `session_history_cursor_v1` | `getHistoryPage`                                                                                                    |
+| `structured_compaction_v1`  | nothing in this SDK; read it with `supports()` before interpreting a `compacted` record's structured summary fields |
 
 A session may retain several heads after a rewind or a divergent import. The
 selected head is host-local: it is never replicated. When `selected_head` is
@@ -455,8 +502,8 @@ from. `selectSessionHead` answers `busy` while another process owns the writer.
 
 ```ts
 let page = await client.getHistoryPage(id, { limit: 50 });
-const head = page.head;                       // pin it while the user scrolls
-render(page.messages);                        // oldest first inside the page
+const head = page.head; // pin it while the user scrolls
+render(page.messages); // oldest first inside the page
 while (page.next_cursor) {
   page = await client.getHistoryPage(id, { headEventId: head, beforeEventId: page.next_cursor, limit: 50 });
   prepend(page.messages);
@@ -622,32 +669,32 @@ try {
 
 ### Launch and connection errors
 
-| Code                    | Cause                                                                                                                     | Recovery                                                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `horon_agent_not_found` | `launch()` could not execute horon-agent.                                                                                 | Install horon-agent, put it on `PATH`, or pass `binary` with an absolute path.                                       |
-| `startup_failed`        | The private instance exited before opening its API socket. Its stderr is included in the message.                         | Display/log the message; fix the reported configuration, credential, or binary error before retrying.                |
-| `startup_timeout`       | The private instance did not open its API socket within `startupTimeoutMs`.                                               | Increase the timeout on a slow machine; otherwise inspect stderr and ensure the runtime directory is writable.       |
-| `invalid_instance_home` | `horonAgentHome`, its credential paths, or the source login home is unsafe (same directory, symlink, file, or traversal). | Choose a separate real directory. Do not point a private instance at the user's live horon-agent home.               |
+| Code                    | Cause                                                                                                                     | Recovery                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `horon_agent_not_found` | `launch()` could not execute horon-agent.                                                                                 | Install horon-agent, put it on `PATH`, or pass `binary` with an absolute path.                                 |
+| `startup_failed`        | The private instance exited before opening its API socket. Its stderr is included in the message.                         | Display/log the message; fix the reported configuration, credential, or binary error before retrying.          |
+| `startup_timeout`       | The private instance did not open its API socket within `startupTimeoutMs`.                                               | Increase the timeout on a slow machine; otherwise inspect stderr and ensure the runtime directory is writable. |
+| `invalid_instance_home` | `horonAgentHome`, its credential paths, or the source login home is unsafe (same directory, symlink, file, or traversal). | Choose a separate real directory. Do not point a private instance at the user's live horon-agent home.         |
 | `connect_failed`        | The bridge is absent, dead, or listening at another socket path.                                                          | Run `horon api-bridge`; verify `socketPath` or `HORON_AGENT_API_SOCKET`. The message names the attempted path. |
-| `handshake_failed`      | The peer replied with an invalid frame during protocol negotiation.                                                       | Confirm the socket is a horon-agent harness socket and upgrade horon-agent/SDK together.                             |
-| `unsupported_version`   | Client and bridge do not share a protocol major version.                                                                  | Upgrade the older side. Do not retry unchanged versions.                                                             |
+| `handshake_failed`      | The peer replied with an invalid frame during protocol negotiation.                                                       | Confirm the socket is a horon-agent harness socket and upgrade horon-agent/SDK together.                       |
+| `unsupported_version`   | Client and bridge do not share a protocol major version.                                                                  | Upgrade the older side. Do not retry unchanged versions.                                                       |
 
 ### Request and transport errors
 
-| Code | Cause | Recovery |
-| --- | --- | --- |
-| `disconnected` | The socket closed or a write failed while work was in flight. | Reconnect. Retry only idempotent reads, or first verify whether a mutating request took effect. |
-| `timeout` | No correlated reply arrived within `requestTimeoutMs` (30 seconds by default). | Check daemon health and raise the timeout for legitimately slow requests. Treat outcome as unknown before repeating mutations. |
-| `unexpected_reply` | A reply was valid protocol data but not the event kind required by that SDK method. | Upgrade both sides and report the server/client versions with the error. |
-| `unknown_request` | The bridge does not implement that request tag. | Upgrade horon-agent, or stop using that newer SDK method with this bridge. |
-| `unknown_session` | The session no longer exists, is not available to this instance, or the connection is not attached where attachment is required. | Refresh `listSessions()`, use the right private/shared instance, and attach when the method requires it. |
-| `invalid_request` | Arguments or current state violate the operation's contract (for example an invalid model, retry count, path, or compaction request). | Correct the caller input. The message contains the rejected constraint; do not blindly retry. |
-| `invalid_option` | A client-only option is outside its allowed range. | Correct the named option, such as `discoveryIntervalMs` or `maxBufferedEvents`. |
-| `unsupported` | The runtime does not advertise the capability that method needs (for example `session_tools`, or one of the four session-store capabilities). | Update both the horon-agent daemon and API bridge before using that surface. |
-| `busy` | Another tool configuration request is in flight for this session. | Await the previous configuration before submitting another. |
-| `too_many_requests` | `maxPendingRequests` requests are already awaiting a reply, so the new request was refused instead of growing the pending map. | Await replies, cancel work, or raise `maxPendingRequests` deliberately. The request never reached the wire, so repeating it is safe. |
-| `transport_backpressure` | The transport reported a full write buffer but provides no `onDrain` signal, so the client cannot honour its backpressure. | Give the transport an `onDrain` listener, or return `void` from `write` if it never blocks. |
-| `internal` | The bridge or daemon failed unexpectedly while handling a valid request. | Preserve the message and horon-agent logs, retry once if safe, then report it if reproducible. |
+| Code                     | Cause                                                                                                                                         | Recovery                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `disconnected`           | The socket closed or a write failed while work was in flight.                                                                                 | Reconnect. Retry only idempotent reads, or first verify whether a mutating request took effect.                                      |
+| `timeout`                | No correlated reply arrived within `requestTimeoutMs` (30 seconds by default).                                                                | Check daemon health and raise the timeout for legitimately slow requests. Treat outcome as unknown before repeating mutations.       |
+| `unexpected_reply`       | A reply was valid protocol data but not the event kind required by that SDK method.                                                           | Upgrade both sides and report the server/client versions with the error.                                                             |
+| `unknown_request`        | The bridge does not implement that request tag.                                                                                               | Upgrade horon-agent, or stop using that newer SDK method with this bridge.                                                           |
+| `unknown_session`        | The session no longer exists, is not available to this instance, or the connection is not attached where attachment is required.              | Refresh `listSessions()`, use the right private/shared instance, and attach when the method requires it.                             |
+| `invalid_request`        | Arguments or current state violate the operation's contract (for example an invalid model, retry count, path, or compaction request).         | Correct the caller input. The message contains the rejected constraint; do not blindly retry.                                        |
+| `invalid_option`         | A client-only option is outside its allowed range.                                                                                            | Correct the named option, such as `discoveryIntervalMs` or `maxBufferedEvents`.                                                      |
+| `unsupported`            | The runtime does not advertise the capability that method needs (for example `session_tools`, or one of the four session-store capabilities). | Update both the horon-agent daemon and API bridge before using that surface.                                                         |
+| `busy`                   | Another tool configuration request is in flight for this session.                                                                             | Await the previous configuration before submitting another.                                                                          |
+| `too_many_requests`      | `maxPendingRequests` requests are already awaiting a reply, so the new request was refused instead of growing the pending map.                | Await replies, cancel work, or raise `maxPendingRequests` deliberately. The request never reached the wire, so repeating it is safe. |
+| `transport_backpressure` | The transport reported a full write buffer but provides no `onDrain` signal, so the client cannot honour its backpressure.                    | Give the transport an `onDrain` listener, or return `void` from `write` if it never blocks.                                          |
+| `internal`               | The bridge or daemon failed unexpectedly while handling a valid request.                                                                      | Preserve the message and horon-agent logs, retry once if safe, then report it if reproducible.                                       |
 
 ### Streaming and structured-output errors
 
