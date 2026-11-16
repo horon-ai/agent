@@ -103,9 +103,14 @@ fn detail_is_cut_only_past_the_character_limit() {
     assert_eq!(kept.detail.chars().count(), MAX_FIELD_CHARS);
     assert_eq!(kept.detail, serde_json::to_string(&at_limit).expect("serializes"));
 
+    // One character over the limit: only the closing brace is cut.
     let cut = record_and_read("write", &one_over);
     assert_eq!(cut.detail.chars().count(), MAX_FIELD_CHARS + "[truncated]".len());
-    assert!(cut.detail.ends_with("x[truncated]"), "unexpected tail: {}", cut.detail);
+    assert!(
+        cut.detail.ends_with("x\"[truncated]"),
+        "unexpected tail: {}",
+        cut.detail
+    );
 }
 
 #[test]
