@@ -24,6 +24,8 @@ pub mod ids {
     pub const APP_SUBMIT: &str = "app.submit";
     /// Cancel the running turn, or leave when nothing is running.
     pub const APP_CANCEL: &str = "app.cancel";
+    /// Interrupt the running turn and nothing else: no action when idle.
+    pub const APP_INTERRUPT: &str = "app.interrupt";
     /// Leave.
     pub const APP_QUIT: &str = "app.quit";
     /// Delete the character before the cursor.
@@ -92,6 +94,7 @@ impl ActionSpec {
 pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SUBMIT, Scope::App, &["enter"]),
     ActionSpec::new(ids::APP_CANCEL, Scope::App, &["ctrl+c"]),
+    ActionSpec::new(ids::APP_INTERRUPT, Scope::App, &["esc"]),
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),

@@ -32,6 +32,12 @@ impl ToolState {
     }
 }
 
+/// What a tool line says when the turn ended before its result arrived.
+///
+/// Neutral on purpose: a cancelled turn and a dead connection end calls the
+/// same way, and neither says anything about the tool itself.
+pub const TURN_ENDED: &str = "the turn ended before this call reported";
+
 /// One tool call, as far as the client knows it.
 ///
 /// The call id is kept because parallel calls of the same tool are ordinary:
@@ -80,6 +86,9 @@ impl ToolCall {
 pub enum Item {
     /// A message the user sent.
     User(String),
+    /// A message typed while a turn was running: kept, drawn, and sent when
+    /// the turn ends.
+    Queued(String),
     /// A completed assistant message.
     Assistant(String),
     /// A tool call, addressed by its call id while it runs.
@@ -221,6 +230,55 @@ impl Transcript {
     pub fn push_warning(&mut self, text: impl Into<String>) {
         self.finish_stream();
         self.items.push(Item::Warning(text.into()));
+    }
+
+    /// Record a message waiting for the running turn to end.
+    ///
+    /// It is a line of its own rather than a warning, because it is not a
+    /// problem: the text is already accepted and will be sent.
+    pub fn push_queued(&mut self, text: impl Into<String>) {
+        self.finish_stream();
+        self.items.push(Item::Queued(text.into()));
+    }
+
+    /// Turn the oldest queued line for `text` into the message that was sent.
+    ///
+    /// The queued line is promoted rather than replaced, so the conversation
+    /// keeps the order the messages were typed in.
+    pub fn promote_queued(&mut self, text: &str) {
+        let found = self
+            .items
+            .iter()
+            .position(|item| matches!(item, Item::Queued(queued) if queued == text));
+        if let Some(index) = found {
+            self.items[index] = Item::User(text.to_string());
+        }
+    }
+
+    /// End every tool line that never reported a result.
+    ///
+    /// A turn can end while a call is still running: it was cancelled, the
+    /// provider failed, or the connection died. The line would then say
+    /// `running` for the rest of the session, so it is closed here with a
+    /// sentence that blames neither the tool nor the model.
+    pub fn end_running_tools(&mut self) {
+        for item in &mut self.items {
+            if let Item::Tool(call) = item
+                && call.state == ToolState::Running
+            {
+                call.state = ToolState::Failed(TURN_ENDED.to_string());
+            }
+        }
+        // The call can never finish now, so its start mark is dead weight; a
+        // late replay of its result must not invent a duration either.
+        let items = &self.items;
+        self.starts.retain(|start| {
+            items.iter().any(|item| {
+                matches!(item, Item::Tool(call) if call.state == ToolState::Running
+                    && ((!start.call_id.is_empty() && call.call_id == start.call_id)
+                        || (start.call_id.is_empty() && call.name == start.name)))
+            })
+        });
     }
 
     /// Append streamed assistant text.

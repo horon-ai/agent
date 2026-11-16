@@ -8,7 +8,7 @@
 use std::sync::mpsc::{self, Receiver};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use horon_agent_sdk::api::{ApiEvent, AskSelection};
+use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
 use crate::commands::{Invocation, Local, Registry};
 use crate::input::Input;
@@ -66,6 +66,12 @@ pub struct App {
     pub exit_code: i32,
     /// Whether a turn is in flight (Ctrl-C cancels instead of leaving).
     pub pending_turn: bool,
+    /// Messages typed while a turn was running, oldest first. Each one is sent
+    /// when the turn before it ends.
+    pub queue: Vec<String>,
+    /// Whether the bridge or the daemon went away. The client stays up so the
+    /// conversation can be read; the status line says why nothing is sent.
+    pub disconnected: bool,
     /// Rows the transcript pane got last frame, used to keep the newest lines.
     pub viewport_height: Option<u16>,
     /// What the client is attached to, for the status line.
@@ -118,6 +124,8 @@ impl App {
             running: true,
             exit_code: 0,
             pending_turn: false,
+            queue: Vec::new(),
+            disconnected: false,
             viewport_height: None,
             description,
             events,
@@ -152,6 +160,8 @@ impl App {
             running: false,
             exit_code: 1,
             pending_turn: false,
+            queue: Vec::new(),
+            disconnected: true,
             viewport_height: None,
             description: "not connected".to_string(),
             events: receiver,
@@ -180,12 +190,84 @@ impl App {
     }
 
     /// The connection ended.
-    pub fn disconnected(&mut self, message: &str) {
+    ///
+    /// The client stays up: the conversation is still worth reading, and
+    /// exiting on a dropped socket means the last error is wiped by the
+    /// terminal restore before anyone can read it. `Ctrl-C` then leaves, and
+    /// the exit code still says the session failed.
+    pub fn disconnect(&mut self, message: &str) {
+        if self.disconnected {
+            return;
+        }
         self.banner = Some(message.to_string());
-        self.running = false;
+        self.lose_connection();
+    }
+
+    /// Stop pretending the session is usable, without claiming a new banner.
+    ///
+    /// Used when the loss is already being reported in the transcript: a send
+    /// that came back as a closed socket proves the connection is gone, and
+    /// the client has to say so in the status line without repeating itself at
+    /// the top of the screen.
+    fn lose_connection(&mut self) {
         self.exit_code = 1;
+        self.disconnected = true;
         self.pending_turn = false;
+        self.session_status = Some("idle".to_string());
         self.prompt = None;
+        self.transcript.end_running_tools();
+        if !self.queue.is_empty() {
+            let waiting = self.queue.len();
+            self.transcript
+                .push_notice(format!("{waiting} queued message(s) cannot be sent"));
+        }
+    }
+
+    /// A message the bridge could not deliver.
+    ///
+    /// The text goes back to the input line, so a dropped send costs a key
+    /// press rather than the message. The turn never started, so the status
+    /// returns to idle instead of staying on `running`. A failure the bridge
+    /// traced to a closed socket also marks the connection lost: otherwise the
+    /// client would keep saying it is ready to send.
+    pub fn send_failed(&mut self, text: &str, message: &str, lost: bool) {
+        self.pending_turn = false;
+        self.session_status = Some("idle".to_string());
+        self.keep_text(text);
+        if lost {
+            self.lose_connection();
+        }
+        self.warn(message);
+    }
+
+    /// The next queued message, as the action that sends it.
+    ///
+    /// Called after a turn-end event: a message typed during a turn waits for
+    /// that turn rather than racing it, and several of them keep their order.
+    pub fn take_queued(&mut self) -> Option<Action> {
+        if self.pending_turn || self.disconnected {
+            return None;
+        }
+        let text = self.queue.first()?.clone();
+        self.queue.remove(0);
+        self.transcript.promote_queued(&text);
+        Some(self.start_turn(text))
+    }
+
+    /// Put a message that was not sent back where the user can see it.
+    ///
+    /// The input line is the natural place when it is free. When the user has
+    /// already typed something else, the message is queued instead of
+    /// overwriting that: losing either one silently is worse than a queue.
+    fn keep_text(&mut self, text: &str) {
+        if self.input.is_empty() {
+            for character in text.chars() {
+                self.input.insert(character);
+            }
+            return;
+        }
+        self.transcript.push_queued(text);
+        self.queue.push(text.to_string());
     }
 
     /// The lines the active prompt wants drawn, if any.
@@ -211,7 +293,9 @@ impl App {
         if let Some(provider) = &self.provider {
             parts.push(provider.clone());
         }
-        let state = if self.pending_turn {
+        let state = if self.disconnected {
+            "disconnected"
+        } else if self.pending_turn {
             "running"
         } else {
             self.session_status.as_deref().unwrap_or("idle")
@@ -230,6 +314,7 @@ impl App {
             model: self.model.as_deref(),
             session_id: self.session_id.as_deref(),
             pending_turn: self.pending_turn,
+            disconnected: self.disconnected,
             session_status: self.session_status.as_deref(),
             prompt: self.prompt_label(),
             cwd: self.cwd.as_deref(),
@@ -287,12 +372,22 @@ impl App {
             }
             ApiEvent::TurnDone { .. } => {
                 self.transcript.text_done();
+                self.transcript.end_running_tools();
                 self.pending_turn = false;
                 self.session_status = Some("idle".to_string());
             }
-            ApiEvent::TurnStopped { message, .. } => {
+            ApiEvent::TurnStopped { reason, message, .. } => {
+                self.transcript.end_running_tools();
                 self.pending_turn = false;
-                self.warn(message.clone());
+                self.session_status = Some("idle".to_string());
+                // A cancel is the user's own decision, so it is a notice. Any
+                // other abnormal stop is news about the harness and stays a
+                // warning.
+                if matches!(reason, TurnStopReason::Interrupted) {
+                    self.transcript.push_notice(message.clone());
+                } else {
+                    self.warn(message.clone());
+                }
             }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::ApprovalPending { request_id, action, .. } => {
@@ -334,7 +429,15 @@ impl App {
             }
             ApiEvent::SessionStatus { session_id, status, .. } => {
                 self.session_id = Some(session_id.clone());
-                self.session_status = Some(status.clone());
+                // `cancelled` is the daemon restating the turn that just
+                // stopped, not a state the session is in: left as it is, the
+                // status line kept saying `cancelled` after the notice that
+                // already reported it, and the client was idle all along.
+                self.session_status = Some(if status == "cancelled" {
+                    "idle".to_string()
+                } else {
+                    status.clone()
+                });
             }
             ApiEvent::TokenUsage {
                 session_id,
@@ -353,7 +456,12 @@ impl App {
                 });
             }
             ApiEvent::Error { message, .. } => {
-                self.pending_turn = false;
+                // The turn is not over: the daemon follows a failed turn's
+                // error with `TurnStopped` and `TurnDone`, which close the turn
+                // state. Clearing the flag here made the next Ctrl-C quit the
+                // client while the turn was still live, which is the one thing
+                // the key must not do; closing running tool lines here would
+                // mark a call that may still finish as already ended.
                 self.warn(message.clone());
             }
             _ => {}
@@ -426,11 +534,21 @@ impl App {
                 return None;
             }
             Some(keys::ids::APP_CANCEL) => {
+                // Cancel whenever a turn is actually running, which includes
+                // the stretch after a mid-turn error: the daemon has not
+                // finished the turn yet, so leaving here would drop it.
                 if self.pending_turn {
-                    self.transcript.push_notice("cancelling the turn");
-                    return Some(Action::Cancel);
+                    return self.cancel_turn();
                 }
                 return Some(Action::Quit);
+            }
+            Some(keys::ids::APP_INTERRUPT) => {
+                // `esc` interrupts and never leaves: a stray key on an idle
+                // client must not end the session.
+                if self.pending_turn {
+                    return self.cancel_turn();
+                }
+                return None;
             }
             Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
             Some(keys::ids::EDITOR_BACKSPACE) => self.input.backspace(),
@@ -455,23 +573,57 @@ impl App {
     /// error line and never reaches the model.
     fn submit(&mut self, text: &str) -> Option<Action> {
         match self.commands.resolve(text) {
-            Invocation::Message(message) => {
-                self.transcript.push_user(message.clone());
-                Some(self.start_turn(message))
-            }
+            Invocation::Message(message) => self.send_or_queue(message, None),
             // A command file sends the body it expands to, while the line the
             // user typed stays in the transcript as the message they sent.
-            Invocation::Expanded { display, text } => {
-                self.transcript.push_user(display);
-                Some(self.start_turn(text))
-            }
+            Invocation::Expanded { display, text } => self.send_or_queue(text, Some(display)),
             Invocation::Local { command, arguments } => self.run_local(command, &arguments),
-            Invocation::Server { command, arguments } => Some(Action::Runtime { command, arguments }),
+            Invocation::Server { command, arguments } => {
+                if self.disconnected {
+                    self.refuse(text);
+                    return None;
+                }
+                Some(Action::Runtime { command, arguments })
+            }
             Invocation::Error(message) => {
                 self.warn(message);
                 None
             }
         }
+    }
+
+    /// Send a message now, or queue it while a turn is running.
+    ///
+    /// Sending during a turn is what the daemon answers with "already
+    /// processing a message", which loses the text and shows the user an
+    /// error for doing something ordinary. The message is kept instead and
+    /// sent when the turn ends.
+    fn send_or_queue(&mut self, text: String, display: Option<String>) -> Option<Action> {
+        if self.disconnected {
+            let shown = display.unwrap_or_else(|| text.clone());
+            self.refuse(&shown);
+            return None;
+        }
+        if self.pending_turn {
+            let shown = display.unwrap_or_else(|| text.clone());
+            self.transcript.push_queued(shown);
+            self.queue.push(text);
+            return None;
+        }
+        self.transcript.push_user(display.unwrap_or_else(|| text.clone()));
+        Some(self.start_turn(text))
+    }
+
+    /// Ask the harness to stop the running turn.
+    fn cancel_turn(&mut self) -> Option<Action> {
+        self.transcript.push_notice("cancelling the turn");
+        Some(Action::Cancel)
+    }
+
+    /// Say that a message went nowhere, and put it back in front of the user.
+    fn refuse(&mut self, text: &str) {
+        self.keep_text(text);
+        self.warn("the harness connection is gone; the message was not sent");
     }
 
     /// Mark a turn as running and hand the text to the bridge.

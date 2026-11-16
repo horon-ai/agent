@@ -37,6 +37,7 @@ fn sample() -> StatusData<'static> {
         model: Some("claude-sonnet-4"),
         session_id: Some("abcdef1234567890"),
         pending_turn: false,
+        disconnected: false,
         session_status: Some("idle"),
         prompt: None,
         cwd: Some("/home/u/proj"),
@@ -269,4 +270,21 @@ fn statusline_catalogue_round_trips() {
         assert_eq!(preset.as_str(), name);
     }
     assert!(Preset::parse("bogus").is_none());
+}
+
+#[test]
+fn a_lost_connection_is_named_in_the_state_segment() {
+    let layout = Layout {
+        left: vec![SegmentId::Status],
+        right: Vec::new(),
+        ..Layout::default()
+    };
+    let mut data = StatusData {
+        pending_turn: true,
+        ..StatusData::default()
+    };
+    assert_eq!(rendered(&data, &layout, 80), "running");
+
+    data.disconnected = true;
+    assert_eq!(rendered(&data, &layout, 80), "disconnected");
 }

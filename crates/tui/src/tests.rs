@@ -590,14 +590,18 @@ fn a_long_input_scrolls_instead_of_leaving_the_pane() {
 }
 
 #[test]
-fn a_closed_bridge_ends_the_session_instead_of_spinning() {
+fn a_closed_bridge_shows_a_disconnection_and_leaves_on_ctrl_c() {
     // `app_with(None)` drops the sender, so the channel reports
     // `Disconnected` exactly as it does when the bridge thread exits.
     let mut app = app_with(None);
     assert!(app.running);
     drain_events(&mut app);
-    assert!(!app.running, "a closed bridge must stop the loop");
-    assert_eq!(app.exit_code, 1);
+    // The client stays up: the conversation is still worth reading, and the
+    // banner explaining the loss would be wiped by the terminal restore if the
+    // loop exited here.
+    assert!(app.running, "a closed bridge keeps the client up");
+    assert!(app.disconnected, "the status line has to say what happened");
+    assert_eq!(app.exit_code, 1, "the session still failed");
     match app.banner.as_deref() {
         Some(banner) => assert!(
             banner.contains("bridge"),
@@ -605,4 +609,9 @@ fn a_closed_bridge_ends_the_session_instead_of_spinning() {
         ),
         None => panic!("no banner for the closed bridge"),
     }
+    let quit = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('c'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    assert_eq!(app.on_key(quit), Some(Action::Quit), "Ctrl-C leaves an idle client");
 }

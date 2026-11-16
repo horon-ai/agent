@@ -365,3 +365,23 @@ fn an_output_head_reports_what_it_hides() {
     };
     assert_eq!(head.hidden_rows(), 3);
 }
+
+#[test]
+fn a_call_left_running_ends_neutrally_when_the_turn_ends() {
+    let mut transcript = Transcript::new();
+    transcript.tool_start("c1", "bash");
+    transcript.tool_input("c1", r#"{"command":"sleep 30"}"#);
+    transcript.end_running_tools();
+
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let calls = tool_calls(&transcript);
+    let text: String = lines(calls[0], &theme, symbols, 80)
+        .iter()
+        .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!text.contains("running"), "the line stopped running: {text:?}");
+    assert!(!text.contains("done"), "an unfinished call is not a success: {text:?}");
+    assert!(text.contains(crate::transcript::TURN_ENDED), "{text:?}");
+}

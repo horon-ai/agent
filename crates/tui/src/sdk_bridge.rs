@@ -71,6 +71,12 @@ pub enum Incoming {
     Event(Box<ApiEvent>),
     /// A local notice that is not a protocol event.
     Notice(String),
+    /// A message the harness did not take: the text, the sentence saying why,
+    /// and whether the connection itself is gone. The text travels with the
+    /// failure so the client can put it back in the input line instead of
+    /// losing what the user typed; `lost` lets the client stop pretending it
+    /// can still send.
+    SendFailed { text: String, message: String, lost: bool },
     /// Output from a command, drawn as information rather than a warning.
     Info(String),
     /// The connection ended; the string says why.
@@ -175,19 +181,34 @@ fn run_worker(
         match pump(&events, |timeout| stream.next_result_timeout(timeout)) {
             Step::UiGone | Step::Closed => return,
             flowing => match take_command(&commands, flowing == Step::Flowing) {
-                CommandPoll::Command(command) => match apply(&client, &session_id, command) {
-                    Ok(None) => {}
-                    Ok(Some(message)) => {
-                        if events.send(Incoming::Info(message)).is_err() {
-                            return;
+                CommandPoll::Command(command) => {
+                    // The text is captured before the command is moved, so a
+                    // failure can hand it back to the client.
+                    let sent = match &command {
+                        Command::Text(text) => Some(text.clone()),
+                        _ => None,
+                    };
+                    let description = describe(&command);
+                    match apply(&client, &session_id, command) {
+                        Ok(None) => {}
+                        Ok(Some(message)) => {
+                            if events.send(Incoming::Info(message)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            let lost = lost_connection(&error);
+                            let message = format!("{description}: {error}");
+                            let failure = match sent {
+                                Some(text) => Incoming::SendFailed { text, message, lost },
+                                None => Incoming::Notice(message),
+                            };
+                            if events.send(failure).is_err() {
+                                return;
+                            }
                         }
                     }
-                    Err(message) => {
-                        if events.send(Incoming::Notice(message)).is_err() {
-                            return;
-                        }
-                    }
-                },
+                }
                 CommandPoll::Idle => {}
                 CommandPoll::Disconnected => return,
             },
@@ -287,42 +308,33 @@ fn take_command(commands: &Receiver<Command>, flowing: bool) -> CommandPoll {
 /// Perform one command against the SDK.
 ///
 /// A command that produced something worth reading returns it, so the UI can
-/// draw the output; a failure returns the sentence explaining it.
-fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<String>, String> {
+/// draw the output. A failure is returned as the SDK error rather than as a
+/// sentence: the bridge has to tell "the harness refused this command" apart
+/// from "the connection is gone", and only the error kind says which.
+fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<String>, Error> {
     match command {
-        Command::Text(text) => client
-            .send_message(session_id, &text, Vec::new(), None)
-            .map(|_| None)
-            .map_err(|error| format!("could not send the message: {error}")),
+        Command::Text(text) => client.send_message(session_id, &text, Vec::new(), None).map(|_| None),
         Command::Runtime { command, arguments } => client
             .runtime_command(session_id, command, arguments)
-            .map(|output| Some(output.message))
-            .map_err(|error| format!("could not run the command: {error}")),
+            .map(|output| Some(output.message)),
         Command::Model(Some(name)) => client
             .set_model(session_id, &name)
-            .map(|()| Some(format!("model set to {name}")))
-            .map_err(|error| format!("could not switch the model: {error}")),
-        Command::Model(None) => client
-            .list_models(session_id)
-            .map(|(models, current)| {
-                let mut message = String::from("models:");
-                if models.is_empty() {
-                    message.push_str(" the harness reported none");
+            .map(|()| Some(format!("model set to {name}"))),
+        Command::Model(None) => client.list_models(session_id).map(|(models, current)| {
+            let mut message = String::from("models:");
+            if models.is_empty() {
+                message.push_str(" the harness reported none");
+            }
+            for model in &models {
+                message.push_str("\n  ");
+                message.push_str(model);
+                if current.as_deref() == Some(model.as_str()) {
+                    message.push_str(" (current)");
                 }
-                for model in &models {
-                    message.push_str("\n  ");
-                    message.push_str(model);
-                    if current.as_deref() == Some(model.as_str()) {
-                        message.push_str(" (current)");
-                    }
-                }
-                Some(message)
-            })
-            .map_err(|error| format!("could not list the models: {error}")),
-        Command::Cancel => client
-            .cancel(session_id)
-            .map(|()| None)
-            .map_err(|error| format!("could not cancel the turn: {error}")),
+            }
+            Some(message)
+        }),
+        Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
             approved,
@@ -336,13 +348,33 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             client
                 .respond_to_permission(session_id, &request_id, decision)
                 .map(|()| None)
-                .map_err(|error| format!("could not answer the approval: {error}"))
         }
-        Command::Ask { ask_id, answers } => client
-            .respond_to_ask(session_id, &ask_id, answers)
-            .map(|()| None)
-            .map_err(|error| format!("could not answer the question: {error}")),
+        Command::Ask { ask_id, answers } => client.respond_to_ask(session_id, &ask_id, answers).map(|()| None),
     }
+}
+
+/// How a command's failure is worded in the transcript.
+fn describe(command: &Command) -> &'static str {
+    match command {
+        Command::Text(_) => "could not send the message",
+        Command::Runtime { .. } => "could not run the command",
+        Command::Model(Some(_)) => "could not switch the model",
+        Command::Model(None) => "could not list the models",
+        Command::Cancel => "could not cancel the turn",
+        Command::Approval { .. } => "could not answer the approval",
+        Command::Ask { .. } => "could not answer the question",
+    }
+}
+
+/// Whether the failure means the connection itself is gone.
+///
+/// A refused message leaves the session usable; a closed socket does not, and
+/// the client has to know the difference to stop saying it can still send.
+fn lost_connection(error: &Error) -> bool {
+    matches!(
+        error.kind,
+        ErrorKind::Disconnected | ErrorKind::Transport | ErrorKind::ConnectFailed { .. }
+    )
 }
 
 /// The socket path the client would use with no `--socket`.

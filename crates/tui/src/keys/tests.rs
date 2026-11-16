@@ -88,6 +88,10 @@ fn keys_defaults_reproduce_the_shipped_keys() {
     assert_eq!(editing("enter"), Some(ids::APP_SUBMIT));
     assert_eq!(editing("ctrl+c"), Some(ids::APP_CANCEL));
     assert_eq!(editing("ctrl+d"), Some(ids::APP_QUIT));
+    // `esc` interrupts a turn in the app and dismisses a prompt: the same key
+    // in two scopes is not a conflict, which is why the defaults warn about
+    // nothing.
+    assert_eq!(editing("esc"), Some(ids::APP_INTERRUPT));
     assert_eq!(editing("backspace"), Some(ids::EDITOR_BACKSPACE));
     assert_eq!(editing("delete"), Some(ids::EDITOR_DELETE));
     assert_eq!(editing("left"), Some(ids::EDITOR_LEFT));

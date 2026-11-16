@@ -31,6 +31,10 @@ mod streaming_tests;
 #[path = "tool_line_tests.rs"]
 mod tool_line_tests;
 
+#[cfg(test)]
+#[path = "turn_state_tests.rs"]
+mod turn_state_tests;
+
 use std::time::Duration;
 
 use ratatui::Terminal;
@@ -346,6 +350,11 @@ where
         if !app.running {
             break;
         }
+        // A message typed during a turn waits for that turn; this is the one
+        // place it is sent, right after the event that ended the turn.
+        if let Some(action) = app.take_queued() {
+            dispatch(app, commands, action);
+        }
         // The reloader throttles itself to one file check per second; the
         // theme loader, the key bindings and the command directories share
         // that cadence for their own files.
@@ -418,16 +427,15 @@ fn drain_events(app: &mut App) {
         match app.events.try_recv() {
             Ok(Incoming::Event(event)) => app.apply_event(&event),
             Ok(Incoming::Notice(message)) => app.warn(message),
+            Ok(Incoming::SendFailed { text, message, lost }) => app.send_failed(&text, &message, lost),
             Ok(Incoming::Info(message)) => app.transcript.push_notice(message),
-            Ok(Incoming::Closed(message)) => app.disconnected(&message),
+            Ok(Incoming::Closed(message)) => app.disconnect(&message),
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                // A more specific banner (an unreachable daemon, say) wins over
-                // the generic one, and a session that already ended keeps its
-                // own reason.
-                if app.running {
-                    app.disconnected("the harness bridge stopped");
-                }
+                // The first reason wins: a sentence about an unreachable
+                // daemon is more use than "the bridge stopped", and the banner
+                // is redrawn every frame, so it must not change under the user.
+                app.disconnect("the harness bridge stopped");
                 break;
             }
         }
@@ -664,6 +672,16 @@ fn render_item(item: &Item, theme: &Theme, symbols: Symbols, width: u16) -> Vec<
             Span::styled("> ", Style::default().fg(theme.core.accent)),
             text,
             Style::default().fg(theme.transcript.user_text),
+        ),
+        // A queued message is accepted but not sent yet, so it is drawn dim
+        // and worded as waiting: the same color as a notice, because nothing
+        // is wrong with it.
+        Item::Queued(text) => prefixed(
+            Span::styled("queued: ", Style::default().fg(theme.transcript.notice)),
+            text,
+            Style::default()
+                .fg(theme.transcript.user_text)
+                .add_modifier(Modifier::DIM),
         ),
         Item::Assistant(text) => assistant_lines(text, theme),
         Item::Tool(call) => tool_line::lines(call, theme, symbols, width),

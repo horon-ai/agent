@@ -135,6 +135,8 @@ pub struct StatusData<'a> {
     pub session_id: Option<&'a str>,
     /// Whether a turn is in flight.
     pub pending_turn: bool,
+    /// Whether the client lost its harness connection.
+    pub disconnected: bool,
     /// Latest session status word, e.g. `idle` or `generating`.
     pub session_status: Option<&'a str>,
     /// A parked approval or question, already worded for the line.
@@ -395,6 +397,11 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout) -> String
 
 /// What the turn is doing, in the vocabulary the status segment uses.
 fn status_word<'a>(data: &StatusData<'a>) -> &'a str {
+    // A lost connection outranks the turn: whatever the turn was doing, it is
+    // not doing it any more, and nothing the user types will reach the harness.
+    if data.disconnected {
+        return "disconnected";
+    }
     if data.prompt.is_some() {
         return "requires_action";
     }
@@ -413,7 +420,9 @@ fn segment_style(id: SegmentId, data: &StatusData<'_>, theme: &Theme) -> Style {
     match id {
         SegmentId::Model => Style::default().fg(theme.status.status_accent),
         SegmentId::Status | SegmentId::Pending => {
-            if data.prompt.is_some() || data.pending_turn {
+            if data.disconnected {
+                Style::default().fg(theme.core.error)
+            } else if data.prompt.is_some() || data.pending_turn {
                 Style::default().fg(theme.core.warning)
             } else {
                 Style::default().fg(theme.core.success)
