@@ -19,6 +19,13 @@ pub struct Approval {
     pub request_id: String,
     /// Tool name or action the decision covers.
     pub action: String,
+    /// What the call is about to touch: the argument summary of the tool line
+    /// this decision belongs to, when the transcript had one to pair it with.
+    ///
+    /// `ApprovalPending` carries the action name alone, so two parallel `bash`
+    /// calls read identically without this. `None` keeps the prompt to the name
+    /// rather than inventing a target.
+    pub target: Option<String>,
     /// Whether the user has asked for this decision to apply to later calls too.
     pub always: bool,
 }
@@ -97,10 +104,18 @@ impl Ask {
     }
 
     /// Move to the next unanswered question, or finish when none is left.
+    ///
+    /// A question with no options cannot be answered by pressing a digit, and
+    /// the daemon resolves it with an empty selection; waiting on one would park
+    /// the prompt on a question the user has no way to settle.
     fn advance(&mut self) -> bool {
         while self.current < self.questions.len() {
+            let answerable = self
+                .questions
+                .get(self.current)
+                .is_some_and(|question| !question.options.is_empty());
             let answered = self.chosen.get(self.current).is_some_and(|held| !held.is_empty());
-            if !answered {
+            if answerable && !answered {
                 return false;
             }
             self.current += 1;
@@ -120,6 +135,57 @@ fn question_id(question: &AskQuestion) -> String {
     match &question.id {
         Some(id) => id.clone(),
         None => "q1".to_string(),
+    }
+}
+
+/// One `[key] label` clause for an action, or `None` when nothing is bound.
+///
+/// An action a configuration turned off (`[]` in the file) has no key, and a
+/// prompt that advertised one would tell the user to press a key that does
+/// nothing.
+fn clause(bindings: &Bindings, id: &str, label: &str) -> Option<String> {
+    let keys = bindings.keys_for(id);
+    if keys.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = keys.iter().map(|key| key.to_string()).collect();
+    Some(format!("[{}] {label}", names.join("/")))
+}
+
+/// The approval hint, derived from the key map rather than hardcoded, so a
+/// rebound answer key is the key the hint shows.
+fn approval_hint(bindings: &Bindings) -> String {
+    let clauses: Vec<String> = [
+        (keys::ids::PROMPT_ALLOW, "allow"),
+        (keys::ids::PROMPT_ALLOW_ALWAYS, "allow always"),
+        (keys::ids::PROMPT_DENY, "deny"),
+        (keys::ids::PROMPT_DISMISS, "dismiss"),
+    ]
+    .into_iter()
+    .filter_map(|(id, label)| clause(bindings, id, label))
+    .collect();
+    if clauses.is_empty() {
+        return String::new();
+    }
+    format!("  {}", clauses.join("  "))
+}
+
+/// The hint under a question.
+///
+/// Options are chosen by their digit, which is literal and cannot be rebound;
+/// only the confirmation of a multi-select question is a binding worth naming.
+/// A question with no options cannot be answered at all, so it says so instead
+/// of advertising a key that changes nothing.
+fn ask_hint(bindings: &Bindings, question: &AskQuestion) -> String {
+    if question.options.is_empty() {
+        return "  no options: the tool resolves this question on its own".to_string();
+    }
+    if !question.multi {
+        return "  press the number of an option".to_string();
+    }
+    match clause(bindings, keys::ids::PROMPT_CONFIRM, "confirm") {
+        Some(confirm) => format!("  digits toggle, then {confirm}"),
+        None => "  digits toggle".to_string(),
     }
 }
 
@@ -148,9 +214,18 @@ pub enum Response {
 impl Prompt {
     /// An approval prompt for a parked request.
     pub fn approval(request_id: String, action: String) -> Self {
+        Self::approval_for(request_id, action, None)
+    }
+
+    /// An approval prompt that names what the call touches.
+    ///
+    /// `target` is the argument summary of the tool line the decision covers, so
+    /// two parallel calls of one tool can be told apart.
+    pub fn approval_for(request_id: String, action: String, target: Option<String>) -> Self {
         Self::Approval(Approval {
             request_id,
             action,
+            target,
             always: false,
         })
     }
@@ -161,12 +236,28 @@ impl Prompt {
     }
 
     /// The lines to draw above the input.
+    ///
+    /// Uses the shipped key map; the app draws [`Prompt::lines_with`] with the
+    /// map in force, so a rebound prompt key shows as the key that answers now.
     pub fn lines(&self) -> Vec<String> {
+        self.lines_with(keys::default_bindings())
+    }
+
+    /// The lines to draw above the input, with hints from the given key map.
+    pub fn lines_with(&self, bindings: &Bindings) -> Vec<String> {
         match self {
-            Self::Approval(approval) => vec![
-                format!("! approval needed: {}", approval.action),
-                "  [y] allow  [a] allow always  [n] deny".to_string(),
-            ],
+            Self::Approval(approval) => {
+                let covered = match &approval.target {
+                    Some(target) => format!("{}: {target}", approval.action),
+                    None => approval.action.clone(),
+                };
+                let hint = approval_hint(bindings);
+                let mut lines = vec![format!("! approval needed: {covered}")];
+                if !hint.is_empty() {
+                    lines.push(hint);
+                }
+                lines
+            }
             Self::Ask(ask) => {
                 let mut lines = Vec::new();
                 if let Some(question) = ask.question() {
@@ -193,11 +284,7 @@ impl Prompt {
                             lines.push(format!("  {}) {}{mark}", index + 1, option.label));
                         }
                     }
-                    if question.multi {
-                        lines.push("  digits toggle, Enter confirms".to_string());
-                    } else {
-                        lines.push("  press the number of an option".to_string());
-                    }
+                    lines.push(ask_hint(bindings, question));
                 }
                 lines
             }
@@ -226,7 +313,10 @@ impl Prompt {
                 let (approved, always) = match bindings.resolve(Scope::Prompt, &key) {
                     Some(keys::ids::PROMPT_ALLOW) => (true, false),
                     Some(keys::ids::PROMPT_ALLOW_ALWAYS) => (true, true),
-                    Some(keys::ids::PROMPT_DENY) => (false, false),
+                    // Dismissing a parked approval is a decision, not a pause:
+                    // the turn is waiting on it, and leaving it parked would
+                    // hold the run until the request expires.
+                    Some(keys::ids::PROMPT_DENY | keys::ids::PROMPT_DISMISS) => (false, false),
                     _ => return None,
                 };
                 approval.always = always;
@@ -237,12 +327,19 @@ impl Prompt {
                 })
             }
             Self::Ask(ask) => {
-                let multi = ask.question().is_some_and(|question| question.multi);
+                let question = ask.question();
+                let multi = question.is_some_and(|question| question.multi);
+                let optionless = question.is_some_and(|question| question.options.is_empty());
                 match bindings.resolve(Scope::Prompt, &key) {
+                    // An ask has no deny: the tool resolves its own deadline.
+                    // Closing the prompt here would take away the only way to
+                    // answer a question that is still waiting.
                     Some(keys::ids::PROMPT_DISMISS) => return None,
                     // A multi-select question toggles digits and confirms with
-                    // Enter; a single-choice one is settled by its digit.
-                    Some(keys::ids::PROMPT_CONFIRM) if multi => {}
+                    // Enter; a single-choice one is settled by its digit. A
+                    // question with no options has no digit to press, so the
+                    // confirm key moves past it with an empty answer.
+                    Some(keys::ids::PROMPT_CONFIRM) if multi || optionless => {}
                     Some(_) => return None,
                     None => {
                         let Code::Char(character) = key.code else {

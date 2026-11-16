@@ -1,0 +1,505 @@
+//! Prompts: the queue behind the one on screen, the hints a prompt shows, what
+//! each key answers, and the line the transcript keeps afterwards.
+//!
+//! Kept out of `app.rs` and `prompts.rs` for the size budget. Every test drives
+//! the whole app, because the queue only exists there: `Prompt` alone answers
+//! one decision and knows nothing about the next.
+
+use std::sync::mpsc;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use horon_agent_sdk::api::{ApiEvent, TurnStopReason};
+use horon_agent_tool_types::{AskOption, AskQuestion};
+use toml::Table;
+
+use crate::app::{Action, App};
+use crate::keys::Bindings;
+use crate::prompts::Prompt;
+use crate::sdk_bridge::Incoming;
+use crate::transcript::Item;
+
+fn app() -> App {
+    let (_sender, receiver) = mpsc::channel::<Incoming>();
+    App::new("socket · session".to_string(), receiver)
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
+}
+
+fn esc() -> KeyEvent {
+    key(KeyCode::Esc)
+}
+
+fn done(session: &str) -> ApiEvent {
+    ApiEvent::TurnDone {
+        session_id: session.to_string(),
+        pending_soft_interrupts: None,
+    }
+}
+
+fn stopped(session: &str) -> ApiEvent {
+    ApiEvent::TurnStopped {
+        session_id: session.to_string(),
+        reason: TurnStopReason::Interrupted,
+        message: "turn cancelled by user".to_string(),
+        provider_stop_reason: None,
+    }
+}
+
+fn approval_pending(request: &str, action: &str) -> ApiEvent {
+    ApiEvent::ApprovalPending {
+        session_id: "s1".to_string(),
+        request_id: request.to_string(),
+        action: action.to_string(),
+        expires_at: None,
+    }
+}
+
+fn tool_start(call: &str, name: &str) -> ApiEvent {
+    ApiEvent::ToolStart {
+        session_id: "s1".to_string(),
+        call_id: call.to_string(),
+        name: name.to_string(),
+    }
+}
+
+fn tool_input(call: &str, delta: &str) -> ApiEvent {
+    ApiEvent::ToolInputDelta {
+        session_id: "s1".to_string(),
+        call_id: call.to_string(),
+        delta: delta.to_string(),
+    }
+}
+
+fn question(id: &str, multi: bool, options: &[&str]) -> AskQuestion {
+    AskQuestion {
+        id: Some(id.to_string()),
+        question: "Which one?".to_string(),
+        header: None,
+        options: options
+            .iter()
+            .map(|label| AskOption {
+                label: (*label).to_string(),
+                description: None,
+            })
+            .collect(),
+        recommended: None,
+        multi,
+    }
+}
+
+/// The last line the transcript holds, as text, whichever kind it is.
+fn last_line(app: &App) -> String {
+    match app.transcript.items().last() {
+        Some(Item::Notice(text)) | Some(Item::Warning(text)) => text.clone(),
+        Some(Item::User(text)) | Some(Item::Queued(text)) => text.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Every line of the drawn prompt block, joined, for a text search.
+fn drawn(app: &App) -> String {
+    app.prompt_lines().join("\n")
+}
+
+#[test]
+fn two_approvals_wait_their_turn_and_the_second_never_hides_the_first() {
+    let mut app = app();
+    app.pending_turn = true;
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.apply_event(&approval_pending("r2", "write"));
+
+    assert!(
+        drawn(&app).contains("bash"),
+        "the first approval is not the one on screen:\n{}",
+        drawn(&app)
+    );
+    assert!(
+        drawn(&app).contains("1 more prompt waiting"),
+        "the queued approval is not counted:\n{}",
+        drawn(&app)
+    );
+    assert_eq!(app.waiting_prompts.len(), 1);
+
+    let first = app.on_key(key(KeyCode::Char('y')));
+    assert_eq!(
+        first,
+        Some(Action::Approval {
+            request_id: "r1".to_string(),
+            approved: true,
+            always: false,
+        }),
+        "the first answer did not settle the first request"
+    );
+    assert!(
+        drawn(&app).contains("write"),
+        "the queued approval did not come forward:\n{}",
+        drawn(&app)
+    );
+    assert!(
+        !drawn(&app).contains("more prompt"),
+        "the count still claims a waiting prompt:\n{}",
+        drawn(&app)
+    );
+
+    let second = app.on_key(key(KeyCode::Char('n')));
+    assert_eq!(
+        second,
+        Some(Action::Approval {
+            request_id: "r2".to_string(),
+            approved: false,
+            always: false,
+        }),
+        "the second answer did not settle the second request"
+    );
+    assert!(app.prompt.is_none());
+    assert!(app.waiting_prompts.is_empty());
+}
+
+#[test]
+fn a_resolved_request_leaves_the_queue_it_was_waiting_in() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.apply_event(&approval_pending("r2", "write"));
+    // Answered somewhere else: the desktop prompt, the CLI, a file.
+    app.apply_event(&ApiEvent::ApprovalResolved {
+        session_id: "s1".to_string(),
+        request_id: "r2".to_string(),
+        approved: true,
+        via: "file".to_string(),
+        resolved_by: "tool".to_string(),
+    });
+    assert!(
+        app.waiting_prompts.is_empty(),
+        "a decided request stayed queued: {:?}",
+        app.waiting_prompts
+    );
+    assert!(app.prompt.is_some(), "the undecided prompt was dropped too");
+}
+
+#[test]
+fn the_prompt_names_the_call_it_covers_and_parallel_calls_pair_in_order() {
+    let mut app = app();
+    app.apply_event(&tool_start("c1", "bash"));
+    app.apply_event(&tool_input("c1", r#"{"command":"ls -la"}"#));
+    app.apply_event(&tool_start("c2", "bash"));
+    app.apply_event(&tool_input("c2", r#"{"command":"pwd"}"#));
+
+    app.apply_event(&approval_pending("r1", "bash"));
+    assert!(
+        drawn(&app).contains("ls -la"),
+        "the first prompt did not name its command:\n{}",
+        drawn(&app)
+    );
+    app.apply_event(&approval_pending("r2", "bash"));
+    let queued = app.waiting_prompts.front().expect("the second prompt waits");
+    assert!(
+        format!("{queued:?}").contains(r"pwd"),
+        "the second prompt repeated the first command: {queued:?}"
+    );
+}
+
+#[test]
+fn a_prompt_without_a_tool_line_shows_the_name_alone() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    let lines = app.prompt_lines();
+    assert_eq!(lines[0], "! approval needed: bash");
+}
+
+#[test]
+fn the_hint_names_the_keys_the_map_holds_now() {
+    let mut table = Table::new();
+    table.insert("prompt.allow".to_string(), toml::Value::Array(vec!["k".into()]));
+    table.insert("prompt.deny".to_string(), toml::Value::Array(vec!["d".into()]));
+    let (bindings, warnings) = Bindings::from_table(&table);
+    assert!(warnings.is_empty(), "unexpected key-map warnings: {warnings:?}");
+
+    let mut app = app();
+    app.bindings = bindings;
+    app.apply_event(&approval_pending("r1", "bash"));
+    let hint = app.prompt_lines()[1].clone();
+    assert!(hint.contains("[k] allow"), "the rebound allow key is missing: {hint}");
+    assert!(hint.contains("[d] deny"), "the rebound deny key is missing: {hint}");
+    assert!(
+        !hint.contains("[y] allow"),
+        "the old allow key is still advertised: {hint}"
+    );
+    assert!(
+        !hint.contains("[n] deny"),
+        "the old deny key is still advertised: {hint}"
+    );
+
+    // The key that was taken away does nothing now, and the new one answers.
+    assert_eq!(app.on_key(key(KeyCode::Char('y'))), None);
+    assert_eq!(
+        app.on_key(key(KeyCode::Char('k'))),
+        Some(Action::Approval {
+            request_id: "r1".to_string(),
+            approved: true,
+            always: false,
+        })
+    );
+}
+
+#[test]
+fn escape_answers_a_parked_approval_with_a_denial() {
+    let mut app = app();
+    app.pending_turn = true;
+    app.apply_event(&approval_pending("r1", "bash"));
+
+    let answer = app.on_key(esc());
+    assert_eq!(
+        answer,
+        Some(Action::Approval {
+            request_id: "r1".to_string(),
+            approved: false,
+            always: false,
+        }),
+        "escape left the approval parked"
+    );
+    assert!(app.prompt.is_none());
+    assert!(
+        last_line(&app).contains("you denied bash"),
+        "no denial line was written: {}",
+        last_line(&app)
+    );
+}
+
+#[test]
+fn a_stray_key_never_reaches_the_input_line() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    assert_eq!(app.on_key(key(KeyCode::Char('x'))), None);
+    assert_eq!(app.input.text(), "", "a prompt keystroke leaked into the input");
+    assert!(app.prompt.is_some(), "a stray key closed the prompt");
+}
+
+#[test]
+fn every_approval_answer_leaves_one_line_that_states_what_happens_next() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.on_key(key(KeyCode::Char('y')));
+    let allowed = last_line(&app);
+    assert!(
+        allowed.contains("you allowed bash") && allowed.contains("call it again"),
+        "the confirmation line does not say the call must be retried: {allowed}"
+    );
+
+    app.apply_event(&approval_pending("r2", "write"));
+    app.on_key(key(KeyCode::Char('a')));
+    let always = last_line(&app);
+    assert!(
+        always.contains("you allowed write") && always.contains("no always-rule"),
+        "the always answer claims a rule the daemon does not keep: {always}"
+    );
+
+    app.apply_event(&approval_pending("r3", "edit"));
+    app.on_key(key(KeyCode::Char('n')));
+    let denied = last_line(&app);
+    assert!(
+        denied.contains("you denied edit") && denied.contains("will not run"),
+        "the denial line is missing or vague: {denied}"
+    );
+}
+
+#[test]
+fn an_ask_walks_to_the_second_question_and_leaves_a_line_when_it_finishes() {
+    let mut app = app();
+    app.apply_event(&ApiEvent::AskRequested {
+        session_id: "s1".to_string(),
+        ask_id: "a1".to_string(),
+        questions: vec![
+            question("first", false, &["one", "two"]),
+            question("second", true, &["three", "four"]),
+        ],
+    });
+
+    assert!(
+        drawn(&app).contains("(1/2)"),
+        "the first question is not the one on screen:\n{}",
+        drawn(&app)
+    );
+    assert_eq!(app.on_key(key(KeyCode::Char('2'))), None);
+    assert!(
+        drawn(&app).contains("(2/2)"),
+        "the second question did not come up:\n{}",
+        drawn(&app)
+    );
+    // Enter without a choice keeps the question: nothing was selected.
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+
+    assert_eq!(app.on_key(key(KeyCode::Char('1'))), None);
+    let answer = app.on_key(key(KeyCode::Enter));
+    match answer {
+        Some(Action::Ask { ask_id, answers }) => {
+            assert_eq!(ask_id, "a1");
+            assert_eq!(answers.len(), 2);
+            assert_eq!(answers[0].selected, vec!["two".to_string()]);
+            assert_eq!(answers[1].selected, vec!["three".to_string()]);
+        }
+        other => panic!("the ask did not finish: {other:?}"),
+    }
+    assert!(app.prompt.is_none());
+    assert!(
+        last_line(&app).contains("you answered the ask tool (2 answers)"),
+        "the ask confirmation line is missing: {}",
+        last_line(&app)
+    );
+}
+
+#[test]
+fn escape_leaves_a_question_open_because_there_is_nothing_to_deny() {
+    let mut app = app();
+    app.apply_event(&ApiEvent::AskRequested {
+        session_id: "s1".to_string(),
+        ask_id: "a1".to_string(),
+        questions: vec![question("only", false, &["one"])],
+    });
+    assert_eq!(app.on_key(esc()), None);
+    assert!(app.prompt.is_some(), "escape closed a question nobody answered");
+    assert!(
+        drawn(&app).contains("press the number of an option"),
+        "the question lost its hint:\n{}",
+        drawn(&app)
+    );
+}
+
+#[test]
+fn a_question_with_no_options_is_confirmed_past_instead_of_blocking() {
+    let mut app = app();
+    app.apply_event(&ApiEvent::AskRequested {
+        session_id: "s1".to_string(),
+        ask_id: "a1".to_string(),
+        questions: vec![question("empty", false, &[]), question("real", false, &["one"])],
+    });
+    assert!(
+        drawn(&app).contains("no options"),
+        "a question with nothing to choose does not say so:\n{}",
+        drawn(&app)
+    );
+    // The first question has no digit to press, so the confirm key settles it
+    // with an empty selection and the second question takes its place.
+    assert_eq!(app.on_key(key(KeyCode::Enter)), None);
+    assert!(
+        drawn(&app).contains("(2/2)"),
+        "the empty question blocked the prompt:\n{}",
+        drawn(&app)
+    );
+    match app.on_key(key(KeyCode::Char('1'))) {
+        Some(Action::Ask { answers, .. }) => {
+            assert!(answers[0].selected.is_empty());
+            assert_eq!(answers[1].selected, vec!["one".to_string()]);
+        }
+        other => panic!("the ask did not finish: {other:?}"),
+    }
+}
+
+#[test]
+fn a_cancelled_turn_takes_the_prompt_and_the_queue_with_it() {
+    let mut app = app();
+    app.pending_turn = true;
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.apply_event(&approval_pending("r2", "write"));
+
+    app.apply_event(&stopped("s1"));
+    assert!(app.prompt.is_none(), "a prompt outlived the turn it belonged to");
+    assert!(app.waiting_prompts.is_empty(), "a queued prompt outlived its turn");
+    assert_eq!(app.on_key(esc()), None, "a withdrawn prompt still answered a key");
+    assert!(
+        app.transcript
+            .items()
+            .iter()
+            .any(|item| matches!(item, Item::Notice(text) if text.contains("2 prompts withdrawn"))),
+        "the withdrawal was silent: {:?}",
+        app.transcript.items()
+    );
+}
+
+#[test]
+fn an_approval_outlives_its_turn_but_a_question_does_not() {
+    let mut approval = app();
+    approval.pending_turn = true;
+    approval.apply_event(&approval_pending("r1", "bash"));
+    approval.apply_event(&done("s1"));
+    assert!(
+        approval.prompt.is_some(),
+        "the approval was dropped with the turn, leaving its request unanswerable"
+    );
+    assert_eq!(
+        approval.on_key(key(KeyCode::Char('y'))),
+        Some(Action::Approval {
+            request_id: "r1".to_string(),
+            approved: true,
+            always: false,
+        }),
+        "the approval could not be answered after the turn ended"
+    );
+
+    let mut asked = app();
+    asked.pending_turn = true;
+    asked.apply_event(&ApiEvent::AskRequested {
+        session_id: "s1".to_string(),
+        ask_id: "a1".to_string(),
+        questions: vec![question("only", false, &["one"])],
+    });
+    asked.apply_event(&done("s1"));
+    assert!(asked.prompt.is_none(), "a question outlived the tool that asked it");
+    assert!(
+        last_line(&asked).contains("1 question withdrawn"),
+        "the withdrawal was silent: {}",
+        last_line(&asked)
+    );
+}
+
+#[test]
+fn a_lost_connection_takes_the_prompt_with_it() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.disconnect("the daemon closed the socket");
+    assert!(app.prompt.is_none(), "an answer would be sent over a dead socket");
+    assert_eq!(app.on_key(key(KeyCode::Char('y'))), None);
+    // The key falls through to the input line, which is all that is left.
+    assert_eq!(app.input.text(), "y");
+}
+
+#[test]
+fn an_answer_line_never_claims_the_call_ran() {
+    // The engine records the approval and refuses the call, so the wording is
+    // the only place a user learns a retry is needed.
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.on_key(key(KeyCode::Char('y')));
+    let line = last_line(&app);
+    assert!(!line.contains("approved"), "the line reads as a granted call: {line}");
+    assert!(!line.contains("ran"), "the line claims the tool ran: {line}");
+    assert!(line.contains("call it again"), "the retry is not named: {line}");
+}
+
+#[test]
+fn a_prompt_does_not_swallow_the_key_that_leaves() {
+    let mut app = app();
+    app.apply_event(&approval_pending("r1", "bash"));
+    // The prompt takes every other key, but a client whose only exit is
+    // swallowed is a client the user cannot leave.
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+        Some(Action::Quit)
+    );
+    assert!(app.prompt.is_some(), "leaving the client answered the prompt");
+
+    app.pending_turn = true;
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        Some(Action::Cancel),
+        "ctrl-c did not stop the turn it was meant to stop"
+    );
+    assert!(app.prompt.is_none(), "a cancelled turn left its prompt on screen");
+}
+
+#[test]
+fn the_default_prompt_for_a_request_with_no_line_reads_as_its_name() {
+    let prompt = Prompt::approval_for("r1".to_string(), "bash".to_string(), Some("ls -la".to_string()));
+    assert_eq!(prompt.lines()[0], "! approval needed: bash: ls -la");
+}

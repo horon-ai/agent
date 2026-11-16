@@ -35,6 +35,10 @@ mod tool_line_tests;
 #[path = "turn_state_tests.rs"]
 mod turn_state_tests;
 
+#[cfg(test)]
+#[path = "prompt_queue_tests.rs"]
+mod prompt_queue_tests;
+
 use std::time::Duration;
 
 use ratatui::Terminal;
@@ -148,11 +152,17 @@ impl Args {
 ///
 /// `ensure_runtime` stays on: an app that only works once the user has started
 /// two daemons by hand is indistinguishable from a broken one.
+///
+/// `supports_ask_requests` is on because this client draws the questions and
+/// answers them: the daemon parks a turn on the `ask` tool only for a
+/// connection that says so, and the shipped default of `false` is why those
+/// prompts never arrived.
 pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::ConnectOptions {
     horon_agent_sdk::ConnectOptions {
         socket_path: socket,
         client_name: concat!("horon-tui/", env!("CARGO_PKG_VERSION")).to_string(),
         ensure_runtime: true,
+        supports_ask_requests: true,
         ..horon_agent_sdk::ConnectOptions::default()
     }
 }
@@ -485,13 +495,34 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
+    // A prompt line can be wider than the pane (a long option label, a whole
+    // command), and a clipped line hides the choice it names. Wrapping here is
+    // what makes the pane taller for it instead of cutting it off.
+    let prompt_rows: Vec<Line<'static>> = prompt_lines
+        .iter()
+        .enumerate()
+        .flat_map(|(index, text)| {
+            // The first line is the prompt itself; a background sets it apart
+            // from the rest of the pane.
+            let style = if index == 0 {
+                Style::default()
+                    .fg(theme.prompt.prompt_border)
+                    .bg(theme.prompt.selected_bg)
+            } else {
+                Style::default().fg(theme.prompt.prompt_text)
+            };
+            crate::wrap::wrap_line(&Line::from(text.clone()), usize::from(frame.area().width))
+                .into_iter()
+                .map(move |row| row.style(style))
+        })
+        .collect();
     let hint = app.completion_hint();
     let mut constraints = vec![Constraint::Min(3), Constraint::Length(1), Constraint::Length(1)];
     if hint.is_some() {
         constraints.push(Constraint::Length(1));
     }
-    if !prompt_lines.is_empty() {
-        constraints.insert(1, Constraint::Length(prompt_lines.len() as u16));
+    if !prompt_rows.is_empty() {
+        constraints.insert(1, Constraint::Length(prompt_rows.len() as u16));
     }
     if app.banner.is_some() {
         constraints.insert(0, Constraint::Length(1));
@@ -514,24 +545,8 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     frame.render_widget(transcript_widget(app, transcript_area.width), transcript_area);
     index += 1;
 
-    if !prompt_lines.is_empty() {
-        let lines: Vec<Line<'_>> = prompt_lines
-            .into_iter()
-            .enumerate()
-            .map(|(line, text)| {
-                // The first line is the prompt itself; a background sets it
-                // apart from the rest of the pane.
-                let style = if line == 0 {
-                    Style::default()
-                        .fg(theme.prompt.prompt_border)
-                        .bg(theme.prompt.selected_bg)
-                } else {
-                    Style::default().fg(theme.prompt.prompt_text)
-                };
-                Line::from(Span::styled(text, style))
-            })
-            .collect();
-        frame.render_widget(Paragraph::new(lines), areas[index]);
+    if !prompt_rows.is_empty() {
+        frame.render_widget(Paragraph::new(prompt_rows), areas[index]);
         index += 1;
     }
 

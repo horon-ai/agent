@@ -42,6 +42,11 @@ pub struct ConnectOptions {
     pub ensure_runtime: bool,
     /// Desktop inline Markdown response renderer. Other clients leave false.
     pub supports_user_response: bool,
+    /// Whether this client can render the `ask` tool's questions and answer
+    /// them. Off by default: the daemon parks a turn on the person only for a
+    /// connection that says it can ask one, so a client without a question
+    /// screen must not claim one.
+    pub supports_ask_requests: bool,
 }
 
 impl Default for ConnectOptions {
@@ -52,6 +57,7 @@ impl Default for ConnectOptions {
             request_timeout: Some(Duration::from_secs(30)),
             ensure_runtime: true,
             supports_user_response: false,
+            supports_ask_requests: false,
         }
     }
 }
@@ -736,6 +742,9 @@ impl HoronAgentClient {
             socket_path: None,
             client_name: options.client_name.clone(),
             supports_user_response: options.supports_user_response,
+            // `SshConnectOptions` has no ask flag, so a remote session cannot
+            // claim a question screen this connection never offered.
+            supports_ask_requests: false,
             request_timeout: options.request_timeout,
             ensure_runtime: false,
         };
@@ -785,6 +794,7 @@ impl HoronAgentClient {
         let connect = ConnectOptions {
             socket_path: Some(instance.socket_path.clone()),
             supports_user_response: false,
+            supports_ask_requests: false,
             client_name: options.client_name.clone(),
             request_timeout: options.request_timeout,
             ensure_runtime: false,
@@ -862,7 +872,7 @@ impl HoronAgentClient {
                 max_version: API_VERSION_MAJOR,
                 client: options.client_name.clone(),
                 supports_user_response: options.supports_user_response,
-                supports_ask_requests: false,
+                supports_ask_requests: options.supports_ask_requests,
             },
             hello_timeout,
         )?;
@@ -2485,6 +2495,7 @@ fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventContro
     } else {
         HoronAgentClient::connect(ConnectOptions {
             supports_user_response: false,
+            supports_ask_requests: false,
             socket_path: Some(parent.inner.socket_path.clone()),
             client_name: format!("{}/global-events", parent.inner.client_name),
             request_timeout: parent.inner.request_timeout,

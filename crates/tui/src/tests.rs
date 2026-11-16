@@ -187,7 +187,12 @@ fn approval_pending_shows_prompt_and_resolves() {
     });
     let screen = draw_to_string(&mut app);
     assert!(!screen.contains("approval needed"), "prompt still drawn:\n{screen}");
-    assert!(!screen.contains("rm -rf build"), "stale action still drawn:\n{screen}");
+    // The answer itself stays in the transcript: the line says what was allowed
+    // and that the call still has to be retried.
+    assert!(
+        screen.contains("you allowed bash"),
+        "the answer left no line:\n{screen}"
+    );
 }
 
 #[test]

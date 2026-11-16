@@ -136,6 +136,13 @@ pub struct Transcript {
     tool_output_lines: usize,
     /// When each call started, keyed by call id and dropped when it ends.
     starts: Vec<Start>,
+    /// Call ids whose argument summary an approval prompt already showed.
+    ///
+    /// An approval arrives with the tool name alone, so the prompts of two
+    /// parallel calls are paired with the lines by arrival order; this
+    /// remembers what was paired so the second prompt cannot repeat the first
+    /// one's arguments.
+    claims: Vec<String>,
 }
 
 /// When one call started.
@@ -155,6 +162,7 @@ impl Default for Transcript {
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
+            claims: Vec::new(),
         }
     }
 }
@@ -410,6 +418,37 @@ impl Transcript {
             at: Instant::now(),
         });
         self.items.push(Item::Tool(ToolCall::new(call_id, name)));
+    }
+
+    /// The argument summary of the oldest call of `name` no prompt has shown.
+    ///
+    /// An approval carries the tool name alone, so the prompt for the second of
+    /// two parallel `bash` calls would read exactly like the first. The prompt
+    /// pairs with a line instead: the first prompt takes the first line of that
+    /// name, the second the next. A line already paired is skipped, and a call
+    /// whose line exists but whose arguments yield no summary is still claimed,
+    /// so it cannot be paired twice.
+    pub fn claim_argument_summary(&mut self, name: &str) -> Option<String> {
+        let found = self.items.iter().find_map(|item| match item {
+            Item::Tool(call)
+                if call.name == name
+                    && !call.call_id.is_empty()
+                    && !self.claims.iter().any(|claimed| claimed == &call.call_id) =>
+            {
+                Some((call.call_id.clone(), tool_line::summarize(&call.input)))
+            }
+            _ => None,
+        })?;
+        self.claims.push(found.0);
+        found.1
+    }
+
+    /// Drop what earlier prompts paired with.
+    ///
+    /// Called when a turn ends: the lines that were paired belong to that turn,
+    /// and keeping their ids would grow the list for the life of the session.
+    pub fn forget_claims(&mut self) {
+        self.claims.clear();
     }
 
     /// Argument bytes arrived for a call still streaming its input.

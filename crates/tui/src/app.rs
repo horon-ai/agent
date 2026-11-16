@@ -5,6 +5,7 @@
 //! a whole conversation with fake events and draw the result into a
 //! `TestBackend`. Only [`crate::run`] touches a real terminal.
 
+use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -78,6 +79,12 @@ pub struct App {
     pub input: Input,
     /// The prompt blocking the turn, if any.
     pub prompt: Option<Prompt>,
+    /// Prompts that arrived while one was open, oldest first.
+    ///
+    /// The daemon parks one approval per call, so two parallel calls need two
+    /// decisions. They are kept rather than dropped over the one on screen:
+    /// answering shows the next, and the count is drawn with the prompt.
+    pub waiting_prompts: VecDeque<Prompt>,
     /// A fatal or connection-level sentence drawn across the top.
     pub banner: Option<String>,
     /// Whether the loop should keep going.
@@ -153,6 +160,7 @@ impl App {
             transcript: Transcript::new(),
             input: Input::new(),
             prompt: None,
+            waiting_prompts: VecDeque::new(),
             banner: None,
             running: true,
             exit_code: 0,
@@ -191,6 +199,7 @@ impl App {
             transcript: Transcript::new(),
             input: Input::new(),
             prompt: None,
+            waiting_prompts: VecDeque::new(),
             banner: Some(message.to_string()),
             running: false,
             exit_code: 1,
@@ -251,7 +260,7 @@ impl App {
         self.disconnected = true;
         self.pending_turn = false;
         self.session_status = Some("idle".to_string());
-        self.prompt = None;
+        self.withdraw_prompts("the connection was lost");
         self.transcript.end_running_tools();
         if !self.queue.is_empty() {
             let waiting = self.queue.len();
@@ -334,12 +343,87 @@ impl App {
         self.queue.push(Message::new(text.to_string(), None));
     }
 
-    /// The lines the active prompt wants drawn, if any.
-    pub fn prompt_lines(&self) -> Vec<String> {
-        match &self.prompt {
-            Some(prompt) => prompt.lines(),
-            None => Vec::new(),
+    /// Drop the questions a turn was parked on.
+    ///
+    /// The `ask` tool waits on the connection for as long as its turn runs, so a
+    /// question outliving its turn can no longer be answered: the daemon has
+    /// already stopped waiting. Approvals are different and are left alone —
+    /// their request stays queued with its own deadline.
+    fn withdraw_asks(&mut self, reason: &str) {
+        let mut withdrawn = 0;
+        if matches!(self.prompt, Some(Prompt::Ask(_))) {
+            self.prompt = None;
+            withdrawn += 1;
         }
+        let before = self.waiting_prompts.len();
+        self.waiting_prompts.retain(|prompt| !matches!(prompt, Prompt::Ask(_)));
+        withdrawn += before - self.waiting_prompts.len();
+        if self.prompt.is_none() {
+            self.prompt = self.waiting_prompts.pop_front();
+        }
+        if withdrawn == 0 {
+            return;
+        }
+        let plural = if withdrawn == 1 { "" } else { "s" };
+        self.transcript
+            .push_notice(format!("{reason}; {withdrawn} question{plural} withdrawn"));
+    }
+
+    /// The lines the active prompt wants drawn, if any.
+    ///
+    /// The hints come from the key map in force, so a rebound answer key is the
+    /// key the prompt names. A line under the prompt counts the decisions still
+    /// waiting behind it: answering the one on screen shows the next, and
+    /// without the count a second approval would look like a repeat of the
+    /// first.
+    pub fn prompt_lines(&self) -> Vec<String> {
+        let Some(prompt) = &self.prompt else {
+            return Vec::new();
+        };
+        let mut lines = prompt.lines_with(&self.bindings);
+        let waiting = self.waiting_prompts.len();
+        if waiting > 0 {
+            let plural = if waiting == 1 { "" } else { "s" };
+            lines.push(format!("  {waiting} more prompt{plural} waiting"));
+        }
+        lines
+    }
+
+    /// Put a prompt in front of the user, or behind the one already there.
+    fn show_prompt(&mut self, prompt: Prompt) {
+        match &self.prompt {
+            Some(_) => self.waiting_prompts.push_back(prompt),
+            None => self.prompt = Some(prompt),
+        }
+    }
+
+    /// Take the prompt on screen down and show the next one, if any.
+    ///
+    /// Returns the prompt that was on screen, which is what the confirmation
+    /// line names.
+    fn take_prompt(&mut self) -> Option<Prompt> {
+        let taken = self.prompt.take();
+        self.prompt = self.waiting_prompts.pop_front();
+        taken
+    }
+
+    /// Drop the prompts a turn was parked on.
+    ///
+    /// A prompt belongs to the turn that asked for it. Once that turn is gone
+    /// (answered, cancelled, failed, or a lost connection) the decision has no
+    /// waiting call behind it, and answering it would be a claim about a run
+    /// that no longer exists. The queue goes with it for the same reason.
+    fn withdraw_prompts(&mut self, reason: &str) {
+        if self.prompt.is_none() && self.waiting_prompts.is_empty() {
+            return;
+        }
+        let shown = usize::from(self.prompt.is_some()) + self.waiting_prompts.len();
+        self.prompt = None;
+        self.waiting_prompts.clear();
+        self.transcript.forget_claims();
+        let plural = if shown == 1 { "" } else { "s" };
+        self.transcript
+            .push_notice(format!("{reason}; {shown} prompt{plural} withdrawn"));
     }
 
     /// The one-line status: what we are attached to and what it is doing.
@@ -440,6 +524,13 @@ impl App {
                 self.pending_turn = false;
                 self.resend_held = false;
                 self.session_status = Some("idle".to_string());
+                // An approval outlives the turn that asked for it: the request
+                // stays queued in the daemon (with its own deadline) and the
+                // recorded answer is what the model's retry reads, so dropping
+                // the prompt here would throw away the only way to answer it. A
+                // question does not: the `ask` tool stops waiting when the turn
+                // it belongs to ends.
+                self.withdraw_asks("the turn ended");
             }
             ApiEvent::TurnStopped { reason, message, .. } => {
                 self.transcript.end_running_tools();
@@ -448,6 +539,13 @@ impl App {
                 // refused send left waiting is not held for ever.
                 self.resend_held = false;
                 self.session_status = Some("idle".to_string());
+                self.withdraw_asks("the turn stopped");
+                // A cancel is the user deciding to stop, so nothing may stay on
+                // screen asking them for a decision about the run they just
+                // stopped.
+                if matches!(reason, TurnStopReason::Interrupted) {
+                    self.withdraw_prompts("the turn was cancelled");
+                }
                 // A cancel is the user's own decision, so it is a notice. Any
                 // other abnormal stop is news about the harness and stays a
                 // warning.
@@ -459,7 +557,12 @@ impl App {
             }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::ApprovalPending { request_id, action, .. } => {
-                self.prompt = Some(Prompt::approval(request_id.clone(), action.clone()));
+                // The event names the tool and nothing else, so the prompt
+                // pairs with the oldest line of that name no prompt showed yet:
+                // two parallel `bash` calls then read as the two commands they
+                // are, in the order they arrived.
+                let target = self.transcript.claim_argument_summary(action);
+                self.show_prompt(Prompt::approval_for(request_id.clone(), action.clone(), target));
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -468,18 +571,28 @@ impl App {
                 via,
                 ..
             } => {
+                // The decision may have been made on another surface, so the
+                // prompt is found rather than assumed: it can be the one on
+                // screen or one still waiting its turn.
                 let holds_request = matches!(
                     &self.prompt,
                     Some(Prompt::Approval(approval)) if &approval.request_id == request_id
                 );
                 if holds_request {
-                    self.prompt = None;
+                    self.take_prompt();
+                } else {
+                    let queued = self.waiting_prompts.iter().position(
+                        |prompt| matches!(prompt, Prompt::Approval(approval) if &approval.request_id == request_id),
+                    );
+                    if let Some(index) = queued {
+                        self.waiting_prompts.remove(index);
+                    }
                 }
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
             ApiEvent::AskRequested { ask_id, questions, .. } => {
-                self.prompt = Some(Prompt::ask(ask_id.clone(), questions.clone()));
+                self.show_prompt(Prompt::ask(ask_id.clone(), questions.clone()));
             }
             ApiEvent::ModelInfo {
                 session_id,
@@ -564,7 +677,12 @@ impl App {
                     approved,
                     always,
                 }) => {
-                    self.prompt = None;
+                    // The prompt comes down before the answer is sent: the
+                    // daemon refuses a second answer to the same request, and a
+                    // prompt still on screen invites one.
+                    let covered = self.take_prompt();
+                    self.transcript
+                        .push_notice(approval_answer_line(&covered, approved, always));
                     return Some(Action::Approval {
                         request_id,
                         approved,
@@ -572,10 +690,27 @@ impl App {
                     });
                 }
                 Some(Response::Ask { ask_id, answers }) => {
-                    self.prompt = None;
+                    let covered = answers.len();
+                    self.take_prompt();
+                    self.transcript.push_notice(ask_answer_line(covered));
                     return Some(Action::Ask { ask_id, answers });
                 }
-                None => return None,
+                None => {
+                    // A prompt owns every key, but not the two that end the
+                    // session. An approval outlives its turn, so a swallowed
+                    // Ctrl-C would leave a prompt on screen with no way out of
+                    // the client; the prompt still answers its own keys first,
+                    // which is what keeps `esc` on the approval.
+                    let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+                    match bound {
+                        Some(keys::ids::APP_CANCEL) if self.pending_turn => {
+                            self.withdraw_prompts("the turn was cancelled");
+                            return self.cancel_turn();
+                        }
+                        Some(keys::ids::APP_CANCEL | keys::ids::APP_QUIT) => return Some(Action::Quit),
+                        _ => return None,
+                    }
+                }
             }
         }
 
@@ -803,6 +938,46 @@ impl App {
             }
         }
     }
+}
+
+/// The line the transcript keeps after an approval is answered.
+///
+/// An answer is recorded, not resumed. A tool call outside an ACP permission
+/// bridge is refused with "Nothing was executed", and only the model calling the
+/// same tool again runs it: the gate reads the recorded decision on the retry
+/// and then removes the request (`crates/app-core/src/tool/permission_bridge.rs`,
+/// module doc; `Registry::approval_refusal` in `crates/app-core/src/tool/mod.rs`).
+/// A line that just said "approved" would read as "it ran".
+///
+/// `allow_always` is not a rule either: the daemon has no persistent always
+/// store, and records the answer as one approval
+/// (`crates/app-core/src/server/client_ask.rs`).
+fn approval_answer_line(covered: &Option<Prompt>, approved: bool, always: bool) -> String {
+    let action = match covered {
+        Some(Prompt::Approval(approval)) => approval.action.as_str(),
+        Some(Prompt::Ask(_)) | None => "the call",
+    };
+    match (approved, always) {
+        (true, true) => format!(
+            "you allowed {action}: recorded once (the daemon keeps no always-rule), so the model has to call it again"
+        ),
+        (true, false) => format!("you allowed {action}: the model has to call it again before it runs"),
+        (false, _) => format!("you denied {action}: the call will not run"),
+    }
+}
+
+/// The line the transcript keeps after a question set is answered.
+///
+/// The ask tool waits for the answer on the connection that advertised
+/// `supports_ask_requests`, so an answer releases the call rather than being
+/// remembered for a retry (`crates/app-core/src/server/client_ask.rs`).
+fn ask_answer_line(answers: usize) -> String {
+    let counted = if answers == 1 {
+        "1 answer".to_string()
+    } else {
+        format!("{answers} answers")
+    };
+    format!("you answered the ask tool ({counted}): the call resumes")
 }
 
 /// The home directory the `path` segment shortens to `~`.

@@ -140,8 +140,20 @@ fn an_open_prompt_takes_esc_before_the_interrupt() {
     app.pending_turn = true;
     app.prompt = Some(Prompt::approval("r1".to_string(), "bash".to_string()));
 
-    assert_eq!(app.on_key(esc()), None, "the prompt answered the key");
-    assert!(app.prompt.is_some(), "the prompt stays parked");
+    // `esc` answers the prompt instead of interrupting the turn: the prompt's
+    // scope is checked first, and a parked approval is answered by it.
+    assert_eq!(
+        app.on_key(esc()),
+        Some(Action::Approval {
+            request_id: "r1".to_string(),
+            approved: false,
+            always: false,
+        }),
+        "the prompt did not answer the key"
+    );
+    assert!(app.prompt.is_none(), "the prompt stayed parked after its answer");
+    assert!(app.pending_turn, "the interrupt fired instead of the prompt");
+    assert!(app.running);
 }
 
 #[test]
