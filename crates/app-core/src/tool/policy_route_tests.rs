@@ -367,7 +367,7 @@ async fn every_registered_name_of_an_mcp_tool_decides_allow_and_deny() {
         .collect();
     // Registered alone the first tool takes its plain name; the colliding
     // second server then renames both, so the first has two names on record.
-    let legacy = crate::mcp::dispatch_name(&catalog[0].0, &catalog[0].1.name);
+    let retired = crate::mcp::dispatch_name(&catalog[0].0, &catalog[0].1.name);
     registry
         .reconcile_mcp_tools(crate::mcp::create_mcp_tools_from_cached_many(
             &catalog[..1],
@@ -378,14 +378,14 @@ async fn every_registered_name_of_an_mcp_tool_decides_allow_and_deny() {
     registry
         .reconcile_mcp_tools(crate::mcp::create_mcp_tools_from_cached_many(&catalog, manager))
         .await;
-    assert_ne!(legacy, aliases[0]);
+    assert_ne!(retired, aliases[0]);
     assert_eq!(
         known_names(&registry, &aliases[0]),
-        names(&[legacy.as_str(), aliases[0].as_str()])
+        names(&[retired.as_str(), aliases[0].as_str()])
     );
 
     let sets = [
-        names(&[legacy.as_str()]),
+        names(&[retired.as_str()]),
         names(&[aliases[0].as_str()]),
         names(&[aliases[1].as_str()]),
         names(&["mcp"]),
@@ -393,7 +393,7 @@ async fn every_registered_name_of_an_mcp_tool_decides_allow_and_deny() {
         HashSet::new(),
     ];
     let asked = [
-        legacy.as_str(),
+        retired.as_str(),
         aliases[0].as_str(),
         aliases[1].as_str(),
         "bash",
@@ -417,8 +417,8 @@ async fn every_registered_name_of_an_mcp_tool_decides_allow_and_deny() {
     }
 
     // The retired name still decides for the tool it used to name.
-    assert!(registry.tool_is_allowed(&names(&[legacy.as_str()]), &aliases[0]));
-    assert!(registry.tool_is_disabled(&names(&[legacy.as_str()]), &aliases[0]));
+    assert!(registry.tool_is_allowed(&names(&[retired.as_str()]), &aliases[0]));
+    assert!(registry.tool_is_disabled(&names(&[retired.as_str()]), &aliases[0]));
     assert!(!registry.tool_is_allowed(&names(&["bash"]), &aliases[0]));
     assert!(!registry.tool_is_disabled(&HashSet::new(), &aliases[0]));
 }
