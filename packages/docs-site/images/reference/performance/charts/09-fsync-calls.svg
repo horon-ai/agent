@@ -45,6 +45,6 @@
 <rect x="32" y="474.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="492.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <text x="32.0" y="522.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">No tool has a value for this metric on Windows. (strace is not available on this runner.)</text>
-<text x="32.0" y="548.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent cdc8cb8 · measured 2026-11-15 17:01 UTC · run 43736928002</text>
+<text x="32.0" y="548.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent ef9339c · measured 2026-11-16 11:33 UTC · run 43856404791</text>
 <text x="32.0" y="566.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>
