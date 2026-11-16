@@ -549,6 +549,13 @@ impl Transcript {
         if request_id.is_empty() {
             return;
         }
+        // The daemon's resolved event carries `approved` alone, so it cannot say
+        // whether the answer was `a` or `y`: the "always" the local key recorded
+        // must not be weakened by the event that merely confirms it.
+        let decision = match (self.decided_decision(request_id), decision) {
+            (Some(Decision::AllowedAlways), Decision::Allowed) => Decision::AllowedAlways,
+            _ => decision,
+        };
         self.restate_request(request_id, |state| match state {
             ToolState::Failed(message) | ToolState::Waiting(message) | ToolState::Settled(_, message) => {
                 Some(ToolState::Settled(decision, message))
@@ -563,6 +570,15 @@ impl Transcript {
         if self.decided.len() > KEPT {
             self.decided.remove(0);
         }
+    }
+
+    /// The decision already recorded for `request_id`, if any.
+    fn decided_decision(&self, request_id: &str) -> Option<Decision> {
+        self.decided
+            .iter()
+            .rev()
+            .find(|(id, _)| id == request_id)
+            .map(|(_, decision)| *decision)
     }
 
     /// The decision already recorded for the refusal in `state`, if any.

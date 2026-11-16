@@ -389,7 +389,9 @@ impl SlashPopup {
     /// A new draft starts the selection over and brings back a popup `esc`
     /// closed: the dismissal belonged to the text that was there.
     pub fn sync(&mut self, registry: &Registry, draft: &str) {
-        let fingerprint = crate::input::fingerprint(draft.chars());
+        // The length is counted here, once per changed draft, never in the
+        // per-frame check.
+        let fingerprint = crate::input::fingerprint(draft.chars().count(), draft.chars());
         if self.draft == draft {
             self.synced = Some(fingerprint);
             return;

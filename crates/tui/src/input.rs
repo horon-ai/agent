@@ -67,7 +67,9 @@ impl Input {
     /// hashing it costs one pass and no allocation, where building the string
     /// costs an allocation of the whole message.
     pub fn fingerprint(&self) -> u64 {
-        fingerprint(self.characters.iter().copied())
+        // `len()` is the constant-time half: the per-frame check reads at most
+        // the first word of the draft.
+        fingerprint(self.characters.len(), self.characters.iter().copied())
     }
 
     /// Whether the draft starts with the command marker.
@@ -460,32 +462,29 @@ fn char_width(character: char) -> usize {
 /// not cost a pass per frame.
 const FINGERPRINT_CELLS: usize = 64;
 
-/// Fingerprint of a draft, read one character at a time and cut short.
+/// Fingerprint of a draft, from its length and its first word.
 ///
 /// One definition for both sides of the comparison: the editor hashes the
 /// characters it holds, the popup hashes the text it was handed, and neither
-/// builds a string to find out that nothing changed. The length comes first, so
-/// a draft that grew or shrank is seen without hashing anything, and the scan
-/// stops at the first whitespace or at [`FINGERPRINT_CELLS`]: only the first
-/// word can change what the popup offers.
-pub fn fingerprint(characters: impl Iterator<Item = char>) -> u64 {
+/// builds a string to find out that nothing changed.
+///
+/// The length is a parameter so the per-frame caller can read it without a pass
+/// (the editor knows `characters.len()`); the scan stops at the first whitespace
+/// and after [`FINGERPRINT_CELLS`] characters, so a pasted paragraph costs a
+/// bounded read. Two drafts of the same length whose first words match hash
+/// alike, which is what the popup needs: only the first word changes what it
+/// offers.
+pub fn fingerprint(length: usize, characters: impl Iterator<Item = char>) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut length = 0u64;
-    let mut scanned = 0usize;
-    let mut first_word = true;
-    for character in characters {
-        length += 1;
-        if character.is_whitespace() {
-            first_word = false;
-            continue;
-        }
-        if first_word && scanned < FINGERPRINT_CELLS {
-            hash ^= u64::from(character as u32);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            scanned += 1;
-        }
+    for character in characters
+        .take_while(|character| !character.is_whitespace())
+        .take(FINGERPRINT_CELLS)
+    {
+        hash ^= u64::from(character as u32);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    // Mixed in last so the two halves cannot cancel each other out.
-    hash ^= length.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    // Folded in after the word, so a draft that grew or shrank differs even
+    // when its first word is the same one.
+    hash ^= (length as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
     hash
 }

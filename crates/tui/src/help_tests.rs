@@ -640,8 +640,14 @@ fn the_fingerprint_reads_the_first_word_and_the_length() {
     // from walking a pasted paragraph.
     let one = format!("/command {}", "x".repeat(10_000));
     let other = format!("/command {}", "y".repeat(10_000));
-    assert_eq!(fingerprint(one.chars()), fingerprint(other.chars()));
+    let hash = |draft: &str| fingerprint(draft.chars().count(), draft.chars());
+    assert_eq!(hash(&one), hash(&other));
     // A different first word, or a different length, is a different draft.
-    assert_ne!(fingerprint("/command".chars()), fingerprint("/commit".chars()));
-    assert_ne!(fingerprint("/mo".chars()), fingerprint("/mo ".chars()));
+    assert_ne!(hash("/command"), hash("/commit"));
+    assert_ne!(hash("/mo"), hash("/mo "));
+    // The two drafts above hold ten thousand characters each and differ only
+    // past their first word, and they hash alike: the scan stops at that word,
+    // which is what bounds the per-frame check.
+    let long = format!("/mo{}", "x".repeat(100_000));
+    assert_ne!(hash("/mo"), hash(&long), "the length is part of the answer");
 }

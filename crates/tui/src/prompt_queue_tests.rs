@@ -47,6 +47,17 @@ fn stopped(session: &str) -> ApiEvent {
     }
 }
 
+/// The event a decision made elsewhere arrives as: `approved` and nothing else.
+fn approval_resolved(request: &str, approved: bool) -> ApiEvent {
+    ApiEvent::ApprovalResolved {
+        session_id: "s1".to_string(),
+        request_id: request.to_string(),
+        approved,
+        via: "api_client".to_string(),
+        resolved_by: "tool".to_string(),
+    }
+}
+
 fn approval_pending(request: &str, action: &str) -> ApiEvent {
     ApiEvent::ApprovalPending {
         session_id: "s1".to_string(),
@@ -809,4 +820,39 @@ fn clear_does_not_resurrect_a_parked_label() {
         "/clear left the parked label:\n{text}"
     );
     assert!(!text.contains("◐") || text.contains("prompt"), "{text}");
+}
+
+#[test]
+fn an_allowed_event_does_not_weaken_allowed_always() {
+    // The local key records "always", then the daemon confirms it with an event
+    // that only carries `approved`, so it must not turn the row back into a
+    // one-off answer.
+    let mut app = app();
+    parked_call(&mut app, "c1", "ls", "r1");
+    app.on_key(key(KeyCode::Char('a')));
+    assert!(
+        screen(&mut app).contains("allowed always"),
+        "the key did not record the always answer"
+    );
+
+    app.apply_event(&approval_resolved("r1", true));
+    let text = screen(&mut app);
+    assert!(
+        text.contains("allowed always"),
+        "the resolved event weakened the row:\n{text}"
+    );
+    assert!(!text.contains("• allowed\n"), "the row says allowed once:\n{text}");
+}
+
+#[test]
+fn a_resolved_allow_without_a_local_key_reads_allowed() {
+    let mut app = app();
+    parked_call(&mut app, "c1", "ls", "r1");
+    app.apply_event(&approval_resolved("r1", true));
+    let text = screen(&mut app);
+    assert!(text.contains("allowed"), "the answer is missing:\n{text}");
+    assert!(
+        !text.contains("allowed always"),
+        "an event that cannot say `always` claimed it:\n{text}"
+    );
 }
