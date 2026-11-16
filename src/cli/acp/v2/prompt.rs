@@ -31,7 +31,7 @@ pub(super) const SESSION_CLOSED: &str = "The session closed before the request w
 
 /// The answer to a v2 `session/prompt` whose `prompt` array is empty.
 ///
-/// The alpha.13 `PromptRequest.prompt` is `minItems: 1`, and the empty
+/// The alpha.16 `PromptRequest.prompt` is `minItems: 1`, and the empty
 /// `user_message` an empty array would insert is not a turn, so the adapter
 /// refuses it before the daemon ever sees it. v1 keeps accepting an empty
 /// array: its `PromptRequest` sets no `minItems`, and its surface must not

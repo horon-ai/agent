@@ -26,6 +26,7 @@ import {
   REPLICATION_PROTOCOL_VERSION,
   type ApiEvent,
   type ApiRequest,
+  type ArtifactEntry,
   type AskSelection,
   type BackgroundWorkItem,
   type CanonicalRecordRef,
@@ -49,6 +50,7 @@ import {
   type SessionImportResult,
   type SessionInfo,
   type SessionRecordBlobStatus,
+  type SessionSearchHit,
   type SessionSnapshot,
   type SessionToolDefinition,
   type TextMatch,
@@ -56,6 +58,7 @@ import {
   type TodoSnapshot,
   type ToolVerdictName,
   type TurnStopReason,
+  type UsageReport,
 } from "./protocol.js";
 
 export interface RuntimeInfo {
@@ -70,6 +73,13 @@ export interface RuntimeInfo {
   fallbackModels?: string[];
   /** Model that produced the most recent response, which differs from `model` after a fallback. */
   servingModel?: string;
+  /**
+   * Reasoning effort the active route is using. Absent when the daemon did not
+   * report one, which is not the same as the provider's default.
+   */
+  reasoningEffort?: string;
+  /** How the provider authenticates (`api_key`, `oauth`, …), when it said so. */
+  authMethod?: string;
   providers: string[];
   routes: ModelRouteInfo[];
 }
@@ -87,6 +97,19 @@ export interface FileStatus {
   kind: string;
   size?: number;
   modifiedMs?: number;
+}
+
+/** The approval id the daemon confirmed as acked. */
+export interface ApprovalAckReceipt {
+  requestId: string;
+}
+
+/** The failover announcement the daemon confirmed as acked. */
+export interface FailoverAckReceipt {
+  chainId: string;
+  from: string;
+  to: string;
+  attempt: number;
 }
 
 /**
@@ -729,6 +752,20 @@ export class HoronAgentClient extends EventEmitter {
     return this.listSessions({ limit });
   }
 
+  /**
+   * Search every stored transcript, attached or not.
+   *
+   * The scan runs in the daemon's own session index, so a client sees the same
+   * hits and ordering the agent's search tool returns. `limit` caps the hit
+   * count and is clamped by the server; omit it for the server default. An
+   * empty query rejects with `invalid_request` rather than returning
+   * everything.
+   */
+  async searchSessions(query: string, limit?: number): Promise<SessionSearchHit[]> {
+    const frame = await this.expectReply({ req: "search_sessions", query, limit }, "session_search_results");
+    return frame.results;
+  }
+
   /** Reversibly hide a session from the default list. No transcript is deleted. */
   async archiveSession(sessionId: string): Promise<void> {
     await this.requestOk({ req: "archive_session", session_id: sessionId });
@@ -1129,6 +1166,46 @@ export class HoronAgentClient extends EventEmitter {
   }
 
   /**
+   * Retire the daemon's durable copy of an `approval_resolved` event.
+   *
+   * An approval stays parked until it is acked, so a client that resolves one
+   * out of band calls this once the decision has landed; an empty id rejects
+   * with `invalid_request` because it would clear nothing while reporting
+   * success. The daemon only accepts the ack on a connection attached to
+   * `sessionId`.
+   *
+   * The reply is a bare `ok` and no event follows it: an acknowledgement is a
+   * message a client sends, so the daemon never emits an `approval_ack` event
+   * itself. The returned receipt is built from the values that were sent.
+   */
+  async ackApproval(sessionId: string, requestId: string): Promise<ApprovalAckReceipt> {
+    await this.expectReply({ req: "approval_ack", session_id: sessionId, request_id: requestId }, "ok");
+    return { requestId };
+  }
+
+  /**
+   * Retire the daemon's durable copy of a `failover_switched` event.
+   *
+   * Echo the whole announcement: `chainId`, `from`, `to` and `attempt` all
+   * travel, because a partial key would either clear nothing or read as a
+   * different switch. Empty strings reject with `invalid_request`, and the
+   * daemon only accepts the ack on a connection attached to `sessionId`.
+   *
+   * Like `ackApproval`, the reply is a bare `ok`, no `failover_ack` event
+   * follows it, and the receipt is built from the values that were sent.
+   */
+  async ackFailover(
+    sessionId: string,
+    chainId: string,
+    from: string,
+    to: string,
+    attempt: number,
+  ): Promise<FailoverAckReceipt> {
+    await this.expectReply({ req: "failover_ack", session_id: sessionId, chain_id: chainId, from, to, attempt }, "ok");
+    return { chainId, from, to, attempt };
+  }
+
+  /**
    * Models this session can switch to, and which one is serving it.
    *
    * Answered from the catalog the daemon pushes on attach, so opening a model
@@ -1182,6 +1259,8 @@ export class HoronAgentClient extends EventEmitter {
       model: frame.model,
       fallbackModels: frame.fallback_models,
       servingModel: frame.serving_model,
+      reasoningEffort: frame.reasoning_effort,
+      authMethod: frame.auth_method,
       providers: [
         ...new Set(
           [frame.provider, ...routes.map((route) => route.provider)].filter(
@@ -1220,6 +1299,32 @@ export class HoronAgentClient extends EventEmitter {
     );
   }
 
+  /**
+   * Token usage: durable per-request totals, per-model aggregates, the active
+   * context window, and any subscription limits the daemon published.
+   *
+   * Omit `sessionId` for the whole account. A metric no request recorded is
+   * `null` rather than zero, and `pricing` is always `"unknown"` because this
+   * harness carries no price table. A named session id with no stored record
+   * rejects with `unknown_session`.
+   */
+  async usageReport(sessionId?: string): Promise<UsageReport> {
+    const frame = await this.expectReply(
+      sessionId === undefined ? { req: "usage_report" } : { req: "usage_report", session_id: sessionId },
+      "usage_report",
+    );
+    return {
+      session_id: frame.session_id,
+      sessions: frame.sessions,
+      totals: frame.totals,
+      models: frame.models,
+      context_window: frame.context_window,
+      limits: frame.limits,
+      pricing: frame.pricing,
+      estimated_cost: frame.estimated_cost,
+    };
+  }
+
   async readFile(sessionId: string, path: string, maxBytes?: number): Promise<FileContent> {
     const frame = await this.expectReply(
       { req: "read_file", session_id: sessionId, path, max_bytes: maxBytes },
@@ -1243,6 +1348,18 @@ export class HoronAgentClient extends EventEmitter {
       "text_matches",
     );
     return frame.matches;
+  }
+
+  /**
+   * Artifacts this session produced: HTML pages and images under its working
+   * directory. Metadata only; `readFile` serves the bytes.
+   *
+   * Served from the stored record, so the connection need not be attached, but
+   * a session id with no stored transcript rejects with `unknown_session`.
+   */
+  async listArtifacts(sessionId: string): Promise<ArtifactEntry[]> {
+    const frame = await this.expectReply({ req: "list_artifacts", session_id: sessionId }, "artifacts");
+    return frame.artifacts;
   }
 
   /** Persisted todo state for client-side auto-poke and quality gates.
@@ -2314,13 +2431,18 @@ export class HoronAgentClient extends EventEmitter {
           result.toolCalls.push(call);
           break;
         }
-        case "token_usage":
-          result.usage = {
+        case "token_usage": {
+          const usage: NonNullable<TurnResult["usage"]> = {
             input: event.input,
             output: event.output,
             cacheReadInput: event.cache_read_input,
           };
+          // The key is set only when the daemon sent one, so a turn without
+          // cache-creation accounting keeps the shape it had before the field.
+          if (event.cache_creation_input !== undefined) usage.cacheCreationInput = event.cache_creation_input;
+          result.usage = usage;
           break;
+        }
         case "permission_request":
           if (options.autoApprove) {
             await this.respondToPermission(sessionId, event.request_id, "allow");
@@ -2405,7 +2527,7 @@ export interface TurnResult {
   messages: AssistantTextMessage[];
   reasoning: string;
   toolCalls: ToolCallResult[];
-  usage?: { input: number; output: number; cacheReadInput?: number };
+  usage?: { input: number; output: number; cacheReadInput?: number; cacheCreationInput?: number };
 }
 
 export interface AssistantTextMessage {

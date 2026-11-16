@@ -64,7 +64,7 @@ pub(crate) fn auth_methods() -> Vec<Value> {
 /// IS-12: v1 config options renamed to `configId`, every select group renamed
 /// to `groupId`, order kept, select options only.
 ///
-/// alpha.13 requires every select to keep at least one value
+/// alpha.16 requires every select to keep at least one value
 /// (`SessionConfigSelectOptions` is `minItems: 1`), so a select that would
 /// publish none is dropped rather than sent as a frame the schema refuses.
 pub(crate) fn config_options(v1_options: &[Value]) -> Vec<Value> {
@@ -110,7 +110,7 @@ fn select_groups(options: &Value) -> Value {
                     return Some(Value::Object(option.clone()));
                 }
                 // A group whose own value list is empty is refused by the
-                // alpha.13 `SessionConfigSelectGroup` (`minItems: 1`): drop it.
+                // alpha.16 `SessionConfigSelectGroup` (`minItems: 1`): drop it.
                 if is_empty_values(option.get("options")) {
                     return None;
                 }
@@ -456,6 +456,15 @@ pub(crate) fn terminal_finished(
         "output": { "data": base64_encode(output.as_bytes()) },
         "exitStatus": { "exitCode": exit_code, "signal": signal },
     })
+}
+
+/// IS-5, IS-6: the history replay a `session/resume` asked for is over.
+///
+/// Sent once per resume with a `replayFrom` cursor, after the last replayed
+/// update and before the response; an empty history sends it too. Every
+/// session update between the request and this one is replayed history.
+pub(crate) fn replay_complete() -> Value {
+    json!({ "sessionUpdate": "replay_complete" })
 }
 
 /// IS-5: foreground work started.

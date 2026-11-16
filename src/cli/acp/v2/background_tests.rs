@@ -2,7 +2,7 @@
 //! `state_update`, the announce-before-list and finalize-before-removal order,
 //! the deferred removal while idle, `terminal/cancel`, and live terminal
 //! output. Every frame written for a background item is checked against the
-//! alpha.13 schema.
+//! alpha.16 schema.
 
 use super::super::tests::connection_core::*;
 use super::super::*;
