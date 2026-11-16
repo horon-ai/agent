@@ -65,8 +65,10 @@ APPROVAL_PROMPT = "approval needed"
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
 APPROVAL_RESOLVED = "approval approved"
-# The status line names the model and the session only once the client has the
-# reply that identifies its session, which is the state a submitted line needs.
+# The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
+# harness sends over the session event stream once the bridge is serving this
+# client, so seeing it means the client is past its first frame and talking to
+# a live bridge.
 SESSION_READY = "mock/mock-model"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
@@ -273,15 +275,27 @@ class Terminal:
 
     def wait(self, timeout: float) -> int:
         deadline = time.monotonic() + timeout
+        # A read of the master fails with EIO on Linux once every slave
+        # descriptor is closed and returns nothing on macOS; both mean "no more
+        # output", never "the child is gone". The exit status comes from poll(),
+        # so the wait keeps polling after the output side is finished.
+        master_open = True
         while time.monotonic() < deadline:
-            readable, _, _ = select.select([self.master], [], [], 0.1)
-            if readable:
-                try:
-                    chunk = os.read(self.master, 65536)
-                except OSError:
-                    break
-                if chunk:
-                    self.transcript += chunk.decode("utf-8", "replace")
+            if master_open:
+                readable, _, _ = select.select([self.master], [], [], 0.05)
+                if readable:
+                    try:
+                        chunk = os.read(self.master, 65536)
+                    except OSError:
+                        master_open = False
+                    else:
+                        if chunk:
+                            self.transcript += chunk.decode("utf-8", "replace")
+                        else:
+                            master_open = False
+            else:
+                # A finished master stays readable, so polling it would spin.
+                time.sleep(0.05)
             code = self.process.poll()
             if code is not None:
                 # Drain what the child wrote before exiting.
@@ -297,8 +311,6 @@ class Terminal:
                         break
                     self.transcript += chunk.decode("utf-8", "replace")
                 return code
-            if code is None and self.transcript and time.monotonic() >= deadline:
-                break
         self.process.kill()
         raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{self.transcript}")
 
@@ -547,12 +559,12 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
         relaunch = Terminal([launch.argv0], cwd=case_root, env=env)
         try:
             relaunch.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen after the stale socket")
-            # The first screen is drawn before the client has the reply that
-            # identifies its session. A key sent into that gap lands in a client
-            # whose draft and slash list are then replaced by the attach, so the
-            # line submitted is not the one typed; `/quit` never leaves and the
-            # case hangs. The status line carries the model only once that reply
-            # has landed, so it is the observable "the client is settled" state.
+            # The first frame is drawn once the client is connected, which over
+            # a stale socket already says a bridge answered, but not that the
+            # session behind it works. The status line carries `provider/model`
+            # from the harness's session event, so seeing it means data reached
+            # this client through the bridge it started itself: a stronger
+            # proof of recovery than the first frame alone.
             relaunch.read_until(SESSION_READY, STEP_TIMEOUT, "session ready after the stale socket")
             relaunch.send("/quit\r")
             code = relaunch.wait(STEP_TIMEOUT)
