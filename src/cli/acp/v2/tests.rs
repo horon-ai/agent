@@ -1,4 +1,4 @@
-//! Every v2 builder is validated against the vendored `schema-v2.0.0-alpha.13`
+//! Every v2 builder is validated against the vendored `schema-v2.0.0-alpha.16`
 //! `$defs` entry it produces, plus the IS-1/IS-6/IS-12/IS-15 rules that schema
 //! validation cannot express.
 
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
-const SCHEMA_JSON: &str = include_str!("../../../../tests/fixtures/acp/schema-v2.0.0-alpha.13.json");
+const SCHEMA_JSON: &str = include_str!("../../../../tests/fixtures/acp/schema-v2.0.0-alpha.16.json");
 
 fn validator(def_name: &str) -> Arc<jsonschema::Validator> {
     static CACHE: OnceLock<Mutex<HashMap<String, Arc<jsonschema::Validator>>>> = OnceLock::new();
@@ -136,7 +136,7 @@ fn error_frames_match_schema() {
     assert_eq!(invalid.code, -32602);
     let not_found = RpcError::session_not_found("sess-1");
 
-    // alpha.13 names the `data` of the two data-carrying codes: `-32022` is an
+    // alpha.16 names the `data` of the two data-carrying codes: `-32022` is an
     // `UnsupportedProtocolVersionErrorData`, `-32002` a
     // `SessionNotFoundErrorData`. The plain errors carry none.
     let cases: [(&RpcError, i64, Option<&str>); 3] = [
@@ -314,7 +314,7 @@ fn config_options_matches_schema() {
         &json!({ "configOptions": config_options(v1_options.as_array().unwrap()) }),
     );
 
-    // alpha.13 requires `minItems: 1` for a select's values and for each
+    // alpha.16 requires `minItems: 1` for a select's values and for each
     // group's values, so anything that would publish an empty list is dropped
     // instead of sent as a frame the schema refuses.
     let empties = json!([

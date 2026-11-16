@@ -1,9 +1,9 @@
 //! ACP schema validation for the frames the agent and the mock client write.
 //!
 //! Two vendored releases are supported, one per protocol version: the v1 set
-//! (`tests/fixtures/acp/schema-v1.26.0.json`, tag `schema-v1.26.0`) and the v2
-//! set (`tests/fixtures/acp/schema-v2.0.0-alpha.13.json`, tag
-//! `schema-v2.0.0-alpha.13`). Both annotate every method-specific `$defs` entry
+//! (`tests/fixtures/acp/schema-v1.32.0.json`, tag `schema-v1.32.0`) and the v2
+//! set (`tests/fixtures/acp/schema-v2.0.0-alpha.16.json`, tag
+//! `schema-v2.0.0-alpha.16`). Both annotate every method-specific `$defs` entry
 //! with `x-method` (the wire name) and `x-side` (which side implements the
 //! method). Those two annotations are what let this module pick the schema for
 //! one message instead of hand-copying a table from the specification: a request
@@ -42,14 +42,14 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
-pub const SCHEMA_JSON: &str = include_str!("../fixtures/acp/schema-v1.26.0.json");
-pub const META_JSON: &str = include_str!("../fixtures/acp/meta-v1.26.0.json");
-pub const SCHEMA_FIXTURE_PATH: &str = "tests/fixtures/acp/schema-v1.26.0.json";
-pub const META_FIXTURE_PATH: &str = "tests/fixtures/acp/meta-v1.26.0.json";
-pub const SCHEMA_V2_JSON: &str = include_str!("../fixtures/acp/schema-v2.0.0-alpha.13.json");
-pub const META_V2_JSON: &str = include_str!("../fixtures/acp/meta-v2.0.0-alpha.13.json");
-pub const SCHEMA_V2_FIXTURE_PATH: &str = "tests/fixtures/acp/schema-v2.0.0-alpha.13.json";
-pub const META_V2_FIXTURE_PATH: &str = "tests/fixtures/acp/meta-v2.0.0-alpha.13.json";
+pub const SCHEMA_JSON: &str = include_str!("../fixtures/acp/schema-v1.32.0.json");
+pub const META_JSON: &str = include_str!("../fixtures/acp/meta-v1.32.0.json");
+pub const SCHEMA_FIXTURE_PATH: &str = "tests/fixtures/acp/schema-v1.32.0.json";
+pub const META_FIXTURE_PATH: &str = "tests/fixtures/acp/meta-v1.32.0.json";
+pub const SCHEMA_V2_JSON: &str = include_str!("../fixtures/acp/schema-v2.0.0-alpha.16.json");
+pub const META_V2_JSON: &str = include_str!("../fixtures/acp/meta-v2.0.0-alpha.16.json");
+pub const SCHEMA_V2_FIXTURE_PATH: &str = "tests/fixtures/acp/schema-v2.0.0-alpha.16.json";
+pub const META_V2_FIXTURE_PATH: &str = "tests/fixtures/acp/meta-v2.0.0-alpha.16.json";
 
 /// Which side wrote the message being validated.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,14 +114,14 @@ pub struct SchemaSet {
 }
 
 impl SchemaSet {
-    /// The v1 set (`schema-v1.26.0`).
+    /// The v1 set (`schema-v1.32.0`).
     pub fn v1() -> Self {
-        Self::new(1, "schema-v1.26.0", SCHEMA_JSON, META_JSON)
+        Self::new(1, "schema-v1.32.0", SCHEMA_JSON, META_JSON)
     }
 
-    /// The v2 set (`schema-v2.0.0-alpha.13`, the stable v2 document).
+    /// The v2 set (`schema-v2.0.0-alpha.16`, the stable v2 document).
     pub fn v2() -> Self {
-        Self::new(2, "schema-v2.0.0-alpha.13", SCHEMA_V2_JSON, META_V2_JSON)
+        Self::new(2, "schema-v2.0.0-alpha.16", SCHEMA_V2_JSON, META_V2_JSON)
     }
 
     /// The set for one negotiated protocol version, or `None` when no vendored
