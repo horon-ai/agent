@@ -231,7 +231,6 @@
       "tool::goal::goal_tests",
       "tool::hashline_edit::hashline_edit_tests",
       "tool::horon_agent_docs::tests",
-      "tool::inflight::tests",
       "tool::lazy_activation",
       "tool::lsp::lsp_edit::tests",
       "tool::lsp::tests",
