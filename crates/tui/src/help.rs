@@ -89,8 +89,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
         "help" => "list the commands and the keys in force",
-        "model" => "list models, or switch with /model <name>",
+        "model" => "pick a model, or switch with /model <name>",
         "quit" => "leave",
+        "resume" => "pick a session stored for this directory and replay it",
         "settings" => "open the settings screen",
         _ => "",
     }

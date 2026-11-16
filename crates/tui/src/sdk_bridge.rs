@@ -15,8 +15,11 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
+use chrono::TimeZone;
 use horon_agent_sdk::api::{ApiEvent, AskSelection, PermissionDecision};
-use horon_agent_sdk::{ConnectOptions, Error, ErrorKind, EventStream, HoronAgentClient, RuntimeCommand};
+use horon_agent_sdk::{
+    ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
+};
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -58,6 +61,12 @@ pub enum Command {
     },
     /// List the models, or switch to the one named.
     Model(Option<String>),
+    /// List the models the picker offers, with the one in force.
+    Models,
+    /// List the sessions stored for a working directory.
+    Sessions { working_dir: Option<String> },
+    /// Attach to another session; the bridge follows it from then on.
+    Attach(String),
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -79,8 +88,51 @@ pub enum Incoming {
     SendFailed { text: String, message: String, lost: bool },
     /// Output from a command, drawn as information rather than a warning.
     Info(String),
+    /// The models the harness offers, and the one serving the session.
+    Models {
+        models: Vec<String>,
+        current: Option<String>,
+    },
+    /// The sessions the harness stored, newest first.
+    Sessions(Vec<SessionRow>),
+    /// The bridge moved to another session, with its stored conversation.
+    Attached(Box<AttachedSession>),
+    /// A request the harness answered with an error; the client stops waiting.
+    RequestFailed(String),
     /// The connection ended; the string says why.
     Closed(String),
+}
+
+/// One row of the session picker, as the bridge built it.
+///
+/// The label is the session's title, the first thing the user said in it, or
+/// its id, in that order: a session whose metadata never filled in is still a
+/// row somebody can pick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    /// What attaching to this row asks the harness for.
+    pub id: String,
+    /// What the row reads as.
+    pub label: String,
+    /// The time it was last written, or its status when it has no timestamp.
+    pub detail: String,
+    /// Whether this is the session the client is attached to.
+    pub current: bool,
+}
+
+/// A session the bridge attached to, and what the client needs to show it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachedSession {
+    /// The status line's description, naming the new session.
+    pub description: String,
+    /// The session id the connection now follows.
+    pub session_id: String,
+    /// The lifecycle status the harness reported for it.
+    pub status: String,
+    /// The model serving it, when the catalog answered.
+    pub model: Option<String>,
+    /// The stored conversation, oldest first.
+    pub history: Vec<HistoryMessage>,
 }
 
 /// The handles one connected UI keeps.
@@ -125,10 +177,11 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let description = format!("{} · {}", socket.display(), session_id);
+    let where_ = socket.display().to_string();
     let worker_client = client.clone();
     thread::Builder::new()
         .name("horon-tui-bridge".to_string())
-        .spawn(move || run_worker(worker_client, stream, session_id, command_rx, event_tx))
+        .spawn(move || run_worker(worker_client, stream, session_id, where_, command_rx, event_tx))
         .map_err(|error| format!("could not start the harness bridge thread: {error}"))?;
     Ok(Runtime {
         commands: command_tx,
@@ -170,10 +223,16 @@ fn explain_attach(error: &Error, session_id: &str) -> String {
 }
 
 /// The bridge thread: alternate between pumping events and reading commands.
+///
+/// `session_id` and `stream` are the session the thread follows, so they move
+/// when an attach succeeds: the SDK retargets one connection rather than
+/// opening a second one, and everything after the switch (sends, cancels,
+/// answers) has to name the session that is now current.
 fn run_worker(
     client: HoronAgentClient,
-    stream: EventStream,
-    session_id: String,
+    mut stream: EventStream,
+    mut session_id: String,
+    socket: String,
     commands: Receiver<Command>,
     events: Sender<Incoming>,
 ) {
@@ -195,10 +254,17 @@ fn run_worker(
                         _ => None,
                     };
                     let description = describe(&command);
-                    match apply(&client, &session_id, command) {
+                    match serve(&client, &session_id, &socket, command) {
                         Ok(None) => {}
-                        Ok(Some(message)) => {
-                            if events.send(Incoming::Info(message)).is_err() {
+                        Ok(Some(Incoming::Attached(attached))) => {
+                            stream = client.events(Some(&attached.session_id));
+                            session_id = attached.session_id.clone();
+                            if events.send(Incoming::Attached(attached)).is_err() {
+                                return;
+                            }
+                        }
+                        Ok(Some(incoming)) => {
+                            if events.send(incoming).is_err() {
                                 return;
                             }
                         }
@@ -207,7 +273,7 @@ fn run_worker(
                             let message = format!("{description}: {error}");
                             let failure = match sent_text {
                                 Some(text) => Incoming::SendFailed { text, message, lost },
-                                None => Incoming::Notice(message),
+                                None => Incoming::RequestFailed(message),
                             };
                             if events.send(failure).is_err() {
                                 return;
@@ -332,6 +398,31 @@ fn take_command(commands: &Receiver<Command>, flowing: bool) -> CommandPoll {
 /// draw the output. A failure is returned as the SDK error rather than as a
 /// sentence: the bridge has to tell "the harness refused this command" apart
 /// from "the connection is gone", and only the error kind says which.
+///
+/// The commands the pickers need carry a structure rather than a line, and the
+/// attach changes which session the thread follows, so they are answered before
+/// this point and the line-producing commands come through here.
+fn serve(
+    client: &HoronAgentClient,
+    session_id: &str,
+    socket: &str,
+    command: Command,
+) -> Result<Option<Incoming>, Error> {
+    match command {
+        Command::Models => {
+            let (models, current) = client.list_models(session_id)?;
+            Ok(Some(Incoming::Models { models, current }))
+        }
+        Command::Sessions { working_dir } => {
+            let rows = session_rows(client, session_id, working_dir.as_deref())?;
+            Ok(Some(Incoming::Sessions(rows)))
+        }
+        Command::Attach(id) => Ok(Some(Incoming::Attached(Box::new(attach(client, &id, socket)?)))),
+        other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
+    }
+}
+
+/// Perform one command whose result is a line of information.
 fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<String>, Error> {
     match command {
         Command::Text(text) => client.send_message(session_id, &text, Vec::new(), None).map(|_| None),
@@ -355,6 +446,10 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             }
             Some(message)
         }),
+        // Answered by `serve` before they reach this point: they carry a
+        // structure rather than a line, and the attach moves the session the
+        // thread follows.
+        Command::Models | Command::Sessions { .. } | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -380,11 +475,152 @@ fn describe(command: &Command) -> &'static str {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
         Command::Model(Some(_)) => "could not switch the model",
-        Command::Model(None) => "could not list the models",
+        Command::Model(None) | Command::Models => "could not list the models",
+        Command::Sessions { .. } => "could not list the sessions",
+        Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",
         Command::Approval { .. } => "could not answer the approval",
         Command::Ask { .. } => "could not answer the question",
     }
+}
+
+/// How many stored messages are read to find the first thing a user said.
+const PEEK_MESSAGES: u32 = 20;
+
+/// How much of a derived label a row keeps.
+const LABEL_CHARS: usize = 80;
+
+/// Attach to a session and read back what the client has to show for it.
+///
+/// The stored conversation is read after the attach, so it is the one the
+/// connection now follows. The catalog is asked for the model in force because
+/// the status line has to stop naming the model of the session just left; a
+/// catalog the daemon refuses leaves it unknown rather than failing a switch
+/// that already happened, since the events the attach emits carry it too.
+fn attach(client: &HoronAgentClient, session_id: &str, socket: &str) -> Result<AttachedSession, Error> {
+    let session = client.attach_session(session_id)?;
+    let history = client.get_history(&session.session_id)?;
+    let model = match client.list_models(&session.session_id) {
+        Ok((_, current)) => current,
+        Err(_) => None,
+    };
+    Ok(AttachedSession {
+        description: format!("{socket} · {}", session.session_id),
+        session_id: session.session_id,
+        status: session.status,
+        model,
+        history,
+    })
+}
+
+/// One row per stored session in the client's directory, newest first.
+fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&str>) -> Result<Vec<SessionRow>, Error> {
+    let mut sessions = client.list_sessions()?;
+    sessions.retain(|session| in_directory(session, working_dir));
+    sessions.sort_by_key(|session| std::cmp::Reverse(activity(session)));
+    let mut rows = Vec::with_capacity(sessions.len());
+    for session in &sessions {
+        let label = match title_of(session) {
+            Some(title) => title,
+            None => match first_user_text(client, &session.session_id) {
+                Some(line) => line,
+                None => session.session_id.clone(),
+            },
+        };
+        rows.push(SessionRow {
+            id: session.session_id.clone(),
+            label,
+            detail: detail(session),
+            current: session.session_id == current,
+        });
+    }
+    Ok(rows)
+}
+
+/// What the user said first in a session, read from its stored history.
+fn first_user_text(client: &HoronAgentClient, session_id: &str) -> Option<String> {
+    let messages = match client.peek_session(session_id, Some(PEEK_MESSAGES)) {
+        Ok(messages) => messages,
+        // A record whose history cannot be read is still a session somebody may
+        // want to resume: it keeps its id as the label instead of hiding every
+        // other row behind the one failure.
+        Err(_) => return None,
+    };
+    messages
+        .iter()
+        .filter(|message| message.role == "user")
+        .find_map(|message| {
+            message
+                .content
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(cut)
+        })
+}
+
+/// The second column of a session row: when it was last written, or what it is
+/// doing when it has no timestamp.
+fn detail(session: &SessionInfo) -> String {
+    match activity(session).and_then(moment) {
+        Some(time) => time,
+        None => session.status.clone(),
+    }
+}
+
+/// When a session last changed, for the newest-first order.
+fn activity(session: &SessionInfo) -> Option<i64> {
+    session.updated_at_ms.or(session.last_active_at_ms)
+}
+
+/// A stored millisecond timestamp as the local date and time.
+fn moment(ms: i64) -> Option<String> {
+    chrono::Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|time| time.format("%m-%d %H:%M").to_string())
+}
+
+/// Whether a session belongs to the directory the client is working in.
+///
+/// A record that does not name its directory cannot be placed in another one,
+/// so it is listed rather than hidden. The comparison goes through the
+/// filesystem because the stored path is resolved while the client may have
+/// started in a symlinked one.
+fn in_directory(session: &SessionInfo, working_dir: Option<&str>) -> bool {
+    let Some(wanted) = working_dir else {
+        return true;
+    };
+    match session.working_dir.as_deref() {
+        None => true,
+        Some(dir) => same_path(dir, wanted),
+    }
+}
+
+/// Whether two paths name one directory.
+fn same_path(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// The title a row shows, when the record has one worth showing.
+fn title_of(session: &SessionInfo) -> Option<String> {
+    let title = session
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|title| !title.is_empty())?;
+    Some(cut(title))
+}
+
+/// A label cut to what a row can carry.
+fn cut(text: &str) -> String {
+    text.chars().take(LABEL_CHARS).collect()
 }
 
 /// Whether the failure means the connection itself is gone.
@@ -619,5 +855,89 @@ mod tests {
 
         assert!(matches!(take_command(&incoming, true), CommandPoll::Disconnected));
         assert!(matches!(take_command(&incoming, false), CommandPoll::Disconnected));
+    }
+
+    /// A session record as the daemon serialises one; only the two fields
+    /// without a default are required, so this is what a record whose metadata
+    /// never filled in looks like on the wire.
+    fn record(json: &str) -> SessionInfo {
+        serde_json::from_str(json).expect("a session record")
+    }
+
+    #[test]
+    fn a_session_with_no_metadata_still_reads_as_a_row() {
+        let bare = record(r#"{"session_id":"session_ant_1794809866522","status":"idle"}"#);
+        assert_eq!(title_of(&bare), None, "a record with no title named one");
+        assert_eq!(detail(&bare), "idle", "a record with no time said nothing about itself");
+        assert_eq!(activity(&bare), None);
+        // It cannot be placed in another directory, so it is not hidden from
+        // the list of the directory the client is in.
+        assert!(in_directory(&bare, Some("/tmp")));
+    }
+
+    #[test]
+    fn a_blank_title_is_no_title_and_a_long_one_is_cut() {
+        let blank = record(r#"{"session_id":"a","status":"idle","title":"   "}"#);
+        assert_eq!(title_of(&blank), None);
+        let long = record(&format!(
+            r#"{{"session_id":"a","status":"idle","title":"{}"}}"#,
+            "t".repeat(LABEL_CHARS + 20)
+        ));
+        let title = title_of(&long).expect("a titled session");
+        assert_eq!(title.chars().count(), LABEL_CHARS);
+    }
+
+    #[test]
+    fn the_newest_session_comes_first_and_undated_ones_last() {
+        let older = record(r#"{"session_id":"older","status":"idle","updated_at_ms":1000}"#);
+        let newer = record(r#"{"session_id":"newer","status":"idle","last_active_at_ms":2000}"#);
+        let bare = record(r#"{"session_id":"bare","status":"idle"}"#);
+        let mut sessions = [bare.clone(), older.clone(), newer.clone()];
+        sessions.sort_by_key(|session| std::cmp::Reverse(activity(session)));
+        let order: Vec<&str> = sessions.iter().map(|session| session.session_id.as_str()).collect();
+        assert_eq!(order, vec!["newer", "older", "bare"]);
+    }
+
+    #[test]
+    fn a_row_time_reads_as_a_local_moment() {
+        let stamped = record(r#"{"session_id":"a","status":"idle","updated_at_ms":1794809866522}"#);
+        let detail = detail(&stamped);
+        assert_eq!(detail.len(), 11, "the row time is not a date and a time: {detail}");
+        assert!(detail.contains(':'), "the row time has no clock: {detail}");
+        assert_eq!(moment(1794809866522).as_deref(), Some(detail.as_str()));
+    }
+
+    #[test]
+    fn a_directory_is_matched_through_a_symlink_and_only_then() {
+        let temp = tempfile::tempdir().expect("a directory");
+        let real = temp.path().join("work");
+        std::fs::create_dir_all(&real).expect("create the directory");
+        let link = temp.path().join("link");
+        let linked = std::os::unix::fs::symlink(&real, &link).is_ok();
+
+        assert!(same_path(
+            real.to_str().expect("a path"),
+            real.to_str().expect("a path")
+        ));
+        assert!(!same_path("/one/place", "/another/place"));
+        if linked {
+            assert!(
+                same_path(real.to_str().expect("a path"), link.to_str().expect("a path")),
+                "a symlinked working directory was treated as another one"
+            );
+        }
+
+        let here = record(&format!(
+            r#"{{"session_id":"a","status":"idle","working_dir":"{}"}}"#,
+            real.display()
+        ));
+        let elsewhere = record(r#"{"session_id":"b","status":"idle","working_dir":"/somewhere/else"}"#);
+        let wanted = real.to_str().expect("a path");
+        assert!(in_directory(&here, Some(wanted)));
+        assert!(!in_directory(&elsewhere, Some(wanted)));
+        assert!(
+            in_directory(&elsewhere, None),
+            "a client with no directory hid sessions"
+        );
     }
 }

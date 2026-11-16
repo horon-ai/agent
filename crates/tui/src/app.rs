@@ -14,6 +14,7 @@ use crate::commands::Registry;
 use crate::history::History;
 use crate::input::Input;
 use crate::keys::Bindings;
+use crate::overlays::picker::Picker;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
 use crate::scroll::Scroll;
@@ -25,6 +26,7 @@ use crate::transcript::Transcript;
 
 mod commands;
 mod keys;
+mod picker;
 mod prompts;
 mod sending;
 mod settings;
@@ -54,6 +56,12 @@ pub enum Action {
     },
     /// List the models, or switch to the one named.
     Model(Option<String>),
+    /// Ask for the model list the picker offers.
+    Models,
+    /// Ask for the sessions stored for this working directory.
+    Sessions,
+    /// Attach to another session and replay its stored conversation.
+    Attach(String),
     /// Leave.
     Quit,
 }
@@ -168,6 +176,11 @@ pub struct App {
     pub themes_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
+    /// The open list of models or sessions, if one is showing.
+    ///
+    /// A picker sits above every other surface: while it is open no key reaches
+    /// the settings screen, a prompt, the slash popup or the draft.
+    pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
 }
@@ -210,6 +223,7 @@ impl App {
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
+            picker: None,
             pending_change: None,
         }
     }
@@ -253,6 +267,7 @@ impl App {
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
+            picker: None,
             pending_change: None,
         }
     }
@@ -286,6 +301,11 @@ impl App {
         self.exit_code = 1;
         self.disconnected = true;
         self.pending_turn = false;
+        // A list that is still waiting for rows will never get them: with the
+        // connection gone it can only swallow keys, so it goes with it.
+        if self.picker.as_ref().is_some_and(Picker::is_loading) {
+            self.picker = None;
+        }
         self.session_status = Some("idle".to_string());
         self.withdraw_prompts("the connection was lost");
         self.transcript.end_running_tools();

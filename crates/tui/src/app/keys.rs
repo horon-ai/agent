@@ -28,6 +28,12 @@ impl App {
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A list sits at the top of the precedence order: while it is open no
+        // key reaches the settings screen, a prompt, the slash popup, the
+        // scroll keys, the history or the draft underneath it.
+        if self.picker.is_some() {
+            return self.picker_key(key);
+        }
         // An open overlay owns every key: a letter meant for a value must not
         // reach the message being drafted underneath it.
         if let Some(mut overlay) = self.overlay.take() {
@@ -225,7 +231,7 @@ impl App {
     /// keystrokes would be. Otherwise the whole text lands in the draft as one
     /// edit, with its line breaks kept.
     pub fn on_paste(&mut self, text: &str) {
-        if self.prompt.is_some() || self.overlay.is_some() {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
             return;
         }
         self.history.reset();
@@ -265,7 +271,7 @@ impl App {
     /// focusable regions has nothing for a click to mean, and the settings
     /// screen covers the pane the wheel would move.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if !self.mouse_scroll || self.overlay.is_some() {
+        if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() {
             return;
         }
         match mouse.kind {

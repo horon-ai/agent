@@ -220,6 +220,27 @@ impl Transcript {
         self.items.push(Item::User(text.into()));
     }
 
+    /// Record a completed assistant message that was not streamed here.
+    ///
+    /// Reading a stored session back goes through this: the daemon hands over
+    /// whole messages, so there are no deltas to accumulate.
+    pub fn push_assistant(&mut self, text: impl Into<String>) {
+        self.finish_stream();
+        self.items.push(Item::Assistant(text.into()));
+    }
+
+    /// Empty the conversation, keeping the display settings.
+    ///
+    /// Resuming another session replaces the conversation rather than the
+    /// reader's settings: the output preview length and the reasoning switch
+    /// were chosen for this terminal, not for the session that was open.
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.streaming = Streaming::default();
+        self.reasoned = Reasoned::default();
+        self.starts.clear();
+    }
+
     /// Record an informational line.
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.finish_stream();

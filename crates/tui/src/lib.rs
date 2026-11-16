@@ -525,6 +525,10 @@ fn drain_events(app: &mut App) {
             Ok(Incoming::Notice(message)) => app.warn(message),
             Ok(Incoming::SendFailed { text, message, lost }) => app.send_failed(&text, &message, lost),
             Ok(Incoming::Info(message)) => app.transcript.push_notice(message),
+            Ok(Incoming::Models { models, current }) => app.show_models(models, current),
+            Ok(Incoming::Sessions(rows)) => app.show_sessions(rows),
+            Ok(Incoming::Attached(session)) => app.attach_session(*session),
+            Ok(Incoming::RequestFailed(message)) => app.request_failed(&message),
             Ok(Incoming::Closed(message)) => app.disconnect(&message),
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -555,13 +559,24 @@ fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: 
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
         Action::Model(name) => Command::Model(name),
+        Action::Models => Command::Models,
+        // The directory is the one the client is working in, which is what
+        // makes the list the sessions of this project rather than of the
+        // daemon's whole history.
+        Action::Sessions => Command::Sessions {
+            working_dir: app.cwd.clone(),
+        },
+        Action::Attach(session_id) => Command::Attach(session_id),
         Action::Quit => {
             app.running = false;
             return;
         }
     };
     if let Err(error) = commands.send(command) {
-        app.warn(format!("the harness bridge stopped: {error}"));
+        // A request that never left the client has the same effect as one the
+        // harness refused: whatever was waiting for its answer has to stop
+        // waiting, and a list left on screen would swallow every key.
+        app.request_failed(&format!("the harness bridge stopped: {error}"));
     }
 }
 
@@ -749,7 +764,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
     // The settings screen covers the conversation rather than the input, so
     // closing it reveals the transcript unchanged and the message being typed
-    // stays visible under it.
+    // stays visible under it; a picker covers the same area and sits above it.
+    if let Some(picker) = app.picker.as_mut() {
+        overlays::picker::draw(frame, transcript_area, picker, theme, symbols);
+        return;
+    }
     match app.overlay.as_ref() {
         Some(overlay) => {
             if let Some((x, y)) = overlays::settings::draw(frame, transcript_area, overlay, theme, symbols) {
@@ -1046,6 +1065,10 @@ fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'sta
         usize::from(width),
     )
 }
+
+#[cfg(test)]
+#[path = "picker_app_tests.rs"]
+mod picker_app_tests;
 
 #[cfg(test)]
 #[path = "tests.rs"]

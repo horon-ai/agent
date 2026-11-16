@@ -4,7 +4,7 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
-//!    `/help`, `/clear` and `/model`.
+//!    `/help`, `/clear`, `/model`, `/settings` and `/resume`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -43,10 +43,12 @@ pub enum Local {
     Help,
     /// Clear the transcript pane.
     Clear,
-    /// List the models, or switch to the one named.
+    /// Open the model picker, or switch to the model named.
     Model,
     /// Open the settings screen.
     Settings,
+    /// Resume a session stored for this working directory.
+    Resume,
 }
 
 impl Local {
@@ -58,6 +60,7 @@ impl Local {
             "clear" => Some(Self::Clear),
             "model" => Some(Self::Model),
             "settings" => Some(Self::Settings),
+            "resume" => Some(Self::Resume),
             _ => None,
         }
     }
@@ -70,6 +73,7 @@ impl Local {
             Self::Clear => "clear",
             Self::Model => "model",
             Self::Settings => "settings",
+            Self::Resume => "resume",
         }
     }
 }
@@ -463,7 +467,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 5] = ["clear", "help", "model", "quit", "settings"];
+const LOCAL_NAMES: [&str; 6] = ["clear", "help", "model", "quit", "resume", "settings"];
 
 /// Every runtime command, in declaration order.
 const SERVER_VARIANTS: &[RuntimeCommand] = &[

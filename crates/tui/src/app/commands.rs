@@ -21,14 +21,17 @@ impl App {
                 self.transcript = Transcript::new();
                 None
             }
+            // No argument asks for the list the picker draws; a name still
+            // switches straight away, which is what a script or a habit uses.
             Local::Model => match arguments.trim() {
-                "" => Some(Action::Model(None)),
+                "" => self.open_models(),
                 name => Some(Action::Model(Some(name.to_string()))),
             },
             Local::Settings => {
                 self.open_settings();
                 None
             }
+            Local::Resume => self.open_sessions(),
         }
     }
 

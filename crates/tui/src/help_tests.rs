@@ -344,7 +344,10 @@ fn the_popup_offers_the_commands_a_prefix_matches() {
     type_text(&mut app, "/re");
     assert!(app.slash.is_open(), "the popup is closed for a matching prefix");
     let names: Vec<String> = app.slash.matches().iter().map(|entry| entry.name.clone()).collect();
-    assert_eq!(names, vec!["refresh_model_list", "remote", "resume_all", "review"]);
+    assert_eq!(
+        names,
+        vec!["refresh_model_list", "remote", "resume", "resume_all", "review"]
+    );
     // A slash that matches nothing offers nothing.
     app.input.clear();
     type_text(&mut app, "/zzzz");
@@ -379,10 +382,10 @@ fn a_closed_popup_leaves_up_and_down_to_the_history() {
 fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     let mut app = app();
     type_text(&mut app, "/re");
-    for _ in 0..3 {
+    for _ in 0..4 {
         press(&mut app, KeyCode::Down);
     }
-    assert_eq!(app.slash.selected(), 3, "down stopped before the last row");
+    assert_eq!(app.slash.selected(), 4, "down stopped before the last row");
     assert_eq!(press(&mut app, KeyCode::Tab), None);
     assert_eq!(app.input.text(), "/review");
     assert!(!app.slash.is_open(), "the popup stayed open after the fill");

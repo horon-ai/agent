@@ -378,8 +378,14 @@ fn commands_typed_lines_become_actions() {
 #[test]
 fn commands_model_maps_to_the_model_path() {
     let (_user, _project, mut app) = app_fixture();
-    // `/model` with no argument asks for the list; a name switches.
-    assert_eq!(type_line(&mut app, "/model"), Some(Action::Model(None)));
+    // `/model` with no argument opens the list the picker draws; a name
+    // switches straight away.
+    assert_eq!(type_line(&mut app, "/model"), Some(Action::Models));
+    assert!(app.picker.is_some(), "/model did not open the picker");
+    // The open list owns every key, so it is closed before the next line is
+    // typed; closing it changes nothing, which is what `esc` promises.
+    app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.picker.is_none(), "escape did not close the list");
     assert_eq!(
         type_line(&mut app, "/model gpt-5"),
         Some(Action::Model(Some("gpt-5".to_string())))
