@@ -1,0 +1,138 @@
+name: Documentation site deploy
+
+# agent.horon.ai is the Mintlify project in `packages/docs-site`. Mintlify's
+# GitHub App rebuilds the site on every push to its deployment branch and builds
+# a preview for every pull request that targets that branch, with no path
+# filter. Its deployment branch is therefore `deploy/docs`, which only this
+# workflow moves: it fast-forwards `deploy/docs` to `main` when the site folder
+# on `main` differs from the one `deploy/docs` holds and the site still
+# validates. A push to `dev`, a pull request, or a `main` push that leaves the
+# folder as it was deploys nothing.
+#
+# Triggers:
+# - a push to `main` that touches `packages/docs-site/`;
+# - `Benchmark docs` finishing on `main`: its commits carry `[skip ci]`, which
+#   starts no push workflow, yet they rewrite the generated Reference pages;
+# - a manual dispatch (for example after a documentation refresh of `main`,
+#   whose `[skip ci]` subject starts nothing). Every trigger deploys `main`,
+#   whatever ref the run was started from.
+#
+# `deploy/docs` is never force-pushed. `main` is never rewritten, so the branch
+# stays an ancestor of `main`; if that ever breaks, the job fails instead of
+# deploying. The repository ruleset covers `dev` and `main` only, so
+# GITHUB_TOKEN may push this branch, and Mintlify's App sees the push like any
+# other. `push` and `workflow_run` start from the copy of this file on `main`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/docs-site/**"
+  workflow_run:
+    workflows: [Benchmark docs]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time; a newer trigger waits and then compares against the
+  # branch the previous run moved.
+  group: docs-site-deploy
+  cancel-in-progress: false
+
+env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  SITE: packages/docs-site
+  DEPLOY_BRANCH: deploy/docs
+
+jobs:
+  deploy:
+    name: Deploy (fast-forward deploy/docs to main)
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Compare the site on main with deploy/docs
+        id: decide
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          echo "sha=$head" >> "$GITHUB_OUTPUT"
+          rc=0
+          git ls-remote --exit-code --heads origin "$DEPLOY_BRANCH" > /dev/null || rc=$?
+          case "$rc" in
+            0)
+              git fetch --quiet origin "$DEPLOY_BRANCH"
+              deployed=$(git rev-parse FETCH_HEAD)
+              if ! git merge-base --is-ancestor "$deployed" "$head"; then
+                echo "::error::$DEPLOY_BRANCH (${deployed:0:12}) is not an ancestor of main (${head:0:12}); not moving it"
+                exit 1
+              fi
+              if git diff --quiet "$deployed" "$head" -- "$SITE"; then
+                echo "$SITE on main ${head:0:12} matches $DEPLOY_BRANCH ${deployed:0:12}: nothing to deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+                echo "deploy=false" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              echo "$SITE changed between ${deployed:0:12} and ${head:0:12}:"
+              git diff --stat "$deployed" "$head" -- "$SITE" | tail -n 1
+              ;;
+            2)
+              echo "$DEPLOY_BRANCH does not exist yet; it starts at main ${head:0:12}."
+              ;;
+            *)
+              echo "::error::could not read $DEPLOY_BRANCH from origin (git ls-remote exit $rc)"
+              exit 1
+              ;;
+          esac
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
+      - name: Reference pages are current
+        if: steps.decide.outputs.deploy == 'true'
+        run: python3 scripts/ci/sync_docs_site.py --check
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: steps.decide.outputs.deploy == 'true'
+        with:
+          node-version: "22"
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: steps.decide.outputs.deploy == 'true'
+        with:
+          bun-version: 1.4.3
+
+      - name: Install
+        if: steps.decide.outputs.deploy == 'true'
+        run: bun install --frozen-lockfile
+        working-directory: packages/docs-site
+
+      - name: Validate and check links
+        if: steps.decide.outputs.deploy == 'true'
+        run: bun run check
+        working-directory: packages/docs-site
+
+      - name: Fast-forward deploy/docs
+        if: steps.decide.outputs.deploy == 'true'
+        env:
+          SHA: ${{ steps.decide.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # No --force: a push that is not a fast-forward is rejected.
+          git push origin "$SHA:refs/heads/$DEPLOY_BRANCH"
+          echo "$DEPLOY_BRANCH moved to main ${SHA:0:12}; Mintlify deploys it." | tee -a "$GITHUB_STEP_SUMMARY"
