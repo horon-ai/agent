@@ -207,7 +207,8 @@ jobs:
               # Stage first so charts drawn for the first time are seen as changes.
               git add -A -- "$DOC" "$DOC_KO" "$CHARTS"
               if [[ "$mirror" == true ]]; then
-                git add -A -- packages/docs-site/reference packages/docs-site/images/reference
+                git add -A -- packages/docs-site/reference packages/docs-site/ko/reference \
+                  packages/docs-site/images/reference
               fi
               if git diff --cached --quiet; then
                 echo "$branch: already up to date"; ok=true; break
