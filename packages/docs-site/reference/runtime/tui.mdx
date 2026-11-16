@@ -36,7 +36,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
 
-A lost bridge ends the client. The banner carries the sentence the event stream produced (for example `the event stream ended: ...`), the loop stops, and the process exits with code 1 so a wrapper sees the failure.
+A connection that never opened ends the client. The banner carries the sentence the event stream produced (for example `the event stream ended: ...`), the loop stops, and the process exits with code 1 so a wrapper sees the failure.
+
+A connection lost while the client runs is handled differently: the screen stays up so the failure and the conversation can be read. The status line says `disconnected`, a submit is refused with one warning line and the text stays in the input line, nothing remaining in the queue is sent, and prompts for the turn that was running are withdrawn. Ctrl-C leaves, and the process still exits with code 1 because the session failed.
 
 ## User files
 
@@ -66,9 +68,18 @@ The settings of one process are the registry defaults, then the global file, the
 | `statusline.path_max` | number | `40` | `HORON_TUI_STATUSLINE_PATH_MAX` |
 | `statusline.context_window` | number | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
+| `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.mouse_scroll` | boolean | `false` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
+| `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-`statusline.path_max` is the longest directory the `path` segment shows before it is shortened from the left; `0` keeps it whole. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment. `editor.submit_on_enter = false` disconnects the send key, so pressing it leaves the draft in place instead of sending; the editor is single-line, so the key inserts nothing rather than a newline. `transcript.show_reasoning = true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being buffered for a setting that may never be turned on.
+The table is the settings registry (`crates/tui/src/settings/registry.rs`), twelve keys in its order, and it is what the settings screen draws.
+
+`statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
+
+`editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll = true` turns on the terminal's mouse capture and gives the wheel to the transcript; with the default `false` the client never captures the mouse and the terminal keeps its own text selection. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`transcript.show_reasoning = true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being stored.
 
 The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working directory cannot be read. The file is read again a second after it changes in size or modification time, so a hand edit applies without a restart.
 
@@ -131,8 +142,10 @@ The file maps an action id to the keys it answers. An entry replaces every defau
 # ~/.horon/keybindings.toml
 "app.submit" = ["enter", "shift+enter"]
 "editor.complete" = []
-"app.cancel" = ["ctrl+c", "esc"]
+"app.interrupt" = ["ctrl+x"]
 ```
+
+An action id is a dotted name, so it must be written as a quoted key. `"app.interrupt" = [...]` names the action; the unquoted `app.interrupt = [...]` is a nested table, which the client reports as unknown action `app` and ignores, leaving every default in place.
 
 A key is written with the modifiers `ctrl`, `alt` and `shift` in any order before the key name (`Control+J` and `ctrl+j` are the same key). Character keys carry their shift in the character, so `A` and `shift+a` are one binding; every other key keeps shift, which makes `shift+enter` distinct from `enter`. A key the terminal reports with extra modifiers still answers a binding with the same key: `alt+left` moves the cursor like `left`.
 
@@ -157,25 +170,107 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 ## Default keys
 
-| Action | Keys | Scope |
+| Action | Keys | What it does |
 | --- | --- | --- |
 | `app.submit` | `enter` | Send the typed message |
 | `app.cancel` | `ctrl+c` | Cancel the running turn, or leave when nothing is running |
+| `app.interrupt` | `esc` | Interrupt the running turn and nothing else |
 | `app.quit` | `ctrl+d` | Leave |
+| `app.scroll_page_up` | `pageup` | Hold the transcript one page higher |
+| `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |
+| `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
+| `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
+| `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
 | `editor.backspace` | `backspace` | Delete the character before the cursor |
 | `editor.delete` | `delete` | Delete the character at the cursor |
-| `editor.left` | `left` | Move the cursor one character left |
-| `editor.right` | `right` | Move the cursor one character right |
-| `editor.home` | `home` | Move the cursor to the start of the line |
-| `editor.end` | `end` | Move the cursor to the end of the line |
-| `editor.complete` | `tab` | Complete the slash command being typed |
-| `prompt.allow` | `y` | Approve a parked tool call once |
-| `prompt.allow_always` | `a` | Approve a parked tool call and every later call like it |
-| `prompt.deny` | `n` | Deny a parked tool call |
-| `prompt.dismiss` | `esc` | Ignore the prompt; the turn stays parked |
+| `editor.left` | `left`, `ctrl+b` | Move the cursor one character left |
+| `editor.right` | `right`, `ctrl+f` | Move the cursor one character right |
+| `editor.home` | `home`, `ctrl+a` | Move the cursor to the start of its line |
+| `editor.end` | `end`, `ctrl+e` | Move the cursor to the end of its line |
+| `editor.word_left` | `alt+left` | Move to the start of the word before the cursor |
+| `editor.word_right` | `alt+right` | Move past the word after the cursor |
+| `editor.history_prev` | `up` | Step back through earlier drafts, then into the lines of the draft |
+| `editor.history_next` | `down` | Step forward again, back to the draft being typed |
+| `editor.newline` | `shift+enter`, `alt+enter`, `ctrl+j` | Start a new line without sending the draft |
+| `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
+| `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
+| `editor.delete_word` | `ctrl+w` | Delete the word before the cursor |
+| `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
+| `prompt.allow` | `y` | Approve the parked tool call once |
+| `prompt.allow_always` | `a` | Approve this call and every later call like it |
+| `prompt.deny` | `n` | Deny the parked tool call |
+| `prompt.dismiss` | `esc` | Close the prompt without answering; on an approval that answers it with a denial |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
-While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
+The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: twenty-nine actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows.
+
+Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
+
+`up` and `down` move between the lines of a draft first and reach the input history only at its first and last line, which is why the transcript view moved to `shift+up`, `shift+down` and the page keys. While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
+
+## The editor
+
+The input line grows with the draft: one row per line, up to eight rows, and a taller draft scrolls inside its own pane. The conversation keeps at least three rows while the draft grows, so a long message never takes the whole screen.
+
+`enter` sends and the newline keys start a new line. With `editor.submit_on_enter = false` the send key starts a new line instead and nothing is sent from the keyboard, which is one way to type a multi-line message without a paste.
+
+A paste is taken as one block. The client turns on the terminal's bracketed-paste mode while it runs, so a three-line paste arrives as one `Paste` event and stays one draft instead of being sent as three messages. The mode is turned off on the normal exit, on the error path, and from the panic hook, because a client that dies with it on leaves the shell pasting escape codes into the next program. A terminal that does not support the mode answers nothing and the paste arrives as ordinary keystrokes.
+
+The last hundred drafts are kept for `up` and `down`. A walk starts from the newest entry and stepping past it returns the draft that was on screen when the walk began, so `up` twice never loses what was being typed. One entry is kept per distinct message in a row, and editing the draft ends the walk: the next `down` does not replace the edit with the entry the walk started from.
+
+The cursor is placed in display cells rather than bytes, so a wide character counts for two. Text before the cursor is dropped from the left once the draft is wider than the pane, leaving one cell free so the caret stays visible at the right edge.
+
+## The transcript
+
+A tool call is drawn as one head row and the rows under it. The head carries the call's name, a short argument summary and the outcome. The summary is the first interesting field of the call's own JSON, taken in the order `command`, `file_path`, `path`, `pattern`, `query`, `url`, `name`, `prompt`, cut to the space the row has left. The outcome is `◐ running`, `✓ done` or `✕ failed` with the elapsed time (`1.4s`, `2m 05s`).
+
+Results are matched to calls by call id, so two calls that ran in parallel cannot swap their results, and a result whose start this client never saw gets a row of its own instead of being attached to another call's. A finished call keeps a preview of its output under the head: three rows by default, each cut to 160 cells, and `+N lines` for the rows the preview does not show. A failure puts its message on its own row instead of in the head, because the message is usually longer than the pane and would push the argument and the duration off the right edge.
+
+A call the approval gate refused is drawn with `needs approval` rather than the daemon's whole sentence, because the prompt beside it already asks the question. Answering that prompt does not run the call: the decision is recorded and the model has to call the tool again, and the transcript says so.
+
+The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, and `ctrl+end` returns to the end. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
+
+Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
+
+`transcript.markdown = false` turns the rendering off and draws the same text with its markers as typed.
+
+## Turn state
+
+One turn runs at a time. Enter during a running turn queues the text instead of sending it: the transcript shows it as a `queued: <text>` row, and the message is sent when the running turn ends, in the order the messages were typed. Cancelling the turn keeps the queue, because the queue belongs to the next turn rather than to the one that stopped.
+
+`esc` interrupts the running turn and does nothing when the client is idle, so a stray key cannot end the session. `ctrl+c` cancels the turn when one is running and leaves when none is, and `ctrl+d` always leaves.
+
+A failed send is not drawn as a message. The client takes the user row back, puts the text in the input line (or queues it, when the input line already holds something else), returns the status to `idle` and shows one warning line with the reason. The queue is held until the next turn ends or the user submits again, so a harness that keeps refusing cannot turn a refused send into a loop.
+
+When the connection goes away the status line says `disconnected`, the queue is not sent, the prompts of the turn are withdrawn, and submitting is refused with the text left in the input line. Ctrl-C leaves from there.
+
+## Prompts
+
+An approval and a question are drawn above the input line and take every key until they are answered.
+
+Approvals are a queue. A second call that needs approval while the first is on screen waits behind it, and the prompt on screen adds a line `N more prompt waiting`, singular as `1 more prompt waiting`, so a second approval is not read as a repeat of the first. The prompt shows the call's action and, when the transcript can pair it with the request id the refusal wrote, the arguments of that exact call; a prompt is never shown another call's command.
+
+`y` approves once, `a` approves and asks for every later call like it, and `n` or `esc` denies. An approval outlives its turn: the request stays queued in the daemon with its own deadline, so a lost prompt would be the only way to answer it taken away. Approving does not run the call. The transcript records the decision as `you allowed <action>: the model has to call it again before it runs`, or `you allowed <action>: recorded once (the daemon keeps no always-rule), so the model has to call it again` for the `a` key, and `you denied <action>: the call will not run` for a denial, because only the model calling the tool again runs it.
+
+The `ask` tool's questions are drawn one at a time with a `(1/2)` counter. A single-choice question is settled by the digit of its option; a multi-select one toggles digits and confirms with `enter`, and the chosen options carry `[x]`. A recommended option is marked `(recommended)`. `esc` leaves the question open: the tool has no deny path and resolves its own deadline, so closing the prompt would take away the only way to answer it. Answering every question adds `you answered the ask tool (N answers): the call resumes`, because the tool waits for the answer on this connection instead of being remembered for a retry.
+
+Prompts are withdrawn when their turn is cancelled, when the turn ends (questions only), and when the connection is lost. The withdrawal leaves one notice line naming what was dropped, as in `the turn was cancelled; 2 prompts withdrawn`.
+
+## The slash popup and `/help`
+
+Typing `/` opens a list of the commands whose name starts with what has been typed: the same commands `/help` lists, in name order, with their descriptions. The list shows at most eight rows and moves its window with the selection; `up` and `down` move it, `tab` fills the selected command, and `esc` closes it. The popup is the topmost surface, so the first `esc` always closes the popup and only a second one interrupts the turn. While the popup is open the completion hint is not drawn, because the list already says what the hint would. A draft whose one match is exactly the name typed shows no popup: there is nothing left to choose.
+
+`/help` prints the commands grouped by where they come from, with the description column aligned, then the keys. The key list is built from the key map in force rather than from the shipped defaults, so a rebound key shows its new binding and an action a file turned off shows as `(unbound)`.
+
+## Pickers
+
+`/model` with no argument opens a filterable list of the models the harness reported, with the model in force marked `(current)` and the selected row carrying the input line's own marker (`❯` in the Unicode preset). Typing filters the list, the rows show `nothing matches that filter` when none is left, `enter` picks the row and `esc` closes the list. Picking sends the switch to the daemon, and the status line changes only when the daemon confirms it with the session's identity, so a refused switch leaves the old model showing.
+
+`/model <name>` switches without the list.
+
+`/resume` opens the sessions stored for the directory the client is working in, newest first. Each row carries the session's title (or its first user line, or its id) and the time it last changed, flush with the row's right edge so the times read down the list; a conversation too narrow for both keeps the name. The session in force is marked `(current)`. `/resume` is refused while a turn is running, because attaching elsewhere would leave that turn's events arriving for a session the client no longer shows, and it is refused when the connection is gone. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds a notice naming the new session, and takes the model and provider from the new session's identity, so the status line keeps showing `provider/model`.
+
+In a window too small for an overlay, both `/model`, `/resume` and the settings screen draw one line instead of the panel: `list hidden: window too small, esc closes` or `settings hidden: window too small, esc closes`. The overlay still owns every key, so `esc` closes it.
 
 ## The status line
 
@@ -183,10 +278,10 @@ The bottom line is assembled from named segments. A segment with no data draws n
 
 | Segment | Shows |
 | --- | --- |
-| `status` | What the turn is doing: `idle`, `running` or `requires_action` |
+| `status` | What the turn is doing: `idle`, `running`, `requires_action` or `disconnected` |
 | `model` | `provider/model`, or whichever of the two the daemon reported |
 | `session` | The session id, shortened |
-| `path` | The working directory, with the home directory shortened to `~` |
+| `path` | The working directory, with the home directory shortened to `~` and long paths cut at a segment boundary |
 | `tokens` | Input and output tokens of the last request, as `↑in ↓out` |
 | `context_pct` | Share of `statusline.context_window` used; hidden when the setting is `0` |
 | `time` | Local wall-clock time as `HH:MM` |
@@ -208,11 +303,14 @@ A line starting with `/` is resolved in this order: a built-in command, a comman
 
 | Command | Effect |
 | --- | --- |
-| `/quit` | Leave |
-| `/help` | List the commands, where each one comes from, and its summary |
 | `/clear` | Clear the transcript pane |
-| `/model [name]` | List the models, or switch to the one named |
+| `/help` | List the commands, where each one comes from, and the keys in force |
+| `/model [name]` | Pick a model from a list, or switch to the one named |
+| `/quit` | Leave |
+| `/resume` | Pick a session stored for this directory and replay it |
 | `/settings` | Open the settings screen |
+
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): six commands the client answers itself, in name order.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` prints them in name order, six to a line:
 
@@ -225,12 +323,6 @@ The harness commands run in the attached runtime and never reach the model as a 
 ```
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
-
-## The screen
-
-The transcript is wrapped to the pane width before the visible rows are chosen, so a wrapped line occupies as many rows as its cells need. The newest rows stay in view: the pane keeps the tail of the wrapped output rather than the top of it. A row breaks after its last whitespace character, so a word is never split while the row has somewhere else to break; a row with no whitespace breaks at the cell limit, and a wide character that does not fit starts the next row. Styling survives the break because each cell carries the style of the span it came from.
-
-The input is one line. Text before the cursor is dropped from the left once the line is wider than the pane, leaving one cell free so the caret stays visible at the right edge. The cursor column is measured in display cells, not bytes, so wide characters count for two.
 
 ## The settings screen
 
@@ -268,4 +360,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - Windows has no PTY smoke test. The `tui` benchmark records the render and size metrics there and marks the PTY metrics with `pty unavailable on Windows` instead of failing the run.
 - FreeBSD ships `horon-agent` only, so the client is not installed there and bare `horon` reports the missing sibling.
 - On Linux and macOS the handoff is one process replacing another, so a client that exits takes the terminal command with it and the exit code is the client's. On Windows the launcher starts the client and exits with code 0 at once, so its exit code says nothing about the client.
-- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript. Both apply from the next keystroke and the next reasoning delta once changed in the settings screen.
+- Killing the client with `SIGTERM` or `SIGHUP` does not restore the terminal modes. Bracketed paste is turned off on every exit the client itself runs, but a signal is not an exit it runs, so the shell can be left with the mode on; with `transcript.mouse_scroll = true` the mouse mode is left on the same way. The client installs no signal handler.
+- A theme JSON file edited on disk is re-read by the theme loader on its one-second check, but the screen is not redrawn for it: an idle client keeps the picture it has until the next key, event or settings reload.
+- A table and a link are shown as the source the model wrote, and a list indented by one or three spaces rounds down to a whole number of levels, because a level is two columns.
+- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript; both apply from the next keystroke and the next reasoning delta once changed. The other transcript settings and the status line take effect as soon as the file reloads, which redraws the screen.

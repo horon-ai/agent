@@ -103,16 +103,26 @@ Options:
 
 Keys:
   Enter          send the typed message
+  Alt-Enter      start a new line (Ctrl-J does the same; most terminals
+                 send Shift-Enter as a plain Enter, which sends)
   Tab            complete the slash command being typed
+  Esc            interrupt the running turn
   Ctrl-C         cancel a running turn, or leave when nothing is running
   Ctrl-D         leave
-  Bindings are remapped in $HORON_HOME/keybindings.toml.
+  Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
+  Ctrl-W         delete the word before the cursor
+  PgUp, PgDn     scroll the transcript one page
+  Shift-Up/Down  scroll the transcript one row
+  Ctrl-End       follow the end of the conversation again
+  Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
+  the keys in force.
 
 Commands:
   /help          list the commands, including the harness ones and the
                  markdown files under .horon/commands and $HORON_HOME/commands
   /clear         clear the transcript pane
-  /model [name]  list the models, or switch to the one named
+  /model [name]  pick a model from a list, or switch to the one named
+  /resume        pick a session stored for this directory and replay it
   /settings      open the settings screen, generated from the registry
   /quit          leave
   //text         send the literal message /text

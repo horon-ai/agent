@@ -633,6 +633,26 @@ timeout.
 
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
+## Ask requests a client declares in the handshake
+
+The `ask` tool shows a person a question and waits for the answer. The daemon draws no screen and cannot assume a client is attached, so the question goes only to a connection that said it can show one. The advertisement is one boolean field on `Hello`:
+
+| Field | Type | When absent | Meaning |
+| --- | --- | --- | --- |
+| `supports_ask_requests` | boolean | `false` | This connection draws the `ask` tool's questions and answers them |
+
+The bridge reads the field with `hello["supports_ask_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates the field advertises nothing and keeps working. The field is not a capability string and not a protocol-minor negotiation: it gates the direction the person is asked in. A session whose attached connection advertised it gets the question there and the call waits for the answer; a session without such a connection falls back to `ask_policy` (`docs/safety/SAFETY.md`).
+
+The SDKs expose it as one connect option, and all three default it to off:
+
+| SDK | Option | Default |
+| --- | --- | --- |
+| Rust | `ConnectOptions::supports_ask_requests` | `false` |
+| TypeScript | `supportsAskRequests` | `false` |
+| Python | `supports_ask_requests` | `False` |
+
+The Rust SDK copies the option into `Hello` (`crates/agent-sdk/src/client.rs`), TypeScript writes `options.supportsAskRequests ?? false` and Python passes the field straight through. The TUI binary `horon-tui` sets it to `true` in `connect_options` (`crates/tui/src/lib.rs`), because it draws the question and answers it. A client that only runs turns leaves the default in place, and a turn that reaches `ask` then resolves through the policy instead of parking on a question nobody can see.
+
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 
 This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, the next covers the four durable runtime surfaces of 1.14, and the part after that covers the argument repair of 1.16. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
