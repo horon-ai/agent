@@ -73,6 +73,13 @@ pub struct Scroll {
     tally: Option<Tally>,
     /// The height the last measurement found, for spotting growth.
     height: Option<usize>,
+    /// Whether the last frame drawn was a held one.
+    ///
+    /// A frame that follows the end does not measure the content, so the height
+    /// it leaves behind says nothing about how much arrived since. The first
+    /// held frame therefore takes its baseline fresh instead of reading the
+    /// whole gap as output that landed below a view the user had already left.
+    held_frame: bool,
     /// What the content held at the last frame.
     mark: Option<Mark>,
 }
@@ -144,6 +151,15 @@ impl Scroll {
         }
     }
 
+    /// Note that a frame followed the end of the conversation.
+    ///
+    /// Called for every frame drawn at the bottom. It is what makes the next
+    /// held frame start a new baseline: the height measured during an earlier
+    /// scroll is stale by however many rows arrived while the view followed.
+    pub fn following_frame(&mut self) {
+        self.held_frame = false;
+    }
+
     /// Note what the content holds now.
     ///
     /// Only used for the indicator: a delta that adds characters without adding
@@ -175,6 +191,10 @@ impl Scroll {
         rows_of: impl FnMut(usize) -> usize,
     ) -> usize {
         let mut rows_of = rows_of;
+        // The first held frame after the view followed takes the height as its
+        // baseline: nothing measured it while the view was at the end, so every
+        // row added since then would otherwise read as growth below the view.
+        let baseline = !self.held_frame;
         let rebuilt = match &self.tally {
             Some(tally) => tally.width != width || tally.items.len() > items,
             None => true,
@@ -212,6 +232,7 @@ impl Scroll {
         // arriving: only a height that grew across two measurements of the same
         // width moves the offset.
         if !rebuilt
+            && !baseline
             && let Some(previous) = previous
             && height != previous
             && self.offset > 0
@@ -227,6 +248,7 @@ impl Scroll {
             }
         }
         self.clamp(height, view);
+        self.held_frame = true;
         height
     }
 }

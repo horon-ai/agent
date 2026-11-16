@@ -771,6 +771,11 @@ fn transcript_pane(app: &mut App, width: u16, height: u16) -> Pane {
     };
     if held_before {
         measure_transcript(app, width, measure_rows);
+    } else {
+        // A frame at the end measures nothing, so it must say so: the next held
+        // frame takes its height baseline fresh rather than trusting the last
+        // scroll's.
+        app.scroll.following_frame();
     }
     let offset = app.scroll.offset();
     let indicator = offset > 0 && view > 1;

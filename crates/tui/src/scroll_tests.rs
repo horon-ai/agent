@@ -185,6 +185,45 @@ fn scroll_only_follows_growth_while_the_view_is_held() {
 }
 
 #[test]
+fn leaving_the_bottom_drops_the_stale_height() {
+    let mut scroll = Scroll::new();
+    // A held frame, then back to the end: the height that frame measured is the
+    // only baseline there is, and it goes stale the moment the view follows.
+    scroll.up(2);
+    scroll.measure(80, 2, [0, 0], 3, |_| 2);
+    scroll.to_bottom();
+    scroll.following_frame();
+
+    // Sixteen rows landed while the view followed, then a page key.
+    scroll.up(9);
+    assert_eq!(scroll.measure(80, 10, [0, 0], 3, |_| 2), 20);
+    assert_eq!(
+        scroll.offset(),
+        9,
+        "the offset took the rows that arrived while following"
+    );
+    assert!(
+        !scroll.has_fresh_output(),
+        "output that landed before the view was held is not new output"
+    );
+}
+
+#[test]
+fn one_row_from_the_bottom_after_growth_moves_one_row() {
+    let mut scroll = Scroll::new();
+    scroll.up(1);
+    scroll.measure(80, 1, [0, 0], 3, |_| 1);
+    scroll.to_bottom();
+    scroll.following_frame();
+
+    // Thirty rows arrived while the view followed; one row up must move one row.
+    scroll.up(1);
+    assert_eq!(scroll.measure(80, 30, [0, 0], 3, |_| 1), 30);
+    assert_eq!(scroll.offset(), 1);
+    assert!(!scroll.has_fresh_output());
+}
+
+#[test]
 fn scroll_marks_output_that_adds_no_row() {
     let mut scroll = Scroll::new();
     scroll.observe(Mark::new(1, 0, 0));
@@ -269,6 +308,81 @@ fn new_output_does_not_move_a_held_view() {
     let end = draw_at(&mut app, 40, 12);
     assert!(end.contains("fresh output"), "{end}");
     assert!(!end.contains("rows below"), "{end}");
+}
+
+#[test]
+fn a_page_after_output_arrived_while_following_moves_one_page() {
+    let mut app = app_with_lines(20);
+    draw_at(&mut app, 40, 12);
+    // Hold once and come back, so a height measured during a scroll exists.
+    app.on_key(key(KeyCode::PageUp));
+    draw_at(&mut app, 40, 12);
+    app.on_key(control(KeyCode::End));
+    draw_at(&mut app, 40, 12);
+    // Forty rows arrive while the view follows the end, frame after frame.
+    for index in 20..60 {
+        app.transcript.push_notice(format!("line {index:04}"));
+    }
+    let bottom = draw_at(&mut app, 40, 12);
+    assert!(bottom.contains("line 0059"), "{bottom}");
+
+    // One page is nine rows: the pane is ten rows and the indicator keeps one.
+    app.on_key(key(KeyCode::PageUp));
+    let screen = draw_at(&mut app, 40, 12);
+    assert_eq!(
+        app.scroll.offset(),
+        9,
+        "the page overshot by the rows that arrived while the view followed"
+    );
+    assert!(screen.contains("line 0050"), "{screen}");
+    assert!(screen.contains("9 rows below"), "{screen}");
+    assert!(
+        !screen.contains("new output"),
+        "nothing arrived after the view was held:\n{screen}"
+    );
+}
+
+#[test]
+fn a_line_shift_after_output_arrived_while_following_moves_one_row() {
+    let mut app = app_with_lines(20);
+    draw_at(&mut app, 40, 12);
+    app.on_key(shifted(KeyCode::Up));
+    draw_at(&mut app, 40, 12);
+    app.on_key(control(KeyCode::End));
+    draw_at(&mut app, 40, 12);
+    for index in 20..60 {
+        app.transcript.push_notice(format!("line {index:04}"));
+    }
+    draw_at(&mut app, 40, 12);
+
+    app.on_key(shifted(KeyCode::Up));
+    let screen = draw_at(&mut app, 40, 12);
+    assert_eq!(
+        app.scroll.offset(),
+        1,
+        "shift+up took the rows that arrived while following"
+    );
+    assert!(screen.contains("1 row below"), "{screen}");
+    assert!(!screen.contains("new output"), "{screen}");
+}
+
+#[test]
+fn output_that_arrives_after_the_view_is_held_still_moves_the_offset() {
+    let mut app = app_with_lines(60);
+    draw_at(&mut app, 40, 12);
+    app.on_key(key(KeyCode::PageUp));
+    let held = draw_at(&mut app, 40, 12);
+    assert!(held.contains("9 rows below"), "{held}");
+
+    // Three rows arrive below the held view: the offset follows them, so the
+    // same rows stay on screen, and the indicator calls them new.
+    for index in 60..63 {
+        app.transcript.push_notice(format!("line {index:04}"));
+    }
+    let after = draw_at(&mut app, 40, 12);
+    assert_eq!(app.scroll.offset(), 12);
+    assert!(after.contains("12 rows below · new output"), "{after}");
+    assert_eq!(top_rows(&held, 8), top_rows(&after, 8));
 }
 
 #[test]
