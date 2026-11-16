@@ -212,6 +212,30 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.tool_output_lines",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES",
+        default: DefaultValue::Number(3),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Tool output lines",
+            description: "Rows of a finished tool call's output shown under its line; 0 hides the preview.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.mouse_scroll",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_MOUSE_SCROLL",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Keys",
+            label: "Wheel scrolls",
+            description: "Give the mouse wheel to the transcript; off keeps the terminal's own text selection.",
+        },
+    },
+    SettingSpec {
         id: "transcript.show_reasoning",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_SHOW_REASONING",
@@ -221,6 +245,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Content",
             label: "Show reasoning",
             description: "Keep the model's reasoning lines in the transcript.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.markdown",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_MARKDOWN",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Markdown",
+            description: "Render the model's Markdown; off draws its text with the markers as typed.",
         },
     },
 ];

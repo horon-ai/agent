@@ -183,6 +183,11 @@
     },
     {
       "package": "horon-agent-sdk",
+      "target": "ask_capability",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-sdk",
       "target": "client_behavior",
       "min_passed": 33
     },

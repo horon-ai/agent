@@ -260,8 +260,12 @@ fn theme_symbol_presets_are_distinct_and_ascii_is_plain() {
         ascii.tool_running,
         ascii.tool_done,
         ascii.tool_error,
+        ascii.tool_lead,
         ascii.prompt_marker,
+        ascii.more_below,
         ascii.separator,
+        ascii.quote,
+        ascii.rule,
     ] {
         assert!(mark.is_ascii(), "{mark:?} is not ASCII");
     }

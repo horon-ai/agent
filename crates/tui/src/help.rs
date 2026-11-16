@@ -1,0 +1,488 @@
+//! `/help` and the slash popup: the two places the client lists what it can do.
+//!
+//! Both listings are built here rather than where they are drawn, so the
+//! columns come out one width, the popup stays inside the pane, and what the
+//! interface says can be tested without a terminal.
+//!
+//! Every key in the listing comes from the map in force. A listing written as
+//! text would keep naming `esc` after the user rebound the action to `ctrl+x`,
+//! which is worse than saying nothing: the one place that claims to explain the
+//! keys would be wrong.
+
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use crate::commands::{Entry, Group, Registry};
+use crate::keys::{ACTIONS, Bindings, ids};
+use crate::theme::Theme;
+
+/// Rows the popup may show at once.
+///
+/// A full list of commands would cover the conversation it is being typed
+/// over; eight rows is one screenful of choices next to the draft.
+pub const POPUP_ROWS: usize = 8;
+
+/// Spaces between the two columns of a listing.
+const GAP: usize = 2;
+
+/// The action ids the interface answers to, with the line that explains each.
+///
+/// The rows are generated from [`ACTIONS`] in its own order, so this table only
+/// adds the words; an action missing here still gets a row, without a
+/// description.
+const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
+    (ids::APP_SUBMIT, "send the typed message"),
+    (
+        ids::APP_CANCEL,
+        "cancel the running turn, or leave when nothing is running",
+    ),
+    (ids::APP_INTERRUPT, "interrupt the running turn and nothing else"),
+    (ids::APP_QUIT, "leave"),
+    (ids::APP_SCROLL_PAGE_UP, "hold the transcript one page higher"),
+    (
+        ids::APP_SCROLL_PAGE_DOWN,
+        "move the transcript one page back towards the end",
+    ),
+    (ids::APP_SCROLL_UP, "hold the transcript one row higher"),
+    (ids::APP_SCROLL_DOWN, "move the transcript one row back towards the end"),
+    (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
+    (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
+    (ids::EDITOR_DELETE, "delete the character at the cursor"),
+    (ids::EDITOR_LEFT, "move the cursor one character left"),
+    (ids::EDITOR_RIGHT, "move the cursor one character right"),
+    (ids::EDITOR_HOME, "move the cursor to the start of its line"),
+    (ids::EDITOR_END, "move the cursor to the end of its line"),
+    (ids::EDITOR_WORD_LEFT, "move to the start of the word before the cursor"),
+    (ids::EDITOR_WORD_RIGHT, "move past the word after the cursor"),
+    (
+        ids::EDITOR_HISTORY_PREV,
+        "step back through earlier drafts, then into the lines of the draft",
+    ),
+    (
+        ids::EDITOR_HISTORY_NEXT,
+        "step forward again, back to the draft being typed",
+    ),
+    (ids::EDITOR_NEWLINE, "start a new line without sending the draft"),
+    (
+        ids::EDITOR_KILL_TO_START,
+        "delete from the start of the line to the cursor",
+    ),
+    (ids::EDITOR_KILL_TO_END, "delete from the cursor to the end of the line"),
+    (ids::EDITOR_DELETE_WORD, "delete the word before the cursor"),
+    (
+        ids::EDITOR_COMPLETE,
+        "fill the popup's selected command, or complete the prefix",
+    ),
+    (ids::PROMPT_ALLOW, "approve the parked tool call once"),
+    (
+        ids::PROMPT_ALLOW_ALWAYS,
+        "approve this call and every later call like it",
+    ),
+    (ids::PROMPT_DENY, "deny the parked tool call"),
+    (ids::PROMPT_DISMISS, "deny the parked call; a question stays open"),
+    (ids::PROMPT_CONFIRM, "confirm a multi-choice question"),
+];
+
+/// The line that explains one built-in UI command.
+pub(crate) fn local_description(name: &str) -> &'static str {
+    match name {
+        "clear" => "clear the transcript",
+        "help" => "list the commands and the keys in force",
+        "model" => "pick a model, or switch with /model <name>",
+        "quit" => "leave",
+        "resume" => "pick a session stored for this directory and replay it",
+        "settings" => "open the settings screen",
+        _ => "",
+    }
+}
+
+/// The line that explains one harness command.
+///
+/// The names come out of serde from `RuntimeCommand`, so a name this table does
+/// not know still lists: it simply shows without a description.
+pub(crate) fn harness_description(name: &str) -> &'static str {
+    match name {
+        "agents" => "list the agent models, and switch one for this session or every session",
+        "auth" => "show the login status and the provider profiles",
+        "autojudge" => "turn the automatic judge on or off",
+        "autoreview" => "turn the automatic review on or off",
+        "context" => "show what is filling the context window",
+        "continue" => "resume every paused session",
+        "fast" => "switch the provider's fast (priority) service tier",
+        "info" => "show the session, provider and usage details",
+        "initiatives" => "list the open initiatives",
+        "judge" => "spawn a judge that checks the work against the request",
+        "logout" => "drop the stored provider credentials",
+        "memory" => "show the memory status; `memory extract` schedules an extraction",
+        "overnight" => "run the overnight work queue",
+        "plan" => "enter or leave plan mode",
+        "productivity" => "generate the productivity report",
+        "refresh_model_list" => "re-read the provider's model catalog",
+        "remote" => "show or change the remote access settings",
+        "resume_all" => "resume every paused session",
+        "review" => "spawn a review of the working tree changes",
+        "server_reload" => "upgrade the server in place, keeping its state",
+        "skills" => "reload the skills and list them",
+        "subagent" => "spawn a subagent with the task given after the command",
+        "subagent_model" => "show or set the model subagents run on",
+        "swarm" => "show the swarm and its members",
+        "transport" => "show or set the provider transport",
+        _ => "",
+    }
+}
+
+/// One row of a two-column listing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Row {
+    /// The name or key column.
+    pub left: String,
+    /// What it does; empty when nothing says.
+    pub right: String,
+}
+
+/// The `/help` text: commands by source, then the keys in force.
+pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
+    let commands = command_rows(entries);
+    let width = column(&commands);
+    let mut lines: Vec<String> = Vec::with_capacity(commands.len() + ACTIONS.len() + 8);
+    let mut group = None;
+    for (entry, row) in entries.iter().zip(commands.iter()) {
+        if group != Some(entry.group) {
+            group = Some(entry.group);
+            lines.push(format!("{}:", header(entry.group)));
+        }
+        let mut line = aligned(row, width);
+        if entry.shadowed {
+            line.push_str("  (shadowed by the built-in)");
+        }
+        lines.push(line);
+    }
+    if !entries.iter().any(|entry| entry.group == Group::File) {
+        lines.push(
+            "no command files; add .horon/commands/<name>.md to a project or \
+             $HORON_HOME/commands/<name>.md for every project"
+                .to_string(),
+        );
+    }
+    let keys = key_rows(bindings);
+    let key_width = column(&keys);
+    lines.push("keys:".to_string());
+    lines.extend(keys.iter().map(|row| aligned(row, key_width)));
+    lines.join("\n")
+}
+
+/// Every command as one row, in the order the sections print them.
+pub fn command_rows(entries: &[Entry]) -> Vec<Row> {
+    entries
+        .iter()
+        .map(|entry| Row {
+            left: entry.label(),
+            right: entry.description.clone(),
+        })
+        .collect()
+}
+
+/// Every action as one row: the keys it answers to now, and what it does.
+///
+/// The order is [`ACTIONS`] order, which is also the order a conflict is settled
+/// in, so the listing explains the map as it stands rather than a copy of it.
+pub fn key_rows(bindings: &Bindings) -> Vec<Row> {
+    ACTIONS
+        .iter()
+        .map(|spec| {
+            let keys = bindings.keys_for(spec.id);
+            let mut left = String::new();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    left.push_str(", ");
+                }
+                left.push_str(&key.to_string());
+            }
+            if left.is_empty() {
+                left.push_str("(unbound)");
+            }
+            Row {
+                left,
+                right: description_for(spec.id),
+            }
+        })
+        .collect()
+}
+
+/// The words for one action id.
+fn description_for(id: &str) -> String {
+    match ACTION_DESCRIPTIONS.iter().find(|(action, _)| *action == id) {
+        Some((_, text)) => (*text).to_string(),
+        None => String::new(),
+    }
+}
+
+/// The heading of one group of commands.
+fn header(group: Group) -> &'static str {
+    match group {
+        Group::Builtin => "built-in commands",
+        Group::Harness => "harness commands",
+        Group::File => "command files",
+    }
+}
+
+/// The width the left column of a listing needs.
+fn column(rows: &[Row]) -> usize {
+    rows.iter()
+        .map(|row| UnicodeWidthStr::width(row.left.as_str()))
+        .max()
+        .unwrap_or(0)
+}
+
+/// One row with its description in the column `width` wide.
+fn aligned(row: &Row, width: usize) -> String {
+    let mut line = String::with_capacity(width + row.right.len() + GAP + 2);
+    line.push_str("  ");
+    line.push_str(&row.left);
+    line.push_str(&" ".repeat(width.saturating_sub(UnicodeWidthStr::width(row.left.as_str()))));
+    if !row.right.is_empty() {
+        line.push_str(&" ".repeat(GAP));
+        line.push_str(&row.right);
+    }
+    line
+}
+
+/// The prefix a draft asks a popup for, if it asks for one.
+///
+/// Only the first word completes: once the draft has a space the argument
+/// position is the user's to fill, and `//text` is the escape for a message that
+/// starts with a slash rather than a command.
+pub fn prefix(draft: &str) -> Option<&str> {
+    let rest = draft.trim_start().strip_prefix('/')?;
+    if rest.starts_with('/') || rest.contains(char::is_whitespace) {
+        return None;
+    }
+    Some(rest)
+}
+
+/// The commands a prefix offers, in name order.
+///
+/// A shadowed command file is left out: the built-in answers that name, so
+/// offering the file would offer a line that never runs.
+pub fn popup_matches(entries: &[Entry], prefix: &str) -> Vec<Entry> {
+    let mut matches: Vec<Entry> = entries
+        .iter()
+        .filter(|entry| !entry.shadowed && entry.name.starts_with(prefix))
+        .cloned()
+        .collect();
+    matches.sort_by(|left, right| left.name.cmp(&right.name));
+    matches.dedup_by(|left, right| left.name == right.name);
+    matches
+}
+
+/// Drop the offer once the draft already names the command it would offer.
+///
+/// A list of one row saying what the user has just finished typing is in the
+/// way: there is nothing left to choose, and the next key is the one that sends.
+fn settled(matches: Vec<Entry>, prefix: &str) -> Vec<Entry> {
+    match matches.as_slice() {
+        [only] if only.name == prefix => Vec::new(),
+        _ => matches,
+    }
+}
+
+/// The rows the popup shows, and the first of them.
+///
+/// The selection stays on screen as it moves, and a list shorter than the popup
+/// shows every row it has.
+pub fn window(len: usize, selected: usize, rows: usize) -> (usize, usize) {
+    let rows = rows.max(1);
+    if len <= rows {
+        return (0, len);
+    }
+    let selected = selected.min(len - 1);
+    let first = (selected + 1).saturating_sub(rows);
+    (first, rows)
+}
+
+/// The popup's rows as drawn: one line per command, cut to `width` cells.
+///
+/// Each line is padded to the full width so the row clears whatever the frame
+/// left behind it, and the selected one carries the prompt's highlight.
+pub fn popup_lines(
+    entries: &[Entry],
+    selected: usize,
+    first: usize,
+    count: usize,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let visible: Vec<&Entry> = entries.iter().skip(first).take(count).collect();
+    let labels: Vec<String> = visible.iter().map(|entry| entry.label()).collect();
+    let label_width = labels
+        .iter()
+        .map(|label| UnicodeWidthStr::width(label.as_str()))
+        .max()
+        .unwrap_or(0);
+    visible
+        .iter()
+        .enumerate()
+        .map(|(offset, entry)| {
+            let chosen = first + offset == selected;
+            let mut body = format!(" {}", labels[offset]);
+            body.push_str(
+                &" ".repeat(label_width.saturating_sub(UnicodeWidthStr::width(labels[offset].as_str())) + GAP),
+            );
+            body.push_str(&entry.description);
+            let style = if chosen {
+                Style::default()
+                    .fg(theme.prompt.prompt_border)
+                    .bg(theme.prompt.selected_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.prompt.prompt_text)
+            };
+            Line::from(Span::styled(fit(&body, width), style))
+        })
+        .collect()
+}
+
+/// `text` cut or padded to exactly `width` cells.
+///
+/// A character that would cross the edge starts no row: the cell stays a space,
+/// so a wide glyph is never split in half.
+fn fit(text: &str, width: usize) -> String {
+    let mut fitted = String::with_capacity(text.len() + width);
+    let mut used = 0;
+    for character in text.chars() {
+        let cell = UnicodeWidthChar::width(character).unwrap_or(0);
+        if used + cell > width {
+            break;
+        }
+        used += cell;
+        fitted.push(character);
+    }
+    fitted.push_str(&" ".repeat(width.saturating_sub(used)));
+    fitted
+}
+
+/// The slash popup: the commands the draft offers, and the row chosen.
+///
+/// The matches are kept with the draft they were computed for, so a frame that
+/// draws the popup costs nothing, and a key that reads the length cannot read
+/// the list of another draft.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SlashPopup {
+    /// The draft the matches belong to.
+    draft: String,
+    /// Fingerprint of that draft, so a caller can skip rebuilding it.
+    synced: Option<u64>,
+    matches: Vec<Entry>,
+    selected: usize,
+    dismissed: bool,
+}
+
+impl SlashPopup {
+    /// A popup with nothing to offer.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bring the matches in line with the draft, if it changed.
+    ///
+    /// A new draft starts the selection over and brings back a popup `esc`
+    /// closed: the dismissal belonged to the text that was there.
+    pub fn sync(&mut self, registry: &Registry, draft: &str) {
+        // The length is counted here, once per changed draft, never in the
+        // per-frame check.
+        let fingerprint = crate::input::fingerprint(draft.chars().count(), draft.chars());
+        if self.draft == draft {
+            self.synced = Some(fingerprint);
+            return;
+        }
+        self.draft.clear();
+        self.draft.push_str(draft);
+        self.synced = Some(fingerprint);
+        self.selected = 0;
+        self.dismissed = false;
+        self.matches = match prefix(draft) {
+            Some(prefix) => settled(popup_matches(&registry.entries(), prefix), prefix),
+            None => Vec::new(),
+        };
+    }
+
+    /// Whether the matches already belong to the draft with this fingerprint.
+    ///
+    /// The caller reads it before building the draft: a key that changed
+    /// nothing used to build the whole message a second time to find out.
+    pub fn is_synced(&self, fingerprint: u64) -> bool {
+        self.synced == Some(fingerprint)
+    }
+
+    /// Bring the popup in line with a draft that cannot open it.
+    ///
+    /// A message being written, or a line holding more than one, is not a
+    /// command: the list closes without the draft being built to prove it.
+    pub fn clear_for(&mut self, fingerprint: u64) {
+        self.synced = Some(fingerprint);
+        if self.matches.is_empty() && self.draft.is_empty() {
+            return;
+        }
+        self.draft.clear();
+        self.matches.clear();
+        self.selected = 0;
+        self.dismissed = false;
+    }
+
+    /// Whether the popup is on screen.
+    pub fn is_open(&self) -> bool {
+        !self.matches.is_empty() && !self.dismissed
+    }
+
+    /// Close the popup without touching the draft.
+    ///
+    /// Used where something else takes the keys, and by `esc`. The next edit
+    /// brings it back.
+    pub fn dismiss(&mut self) {
+        self.dismissed = true;
+    }
+
+    /// Every command the draft offers, whether or not it is on screen.
+    pub fn matches(&self) -> &[Entry] {
+        &self.matches
+    }
+
+    /// How many commands the draft offers.
+    pub fn len(&self) -> usize {
+        self.matches.len()
+    }
+
+    /// Whether the draft offers nothing.
+    pub fn is_empty(&self) -> bool {
+        self.matches.is_empty()
+    }
+
+    /// The row the keys move.
+    pub fn selected(&self) -> usize {
+        self.matches.get(self.selected).map_or(0, |_| self.selected)
+    }
+
+    /// Move the selection, stopping at both ends.
+    pub fn move_by(&mut self, delta: isize) {
+        if self.matches.is_empty() {
+            return;
+        }
+        let last = self.matches.len() - 1;
+        self.selected = if delta < 0 {
+            self.selected.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.selected.saturating_add(delta as usize).min(last)
+        };
+    }
+
+    /// The name `editor.complete` fills in.
+    pub fn selected_name(&self) -> Option<&str> {
+        self.matches.get(self.selected).map(|entry| entry.name.as_str())
+    }
+
+    /// The rows the popup may show: the first one, and how many.
+    pub fn visible(&self) -> (usize, usize) {
+        window(self.matches.len(), self.selected, POPUP_ROWS)
+    }
+}

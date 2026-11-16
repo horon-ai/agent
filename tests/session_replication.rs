@@ -67,6 +67,7 @@ impl Instance {
             request_timeout: Some(Duration::from_secs(30)),
             ensure_runtime: false,
             supports_user_response: false,
+            supports_ask_requests: false,
         })
         .unwrap_or_else(|error| panic!("connect to the bridge: {error}\n{}", self.logs()))
     }

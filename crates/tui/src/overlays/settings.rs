@@ -256,8 +256,11 @@ impl SettingsOverlay {
         match key.code {
             KeyCode::Up => self.step(-1),
             KeyCode::Down => self.step(1),
-            KeyCode::Left | KeyCode::Tab => self.left(),
-            KeyCode::Right | KeyCode::BackTab => self.right(),
+            // `tab` moves forward through the header and `shift+tab` back,
+            // which is the order the tabs are drawn in: the two arrow keys keep
+            // the same meaning.
+            KeyCode::Left | KeyCode::BackTab => self.left(),
+            KeyCode::Right | KeyCode::Tab => self.right(),
             _ => {}
         }
         Outcome::Handled
@@ -505,6 +508,27 @@ fn theme_choices(dir: &std::path::Path) -> Vec<String> {
     choices
 }
 
+/// Narrowest pane the panel is drawn in; below it the overlay says where it is.
+pub const MIN_WIDTH: u16 = 12;
+/// Shortest pane the panel is drawn in.
+pub const MIN_HEIGHT: u16 = 5;
+
+/// Where the panel is drawn inside `area`.
+///
+/// It is narrower than the pane so the screen around it still shows where the
+/// client is, and it stops two columns short of the pane's edges so its border
+/// is never written into the terminal's last cell, which some terminals drop.
+pub fn panel(area: Rect) -> Rect {
+    let width = area.width.saturating_sub(4).min(76);
+    let height = area.height.saturating_sub(2);
+    Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    }
+}
+
 /// Draw the overlay over `area`, returning where an open editor wants the
 /// cursor.
 pub fn draw(
@@ -514,18 +538,23 @@ pub fn draw(
     theme: &Theme,
     symbols: Symbols,
 ) -> Option<(u16, u16)> {
-    if area.width < 12 || area.height < 5 {
+    // The overlay is modal, so the conversation behind it is not being read.
+    // A transcript character left beside the panel reads as part of the screen,
+    // so the whole pane is cleared and the panel is drawn on the blank area.
+    frame.render_widget(Clear, area);
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        // No room for a border and one row. The overlay still owns every key,
+        // so it says it is there instead of disappearing and swallowing them.
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " settings hidden: window too small, esc closes",
+                Style::default().fg(theme.core.muted),
+            ))),
+            area,
+        );
         return None;
     }
-    let width = area.width.saturating_sub(4).min(76);
-    let height = area.height.saturating_sub(2);
-    let panel = Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, panel);
+    let panel = panel(area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.core.border))

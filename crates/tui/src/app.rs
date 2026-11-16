@@ -5,21 +5,32 @@
 //! a whole conversation with fake events and draw the result into a
 //! `TestBackend`. Only [`crate::run`] touches a real terminal.
 
+use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use horon_agent_sdk::api::{ApiEvent, AskSelection};
+use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
-use crate::commands::{Invocation, Local, Registry};
+use crate::commands::Registry;
+use crate::history::History;
 use crate::input::Input;
-use crate::keys::{self, Bindings, Key};
-use crate::overlays::settings::{Outcome, SettingChange, SettingsOverlay};
-use crate::prompts::{Prompt, Response};
+use crate::keys::Bindings;
+use crate::overlays::picker::Picker;
+use crate::overlays::settings::{SettingChange, SettingsOverlay};
+use crate::prompts::Prompt;
+use crate::scroll::Scroll;
 use crate::sdk_bridge::Incoming;
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
+use crate::transcript::Decision;
 use crate::transcript::Transcript;
+
+mod commands;
+mod keys;
+mod picker;
+mod prompts;
+mod sending;
+mod settings;
 
 /// What the UI asks the bridge to do after a keystroke.
 ///
@@ -44,10 +55,36 @@ pub enum Action {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
-    /// List the models, or switch to the one named.
-    Model(Option<String>),
+    /// Switch to the model named.
+    Model(String),
+    /// Ask for the model list the picker offers.
+    Models,
+    /// Ask for the sessions stored for this working directory.
+    Sessions,
+    /// Attach to another session and replay its stored conversation.
+    Attach(String),
     /// Leave.
     Quit,
+}
+
+/// One message from the user, before the harness has confirmed it.
+///
+/// The two strings differ only for a command file: the harness receives the
+/// body it expands to, while the conversation shows the line that was typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// What the harness is sent.
+    pub text: String,
+    /// The line the user typed, which is what the conversation shows.
+    pub display: String,
+}
+
+impl Message {
+    /// A message, with `text` doubling as the line when nothing else is given.
+    fn new(text: String, display: Option<String>) -> Self {
+        let display = display.unwrap_or_else(|| text.clone());
+        Self { text, display }
+    }
 }
 
 /// The whole client state.
@@ -56,8 +93,16 @@ pub struct App {
     pub transcript: Transcript,
     /// The line being edited.
     pub input: Input,
+    /// Drafts sent before this one, for `up` and `down`.
+    pub history: History,
     /// The prompt blocking the turn, if any.
     pub prompt: Option<Prompt>,
+    /// Prompts that arrived while one was open, oldest first.
+    ///
+    /// The daemon parks one approval per call, so two parallel calls need two
+    /// decisions. They are kept rather than dropped over the one on screen:
+    /// answering shows the next, and the count is drawn with the prompt.
+    pub waiting_prompts: VecDeque<Prompt>,
     /// A fatal or connection-level sentence drawn across the top.
     pub banner: Option<String>,
     /// Whether the loop should keep going.
@@ -66,8 +111,35 @@ pub struct App {
     pub exit_code: i32,
     /// Whether a turn is in flight (Ctrl-C cancels instead of leaving).
     pub pending_turn: bool,
+    /// Messages typed while a turn was running, oldest first. Each one is sent
+    /// when the turn before it ends.
+    pub queue: Vec<Message>,
+    /// The message handed to the bridge and not yet confirmed or refused.
+    ///
+    /// It keeps the line the user typed beside the text the harness receives,
+    /// so a command file is drawn as the line that was typed rather than as
+    /// the body it expands to.
+    pub in_flight: Option<Message>,
+    /// Whether the bridge or the daemon went away. The client stays up so the
+    /// conversation can be read; the status line says why nothing is sent.
+    pub disconnected: bool,
+    /// Whether a failed send is holding the queue back.
+    ///
+    /// A message the harness refused goes back to the input line or the queue;
+    /// retrying it automatically would loop against a daemon that keeps
+    /// refusing, so the queue waits for the next turn end or an explicit
+    /// submit instead.
+    pub resend_held: bool,
     /// Rows the transcript pane got last frame, used to keep the newest lines.
     pub viewport_height: Option<u16>,
+    /// Where the transcript view sits: at the newest rows, or held above them.
+    pub scroll: Scroll,
+    /// Whether `transcript.mouse_scroll` hands the wheel to the transcript.
+    ///
+    /// The setting is read here and acted on where the terminal is: capture
+    /// takes the terminal's own text selection away, so it is on only while the
+    /// setting says so.
+    pub mouse_scroll: bool,
     /// What the client is attached to, for the status line.
     pub description: String,
     /// Events from the bridge thread.
@@ -95,6 +167,8 @@ pub struct App {
     pub symbols: Symbols,
     /// What keystrokes mean, replaced when `keybindings.toml` changes.
     pub bindings: Bindings,
+    /// The slash command popup: the commands the draft offers, and its row.
+    pub slash: crate::help::SlashPopup,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
     /// The resolved settings last applied, which the settings screen draws.
@@ -103,6 +177,11 @@ pub struct App {
     pub themes_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
+    /// The open list of models or sessions, if one is showing.
+    ///
+    /// A picker sits above every other surface: while it is open no key reaches
+    /// the settings screen, a prompt, the slash popup or the draft.
+    pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
 }
@@ -113,12 +192,20 @@ impl App {
         Self {
             transcript: Transcript::new(),
             input: Input::new(),
+            history: History::new(),
             prompt: None,
+            waiting_prompts: VecDeque::new(),
             banner: None,
             running: true,
             exit_code: 0,
             pending_turn: false,
+            queue: Vec::new(),
+            in_flight: None,
+            disconnected: false,
+            resend_held: false,
             viewport_height: None,
+            scroll: Scroll::new(),
+            mouse_scroll: false,
             description,
             events,
             model: None,
@@ -132,10 +219,12 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
+            picker: None,
             pending_change: None,
         }
     }
@@ -147,12 +236,20 @@ impl App {
         Self {
             transcript: Transcript::new(),
             input: Input::new(),
+            history: History::new(),
             prompt: None,
+            waiting_prompts: VecDeque::new(),
             banner: Some(message.to_string()),
             running: false,
             exit_code: 1,
             pending_turn: false,
+            queue: Vec::new(),
+            in_flight: None,
+            disconnected: true,
+            resend_held: false,
             viewport_height: None,
+            scroll: Scroll::new(),
+            mouse_scroll: false,
             description: "not connected".to_string(),
             events: receiver,
             model: None,
@@ -166,10 +263,12 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
+            picker: None,
             pending_change: None,
         }
     }
@@ -180,19 +279,41 @@ impl App {
     }
 
     /// The connection ended.
-    pub fn disconnected(&mut self, message: &str) {
+    ///
+    /// The client stays up: the conversation is still worth reading, and
+    /// exiting on a dropped socket means the last error is wiped by the
+    /// terminal restore before anyone can read it. `Ctrl-C` then leaves, and
+    /// the exit code still says the session failed.
+    pub fn disconnect(&mut self, message: &str) {
+        if self.disconnected {
+            return;
+        }
         self.banner = Some(message.to_string());
-        self.running = false;
-        self.exit_code = 1;
-        self.pending_turn = false;
-        self.prompt = None;
+        self.lose_connection();
     }
 
-    /// The lines the active prompt wants drawn, if any.
-    pub fn prompt_lines(&self) -> Vec<String> {
-        match &self.prompt {
-            Some(prompt) => prompt.lines(),
-            None => Vec::new(),
+    /// Stop pretending the session is usable, without claiming a new banner.
+    ///
+    /// Used when the loss is already being reported in the transcript: a send
+    /// that came back as a closed socket proves the connection is gone, and
+    /// the client has to say so in the status line without repeating itself at
+    /// the top of the screen.
+    fn lose_connection(&mut self) {
+        self.exit_code = 1;
+        self.disconnected = true;
+        self.pending_turn = false;
+        // A list that is still waiting for rows will never get them: with the
+        // connection gone it can only swallow keys, so it goes with it.
+        if self.picker.as_ref().is_some_and(Picker::is_loading) {
+            self.picker = None;
+        }
+        self.session_status = Some("idle".to_string());
+        self.withdraw_prompts("the connection was lost");
+        self.transcript.end_running_tools();
+        if !self.queue.is_empty() {
+            let waiting = self.queue.len();
+            self.transcript
+                .push_notice(format!("{waiting} queued message(s) cannot be sent"));
         }
     }
 
@@ -211,7 +332,9 @@ impl App {
         if let Some(provider) = &self.provider {
             parts.push(provider.clone());
         }
-        let state = if self.pending_turn {
+        let state = if self.disconnected {
+            "disconnected"
+        } else if self.pending_turn {
             "running"
         } else {
             self.session_status.as_deref().unwrap_or("idle")
@@ -230,21 +353,13 @@ impl App {
             model: self.model.as_deref(),
             session_id: self.session_id.as_deref(),
             pending_turn: self.pending_turn,
+            disconnected: self.disconnected,
             session_status: self.session_status.as_deref(),
             prompt: self.prompt_label(),
             cwd: self.cwd.as_deref(),
             home: self.home.as_deref(),
             tokens: self.tokens,
             now: None,
-        }
-    }
-
-    /// The pending-decision wording for the `pending` segment.
-    fn prompt_label(&self) -> Option<&'static str> {
-        match &self.prompt {
-            Some(Prompt::Approval(_)) => Some("approval needed"),
-            Some(Prompt::Ask(_)) => Some("question waiting"),
-            None => None,
         }
     }
 
@@ -263,26 +378,84 @@ impl App {
             ApiEvent::TextReplace { text, message_id, .. } => {
                 self.transcript.text_replace(message_id.as_deref(), text);
             }
-            ApiEvent::ToolStart { name, .. } => self.transcript.tool_start(name),
+            ApiEvent::ToolStart { call_id, name, .. } => {
+                self.transcript.tool_start(call_id, name);
+            }
+            // Input streams as JSON fragments, joined onto the call's own line:
+            // the id is what keeps two parallel calls from mixing arguments.
+            ApiEvent::ToolInputDelta { call_id, delta, .. } => {
+                self.transcript.tool_input(call_id, delta);
+            }
             // `ToolExec` follows `ToolStart` for the same call, so its line is
             // already in the transcript; a call that starts execution without
             // a start event still gets a line when it finishes.
             ApiEvent::ToolExec { .. } => {}
-            ApiEvent::ToolDone { name, error, .. } => {
-                self.transcript.tool_done(name, error.as_deref());
+            ApiEvent::ToolDone {
+                call_id,
+                name,
+                output,
+                error,
+                ..
+            } => {
+                self.transcript
+                    .tool_done(call_id, name, Some(output.as_str()), error.as_deref());
+                // A refusal can reach the client before the event that parks
+                // it, so the line is parked from this side too: any request
+                // already waiting that the message names makes the call a
+                // waiting one rather than a failed one. The prompt arriving
+                // later parks the same line, and parking twice changes nothing.
+                if let Some(message) = error {
+                    self.park_line_naming(message);
+                }
             }
             ApiEvent::TurnDone { .. } => {
                 self.transcript.text_done();
+                self.transcript.end_running_tools();
                 self.pending_turn = false;
+                self.resend_held = false;
                 self.session_status = Some("idle".to_string());
+                // An approval outlives the turn that asked for it: the request
+                // stays queued in the daemon (with its own deadline) and the
+                // recorded answer is what the model's retry reads, so dropping
+                // the prompt here would throw away the only way to answer it. A
+                // question does not: the `ask` tool stops waiting when the turn
+                // it belongs to ends.
+                self.withdraw_asks("the turn ended");
             }
-            ApiEvent::TurnStopped { message, .. } => {
+            ApiEvent::TurnStopped { reason, message, .. } => {
+                self.transcript.end_running_tools();
                 self.pending_turn = false;
-                self.warn(message.clone());
+                // A turn boundary is a fresh chance to send: a message a
+                // refused send left waiting is not held for ever.
+                self.resend_held = false;
+                self.session_status = Some("idle".to_string());
+                self.withdraw_asks("the turn stopped");
+                // A cancel is the user deciding to stop, so nothing may stay on
+                // screen asking them for a decision about the run they just
+                // stopped.
+                if matches!(reason, TurnStopReason::Interrupted) {
+                    self.withdraw_prompts("the turn was cancelled");
+                }
+                // A cancel is the user's own decision, so it is a notice. Any
+                // other abnormal stop is news about the harness and stays a
+                // warning.
+                if matches!(reason, TurnStopReason::Interrupted) {
+                    self.transcript.push_notice(message.clone());
+                } else {
+                    self.warn(message.clone());
+                }
             }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::ApprovalPending { request_id, action, .. } => {
-                self.prompt = Some(Prompt::approval(request_id.clone(), action.clone()));
+                // The event names the tool only. The prompt pairs with a line
+                // when it is drawn, using the request id the refusal wrote into
+                // that line, so a decision can never be shown another call's
+                // arguments.
+                self.show_prompt(Prompt::approval(request_id.clone(), action.clone()));
+                // The call the request names is drawn as waiting from here on:
+                // it was refused because the mode asks first, and the failure
+                // wording is for a call that broke.
+                self.transcript.park_request(request_id);
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -291,18 +464,32 @@ impl App {
                 via,
                 ..
             } => {
+                // The decision may have been made on another surface, so the
+                // prompt is found rather than assumed: it can be the one on
+                // screen or one still waiting its turn.
                 let holds_request = matches!(
                     &self.prompt,
                     Some(Prompt::Approval(approval)) if &approval.request_id == request_id
                 );
                 if holds_request {
-                    self.prompt = None;
+                    self.take_prompt();
+                } else {
+                    let queued = self.waiting_prompts.iter().position(
+                        |prompt| matches!(prompt, Prompt::Approval(approval) if &approval.request_id == request_id),
+                    );
+                    if let Some(index) = queued {
+                        self.waiting_prompts.remove(index);
+                    }
                 }
+                // A decision made on another surface settles the row the same
+                // way one made here does.
+                self.transcript
+                    .decide_request(request_id, if *approved { Decision::Allowed } else { Decision::Denied });
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
             ApiEvent::AskRequested { ask_id, questions, .. } => {
-                self.prompt = Some(Prompt::ask(ask_id.clone(), questions.clone()));
+                self.show_prompt(Prompt::ask(ask_id.clone(), questions.clone()));
             }
             ApiEvent::ModelInfo {
                 session_id,
@@ -320,7 +507,15 @@ impl App {
             }
             ApiEvent::SessionStatus { session_id, status, .. } => {
                 self.session_id = Some(session_id.clone());
-                self.session_status = Some(status.clone());
+                // `cancelled` is the daemon restating the turn that just
+                // stopped, not a state the session is in: left as it is, the
+                // status line kept saying `cancelled` after the notice that
+                // already reported it, and the client was idle all along.
+                self.session_status = Some(if status == "cancelled" {
+                    "idle".to_string()
+                } else {
+                    status.clone()
+                });
             }
             ApiEvent::TokenUsage {
                 session_id,
@@ -339,194 +534,97 @@ impl App {
                 });
             }
             ApiEvent::Error { message, .. } => {
-                self.pending_turn = false;
+                // The turn is not over: the daemon follows a failed turn's
+                // error with `TurnStopped` and `TurnDone`, which close the turn
+                // state. Clearing the flag here made the next Ctrl-C quit the
+                // client while the turn was still live, which is the one thing
+                // the key must not do; closing running tool lines here would
+                // mark a call that may still finish as already ended.
                 self.warn(message.clone());
             }
             _ => {}
         }
     }
 
-    /// Translate one keystroke into an action, if it produced one.
-    ///
-    /// A live prompt takes every key first: a half-answered approval must not
-    /// let a stray character into the message being drafted. The key map
-    /// decides what each key means; a printable character that no action claims
-    /// is inserted, so a text field cannot lose a letter to a binding.
-    pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
-        // An open overlay owns every key: a letter meant for a value must not
-        // reach the message being drafted underneath it.
-        if let Some(mut overlay) = self.overlay.take() {
-            let outcome = overlay.on_key(key);
-            match outcome {
-                Outcome::Handled => self.overlay = Some(overlay),
-                Outcome::Closed => self.pending_change = None,
-                Outcome::Change(change) => {
-                    self.pending_change = Some(change);
-                    self.overlay = Some(overlay);
-                }
-            }
-            return None;
-        }
-        if let Some(prompt) = self.prompt.as_mut() {
-            match prompt.on_key_with(&self.bindings, key) {
-                Some(Response::Approval {
-                    request_id,
-                    approved,
-                    always,
-                }) => {
-                    self.prompt = None;
-                    return Some(Action::Approval {
-                        request_id,
-                        approved,
-                        always,
-                    });
-                }
-                Some(Response::Ask { ask_id, answers }) => {
-                    self.prompt = None;
-                    return Some(Action::Ask { ask_id, answers });
-                }
-                None => return None,
-            }
-        }
-
-        let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
-        match bound {
-            Some(keys::ids::APP_SUBMIT) => {
-                // `editor.submit_on_enter = false` disconnects the send key.
-                // The editor is single-line, so there is nowhere to insert a
-                // newline: the key does nothing rather than sending, since
-                // sending is exactly what the user turned off.
-                let submits = self.settings.boolean("editor.submit_on_enter").unwrap_or(true);
-                if !submits {
-                    return None;
-                }
-                let text = self.input.take();
-                if text.trim().is_empty() {
-                    return None;
-                }
-                return self.submit(&text);
-            }
-            Some(keys::ids::EDITOR_COMPLETE) => {
-                self.complete();
-                return None;
-            }
-            Some(keys::ids::APP_CANCEL) => {
-                if self.pending_turn {
-                    self.transcript.push_notice("cancelling the turn");
-                    return Some(Action::Cancel);
-                }
-                return Some(Action::Quit);
-            }
-            Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
-            Some(keys::ids::EDITOR_BACKSPACE) => self.input.backspace(),
-            Some(keys::ids::EDITOR_DELETE) => self.input.delete(),
-            Some(keys::ids::EDITOR_LEFT) => self.input.left(),
-            Some(keys::ids::EDITOR_RIGHT) => self.input.right(),
-            Some(keys::ids::EDITOR_HOME) => self.input.home(),
-            Some(keys::ids::EDITOR_END) => self.input.end(),
-            _ => {}
-        }
-        match key.code {
-            KeyCode::Char(character) if !control => self.input.insert(character),
-            _ => {}
-        }
-        None
-    }
-
-    /// Resolve one submitted line and turn it into an action.
-    ///
-    /// A slash line either names a built-in UI command, a command file or one
-    /// of the harness's commands; a line that names none of them becomes an
-    /// error line and never reaches the model.
-    fn submit(&mut self, text: &str) -> Option<Action> {
-        match self.commands.resolve(text) {
-            Invocation::Message(message) => {
-                self.transcript.push_user(message.clone());
-                Some(self.start_turn(message))
-            }
-            // A command file sends the body it expands to, while the line the
-            // user typed stays in the transcript as the message they sent.
-            Invocation::Expanded { display, text } => {
-                self.transcript.push_user(display);
-                Some(self.start_turn(text))
-            }
-            Invocation::Local { command, arguments } => self.run_local(command, &arguments),
-            Invocation::Server { command, arguments } => Some(Action::Runtime { command, arguments }),
-            Invocation::Error(message) => {
-                self.warn(message);
-                None
-            }
-        }
-    }
-
-    /// Mark a turn as running and hand the text to the bridge.
-    fn start_turn(&mut self, text: String) -> Action {
-        self.pending_turn = true;
-        self.session_status = Some("generating".to_string());
-        Action::Send(text)
-    }
-
-    /// Answer a built-in command that the client owns.
-    fn run_local(&mut self, command: Local, arguments: &str) -> Option<Action> {
-        match command {
-            Local::Quit => Some(Action::Quit),
-            Local::Help => {
-                let listing = self.commands.help();
-                self.transcript.push_notice(listing);
-                None
-            }
-            Local::Clear => {
-                self.transcript = Transcript::new();
-                None
-            }
-            Local::Model => match arguments.trim() {
-                "" => Some(Action::Model(None)),
-                name => Some(Action::Model(Some(name.to_string()))),
-            },
-            Local::Settings => {
-                self.open_settings();
-                None
-            }
-        }
-    }
-
-    /// Show the settings screen, seeded from the settings in force.
-    pub fn open_settings(&mut self) {
-        let mut overlay = SettingsOverlay::new(self.themes_dir.clone());
-        overlay.refresh(&self.settings);
-        self.overlay = Some(overlay);
-    }
-
-    /// Take the change the settings screen confirmed, for the caller to write.
-    pub fn take_setting_change(&mut self) -> Option<SettingChange> {
-        self.pending_change.take()
-    }
-
-    /// Replace the settings snapshot the screen draws, keeping the selection.
-    ///
-    /// The two settings that change behavior are applied to the parts that read
-    /// them here rather than in each drawing call: the transcript keeps or drops
-    /// reasoning as it streams, and the editor asks before it sends.
-    pub fn refresh_settings(&mut self, settings: &Settings) {
-        self.settings = settings.clone();
-        let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
-        self.transcript.set_show_reasoning(show_reasoning);
-        if let Some(overlay) = self.overlay.as_mut() {
-            overlay.refresh(settings);
-        }
-    }
-
     /// The one-line completion hint drawn under the input, if one applies.
+    ///
+    /// The popup carries the same names with their descriptions, so the hint is
+    /// the fallback for a popup the user closed.
     pub fn completion_hint(&self) -> Option<String> {
         let text = self.input.text();
         let completion = self.commands.complete(&text)?;
+        // A line that already names the command has nothing left to complete,
+        // and naming it again under the draft is noise.
+        if completion.insert == text {
+            return None;
+        }
         Some(completion.matches.join("  "))
+    }
+
+    /// Draw the waiting line a refusal message names, when its request is still
+    /// parked.
+    fn park_line_naming(&mut self, message: &str) {
+        let request = self
+            .prompt
+            .iter()
+            .chain(self.waiting_prompts.iter())
+            .find_map(|prompt| match prompt {
+                Prompt::Approval(approval)
+                    if crate::transcript::Transcript::names_request(message, &approval.request_id) =>
+                {
+                    Some(approval.request_id.clone())
+                }
+                _ => None,
+            });
+        if let Some(request) = request {
+            self.transcript.park_request(&request);
+        }
+    }
+
+    /// Bring the slash popup in line with the draft.
+    ///
+    /// Called before the keys are read and before a frame is drawn: both need
+    /// the matches of the draft that is on screen, not of the one before it.
+    pub fn sync_slash(&mut self) {
+        // The list only ever offers the first word of a one-line draft, and a
+        // message being written is neither. The fingerprint is what says the
+        // draft is new: without it this built the whole draft twice on every
+        // keystroke, once before the key and once after, to learn nothing.
+        let fingerprint = self.input.fingerprint();
+        if self.slash.is_synced(fingerprint) {
+            return;
+        }
+        if !self.input.starts_with_slash() || self.input.line_count() != 1 {
+            self.slash.clear_for(fingerprint);
+            return;
+        }
+        let text = self.input.text();
+        self.slash.sync(&self.commands, &text);
+    }
+
+    /// Fill the draft from the command the popup has selected.
+    ///
+    /// The whole line is the command, so nothing of the old prefix survives to
+    /// be sent as an argument the user did not type.
+    fn complete_selected(&mut self) -> bool {
+        let Some(name) = self.slash.selected_name().map(str::to_string) else {
+            return false;
+        };
+        self.history.reset();
+        self.input.set_text(&format!("/{name}"));
+        // The filled line names the command outright, which is the state the
+        // popup has nothing to offer for; syncing here keeps that true for the
+        // next frame and the next key alike.
+        self.sync_slash();
+        true
     }
 
     /// Complete the line being edited to the longest common prefix, or the
     /// single match when there is one.
     pub fn complete(&mut self) {
+        if self.slash.is_open() && self.complete_selected() {
+            return;
+        }
         let text = self.input.text();
         let Some(completion) = self.commands.complete(&text) else {
             return;
@@ -534,29 +632,9 @@ impl App {
         if completion.insert == text {
             return;
         }
-        self.input.clear();
-        for character in completion.insert.chars() {
-            self.input.insert(character);
-        }
-    }
-
-    /// Point the command registry at the working directory and read the files.
-    pub fn reload_commands(&mut self) {
-        let cwd = self.cwd.clone();
-        if self.commands.sync(cwd.as_deref().map(std::path::Path::new)) {
-            for warning in self.commands.take_warnings() {
-                self.warn(format!("commands: {warning}"));
-            }
-        }
-    }
-
-    /// Re-read the command files when a directory changed.
-    pub fn tick_commands(&mut self) {
-        if self.commands.tick() {
-            for warning in self.commands.take_warnings() {
-                self.warn(format!("commands: {warning}"));
-            }
-        }
+        self.history.reset();
+        self.input.set_text(&completion.insert);
+        self.sync_slash();
     }
 }
 

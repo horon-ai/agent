@@ -12,6 +12,52 @@ use unicode_width::UnicodeWidthChar;
 /// One character, its cell width, and the style of the span it came from.
 type Cell = (char, usize, Style);
 
+/// Columns a continuation row keeps for its own text at the narrowest width.
+///
+/// An indent that leaves less than this would hide the text it is aligning, so
+/// it gives way instead: the alignment is worth less than the words.
+const MIN_TEXT_COLUMNS: usize = 3;
+
+/// A rendered line and the columns its continuation rows keep.
+///
+/// Wrapping alone would start every row at the first column, so a message under
+/// a `> ` prefix or a list marker would lose the alignment that shows it is one
+/// message. The indent travels with the line and is spent out of the row's
+/// width, not added to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Indented {
+    line: Line<'static>,
+    indent: usize,
+}
+
+impl Indented {
+    /// A line whose continuation rows start at the first column.
+    pub fn plain(line: Line<'static>) -> Self {
+        Self { line, indent: 0 }
+    }
+
+    /// A line whose continuation rows keep `indent` columns.
+    pub fn new(line: Line<'static>, indent: usize) -> Self {
+        Self { line, indent }
+    }
+
+    /// The line before it is wrapped.
+    pub fn line(&self) -> &Line<'static> {
+        &self.line
+    }
+
+    /// Columns the continuation rows keep.
+    pub fn indent(&self) -> usize {
+        self.indent
+    }
+}
+
+impl From<Line<'static>> for Indented {
+    fn from(line: Line<'static>) -> Self {
+        Self::plain(line)
+    }
+}
+
 /// Break `line` into rows of at most `width` cells, keeping each span's style.
 ///
 /// A row that overflows ends after its last whitespace character, which stays
@@ -21,7 +67,18 @@ type Cell = (char, usize, Style);
 /// row rather than being split, so a row is only wider than `width` when one
 /// character alone is wider than the pane.
 pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
+    wrap_indented(line, width, 0)
+}
+
+/// Break `line` into rows, keeping `indent` columns free on continuation rows.
+///
+/// The first row carries the line's own prefix, so it uses the full width; every
+/// row after it spends `indent` columns on staying under the text that prefix
+/// introduced. The indent gives way at a width too narrow to hold both it and a
+/// few columns of text.
+pub fn wrap_indented(line: &Line<'static>, width: usize, indent: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
+    let indent = indent.min(width.saturating_sub(MIN_TEXT_COLUMNS));
     let cells: Vec<Cell> = line
         .spans
         .iter()
@@ -33,13 +90,19 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
         .collect();
     let mut rows: Vec<Line<'static>> = Vec::new();
     let mut start = 0;
+    // An empty line still occupies one row.
+    if cells.is_empty() {
+        return vec![row(Vec::new(), line)];
+    }
     while start < cells.len() {
+        let lead = if rows.is_empty() { 0 } else { indent };
+        let budget = width.saturating_sub(lead).max(1);
         let mut used = 0;
         let mut end = start;
         let mut space = None;
         while end < cells.len() {
             let cell_width = cells[end].1;
-            if used > 0 && used + cell_width > width {
+            if used > 0 && used + cell_width > budget {
                 break;
             }
             used += cell_width;
@@ -56,12 +119,22 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
         } else {
             end
         };
-        rows.push(row_of(&cells[start..end], line));
+        let mut built = row_of(&cells[start..end], line);
+        if lead > 0 {
+            built.spans.insert(0, Span::raw(" ".repeat(lead)));
+        }
+        rows.push(built);
         start = end;
     }
-    // An empty line still occupies one row.
-    if rows.is_empty() {
-        rows.push(row(Vec::new(), line));
+    rows
+}
+
+/// Wrap a rendered block, keeping every line's own indent.
+pub fn wrap_rows(lines: Vec<Indented>, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width);
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for line in lines {
+        rows.extend(wrap_indented(line.line(), width, line.indent()));
     }
     rows
 }
@@ -177,6 +250,46 @@ mod tests {
         let rows = wrap_line(&Line::from("supercalifragilistic"), 6);
         let texts: Vec<String> = rows.iter().map(text_of).collect();
         assert_eq!(texts, vec!["superc", "alifra", "gilist", "ic"]);
+    }
+
+    #[test]
+    fn continuation_rows_keep_the_indent() {
+        // The first row carries the prefix a caller already drew; every row
+        // after it stays under the text that prefix introduced.
+        let rows = wrap_indented(&Line::from("abcdefgh"), 5, 2);
+        let texts: Vec<String> = rows.iter().map(text_of).collect();
+        assert_eq!(texts, vec!["abcde", "  fgh"]);
+    }
+
+    #[test]
+    fn the_indent_is_spent_from_the_width() {
+        // A word still fits a continuation row because the row's budget is the
+        // pane width minus the indent, not the width itself.
+        let rows = wrap_indented(&Line::from("hello world"), 8, 2);
+        let texts: Vec<String> = rows.iter().map(text_of).collect();
+        assert_eq!(texts, vec!["hello ", "  world"]);
+    }
+
+    #[test]
+    fn the_indent_gives_way_at_a_narrow_width() {
+        // Two columns of indent in a four-cell pane would leave two cells for
+        // the text, so the indent shrinks instead of hiding it.
+        let rows = wrap_indented(&Line::from("abcdefgh"), 4, 2);
+        let texts: Vec<String> = rows.iter().map(text_of).collect();
+        assert_eq!(texts, vec!["abcd", " efg", " h"]);
+    }
+
+    #[test]
+    fn wrap_rows_keeps_each_lines_indent() {
+        let rows = wrap_rows(
+            vec![
+                Indented::plain(Line::from("plain")),
+                Indented::new(Line::from("abcdef"), 2),
+            ],
+            5,
+        );
+        let texts: Vec<String> = rows.iter().map(text_of).collect();
+        assert_eq!(texts, vec!["plain", "abcde", "  f"]);
     }
 
     #[test]
