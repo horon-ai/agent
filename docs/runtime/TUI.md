@@ -18,6 +18,8 @@ When a condition fails, the command prints a sentence that names the condition (
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
+The client reaches the daemon through the harness API bridge, and starts that bridge when no listening socket answers. The bridge runs in the session of the terminal that started it, so it ends when that terminal closes, while the daemon keeps running and the bridge's socket file (`horon-agent-api.sock`) stays on disk. A stale socket file is therefore not taken as a running bridge: `horon` and `horon-tui` check the socket with a connection, and when nothing answers they start the bridge again, which replaces the leftover file. No manual cleanup is needed.
+
 The client takes its own arguments:
 
 ```text
