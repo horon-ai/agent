@@ -158,6 +158,8 @@ pub struct App {
     pub symbols: Symbols,
     /// What keystrokes mean, replaced when `keybindings.toml` changes.
     pub bindings: Bindings,
+    /// The slash command popup: the commands the draft offers, and its row.
+    pub slash: crate::help::SlashPopup,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
     /// The resolved settings last applied, which the settings screen draws.
@@ -203,6 +205,7 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
@@ -245,6 +248,7 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
@@ -506,15 +510,52 @@ impl App {
     }
 
     /// The one-line completion hint drawn under the input, if one applies.
+    ///
+    /// The popup carries the same names with their descriptions, so the hint is
+    /// the fallback for a popup the user closed.
     pub fn completion_hint(&self) -> Option<String> {
         let text = self.input.text();
         let completion = self.commands.complete(&text)?;
+        // A line that already names the command has nothing left to complete,
+        // and naming it again under the draft is noise.
+        if completion.insert == text {
+            return None;
+        }
         Some(completion.matches.join("  "))
+    }
+
+    /// Bring the slash popup in line with the draft.
+    ///
+    /// Called before the keys are read and before a frame is drawn: both need
+    /// the matches of the draft that is on screen, not of the one before it.
+    pub fn sync_slash(&mut self) {
+        let text = self.input.text();
+        self.slash.sync(&self.commands, &text);
+    }
+
+    /// Fill the draft from the command the popup has selected.
+    ///
+    /// The whole line is the command, so nothing of the old prefix survives to
+    /// be sent as an argument the user did not type.
+    fn complete_selected(&mut self) -> bool {
+        let Some(name) = self.slash.selected_name().map(str::to_string) else {
+            return false;
+        };
+        self.history.reset();
+        self.input.set_text(&format!("/{name}"));
+        // The filled line names the command outright, which is the state the
+        // popup has nothing to offer for; syncing here keeps that true for the
+        // next frame and the next key alike.
+        self.sync_slash();
+        true
     }
 
     /// Complete the line being edited to the longest common prefix, or the
     /// single match when there is one.
     pub fn complete(&mut self) {
+        if self.slash.is_open() && self.complete_selected() {
+            return;
+        }
         let text = self.input.text();
         let Some(completion) = self.commands.complete(&text) else {
             return;
@@ -524,6 +565,7 @@ impl App {
         }
         self.history.reset();
         self.input.set_text(&completion.insert);
+        self.sync_slash();
     }
 }
 

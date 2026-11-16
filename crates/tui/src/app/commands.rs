@@ -11,7 +11,9 @@ impl App {
         match command {
             Local::Quit => Some(Action::Quit),
             Local::Help => {
-                let listing = self.commands.help();
+                // The listing names the keys in force, not the shipped ones: a
+                // rebound key has to be the key the listing shows.
+                let listing = self.commands.help_with(&self.bindings);
                 self.transcript.push_notice(listing);
                 None
             }

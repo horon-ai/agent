@@ -17,6 +17,17 @@ impl App {
     /// decides what each key means; a printable character that no action claims
     /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The popup is read against the draft on screen, before this key
+        // changes it, and brought up to date again after it: a key that moved
+        // the draft leaves a list that belongs to the text it left behind.
+        self.sync_slash();
+        let action = self.handle_key(key);
+        self.sync_slash();
+        action
+    }
+
+    /// What one keystroke does, with the popup already in line with the draft.
+    fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         // An open overlay owns every key: a letter meant for a value must not
         // reach the message being drafted underneath it.
         if let Some(mut overlay) = self.overlay.take() {
@@ -85,6 +96,35 @@ impl App {
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+        // The popup sits above the editor and below the prompt, so while it is
+        // open the keys that pick a row are its own: `up` and `down` move the
+        // selection instead of the history, `esc` closes the list rather than
+        // interrupting the turn, and `tab` fills the row it has chosen. Every
+        // other key falls through to the editor, which is what keeps the draft
+        // editable with the list on screen.
+        if self.slash.is_open()
+            && let Some(action) = bound
+        {
+            match action {
+                keys::ids::EDITOR_HISTORY_PREV => {
+                    self.slash.move_by(-1);
+                    return None;
+                }
+                keys::ids::EDITOR_HISTORY_NEXT => {
+                    self.slash.move_by(1);
+                    return None;
+                }
+                keys::ids::EDITOR_COMPLETE => {
+                    self.complete();
+                    return None;
+                }
+                keys::ids::APP_INTERRUPT => {
+                    self.slash.dismiss();
+                    return None;
+                }
+                _ => {}
+            }
+        }
         match bound {
             Some(keys::ids::APP_SUBMIT) => {
                 // `editor.submit_on_enter = false` disconnects the send key, so

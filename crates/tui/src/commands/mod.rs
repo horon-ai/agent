@@ -100,6 +100,45 @@ pub struct FileCommand {
     pub shadowed: bool,
 }
 
+/// Where a command in a listing comes from.
+///
+/// The listing prints one section per group, so a reader can tell a command the
+/// client answers from one the harness runs without reading the description.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Group {
+    /// A command the client answers itself ([`Local`]).
+    Builtin,
+    /// A runtime command the harness answers.
+    Harness,
+    /// A markdown command file.
+    File,
+}
+
+/// One command as `/help` and the slash popup list it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    /// The name typed after the slash.
+    pub name: String,
+    /// The frontmatter argument hint, when the command takes arguments.
+    pub argument_hint: Option<String>,
+    /// One line saying what the command does; empty when nothing says.
+    pub description: String,
+    /// Where the command comes from.
+    pub group: Group,
+    /// A built-in owns the name, so the file never runs.
+    pub shadowed: bool,
+}
+
+impl Entry {
+    /// The name column: `/name` and its argument hint.
+    pub fn label(&self) -> String {
+        match &self.argument_hint {
+            Some(hint) => format!("/{} {hint}", self.name),
+            None => format!("/{}", self.name),
+        }
+    }
+}
+
 /// What one typed line asks the interface to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Invocation {
@@ -206,6 +245,40 @@ impl Registry {
         &self.files
     }
 
+    /// Every command in force, as `/help` and the slash popup list it.
+    ///
+    /// The order is the order the sections print in: built-ins first, then the
+    /// harness's own names, then the command files.
+    pub fn entries(&self) -> Vec<Entry> {
+        let mut entries: Vec<Entry> = LOCAL_NAMES
+            .iter()
+            .map(|name| Entry {
+                name: (*name).to_string(),
+                argument_hint: None,
+                description: crate::help::local_description(name).to_string(),
+                group: Group::Builtin,
+                shadowed: false,
+            })
+            .collect();
+        let mut names: Vec<&str> = server_commands().iter().map(|(name, _)| name.as_str()).collect();
+        names.sort_unstable();
+        entries.extend(names.into_iter().map(|name| Entry {
+            name: name.to_string(),
+            argument_hint: None,
+            description: crate::help::harness_description(name).to_string(),
+            group: Group::Harness,
+            shadowed: false,
+        }));
+        entries.extend(self.files.iter().map(|file| Entry {
+            name: file.name.clone(),
+            argument_hint: file.argument_hint.clone(),
+            description: file.description.clone(),
+            group: Group::File,
+            shadowed: file.shadowed,
+        }));
+        entries
+    }
+
     /// Take the problems the last read produced.
     pub fn take_warnings(&mut self) -> Vec<String> {
         std::mem::take(&mut self.warnings)
@@ -289,47 +362,17 @@ impl Registry {
         })
     }
 
-    /// The `/help` text: every command, where it comes from, and its summary.
+    /// The `/help` text: every command with its summary, then the keys.
+    ///
+    /// The keys come from the default map, which is what a caller with no app
+    /// around it means; the client passes the map it loaded.
     pub fn help(&self) -> String {
-        let mut lines = vec![
-            "built-in commands:".to_string(),
-            "  /clear   clear the transcript".to_string(),
-            "  /help    list commands".to_string(),
-            "  /model   list models, or switch with /model <name>".to_string(),
-            "  /settings  open the settings screen".to_string(),
-            "  /quit    leave".to_string(),
-            "harness commands:".to_string(),
-        ];
-        let mut names: Vec<&str> = server_commands().iter().map(|(name, _)| name.as_str()).collect();
-        names.sort_unstable();
-        for chunk in names.chunks(6) {
-            lines.push(format!("  /{}", chunk.join(" /")));
-        }
-        if self.files.is_empty() {
-            lines.push(
-                "no command files; add .horon/commands/<name>.md to a project or \
-                 $HORON_HOME/commands/<name>.md for every project"
-                    .to_string(),
-            );
-            return lines.join("\n");
-        }
-        lines.push("command files:".to_string());
-        for file in &self.files {
-            let mut line = format!("  /{}", file.name);
-            if let Some(hint) = &file.argument_hint {
-                line.push(' ');
-                line.push_str(hint);
-            }
-            if !file.description.is_empty() {
-                line.push_str("  ");
-                line.push_str(&file.description);
-            }
-            if file.shadowed {
-                line.push_str("  (shadowed by the built-in)");
-            }
-            lines.push(line);
-        }
-        lines.join("\n")
+        self.help_with(crate::keys::default_bindings())
+    }
+
+    /// The `/help` text against the key map in force.
+    pub fn help_with(&self, bindings: &crate::keys::Bindings) -> String {
+        crate::help::text(&self.entries(), bindings)
     }
 
     /// Re-read both directories and rebuild the file list.

@@ -61,7 +61,12 @@ impl App {
     }
 
     /// Put a prompt in front of the user, or behind the one already there.
+    ///
+    /// A prompt takes every key, so the slash popup goes: a list still on screen
+    /// under a prompt would claim keys it no longer gets, and its rows would sit
+    /// between the decision and the draft it is about.
     pub(crate) fn show_prompt(&mut self, prompt: Prompt) {
+        self.slash.dismiss();
         match &self.prompt {
             Some(_) => self.waiting_prompts.push_back(prompt),
             None => self.prompt = Some(prompt),

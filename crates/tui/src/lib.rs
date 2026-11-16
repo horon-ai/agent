@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod commands;
+pub mod help;
 pub mod history;
 pub mod input;
 mod item_lines;
@@ -59,6 +60,10 @@ mod scroll_tests;
 #[cfg(test)]
 #[path = "markdown_tests.rs"]
 mod markdown_tests;
+
+#[cfg(test)]
+#[path = "help_tests.rs"]
+mod help_tests;
 
 use std::time::Duration;
 
@@ -579,6 +584,9 @@ const MIN_TRANSCRIPT_ROWS: u16 = 3;
 const MAX_INPUT_ROWS: u16 = 8;
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
+    // The popup is read from the draft on screen, before anything borrows the
+    // app to draw.
+    app.sync_slash();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -603,15 +611,32 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
                 .map(move |row| row.style(style))
         })
         .collect();
-    let hint = app.completion_hint();
+    // The popup lists the same commands the hint names, with their
+    // descriptions, so the hint is only the fallback for a popup `esc` closed.
+    let popup = app.slash.is_open().then(|| app.slash.len());
+    let hint = if popup.is_some() { None } else { app.completion_hint() };
     // The input pane grows with the draft, but never past a cap and never at
     // the transcript's expense: three rows of conversation stay readable on a
     // short terminal, and a taller draft scrolls inside its own pane.
     let marker_width = symbols.prompt_marker_width();
     let text_width = frame.area().width.saturating_sub(marker_width).saturating_sub(1);
+    // The popup takes its rows from the transcript, so it is held to what is
+    // left once the conversation keeps its minimum: on a terminal too short for
+    // both, the conversation wins and the popup shows fewer commands.
+    let fixed = u16::from(app.banner.is_some())
+        .saturating_add(u16::try_from(prompt_rows.len()).unwrap_or(u16::MAX))
+        .saturating_add(u16::from(hint.is_some()))
+        .saturating_add(MIN_TRANSCRIPT_ROWS)
+        .saturating_add(1);
+    let popup_rows = match popup {
+        Some(len) => (u16::try_from(len.min(crate::help::POPUP_ROWS)).unwrap_or(1))
+            .min(frame.area().height.saturating_sub(fixed)),
+        None => 0,
+    };
     let reserved = u16::from(app.banner.is_some())
         .saturating_add(u16::try_from(prompt_rows.len()).unwrap_or(u16::MAX))
         .saturating_add(u16::from(hint.is_some()))
+        .saturating_add(popup_rows)
         .saturating_add(1);
     let input_rows = frame
         .area()
@@ -619,11 +644,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         .saturating_sub(reserved.saturating_add(MIN_TRANSCRIPT_ROWS))
         .clamp(1, MAX_INPUT_ROWS);
     let view = app.input.view(text_width, input_rows);
-    let mut constraints = vec![
-        Constraint::Min(MIN_TRANSCRIPT_ROWS),
-        Constraint::Length(1),
-        Constraint::Length(u16::try_from(view.rows.len()).unwrap_or(1)),
-    ];
+    let mut constraints = vec![Constraint::Min(MIN_TRANSCRIPT_ROWS), Constraint::Length(1)];
+    if popup_rows > 0 {
+        constraints.push(Constraint::Length(popup_rows));
+    }
+    constraints.push(Constraint::Length(u16::try_from(view.rows.len()).unwrap_or(1)));
     if hint.is_some() {
         constraints.push(Constraint::Length(1));
     }
@@ -678,6 +703,23 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     let status_area = areas[index];
     frame.render_widget(status_widget(app, status_area.width), status_area);
     index += 1;
+
+    // Above the input and below the status line: the commands are read next to
+    // the draft they complete, and the decision line keeps its own row.
+    if popup_rows > 0 {
+        let popup_area = areas[index];
+        let (first, count) = crate::help::window(app.slash.len(), app.slash.selected(), usize::from(popup_rows));
+        let lines = crate::help::popup_lines(
+            app.slash.matches(),
+            app.slash.selected(),
+            first,
+            count,
+            usize::from(popup_area.width),
+            theme,
+        );
+        frame.render_widget(Paragraph::new(lines), popup_area);
+        index += 1;
+    }
 
     let input_area = areas[index];
     // One row per visible line of the draft. Only the first carries the prompt
