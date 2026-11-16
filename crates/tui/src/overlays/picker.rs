@@ -131,11 +131,6 @@ impl Picker {
         self.kind
     }
 
-    /// The text drawn in the title bar.
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
     /// The filter as typed.
     pub fn filter(&self) -> &str {
         &self.filter
@@ -177,11 +172,6 @@ impl Picker {
         self.loading = false;
         self.selected = 0;
         self.refilter();
-    }
-
-    /// Stop waiting for rows, keeping whatever arrived.
-    pub fn settle(&mut self) {
-        self.loading = false;
     }
 
     /// The line drawn where the rows would be when there are none.
@@ -303,6 +293,11 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
     if area.width < 12 || area.height < 5 {
         return;
     }
+    // The list is modal, so the conversation behind it is not being read: a
+    // character of it beside the panel (the panel is narrower than the pane)
+    // reads as part of the list. The whole pane is cleared, then the panel is
+    // drawn on the blank area.
+    frame.render_widget(Clear, area);
     let rect = panel(area, picker.visible.len());
     frame.render_widget(Clear, rect);
     let block = Block::default()
@@ -350,7 +345,7 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
             let Some(index) = picker.visible.get(start + offset).copied() else {
                 break;
             };
-            lines.push(picker.row_line(index, start + offset == picker.selected, theme));
+            lines.push(picker.row_line(index, start + offset == picker.selected, theme, symbols));
         }
         frame.render_widget(Paragraph::new(lines), list_area);
     }
@@ -374,7 +369,7 @@ impl Picker {
     /// One row as it is drawn: the label, the marker for the row in force, and
     /// the second column. The paragraph clips whatever does not fit, so a long
     /// title never pushes the border or wraps onto the next row.
-    fn row_line(&self, index: usize, chosen: bool, theme: &Theme) -> Line<'static> {
+    fn row_line(&self, index: usize, chosen: bool, theme: &Theme, symbols: Symbols) -> Line<'static> {
         let Some(row) = self.rows.get(index) else {
             return Line::default();
         };
@@ -386,7 +381,19 @@ impl Picker {
         } else {
             Style::default().fg(theme.core.text)
         };
-        let mut spans = vec![Span::styled(format!(" {}", row.label), base)];
+        // The mark is the input line's own marker, repeated here so the
+        // selection is the row with the mark even where the theme's selection
+        // background is not drawn: a terminal without colour or with the
+        // `ascii` symbols still shows which row `enter` would take.
+        let mark = if chosen {
+            symbols.prompt_marker.to_string()
+        } else {
+            " ".repeat(symbols.prompt_marker.chars().count())
+        };
+        let mut spans = vec![
+            Span::styled(format!(" {mark} "), Style::default().fg(theme.core.accent)),
+            Span::styled(row.label.clone(), base),
+        ];
         if row.current {
             spans.push(Span::styled(" (current)", Style::default().fg(theme.core.accent)));
         }

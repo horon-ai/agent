@@ -313,6 +313,50 @@ fn a_failed_list_closes_the_list_and_warns_once() {
     );
 }
 
+/// The whole screen as one string, drawn through the client's own renderer.
+fn screen(app: &mut App, width: u16, height: u16) -> String {
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = match ratatui::Terminal::new(backend) {
+        Ok(terminal) => terminal,
+        Err(error) => panic!("test backend failed: {error}"),
+    };
+    if let Err(message) = crate::draw(&mut terminal, app) {
+        panic!("draw failed: {message}");
+    }
+    let buffer = terminal.backend().buffer().clone();
+    let mut text = String::new();
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            text.push_str(buffer.cell((x, y)).map(|cell| cell.symbol()).unwrap_or(" "));
+        }
+        text.push('\n');
+    }
+    text
+}
+
+#[test]
+fn the_picker_clears_the_conversation_behind_it() {
+    let mut app = app();
+    // One long message, wider than the pane and away from the panel's own
+    // columns, so any cell of it left on screen is a character beside the list.
+    app.transcript.push_user(format!("{}|end marker", "X".repeat(400)));
+    let before = screen(&mut app, 100, 30);
+    assert!(before.contains("XXXX"), "the conversation was not drawn:\n{before}");
+
+    submit(&mut app, "/model");
+    app.show_models(models(&["alpha", "beta"]), Some("alpha".to_string()));
+    let after = screen(&mut app, 100, 30);
+    assert!(after.contains("Select model"), "the list was not drawn:\n{after}");
+    assert!(
+        !after.contains('X'),
+        "a character of the conversation is still on screen beside the list:\n{after}"
+    );
+    assert!(
+        !after.contains("end marker"),
+        "the tail of the conversation is still on screen:\n{after}"
+    );
+}
+
 #[test]
 fn a_request_that_never_leaves_the_client_closes_the_waiting_list() {
     let (sender, receiver) = std::sync::mpsc::channel();

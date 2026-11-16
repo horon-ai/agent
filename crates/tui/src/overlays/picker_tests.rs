@@ -15,7 +15,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use super::picker::{Kind, Outcome, Picker, Row, draw, panel};
-use crate::theme::{Symbols, Theme};
+use crate::theme::{SymbolPreset, Symbols, Theme};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -183,22 +183,57 @@ fn a_long_list_keeps_the_selection_on_screen() {
 }
 
 #[test]
-fn the_picker_clears_the_cells_behind_it() {
+fn the_picker_clears_every_cell_of_the_area_it_covers() {
     let mut picker = list(&["alpha"]);
     let area = Rect::new(0, 0, 60, 14);
     let buffer = screen(&mut picker, area.width, area.height, Some(&"X".repeat(60)));
 
     let panel = panel(area, picker.len());
     assert!(panel.width > 0 && panel.height > 0, "the panel was not drawn");
-    for y in panel.y..panel.bottom() {
-        for x in panel.x..panel.right() {
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if (panel.x..panel.right()).contains(&x) && (panel.y..panel.bottom()).contains(&y) {
+                continue;
+            }
             let symbol = buffer.cell((x, y)).map(|cell| cell.symbol()).unwrap_or("");
-            assert_ne!(symbol, "X", "the cell at ({x}, {y}) still shows what the list covered");
+            assert_ne!(
+                symbol, "X",
+                "the cell at ({x}, {y}) outside the panel still shows the conversation"
+            );
         }
     }
-    // Outside the panel the conversation is still there: the list covers, it
-    // does not redraw the whole screen.
-    assert!(buffer_text(&buffer).contains("XXX"));
+}
+
+#[test]
+fn the_selection_keeps_its_mark_in_the_ascii_preset() {
+    for preset in [SymbolPreset::Unicode, SymbolPreset::Nerd, SymbolPreset::Ascii] {
+        let symbols = preset.symbols();
+        let mut picker = list(&["alpha", "beta"]);
+        picker.on_key(key(KeyCode::Down));
+        let backend = TestBackend::new(50, 12);
+        let mut terminal = match Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend failed: {error}"),
+        };
+        let theme = Theme::default();
+        if let Err(error) = terminal.draw(|frame| {
+            draw(frame, frame.area(), &mut picker, &theme, symbols);
+        }) {
+            panic!("draw failed: {error}");
+        }
+        let text = buffer_text(terminal.backend().buffer());
+        let marked = format!(" {} beta", symbols.prompt_marker);
+        assert!(
+            text.contains(&marked),
+            "the selected row carries no mark in the {} preset:\n{text}",
+            preset.as_str()
+        );
+        assert!(
+            !text.contains(&format!(" {} alpha", symbols.prompt_marker)),
+            "an unselected row carries the mark in the {} preset",
+            preset.as_str()
+        );
+    }
 }
 
 #[test]

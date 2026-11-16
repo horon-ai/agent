@@ -254,10 +254,22 @@ fn run_worker(
                         _ => None,
                     };
                     let description = describe(&command);
+                    // Subscribed before the attach is sent: the daemon
+                    // publishes the new session's identity (provider and model)
+                    // while the attach request is in flight, and a stream
+                    // filtered to the session being left would drop that event.
+                    // The old stream is kept until the attach is known to have
+                    // worked, so a refused attach loses nothing from it.
+                    let next_stream = match &command {
+                        Command::Attach(target) => Some(client.events(Some(target.as_str()))),
+                        _ => None,
+                    };
                     match serve(&client, &session_id, &socket, command) {
                         Ok(None) => {}
                         Ok(Some(Incoming::Attached(attached))) => {
-                            stream = client.events(Some(&attached.session_id));
+                            if let Some(next) = next_stream {
+                                stream = next;
+                            }
                             session_id = attached.session_id.clone();
                             if events.send(Incoming::Attached(attached)).is_err() {
                                 return;
