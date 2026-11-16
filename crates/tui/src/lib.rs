@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod commands;
+mod fuzzy;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -65,6 +66,10 @@ mod markdown_tests;
 #[cfg(test)]
 #[path = "help_tests.rs"]
 mod help_tests;
+
+#[cfg(test)]
+#[path = "fuzzy_tests.rs"]
+mod fuzzy_tests;
 
 use std::time::Duration;
 
@@ -674,6 +679,10 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             first,
             count,
             usize::from(popup_area.width),
+            crate::help::Look {
+                needle: app.slash.needle().unwrap_or(""),
+                symbols,
+            },
             theme,
         );
         frame.render_widget(Paragraph::new(lines), popup_area);

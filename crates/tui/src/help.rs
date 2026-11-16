@@ -15,7 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::commands::{Entry, Group, Registry};
 use crate::keys::{ACTIONS, Bindings, ids};
-use crate::theme::Theme;
+use crate::theme::{Symbols, Theme};
 
 /// Rows the popup may show at once.
 ///
@@ -261,30 +261,45 @@ pub fn prefix(draft: &str) -> Option<&str> {
     Some(rest)
 }
 
-/// The commands a prefix offers, in name order.
+/// The commands a draft offers, best match first.
 ///
 /// A shadowed command file is left out: the built-in answers that name, so
 /// offering the file would offer a line that never runs.
-pub fn popup_matches(entries: &[Entry], prefix: &str) -> Vec<Entry> {
-    let mut matches: Vec<Entry> = entries
+///
+/// The rank puts the names a prefix still spells out first, in name order, so
+/// the rows a typed word used to offer are the first rows it offers now; the
+/// names the letters only resemble follow, best first.
+pub fn popup_matches(entries: &[Entry], needle: &str) -> Vec<Entry> {
+    let mut matches: Vec<(i32, Entry)> = entries
         .iter()
-        .filter(|entry| !entry.shadowed && entry.name.starts_with(prefix))
-        .cloned()
+        .filter(|entry| !entry.shadowed)
+        .filter_map(|entry| {
+            let found = crate::fuzzy::find(needle, &entry.name)?;
+            Some((found.score, entry.clone()))
+        })
         .collect();
-    matches.sort_by(|left, right| left.name.cmp(&right.name));
-    matches.dedup_by(|left, right| left.name == right.name);
-    matches
+    matches.sort_by(|(left_score, left), (right_score, right)| {
+        right_score.cmp(left_score).then_with(|| left.name.cmp(&right.name))
+    });
+    // Equal names carry equal scores, so the duplicates a source can repeat sit
+    // next to each other once the sort is done.
+    matches.dedup_by(|(_, left), (_, right)| left.name == right.name);
+    matches.into_iter().map(|(_, entry)| entry).collect()
 }
 
 /// Drop the offer once the draft already names the command it would offer.
 ///
-/// A list of one row saying what the user has just finished typing is in the
-/// way: there is nothing left to choose, and the next key is the one that sends.
-fn settled(matches: Vec<Entry>, prefix: &str) -> Vec<Entry> {
-    match matches.as_slice() {
-        [only] if only.name == prefix => Vec::new(),
-        _ => matches,
-    }
+/// A list saying what the user has just finished typing is in the way: there is
+/// nothing left to choose, and the next key is the one that sends. A name that
+/// another match extends still leaves a choice (`resume` and `resume_all`), so
+/// the list stays; a row the letters only resemble (`autoreview` for `review`)
+/// is no choice at all and must not keep a finished name open.
+fn settled(matches: Vec<Entry>, needle: &str) -> Vec<Entry> {
+    let names = matches.iter().any(|entry| entry.name == needle);
+    let extended = matches
+        .iter()
+        .any(|entry| entry.name != needle && entry.name.starts_with(needle));
+    if names && !extended { Vec::new() } else { matches }
 }
 
 /// The rows the popup shows, and the first of them.
@@ -301,16 +316,33 @@ pub fn window(len: usize, selected: usize, rows: usize) -> (usize, usize) {
     (first, rows)
 }
 
+/// What a popup row is drawn with.
+///
+/// The matcher and the glyph preset travel together because both come from the
+/// same draft and the same settings, and a row cannot underline the right
+/// characters without the needle that ranked it.
+#[derive(Debug, Clone, Copy)]
+pub struct Look<'a> {
+    /// The needle the rows were ranked for; the characters it matched in a name
+    /// are underlined.
+    pub needle: &'a str,
+    /// The glyphs in force, so the marker follows the chosen preset.
+    pub symbols: Symbols,
+}
+
 /// The popup's rows as drawn: one line per command, cut to `width` cells.
 ///
 /// Each line is padded to the full width so the row clears whatever the frame
-/// left behind it, and the selected one carries the prompt's highlight.
+/// left behind it. The chosen row starts with the prompt's marker, so the row
+/// the keys act on is the one that looks chosen, and the characters the needle
+/// matched in the name are underlined on top of the row style.
 pub fn popup_lines(
     entries: &[Entry],
     selected: usize,
     first: usize,
     count: usize,
     width: usize,
+    look: Look<'_>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let visible: Vec<&Entry> = entries.iter().skip(first).take(count).collect();
@@ -320,16 +352,31 @@ pub fn popup_lines(
         .map(|label| UnicodeWidthStr::width(label.as_str()))
         .max()
         .unwrap_or(0);
+    // The marker and the space after it, which every row spends so the names
+    // line up whether or not the row is chosen.
+    let lead = usize::from(look.symbols.prompt_marker_width()) + 1;
     visible
         .iter()
         .enumerate()
         .map(|(offset, entry)| {
             let chosen = first + offset == selected;
-            let mut body = format!(" {}", labels[offset]);
+            let mut body = String::with_capacity(lead + labels[offset].len() + entry.description.len());
+            if chosen {
+                body.push_str(look.symbols.prompt_marker);
+            } else {
+                body.push_str(&" ".repeat(lead - 1));
+            }
+            body.push(' ');
+            body.push_str(&labels[offset]);
             body.push_str(
                 &" ".repeat(label_width.saturating_sub(UnicodeWidthStr::width(labels[offset].as_str())) + GAP),
             );
             body.push_str(&entry.description);
+            // The label starts with `/`; the name the matcher saw follows it.
+            let emphasise: Vec<usize> = match crate::fuzzy::find(look.needle, entry.name.as_str()) {
+                Some(found) => found.positions.iter().map(|position| position + lead + 1).collect(),
+                None => Vec::new(),
+            };
             let style = if chosen {
                 Style::default()
                     .fg(theme.prompt.prompt_border)
@@ -338,28 +385,45 @@ pub fn popup_lines(
             } else {
                 Style::default().fg(theme.prompt.prompt_text)
             };
-            Line::from(Span::styled(fit(&body, width), style))
+            let mark = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+            Line::from(marked_fit(&body, &emphasise, width, style, mark))
         })
         .collect()
 }
 
-/// `text` cut or padded to exactly `width` cells.
+/// `text` cut or padded to exactly `width` cells, with `emphasised` underlined.
 ///
 /// A character that would cross the edge starts no row: the cell stays a space,
-/// so a wide glyph is never split in half.
-fn fit(text: &str, width: usize) -> String {
-    let mut fitted = String::with_capacity(text.len() + width);
+/// so a wide glyph is never split in half. Runs of like characters share one
+/// span, so a row without an emphasis stays a single span.
+fn marked_fit(text: &str, emphasised: &[usize], width: usize, style: Style, mark: Style) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut run_marked = false;
     let mut used = 0;
-    for character in text.chars() {
+    for (index, character) in text.chars().enumerate() {
         let cell = UnicodeWidthChar::width(character).unwrap_or(0);
         if used + cell > width {
             break;
         }
         used += cell;
-        fitted.push(character);
+        let marked = emphasised.binary_search(&index).is_ok();
+        if !run.is_empty() && marked != run_marked {
+            spans.push(Span::styled(
+                std::mem::take(&mut run),
+                if run_marked { mark } else { style },
+            ));
+        }
+        run_marked = marked;
+        run.push(character);
     }
-    fitted.push_str(&" ".repeat(width.saturating_sub(used)));
-    fitted
+    if !run.is_empty() {
+        spans.push(Span::styled(run, if run_marked { mark } else { style }));
+    }
+    if used < width {
+        spans.push(Span::styled(" ".repeat(width - used), style));
+    }
+    spans
 }
 
 /// The slash popup: the commands the draft offers, and the row chosen.
@@ -479,6 +543,14 @@ impl SlashPopup {
     /// The name `editor.complete` fills in.
     pub fn selected_name(&self) -> Option<&str> {
         self.matches.get(self.selected).map(|entry| entry.name.as_str())
+    }
+
+    /// The needle the matches were ranked for, when the draft asks for a list.
+    ///
+    /// The rows are drawn from it: the characters it matched are the ones the
+    /// frame underlines.
+    pub fn needle(&self) -> Option<&str> {
+        prefix(&self.draft)
     }
 
     /// The rows the popup may show: the first one, and how many.
