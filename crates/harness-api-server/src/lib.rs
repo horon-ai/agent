@@ -383,7 +383,13 @@ where
     let mut line = String::new();
 
     // 1. Handshake: first frame must be hello with a compatible version.
-    read_frame(&mut reader, &mut line).await?;
+    // A peer that closes without sending a byte is a liveness probe or a client
+    // that gave up while starting, not a protocol mistake: end the connection
+    // silently. Reporting it would litter the log of a server that every launch
+    // probes, and the peer is already gone, so no error frame can reach it.
+    if read_frame(&mut reader, &mut line).await? == 0 {
+        return Ok(());
+    }
     // A malformed first frame used to abort the task, closing the connection
     // with no reply at all: the client saw only an EOF and could not tell a
     // protocol mistake from a crashed bridge. Say what was wrong, then close.

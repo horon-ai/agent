@@ -11,5 +11,5 @@
 
 pub use horon_agent_platform::ipc::{
     Addr, InstanceLock, Listener, ReadHalf, Stream, SyncStream, WriteHalf, is_socket_path, lock_instance_file,
-    remove_socket, restrict_socket_to_owner, stream_pair, sync_stream_shutdown_handle,
+    remove_socket, restrict_socket_to_owner, socket_has_listener, stream_pair, sync_stream_shutdown_handle,
 };

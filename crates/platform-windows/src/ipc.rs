@@ -335,6 +335,16 @@ pub fn is_socket_path(path: &Path) -> bool {
     }
 }
 
+/// Whether something answers on `path` right now.
+///
+/// A named pipe has no filesystem node to outlive its server, so the presence
+/// probe already answers "is a server there". A connect would additionally take
+/// one published pipe instance away from a real client, which a liveness
+/// question must not do.
+pub fn socket_has_listener(path: &Path) -> bool {
+    is_socket_path(path)
+}
+
 pub fn remove_socket(path: &Path) {
     let pipe_name = path_to_pipe_name(path);
     if probe_pipe(&pipe_name).is_ok() {

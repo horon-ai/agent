@@ -646,8 +646,9 @@ jobs:
         # terminal client's screen: the build above only proves the two binaries
         # link. This runs both through a real PTY against the mock model server
         # and checks the first screen, a streamed reply, the approval prompt, the
-        # retried tool call, `/quit`, and the three headless fallbacks. The
-        # client is built without `--release` above, next to the release daemon.
+        # retried tool call, `/quit`, the three headless fallbacks, and a relaunch
+        # over the socket file a killed bridge left behind. The client is built
+        # without `--release` above, next to the release daemon.
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -1510,6 +1511,21 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
             --timeout 600 --min-passed 1 \
             -- tool_done_carries_ --nocapture
+
+      - name: Run stale API socket probe cohort
+        shell: bash
+        # A client that answered "is the bridge up?" from the socket file's
+        # existence dialled the bridge a closed terminal had killed, and reported
+        # "no harness answered". The SDK now probes with a connection, and that
+        # probe hangs up without sending a byte, so the bridge must end such a
+        # connection without an error frame or a log line. `stdio_tests` has no
+        # other cohort, `--min-passed` is the number of tests the filter matches,
+        # and a renamed test then fails instead of passing over an empty subset.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- stale_socket_probe --nocapture
 
       - name: Run session id prefix cohort
         shell: bash
