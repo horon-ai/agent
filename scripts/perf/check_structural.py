@@ -26,6 +26,8 @@ does not. So every check here reads a counter:
   ceiling;
 - the request projection with no `pre_request` hook configured: no child
   process spawned and no message copied.
+- the heap allocations and the bytes one tool dispatch asks for, with a short
+  input and with a 10 KB one.
 
 The measurements are the repo's own tests. Each one prints one
 `STRUCTURAL_PERF section=<name> k=v k=v` line, so this gate reads the numbers
@@ -59,6 +61,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUDGET_FILE = REPO_ROOT / "scripts" / "perf" / "structural_budget.json"
 RESULT_PREFIX = "STRUCTURAL_PERF_RESULT "
+# A measurement may print lines with this prefix to say where its counts come
+# from. The gate repeats them in its own output and never judges them.
+NOTE_PREFIX = "STRUCTURAL_PERF_NOTE "
 LINE_PATTERN = re.compile(r"^STRUCTURAL_PERF\s+(.*)$")
 
 # One cargo invocation per measurement. `--test-threads=1` and `--exact` keep a
@@ -253,6 +258,20 @@ MEASUREMENTS = (
             "prompt::session_context_tests::session_context_child_processes_are_measured",
         ],
     },
+    # Every tool call goes through `Registry::execute`. Its cost is counted as
+    # allocator requests, in an integration target of its own because the
+    # counting allocator is per binary.
+    {
+        "section": "tool_dispatch",
+        "source": "app-core",
+        "args": [
+            "-p",
+            "horon-agent-app-core",
+            "--test",
+            "tool_dispatch_perf",
+            "one_dispatch_allocates_a_bounded_amount",
+        ],
+    },
 )
 
 REQUIRED_SECTIONS = (
@@ -270,6 +289,7 @@ REQUIRED_SECTIONS = (
     "prefix",
     "prompt",
     "session_context",
+    "tool_dispatch",
 )
 
 
@@ -361,6 +381,10 @@ def parse_lines(text: str) -> list[dict[str, str]]:
             raise GateError(f"STRUCTURAL_PERF line has no section: {raw.strip()}")
         records.append(record)
     return records
+
+
+def note_lines(text: str) -> list[str]:
+    return [raw.strip() for raw in text.splitlines() if raw.strip().startswith(NOTE_PREFIX)]
 
 
 def as_int(record: dict[str, str], key: str, section: str) -> int:
@@ -854,6 +878,42 @@ def check_session_context(report: Report, records: list[dict[str, str]], bounds:
         )
 
 
+def check_tool_dispatch(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """What one tool dispatch asks the allocator for.
+
+    Wall-clock CPU time moves with the runner; the number of allocations and
+    the bytes requested do not. A second serialization of the input, a deep
+    copy of it, or a log field built twice raises both, so the per-dispatch
+    ceilings hold the dispatcher to the work it does today. The two input
+    sizes separate the fixed cost of a call from the cost that grows with the
+    arguments. The floors matter as much: a counter that recorded nothing
+    would pass every ceiling.
+    """
+    for record in records:
+        section = "tool_dispatch"
+        dispatches = as_int(record, "dispatches", section)
+        report.at_least(section, "dispatches", dispatches, 1)
+        if dispatches < 1:
+            continue
+        for size in ("small", "large"):
+            allocations = as_int(record, f"{size}_allocs", section)
+            requested = as_int(record, f"{size}_alloc_bytes", section)
+            report.at_least(section, f"{size}_allocs", allocations, dispatches)
+            report.at_least(section, f"{size}_alloc_bytes", requested, allocations)
+            report.at_most(
+                section,
+                f"{size}_allocs_per_dispatch",
+                per_item(allocations, dispatches),
+                bounds[f"tool_dispatch_{size}_allocs_per_dispatch_max"],
+            )
+            report.at_most(
+                section,
+                f"{size}_alloc_bytes_per_dispatch",
+                per_item(requested, dispatches),
+                bounds[f"tool_dispatch_{size}_alloc_bytes_per_dispatch_max"],
+            )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -869,6 +929,7 @@ CHECKS = {
     "prefix": check_prefix,
     "prompt": check_prompt,
     "session_context": check_session_context,
+    "tool_dispatch": check_tool_dispatch,
 }
 
 
@@ -990,7 +1051,8 @@ def main(argv: list[str] | None = None) -> int:
         if not path.exists():
             print(f"Structural performance gate: no such log: {path}", file=sys.stderr)
             return 2
-        records = parse_lines(path.read_text(encoding="utf-8", errors="replace"))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        records = parse_lines(text)
     else:
         text = ""
         for measurement in MEASUREMENTS:
@@ -1004,6 +1066,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Structural performance gate: {error}", file=sys.stderr)
                 return 2
         records = parse_lines(text)
+    for note in note_lines(text):
+        print(note)
 
     try:
         report, missing, skipped = gate(records, bounds, sections)

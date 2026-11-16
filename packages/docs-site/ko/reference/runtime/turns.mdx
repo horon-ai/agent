@@ -383,7 +383,7 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 `context_notes`는 모델에게 작은 메모 파일을 준다. `new_context`는 그 메모만으로 충분하다고
 모델이 판단해 다음 턴을 깨끗한 활성 컨텍스트에서 시작하게 한다. 이 도구는
 `[tools] context_notes`가 켜져 있을 때만 등록된다
-(`crates/app-core/src/tool/mod.rs:1095`). 전환이 유지하는 것이 바로 동적 시스템
+(`crates/app-core/src/tool/mod.rs:1107`). 전환이 유지하는 것이 바로 동적 시스템
 프롬프트가 싣는 메모이기 때문이다.
 
 호출 자체는 세션별 대기 요청만 기록한다(`crates/app-core/src/tool/new_context.rs`).

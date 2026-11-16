@@ -62,7 +62,7 @@ description: "메시지의 도구 호출이 어떻게 실행되는지를 두 가
 
 나머지는 기본값인 장벽에 남는데, `write`, `edit`, `replace`, `apply_patch`,
 `batch`, `mcp`, `skill_manage`가 그렇습니다. 레지스트리
-조회는 제공자 별칭을 해석하고, 자기에게 없는 이름에는 `ToolEffects::write()`로 답합니다 (`crates/app-core/src/tool/mod.rs:1320` `Registry::effects_for_call`).
+조회는 제공자 별칭을 해석하고, 자기에게 없는 이름에는 `ToolEffects::write()`로 답합니다 (`crates/app-core/src/tool/mod.rs:1332` `Registry::effects_for_call`).
 
 ## 그룹당 상한 두 개
 
@@ -102,7 +102,7 @@ API 요청을 쓰기 때문입니다.
 ## 컨텍스트 예산
 
 실행된 도구는 출력을 도구 계층의 넘침 가드에 통과시킵니다
-(`crates/app-core/src/tool/mod.rs:2295` `self.guard_context_overflow`, `guard_context_overflow` 안의 검사, `tool/mod.rs:2330` `guard_context_overflow`).
+(`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, `guard_context_overflow` 안의 검사, `tool/mod.rs:2330` `guard_context_overflow`).
 그 가드는 출력을 `token_budget()` 곱하기 `CONTEXT_GUARD_THRESHOLD`와
 비교합니다(0.90, `tool/mod.rs:1754` `CONTEXT_GUARD_THRESHOLD`, 비교는 `tool/mod.rs:2352` `needs_truncation`).
 
