@@ -15,6 +15,7 @@
 
 use serde_json::{Map, Value};
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hasher};
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// Bounded passes: each pass fixes what the previous one exposed (for example
@@ -32,26 +33,65 @@ const PREPARED_CAP: usize = 256;
 /// `validator` is `None` when the schema is not object-shaped or does not
 /// compile, in which case input passes through untouched.
 struct Prepared {
+    /// The schema as the tool handed it over. A lookup compares against it, so
+    /// two schemas that share a fingerprint never share a validator.
+    source: Value,
     schema: Value,
     validator: Option<jsonschema::Validator>,
 }
 
+/// Prepared schemas by the fingerprint of their JSON text.
+type PreparedCache = Mutex<HashMap<u64, Arc<Prepared>>>;
+
 /// Compiling a validator walks and allocates the whole schema, and a tool's
-/// schema does not change between calls, so each one is prepared once.
-static PREPARED: LazyLock<Mutex<HashMap<String, Arc<Prepared>>>> = LazyLock::new(Mutex::default);
+/// schema does not change between calls, so each one is prepared once. The
+/// entry keeps the schema itself to confirm a hit.
+static PREPARED: LazyLock<PreparedCache> = LazyLock::new(Mutex::default);
 
 fn prepared(schema: &Value) -> Arc<Prepared> {
-    let key = schema.to_string();
-    let cached = PREPARED
+    prepared_at(&PREPARED, fingerprint(schema), schema)
+}
+
+/// Hash of the schema's JSON text, taken while serializing so the text itself
+/// is never built: this runs on every dispatch.
+fn fingerprint(schema: &Value) -> u64 {
+    struct Sink(DefaultHasher);
+    impl std::io::Write for Sink {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            Hasher::write(&mut self.0, bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut sink = Sink(DefaultHasher::new());
+    match serde_json::to_writer(&mut sink, schema) {
+        Ok(()) => sink.0.finish(),
+        // Not reachable: the sink cannot fail and a `Value` always serializes.
+        // One shared key would still be correct, because the lookup compares
+        // the schema itself before trusting an entry.
+        Err(_) => 0,
+    }
+}
+
+/// The prepared form `cache` holds under `key`, rebuilt when the entry there
+/// belongs to a different schema. Split from [`prepared`] so a test can use
+/// its own cache and make two schemas share a key.
+fn prepared_at(cache: &PreparedCache, key: u64, schema: &Value) -> Arc<Prepared> {
+    let cached = cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&key)
         .cloned();
-    if let Some(hit) = cached {
+    if let Some(hit) = cached
+        && hit.source == *schema
+    {
         return hit;
     }
     let built = Arc::new(prepare(schema));
-    let mut map = PREPARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut map = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if map.len() >= PREPARED_CAP {
         map.clear();
     }
@@ -59,8 +99,8 @@ fn prepared(schema: &Value) -> Arc<Prepared> {
     built
 }
 
-fn prepare(schema: &Value) -> Prepared {
-    let mut schema = horon_agent_tool_core::ensure_intent_in_schema(schema.clone());
+fn prepare(source: &Value) -> Prepared {
+    let mut schema = horon_agent_tool_core::ensure_intent_in_schema(source.clone());
     // `ensure_intent_in_schema` advertises `intent` as required because the
     // prompt wants it. Repair must treat it as optional: an unrelated repair
     // would otherwise be discarded whenever the model omitted the label, since
@@ -77,17 +117,20 @@ fn prepare(schema: &Value) -> Prepared {
     });
     if !object_shaped {
         return Prepared {
+            source: source.clone(),
             schema,
             validator: None,
         };
     }
     let Ok(validator) = jsonschema::validator_for(&schema) else {
         return Prepared {
+            source: source.clone(),
             schema,
             validator: None,
         };
     };
     Prepared {
+        source: source.clone(),
         schema,
         validator: Some(validator),
     }
@@ -767,3 +810,7 @@ fn scalar_fits(item_schema: &Value, value: &Value) -> bool {
 #[cfg(test)]
 #[path = "arg_repair_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "arg_repair_prepared_tests.rs"]
+mod prepared_tests;

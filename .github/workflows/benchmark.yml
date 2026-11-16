@@ -11,6 +11,10 @@ name: Benchmark
 #   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
 #     -f sessions="1 10 100" -f baseline_ref=<merge-base sha>
 #
+#   # Daemon CPU per tool call, branch against `dev`, both daemons in one job.
+#   gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=tools \
+#     -f baseline_ref=dev
+#
 # and `workflow_call` from benchmark-docs.yml, which runs every suite on every OS
 # for a `main` commit after its CI passed and writes the result into
 # docs/performance/RESULTS.md.
@@ -63,7 +67,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref built beside the measured commit and compared as a second horon row"
+        description: "Optional ref built beside the measured commit and compared as a second horon row (compare) or a second daemon (tools)"
         type: string
         required: false
         default: ""
@@ -99,7 +103,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row; empty measures one build"
+        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row (compare) or a second daemon (tools); empty measures one build"
         required: false
         default: ""
       features:
