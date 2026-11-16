@@ -294,7 +294,7 @@ tokens" and "the provider reported no cache tokens" are different facts.
 `pricing` is always `"unknown"` and `estimated_cost` always `None`: this harness
 carries no price table.
 
-`approval_pending` and `failover_switched` stay parked in the daemon until a
+`approval_resolved` and `failover_switched` stay parked in the daemon until a
 client acks them, so a resolution that lands out of band is not lost.
 `ack_approval(id, request_id)` and `ack_failover(id, chain_id, from_, to, attempt)`
 retire those records. An acknowledgement is a message a client sends, so the

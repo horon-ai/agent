@@ -467,7 +467,7 @@ published. Omit the id for the whole account. A metric no request recorded is
 always `"unknown"` and `estimated_cost` always `null`: this harness carries no
 price table.
 
-`approval_pending` and `failover_switched` stay parked in the daemon until a
+`approval_resolved` and `failover_switched` stay parked in the daemon until a
 client acks them, so a resolution that lands out of band is not lost.
 `ackApproval(id, requestId)` and `ackFailover(id, chainId, from, to, attempt)`
 retire those records. An acknowledgement is a message a client sends, so the
