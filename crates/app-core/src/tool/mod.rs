@@ -229,7 +229,7 @@ struct SessionToolPolicy {
     owner: Option<u64>,
 }
 
-static SESSION_TOOL_POLICIES: LazyLock<StdRwLock<HashMap<String, SessionToolPolicy>>> =
+static SESSION_TOOL_POLICIES: LazyLock<StdRwLock<HashMap<String, Arc<SessionToolPolicy>>>> =
     LazyLock::new(|| StdRwLock::new(HashMap::new()));
 static NEXT_SESSION_TOOL_POLICY_OWNER: AtomicU64 = AtomicU64::new(1);
 
@@ -435,7 +435,7 @@ pub(crate) fn allow_session_tool(session_id: &str, tool_name: &str) {
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(policy) = policies.get_mut(session_id) {
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
         if let Some(allowed) = policy.allowed_tools.as_mut() {
             allowed.insert(tool_name.to_string());
         }
@@ -454,13 +454,13 @@ pub(crate) fn register_session_tool_policy(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     policies.insert(
         session_id.to_string(),
-        SessionToolPolicy {
+        Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
             owner: Some(owner),
-        },
+        }),
     );
     SessionToolPolicyRegistration {
         session_id: session_id.to_string(),
@@ -479,7 +479,7 @@ pub(crate) fn register_session_load_tiers(session_id: &str, tiers: crate::config
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(policy) = policies.get_mut(session_id) {
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
         policy.load_tiers = Some(tiers);
     }
 }
@@ -493,7 +493,7 @@ pub(crate) fn register_session_listed_mcp(session_id: &str, listed: bool) {
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(policy) = policies.get_mut(session_id) {
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
         policy.listed_mcp_surface = listed;
     }
 }
@@ -518,13 +518,13 @@ pub(crate) fn set_session_tool_policy(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     policies.insert(
         session_id.to_string(),
-        SessionToolPolicy {
+        Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
             owner: None,
-        },
+        }),
     );
 }
 
@@ -533,7 +533,7 @@ pub(crate) fn set_session_listed_mcp_for_test(session_id: &str, listed: bool) {
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    policies.entry(session_id.to_string()).or_default().listed_mcp_surface = listed;
+    Arc::make_mut(policies.entry(session_id.to_string()).or_default()).listed_mcp_surface = listed;
 }
 
 #[cfg(test)]
@@ -544,24 +544,34 @@ pub(crate) fn clear_session_tool_policy(session_id: &str) {
     policies.remove(session_id);
 }
 
-fn session_tool_policy(session_id: &str) -> Option<SessionToolPolicy> {
-    let mut policy = SESSION_TOOL_POLICIES
+/// The session's policy as one shared snapshot.
+///
+/// A session without an SDK overlay gets the stored policy itself, so a
+/// dispatch reads it without copying the name sets. An overlay is merged into
+/// a copy: the stored policy never carries the client's entries.
+fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>> {
+    let stored = SESSION_TOOL_POLICIES
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
-    if let Some(config) = sdk::config(session_id) {
-        let policy = policy.get_or_insert_with(SessionToolPolicy::default);
-        if let Some(enabled) = config.enabled {
-            policy.allowed_tools = Some(enabled.into_iter().collect());
-            policy.disabled_tools.clear();
-        }
-        policy.disabled_tools.extend(config.disabled);
-        if let Some(allowed) = policy.allowed_tools.as_mut() {
-            allowed.extend(config.custom.into_iter().map(|t| t.name));
-        }
+    let Some(config) = sdk::config(session_id) else {
+        return stored;
+    };
+    let mut policy = stored.map_or_else(SessionToolPolicy::default, Arc::unwrap_or_clone);
+    if let Some(enabled) = config.enabled {
+        policy.allowed_tools = Some(enabled.into_iter().collect());
+        policy.disabled_tools.clear();
     }
-    policy
+    policy.disabled_tools.extend(config.disabled);
+    if let Some(allowed) = policy.allowed_tools.as_mut() {
+        allowed.extend(config.custom.into_iter().map(|t| t.name));
+    }
+    Some(Arc::new(policy))
+}
+
+fn session_tool_policy(session_id: &str) -> Option<SessionToolPolicy> {
+    session_tool_policy_shared(session_id).map(Arc::unwrap_or_clone)
 }
 
 #[cfg(test)]
@@ -1958,7 +1968,7 @@ impl Registry {
                 return Err(ToolRejected(format!("Tool '{}' is disabled", resolved_name)).into());
             }
         }
-        if !is_custom && let Some(policy) = session_tool_policy(&ctx.session_id) {
+        if !is_custom && let Some(policy) = session_tool_policy_shared(&ctx.session_id) {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !self.tool_is_allowed(allowed, resolved_name)
             {
@@ -2554,28 +2564,26 @@ impl Registry {
         names
     }
 
-    fn policy_names(&self, name: &str) -> HashSet<String> {
+    /// Whether `matches` holds for `name` or for any name the MCP tool behind
+    /// it has been registered under.
+    fn any_policy_name(&self, name: &str, matches: impl Fn(&str) -> bool) -> bool {
+        if matches(name) {
+            return true;
+        }
         let index = self.mcp_policy.read().unwrap_or_else(|e| e.into_inner());
-        let mut names = index
+        index
             .current
             .get(name)
             .and_then(|identity| index.history.get(identity))
-            .cloned()
-            .unwrap_or_default();
-        names.insert(name.to_string());
-        names
+            .is_some_and(|names| names.iter().any(|known| matches(known)))
     }
 
     pub(crate) fn tool_is_allowed(&self, allowed: &HashSet<String>, name: &str) -> bool {
-        self.policy_names(name)
-            .iter()
-            .any(|name| tool_name_is_allowed(allowed, name))
+        self.any_policy_name(name, |known| tool_name_is_allowed(allowed, known))
     }
 
     pub(crate) fn tool_is_disabled(&self, disabled: &HashSet<String>, name: &str) -> bool {
-        self.policy_names(name)
-            .iter()
-            .any(|name| tool_name_is_disabled(disabled, name))
+        self.any_policy_name(name, |known| tool_name_is_disabled(disabled, known))
     }
 
     /// Original `(server, tool)` for a registered MCP alias. Aliases are
@@ -3141,6 +3149,8 @@ mod lazy_activation;
 #[cfg(test)]
 #[path = "monitor_tests.rs"]
 mod monitor_tool;
+#[cfg(test)]
+mod policy_route_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

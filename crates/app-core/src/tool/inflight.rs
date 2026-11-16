@@ -22,16 +22,17 @@
 //! cancellation, or early return.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// Reference counts per tool_call_id. A count (rather than a set) keeps the
 /// registry correct if the same id is somehow executed concurrently, e.g. a
-/// retry racing the original.
-static IN_FLIGHT: LazyLock<Mutex<HashMap<String, usize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// retry racing the original. The key is shared with every guard of that id,
+/// so one call copies its id once.
+static IN_FLIGHT: LazyLock<Mutex<HashMap<Arc<str>, usize>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// RAII registration for one executing tool call.
 pub struct InFlightToolGuard {
-    tool_call_id: String,
+    tool_call_id: Arc<str>,
 }
 
 impl Drop for InFlightToolGuard {
@@ -39,10 +40,10 @@ impl Drop for InFlightToolGuard {
         let Ok(mut map) = IN_FLIGHT.lock() else {
             return;
         };
-        if let Some(count) = map.get_mut(&self.tool_call_id) {
+        if let Some(count) = map.get_mut(&*self.tool_call_id) {
             *count = count.saturating_sub(1);
             if *count == 0 {
-                map.remove(&self.tool_call_id);
+                map.remove(&*self.tool_call_id);
             }
         }
     }
@@ -55,10 +56,10 @@ pub fn mark_tool_in_flight(tool_call_id: &str) -> Option<InFlightToolGuard> {
         return None;
     }
     let mut map = IN_FLIGHT.lock().ok()?;
-    *map.entry(tool_call_id.to_string()).or_insert(0) += 1;
-    Some(InFlightToolGuard {
-        tool_call_id: tool_call_id.to_string(),
-    })
+    let tracked = map.get_key_value(tool_call_id).map(|(id, _)| Arc::clone(id));
+    let tool_call_id = tracked.unwrap_or_else(|| Arc::from(tool_call_id));
+    *map.entry(Arc::clone(&tool_call_id)).or_insert(0) += 1;
+    Some(InFlightToolGuard { tool_call_id })
 }
 
 /// True while a tool call with this id is executing somewhere in this process.
