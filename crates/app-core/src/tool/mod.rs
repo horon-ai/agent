@@ -326,14 +326,15 @@ impl DispatchTimings {
     /// `elapsed_ms` keeps its name and now means the dispatch total, so existing
     /// log consumers read real dispatch latency; the execute span stays
     /// available, unchanged in meaning, as `execute_ms`.
-    pub(crate) fn fields(&self) -> Vec<(String, String)> {
-        vec![
-            ("elapsed_ms".to_string(), self.total_ms.to_string()),
-            ("execute_ms".to_string(), self.execute_ms.to_string()),
-            ("hook_transform_ms".to_string(), self.hook_transform_ms.to_string()),
-            ("hook_gate_ms".to_string(), self.hook_gate_ms.to_string()),
-            ("post_feedback_ms".to_string(), self.post_feedback_ms.to_string()),
-            ("overflow_guard_ms".to_string(), self.overflow_guard_ms.to_string()),
+    pub(crate) fn fields(&self) -> [(&'static str, lifecycle::FieldValue<'static>); 6] {
+        use lifecycle::FieldValue::Millis;
+        [
+            ("elapsed_ms", Millis(self.total_ms)),
+            ("execute_ms", Millis(self.execute_ms)),
+            ("hook_transform_ms", Millis(self.hook_transform_ms)),
+            ("hook_gate_ms", Millis(self.hook_gate_ms)),
+            ("post_feedback_ms", Millis(self.post_feedback_ms)),
+            ("overflow_guard_ms", Millis(self.overflow_guard_ms)),
         ]
     }
 
@@ -1486,8 +1487,8 @@ impl Registry {
                 );
                 if decision.approved {
                     let mut fields = lifecycle::fields("approved", resolved_name, resolved_name, input, ctx);
-                    fields.push(("block_reason".to_string(), "approval".to_string()));
-                    fields.push(("approval_request_id".to_string(), request_id));
+                    fields.push(("block_reason", lifecycle::FieldValue::Text("approval")));
+                    fields.push(("approval_request_id", lifecycle::FieldValue::Owned(request_id)));
                     crate::logging::event_info("TOOL_LIFECYCLE", fields);
                     return None;
                 }
@@ -1981,7 +1982,7 @@ impl Registry {
             && !crate::plan_mode::allows_effects(&ctx.session_id, plan_effects.unwrap_or(ToolEffects::write()))
         {
             let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
-            fields.push(("block_reason".to_string(), "plan_mode".to_string()));
+            fields.push(("block_reason", lifecycle::FieldValue::Text("plan_mode")));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
             return Err(ToolRejected(crate::plan_mode::block_message(resolved_name)).into());
         }
@@ -2062,7 +2063,7 @@ impl Registry {
                 && verdict.approval == crate::config::BashPatternApproval::Deny
             {
                 let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
-                fields.push(("block_reason".to_string(), "bash_pattern".to_string()));
+                fields.push(("block_reason", lifecycle::FieldValue::Text("bash_pattern")));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Blocked by bash pattern '{}' (deny).", verdict.pattern)).into());
             }
@@ -2140,7 +2141,7 @@ impl Registry {
         };
         if let Some(refusal) = refusal {
             let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
-            fields.push(("block_reason".to_string(), "approval".to_string()));
+            fields.push(("block_reason", lifecycle::FieldValue::Text("approval")));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
             return Err(ToolRejected(refusal).into());
         }
@@ -2168,7 +2169,7 @@ impl Registry {
                 .await;
             if let crate::hooks::GateDecision::Block { reason } = decision {
                 let mut fields = lifecycle::fields("blocked", name, resolved_name, &restored, &ctx);
-                fields.push(("block_reason".to_string(), reason.clone()));
+                fields.push(("block_reason", lifecycle::FieldValue::Text(&reason)));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Tool call blocked by pre_tool hook: {reason}")).into());
             }
@@ -2209,7 +2210,10 @@ impl Registry {
                 observe_dispatch_timings(&ctx.tool_call_id, timings);
                 lifecycle::set_phase(&mut fields, "error");
                 fields.extend(timings.fields());
-                fields.push(("error".to_string(), crate::util::format_error_chain(&error)));
+                fields.push((
+                    "error",
+                    lifecycle::FieldValue::Owned(crate::util::format_error_chain(&error)),
+                ));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(error);
             }
@@ -2261,9 +2265,12 @@ impl Registry {
 
         lifecycle::set_phase(&mut fields, "done");
         fields.extend(timings.fields());
-        fields.push(("output_bytes".to_string(), output.output.len().to_string()));
-        fields.push(("output_chars".to_string(), output.output.chars().count().to_string()));
-        fields.push(("image_count".to_string(), output.images.len().to_string()));
+        fields.push(("output_bytes", lifecycle::FieldValue::Count(output.output.len())));
+        fields.push((
+            "output_chars",
+            lifecycle::FieldValue::Count(output.output.chars().count()),
+        ));
+        fields.push(("image_count", lifecycle::FieldValue::Count(output.images.len())));
         crate::logging::event_info("TOOL_LIFECYCLE", fields);
 
         Ok(output)

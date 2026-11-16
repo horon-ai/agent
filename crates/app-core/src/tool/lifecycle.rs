@@ -5,55 +5,140 @@
 //! the context, and neither changes between the two lines, so the dispatcher
 //! builds the list once, lends it to the first line and relabels it for the
 //! second.
+//!
+//! A field borrows from the input and the context instead of holding text of
+//! its own: the list is one allocation, and a value is printed straight into
+//! the line when the line is written.
 
-use super::{ToolContext, path_policy};
-use serde_json::Value;
+use super::{ToolContext, ToolExecutionMode, path_policy};
+use serde_json::{Map, Value};
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 const PHASE_KEY: &str = "phase";
 
+/// Room for every field of a `done` line: the call, the input, the timings
+/// and the output sizes.
+const FIELD_CAPACITY: usize = 32;
+
+/// The text inputs a line reports the size of, each with its two field names.
+const TEXT_SIZE_FIELDS: [(&str, &str, &str); 5] = [
+    ("command", "command_bytes", "command_chars"),
+    ("prompt", "prompt_bytes", "prompt_chars"),
+    ("task", "task_bytes", "task_chars"),
+    ("query", "query_bytes", "query_chars"),
+    ("content", "content_bytes", "content_chars"),
+];
+
+/// The value of one lifecycle field, printed when its line is written.
+pub(crate) enum FieldValue<'a> {
+    /// Text that outlives the line: a name, an id, a phase, a reason.
+    Text(&'a str),
+    /// Text made for this line.
+    Owned(String),
+    Count(usize),
+    Millis(u64),
+    Mode(ToolExecutionMode),
+    /// The working directory, `none` without one.
+    Cwd(Option<&'a Path>),
+    /// The keys of an object input, sorted and comma-joined.
+    InputKeys(&'a Map<String, Value>),
+    /// The paths a call names, each as `key:path`, comma-joined.
+    TouchedPaths(Vec<(&'static str, PathBuf)>),
+}
+
+impl fmt::Display for FieldValue<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(text) => f.write_str(text),
+            Self::Owned(text) => f.write_str(text),
+            Self::Count(count) => write!(f, "{count}"),
+            Self::Millis(millis) => write!(f, "{millis}"),
+            Self::Mode(mode) => write!(f, "{mode:?}"),
+            Self::Cwd(Some(path)) => write!(f, "{}", path.display()),
+            Self::Cwd(None) => f.write_str("none"),
+            Self::InputKeys(object) => fmt::Display::fmt(&SortedKeys(object.keys()), f),
+            Self::TouchedPaths(paths) => {
+                for (index, (key, path)) in paths.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(",")?;
+                    }
+                    write!(f, "{key}:{}", path.display())?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// Keys printed sorted and comma-joined.
+///
+/// A JSON object hands its keys out sorted unless `serde_json` is built to
+/// keep insertion order, so the sort and its list are paid for only then.
+struct SortedKeys<I>(I);
+
+impl<'k, I> fmt::Display for SortedKeys<I>
+where
+    I: Iterator<Item = &'k String> + Clone,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.clone().is_sorted() {
+            return write_joined(f, self.0.clone());
+        }
+        let mut keys = self.0.clone().collect::<Vec<_>>();
+        keys.sort();
+        write_joined(f, keys.into_iter())
+    }
+}
+
+fn write_joined<'k>(f: &mut fmt::Formatter<'_>, keys: impl Iterator<Item = &'k String>) -> fmt::Result {
+    for (index, key) in keys.enumerate() {
+        if index > 0 {
+            f.write_str(",")?;
+        }
+        f.write_str(key)?;
+    }
+    Ok(())
+}
+
+/// The fields of one lifecycle line, in the order they were added.
+pub(super) type Fields<'a> = Vec<(&'static str, FieldValue<'a>)>;
+
 /// The fields every lifecycle line of one call carries, `phase` first.
-pub(super) fn fields(
-    phase: &str,
-    requested_name: &str,
-    resolved_name: &str,
-    input: &Value,
-    ctx: &ToolContext,
-) -> Vec<(String, String)> {
-    let cwd = ctx
-        .working_dir
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "none".to_string());
-    let mut fields = vec![
-        (PHASE_KEY.to_string(), phase.to_string()),
-        ("tool_name".to_string(), requested_name.to_string()),
-        ("resolved_tool_name".to_string(), resolved_name.to_string()),
-        ("session_id".to_string(), ctx.session_id.clone()),
-        ("message_id".to_string(), ctx.message_id.clone()),
-        ("tool_call_id".to_string(), ctx.tool_call_id.clone()),
-        ("execution_mode".to_string(), format!("{:?}", ctx.execution_mode)),
-        ("cwd".to_string(), cwd),
-        ("input_json_bytes".to_string(), json_len(input).to_string()),
-    ];
+pub(super) fn fields<'a>(
+    phase: &'a str,
+    requested_name: &'a str,
+    resolved_name: &'a str,
+    input: &'a Value,
+    ctx: &'a ToolContext,
+) -> Fields<'a> {
+    let mut fields = Vec::with_capacity(FIELD_CAPACITY);
+    fields.extend([
+        (PHASE_KEY, FieldValue::Text(phase)),
+        ("tool_name", FieldValue::Text(requested_name)),
+        ("resolved_tool_name", FieldValue::Text(resolved_name)),
+        ("session_id", FieldValue::Text(&ctx.session_id)),
+        ("message_id", FieldValue::Text(&ctx.message_id)),
+        ("tool_call_id", FieldValue::Text(&ctx.tool_call_id)),
+        ("execution_mode", FieldValue::Mode(ctx.execution_mode)),
+        ("cwd", FieldValue::Cwd(ctx.working_dir.as_deref())),
+        ("input_json_bytes", FieldValue::Count(json_len(input))),
+    ]);
 
     if let Some(object) = input.as_object() {
-        let mut keys = object.keys().cloned().collect::<Vec<_>>();
-        keys.sort();
-        fields.push(("input_keys".to_string(), keys.join(",")));
+        fields.push(("input_keys", FieldValue::InputKeys(object)));
 
-        let touched_paths = path_policy::touched_paths(input, ctx)
-            .into_iter()
-            .map(|(key, path)| format!("{key}:{}", path.display()))
-            .collect::<Vec<_>>();
+        let touched_paths = path_policy::touched_paths(input, ctx);
         if !touched_paths.is_empty() {
-            fields.push(("touched_paths".to_string(), touched_paths.join(",")));
-            fields.push(("touched_path_count".to_string(), touched_paths.len().to_string()));
+            let count = touched_paths.len();
+            fields.push(("touched_paths", FieldValue::TouchedPaths(touched_paths)));
+            fields.push(("touched_path_count", FieldValue::Count(count)));
         }
 
-        for text_key in ["command", "prompt", "task", "query", "content"] {
+        for (text_key, bytes_key, chars_key) in TEXT_SIZE_FIELDS {
             if let Some(text) = object.get(text_key).and_then(Value::as_str) {
-                fields.push((format!("{text_key}_bytes"), text.len().to_string()));
-                fields.push((format!("{text_key}_chars"), text.chars().count().to_string()));
+                fields.push((bytes_key, FieldValue::Count(text.len())));
+                fields.push((chars_key, FieldValue::Count(text.chars().count())));
             }
         }
     }
@@ -62,14 +147,16 @@ pub(super) fn fields(
 }
 
 /// The list as borrowed pairs, for a line that leaves the list in place.
-pub(super) fn borrowed(fields: &[(String, String)]) -> impl Iterator<Item = (&str, &str)> {
-    fields.iter().map(|(key, value)| (key.as_str(), value.as_str()))
+pub(super) fn borrowed<'f, 'a>(
+    fields: &'f [(&'static str, FieldValue<'a>)],
+) -> impl Iterator<Item = (&'static str, &'f FieldValue<'a>)> {
+    fields.iter().map(|(key, value)| (*key, value))
 }
 
 /// Relabel a list built by [`fields`] for a later line of the same call.
-pub(super) fn set_phase(fields: &mut [(String, String)], phase: &str) {
-    if let Some((_, value)) = fields.iter_mut().find(|(key, _)| key.as_str() == PHASE_KEY) {
-        phase.clone_into(value);
+pub(super) fn set_phase<'a>(fields: &mut [(&'static str, FieldValue<'a>)], phase: &'a str) {
+    if let Some((_, value)) = fields.iter_mut().find(|(key, _)| *key == PHASE_KEY) {
+        *value = FieldValue::Text(phase);
     }
 }
 
@@ -105,10 +192,8 @@ fn json_len(value: &Value) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ToolExecutionMode;
     use super::*;
     use serde_json::json;
-    use std::path::{Path, PathBuf};
 
     fn context(working_dir: Option<&str>) -> ToolContext {
         ToolContext {
@@ -124,6 +209,14 @@ mod tests {
 
     fn text_len(value: &Value) -> usize {
         serde_json::to_string(value).expect("a JSON value serializes").len()
+    }
+
+    /// The fields as the text a line carries.
+    fn rendered(fields: &[(&'static str, FieldValue<'_>)]) -> Vec<(String, String)> {
+        fields
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
     }
 
     #[test]
@@ -176,18 +269,20 @@ mod tests {
         ]
         .map(|(key, value)| (key.to_string(), value));
 
-        let built = fields("start", "write_alias", "write", &input, &context(Some("/work")));
+        let ctx = context(Some("/work"));
+        let built = fields("start", "write_alias", "write", &input, &ctx);
 
-        assert_eq!(built, expected);
+        assert_eq!(rendered(&built), expected);
     }
 
     #[test]
     fn an_input_that_is_not_an_object_has_only_the_call_fields() {
         let input = json!("just text");
+        let ctx = context(None);
 
-        let built = fields("start", "probe", "probe", &input, &context(None));
+        let built = fields("start", "probe", "probe", &input, &ctx);
 
-        let keys = built.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+        let keys = built.iter().map(|(key, _)| *key).collect::<Vec<_>>();
         assert_eq!(
             keys,
             [
@@ -202,8 +297,8 @@ mod tests {
                 "input_json_bytes"
             ]
         );
-        assert_eq!(built[7].1, "none");
-        assert_eq!(built[8].1, text_len(&input).to_string());
+        assert_eq!(built[7].1.to_string(), "none");
+        assert_eq!(built[8].1.to_string(), text_len(&input).to_string());
     }
 
     #[test]
@@ -214,18 +309,57 @@ mod tests {
             let mut relabelled = fields("start", "probe", "probe", &input, &ctx);
             set_phase(&mut relabelled, phase);
 
-            assert_eq!(relabelled, fields(phase, "probe", "probe", &input, &ctx));
+            assert_eq!(
+                rendered(&relabelled),
+                rendered(&fields(phase, "probe", "probe", &input, &ctx))
+            );
         }
     }
 
     #[test]
     fn borrowed_pairs_are_the_list_in_order() {
-        let built = fields("start", "probe", "probe", &json!({"task": "t"}), &context(None));
+        let input = json!({"task": "t"});
+        let ctx = context(None);
+        let built = fields("start", "probe", "probe", &input, &ctx);
 
         let pairs = borrowed(&built)
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect::<Vec<_>>();
 
-        assert_eq!(pairs, built);
+        assert_eq!(pairs, rendered(&built));
+    }
+
+    #[test]
+    fn keys_handed_out_of_order_are_printed_sorted() {
+        let unsorted = ["zeta", "alpha", "mid"].map(str::to_string);
+        assert_eq!(SortedKeys(unsorted.iter()).to_string(), "alpha,mid,zeta");
+
+        let sorted = ["alpha", "mid", "zeta"].map(str::to_string);
+        assert_eq!(SortedKeys(sorted.iter()).to_string(), "alpha,mid,zeta");
+
+        let none: [String; 0] = [];
+        assert_eq!(SortedKeys(none.iter()).to_string(), "");
+    }
+
+    #[test]
+    fn a_value_prints_the_text_the_line_used_to_hold() {
+        let turn = ToolExecutionMode::AgentTurn;
+        assert_eq!(FieldValue::Mode(turn).to_string(), format!("{turn:?}"));
+        assert_eq!(FieldValue::Mode(turn).to_string(), "AgentTurn");
+        assert_eq!(
+            FieldValue::Owned("made for the line".to_string()).to_string(),
+            "made for the line"
+        );
+        assert_eq!(FieldValue::Millis(u64::MAX).to_string(), u64::MAX.to_string());
+        assert_eq!(FieldValue::Count(0).to_string(), "0");
+
+        let paths = vec![
+            ("path", PathBuf::from("/work/a")),
+            ("paths", PathBuf::from("/work/b c")),
+        ];
+        assert_eq!(
+            FieldValue::TouchedPaths(paths).to_string(),
+            "path:/work/a,paths:/work/b c"
+        );
     }
 }

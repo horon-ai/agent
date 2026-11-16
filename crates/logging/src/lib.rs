@@ -4,12 +4,14 @@
 //!
 //! Supports thread-local context for server, session, provider, and model info.
 
+mod event_buffer;
 pub mod watchdog;
 
-use chrono::Local;
+use chrono::{Datelike, Local, Timelike};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -19,7 +21,7 @@ use std::time::{Duration, Instant};
 
 static LOGGER: Mutex<Option<Logger>> = Mutex::new(None);
 static CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
-static TASK_LOG_CONTEXTS: OnceLock<Mutex<HashMap<String, TaskLogContext>>> = OnceLock::new();
+static TASK_LOG_CONTEXTS: OnceLock<Mutex<HashMap<tokio::task::Id, TaskLogContext>>> = OnceLock::new();
 static RATE_LIMITS: OnceLock<Mutex<HashMap<String, RateLimitState>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,21 +108,24 @@ pub fn set_provider_info(provider: &str, model: &str) {
     });
 }
 
-/// Get the current context as a prefix string
-fn context_prefix() -> String {
-    if let Some(task_ctx) = task_context_snapshot() {
-        return context_prefix_for(&task_ctx);
+/// Append the current context as a line prefix: the task's context when the
+/// running task has one, the thread's otherwise.
+fn push_context_prefix(line: &mut String) {
+    if let Some(task_id) = tokio::task::try_id()
+        && let Some(store) = TASK_LOG_CONTEXTS.get()
+        && let Ok(mut contexts) = store.lock()
+        && let Some(entry) = contexts.get_mut(&task_id)
+    {
+        entry.last_used = Instant::now();
+        push_context_prefix_for(line, &entry.context);
+        return;
     }
 
-    LOG_CONTEXT.with(|c| context_prefix_for(&c.borrow()))
-}
-
-fn current_task_id() -> Option<String> {
-    tokio::task::try_id().map(|id| id.to_string())
+    LOG_CONTEXT.with(|c| push_context_prefix_for(line, &c.borrow()));
 }
 
 fn with_task_context_mut(update: impl FnOnce(&mut LogContext)) -> bool {
-    let Some(task_id) = current_task_id() else {
+    let Some(task_id) = tokio::task::try_id() else {
         return false;
     };
 
@@ -152,7 +157,7 @@ struct TaskLogContext {
     last_used: Instant,
 }
 
-fn evict_stale_task_contexts(contexts: &mut HashMap<String, TaskLogContext>) {
+fn evict_stale_task_contexts<K>(contexts: &mut HashMap<K, TaskLogContext>) {
     let mut ages: Vec<Instant> = contexts.values().map(|entry| entry.last_used).collect();
     ages.sort_unstable();
     let cutoff = ages[ages.len() / 2];
@@ -160,7 +165,7 @@ fn evict_stale_task_contexts(contexts: &mut HashMap<String, TaskLogContext>) {
 }
 
 fn task_context_snapshot() -> Option<LogContext> {
-    let task_id = current_task_id()?;
+    let task_id = tokio::task::try_id()?;
     let store = TASK_LOG_CONTEXTS.get()?;
     let mut contexts = store.lock().ok()?;
     let entry = contexts.get_mut(&task_id)?;
@@ -174,35 +179,81 @@ pub fn current_context_snapshot() -> LogContext {
     task_context_snapshot().unwrap_or_else(|| LOG_CONTEXT.with(|c| c.borrow().clone()))
 }
 
-fn context_prefix_for(ctx: &LogContext) -> String {
-    let mut parts = Vec::new();
+fn push_context_prefix_for(line: &mut String, ctx: &LogContext) {
+    let start = line.len();
+    let mut push_part = |label: &str, value: &str| {
+        line.push(if line.len() == start { '[' } else { '|' });
+        line.push_str(label);
+        line.push_str(value);
+    };
 
     if let Some(ref server) = ctx.server {
-        parts.push(format!("srv:{}", server));
+        push_part("srv:", server);
     }
     if let Some(ref session) = ctx.session {
         // Truncate session name if too long
         let short = if session.len() > 20 { &session[..20] } else { session };
-        parts.push(format!("ses:{}", short));
+        push_part("ses:", short);
     }
     if let Some(ref provider) = ctx.provider {
-        parts.push(format!("prv:{}", provider));
+        push_part("prv:", provider);
     }
     if let Some(ref model) = ctx.model {
         // Just use first part of model name
         let short = model.split('-').next().unwrap_or(model);
-        parts.push(format!("mod:{}", short));
+        push_part("mod:", short);
     }
 
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("[{}] ", parts.join("|"))
+    if line.len() != start {
+        line.push_str("] ");
     }
+}
+
+/// Append `value` in decimal, zero-padded to `width` digits.
+fn push_padded(line: &mut String, value: u32, width: u32) {
+    let mut divisor = 10_u32.pow(width - 1);
+    let mut rest = value % (divisor * 10);
+    while divisor > 0 {
+        line.push(char::from_digit(rest / divisor, 10).unwrap_or('0'));
+        rest %= divisor;
+        divisor /= 10;
+    }
+}
+
+const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
+
+/// Append `now` as [`TIMESTAMP_FORMAT`] would print it.
+///
+/// Written by hand because `DateTime::format` renders the offset name into a
+/// `String` and the formatter builds another one for its output, on every line.
+fn push_timestamp(line: &mut String, now: &chrono::NaiveDateTime) {
+    let year = match u32::try_from(now.year()) {
+        Ok(year) if year <= 9999 => year,
+        _ => {
+            line.push_str(&now.format(TIMESTAMP_FORMAT).to_string());
+            return;
+        }
+    };
+    push_padded(line, year, 4);
+    line.push('-');
+    push_padded(line, now.month(), 2);
+    line.push('-');
+    push_padded(line, now.day(), 2);
+    line.push(' ');
+    push_padded(line, now.hour(), 2);
+    line.push(':');
+    push_padded(line, now.minute(), 2);
+    line.push(':');
+    // A leap second is carried in the nanoseconds.
+    push_padded(line, now.second() + now.nanosecond() / 1_000_000_000, 2);
+    line.push('.');
+    push_padded(line, now.nanosecond() / 1_000_000 % 1000, 3);
 }
 
 pub struct Logger {
     file: File,
+    /// The line being written, kept between writes.
+    line: String,
 }
 
 fn log_dir() -> Option<PathBuf> {
@@ -220,14 +271,28 @@ impl Logger {
 
         let file = OpenOptions::new().create(true).append(true).open(&path).ok()?;
 
-        Some(Self { file })
+        Some(Self {
+            file,
+            line: String::new(),
+        })
     }
 
     fn write(&mut self, level: &str, message: &str) {
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let ctx = context_prefix();
-        let line = format!("[{}] [{}] {}{}\n", timestamp, level, ctx, message);
-        if let Err(err) = self.file.write_all(line.as_bytes()) {
+        let mut line = std::mem::take(&mut self.line);
+        line.clear();
+        line.push('[');
+        push_timestamp(&mut line, &Local::now().naive_local());
+        line.push_str("] [");
+        line.push_str(level);
+        line.push_str("] ");
+        push_context_prefix(&mut line);
+        line.push_str(message);
+        line.push('\n');
+        let written = self.file.write_all(line.as_bytes());
+        if line.capacity() <= event_buffer::MAX_KEPT_BYTES {
+            self.line = line;
+        }
+        if let Err(err) = written {
             eprintln!("horon-agent logger write failed: {err}");
             return;
         }
@@ -351,7 +416,7 @@ pub fn debug(message: &str) {
 pub fn event_info<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Info, event_name, fields);
@@ -360,7 +425,7 @@ where
 pub fn event_warn<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Warn, event_name, fields);
@@ -369,7 +434,7 @@ where
 pub fn event_error<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Error, event_name, fields);
@@ -378,7 +443,7 @@ where
 pub fn event_debug<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Debug, event_name, fields);
@@ -387,19 +452,19 @@ where
 pub fn event<K, V, I>(level: LogLevel, event: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     if !level.is_enabled() {
         return;
     }
-    write_level(level, &format_structured_event(event, fields));
+    write_event(level, event, fields);
 }
 
 pub fn event_rate_limited<K, V, I>(level: LogLevel, rate_key: &str, min_interval: Duration, event: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     if !level.is_enabled() {
@@ -446,7 +511,7 @@ where
     if suppressed > 0 {
         fields.push(("suppressed".to_string(), suppressed.to_string()));
     }
-    write_level(level, &format_structured_event(event, fields));
+    write_event(level, event, fields);
 }
 
 fn write_level(level: LogLevel, message: &str) {
@@ -457,69 +522,41 @@ fn write_level(level: LogLevel, message: &str) {
     }
 }
 
+/// Assemble one structured line in this thread's kept buffers and write it.
+fn write_event<K, V, I>(level: LogLevel, event: &str, fields: I)
+where
+    K: AsRef<str>,
+    V: Display,
+    I: IntoIterator<Item = (K, V)>,
+{
+    event_buffer::with_event_buffers(|buffers| {
+        buffers.compose(structured_json_enabled(), event, fields);
+        write_level(level, buffers.message());
+    });
+}
+
+#[cfg(test)]
 fn format_structured_event<K, V, I>(event: &str, fields: I) -> String
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     format_structured_event_as(structured_json_enabled(), event, fields)
 }
 
-/// Assemble one structured line, as JSON or as `key=value` text.
-///
-/// The text line is written into one buffer. A key that is already clean is
-/// used as it was given and a value that needs no redaction or cut is used as
-/// it was rendered, so the usual field costs the one allocation of its
-/// rendered value.
+/// The line [`write_event`] would write, as JSON or as `key=value` text.
+#[cfg(test)]
 fn format_structured_event_as<K, V, I>(json: bool, event: &str, fields: I) -> String
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
-    let event = sanitize_log_value(event);
-    let mut rendered: Vec<(K, String)> = fields
-        .into_iter()
-        .map(|(key, value)| (key, value.to_string()))
-        .collect();
-    let mut ordered: Vec<(Cow<'_, str>, String)> = rendered
-        .iter_mut()
-        .map(|(key, value)| {
-            let raw_key = AsRef::<str>::as_ref(&*key);
-            (
-                sanitize_log_key(raw_key),
-                redact_rendered_field(raw_key, std::mem::take(value)),
-            )
-        })
-        .collect();
-    // Fields are written in key order. The sort is stable, so of two fields
-    // that share a key the later one stays last, and the last one is written.
-    ordered.sort_by(|left, right| left.0.cmp(&right.0));
-
-    if json {
-        let mut object = serde_json::Map::new();
-        object.insert("event".to_string(), serde_json::Value::String(event));
-        for (key, value) in ordered {
-            object.insert(key.into_owned(), serde_json::Value::String(value));
-        }
-        return format!("EVENT_JSON {}", serde_json::Value::Object(object));
-    }
-
-    let fields_len: usize = ordered.iter().map(|(key, value)| key.len() + value.len() + 2).sum();
-    let mut line = String::with_capacity("EVENT event=".len() + event.len() + fields_len);
-    line.push_str("EVENT event=");
-    push_log_field_value(&mut line, &event);
-    for (index, (key, value)) in ordered.iter().enumerate() {
-        if ordered.get(index + 1).is_some_and(|(next, _)| next == key) {
-            continue;
-        }
-        line.push(' ');
-        line.push_str(key);
-        line.push('=');
-        push_log_field_value(&mut line, value);
-    }
-    line
+    event_buffer::with_event_buffers(|buffers| {
+        buffers.compose(json, event, fields);
+        buffers.take_message()
+    })
 }
 
 fn structured_json_enabled() -> bool {
@@ -704,19 +741,6 @@ fn redact_auth_field(key: &str, value: &str) -> String {
     sanitize_log_value(value)
 }
 
-/// `redact_auth_field` for a value that is already rendered: a value the
-/// sanitizer would leave unchanged is returned as it is.
-fn redact_rendered_field(key: &str, value: String) -> String {
-    if is_credential_key(key) {
-        return "<redacted>".to_string();
-    }
-    // Without a line break, a tab or a `?` there is nothing to replace and no
-    // URL query to redact, and a value within the limit is not cut.
-    let unchanged =
-        value.len() <= MAX_LOG_VALUE_BYTES && !value.bytes().any(|byte| matches!(byte, b'\n' | b'\r' | b'\t' | b'?'));
-    if unchanged { value } else { sanitize_log_value(&value) }
-}
-
 const MAX_LOG_KEY_BYTES: usize = 80;
 const MAX_LOG_VALUE_BYTES: usize = 160;
 
@@ -897,6 +921,51 @@ mod tests {
         assert!(subdir.is_dir(), "subdirectories must survive");
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn timestamp_text_matches_the_chrono_format() {
+        let cases = [
+            (2026, 11, 16, 9, 5, 7, 4_000_000_u32),
+            (1999, 12, 31, 23, 59, 59, 999_999_999),
+            (987, 1, 2, 0, 0, 0, 0),
+            // A leap second: the 60th second is carried in the nanoseconds.
+            (2016, 12, 31, 23, 59, 59, 1_500_000_000),
+            (12345, 6, 7, 8, 9, 10, 11_000_000),
+            (-44, 3, 15, 12, 0, 0, 0),
+        ];
+        for (year, month, day, hour, minute, second, nano) in cases {
+            let at = chrono::NaiveDate::from_ymd_opt(year, month, day)
+                .and_then(|date| date.and_hms_nano_opt(hour, minute, second, nano))
+                .expect("a valid date and time");
+            let mut line = String::new();
+            push_timestamp(&mut line, &at);
+            assert_eq!(line, at.format(TIMESTAMP_FORMAT).to_string());
+        }
+    }
+
+    #[test]
+    fn context_prefix_text_keeps_its_shape() {
+        let mut line = String::from("x");
+        push_context_prefix_for(&mut line, &LogContext::default());
+        assert_eq!(line, "x");
+
+        let full = LogContext {
+            server: Some("main".to_string()),
+            session: Some("session-0123456789abcdef".to_string()),
+            provider: Some("openai".to_string()),
+            model: Some("gpt-5-mini".to_string()),
+        };
+        push_context_prefix_for(&mut line, &full);
+        assert_eq!(line, "x[srv:main|ses:session-0123456789ab|prv:openai|mod:gpt] ");
+
+        let mut line = String::new();
+        let partial = LogContext {
+            session: Some("short".to_string()),
+            ..LogContext::default()
+        };
+        push_context_prefix_for(&mut line, &partial);
+        assert_eq!(line, "[ses:short] ");
     }
 }
 
