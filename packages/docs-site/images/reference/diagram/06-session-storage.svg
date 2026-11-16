@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" width="960" height="700" role="img" aria-labelledby="t d">
+<title id="t">Session storage: originals, derived caches and idle release</title><desc id="d">Each session directory under $HORON_HOME/sessions holds two classes of file. Originals are committed with sync_file and sync_dir: the append-only event log events.jsonl, its blobs named by their own sha256, the four local state files that the log cannot reproduce, and the durable runtime journal. The [storage] sync setting picks how hard the flush is: full is the default and uses F_FULLFSYNC on macOS, fdatasync on Linux and FlushFileBuffers on Windows, while fast uses plain fsync on macOS and falls back to the same call elsewhere. Derived caches are written to a temp file and only renamed, never flushed, so a crash costs only regeneration: checkpoint.json, sparse-index.jsonl, summary.json, facade-cache.json and the catalog rows. Every derived file stores the Stamp of the event log (device, inode, length, mtime, ctime) and its own sha256, so a mismatch discards it and rebuilds under the writer lock. The .catalog.dirty marker is only a hint that a rebuild is due and is never flushed; the stamp comparison is what keeps a stale cache from being served. Idle sessions release their derived caches after [server] idle_hibernation_secs (1800 by default), keeping the originals and the active context, and the next turn rebuilds them from memory with no disk dependency. The claim that the sweep's timing precision is one tick is inferred from the 10-second sweep interval.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="700" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="32" font-size="13" class="m">$HORON_HOME/sessions/&lt;id&gt;/ — originals are flushed, derived caches are rebuilt</text>
+
+<rect x="30" y="48" width="290" height="320" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="72" font-size="13" font-weight="600">Originals</text>
+<text x="46" y="90" font-size="11" class="m">sync_file + sync_dir, must survive power loss</text>
+<rect x="44" y="100" width="262" height="40" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="117" font-size="12" class="mono">events.jsonl</text>
+<text x="58" y="132" font-size="10.5" class="m">append-only canonical log</text>
+<rect x="44" y="148" width="262" height="40" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="165" font-size="12" class="mono">blobs/&lt;sha256&gt;.json</text>
+<text x="58" y="180" font-size="10.5" class="m">externalized payload, flushed per blob</text>
+<rect x="44" y="196" width="262" height="96" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="213" font-size="12" class="mono">local-head.json</text>
+<text x="58" y="229" font-size="12" class="mono">local-head-explicit.json</text>
+<text x="58" y="245" font-size="12" class="mono">local-explicit-source.json</text>
+<text x="58" y="261" font-size="12" class="mono">local-runtime.json</text>
+<text x="58" y="280" font-size="10.5" class="m">state the event log cannot reproduce</text>
+<rect x="44" y="300" width="262" height="52" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="317" font-size="12" class="mono">runtime.jsonl</text>
+<text x="58" y="332" font-size="10.5" class="m">durable run-state journal, seq per</text>
+<text x="58" y="345" font-size="10.5" class="m">transition, synced before published</text>
+
+<rect x="344" y="48" width="286" height="320" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="360" y="72" font-size="13" font-weight="600">[storage] sync</text>
+<text x="360" y="90" font-size="11" class="m">which call confirms an original</text>
+<rect x="358" y="100" width="258" height="130" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="118" font-size="12" class="mono">full (default)</text>
+<text x="372" y="136" font-size="10.5" class="m">macOS F_FULLFSYNC (drive cache too)</text>
+<text x="372" y="152" font-size="10.5" class="m">Linux fdatasync</text>
+<text x="372" y="168" font-size="10.5" class="m">Windows FlushFileBuffers</text>
+<text x="372" y="190" font-size="10.5" class="m">the Mac default stays full</text>
+<text x="372" y="214" font-size="10.5" class="m">HORON_AGENT_STORAGE_SYNC</text>
+<text x="372" y="228" font-size="10.5" class="m">overrides one process</text>
+<rect x="358" y="238" width="258" height="114" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="256" font-size="12" class="mono">fast</text>
+<text x="372" y="274" font-size="10.5" class="m">macOS fsync(2), survives an OS crash</text>
+<text x="372" y="290" font-size="10.5" class="m">Linux and Windows have no cheaper</text>
+<text x="372" y="306" font-size="10.5" class="m">call, so fast is the same as full</text>
+<text x="372" y="328" font-size="10.5" class="m">an unknown value falls back to full</text>
+<text x="372" y="342" font-size="10.5" class="m">with one warning per process</text>
+
+<rect x="654" y="48" width="276" height="320" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="670" y="72" font-size="13" font-weight="600">Derived caches</text>
+<text x="670" y="90" font-size="11" class="m">temp file + rename, never flushed</text>
+<rect x="668" y="100" width="248" height="112" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="682" y="117" font-size="12" class="mono">checkpoint.json</text>
+<text x="682" y="135" font-size="12" class="mono">sparse-index.jsonl</text>
+<text x="682" y="153" font-size="12" class="mono">summary.json</text>
+<text x="682" y="171" font-size="12" class="mono">facade-cache.json</text>
+<text x="682" y="189" font-size="12" class="mono">.catalog.index.jsonl</text>
+<text x="682" y="205" font-size="10.5" class="m">one catalog row per session</text>
+<rect x="668" y="220" width="248" height="70" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="682" y="237" font-size="12" class="mono">.catalog.dirty/&lt;id&gt;</text>
+<text x="682" y="254" font-size="10.5" class="m">empty file, presence only, a hint that</text>
+<text x="682" y="268" font-size="10.5" class="m">a rebuild is due. Created before the</text>
+<text x="682" y="282" font-size="10.5" class="m">originals, deliberately not flushed</text>
+<rect x="668" y="298" width="248" height="54" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="682" y="315" font-size="11" font-weight="600">trust test: Stamp + sha256</text>
+<text x="682" y="330" font-size="10.5" class="m">device, inode, length, mtime, ctime</text>
+<text x="682" y="344" font-size="10.5" class="m">mismatch → discard, rebuild under lock</text>
+
+<rect x="30" y="392" width="900" height="288" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="416" font-size="13" font-weight="600">Idle hibernation releases what can be rebuilt</text>
+<text x="46" y="434" font-size="11" class="m">[server] idle_hibernation_secs = 1800 by default; a daemon sweep rereads the threshold every 10 seconds; 0 turns the sweep off</text>
+
+<rect x="46" y="446" width="276" height="216" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="60" y="466" font-size="12" font-weight="600">released</text>
+<text x="60" y="486" font-size="11" class="mono">provider projection</text>
+<text x="60" y="501" font-size="10.5" class="m">provider_messages_cache, prefix hash</text>
+<text x="60" y="515" font-size="10.5" class="m">cache, length, profile counters; the</text>
+<text x="60" y="529" font-size="10.5" class="m">mode resets to Full so the next turn</text>
+<text x="60" y="543" font-size="10.5" class="m">rebuilds instead of sending nothing</text>
+<text x="60" y="567" font-size="11" class="mono">tool output index</text>
+<text x="60" y="582" font-size="10.5" class="m">tool_call_ids and tool_result_ids are</text>
+<text x="60" y="596" font-size="10.5" class="m">replaced, not cleared, so the allocation</text>
+<text x="60" y="610" font-size="10.5" class="m">goes back; scan index resets to 0</text>
+<text x="60" y="634" font-size="10.5" class="m">the path saves no checkpoint, so it</text>
+<text x="60" y="648" font-size="10.5" class="m">cannot mask a save the lease skipped</text>
+
+<rect x="342" y="446" width="276" height="216" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="356" y="466" font-size="12" font-weight="600">kept</text>
+<text x="356" y="486" font-size="10.5" class="m">events.jsonl and blobs/, the resident</text>
+<text x="356" y="500" font-size="10.5" class="m">active context, the frozen system</text>
+<text x="356" y="514" font-size="10.5" class="m">prompt and the locked tool surface, so</text>
+<text x="356" y="528" font-size="10.5" class="m">the next turn does not renegotiate</text>
+<text x="356" y="542" font-size="10.5" class="m">the tool list</text>
+<text x="356" y="566" font-size="10.5" class="m">pruned_tool_results, stream_rule_</text>
+<text x="356" y="580" font-size="10.5" class="m">ledger, original auxiliary state,</text>
+<text x="356" y="594" font-size="10.5" class="m">rewind undo state, provider handles,</text>
+<text x="356" y="608" font-size="10.5" class="m">pending alerts, resume state</text>
+<text x="356" y="634" font-size="10.5" class="m">on wake nothing on disk is read: the</text>
+<text x="356" y="648" font-size="10.5" class="m">turn rebuilds both caches in memory</text>
+
+<rect x="638" y="446" width="276" height="216" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="652" y="466" font-size="12" font-weight="600">gates, all must hold</text>
+<text x="652" y="486" font-size="10.5" class="m">roster state is not running and no turn</text>
+<text x="652" y="500" font-size="10.5" class="m">is in progress</text>
+<text x="652" y="518" font-size="10.5" class="m">no migration lease, no pending alert or</text>
+<text x="652" y="532" font-size="10.5" class="m">resume, soft interrupt queue empty</text>
+<text x="652" y="550" font-size="10.5" class="m">no compaction running, no tool in flight</text>
+<text x="652" y="568" font-size="10.5" class="m">last activity and last state change are</text>
+<text x="652" y="582" font-size="10.5" class="m">both past the threshold</text>
+<text x="652" y="600" font-size="10.5" class="m">a lock that cannot be taken skips the</text>
+<text x="652" y="614" font-size="10.5" class="m">tick without waiting, so the sweep</text>
+<text x="652" y="628" font-size="10.5" class="m">never queues ahead of a turn</text>
+<text x="652" y="648" font-size="10.5" class="m">one log line records what was released</text>
+</svg>

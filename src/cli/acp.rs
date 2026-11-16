@@ -31,6 +31,8 @@ mod rpc;
 mod session_configuration;
 mod session_list;
 #[cfg(test)]
+mod system_prompt_tests;
+#[cfg(test)]
 mod tests;
 mod util;
 mod v2;

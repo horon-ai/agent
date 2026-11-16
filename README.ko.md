@@ -206,12 +206,12 @@ Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모�
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs](packages/docs)에서 따로 쓴 더 짧은 문서 묶음이다. `docs/`에서 생성하지 않으므로 동작이 바뀌면 둘 다 손으로 고친다.
+문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs-site](packages/docs-site)에서 Mintlify용으로 따로 쓴 더 짧은 문서 묶음이다. `docs/`에서 생성하지 않으므로 동작이 바뀌면 둘 다 손으로 고친다.
 
 | 주제 | 문서 |
 | --- | --- |
 | 문서 사이트(`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
-| 문서 사이트 원본 | [packages/docs](packages/docs) |
+| 문서 사이트 원본 | [packages/docs-site](packages/docs-site) |
 | 색인과 고정 요구사항 | [docs/README.ko.md](docs/README.ko.md) |
 | 터미널 클라이언트와 사용자 파일 | [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md) |
 | 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |

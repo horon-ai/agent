@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 734" width="960" height="734" role="img" aria-labelledby="t d">
+<title id="t">ACP version negotiation</title><desc id="d">One horon acp endpoint answers initialize with the highest protocol version both sides support. protocolVersion 1 selects the v1 surface, 2 or any larger integer selects v2 and requires an info object with a string name and version, 0 is refused with -32022 and the supported list [1, 2], and a missing, non-integer or above-65535 value is -32602. With [acp] protocol_v2 = false every usable value answers v1, including 0. The lower half lists what a v1 connection keeps and what a v2 connection changes: prompt acknowledgement with state_update instead of a waiting response, session/resume with replayFrom instead of session/load, auth/login and auth/logout per connection, session/set_config_option instead of session/set_mode, object capability markers, a display terminal instead of client terminal requests, and the first tool_call_update creating the call with a structured git_patch diff. The parts about how a client reacts are inferred from the schema names and the adapter contract.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="734" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="32" font-size="13" class="m">1. One endpoint, two surfaces: initialize picks the version</text>
+
+<rect x="30" y="48" width="252" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="70" font-size="12.5" font-weight="600">client sends</text>
+<text x="46" y="88" font-size="11.5" class="m">initialize { protocolVersion }</text>
+<rect x="44" y="98" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="124" font-size="13" class="mono">1</text>
+<rect x="44" y="146" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="172" font-size="13" class="mono">2, 3, … 65535</text>
+
+<rect x="344" y="48" width="252" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="360" y="70" font-size="12.5" font-weight="600">select() with v2 on</text>
+<text x="360" y="88" font-size="11.5" class="m">src/cli/acp/v2/negotiate.rs</text>
+<rect x="358" y="98" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="118" font-size="12.5" class="mono">AcpVersion::V1</text>
+<text x="372" y="133" font-size="11" class="m">highest both support</text>
+<rect x="358" y="146" width="224" height="42" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="166" font-size="12.5" class="mono">AcpVersion::V2</text>
+<text x="372" y="181" font-size="11" class="m">answered as 2, needs info</text>
+
+<line x1="282" y1="119" x2="340" y2="119" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="282" y1="167" x2="340" y2="167" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="658" y="48" width="272" height="150" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="674" y="70" font-size="12.5" font-weight="600">connection speaks</text>
+<rect x="672" y="80" width="242" height="50" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="100" font-size="12.5" class="mono">v1 surface</text>
+<text x="686" y="118" font-size="11" class="m">unchanged for existing editors</text>
+<rect x="672" y="138" width="242" height="50" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="158" font-size="12.5" class="mono">v2 surface</text>
+<text x="686" y="176" font-size="11" class="m">info + object capability markers</text>
+<line x1="596" y1="119" x2="654" y2="105" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="596" y1="167" x2="654" y2="163" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="30" y="210" width="252" height="88" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="232" font-size="12.5" font-weight="600">client sends</text>
+<rect x="44" y="240" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="257" font-size="12.5" class="mono">0</text>
+<rect x="44" y="268" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="58" y="285" font-size="12" class="mono">missing / 70000 / "1"</text>
+
+<rect x="344" y="210" width="252" height="88" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="360" y="232" font-size="12.5" font-weight="600">no version selected</text>
+<rect x="358" y="240" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="257" font-size="12" class="mono">InitError::Unsupported</text>
+<rect x="358" y="268" width="224" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="372" y="285" font-size="12" class="mono">InitError::InvalidParams</text>
+<line x1="282" y1="252" x2="340" y2="252" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="282" y1="280" x2="340" y2="280" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="658" y="210" width="272" height="88" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="674" y="232" font-size="12.5" font-weight="600">error frame</text>
+<rect x="672" y="240" width="242" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="257" font-size="12" class="mono">-32022 unsupported</text>
+<rect x="672" y="268" width="242" height="24" rx="7" fill="var(--bg)" stroke="var(--line)"/>
+<text x="686" y="285" font-size="12" class="mono">-32602 invalid params</text>
+<line x1="596" y1="252" x2="654" y2="252" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="596" y1="280" x2="654" y2="280" stroke="var(--muted)" stroke-width="1.4" marker-end="url(#ah)"/>
+
+<rect x="30" y="314" width="900" height="72" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="336" font-size="12.5" font-weight="600">v2 off: [acp] protocol_v2 = false, or HORON_AGENT_ACP_PROTOCOL_V2=0</text>
+<text x="46" y="355" font-size="11.5" class="m">Every usable value answers v1 and the connection is never told about 2. 0 is answered v1 too instead of -32022, so the switch is a true rollback.</text>
+<text x="46" y="372" font-size="11.5" class="m">A changed setting needs a new horon acp process.</text>
+
+<text x="30" y="412" font-size="13" class="m">2. What differs on each surface after initialize</text>
+
+<rect x="30" y="428" width="440" height="284" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="46" y="452" font-size="13" font-weight="600">v1 connection</text>
+<text x="46" y="470" font-size="11" class="m">schema-v1.32.0, stable</text>
+
+<text x="46" y="496" font-size="12" class="mono" font-weight="600">session/prompt</text>
+<text x="46" y="511" font-size="11" class="m">holds the turn, then answers stopReason</text>
+<text x="46" y="538" font-size="12" class="mono" font-weight="600">session/load</text>
+<text x="46" y="553" font-size="11" class="m">replays history as session/update first</text>
+<text x="46" y="580" font-size="12" class="mono" font-weight="600">authenticate</text>
+<text x="46" y="595" font-size="11" class="m">the one auth method; logout not offered</text>
+<text x="46" y="622" font-size="12" class="mono" font-weight="600">session/set_mode</text>
+<text x="46" y="637" font-size="11" class="m">mode changes, current_mode_update</text>
+<text x="46" y="664" font-size="12" class="mono" font-weight="600">capabilities</text>
+<text x="46" y="679" font-size="11" class="m">true / false, loadSession: true</text>
+
+<rect x="490" y="428" width="440" height="284" rx="10" fill="var(--panel)" stroke="var(--line)"/>
+<text x="506" y="452" font-size="13" font-weight="600">v2 connection</text>
+<text x="506" y="470" font-size="11" class="m">schema-v2.0.0-alpha.16, stable part</text>
+
+<text x="506" y="496" font-size="12" class="mono" font-weight="600">session/prompt</text>
+<text x="506" y="511" font-size="11" class="m">acks {messageId} once stored; state_update follows</text>
+<text x="506" y="538" font-size="12" class="mono" font-weight="600">session/resume</text>
+<text x="506" y="553" font-size="11" class="m">replayFrom; session/load is -32601</text>
+<text x="506" y="580" font-size="12" class="mono" font-weight="600">auth/login, auth/logout</text>
+<text x="506" y="595" font-size="11" class="m">per connection; stored keys are kept</text>
+<text x="506" y="622" font-size="12" class="mono" font-weight="600">session/set_config_option</text>
+<text x="506" y="637" font-size="11" class="m">set_mode is -32601; configId, groupId</text>
+<text x="506" y="664" font-size="12" class="mono" font-weight="600">capabilities</text>
+<text x="506" y="679" font-size="11" class="m">object markers, no loadSession, no fs/* or terminal/* requests</text>
+</svg>

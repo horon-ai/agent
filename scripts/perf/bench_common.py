@@ -11,6 +11,8 @@ Exports:
 - ``stats``: median/p95/min/max/sample-count for a list of measurements.
 - ``process_tree_rss_bytes`` / ``process_tree_pss_bytes``: summed RSS (and PSS on
   Linux) of a process and all descendants. Windows reports the working set.
+- ``process_cpu_snapshot`` / ``cpu_usage_between``: CPU time and context switches
+  one process spent between two points, read from ``/proc`` (Linux only).
 - ``ipc_connect`` / ``wait_for_socket`` / ``wait_for_port``: the daemon's local
   socket (a Unix socket, or on Windows the named pipe the daemon derives from
   the same path) and readiness polling.
@@ -441,6 +443,112 @@ def process_tree_status_bytes(pid: int, field: str) -> int | None:
             continue
     return total if found else None
 
+
+def _read_proc_text(path: str) -> str | None:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def _thread_cpu(task_dir: str) -> dict | None:
+    """On-CPU nanoseconds and context switches of one thread; None when it is gone or unreadable."""
+    sched = _read_proc_text(os.path.join(task_dir, "schedstat"))
+    status = _read_proc_text(os.path.join(task_dir, "status"))
+    if sched is None or status is None:
+        return None
+    switches: dict[str, int] = {}
+    try:
+        cpu_ns = int(sched.split()[0])
+        for line in status.splitlines():
+            key, _, value = line.partition(":")
+            if key in ("voluntary_ctxt_switches", "nonvoluntary_ctxt_switches"):
+                switches[key] = int(value)
+    except (IndexError, ValueError):
+        return None
+    if len(switches) != 2:
+        return None
+    return {
+        "cpu_ns": cpu_ns,
+        "voluntary": switches["voluntary_ctxt_switches"],
+        "involuntary": switches["nonvoluntary_ctxt_switches"],
+    }
+
+
+def process_cpu_snapshot(pid: int, proc_root: str = "/proc") -> dict | None:
+    """CPU time and context switches of one process, read from ``/proc``; None where it has none.
+
+    ``process_ms`` is ``utime + stime`` of the whole process and ``children_ms``
+    is ``cutime + cstime``, the time of the children it has reaped. Both move in
+    clock ticks (10 ms on Linux) and keep the share of threads that have exited.
+    ``threads`` maps every live thread to its on-CPU nanoseconds (``schedstat``)
+    and its voluntary and involuntary context switches. A thread that exits
+    takes those with it, which ``cpu_usage_between`` accounts for.
+    """
+    base = os.path.join(proc_root, str(pid))
+    stat = _read_proc_text(os.path.join(base, "stat"))
+    if stat is None:
+        return None
+    # After the comm field: state, ppid, ... so utime is the 12th value.
+    fields = stat.rsplit(")", 1)[-1].split()
+    try:
+        utime, stime, cutime, cstime = (int(fields[index]) for index in (11, 12, 13, 14))
+        tick_ms = 1000.0 / os.sysconf("SC_CLK_TCK")
+    except (IndexError, ValueError, OSError, AttributeError):
+        return None
+    threads: dict[str, dict] = {}
+    try:
+        tids = os.listdir(os.path.join(base, "task"))
+    except OSError:
+        tids = []
+    for tid in tids:
+        thread = _thread_cpu(os.path.join(base, "task", tid))
+        if thread is not None:
+            threads[tid] = thread
+    return {
+        "process_ms": (utime + stime) * tick_ms,
+        "children_ms": (cutime + cstime) * tick_ms,
+        "threads": threads,
+    }
+
+
+def cpu_usage_between(before: dict, after: dict) -> dict:
+    """What one process spent between two ``process_cpu_snapshot`` results.
+
+    ``cpu_ms`` comes from the per-thread nanosecond clocks while every thread
+    seen at the start is still alive (``source`` is ``schedstat``). Once one has
+    exited, its clock is gone and the sum would under-count, so the process tick
+    counters are used instead (``source`` is ``stat``) and the context switches,
+    which have no process-wide counter, are None: a lost thread must never read
+    as a saving.
+    """
+    exited = [tid for tid in before["threads"] if tid not in after["threads"]]
+
+    def thread_delta(key: str) -> int:
+        return sum(
+            thread[key] - before["threads"].get(tid, {}).get(key, 0)
+            for tid, thread in after["threads"].items()
+        )
+
+    if before["threads"] and after["threads"] and not exited:
+        cpu_ms = thread_delta("cpu_ns") / 1_000_000.0
+        voluntary: int | None = thread_delta("voluntary")
+        involuntary: int | None = thread_delta("involuntary")
+        source = "schedstat"
+    else:
+        cpu_ms = after["process_ms"] - before["process_ms"]
+        voluntary = None
+        involuntary = None
+        source = "stat"
+    return {
+        "cpu_ms": cpu_ms,
+        "children_cpu_ms": after["children_ms"] - before["children_ms"],
+        "voluntary_switches": voluntary,
+        "involuntary_switches": involuntary,
+        "source": source,
+        "threads_exited": len(exited),
+    }
 
 
 class MemorySampler:

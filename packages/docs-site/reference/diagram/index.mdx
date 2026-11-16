@@ -1,0 +1,77 @@
+---
+title: "horon-agent diagrams"
+sidebarTitle: "Diagrams"
+description: "Eight diagrams of the code: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading and the release flow."
+---
+
+{/* Generated from docs/diagram/README.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
+
+These diagrams describe the code of the branch they sit on. `dev` and `main` each carry their own copy of this folder, so a diagram is a picture of the code next to it, not of the newest unreleased work. Read one top to bottom: each node names something you can find in the tree, and each arrow is a call, a read or a write that the code performs.
+
+## 01 System overview
+
+![System overview](/images/reference/diagram/01-system-overview.svg)
+
+Start here. The left column is everything that talks to the agent: the terminal client, the TypeScript and Python SDKs, editors over ACP, and a host program over RPC. The middle column is the daemon and its entry points, and the right column is where state lives and where requests finally go. Use it when you need to know which process owns a behaviour before reading that behaviour's code.
+
+Source: `README.md`, `AGENTS.md`, `docs/architecture/CRATES.md`, `docs/assets/architecture.svg`
+
+## 02 Run modes
+
+![Run modes](/images/reference/diagram/02-run-modes.svg)
+
+Every way to start `horon-agent`, decided by case. A bare `horon` on a terminal checks three conditions before handing over to `horon-tui`, and any failed condition prints the reason and stays headless. The named subcommands skip that decision entirely. Use it when a run behaves differently than you expected because of how it was started.
+
+Source: `docs/runtime/TUI.md`, `src/cli/tui_handoff.rs`, `src/cli/startup.rs`, `docs/README.md`
+
+## 03 Turn lifecycle
+
+![Turn lifecycle](/images/reference/diagram/03-turn-lifecycle.svg)
+
+One prompt from arrival to terminal event: the turn state, the single provider request, the tool loop, and the store-then-fanout step applied to every event. It also shows the two orderings that changed in #339 (commit `0f2711ef`): the completion report goes to the request loop before the terminal event, so a prompt sent on `Done` never meets a busy session, and a cancel flushes the session's fanout forwarders, bounded at 500 ms. Use it when debugging anything that looks like a race between a finished turn and the next prompt.
+
+Source: `docs/runtime/TURNS.md`, `docs/architecture/SERVER.md`, `crates/app-core/src/server/fanout_flush.rs`
+
+## 04 Provider wires
+
+![Provider wires](/images/reference/diagram/04-provider-wires.svg)
+
+A model call resolves a profile, then posts to the path its provider type names. The four wire types, the credential lookup order, the auth header each wire sends, and how a role resolves to a model are all in one picture. Use it when a request goes to the wrong URL, carries the wrong header, or a model is not the one you configured.
+
+Source: `docs/provider/MODEL.md`, `docs/provider/INTEGRATIONS.md`, `crates/base/src/config.rs`
+
+## 05 ACP negotiation
+
+![ACP negotiation](/images/reference/diagram/05-acp-negotiation.svg)
+
+The upper half is one `initialize` deciding between two surfaces: the highest version both sides support, with `0` refused as unsupported and a malformed value refused as invalid parameters. The `[acp] protocol_v2` switch turns the whole thing back to v1, including what `0` answers. The lower half is the actual difference a client sees once the version is chosen: prompt acknowledgement, resume versus load, per-connection auth, config options versus modes, and capability markers as objects. Use it when an editor integration works on one protocol version and breaks on the other.
+
+Source: `src/cli/acp/v2/negotiate.rs`, `src/cli/acp/util.rs`, `docs/protocol/ACP.md`
+
+## 06 Session storage
+
+![Session storage](/images/reference/diagram/06-session-storage.svg)
+
+Two classes of file per session. Originals are the ones a power loss must not lose: the event log, its blobs, the local state the log cannot reproduce, and the runtime journal; `[storage] sync` decides which syscall confirms them, and `full` is the only one that also drains the drive cache on macOS. Derived caches are rebuildable and are never flushed at all, which is why each one stores the log's stamp and its own hash. The bottom band is idle hibernation: what gets released, what stays resident, and every condition that must hold first. Use it when a restarted session shows something stale, or when you are choosing between `full` and `fast`.
+
+Source: `docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/performance/MEMORY.md`, `crates/session-store/`, `crates/base/src/config.rs`
+
+## 07 Tool loading
+
+![Tool loading](/images/reference/diagram/07-tool-loading.svg)
+
+One load tier per tool, resolved once at session start. The default `core` profile sends seven tool schemas plus `toolbox` and names the other eleven in the prompt; every other profile sends everything it allows and has no index at all. It also shows the three conditions that must all hold before a session becomes a listing session, and the switches that change the answer: `[tools.load_mode]`, `toolbox = "off"`, and the IRC switch. Use it when a tool is missing from a session, or when you are counting how many schemas a session actually pays for.
+
+Source: `docs/runtime/TOOLS.md`, `crates/base/src/config.rs`, `crates/app-core/src/tool/`
+
+## 08 Branch, CI and release flow
+
+![Branch, CI and release flow](/images/reference/diagram/08-branch-release-flow.svg)
+
+The two lanes this repository lives on. The upper lane is work landing on `dev`: a change branch, an issue-linked pull request, the classification step, the gates that classification selects, and the merge. The lower lane is what ships: the release pull request merged with a merge commit, the push run that `check_ci.py` accepts as release evidence, the tag, the binaries and the container image, then the sync back to `dev`. It also shows the one path that deliberately runs no CI at all, a `[skip ci]` documentation push to `main`. Use it when a release did not happen where you expected, or when you are unsure which gates a change will trigger.
+
+Source: `.github/workflows/ci.yml`, `.github/workflows/structural-perf.yml`, `.github/workflows/release-tag.yml`, `.github/workflows/release.yml`, `.github/workflows/benchmark-docs.yml`, `.github/workflows/require-issue.yml`, `scripts/ci/classify_changes.py`, `scripts/release/next_version.py`, `scripts/release/check_ci.py`, `AGENTS.md`
+
+## When the code changes
+
+These files are hand-written, so nothing regenerates them. When a change alters what a diagram shows, update that diagram in the same change, in both languages.

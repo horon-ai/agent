@@ -59,13 +59,13 @@ fn fixture_sha256_matches_readme() {
             "{fixture} does not match the sha256 recorded in the fixtures README"
         );
     }
-    assert!(readme.contains("schema-v1.26.0"), "the README names the release tag");
+    assert!(readme.contains("schema-v1.32.0"), "the README names the release tag");
     assert!(
-        readme.contains("releases/download/schema-v1.26.0/schema.json"),
+        readme.contains("releases/download/schema-v1.32.0/schema.json"),
         "the README records the schema download URL"
     );
     assert!(
-        readme.contains("e2d83349bc9e28a4059ea3acefa1c91c966f74e2"),
+        readme.contains("13b765828f961812f0c78ae577220e994209fa2f"),
         "the README records the source commit"
     );
 }
@@ -882,7 +882,7 @@ fn session_updates(notifications: &[Value]) -> Vec<&Value> {
 }
 
 /// A real daemon turn against the scripted provider: every stdout frame of the run is
-/// valid against the v1.26.0 schema, and the turn streams a thought, a plan,
+/// valid against the v1.32.0 schema, and the turn streams a thought, a plan,
 /// a tool call with an absolute location, a diff and text before `end_turn`.
 #[test]
 fn acp_prompt_stream_frames_match_schema() {
@@ -1211,7 +1211,7 @@ fn mentions(notifications: &[Value], needle: &str) -> bool {
 
 /// IS-7/IS-8 against a real daemon: the three modes gate a bash call exactly as
 /// the approval gate behaves, a rejected or unknown answer never runs it, and
-/// every stdout frame of the run is valid against the v1.26.0 schema.
+/// every stdout frame of the run is valid against the v1.32.0 schema.
 #[test]
 fn acp_permission_modes_real_daemon() {
     let mut run = T11Run::start(None);
@@ -1431,7 +1431,7 @@ fn update_of(notifications: &[Value], matches: impl Fn(&Value) -> bool) -> Optio
 /// terminal and form elicitation: text reads and writes go through `fs/*`, a
 /// bash call runs in the client terminal and the tool call embeds it, an `ask`
 /// is answered through `elicitation/create`, and every stdout frame of the run
-/// is valid against the v1.26.0 schema.
+/// is valid against the v1.32.0 schema.
 #[test]
 fn acp_client_requests_real_daemon() {
     let mut run = t12_run(ClientCapabilities::all());

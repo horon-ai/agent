@@ -1,0 +1,48 @@
+---
+title: "horon agent"
+description: "One Rust binary coding agent that calls the endpoint the profile's type picks, Chat Completions, Responses, Anthropic Messages or Gemini generateContent, with a terminal client, SDKs, ACP and RPC."
+---
+
+One Rust binary. Four model wires.
+
+horon agent is a coding agent with a terminal client of its own. It runs a turn,
+calls tools and exits — or stays up as a daemon that the client, SDKs, editors and
+host programs attach to over a Unix socket.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
+horon provider current --json
+horon run "summarize this repo"
+```
+
+<CardGroup cols={2}>
+  <Card title="Getting started" icon="rocket" href="/getting-started">
+    Point the agent at an endpoint and run a first turn.
+  </Card>
+  <Card title="CLI" icon="terminal" href="/cli">
+    Every subcommand and what it does.
+  </Card>
+  <Card title="Editors (ACP)" icon="plug" href="/editors">
+    Serve ACP v1 and v2 over stdio to Zed, JetBrains, Neovim and VS Code.
+  </Card>
+  <Card title="SDKs" icon="code" href="/sdk-typescript">
+    Embed the engine from TypeScript or Python.
+  </Card>
+</CardGroup>
+
+## At a glance
+
+<CardGroup cols={3}>
+  <Card title="Two binaries">
+    `horon-agent` runs the agent: `serve`, `run`, `repl`, `api-bridge`, `acp`, `rpc`.
+    The terminal client `horon-tui` is separate and built on the SDK.
+  </Card>
+  <Card title="Append-only sessions">
+    History is an event log with content-addressed blobs. Archive, compaction and
+    rewind append records and never delete an original.
+  </Card>
+  <Card title="ACP v1 and v2">
+    Editors negotiate either version; `initialize` answers with the highest both
+    sides support.
+  </Card>
+</CardGroup>

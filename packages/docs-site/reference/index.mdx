@@ -1,0 +1,68 @@
+---
+title: "horon agent documentation"
+sidebarTitle: "Overview"
+description: "How the reference documentation is organized, the fixed requirements, and the rules for keeping it current."
+---
+
+{/* Generated from docs/README.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
+
+This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
+
+The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) shows them under its Reference tab: `scripts/ci/sync_docs_site.py` writes `packages/docs-site/reference/` from this folder, and the guides in the rest of `packages/docs-site` are written by hand, so a behavior change that a guide also describes is edited in both places.
+
+## Two modes, one agent
+
+horon agent runs in two modes that use the same engine, daemon, sessions, tools, and configuration. In headless mode a program drives the session: `run`, the daemon (`serve`) behind the SDKs and `api-bridge`, `acp` for editors, and `rpc`. In TUI mode a person drives it through `horon-tui`. Neither mode is a reduced form of the other; they differ only in who is on the other end. The modes ship as two binaries: `horon-agent` (the agent binary, which every installation needs) and `horon-tui` (the TUI binary, a separate optional asset of the same release). [`release/INSTALL.md`](/reference/release/install) and [`runtime/TUI.md`](/reference/runtime/tui) describe how each is installed.
+
+## Fixed requirements
+
+Every change keeps the three rules below. The source of truth is `AGENTS.md` at the repository root.
+
+| Requirement | What it means | Current state |
+| --- | --- | --- |
+| No TUI in `horon-agent` | The agent binary (`serve`, `run`, `api-bridge`, `acp`, `rpc`) never opens a screen, and its dependency graph holds no `ratatui`, `crossterm`, `horon-tui`, or `horon-agent-tui*` crate. TUI mode lives in the separate `horon-tui` package on `horon-agent-sdk`, and bare `horon` on a terminal replaces itself with that sibling binary. | Met. `scripts/ci/check_headless_graph.py` walks the resolved graph |
+| ACP v1 and v2 support | `horon acp` handles both `protocolVersion` 1 and 2 and answers with the highest version both sides support. Adding v2 does not break v1. | Met. v2 negotiation lives in `src/cli/acp/v2/negotiate.rs`, v1 in `src/cli/acp/util.rs` |
+| No performance regression | A change must be as fast as or faster than the baseline recorded on the same machine, build profile, and workload. A slower change is not merged. | The method and recorded numbers exist (`performance/BENCHMARK.md`, `performance/RESULTS.md`). The recorded numbers are the baseline |
+
+## Folder layout
+
+| Folder | Document | Contents |
+| --- | --- | --- |
+| `docs/` | [`README.md`](/reference/index) | This index and the update rules |
+| `diagram/` | [`README.md`](/reference/diagram/index) | Eight hand-written SVG diagrams with the code paths each one draws: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading, branch and release flow |
+| `architecture/` | [`SERVER.md`](/reference/architecture/server) | Server, session, and socket structure |
+| | [`CRATES.md`](/reference/architecture/crates) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
+| `protocol/` | [`ACP.md`](/reference/protocol/acp) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
+| | [`HARNESS_API.md`](/reference/protocol/harness-api) | Harness API credential setup and the request and event surface |
+| | [`SESSION_STORE.md`](/reference/protocol/session-store) | Session event storage format, delivery contract, writer pool, durable runtime journal |
+| | [`RPC.md`](/reference/protocol/rpc) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
+| `runtime/` | [`TOOLS.md`](/reference/runtime/tools) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
+| | [`TOOL_SCHEDULING.md`](/reference/runtime/tool-scheduling) | Tool scheduling and loop prevention |
+| | [`TURNS.md`](/reference/runtime/turns) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
+| | [`IRC.md`](/reference/runtime/irc) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
+| | [`TUI.md`](/reference/runtime/tui) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, commands, the settings screen, installing the optional asset, limits |
+| | [`PROMPT.md`](/reference/runtime/prompt) | System prompt composition, skill sources and invocation, token estimates |
+| | [`HOOKS.md`](/reference/runtime/hooks) | Lifecycle hooks |
+| | [`SWARM_TASK_GRAPH.md`](/reference/runtime/swarm-task-graph) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
+| `provider/` | [`MODEL.md`](/reference/provider/model) | Direct calls to the endpoint of the wire a profile's `type` names (Chat Completions, Responses, Anthropic Messages, Gemini generateContent), provider profiles and API keys, model roles and their fallback order, the one-shot `[prewalk]` handoff, model usage metadata |
+| | [`INTEGRATIONS.md`](/reference/provider/integrations) | Remote MCP, user-defined web search |
+| `safety/` | [`SAFETY.md`](/reference/safety/safety) | Safety system, unattended approval and automatic switching |
+| | [`SECURITY.md`](/reference/safety/security) | Workspace trust, crash bundles, dependency security classification |
+| `performance/` | [`BENCHMARK.md`](/reference/performance/benchmark) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
+| | [`RESULTS.md`](/reference/performance/results) | Measured results and their limits |
+| | [`MEMORY.md`](/reference/performance/memory) | Memory regression budgets, idle session derived-cache release, incident response procedure |
+| `release/` | [`INSTALL.md`](/reference/release/install) | Release asset verification and `install-release`, installing from npm, running on a Linux server, the TLS trust set |
+| | [`NPM.md`](/reference/release/npm) | The npm packages of the CLI, installing and running them, versioning, the publish workflow, the one-time trusted publisher setup, provenance |
+| | [`WINDOWS.md`](/reference/release/windows) | Windows build and signing |
+
+## Update rules
+
+| When this changes | Do this |
+| --- | --- |
+| Current behavior changes | Edit the document that describes that behavior, and the diagram in `diagram/` that draws it, in the same change. |
+| You want a new document | First consider adding a section to an existing document in the right folder. A new file gets an uppercase name and a row in this table. |
+| A document moves or is deleted | Fix this table and the paths in code, scripts, and tests in the same change. |
+| The same content appears in two documents | Make one the source of truth and have the other point at it. |
+| You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
+| You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
+| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the regenerated `packages/docs-site/reference/` and `packages/docs-site/images/reference/`; CI fails while they are stale. |

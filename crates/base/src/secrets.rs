@@ -432,15 +432,34 @@ pub fn obfuscate(text: &str, vault: &mut SecretVault, extra: &[Regex]) -> String
 
 /// Replace every placeholder in `text` with the value it stands for.
 pub fn restore(text: &str, vault: &SecretVault) -> String {
-    if vault.reverse.is_empty() {
+    // Every placeholder carries the marker (`placeholder_for` is the only
+    // writer of `reverse`), so text without it holds none of them.
+    if vault.reverse.is_empty() || !is_placeholder(text) {
         return text.to_string();
     }
-    let mut entries: Vec<(&String, &String)> = vault.reverse.iter().collect();
+    restore_in_order(text, &restore_order(vault)).unwrap_or_else(|| text.to_string())
+}
+
+/// The vault's placeholders with their values: longest placeholder first, then
+/// by name, so the result does not depend on the map's iteration order.
+fn restore_order(vault: &SecretVault) -> Vec<(&str, &str)> {
+    let mut entries: Vec<(&str, &str)> = vault
+        .reverse
+        .iter()
+        .map(|(placeholder, secret)| (placeholder.as_str(), secret.as_str()))
+        .collect();
     entries.sort_by(|left, right| right.0.len().cmp(&left.0.len()).then_with(|| left.0.cmp(right.0)));
-    let mut out = text.to_string();
-    for (placeholder, secret) in entries {
-        if out.contains(placeholder.as_str()) {
-            out = out.replace(placeholder.as_str(), secret);
+    entries
+}
+
+/// `text` with the placeholders of `order` replaced one after another, or
+/// `None` when it holds none of them and stays as it is.
+fn restore_in_order(text: &str, order: &[(&str, &str)]) -> Option<String> {
+    let mut out: Option<String> = None;
+    for &(placeholder, secret) in order {
+        let current = out.as_deref().unwrap_or(text);
+        if current.contains(placeholder) {
+            out = Some(current.replace(placeholder, secret));
         }
     }
     out
@@ -588,12 +607,12 @@ pub fn outbound_messages(
 }
 
 /// Restore placeholders in a tool input so the tool runs the real command.
+///
+/// The input is restored in place: a session without a vault, and a string
+/// without a placeholder, keep the value they came in with.
 pub fn restore_tool_input(mut input: Value, session_id: &str) -> Value {
-    let restored = session_vault_with(session_id, |vault| {
-        restore_value(&mut input, vault);
-        input.clone()
-    });
-    restored.unwrap_or(input)
+    session_vault_with(session_id, |vault| restore_value(&mut input, vault));
+    input
 }
 
 /// Restore the input, then let `gate` decide on the restored payload.
@@ -693,16 +712,37 @@ fn obfuscate_value(value: &mut Value, vault: &mut SecretVault, extra: &[Regex]) 
 }
 
 fn restore_value(value: &mut Value, vault: &SecretVault) {
+    if vault.reverse.is_empty() {
+        return;
+    }
+    restore_strings(value, vault, &mut None);
+}
+
+/// Restore every string under `value`. The vault's placeholders are sorted at
+/// most once per value, and only when a string carries the placeholder marker.
+fn restore_strings<'vault>(
+    value: &mut Value,
+    vault: &'vault SecretVault,
+    order: &mut Option<Vec<(&'vault str, &'vault str)>>,
+) {
     match value {
-        Value::String(text) => *text = restore(text, vault),
+        Value::String(text) => {
+            if !is_placeholder(text) {
+                return;
+            }
+            let order = order.get_or_insert_with(|| restore_order(vault));
+            if let Some(restored) = restore_in_order(text, order) {
+                *text = restored;
+            }
+        }
         Value::Array(entries) => {
             for entry in entries {
-                restore_value(entry, vault);
+                restore_strings(entry, vault, order);
             }
         }
         Value::Object(map) => {
             for entry in map.values_mut() {
-                restore_value(entry, vault);
+                restore_strings(entry, vault, order);
             }
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
@@ -830,6 +870,10 @@ pub fn session_vault_with<T>(session_id: &str, f: impl FnOnce(&mut SecretVault) 
 pub fn reset_session_vault(session_id: &str) {
     session_vault_with(session_id, |vault| vault.clear());
 }
+
+#[cfg(test)]
+#[path = "secrets_restore_tests.rs"]
+mod restore_tests;
 
 #[cfg(test)]
 mod tests {

@@ -84,6 +84,11 @@ const CAPABILITIES: &[Capability] = &[
     cap("find_files", "findFiles"),
     cap("search_text", "searchText"),
     cap("file_status", "fileStatus"),
+    cap("search_sessions", "searchSessions"),
+    cap("list_artifacts", "listArtifacts"),
+    cap("usage_report", "usageReport"),
+    cap("ack_approval", "ackApproval"),
+    cap("ack_failover", "ackFailover"),
     cap("todo_state", "todoState"),
     cap("ack_todo_follow_up", "ackTodoFollowUp"),
     cap("set_model", "setModel"),
@@ -325,6 +330,7 @@ fn rust_client_source() -> String {
         "export.rs",
         "message_modes.rs",
         "cancellable_work.rs",
+        "reports.rs",
     ]
     .into_iter()
     .map(|file| {

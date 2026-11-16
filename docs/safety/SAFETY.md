@@ -592,8 +592,9 @@ failover keys in `ProviderConfig` (`crates/config-types/src/lib.rs`).
   `Request::FailoverAck { chain_id, from, to, attempt }`, the server clears only the entry that matches that key
   exactly with `try_clear_acked_failover_event` and answers with `Ack`. If any key part differs it clears nothing,
   and if clearing fails because the lock cannot be taken it answers with `Error` instead of `Ack`. The harness API
-  relays the same ack as a `failover_ack` frame. This build still has no client that sends the ack, so until a
-  consumer sends one it behaves exactly as if no ack existed. An old daemon that does not know the ack tag rejects
+  relays the same ack as a `failover_ack` frame. The three SDKs provide the `ack_failover` method
+  (`ackFailover` in TypeScript), but no client sends an ack automatically, so until a consumer calls one the
+  behaviour is the same as with no ack. An old daemon that does not know the ack tag rejects
   the request as an unknown type.
 - **`ApprovalResolved` is also cleared only by ack.** The event is first written into the record as
   `pending_event` and then emitted, and it is re-emitted on restart. When the client sends
@@ -601,8 +602,9 @@ failover keys in `ProviderConfig` (`crates/config-types/src/lib.rs`).
   If the record is already gone it treats that as success (the runner may delete it first and the ack arrive late).
   Even when a record is closed as `resumed` or `needs-human`, the field remains until the ack, so a consumer that
   does not ack receives that session's unconfirmed events again on every restart. Consumers must deduplicate approval
-  events by `request_id` and failover events by `(session_id, chain_id, from, to, attempt)`. This build has no client
-  that sends acks automatically, the same as for the failover ack. An old daemon that does not know the
+  events by `request_id` and failover events by `(session_id, chain_id, from, to, attempt)`. The three SDKs
+  provide the `ack_approval` method (`ackApproval` in TypeScript), but no client sends an ack automatically, the
+  same as for the failover ack. An old daemon that does not know the
   `approval_ack` tag answers the request with an `Invalid request` error.
 - **Claim files remain after `Done`.** `~/.horon/approvals/resume-claims/<request_id>.json` and
   `~/.horon/approvals/resume-exec-claims/<request_id>.json` are records that bind a resume to exactly once and count

@@ -116,6 +116,14 @@ export interface SessionInfo {
   user_connected?: boolean;
   /** Approximate size of the stored transcript, in bytes. */
   transcript_bytes?: number;
+  /** Whether the user pinned/saved this session. Omitted when false. */
+  saved?: boolean;
+  /** Optional label given alongside the save, shown and searched by pickers. */
+  save_label?: string;
+  /** Persisted transcript update time, the newest-first ordering key. */
+  updated_at_ms?: number;
+  /** Most recent active-process timestamp, when the daemon has one. */
+  last_active_at_ms?: number;
   archived?: boolean;
   archived_at_ms?: number;
 }
@@ -256,6 +264,28 @@ export interface UsageLimitInfo {
   limit?: number | null;
   unit: string;
   resets_at?: string | null;
+}
+
+/**
+ * What a `usage_report` reply carries.
+ *
+ * Every count is a durable per-request total or the daemon's own live total; a
+ * metric no request recorded is `null`, never zero, because "the provider did
+ * not report cache tokens" and "the provider reported no cache tokens" are
+ * different facts. `pricing` is always `"unknown"` and `estimated_cost` always
+ * `null`: this harness carries no price table.
+ */
+export interface UsageReport {
+  /** Present when the request named one session; absent for the whole account. */
+  session_id?: string;
+  sessions: UsageSession[];
+  totals: UsageTotals;
+  models: UsageModel[];
+  /** Context window of the active route, when the daemon knows it. */
+  context_window?: number;
+  limits?: UsageLimitInfo[];
+  pricing: string;
+  estimated_cost: number | null;
 }
 
 export type RenderedImageSource =
@@ -959,23 +989,8 @@ export type ApiEvent =
   | { ev: "todo_state"; session_id: string; state: TodoSnapshot }
   | { ev: "session_search_results"; query: string; results: SessionSearchHit[] }
   | { ev: "artifacts"; session_id: string; artifacts: ArtifactEntry[] }
-  /**
-   * Reply to `usage_report`. Every count is a durable per-request total or the
-   * daemon's own live total; a metric no request recorded is `null`, never
-   * zero. `pricing` is always `"unknown"` and `estimated_cost` always `null`:
-   * this harness carries no price table.
-   */
-  | {
-      ev: "usage_report";
-      session_id?: string;
-      sessions: UsageSession[];
-      totals: UsageTotals;
-      models: UsageModel[];
-      context_window?: number;
-      limits?: UsageLimitInfo[];
-      pricing: string;
-      estimated_cost: number | null;
-    }
+  /** Reply to `usage_report`; see {@link UsageReport} for what the counts mean. */
+  | ({ ev: "usage_report" } & UsageReport)
   | {
       ev: "compacted";
       session_id: string;

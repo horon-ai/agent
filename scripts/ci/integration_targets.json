@@ -4,6 +4,11 @@
   "targets": [
     {
       "package": "horon-agent",
+      "target": "acp_conformance",
+      "min_passed": 11
+    },
+    {
+      "package": "horon-agent",
       "target": "acp_infra",
       "min_passed": 30,
       "skipped": [
@@ -68,6 +73,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "sdk_reports",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
       "target": "session_commands",
       "min_passed": 13
     },
@@ -100,6 +110,16 @@
       "package": "horon-agent-app-core",
       "target": "pi_adoption_tier2",
       "min_passed": 19
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "tool_dispatch_boundaries",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "tool_dispatch_perf",
+      "min_passed": 1
     },
     {
       "package": "horon-agent-base",
@@ -185,6 +205,11 @@
       "package": "horon-agent-sdk",
       "target": "message_modes_api",
       "min_passed": 4
+    },
+    {
+      "package": "horon-agent-sdk",
+      "target": "reports_api",
+      "min_passed": 9
     },
     {
       "package": "horon-agent-sdk",
