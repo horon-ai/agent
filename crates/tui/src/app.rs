@@ -381,6 +381,15 @@ impl App {
             return Vec::new();
         };
         let mut lines = prompt.lines_with(&self.bindings);
+        // The arguments come from the one line whose failure names this request,
+        // so a prompt can only ever show the call it is asking about. No match
+        // means the name alone: a guess here already put one call's command on
+        // another call's decision.
+        if let Prompt::Approval(approval) = prompt
+            && let Some(target) = self.transcript.argument_summary_for_request(&approval.request_id)
+        {
+            lines[0] = format!("! approval needed: {}: {target}", approval.action);
+        }
         let waiting = self.waiting_prompts.len();
         if waiting > 0 {
             let plural = if waiting == 1 { "" } else { "s" };
@@ -420,7 +429,6 @@ impl App {
         let shown = usize::from(self.prompt.is_some()) + self.waiting_prompts.len();
         self.prompt = None;
         self.waiting_prompts.clear();
-        self.transcript.forget_claims();
         let plural = if shown == 1 { "" } else { "s" };
         self.transcript
             .push_notice(format!("{reason}; {shown} prompt{plural} withdrawn"));
@@ -557,12 +565,11 @@ impl App {
             }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::ApprovalPending { request_id, action, .. } => {
-                // The event names the tool and nothing else, so the prompt
-                // pairs with the oldest line of that name no prompt showed yet:
-                // two parallel `bash` calls then read as the two commands they
-                // are, in the order they arrived.
-                let target = self.transcript.claim_argument_summary(action);
-                self.show_prompt(Prompt::approval_for(request_id.clone(), action.clone(), target));
+                // The event names the tool only. The prompt pairs with a line
+                // when it is drawn, using the request id the refusal wrote into
+                // that line, so a decision can never be shown another call's
+                // arguments.
+                self.show_prompt(Prompt::approval(request_id.clone(), action.clone()));
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {

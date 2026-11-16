@@ -178,25 +178,128 @@ fn a_resolved_request_leaves_the_queue_it_was_waiting_in() {
     assert!(app.prompt.is_some(), "the undecided prompt was dropped too");
 }
 
+/// The refusal the approval gate writes into the tool line, request id and all.
+fn refusal(request: &str) -> String {
+    format!(
+        "Tool 'bash' needs approval before it runs: bash runs a process or reaches the network in write \
+         mode. Request {request} is queued; answer it through the approval surface. Nothing was executed."
+    )
+}
+
+/// A refused call: its line carries the argument summary and the request id.
+fn refused_call(app: &mut App, call: &str, command: &str, request: &str) {
+    app.apply_event(&tool_start(call, "bash"));
+    app.apply_event(&tool_input(call, &format!(r#"{{"command":"{command}"}}"#)));
+    app.apply_event(&ApiEvent::ToolDone {
+        session_id: "s1".to_string(),
+        call_id: call.to_string(),
+        name: "bash".to_string(),
+        output: String::new(),
+        error: Some(refusal(request)),
+        verdict: None,
+    });
+}
+
 #[test]
-fn the_prompt_names_the_call_it_covers_and_parallel_calls_pair_in_order() {
+fn parallel_same_name_approvals_each_name_their_own_call() {
     let mut app = app();
-    app.apply_event(&tool_start("c1", "bash"));
-    app.apply_event(&tool_input("c1", r#"{"command":"ls -la"}"#));
-    app.apply_event(&tool_start("c2", "bash"));
-    app.apply_event(&tool_input("c2", r#"{"command":"pwd"}"#));
+    refused_call(&mut app, "c1", "ls", "r1");
+    refused_call(&mut app, "c2", "sleep 1; pwd", "r2");
 
     app.apply_event(&approval_pending("r1", "bash"));
+    app.apply_event(&approval_pending("r2", "bash"));
     assert!(
-        drawn(&app).contains("ls -la"),
-        "the first prompt did not name its command:\n{}",
+        drawn(&app).contains("bash: ls"),
+        "the first prompt did not name its own command:\n{}",
         drawn(&app)
     );
-    app.apply_event(&approval_pending("r2", "bash"));
-    let queued = app.waiting_prompts.front().expect("the second prompt waits");
+
     assert!(
-        format!("{queued:?}").contains(r"pwd"),
-        "the second prompt repeated the first command: {queued:?}"
+        matches!(app.on_key(key(KeyCode::Char('y'))), Some(Action::Approval { .. })),
+        "the first approval did not answer"
+    );
+    let second = drawn(&app);
+    assert!(
+        second.contains("bash: sleep 1; pwd"),
+        "the second prompt did not name its own command:\n{second}"
+    );
+    assert!(
+        !second.contains("bash: ls\n"),
+        "the second prompt repeated the first command:\n{second}"
+    );
+}
+
+#[test]
+fn an_unrelated_line_of_the_same_tool_is_never_paired_with_a_later_approval() {
+    // The verifier's repro: a call that ran without a prompt (auto-approved)
+    // and a refused call whose request was answered in an earlier turn. Both
+    // lines are `bash`, and the later decision is about neither of them.
+    let mut earlier = app();
+    earlier.apply_event(&tool_start("c1", "bash"));
+    earlier.apply_event(&tool_input("c1", r#"{"command":"sleep 2; ls -la"}"#));
+    earlier.apply_event(&ApiEvent::ToolDone {
+        session_id: "s1".to_string(),
+        call_id: "c1".to_string(),
+        name: "bash".to_string(),
+        output: "ran without a prompt".to_string(),
+        error: None,
+        verdict: None,
+    });
+    refused_call(&mut earlier, "c2", "echo old", "r_old");
+    earlier.apply_event(&approval_pending("r_old", "bash"));
+    earlier.on_key(key(KeyCode::Char('y')));
+    earlier.apply_event(&done("s1"));
+
+    // A later turn asks about two different calls of the same tool.
+    refused_call(&mut earlier, "c3", "ls", "r_new1");
+    refused_call(&mut earlier, "c4", "sleep 1; pwd", "r_new2");
+    earlier.apply_event(&approval_pending("r_new1", "bash"));
+    let lines = drawn(&earlier);
+    assert!(
+        lines.contains("bash: ls"),
+        "the prompt did not name its own call:\n{lines}"
+    );
+    assert!(
+        !lines.contains("sleep 2; ls -la"),
+        "the prompt showed an earlier turn's command:\n{lines}"
+    );
+    assert!(
+        !lines.contains("echo old"),
+        "the prompt showed a call that was already answered:\n{lines}"
+    );
+
+    // The request that has no line of its own shows the name alone, even though
+    // an older `bash` line is right there.
+    let mut lone = app();
+    lone.apply_event(&tool_start("c1", "bash"));
+    lone.apply_event(&tool_input("c1", r#"{"command":"sleep 2; ls -la"}"#));
+    lone.apply_event(&approval_pending("r_missing", "bash"));
+    assert_eq!(lone.prompt_lines()[0], "! approval needed: bash");
+}
+
+#[test]
+fn an_approval_outliving_its_turn_keeps_its_summary_and_does_not_lend_it() {
+    let mut app = app();
+    app.pending_turn = true;
+    refused_call(&mut app, "c1", "ls -la", "r1");
+    app.apply_event(&approval_pending("r1", "bash"));
+    app.apply_event(&done("s1"));
+    assert!(
+        app.prompt_lines()[0].contains("bash: ls -la"),
+        "the answerable approval lost its own command: {:?}",
+        app.prompt_lines()
+    );
+
+    // A second turn asks about another call; it queues behind the first and must
+    // name its own command, not inherit the one still on screen.
+    refused_call(&mut app, "c2", "pwd", "r2");
+    app.apply_event(&approval_pending("r2", "bash"));
+    assert!(app.prompt_lines()[0].contains("bash: ls -la"));
+    app.on_key(key(KeyCode::Char('y')));
+    let second = drawn(&app);
+    assert!(
+        second.contains("bash: pwd"),
+        "the next turn's prompt inherited the earlier command:\n{second}"
     );
 }
 
@@ -499,7 +602,9 @@ fn a_prompt_does_not_swallow_the_key_that_leaves() {
 }
 
 #[test]
-fn the_default_prompt_for_a_request_with_no_line_reads_as_its_name() {
-    let prompt = Prompt::approval_for("r1".to_string(), "bash".to_string(), Some("ls -la".to_string()));
-    assert_eq!(prompt.lines()[0], "! approval needed: bash: ls -la");
+fn a_prompt_on_its_own_never_invents_arguments() {
+    // `Prompt` cannot pair itself with a line: the transcript owns the request
+    // ids. A title that grew arguments here would be a guess.
+    let prompt = Prompt::approval("r1".to_string(), "bash".to_string());
+    assert_eq!(prompt.lines()[0], "! approval needed: bash");
 }

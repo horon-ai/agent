@@ -19,13 +19,6 @@ pub struct Approval {
     pub request_id: String,
     /// Tool name or action the decision covers.
     pub action: String,
-    /// What the call is about to touch: the argument summary of the tool line
-    /// this decision belongs to, when the transcript had one to pair it with.
-    ///
-    /// `ApprovalPending` carries the action name alone, so two parallel `bash`
-    /// calls read identically without this. `None` keeps the prompt to the name
-    /// rather than inventing a target.
-    pub target: Option<String>,
     /// Whether the user has asked for this decision to apply to later calls too.
     pub always: bool,
 }
@@ -214,18 +207,9 @@ pub enum Response {
 impl Prompt {
     /// An approval prompt for a parked request.
     pub fn approval(request_id: String, action: String) -> Self {
-        Self::approval_for(request_id, action, None)
-    }
-
-    /// An approval prompt that names what the call touches.
-    ///
-    /// `target` is the argument summary of the tool line the decision covers, so
-    /// two parallel calls of one tool can be told apart.
-    pub fn approval_for(request_id: String, action: String, target: Option<String>) -> Self {
         Self::Approval(Approval {
             request_id,
             action,
-            target,
             always: false,
         })
     }
@@ -244,15 +228,16 @@ impl Prompt {
     }
 
     /// The lines to draw above the input, with hints from the given key map.
+    ///
+    /// The approval title names the action alone. The app adds the argument
+    /// summary of the call the request covers, because only the transcript can
+    /// pair a request id with its line; a prompt that guessed here is what
+    /// showed one call's command on another call's decision.
     pub fn lines_with(&self, bindings: &Bindings) -> Vec<String> {
         match self {
             Self::Approval(approval) => {
-                let covered = match &approval.target {
-                    Some(target) => format!("{}: {target}", approval.action),
-                    None => approval.action.clone(),
-                };
                 let hint = approval_hint(bindings);
-                let mut lines = vec![format!("! approval needed: {covered}")];
+                let mut lines = vec![format!("! approval needed: {}", approval.action)];
                 if !hint.is_empty() {
                     lines.push(hint);
                 }

@@ -48,7 +48,8 @@ pub mod ids {
     pub const PROMPT_ALLOW_ALWAYS: &str = "prompt.allow_always";
     /// Deny a parked tool call.
     pub const PROMPT_DENY: &str = "prompt.deny";
-    /// Ignore the prompt; the turn stays parked.
+    /// Answer a parked tool call with a denial; a question stays open, since
+    /// there is nothing to deny and the tool has its own deadline.
     pub const PROMPT_DISMISS: &str = "prompt.dismiss";
     /// Confirm a multi-choice question.
     pub const PROMPT_CONFIRM: &str = "prompt.confirm";

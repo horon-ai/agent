@@ -136,13 +136,6 @@ pub struct Transcript {
     tool_output_lines: usize,
     /// When each call started, keyed by call id and dropped when it ends.
     starts: Vec<Start>,
-    /// Call ids whose argument summary an approval prompt already showed.
-    ///
-    /// An approval arrives with the tool name alone, so the prompts of two
-    /// parallel calls are paired with the lines by arrival order; this
-    /// remembers what was paired so the second prompt cannot repeat the first
-    /// one's arguments.
-    claims: Vec<String>,
 }
 
 /// When one call started.
@@ -162,7 +155,6 @@ impl Default for Transcript {
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
-            claims: Vec::new(),
         }
     }
 }
@@ -420,35 +412,33 @@ impl Transcript {
         self.items.push(Item::Tool(ToolCall::new(call_id, name)));
     }
 
-    /// The argument summary of the oldest call of `name` no prompt has shown.
+    /// The argument summary of the call the request `request_id` is asking about.
     ///
-    /// An approval carries the tool name alone, so the prompt for the second of
-    /// two parallel `bash` calls would read exactly like the first. The prompt
-    /// pairs with a line instead: the first prompt takes the first line of that
-    /// name, the second the next. A line already paired is skipped, and a call
-    /// whose line exists but whose arguments yield no summary is still claimed,
-    /// so it cannot be paired twice.
-    pub fn claim_argument_summary(&mut self, name: &str) -> Option<String> {
-        let found = self.items.iter().find_map(|item| match item {
-            Item::Tool(call)
-                if call.name == name
-                    && !call.call_id.is_empty()
-                    && !self.claims.iter().any(|claimed| claimed == &call.call_id) =>
-            {
-                Some((call.call_id.clone(), tool_line::summarize(&call.input)))
-            }
+    /// An approval arrives with the tool name alone, so a prompt that named only
+    /// the name could not tell two parallel `bash` calls apart — and pairing by
+    /// name alone showed a prompt the arguments of an unrelated call from an
+    /// earlier turn, which is worse than showing nothing. The refusal the gate
+    /// writes into the tool line carries the request id
+    /// (`crates/app-core/src/tool/mod.rs`, `Registry::approval_refusal`: "... .
+    /// Request {request_id} is queued; answer it through the approval surface.
+    /// Nothing was executed."), and that id is unique to one call, so the line
+    /// whose failure text names this request is the one this prompt covers.
+    ///
+    /// Every other line is excluded by construction: a call that ran without a
+    /// prompt has a result that names something else, a line from an earlier
+    /// turn names an earlier request, and a call still streaming its input names
+    /// no request yet. `None` means the prompt shows the action alone.
+    pub fn argument_summary_for_request(&self, request_id: &str) -> Option<String> {
+        if request_id.is_empty() {
+            return None;
+        }
+        self.items.iter().find_map(|item| match item {
+            Item::Tool(call) => match &call.state {
+                ToolState::Failed(message) if message.contains(request_id) => tool_line::summarize(&call.input),
+                _ => None,
+            },
             _ => None,
-        })?;
-        self.claims.push(found.0);
-        found.1
-    }
-
-    /// Drop what earlier prompts paired with.
-    ///
-    /// Called when a turn ends: the lines that were paired belong to that turn,
-    /// and keeping their ids would grow the list for the life of the session.
-    pub fn forget_claims(&mut self) {
-        self.claims.clear();
+        })
     }
 
     /// Argument bytes arrived for a call still streaming its input.
