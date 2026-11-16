@@ -16,6 +16,10 @@
       "count": 14,
       "reason": "OpenSSH ControlMaster channel sharing: the SDK multiplexes extra API channels over one `ssh -M` master with a Unix control socket, which OpenSSH only exposes on Unix. Windows starts a plain ssh child per channel instead."
     },
+    "crates/agent-sdk/tests/ask_capability.rs": {
+      "count": 1,
+      "reason": "whole test file is a Unix socket-pair fixture (#![cfg(unix)]); Windows has no socket pair to hand the client."
+    },
     "crates/agent-sdk/tests/client_behavior.rs": {
       "count": 1,
       "reason": "whole test file is a Unix socket-pair fixture (#![cfg(unix)]); Windows has no socket pair to hand the client."
