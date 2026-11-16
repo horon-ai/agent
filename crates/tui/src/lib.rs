@@ -27,6 +27,7 @@ pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
 pub mod theme;
+mod title;
 pub mod tool_line;
 pub mod transcript;
 mod wrap;
@@ -38,6 +39,10 @@ mod streaming_tests;
 #[cfg(test)]
 #[path = "tool_line_tests.rs"]
 mod tool_line_tests;
+
+#[cfg(test)]
+#[path = "title_tests.rs"]
+mod title_tests;
 
 #[cfg(test)]
 #[path = "turn_state_tests.rs"]
@@ -296,6 +301,15 @@ fn show_failure(message: &str) {
     }
 }
 
+/// The name the window carries for the app's state.
+///
+/// The client is told the session's id, not any title the daemon holds for it,
+/// so the working directory names the window today; the title argument is the
+/// one thing to fill in once the app carries a title.
+fn window_label(app: &App) -> String {
+    title::label(None, app.cwd.as_deref())
+}
+
 /// Drive the real terminal until the user leaves.
 fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
     let mut themes = ThemeLoader::new();
@@ -325,18 +339,35 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
             return 1;
         }
     };
-    // The restore hook knows nothing about the paste mode or the mouse mode, so
-    // it is chained behind hooks that turn them off: a panic must not leave
-    // either mode on for the next program in this terminal.
+    // The restore hook knows nothing about the paste mode, the mouse mode or the
+    // window title, so it is chained behind hooks that undo those: a panic must
+    // not leave a mode on, or the window named after a session that is gone, for
+    // the next program in this terminal.
     paste::guard_panics();
     scroll::guard_panics();
+    title::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
         app.warn(format!("paste: {error}"));
     }
-    let (code, failure) = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
+    let mut title = title::WindowTitle::stdout();
+    if let Err(error) = title.start(&window_label(&app)) {
+        app.warn(format!("title: {error}"));
+    }
+    let (code, failure) = event_loop(
+        &mut terminal,
+        &mut app,
+        &mut title,
+        &runtime.commands,
+        reloader,
+        &mut themes,
+        keys,
+    );
     paste::disable();
+    // The stack entry goes back with the screen: the title the shell set is the
+    // one the next prompt should be in.
+    title::pop();
     // Released on the normal exit as well as the error one: a captured terminal
     // does not hand a drag back to its own text selection.
     scroll::disable_mouse();
@@ -407,6 +438,7 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
+    title: &mut title::WindowTitle,
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
@@ -437,6 +469,16 @@ where
         if let Some(action) = app.take_queued() {
             loop_io::dispatch(app, commands, action);
             changed = true;
+        }
+        // The session and the working directory can change while the client
+        // runs; the window is renamed only when the label on it is not the one
+        // the app now names.
+        if changed {
+            let label = window_label(app);
+            if let Err(error) = title.show(&label) {
+                app.warn(format!("title: {error}"));
+                changed = true;
+            }
         }
         // The reloader throttles itself to one file check per second; the
         // theme loader, the key bindings and the command directories share
