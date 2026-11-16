@@ -278,7 +278,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 | 세그먼트 | 보여 주는 것 |
 | --- | --- |
-| `status` | 턴이 하는 일: `idle`, `running`, `requires_action`, `disconnected` |
+| `status` | 턴이 하는 일: 클라이언트가 직접 쓰는 `idle`, `running`, `requires_action`, `disconnected`, 또는 데몬이 보고한 세션 상태 |
 | `model` | `provider/model`, 또는 데몬이 보고한 둘 중 있는 쪽 |
 | `session` | 세션 아이디를 줄인 것 |
 | `path` | 작업 디렉터리. 홈 디렉터리는 `~`로 줄이고, 긴 경로는 세그먼트 경계에서 자른다 |
@@ -286,6 +286,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `context_pct` | `statusline.context_window`에서 쓴 비율. 설정이 `0`이면 숨긴다 |
 | `time` | 현지 시각 `HH:MM` |
 | `pending` | 대기 중인 승인이나 질문 |
+
+`status`는 그 말이 모두 클라이언트의 것이 아닌 유일한 세그먼트다. 클라이언트는 `idle`, `running`, 프롬프트를 기다리는 동안의 `requires_action`, 연결이 끊겼을 때의 `disconnected`를 직접 쓰고, 데몬의 `generating`은 `running`으로, 멈춘 턴을 데몬이 다시 말한 `cancelled`는 `idle`로 그리며, 그 밖의 비어 있지 않은 세션 상태는 데몬이 보낸 그대로 보여 준다. 그래서 이 문서가 나열하지 않은 말도 그 자리에 나올 수 있다. 세션에 막 붙었을 때의 `attached`가 그런 예다.
 
 `statusline.preset`이 배치를 고른다.
 
@@ -312,15 +314,21 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 여섯 명령을 이름 순으로 적었다.
 
-하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 이름 순으로 여섯 개씩 한 줄에 출력한다.
+하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 
 ```text
-  /agents /auth /autojudge /autoreview /context /continue
-  /fast /info /initiatives /judge /logout /memory
-  /overnight /plan /productivity /refresh_model_list /remote /resume_all
-  /review /server_reload /skills /subagent /subagent_model /swarm
-  /transport
+built-in commands:
+  /clear               clear the transcript
+  /help                list the commands and the keys in force
+  /model               pick a model, or switch with /model <name>
+  /quit                leave
+  /resume              pick a session stored for this directory and replay it
+  /settings            open the settings screen
+harness commands:
+  /agents              list the agent models, and switch one for this session or every session
 ```
+
+어떤 하네스 이름이 몇 개 나오는지는 소켓 반대편에 붙은 빌드가 답하는 몫이다. 이 목록은 이 문서가 아니라 그 데몬에서 온다.
 
 명령 파일은 인자 힌트와 설명과 함께 `/help`에 나온다. 명령 파일이 하나도 없으면 `/help`가 어디에 두는지 알려 준다.
 

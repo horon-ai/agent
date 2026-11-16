@@ -278,7 +278,7 @@ The bottom line is assembled from named segments. A segment with no data draws n
 
 | Segment | Shows |
 | --- | --- |
-| `status` | What the turn is doing: `idle`, `running`, `requires_action` or `disconnected` |
+| `status` | What the turn is doing: the client's own `idle`, `running`, `requires_action` or `disconnected`, or the session status the daemon reported |
 | `model` | `provider/model`, or whichever of the two the daemon reported |
 | `session` | The session id, shortened |
 | `path` | The working directory, with the home directory shortened to `~` and long paths cut at a segment boundary |
@@ -286,6 +286,8 @@ The bottom line is assembled from named segments. A segment with no data draws n
 | `context_pct` | Share of `statusline.context_window` used; hidden when the setting is `0` |
 | `time` | Local wall-clock time as `HH:MM` |
 | `pending` | A parked approval or question |
+
+`status` is the one segment whose words are not all the client's own. It writes `idle`, `running`, `requires_action` while a prompt waits, and `disconnected` when the connection is gone; it draws the daemon's `generating` as `running` and its `cancelled` restatement of a stopped turn as `idle`; and it shows any other non-empty session status as the daemon sent it, so a word this page does not list can appear there. `attached`, right after the client attaches to a session, is one of those.
 
 `statusline.preset` picks an arrangement:
 
@@ -312,15 +314,21 @@ A line starting with `/` is resolved in this order: a built-in command, a comman
 
 The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): six commands the client answers itself, in name order.
 
-The harness commands run in the attached runtime and never reach the model as a prompt. `/help` prints them in name order, six to a line:
+The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
 ```text
-  /agents /auth /autojudge /autoreview /context /continue
-  /fast /info /initiatives /judge /logout /memory
-  /overnight /plan /productivity /refresh_model_list /remote /resume_all
-  /review /server_reload /skills /subagent /subagent_model /swarm
-  /transport
+built-in commands:
+  /clear               clear the transcript
+  /help                list the commands and the keys in force
+  /model               pick a model, or switch with /model <name>
+  /quit                leave
+  /resume              pick a session stored for this directory and replay it
+  /settings            open the settings screen
+harness commands:
+  /agents              list the agent models, and switch one for this session or every session
 ```
+
+Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page.
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
 

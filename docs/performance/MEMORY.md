@@ -85,9 +85,11 @@ rows for the frame it is drawing and keeps nothing between frames, and the clien
 
 What the client does keep per item is measured rather than rendered. `Scroll` holds a `Tally` with the wrapped row count of every committed
 transcript item and of the two open buffers (`crates/tui/src/scroll.rs`), which is what lets a held view stay still without wrapping the
-conversation again. That tally is one `usize` per item, rebuilt when the pane width changes or when the Markdown setting invalidates it, and
-otherwise extended only for the items the last measurement never saw; it grows with the number of items, not with the size of their text, and
-the code sets no cap on it. When a cache of rendered rows comes back, restore a cap and its reasoning in this section.
+conversation again. That tally is one `usize` per item and is rebuilt when the pane width changes or the Markdown setting invalidates it. In
+between, a frame that measures at all keeps the heights it already has except for the newest committed item, which `Scroll::measure` truncates
+off and measures again every such frame, and any item the last measurement never saw. Measuring happens only while the view is held away from
+the end; a frame at the end counts nothing and leaves the tally alone. The tally grows with the number of items, not with the size of their
+text, and the code sets no cap on it. When a cache of rendered rows comes back, restore a cap and its reasoning in this section.
 
 ### Ratchet expectations
 
