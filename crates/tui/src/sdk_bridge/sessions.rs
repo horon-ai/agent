@@ -284,7 +284,8 @@ pub(super) fn described(
 /// single-file record and a daemon without the `session_history_cursor_v1`
 /// capability are only reachable through the tail (`peek_session`). The page is
 /// asked first, and the tail answers when the page fails or is empty; a session
-/// neither read can answer keeps its id as the label and a head-only preview.
+/// neither read can answer shows its title, or its id when it has none, and a
+/// head-only preview.
 pub(super) fn peek(client: &HoronAgentClient, session_id: &str) -> Vec<HistoryMessage> {
     let page = client
         .get_history_page(session_id, None, None, Some(PEEK_MESSAGES))

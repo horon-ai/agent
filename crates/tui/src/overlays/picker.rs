@@ -319,8 +319,8 @@ impl Picker {
     /// said finds that session even when its title says something else. The
     /// drawn preview is not searched: its first line is context the rows share,
     /// and matching it would keep the whole list. The scores order the hits;
-    /// equal scores keep the row order the caller gave, which is why the row in
-    /// force stays on top while the filter is empty.
+    /// equal scores keep the row order the caller gave, which is why an empty
+    /// filter shows the list in its own order.
     fn refilter(&mut self) {
         let needle = self.filter.as_str();
         let mut ranked: Vec<(i32, usize)> = Vec::with_capacity(self.rows.len());
