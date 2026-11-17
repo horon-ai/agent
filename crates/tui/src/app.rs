@@ -37,6 +37,9 @@ mod settings;
 mod skills;
 
 #[cfg(test)]
+mod boundary_tests;
+
+#[cfg(test)]
 mod effort_cmd_tests;
 
 #[cfg(test)]
@@ -222,6 +225,14 @@ pub struct App {
     /// them in place: a confirmation turns each row into the message the model
     /// received, and a refusal puts the messages back in front of the queue.
     steer_pending: Option<PendingSteer>,
+    /// Steers of sessions the client left that no answer has settled yet,
+    /// oldest first.
+    ///
+    /// The bridge answers steers in the order it received them, so the oldest
+    /// one is the one the next answer belongs to. Keeping them beside the slot
+    /// lets a steer of the session in force take it without dropping a record
+    /// whose answer is still on its way.
+    steer_left_behind: VecDeque<PendingSteer>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
     /// Session the client is attached to, from the last event that named it.
@@ -309,6 +320,7 @@ impl App {
             effort_after_turn: None,
             model_after_turn: None,
             steer_pending: None,
+            steer_left_behind: VecDeque::new(),
             session_status: None,
             session_id: None,
             session_title: None,
@@ -364,6 +376,7 @@ impl App {
             effort_after_turn: None,
             model_after_turn: None,
             steer_pending: None,
+            steer_left_behind: VecDeque::new(),
             session_status: None,
             session_id: None,
             session_title: None,
@@ -539,7 +552,10 @@ impl App {
                     self.park_line_naming(message);
                 }
             }
-            ApiEvent::TurnDone { .. } => {
+            ApiEvent::TurnDone {
+                pending_soft_interrupts,
+                ..
+            } => {
                 self.transcript.text_done();
                 self.transcript.end_running_tools();
                 self.pending_turn = false;
@@ -552,6 +568,20 @@ impl App {
                 // question does not: the `ask` tool stops waiting when the turn
                 // it belongs to ends.
                 self.withdraw_asks("the turn ended");
+                // The turn ended before it reached everything the daemon was
+                // still holding for the session. The count is a number of queue
+                // items: a steer of several messages is one item, and a
+                // background result or another client's interrupt is one too.
+                // It says nothing about how many messages were typed or how
+                // they were sent, so the notice names neither a number nor a
+                // key — only that the next turn carries the rest.
+                if let Some(count) = *pending_soft_interrupts
+                    && count > 0
+                {
+                    self.transcript.push_notice(
+                        "the turn ended before reading everything sent into it; the next turn carries the rest",
+                    );
+                }
             }
             ApiEvent::TurnStopped { reason, message, .. } => {
                 self.transcript.end_running_tools();

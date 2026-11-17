@@ -3,10 +3,11 @@
 //!
 //! The three commands share one refusal rule and one warning: a running turn's
 //! events would arrive for a session the client no longer shows, and the queue
-//! that turn is still working through belongs to it, so the change waits; a
-//! connection that is gone has no session to change to. The strings are built
-//! here rather than copied per command, so a refusal always names the command
-//! the user typed.
+//! that turn is still working through belongs to it, so the change waits. A
+//! model or an effort still waiting for its turn-end pass waits for the same
+//! reason: the change would drop it. A connection that is gone has no session to
+//! change to. The strings are built here rather than copied per command, so a
+//! refusal always names the command the user typed.
 
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Picker};
@@ -55,6 +56,15 @@ impl App {
         if self.pending_turn {
             self.transcript
                 .push_notice(format!("the turn is still running; /{name} works once it ends"));
+            return false;
+        }
+        // The turn flag is already down when a held change leaves, and one
+        // leaves per pass: a session change here would drop the other, or send
+        // it to a session it was never asked for.
+        if self.model_after_turn.is_some() || self.effort_after_turn.is_some() {
+            self.transcript.push_notice(format!(
+                "a held model or effort change is still being applied; /{name} works in a moment"
+            ));
             return false;
         }
         if self.disconnected {

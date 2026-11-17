@@ -24,7 +24,8 @@ pub mod ids {
     pub const APP_SUBMIT: &str = "app.submit";
     /// Cancel the running turn, or leave when nothing is running.
     pub const APP_CANCEL: &str = "app.cancel";
-    /// Interrupt the running turn and nothing else: no action when idle.
+    /// Send the queued messages into the running turn; with nothing queued,
+    /// interrupt it. No action when idle.
     pub const APP_INTERRUPT: &str = "app.interrupt";
     /// Leave.
     pub const APP_QUIT: &str = "app.quit";

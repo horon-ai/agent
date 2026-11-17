@@ -12,7 +12,9 @@ use horon_agent_sdk::api::ApiEvent;
 use horon_agent_sdk::{ConnectOptions, HistoryMessage, SessionInfo};
 
 use super::AttachedSession;
-use super::sessions::{Dial, belongs, described, first_user_text, follow, messages, preview, session_of};
+use super::sessions::{
+    Dial, belongs, described, first_user_text, follow, history_or_empty, messages, preview, session_of,
+};
 
 /// One streamed delta of the session named, as the daemon publishes it.
 fn delta(session_id: &str) -> ApiEvent {
@@ -336,5 +338,23 @@ fn a_session_neither_read_can_answer_has_no_preview_messages() {
     assert!(
         lines.is_empty(),
         "a session nothing could read produced messages: {lines:?}"
+    );
+}
+
+#[test]
+fn an_attach_whose_history_read_failed_still_reports_the_session() {
+    // The attach already moved this connection to the session, so the read's
+    // failure cannot be the answer's: the worker would keep the id it left and
+    // filter the new session's events away.
+    let read: Result<Vec<HistoryMessage>, &str> = Err("the history page timed out");
+    assert!(history_or_empty(read).is_empty(), "a failed read produced messages");
+}
+
+#[test]
+fn an_attach_whose_history_read_answered_keeps_the_conversation() {
+    let read: Result<Vec<HistoryMessage>, &str> = Ok(vec![message("user", "hello"), message("assistant", "hi")]);
+    assert_eq!(
+        history_or_empty(read),
+        vec![message("user", "hello"), message("assistant", "hi")]
     );
 }

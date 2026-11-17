@@ -171,6 +171,9 @@ impl App {
         self.effort_requested = None;
         self.effort_after_turn = None;
         self.model_after_turn = None;
+        // A steer still in flight is kept: its answer belongs to the session
+        // being left, and its refusal is still worth showing. It stops holding
+        // this session's `esc`, which reads the ids instead of clearing it.
         self.provider = None;
         self.tokens = None;
         self.scroll = Scroll::new();

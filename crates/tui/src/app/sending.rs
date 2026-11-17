@@ -168,16 +168,23 @@ impl App {
     /// queued there is nothing to send, so it cancels exactly as it always did.
     /// The queue empties here, while the rows stay drawn as queued until the
     /// bridge answers: a refusal then needs no redraw, and the text is never on
-    /// screen twice. One steer is in flight at a time, so a second `esc` while
+    /// screen twice. One steer is in flight per session, so a second `esc` while
     /// one waits cancels rather than stacking messages the client could not put
-    /// back together.
+    /// back together; a steer the session change left behind is answered
+    /// elsewhere and does not hold this session's key.
     pub(crate) fn steer_turn(&mut self) -> Option<Action> {
-        if self.disconnected || self.steer_pending.is_some() {
+        if self.disconnected || self.steer_outstanding_here() {
             return self.cancel_turn();
         }
         let text = joined_text(&self.queue);
         if text.is_empty() {
             return self.cancel_turn();
+        }
+        // The check above leaves the slot empty or holding a steer of a session
+        // the client has left. That record waits in the list for the answer it
+        // was sent for, and this steer takes the slot.
+        if let Some(pending) = self.steer_pending.take() {
+            self.steer_left_behind.push_back(pending);
         }
         self.steer_pending = Some(PendingSteer {
             text: text.clone(),
@@ -226,17 +233,43 @@ impl App {
         self.warn(message);
     }
 
-    /// The steer an answer about `text` settles, taken out of the slot.
+    /// The steer an answer about `text` settles.
     ///
-    /// One steer is in flight at a time, so an answer naming other text is not
-    /// this client's and the held steer stays where it is.
+    /// The bridge answers steers in the order it received them, so the oldest
+    /// record still outstanding is the one the next answer belongs to: a listed
+    /// steer of a session the client left is taken first, and the slot only
+    /// when nothing older is listed. A listed steer is taken only by an answer
+    /// naming its own text; other text is not this client's answer to it, so it
+    /// stays listed and the answer is matched against the slot as usual. The
+    /// slot keeps its own text check, so a steer naming other text stays where
+    /// it is.
     fn take_steer(&mut self, text: &str) -> Option<PendingSteer> {
+        let oldest_names_it = self
+            .steer_left_behind
+            .front()
+            .is_some_and(|pending| pending.text == text);
+        if oldest_names_it {
+            return self.steer_left_behind.pop_front();
+        }
         let pending = self.steer_pending.take()?;
         if pending.text != text {
             self.steer_pending = Some(pending);
             return None;
         }
         Some(pending)
+    }
+
+    /// Whether a steer in flight belongs to the session in force.
+    ///
+    /// A steer still unanswered when the client moves is answered for the
+    /// session it was made in: its refusal is still shown, but it says nothing
+    /// about the turn running under the session shown now, and holding the key
+    /// back for it would turn the first `esc` there into a cancel. Unknown ids
+    /// count as this session, so the ordinary case stays one steer at a time.
+    fn steer_outstanding_here(&self) -> bool {
+        self.steer_pending
+            .as_ref()
+            .is_some_and(|pending| self.carried_into(pending))
     }
 
     /// Whether a steer's messages still belong to the session in force.
@@ -261,11 +294,29 @@ impl App {
     /// Put a steer the connection lost back in front of the queue.
     ///
     /// The messages were never taken by the harness, so a connection that dies
-    /// with one in flight reports them with the rest of the queue.
+    /// with one in flight reports them with the rest of the queue: those of any
+    /// listed steer that belongs to the session in force and then the slot's,
+    /// oldest first, so the queue keeps the order they were typed. A steer made
+    /// for a session the client has already left is not one of them: its queue
+    /// went with that session, and putting its text back here would send one
+    /// conversation's words into another.
     pub(super) fn restore_steer(&mut self) {
-        if let Some(pending) = self.steer_pending.take() {
-            self.restore(pending);
+        let mut restored: Vec<Message> = Vec::new();
+        while let Some(pending) = self.steer_left_behind.pop_front() {
+            if self.carried_into(&pending) {
+                restored.extend(pending.messages);
+            }
         }
+        if let Some(pending) = self.steer_pending.take()
+            && self.carried_into(&pending)
+        {
+            restored.extend(pending.messages);
+        }
+        if restored.is_empty() {
+            return;
+        }
+        restored.append(&mut self.queue);
+        self.queue = restored;
     }
 
     /// Say that a message went nowhere, and put it back in front of the user.

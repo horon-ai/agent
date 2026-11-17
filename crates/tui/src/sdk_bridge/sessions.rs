@@ -118,9 +118,26 @@ pub(super) fn created(
 /// connection now follows.
 pub(super) fn resumed(client: &HoronAgentClient, session_id: &str, socket: &str) -> Result<AttachedSession, Error> {
     let session = client.attach_session(session_id)?;
-    let history = client.get_history(&session.session_id)?;
+    // From here the connection already follows `session`, so a read that fails
+    // cannot be the answer's failure: the caller moves the worker with
+    // `follow` only once this returns, and an error would leave it filtering
+    // events and naming requests with the session the daemon just left. The
+    // conversation shows empty instead.
+    let history = history_or_empty(client.get_history(&session.session_id));
     let (model, effort) = runtime::identity(client, &session.session_id);
     Ok(described(session, history, model, effort, socket))
+}
+
+/// The stored conversation an attach reports when the read itself failed.
+///
+/// Once the attach answered, the daemon has this connection on the new
+/// session, and nothing here can move it back. The read's error is spent as an
+/// empty conversation rather than as the answer's failure.
+pub(super) fn history_or_empty<E>(read: Result<Vec<HistoryMessage>, E>) -> Vec<HistoryMessage> {
+    let Ok(messages) = read else {
+        return Vec::new();
+    };
+    messages
 }
 
 /// Move the worker to the session a change answered with.
