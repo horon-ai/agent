@@ -262,7 +262,11 @@ fn log_request_lifecycle_handled(
 /// Background housekeeping holds the lock for microseconds - the resume-time
 /// model prefetch takes it once to snapshot the catalog and once to apply the
 /// refresh - so a request that arrives inside that window must not be failed.
-/// The bound stays below the first request-handler stall warning (2 s).
+/// A turn's completion tail holds it the same way: the turn task keeps the
+/// agent until its idle state reached every attachment, and that tail begins
+/// after the turn's terminal event, so it is exactly what a client answering
+/// that event arrives in. The bound stays below the first request-handler
+/// stall warning (2 s).
 const AGENT_LOCK_BACKGROUND_WAIT: Duration = Duration::from_millis(500);
 
 /// Reject a request arm that mutates session state while the session has a
@@ -3496,6 +3500,54 @@ fn retry_after_for_turn_error(error: &anyhow::Error) -> Option<u64> {
     error.downcast_ref::<crate::agent::ResumeCommitFailed>().map(|_| 1)
 }
 
+/// Take the agent for a no-reply context message.
+///
+/// `None` means a turn is running and the message gets the busy answer at
+/// once: a context message carries no turn of its own, so it must never park
+/// the sequential request loop on a turn's agent, which would also stop that
+/// loop from reading Cancel.
+///
+/// The wait below is for a completion tail only. The turn task keeps the agent
+/// until its idle state reached every attachment (the foreground guard's
+/// `close`), and that window opens after the turn's terminal event, so a
+/// client writing its context message on that event arrives while no turn is
+/// registered (issue #355). Those holds are normally microseconds; one that
+/// outlives [`AGENT_LOCK_BACKGROUND_WAIT`] is a turn that took the agent
+/// meanwhile and gets the same busy answer as a registered one.
+///
+/// The lock is taken once for the append: a check followed by a second
+/// acquisition could be overtaken by a turn starting in between.
+async fn lock_agent_for_context_message(
+    request_id: u64,
+    client_session_id: &str,
+    client_is_processing: bool,
+    agent: &Arc<Mutex<Agent>>,
+) -> Option<tokio::sync::OwnedMutexGuard<Agent>> {
+    if client_is_processing || crate::turn_cancel_registry::has_active_turn(client_session_id) {
+        return None;
+    }
+    if let Ok(agent) = Arc::clone(agent).try_lock_owned() {
+        return Some(agent);
+    }
+    let waited = Instant::now();
+    match tokio::time::timeout(AGENT_LOCK_BACKGROUND_WAIT, Arc::clone(agent).lock_owned()).await {
+        Ok(agent) => Some(agent),
+        Err(_) => {
+            crate::logging::event_warn(
+                "SERVER_REQUEST_AGENT_LOCK_OUTLIVED_WAIT",
+                vec![
+                    ("request_id", request_id.to_string()),
+                    ("request_kind", "context_message".to_string()),
+                    ("session_id", client_session_id.to_string()),
+                    ("client_processing", "false".to_string()),
+                    ("waited_ms", waited.elapsed().as_millis().to_string()),
+                ],
+            );
+            None
+        }
+    }
+}
+
 async fn append_context_message(
     id: u64,
     content: &str,
@@ -3505,15 +3557,19 @@ async fn append_context_message(
     agent: &Arc<Mutex<Agent>>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
-    let Ok(mut agent) = agent.try_lock() else {
-        send_agent_busy_error(
-            id,
-            "context_message",
-            client_session_id,
-            client_is_processing,
-            client_event_tx,
-        );
-        return;
+    let acquired = lock_agent_for_context_message(id, client_session_id, client_is_processing, agent);
+    let mut agent = match acquired.await {
+        Some(agent) => agent,
+        None => {
+            send_agent_busy_error(
+                id,
+                "context_message",
+                client_session_id,
+                client_is_processing,
+                client_event_tx,
+            );
+            return;
+        }
     };
     let result = agent.append_user_context_message(content, images);
     let event = match result {

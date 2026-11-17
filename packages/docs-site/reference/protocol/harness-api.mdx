@@ -484,10 +484,15 @@ was accepted.
 Two ordering rules hold on the daemon's side of the socket. A finished turn is
 closed before the next `message` for that session is read, so a client that
 answers a turn's terminal event with its next prompt is not refused with
-`Already processing a message` (`crates/app-core/src/server/client_lifecycle.rs:820-830`).
+`Already processing a message` (`crates/app-core/src/server/client_lifecycle.rs:824-834`).
+A `no_reply` message answered with that terminal event is a context message: it
+starts no turn, so it waits out the finished turn's completion tail, is stored
+exactly once and answered with `context_message_added`. Only a turn that is
+really running - this connection's own, or one any surface registered - answers
+the busy error, and it answers it at once.
 And a cancel's `Interrupted` and the turn's `Done` are written only after the
 cancelled turn's own frames have been forwarded, waiting at most 500 ms for
-that (`crates/app-core/src/server/client_lifecycle.rs:3970-3980`,
+that (`crates/app-core/src/server/client_lifecycle.rs:4026-4036`,
 `crates/app-core/src/server/fanout_flush.rs:56-60`).
 
 ### Events
