@@ -112,6 +112,8 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 
 아카이브에는 래퍼, `<artifact>.bin`, `LICENSE`가 들어 있고 OpenSSL 라이브러리는 더 이상 들어가지 않는다. `scripts/install/install.sh`는 예전 아카이브도 설치하도록 `libssl.so*` 멤버를 계속 받는다.
 
+셸 설치기는 체크섬과 압축 파일 안의 모든 이름을 확인한 뒤 설치용 실행 파일을 준비한다. 파일이 둘 이상 필요하면 GNU tar로 압축 파일을 한 번 읽어 필요한 파일을 모두 꺼낸다. 다른 tar 구현을 쓰면 파일을 하나씩 꺼낸다.
+
 ### CI 가드
 
 `scripts/ci/check_linux_bare_runtime.sh <binary>`가 바이너리를 `debian:trixie-slim`에서 돌린다. 컨테이너에서 OpenSSL 라이브러리와 CA 저장소를 지우고, `ldd` 결과가 glibc 계열과 libgcc 허용 목록 안에 있는지 확인한다. 이어서 `--version`과 모의 프로바이더를 상대로 `run` 한 턴을 실행한다. CI `build` 작업의 Linux 항목이 release 프로필 빌드 뒤에 이 스크립트를 돌린다. 이 단계는 GitHub 호스팅 러너에서만 돈다 (`CI_SELF_HOSTED`를 켜면 macOS 항목만 남는다). Docker가 있으면 개발자 기계에서도 같은 명령을 돌릴 수 있다.

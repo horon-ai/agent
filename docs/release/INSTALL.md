@@ -112,6 +112,8 @@ The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. The
 
 The archive holds the wrapper, `<artifact>.bin` and the `LICENSE`; the OpenSSL libraries are no longer included. `scripts/install/install.sh` still accepts `libssl.so*` members so it can install older archives.
 
+The shell installer verifies the checksum and checks every member name before preparing the bootstrap executable. When the bootstrap needs more than one file, GNU tar streams the selected files in one extraction pass. Other tar implementations stream one selected file at a time.
+
 ### CI guard
 
 `scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. That step runs only on GitHub-hosted runners (with `CI_SELF_HOSTED` set, only the macOS entry remains). The same command can run on a developer machine that has Docker.

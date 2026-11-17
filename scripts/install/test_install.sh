@@ -107,7 +107,14 @@ build_assets() {
   # Every published archive carries the licence beside the binary, and the
   # installer must accept that member without treating it as unexpected.
   printf 'MIT License\n' > "$dest/stage/LICENSE"
-  tar -czf "$dest/$archive_name.tar.gz" -C "$dest/stage" "$agent_artifact" LICENSE
+  local members=("$agent_artifact")
+  if [[ "$agent_artifact" == horon-agent-linux-x86_64 ]]; then
+    mv "$dest/stage/$agent_artifact" "$dest/stage/$agent_artifact.bin"
+    printf '%s\n' '#!/bin/sh' 'exec "${0%/*}/horon-agent-linux-x86_64.bin" "$@"' > "$dest/stage/$agent_artifact"
+    chmod +x "$dest/stage/$agent_artifact"
+    members+=("$agent_artifact.bin")
+  fi
+  tar -czf "$dest/$archive_name.tar.gz" -C "$dest/stage" "${members[@]}" LICENSE
   (
     cd "$dest"
     printf '%s  %s\n' "$(sha256 "$archive_name.tar.gz")" "$archive_name.tar.gz"
