@@ -83,7 +83,7 @@ There are no secrets and no API charges. Every measurement that needs a model at
 | `loading` | `bench_loading.py` | Session loading of a fixed-seed fixture, COLD and WARM |
 | `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket, and on Linux the daemon's CPU time and context switches per call |
 | `reload` | `bench_reload_storm.py` | Latency until `history` arrives when reopening N sessions (1, 10, 40) at once |
-| `tui` | `bench_tui.py` | The interactive client `horon-tui`: first frame (bare `horon-agent` and a direct launch), the handoff between them, PTY input echo, idle and post-turn RSS, one drawn frame from the `render_bench` example, and install size |
+| `tui` | `bench_tui.py` | The interactive client `horon-tui`: first frame (bare `horon-agent` and a direct launch), the handoff between them, PTY input echo, idle and post-turn RSS, one drawn frame from the `render_bench` example, held frames scrolled through a large session from the separate `scroll_bench` example, and install size |
 | `compile` | `bench_compile.py` | `cargo check` with no change, and rebuild time after editing `src/main.rs`, `crates/app-core`, or build-meta |
 
 ### Automatic measurement
@@ -249,7 +249,33 @@ Dispatch the suite the same way as the others:
 gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui
 ```
 
-The PTY metrics need `pty` and a POSIX executable bit, so they run on Linux and macOS only. Windows still records the render and size metrics and writes `pty unavailable on Windows` for the rest, and the suite succeeds. A missing `horon-tui` is recorded as a skip of this suite alone, never as a failure of the run. A step that times out is recorded with its error and left out of its metric, so a refusal never looks like a fast number.
+The PTY metrics need `pty` and a POSIX executable bit, so they run on Linux and macOS only. Windows still records the render, scroll and size metrics and writes `pty unavailable on Windows` for the rest, and the suite succeeds. A missing `horon-tui` is recorded as a skip of this suite alone, never as a failure of the run. A step that times out is recorded with its error and left out of its metric, so a refusal never looks like a fast number.
+
+### Scrolling a large session
+
+`render_p50_ms` and `render_p95_ms` time one frame that follows the end of a long streamed answer: the view is never held off the end and the transcript has no tool output, so neither number covers scrolling. That path is measured by a second example, `crates/tui/examples/scroll_bench.rs`, and reported under its own `scroll` key and its own table, never folded into the frame cells.
+
+The example commits 24 turns and a 4,000-row tool output, expands that output with `ctrl+o`, and holds the view off the end with `shift+up`.
+
+| Scroll metric | What it measures |
+| --- | --- |
+| `scroll_input_p50_us`, `scroll_input_p95_us` | Key handling of one `shift+up` step, before any frame is drawn |
+| `scroll_frame_p50_ms`, `scroll_frame_p95_ms` | Draw of the frame that followed that key |
+| `first_held_frame_ms` | The first held frame, which measures the whole conversation before it can show rows |
+| `held_redraw_p50_ms`, `held_redraw_p95_ms` | A redraw at the held view with no input between frames |
+
+Every timed screen is checked to be non-empty, different from the screen before it, and to carry rows of the expanded output, so a blank or unmoved view is an error instead of a fast sample. The report also records `steps`, `redraws`, `content_rows`, `items` and `tool_output_bytes`.
+
+These metrics need no PTY, so Linux, macOS and Windows all record them.
+
+A before/after pair is one job with `baseline_ref`, which builds the baseline `scroll_bench` beside the candidate and alternates the two runs:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui \
+  -f baseline_ref=<merge-base sha>
+```
+
+The runner builds the same scroll example against both renderer revisions and alternates their execution order. The report lists the baseline medians and the paired differences (candidate minus baseline) for the held frame p95 and first held frame. Each difference uses two successful samples from the same round.
 
 ## Structural gate
 
@@ -404,7 +430,7 @@ jcode's (`1jehuang/jcode`, commit `c725fa3` from 2026-11-05) `scripts/` benchmar
 | `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | Ported as the competitor comparison. Measured in headless mode. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | Already present |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | Other scripts measure the same axis. |
-| TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | `bench_tui.py` | The client is measured on its own suite, not ported: first frame, handoff, input echo, RSS, one drawn frame and install size. The session picker, the visible-ready budget and the frame-by-frame scripts have no counterpart. |
+| TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | `bench_tui.py` | The client is measured on its own suite, not ported: first frame, handoff, input echo, RSS, one drawn frame, a scrolled held view and install size. The session picker, the visible-ready budget and the frame-by-frame scripts have no counterpart. |
 | `bench_resume_suite.py` | None | Excluded. The reload storm measures resume latency. |
 | Ones that need a real model, a paid API, or an external harness (`benchmark_swarm.py`, `run_terminal_bench_*`, `benchmark_discovery*.py`, `benchmark_browser_handoff.*`, and others) | None | Excluded |
 | `analyze_root_crate.py`, `analyze_openai_ws_cache.py` | None | Excluded. Those log lines do not exist. |

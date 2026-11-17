@@ -33,14 +33,33 @@ render_p95_ms        example (1000 streamed deltas, drawn on a `TestBackend`),
                      median over the runs of its own p50 and p95.
 install_size_bytes   Size of the `horon-tui` binary.
 
+Scroll bench
+------------
+The frame cell above is one frame following the end of a long streamed answer:
+it never holds the view off the end, and its transcript has no tool output. The
+cost of scrolling a large session is a different path, so it is measured
+separately and written under its own `scroll` key, in its own table: nothing
+here is folded into `render_p50_ms`/`render_p95_ms`.
+
+`crates/tui`'s `scroll_bench` example fills a session with many turns and one
+long tool output, expands that output with the real `ctrl+o` key, holds the view
+with the real `shift+up` key, and times each step as the key handling
+(`scroll_input_p50_us`, `scroll_input_p95_us`) and the frame that followed it
+(`scroll_frame_p50_ms`, `scroll_frame_p95_ms`). `first_held_frame_ms` is the
+frame that measured the conversation the first time, and
+`held_redraw_p50_ms`/`held_redraw_p95_ms` are redraws at the held view with no
+input. `steps`, `redraws`, `content_rows`, `items` and `tool_output_bytes` say
+what was scrolled. A frame that draws a blank screen, repeats the screen before
+it, or misses the expanded output is an error instead of a fast sample.
+
 Every repeatable metric reports median, p95, min, max and the sample count, the
 same shape the other suites use (`bench_common.summarize`).
 
 Platforms
 ---------
 The PTY metrics need `pty` and a POSIX executable bit, so they run on Linux and
-macOS only. Windows still records the render and size metrics and writes the
-skip reason `pty unavailable on Windows` for the rest; the suite succeeds. A
+macOS only. Windows still records the render, scroll and size metrics and writes
+the skip reason `pty unavailable on Windows` for the rest; the suite succeeds. A
 missing `horon-tui` is recorded as a skip of this suite alone, never as a
 failure of the run.
 
@@ -96,6 +115,21 @@ ROWS = (
     ("render_p50_ms", "Frame draw time (p50)", "ms", False),
     ("render_p95_ms", "Frame draw time (p95)", "ms", False),
     ("install_size_bytes", "Install size (`horon-tui`)", "bytes", True),
+)
+
+# The scroll bench's rows, in their own table: the frame cells above are one
+# frame following the end of a long answer, and these are held frames over a
+# large session, so the two are never read as one number. The key handling is
+# microseconds because a millisecond column would print it as 0.0 ms.
+# (metric key, label, unit).
+SCROLL_ROWS = (
+    ("scroll_frame_p50_ms", "Held frame draw (p50)", "ms"),
+    ("scroll_frame_p95_ms", "Held frame draw (p95)", "ms"),
+    ("scroll_input_p50_us", "Scroll key handling (p50)", "us"),
+    ("scroll_input_p95_us", "Scroll key handling (p95)", "us"),
+    ("first_held_frame_ms", "First held frame after scrolling", "ms"),
+    ("held_redraw_p50_ms", "Held frame redraw without input (p50)", "ms"),
+    ("held_redraw_p95_ms", "Held frame redraw without input (p95)", "ms"),
 )
 
 HANDOFF_DEFINITION = (
@@ -161,14 +195,27 @@ def render_skip_reason(path: str | None) -> str | None:
     return None if path else "render bench binary not found"
 
 
+def scroll_skip_reason(path: str | None) -> str | None:
+    return None if path else "scroll bench binary not found"
+
+
 def _fmt(value: float | None, unit: str) -> str:
     if value is None:
         return "—"
+    if unit == "us":
+        return f"{value:.1f} µs"
     if unit == "bytes":
         return common.fmt_bytes(float(value))
     if unit == "count":
         return f"{value:,.0f}"
     return common.fmt_ms(float(value))
+
+
+def _median_ms(series) -> str:
+    """The median of one summary series, or the missing marker."""
+    if not isinstance(series, dict):
+        return "—"
+    return _fmt(series.get("median"), "ms")
 
 
 def _stat_row(name: str, label: str, unit: str, value) -> str:
@@ -207,6 +254,39 @@ def markdown(report: dict) -> str:
         height = render.get("height")
         if frames:
             lines += ["", f"Render bench: {frames} frames on a {width}×{height} terminal."]
+    scroll = report.get("scroll")
+    if isinstance(scroll, dict) and isinstance(scroll.get("metrics"), dict):
+        detail = scroll.get("detail") or {}
+        lines += [
+            "",
+            "Scroll bench (a separate measurement, not the frame cells above): "
+            f"{_fmt(detail.get('steps'), 'count')} one-row scroll steps and "
+            f"{_fmt(detail.get('redraws'), 'count')} no-input redraws over a "
+            f"{_fmt(detail.get('content_rows'), 'count')}-row transcript "
+            f"({_fmt(detail.get('items'), 'count')} items, "
+            f"{_fmt(detail.get('tool_output_bytes'), 'bytes')} of tool output, expanded) on a "
+            f"{_fmt(detail.get('width'), 'count')}×{_fmt(detail.get('height'), 'count')} terminal. "
+            "Every timed screen was non-empty, different from the one before it, and "
+            "carried rows of the expanded output.",
+            "",
+            "| Scroll metric | Median | Min–max | Samples |",
+            "| --- | --- | --- | --- |",
+        ]
+        for key, label, unit in SCROLL_ROWS:
+            lines.append(_stat_row(key, label, unit, scroll["metrics"].get(key)))
+        baseline = scroll.get("baseline")
+        if isinstance(baseline, dict) and isinstance(baseline.get("metrics"), dict):
+            base = baseline["metrics"]
+            delta = scroll.get("delta")
+            lines += [
+                "",
+                "Baseline built from the baseline ref and measured in this job, alternating with "
+                f"the candidate: held frame p95 {_median_ms(base.get('scroll_frame_p95_ms'))}, "
+                f"first held frame {_median_ms(base.get('first_held_frame_ms'))}. Delta (candidate "
+                f"minus baseline): held frame p95 "
+                f"{_median_ms((delta or {}).get('scroll_frame_p95_ms'))}, first held frame "
+                f"{_median_ms((delta or {}).get('first_held_frame_ms'))}.",
+            ]
     skipped = [entry for entry in report.get("skipped", []) if isinstance(entry, dict)]
     if skipped:
         # The reason already names what was skipped ("pty unavailable on
@@ -232,6 +312,9 @@ def report(**metrics) -> dict:
     }
     for key, _label, _unit, _scalar in ROWS:
         document.setdefault(key, None)
+    # The scroll bench is a separate measurement: its place is always present,
+    # and nothing else in this report is written under it.
+    document.setdefault("scroll", None)
     document.update({key: value for key, value in metrics.items() if value is not None})
     if "skipped" in metrics:
         document["skipped"] = metrics["skipped"]
@@ -533,6 +616,96 @@ def run_render_bench(path: str, runs: int, errors: list[dict]) -> dict | None:
     }
 
 
+def _scroll_sample(path: str, step: str, errors: list[dict]) -> tuple[dict[str, float], dict] | None:
+    """One run of the scroll example: its figures and what it scrolled."""
+    try:
+        completed = subprocess.run(
+            [path], capture_output=True, text=True, timeout=300, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        errors.append({"step": step, "error": str(error)})
+        return None
+    if completed.returncode != 0:
+        errors.append({"step": step,
+                       "error": f"exit {completed.returncode}: {completed.stderr.strip()[:400]}"})
+        return None
+    try:
+        decoded = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as error:
+        errors.append({"step": step, "error": f"unreadable output: {error}"})
+        return None
+    if not isinstance(decoded, dict):
+        errors.append({"step": step, "error": "output is not a JSON object"})
+        return None
+    values: dict[str, float] = {}
+    try:
+        for key, _label, _unit in SCROLL_ROWS:
+            values[key] = float(decoded[key])
+    except (KeyError, TypeError, ValueError) as error:
+        errors.append({"step": step, "error": f"missing metric: {error}"})
+        return None
+    detail = {
+        "steps": decoded.get("steps"),
+        "redraws": decoded.get("redraws"),
+        "content_rows": decoded.get("content_rows"),
+        "items": decoded.get("items"),
+        "tool_output_bytes": decoded.get("tool_output_bytes"),
+        "width": decoded.get("width"),
+        "height": decoded.get("height"),
+    }
+    return values, detail
+
+
+def run_scroll_bench(path: str, runs: int, errors: list[dict],
+                     baseline: str | None = None) -> dict | None:
+    """Run the `scroll_bench` example and keep the median of its own figures.
+
+    A separate experiment from `render_bench`: the example scrolls a large
+    session with real keys and checks every screen it draws, so its figures go
+    under their own `scroll` key and never replace the frame cells above.
+
+    `baseline` is the same example built from a baseline tree. It runs beside
+    the candidate inside this job, once per run, so the pair shares one machine
+    and the difference is not a machine difference.
+    """
+    series: dict[str, list[float]] = {key: [] for key, _label, _unit in SCROLL_ROWS}
+    base_series: dict[str, list[float]] = {key: [] for key, _label, _unit in SCROLL_ROWS}
+    detail: dict | None = None
+    base_detail: dict | None = None
+    deltas: dict[str, list[float]] = {key: [] for key in ("scroll_frame_p95_ms", "first_held_frame_ms")}
+    for index in range(runs):
+        other = None
+        if baseline and index % 2:
+            other = _scroll_sample(baseline, f"scroll-base[{index}]", errors)
+        sample = _scroll_sample(path, f"scroll[{index}]", errors)
+        if baseline and not index % 2:
+            other = _scroll_sample(baseline, f"scroll-base[{index}]", errors)
+        if sample:
+            values, detail = sample
+            for key, value in values.items():
+                series[key].append(value)
+        if other:
+            base_values, base_detail = other
+            for key, value in base_values.items():
+                base_series[key].append(value)
+        if sample and other:
+            for key, differences in deltas.items():
+                differences.append(sample[0][key] - other[0][key])
+    if detail is None:
+        return None
+    result = {
+        "metrics": {key: summary(values) for key, values in series.items()},
+        "detail": {**detail, "runs": len(series["scroll_frame_p50_ms"])},
+    }
+    if base_detail is not None:
+        result["baseline"] = {
+            "metrics": {key: summary(values) for key, values in base_series.items()},
+            "detail": {**base_detail, "runs": len(base_series["scroll_frame_p50_ms"])},
+        }
+        result["delta"] = {key: summary(values) for key, values in deltas.items() if values}
+    return result
+
+
 def install_size(path: str | None) -> int | None:
     if not path:
         return None
@@ -560,6 +733,18 @@ def measure(args: argparse.Namespace) -> dict:
         measured = run_render_bench(render_path, args.runs, errors)
         if measured:
             metrics.update(measured)
+
+    scroll_path = args.scroll_bench if args.scroll_bench and os.path.isfile(args.scroll_bench) else None
+    scroll_reason = scroll_skip_reason(scroll_path)
+    if scroll_reason:
+        skipped.append({"name": "scroll", "reason": scroll_reason})
+    elif scroll_path is not None:
+        base_scroll = (args.scroll_bench_baseline
+                       if args.scroll_bench_baseline and os.path.isfile(args.scroll_bench_baseline)
+                       else None)
+        measured = run_scroll_bench(scroll_path, args.runs, errors, base_scroll)
+        if measured:
+            metrics["scroll"] = measured
 
     size = install_size(args.tui if args.tui and os.path.isfile(args.tui) else None)
     if size is not None:
@@ -623,6 +808,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--binary", help="path to the built horon-agent binary")
     parser.add_argument("--tui", help="path to the built horon-tui binary")
     parser.add_argument("--render-bench", help="path to the built render_bench example")
+    parser.add_argument("--scroll-bench", help="path to the built scroll_bench example")
+    parser.add_argument("--scroll-bench-baseline",
+                        help="path to a scroll_bench example built from the baseline tree")
     parser.add_argument("--runs", type=int, default=5, help="repeats per PTY and render metric")
     parser.add_argument("--idle-seconds", type=float, default=5.0,
                         help="wait between the first frame and the idle RSS sample")

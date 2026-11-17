@@ -99,6 +99,10 @@ class SkipTest(unittest.TestCase):
         self.assertIsNone(bench_tui.render_skip_reason("/b/render_bench"))
         self.assertIn("render", bench_tui.render_skip_reason(None))
 
+    def test_missing_scroll_bench_is_skipped(self):
+        self.assertIsNone(bench_tui.scroll_skip_reason("/b/scroll_bench"))
+        self.assertIn("scroll", bench_tui.scroll_skip_reason(None))
+
 
 class ReportTest(unittest.TestCase):
     def test_every_metric_key_exists_even_when_unmeasured(self):
@@ -111,6 +115,14 @@ class ReportTest(unittest.TestCase):
         document = bench_tui.report(install_size_bytes=1024)
         self.assertEqual(document["install_size_bytes"], 1024)
         self.assertIsNone(document["render_p50_ms"])
+
+    def test_scroll_stays_its_own_place_until_measured(self):
+        # The scroll bench is a separate measurement: it has one place of its
+        # own, it is empty until it runs, and no frame cell reads it.
+        document = bench_tui.report()
+        self.assertIn("scroll", document)
+        self.assertIsNone(document["scroll"])
+        self.assertNotIn("scroll_frame_p95_ms", document)
 
     def test_report_names_its_suite_and_documents_the_handoff(self):
         document = bench_tui.report()
@@ -192,6 +204,31 @@ class MarkdownTest(unittest.TestCase):
 
     def test_render_detail_names_the_terminal_size(self):
         self.assertIn("1000 frames on a 120×40 terminal", bench_tui.markdown(self.report()))
+
+    def scroll(self) -> dict:
+        metrics = {key: bench_tui.summary([1.0, 2.0]) for key, _label, _unit in bench_tui.SCROLL_ROWS}
+        return {"metrics": metrics,
+                "detail": {"steps": 120, "redraws": 20, "content_rows": 1800,
+                           "items": 49, "tool_output_bytes": 180_000,
+                           "width": 120, "height": 40, "runs": 2}}
+
+    def test_scroll_section_is_separate_from_the_frame_cells(self):
+        document = self.report()
+        document["scroll"] = self.scroll()
+        text = bench_tui.markdown(document)
+        # The frame cells keep their own one table, and the scroll numbers get
+        # their own: a reader cannot mistake one for the other.
+        self.assertEqual(text.count("| Metric |"), 1)
+        self.assertIn("| Scroll metric |", text)
+        for _key, label, _unit in bench_tui.SCROLL_ROWS:
+            self.assertIn(f"| {label} |", text)
+        self.assertIn("120 one-row scroll steps", text)
+        for line in text.splitlines():
+            if line.startswith("| ") and "---" not in line:
+                self.assertEqual(len(line.split("|")), 6, line)
+
+    def test_scroll_section_is_absent_until_measured(self):
+        self.assertNotIn("Scroll metric", bench_tui.markdown(self.report()))
 
     def test_headless_and_tui_numbers_stay_in_separate_tables(self):
         text = bench_tui.markdown(self.report())

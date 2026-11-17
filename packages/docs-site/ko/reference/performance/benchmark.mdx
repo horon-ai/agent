@@ -83,7 +83,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연, Linux에서는 호출당 데몬 CPU 시간과 문맥 전환 수도 잰다 |
 | `reload` | `bench_reload_storm.py` | 세션 N개(1, 10, 40)를 동시에 다시 열어 `history`가 올 때까지의 지연 |
-| `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 설치 크기 |
+| `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 별도 `scroll_bench` 예제로 큰 세션을 스크롤할 때의 held 프레임, 설치 크기 |
 | `compile` | `bench_compile.py` | `cargo check`의 변경 없음, `src/main.rs`·`crates/app-core`·build-meta 수정 뒤 재빌드 시간 |
 
 ### 자동 측정
@@ -249,7 +249,33 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui
 ```
 
-PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에서만 돈다. Windows는 렌더와 크기 지표는 그대로 기록하고 나머지에는 `pty unavailable on Windows`를 적으며, 묶음은 성공한다. `horon-tui`가 없으면 이 묶음만 건너뛴 것으로 기록하고 실행을 실패시키지 않는다. 시간 초과 단계는 오류와 함께 기록하고 그 지표에서 빼므로, 거절이 빠른 수치처럼 보이지 않는다.
+PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에서만 돈다. Windows는 렌더와 스크롤, 크기 지표는 그대로 기록하고 나머지에는 `pty unavailable on Windows`를 적으며, 묶음은 성공한다. `horon-tui`가 없으면 이 묶음만 건너뛴 것으로 기록하고 실행을 실패시키지 않는다. 시간 초과 단계는 오류와 함께 기록하고 그 지표에서 빼므로, 거절이 빠른 수치처럼 보이지 않는다.
+
+### 큰 세션 스크롤
+
+`render_p50_ms`와 `render_p95_ms`는 긴 스트리밍 답변의 끝을 따라가는 프레임 한 장을 잰다. 화면을 끝에서 떼어 두지 않고 도구 출력도 없는 대화라 두 수치는 스크롤을 덮지 않는다. 그 경로는 두 번째 예제 `crates/tui/examples/scroll_bench.rs`가 재고, `scroll` 키와 별도 표로 보고하며 프레임 칸에 섞지 않는다.
+
+예제는 턴 24개와 4,000줄 도구 출력을 쌓고, `ctrl+o`로 그 출력을 펼친 뒤 `shift+up`으로 화면을 끝에서 뗀다.
+
+| 스크롤 지표 | 재는 것 |
+| --- | --- |
+| `scroll_input_p50_us`, `scroll_input_p95_us` | `shift+up` 한 단계의 키 처리. 프레임을 그리기 전까지 |
+| `scroll_frame_p50_ms`, `scroll_frame_p95_ms` | 그 키 뒤에 이어 그린 프레임 |
+| `first_held_frame_ms` | 첫 held 프레임. 줄을 보여 주기 전에 대화 전체를 세는 프레임 |
+| `held_redraw_p50_ms`, `held_redraw_p95_ms` | 프레임 사이에 입력 없이 held 화면을 다시 그리는 비용 |
+
+잰 화면마다 비어 있지 않은지, 바로 앞 화면과 다른지, 펼친 출력의 줄을 담았는지 확인한다. 빈 화면이나 움직이지 않은 화면은 빠른 표본이 아니라 오류가 된다. 보고에는 `steps`, `redraws`, `content_rows`, `items`, `tool_output_bytes`도 남는다.
+
+이 지표는 PTY가 필요 없어 Linux, macOS, Windows에서 모두 기록한다.
+
+비교 쌍은 `baseline_ref`를 준 한 번의 작업이다. 기준 트리의 `scroll_bench`를 후보와 함께 빌드해 두 실행을 번갈아 잰다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui \
+  -f baseline_ref=<merge-base sha>
+```
+
+러너는 두 버전의 렌더러에 같은 스크롤 예제를 빌드하고 회차마다 실행 순서를 바꾼다. 보고서에는 스크롤 후 프레임을 그리는 시간의 95백분위수와 첫 프레임 시간에 대해 기준 중앙값과 두 버전의 차이(후보 − 기준)를 싣는다. 차이는 같은 회차에서 양쪽 모두 성공했을 때 계산한다.
 
 ## 구조 게이트
 
@@ -406,7 +432,7 @@ jcode(`1jehuang/jcode`, 2026-11-05 커밋 `c725fa3`)의 `scripts/` 벤치마크�
 | `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | 경쟁 도구 비교로 이식. 헤드리스 모드로 잰다. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | 이미 있음 |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | 같은 축을 다른 스크립트가 잰다. |
-| TUI 화면 측정(`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh` 등) | `bench_tui.py` | 포팅하지 않고 클라이언트를 자체 스위트로 측정한다. 첫 프레임, 인계, 입력 에코, RSS, 한 프레임 그리기, 설치 크기를 잰다. 세션 선택기와 표시 준비 예산, 프레임 단위 스크립트는 대응물이 없다. |
+| TUI 화면 측정(`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh` 등) | `bench_tui.py` | 포팅하지 않고 클라이언트를 자체 스위트로 측정한다. 첫 프레임, 인계, 입력 에코, RSS, 한 프레임 그리기, 스크롤한 held 화면, 설치 크기를 잰다. 세션 선택기와 표시 준비 예산, 프레임 단위 스크립트는 대응물이 없다. |
 | `bench_resume_suite.py` | 없음 | 제외. 재개 지연은 reload storm이 잰다. |
 | 실제 모델·유료 API·외부 하네스가 필요한 것(`benchmark_swarm.py`, `run_terminal_bench_*`, `benchmark_discovery*.py`, `benchmark_browser_handoff.*` 등) | 없음 | 제외 |
 | `analyze_root_crate.py`, `analyze_openai_ws_cache.py` | 없음 | 제외. 해당 로그 줄이 없다. |
