@@ -29,7 +29,7 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 
 ## 압축 형식
 
-FreeBSD x64 압축 파일은 POSIX ustar 형식이며 최상위에 일반 파일 `horon-agent-freebsd-x86_64`와 `LICENSE`를 담는다. FreeBSD tar는 v0.1.14 배포물의 실행 파일 경로를 `GNUSparseFile.0/horon-agent-freebsd-x86_64`로 표시했고 셸 설치기는 이 경로를 거부했다. FreeBSD 릴리스 빌드는 업로드 전에 `scripts/release/agent_archive.sh pack <dist-dir> <binary>`로 압축 형식, 파일 이름, 실행 권한과 원본 바이트를 확인한다.
+FreeBSD x64 압축 파일은 POSIX ustar 형식을 쓴다. FreeBSD `tar`와 `install-release`는 모두 최상위에서 일반 파일 `horon-agent-freebsd-x86_64`와 `LICENSE`를 읽는다. 업로드 전에 `scripts/release/agent_archive.sh pack <dist-dir> <binary>`로 압축 형식, 파일 이름, 실행 권한과 원본 바이트를 확인한다. 이어서 릴리스 작업은 압축 파일로 설치한 실행 파일이 빌드 결과와 일치하는지 확인하고 런처를 실행한다.
 
 `scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]`는 새 폴더에 설치한 뒤 같은 폴더에 다시 설치한다. 두 번 모두 설치본의 바이트가 원본과 일치하고 런처가 원본과 같은 버전을 출력해야 한다. FreeBSD 시험을 `official_asset=v0.1.14`로 요청하면 공개 체크섬을 확인한 뒤 그 릴리스의 실행 파일을 다시 포장해 설치를 다섯 쌍 검증한다. 로그와 압축 파일 목록은 `freebsd-archive-evidence-<tag>`에 저장한다.
 

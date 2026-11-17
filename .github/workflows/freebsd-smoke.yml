@@ -162,10 +162,7 @@ jobs:
             cargo test --locked $PROFILE_FLAG -p horon-agent-base --lib -- --nocapture platform
             echo "::endgroup::"
 
-            # The release archive is packed and installed here too: the FreeBSD
-            # archive shipped in v0.1.14 held its executable as a GNU sparse
-            # member (`GNUSparseFile.0/<asset>`), which the installer refuses, and
-            # only a real package-and-install run in this VM catches that.
+            # Exercise the same pack and install steps as the release job.
             if [ "$TARGET_DIR" = release ]; then
               echo "::group::Package and install the release archive"
               sh scripts/release/agent_archive.sh pack dist target/release/horon-agent
@@ -198,9 +195,8 @@ jobs:
             [ "$actual" = "$expected" ] \
               || { echo "::error::$asset.tar.gz hashes to $actual, but $official published $expected"; exit 1; }
             echo "sha256 $actual matches the $official manifest"
-            # The listing is the evidence for the v0.1.14 defect: it showed
-            # `GNUSparseFile.0/horon-agent-freebsd-x86_64`, a member with a path
-            # separator, which the installer refuses.
+            # FreeBSD tar displays GNU.sparse.name for the v0.1.14 asset.
+            # Keep its listing alongside the release installer's own output.
             tar -tzf "published/$asset.tar.gz" > published/members.txt \
               || { echo "::error::$asset.tar.gz is not a readable tar.gz"; exit 1; }
             cat published/members.txt
@@ -220,16 +216,16 @@ jobs:
             echo "::group::Hand the published bytes to their own installer"
             mkdir -p published/assets published/home
             cp "published/$asset.tar.gz" published/assets/
-            printf '%s  %s\n' "$actual" "$asset.tar.gz" > published/assets/SHA256SUMS
-            # An archive that is already correct installs here; the log keeps
-            # whichever answer the installer shipped in that release gives.
+            cp published/SHA256SUMS published/assets/
             if HORON_HOME="$PWD/published/home" HORON_AGENT_NO_AUTO_UPDATE=1 \
                 "$original" install-release --assets "$PWD/published/assets" \
-                --agent-version "$version" 2>&1; then
-              echo "$official installs as published"
+                --agent-version "$version" > evidence/published-install.txt 2>&1; then
+              published_exit=0
             else
-              echo "$official is refused by the installer it shipped with"
+              published_exit=$?
             fi
+            cat evidence/published-install.txt
+            echo "published install-release exit: $published_exit"
             echo "::endgroup::"
 
             echo "::group::Re-pack the published bytes and install them"
@@ -247,6 +243,7 @@ jobs:
             {
               echo "official release: $official"
               echo "published archive sha256: $actual"
+              echo "published install-release exit: $published_exit"
               echo "published members:"
               sed 's/^/  /' published/members.txt
               echo "original executable: $original"

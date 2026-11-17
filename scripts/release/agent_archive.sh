@@ -2,14 +2,9 @@
 # Pack a release archive in POSIX ustar, then install it back to prove it works.
 #
 # The FreeBSD agent archive has two top-level regular files: the executable and
-# LICENSE. The archiver's default format cannot be trusted to deliver that.
-# GNU sparse archives can expose a different member name to FreeBSD tar:
-# `GNUSparseFile.0/<name>`, and the installer refuses any member with a path
-# separator before it looks at the executable (`scripts/install/install.sh`,
-# `crates/app-core/src/update/release_asset.rs`). v0.1.14's FreeBSD archive was
-# listed as `GNUSparseFile.0/horon-agent-freebsd-x86_64`, so the published asset
-# could not be installed. This script always writes ustar and checks the archive
-# it produced before anything uploads it.
+# LICENSE. In v0.1.14 FreeBSD tar resolved GNU.sparse.name, while the Rust
+# installer saw the stored GNUSparseFile.0/<asset> path and found no executable
+# at the archive root. POSIX ustar gives both readers the same regular member.
 #
 # Usage:
 #   scripts/release/agent_archive.sh pack <dist-dir> <binary>

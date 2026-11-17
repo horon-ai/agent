@@ -32,7 +32,7 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 ## Archive format
 
-The FreeBSD x64 archive uses POSIX ustar and contains two regular files at its root: `horon-agent-freebsd-x86_64` and `LICENSE`. FreeBSD tar listed the executable in the published v0.1.14 archive as `GNUSparseFile.0/horon-agent-freebsd-x86_64`. The shell installer rejected that path. The FreeBSD release build uses `scripts/release/agent_archive.sh pack <dist-dir> <binary>` to check the format, names, executable permission and bytes before upload.
+The FreeBSD x64 archive uses POSIX ustar so FreeBSD `tar` and `install-release` read the same two top-level regular files, `horon-agent-freebsd-x86_64` and `LICENSE`. Before upload, `scripts/release/agent_archive.sh pack <dist-dir> <binary>` checks the format, names, executable permission and bytes. The release job then installs the archive, compares the installed executable with the build output and runs the launcher.
 
 `scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]` installs the archive into a fresh home and reinstalls into that home. Both installs must preserve the source bytes and the launcher's version output. A manual FreeBSD smoke run with `official_asset=v0.1.14` also verifies the published checksum, re-packs that release's own executable and checks five installation pairs. The workflow saves its logs and member listing in `freebsd-archive-evidence-<tag>`.
 
