@@ -47,7 +47,7 @@ impl App {
         // A terminal that already reported the wheel keeps doing so until the
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
-        self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(false);
+        self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

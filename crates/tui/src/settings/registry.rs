@@ -227,7 +227,7 @@ pub const REGISTRY: &[SettingSpec] = &[
         id: "transcript.mouse_scroll",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_MOUSE_SCROLL",
-        default: DefaultValue::Bool(false),
+        default: DefaultValue::Bool(true),
         ui: UiMeta {
             tab: "Transcript",
             group: "Keys",
@@ -243,8 +243,8 @@ pub const REGISTRY: &[SettingSpec] = &[
         ui: UiMeta {
             tab: "Transcript",
             group: "Content",
-            label: "Show reasoning",
-            description: "Keep the model's reasoning lines in the transcript.",
+            label: "Show thinking",
+            description: "Keep the model's reasoning and thinking blocks in the transcript; off hides them as they stream.",
         },
     },
     SettingSpec {

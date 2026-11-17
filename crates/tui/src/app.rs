@@ -205,6 +205,9 @@ impl App {
             resend_held: false,
             viewport_height: None,
             scroll: Scroll::new(),
+            // Placeholder until the settings resolve: the terminal is not
+            // captured yet, and `refresh_settings` decides from the registry's
+            // default once the files are read.
             mouse_scroll: false,
             description,
             events,
@@ -249,6 +252,9 @@ impl App {
             resend_held: false,
             viewport_height: None,
             scroll: Scroll::new(),
+            // Placeholder until the settings resolve: the terminal is not
+            // captured yet, and `refresh_settings` decides from the registry's
+            // default once the files are read.
             mouse_scroll: false,
             description: "not connected".to_string(),
             events: receiver,

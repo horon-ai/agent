@@ -139,6 +139,11 @@ pub enum Item {
     Warning(String),
     /// A thought the model published before its answer, drawn apart from it.
     Reasoning(String),
+    /// What fills the context window, as `/context` reported it.
+    ///
+    /// Boxed because the report is the widest thing an item can carry and the
+    /// variant is rare, so the enum keeps the footprint of its common cases.
+    Context(Box<crate::context::ContextReport>),
 }
 
 /// The streaming message being assembled.
@@ -292,6 +297,15 @@ impl Transcript {
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.finish_stream();
         self.items.push(Item::Notice(text.into()));
+    }
+
+    /// Record the `/context` breakdown.
+    ///
+    /// One item rather than a notice per row: the rows are one block, they are
+    /// measured together, and a held view scrolls past them as one unit.
+    pub fn push_context(&mut self, report: crate::context::ContextReport) {
+        self.finish_stream();
+        self.items.push(Item::Context(Box::new(report)));
     }
 
     /// Record a warning line.

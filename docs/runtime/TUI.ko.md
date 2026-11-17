@@ -68,7 +68,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `statusline.context_window` | 숫자 | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
-| `transcript.mouse_scroll` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
+| `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
@@ -76,9 +76,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
-`editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll = true`는 터미널의 마우스 캡처를 켜고 휠을 트랜스크립트에 넘긴다. 기본값 `false`에서는 클라이언트가 마우스를 잡지 않으므로 터미널의 텍스트 선택이 그대로 동작한다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
+`editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
-`transcript.show_reasoning = true`는 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 저장하지 않고 버린다.
+`transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
 
 프로젝트 파일은 `<cwd>/.horon/tui.toml`이다. 작업 디렉터리를 읽을 수 없으면 건너뛴다. 파일의 크기나 수정 시각이 바뀐 뒤 1초가 지나면 다시 읽으므로, 손으로 고친 값이 재시작 없이 적용된다.
 
@@ -227,7 +227,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
 
-대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아온다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
+대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
 
 어시스턴트 글은 마크다운으로 그린다. 제목, 강조, 인라인 코드, 목록, 인용, 펜스 코드, 가로줄을 다룬다. 목록은 최대 여섯 단계까지 중첩되고, 단계마다 두 칸 또는 탭 하나를 쓰며, 모델이 적은 들여쓰기에서 중첩을 그린다. 펜스 코드는 적힌 글자를 그대로 두고, 여는 펜스 줄이 완성되면 그 첫 낱말을 언어 표시로 그리므로, 절반만 도착한 ` ```ru `가 잠깐 표시를 띄웠다가 바뀌지 않는다. 표, 링크, 렌더러가 다루지 않는 문법은 모델이 적은 원문 그대로 남는다. 글을 지우면 모델이 한 말을 잃기 때문이다. 줄바꿈된 행은 이어지는 행의 들여쓰기를 지키므로, 중첩된 항목은 줄이 바뀐 뒤에도 중첩으로 읽힌다. 새 턴은 앞 턴에서 한 행 비운 아래에서 시작한다.
 
@@ -331,6 +331,8 @@ harness commands:
 
 명령 파일은 인자 힌트와 설명과 함께 `/help`에 나온다. 명령 파일이 하나도 없으면 `/help`가 어디에 두는지 알려 준다.
 
+`/context`만은 클라이언트가 글자로 찍지 않고 직접 그리는 하네스 명령이다. 데몬은 다음 요청이 싣는 재료와 부분별 추정치를 함께 답하고, 클라이언트는 숫자만 남기고 본문은 버린다. 첫 줄은 `context · ~8.7k of 200k tokens (4%)`이고, 그 아래로 요청이 싣는 부분마다 한 줄씩 `system prompt`, 요청이 보내는 도구 수와 그중 지연된 수를 붙인 `tools`, 담긴 메시지 수를 붙인 `messages`, 그리고 `free`가 놓인다. 각 줄에는 창 전체를 기준으로 한 막대가 붙으므로, 늘어난 부분이 곧 늘어난 막대다. 비용이 있는 부분은 항상 한 칸 이상을 차지하고, 추정치가 창의 80%에 이르면 경고 색으로 `near the limit`이 붙는다. 숫자는 프로바이더가 보고한 사용량이 아니라 데몬이 프롬프트, 도구 목록, 보이는 대화로 계산한 추정치다. 빌드가 창 크기를 모르면 퍼센트와 `free` 줄을 빼고, 막대를 그릴 폭이 없는 창에서는 줄만 남기고 막대를 뺀다. 내역을 모르는 옛 데몬이면 그 명령이 보낸 메시지를 그대로 보여 준다.
+
 ## 설정 화면
 
 `/settings`는 설정 레지스트리에서 생성된다. 키마다 행 하나를 Appearance, Status line, Editor, Transcript 탭으로 묶고, 레지스트리가 선언한 이름표와 설명을 쓴다. 행마다 값이 온 계층도 함께 보여 준다.
@@ -367,7 +369,7 @@ harness commands:
 - Windows에는 PTY 스모크 테스트가 없다. `tui` 벤치마크는 그곳에서 렌더와 크기 지표를 기록하고, PTY 지표는 실행을 실패시키지 않고 `pty unavailable on Windows`로 표시한다.
 - FreeBSD는 `horon-agent`만 배포하므로 클라이언트를 설치하지 않고, 인자 없는 `horon`은 형제 파일이 없다고 알린다.
 - Linux와 macOS에서 핸드오프는 프로세스 하나가 다른 하나를 대체하는 방식이므로, 클라이언트가 끝나면 터미널 명령도 함께 끝나고 종료 코드는 클라이언트의 것이다. Windows에서 런처는 클라이언트를 띄우고 곧바로 코드 0으로 끝나므로, 그 코드는 클라이언트에 대해 아무것도 말하지 않는다.
-- `SIGTERM`이나 `SIGHUP`으로 클라이언트를 죽이면 터미널 모드가 복구되지 않는다. bracketed paste는 클라이언트가 직접 도는 모든 종료 경로에서 끄지만, 신호는 그 경로가 아니므로 셸에 모드가 켜진 채 남을 수 있다. `transcript.mouse_scroll = true`이면 마우스 모드도 같은 방식으로 남는다. 클라이언트는 신호 핸들러를 설치하지 않는다.
+- `SIGTERM`이나 `SIGHUP`으로 클라이언트를 죽이면 터미널 모드가 복구되지 않는다. bracketed paste는 클라이언트가 직접 도는 모든 종료 경로에서 끄지만, 신호는 그 경로가 아니므로 셸에 모드가 켜진 채 남을 수 있다. `transcript.mouse_scroll`이 켜져 있으면(기본값) 마우스 모드도 같은 방식으로 남는다. 클라이언트는 신호 핸들러를 설치하지 않는다.
 - 디스크에서 고친 테마 JSON 파일은 테마 로더가 1초 확인에서 다시 읽지만, 그것만으로 화면을 다시 그리지는 않는다. 노는 클라이언트는 다음 키, 이벤트, 설정 재적용이 있을 때까지 지금 그림을 유지한다.
 - 표와 링크는 모델이 적은 원문으로 보이고, 한 칸이나 세 칸 들여쓴 목록은 단계 하나가 두 칸이므로 온전한 단계 수로 내림된다.
 - 프롬프트가 열려 있는 동안 키보드는 프롬프트의 것이다. 슬래시 명령을 입력할 수 없고, 프롬프트 키인 글자는 프롬프트에 답한다(`a`는 `/clear`의 시작이 아니라 "allow always"다).
