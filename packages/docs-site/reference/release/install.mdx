@@ -34,6 +34,8 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch the release assets and `SHA256SUMS` into a temporary directory and then call this command. `scripts/install/install_from_source.sh` calls the same command with `--source-binary` to install a local build. The shell and PowerShell installers therefore never produce different layouts, and a failure leaves the previous installation alone.
 
+The PowerShell installer hides progress while downloading release files. A caller that pipes the script into `iex` keeps its own `$ProgressPreference` setting.
+
 The Windows install locations and signing procedure are in [`WINDOWS.md`](/reference/release/windows).
 
 ## Installing from npm (not published yet)
