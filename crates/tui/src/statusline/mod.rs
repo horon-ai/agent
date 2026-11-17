@@ -582,7 +582,7 @@ fn tail_cells(text: &str, budget: usize) -> String {
 }
 
 /// A token count in a compact form, e.g. `12.3k`.
-fn compact(value: u64) -> String {
+pub(crate) fn compact(value: u64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}m", value as f64 / 1_000_000.0)
     } else if value >= 1_000 {

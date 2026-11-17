@@ -110,6 +110,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         // a new required token would reject every theme file already written,
         // and the notice color is already the dimmest text the client has.
         Item::Reasoning(text) => reasoning(text, look),
+        Item::Context(report) => crate::context::lines(report, look),
     }
 }
 

@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod commands;
+pub mod context;
 mod fuzzy;
 pub mod help;
 pub mod history;
@@ -68,6 +69,10 @@ mod app_settings_tests;
 #[cfg(test)]
 #[path = "scroll_tests.rs"]
 mod scroll_tests;
+
+#[cfg(test)]
+#[path = "context_tests.rs"]
+mod context_tests;
 
 #[cfg(test)]
 #[path = "markdown_tests.rs"]

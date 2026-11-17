@@ -21,6 +21,8 @@ use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
 
+use crate::context::ContextReport;
+
 mod runtime;
 mod sessions;
 mod skills;
@@ -130,6 +132,8 @@ pub enum Incoming {
     SendFailed { text: String, message: String, lost: bool },
     /// Output from a command, drawn as information rather than a warning.
     Info(String),
+    /// The `/context` breakdown, drawn as a panel rather than its JSON text.
+    Context(Box<ContextReport>),
     /// The models the harness offers, and the one serving the session.
     Models {
         models: Vec<String>,
@@ -640,6 +644,13 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // client matches that against the messages it is holding, so one
         // refusal restores exactly the messages it was about.
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
+        Command::Runtime { command, arguments } => {
+            let output = client.runtime_command(session_id, command, arguments)?;
+            Ok(Some(match report(command, &output.data) {
+                Some(report) => Incoming::Context(Box::new(report)),
+                None => Incoming::Info(output.message),
+            }))
+        }
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -648,9 +659,6 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
 fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<String>, Error> {
     match command {
         Command::Text(text) => client.send_message(session_id, &text, Vec::new(), None).map(|_| None),
-        Command::Runtime { command, arguments } => client
-            .runtime_command(session_id, command, arguments)
-            .map(|output| Some(output.message)),
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
@@ -662,6 +670,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Sessions { .. }
         | Command::Skills { .. }
         | Command::Steer(_)
+        | Command::Runtime { .. }
         | Command::NewSession { .. }
         | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
@@ -680,6 +689,18 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
                 .map(|()| None)
         }
         Command::Ask { ask_id, answers } => client.respond_to_ask(session_id, &ask_id, answers).map(|()| None),
+    }
+}
+
+/// The typed report a runtime command answers with, when it carries one.
+///
+/// `/context` is the only command that sends a breakdown today. A payload
+/// without the numbers (a daemon older than the field) yields `None`, and the
+/// caller shows the message the command sent instead of an empty panel.
+fn report(command: RuntimeCommand, data: &serde_json::Value) -> Option<ContextReport> {
+    match command {
+        RuntimeCommand::Context => ContextReport::from_data(data),
+        _ => None,
     }
 }
 

@@ -37,12 +37,12 @@ pub use horon_agent_compaction_core::{
     MIN_TURNS_TO_KEEP, PAYLOAD_IMAGE_CHAR_BUDGET, SEMANTIC_EMBED_CACHE_CAPACITY, SUMMARY_PROMPT,
     SYSTEM_OVERHEAD_TOKENS, Summary, TOKEN_HISTORY_WINDOW, base_context_ratio, build_compaction_prompt,
     build_emergency_summary_text, compacted_summary_text_block, compute_context_budget, conservative_context_tokens,
-    content_char_count, effective_context_tokens_from_usage, effective_context_tokens_from_usage_with,
-    emergency_strip_large_images, emergency_truncate_large_payloads, estimate_compaction_tokens_from_text,
-    is_image_rejection_error, is_request_payload_too_large_error, mean_embedding, message_char_count,
-    message_token_count, recent_cutoff_for_token_budget, recent_tokens_for_window, safe_compaction_cutoff,
-    semantic_cache_key, semantic_goal_text, semantic_message_text, strip_large_images_in_contents,
-    summary_payload_char_count,
+    content_char_count, content_token_count, effective_context_tokens_from_usage,
+    effective_context_tokens_from_usage_with, emergency_strip_large_images, emergency_truncate_large_payloads,
+    estimate_compaction_tokens_from_text, is_image_rejection_error, is_request_payload_too_large_error, mean_embedding,
+    message_char_count, message_token_count, recent_cutoff_for_token_budget, recent_tokens_for_window,
+    safe_compaction_cutoff, semantic_cache_key, semantic_goal_text, semantic_message_text,
+    strip_large_images_in_contents, summary_payload_char_count,
 };
 use horon_agent_config_types::CompactionStrategy;
 
