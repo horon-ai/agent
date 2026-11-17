@@ -356,6 +356,40 @@ Read a stage for what it measures. `attach_history` is `Session::load` followed 
 
 The fixture's `attach_history_samples` field retains the detail of each successful measured run for sides `a` and `b`. An older probe or an empty fixture produces an empty list.
 
+### Where a cold resume spends its time
+
+`attach_history` is two whole functions, so it cannot say whether the milliseconds went into moving bytes, decoding records, building the projection or writing the transcript back out. `crates/base/examples/resume_stage_probe.rs` answers that by calling the same store functions the load path calls, in the same order, and timing each one. It adds no timer to the product: the load and history path are untouched, and the probe carries the whole measurement.
+
+The stages, in the order the probe runs them:
+
+| Stage | What it times | Where it sits in `Session::load` |
+| --- | --- | --- |
+| `selection` | the two selection files (`local-head-explicit.json`, `local-head.json`) | `selected()` |
+| `checkpoint_recent` | the derived-cache read; a cold home rebuilds it with one scan, one replay and a published checkpoint | `SessionCache::recent()`, whose result the load then discards |
+| `log_read` | one whole-file read of `events.jsonl`, which measures the copy, not the disk: the fixture was just copied and `checkpoint_recent` already streamed the log | not in the load: measured so `full_scan` can be read as decode |
+| `full_scan` | the streaming scan: per record a JSON decode, a canonical re-encode to prove the line is canonical, and parent-chain validation | `graph()` |
+| `blob_read` | every `payload_ref` blob read, separated from graph construction | `graph()` |
+| `graph_replay` | graph construction and replay: ancestry walk, payload decode, one clone per message | `graph()` and `replay()` |
+| `metadata_json` | `serde_json::to_value` of the projection metadata | `to_value(metadata)` |
+| `messages_json` | one JSON tree built for the whole transcript | the `json!` messages array |
+| `messages_decode` | the tree decoded back into stored messages | `from_value::<Session>` |
+| `source_hash` | the whole log re-read and hashed | `source_hash()` |
+| `history_rescan` | the scan, the blob pass and the replay again | `history_messages()` |
+| `page_index` | the head-bound index opened and a first page returned | `history_page()`, which the load does not call |
+
+The probe prints one JSON report and exits `0` when every stage ran, `1` on a fixture or stage mismatch, and `2` on preflight (bad arguments, `HORON_HOME` mismatch, counters disabled). It reads a pristine fixture: `checkpoint_recent`, `history_rescan` and `page_index` publish the same derived caches the product does, `events.jsonl` is never written, and the report carries its SHA-256 before and after. Blobs and recovery are untouched: a damaged log or a torn tail is a failure, never a cleanup.
+
+```bash
+cargo build --release --locked -p horon-agent-base --example resume_stage_probe
+HORON_HOME=<fixture home> HORON_AGENT_PERF_COUNTERS=1 \
+  target/release/examples/resume_stage_probe \
+  --session perf-events-10000 --expect-events 10000 --expect-messages 9999
+```
+
+`bench_loading.py` finds the probe beside `--binary` and, for a session fixture in `cold` mode, records three cold passes per fixture as the fixture's `stage_probe` block: each stage's `p50_ms`, `min_ms`, `max_ms`, `mad_ms`, and, when the measured runs were cold, `ratio_to_attach_history_pct`. The block is attribution, not a budget. The stages run one after another in a separate process, so their sum is not `attach_history` and must not be read as one; the only measured latency is `anchor.attach_history_p50_ms` from the same report. A stage that fails, or a sample that does not run, makes the whole block `status: failed`: its numbers stay for diagnosis and are not evidence. `--stage-probe-samples 0` skips the block and an absent binary records `status: skipped`, never a zero. Absolute stage times are comparable only inside one report, for the same reason the byte counters are. Every read stage is page-cached, so nothing here is a disk-latency claim.
+
+What the numbers mean together: `log_read` is the copy, `full_scan` is decode over page-cached bytes, `graph_replay` is the projection, and the three JSON stages are the serialise/deserialise half of the load. `checkpoint_recent` and `history_rescan` are the passes that repeat work the load has already done, so they are the first place to look when a resume is slower than the bytes it reads.
+
 The judging measurement runs in `.github/workflows/loading-ab.yml`, not on a development machine. That workflow checks out the baseline and candidate commits inside one `ubuntu-24.04` job, builds both as release, measures the two conditions above alternately with the candidate's `bench_loading.py` (an 8 KiB body and a 300 KB `~/.claude.json`, both 0), then runs `--compare`. A "Check counters" step then verifies three counter conditions: the skill catalog with bodies reads less than the baseline, workspace skills are not read again on repeated requests, and MCP config with `~/.claude.json` reads less than the baseline. Breaking any one fails the job. `bench_tools.py` also runs against both binaries, and the result stays for 30 days as the `loading-ab-<run_id>` artifact.
 
 ```bash
