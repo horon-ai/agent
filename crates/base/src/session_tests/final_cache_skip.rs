@@ -1,9 +1,11 @@
 //! The derived cache a one-shot run leaves behind is rebuilt by the next reader.
 //!
-//! The final commit of `horon-agent run` still writes its originals, its runtime
-//! binding and its selected head; only the derived checkpoint and catalog row are
-//! left. Every reader validates those against the log's stamp, so the untouched
-//! cache is refused and rebuilt instead of being served stale.
+//! The final commit of `horon-agent run` still writes its originals and its
+//! runtime binding; only the derived checkpoint and catalog row are left. The
+//! selected head needs no file of its own: a session that never had an explicit
+//! selection resolves the head from the log. Every reader validates the cache
+//! against the log's stamp, so the untouched cache is refused and rebuilt
+//! instead of being served stale.
 
 use super::*;
 use anyhow::{Context, Result};
@@ -60,21 +62,22 @@ fn final_commit_leaves_its_cache_to_the_next_reader() -> Result<()> {
         published,
         "the final commit must not rebuild the derived cache"
     );
-    // And the head the commit selected is on disk.
+    // The head the commit selected is the newest original. A session that never
+    // had an explicit head keeps no `local-head.json`: every reader resolves the
+    // implicit head from the log, so the file would cost a flush and be ignored.
     let head = session.event_state.head.clone().context("head missing")?;
     let id = store::SessionId::parse("final_cache_skip")?;
     let paths = store_paths()?;
-    assert_eq!(
-        serde_json::from_slice::<store::EventId>(&std::fs::read(directory.join("local-head.json"))?)?,
-        head,
-        "the selected head is a local original and must still be published"
+    assert!(
+        !directory.join("local-head.json").exists(),
+        "an implicit selection publishes no head file"
     );
     drop(session);
 
     // When the next reader opens it, the stale checkpoint is refused by its
     // stamp and rebuilt from the originals.
     let reopened = Session::load("final_cache_skip")?;
-    // Then it sees the newest message and head.
+    // Then it sees the newest message and resolves the same head from the log.
     assert_eq!(reopened.history_messages()?.len(), 2);
     assert_eq!(reopened.event_state.head.as_ref(), Some(&head));
     assert_ne!(

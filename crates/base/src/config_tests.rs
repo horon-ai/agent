@@ -877,10 +877,14 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         profile: CORE_TOOL_PROFILE.to_string(),
         ..ToolConfig::default()
     };
-    let allowed = cfg.allowed_tools().expect("core profile is an allow-list");
+    // Default ambient switches, not a developer's `~/.horon`: plan mode,
+    // clientless approvals, IRC and checkpoints each join a restricted list.
+    let allowed = cfg
+        .selection_with_ambient(&crate::config::AmbientConfig::default())
+        .allowed_tools
+        .expect("core profile is an allow-list");
 
-    // The kept set: file + shell + search + web, plus skill, mcp, monitor, undo
-    // and ask.
+    // The kept set: file, shell, search, web, skill, mcp, monitor, undo, ask.
     for kept in [
         "bash",
         "read",
@@ -897,6 +901,9 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "skill_manage",
         "mcp",
         "monitor",
+        "todo",
+        "session_search",
+        "swarm",
     ] {
         assert!(allowed.contains(kept), "core profile must keep {kept}");
     }
@@ -905,18 +912,8 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
         "core profile must keep the skill and mcp tools registered"
     );
 
-    // Out-of-scope tools stay off under the default profile.
-    for off in [
-        "swarm",
-        "batch",
-        "bg",
-        "memory",
-        "irc",
-        "schedule",
-        "session_search",
-        "conversation_search",
-        "todo",
-    ] {
+    // Tools outside `CORE_TOOLS` stay off under the default profile.
+    for off in ["batch", "bg", "memory", "irc", "schedule", "conversation_search"] {
         assert!(!allowed.contains(off), "core profile must exclude {off}");
     }
 
@@ -924,7 +921,7 @@ fn tool_config_core_profile_keeps_only_the_headless_tool_set() {
     // default silently.
     assert_eq!(
         allowed.len(),
-        16,
+        crate::config::CORE_TOOLS.len() + 1,
         "core profile is the kept set plus the toolbox dispatcher"
     );
 }

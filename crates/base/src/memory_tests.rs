@@ -13,6 +13,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(super) static PENDING_MEMORY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Take the pending-memory test lock, ignoring poisoning.
+///
+/// A test that panics while holding it leaves the mutex poisoned; the guard is
+/// only serializing process-global state, so the next test adopts the lock and
+/// runs instead of failing with a `PoisonError` of its own.
+fn lock_pending_memory() -> std::sync::MutexGuard<'static, ()> {
+    PENDING_MEMORY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn jev_storage_preserves_code_spelling_and_scope_without_embeddings() {
     with_temp_home(|_| {
@@ -98,9 +109,7 @@ where
 
 #[test]
 fn injected_memory_dedup_expires_after_ttl() {
-    let _guard = PENDING_MEMORY_TEST_LOCK
-        .lock()
-        .expect("pending memory test lock poisoned");
+    let _guard = lock_pending_memory();
     clear_all_pending_memory();
 
     let sid = "test-session-ttl";
@@ -119,9 +128,7 @@ fn injected_memory_dedup_expires_after_ttl() {
 
 #[test]
 fn mark_memories_known_blocks_reinjection_like_injection() {
-    let _guard = PENDING_MEMORY_TEST_LOCK
-        .lock()
-        .expect("pending memory test lock poisoned");
+    let _guard = lock_pending_memory();
     clear_all_pending_memory();
 
     let sid = "test-session-self-echo";

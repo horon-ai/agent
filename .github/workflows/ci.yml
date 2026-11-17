@@ -814,6 +814,36 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-token-estimate --min-passed 16 --timeout 600
 
+      - name: Run horon-agent-base lib tests (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        # `horon-agent-base` owns config, memory, session, skill and storage
+        # tests that only filtered cohorts ever ran, so a module outside those
+        # filters could rot green: #321 collected eighteen failures, from stale
+        # tool-profile expectations to non-UUID journal ids and an explicit
+        # export save guard nothing exercised. No filter: the whole crate is the
+        # surface.
+        #
+        # The floor is the macOS measurement (#321, 1592 passed, 3 ignored),
+        # which Linux cannot fall below: nine test functions are gated on
+        # `target_os = "linux"` (import, import takeover, process memory, hooks)
+        # plus the Linux-only `claude_live` module, against one macOS-gated
+        # test. Re-pin both numbers when the suite grows.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-base --min-passed 1592 --timeout 1200
+
+      - name: Run horon-agent-base lib tests (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # The measured count on this tree: 1592 passed, 3 ignored, 218 s with
+        # the default parallel test threads. The timeout covers a cold hosted
+        # runner. A run that selects almost nothing fails here instead of
+        # passing as `0 passed`.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-base --min-passed 1592 --timeout 1200
+
       - name: Run CLI handoff cohort
         shell: bash
         # The bare command's handoff decision is the only thing that sends a

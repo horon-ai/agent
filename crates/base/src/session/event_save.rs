@@ -49,6 +49,13 @@ impl Session {
         writer.prepare()?;
         self.refresh_agent_model_overrides()?;
         super::event_origin::validate_legacy_source(&paths, &id)?;
+        // A facade loaded from an explicit export may only save while that file
+        // still has the bytes it was read from. The check runs on every save,
+        // including one that appends no event: the metadata-only and close paths
+        // below would otherwise publish from a stale copy.
+        if let Some(source) = &self.event_state.external_source {
+            event_store::validate_external(source)?;
+        }
         // Retry the exact reserved bytes before preparing any newly dirty changes.
         let retried = !self.event_state.pending.is_empty();
         if retried {
