@@ -261,6 +261,7 @@ PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에�
 | --- | --- |
 | `scroll_input_p50_us`, `scroll_input_p95_us` | `shift+up` 한 단계의 키 처리. 프레임을 그리기 전까지 |
 | `scroll_frame_p50_ms`, `scroll_frame_p95_ms` | 그 키 뒤에 이어 그린 프레임 |
+| `scroll_input_to_frame_p50_ms`, `scroll_input_to_frame_p95_ms`, `first_input_to_frame_ms` | `shift+up` 키를 전달한 순간부터 시험용 터미널에 그 프레임을 다 그릴 때까지 걸린 시간. 첫 입력은 대화 전체의 높이를 재는 시간도 포함한다. |
 | `first_held_frame_ms` | 첫 held 프레임. 줄을 보여 주기 전에 대화 전체를 세는 프레임 |
 | `held_redraw_p50_ms`, `held_redraw_p95_ms` | 프레임 사이에 입력 없이 held 화면을 다시 그리는 비용 |
 

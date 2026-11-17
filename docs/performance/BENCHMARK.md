@@ -257,6 +257,7 @@ The example commits 24 turns and a 4,000-row tool output, expands that output wi
 | --- | --- |
 | `scroll_input_p50_us`, `scroll_input_p95_us` | Key handling of one `shift+up` step, before any frame is drawn |
 | `scroll_frame_p50_ms`, `scroll_frame_p95_ms` | Draw of the frame that followed that key |
+| `scroll_input_to_frame_p50_ms`, `scroll_input_to_frame_p95_ms`, `first_input_to_frame_ms` | Wall time from dispatching `shift+up` through completion of its frame on the test terminal. The first step includes conversation measurement. |
 | `first_held_frame_ms` | The first held frame, which measures the whole conversation before it can show rows |
 | `held_redraw_p50_ms`, `held_redraw_p95_ms` | A redraw at the held view with no input between frames |
 

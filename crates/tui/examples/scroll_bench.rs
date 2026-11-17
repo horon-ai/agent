@@ -93,24 +93,27 @@ fn measurement() -> Option<String> {
 
     let mut inputs: Vec<f64> = Vec::with_capacity(STEPS);
     let mut frames: Vec<f64> = Vec::with_capacity(STEPS);
+    let mut input_to_frames: Vec<f64> = Vec::with_capacity(STEPS);
     let mut previous = String::new();
     let mut first_held = None;
     for step in 0..STEPS {
-        let started = Instant::now();
+        let input_started = Instant::now();
         app.on_key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT));
-        inputs.push(millis(started.elapsed()));
-
-        let started = Instant::now();
+        let draw_started = Instant::now();
         if let Err(message) = draw(&mut terminal, &mut app) {
             eprintln!("scroll_bench: draw failed: {message}");
             return None;
         }
-        let elapsed = millis(started.elapsed());
+        let finished = Instant::now();
+        let elapsed = millis(finished.duration_since(draw_started));
+        let input_to_frame = millis(finished.duration_since(input_started));
+        inputs.push(millis(draw_started.duration_since(input_started)));
+        input_to_frames.push(input_to_frame);
         frames.push(elapsed);
         if step == 0 {
             // Named on its own as well: this is the frame that measured the
             // conversation, which only the first held frame pays for.
-            first_held = Some((elapsed, rows(&app)));
+            first_held = Some((elapsed, input_to_frame, rows(&app)));
         }
 
         let screen = format!("{}", terminal.backend());
@@ -140,7 +143,7 @@ fn measurement() -> Option<String> {
     }
 
     let rows_floor = usize::from(HEIGHT) * 10;
-    let Some((first_held, content_rows)) = first_held else {
+    let Some((first_held, first_input_to_frame, content_rows)) = first_held else {
         eprintln!("scroll_bench: no held frame was drawn");
         return None;
     };
@@ -151,10 +154,13 @@ fn measurement() -> Option<String> {
 
     inputs.sort_by(|left, right| left.total_cmp(right));
     frames.sort_by(|left, right| left.total_cmp(right));
+    input_to_frames.sort_by(|left, right| left.total_cmp(right));
     redraws.sort_by(|left, right| left.total_cmp(right));
     Some(format!(
         "{{\"scroll_input_p50_us\":{:.1},\"scroll_input_p95_us\":{:.1},\
          \"scroll_frame_p50_ms\":{:.4},\"scroll_frame_p95_ms\":{:.4},\
+         \"scroll_input_to_frame_p50_ms\":{:.4},\"scroll_input_to_frame_p95_ms\":{:.4},\
+         \"first_input_to_frame_ms\":{first_input_to_frame:.4},\
          \"held_redraw_p50_ms\":{:.4},\"held_redraw_p95_ms\":{:.4},\
          \"first_held_frame_ms\":{first_held:.4},\"steps\":{STEPS},\"redraws\":{REDRAWS},\
          \"content_rows\":{content_rows},\"items\":{},\"tool_output_bytes\":{},\
@@ -163,6 +169,8 @@ fn measurement() -> Option<String> {
         percentile(&inputs, 95.0) * 1000.0,
         percentile(&frames, 50.0),
         percentile(&frames, 95.0),
+        percentile(&input_to_frames, 50.0),
+        percentile(&input_to_frames, 95.0),
         percentile(&redraws, 50.0),
         percentile(&redraws, 95.0),
         app.transcript.items().len(),

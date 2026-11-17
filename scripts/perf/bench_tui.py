@@ -45,10 +45,12 @@ here is folded into `render_p50_ms`/`render_p95_ms`.
 long tool output, expands that output with the real `ctrl+o` key, holds the view
 with the real `shift+up` key, and times each step as the key handling
 (`scroll_input_p50_us`, `scroll_input_p95_us`) and the frame that followed it
-(`scroll_frame_p50_ms`, `scroll_frame_p95_ms`). `first_held_frame_ms` is the
-frame that measured the conversation the first time, and
-`held_redraw_p50_ms`/`held_redraw_p95_ms` are redraws at the held view with no
-input. `steps`, `redraws`, `content_rows`, `items` and `tool_output_bytes` say
+(`scroll_frame_p50_ms`, `scroll_frame_p95_ms`). Each step also times the full
+interval from key dispatch to completed draw (`scroll_input_to_frame_*`). The
+first step reports the whole interval as `first_input_to_frame_ms` and its draw
+as `first_held_frame_ms`. That draw measures the conversation for the first time.
+`held_redraw_p50_ms`/`held_redraw_p95_ms` measure redraws at the held view with
+no input. `steps`, `redraws`, `content_rows`, `items` and `tool_output_bytes` say
 what was scrolled. A frame that draws a blank screen, repeats the screen before
 it, or misses the expanded output is an error instead of a fast sample.
 
@@ -128,6 +130,9 @@ SCROLL_ROWS = (
     ("scroll_input_p50_us", "Scroll key handling (p50)", "us"),
     ("scroll_input_p95_us", "Scroll key handling (p95)", "us"),
     ("first_held_frame_ms", "First held frame after scrolling", "ms"),
+    ("scroll_input_to_frame_p50_ms", "Key dispatch through completed draw (p50)", "ms"),
+    ("scroll_input_to_frame_p95_ms", "Key dispatch through completed draw (p95)", "ms"),
+    ("first_input_to_frame_ms", "First key dispatch through completed draw", "ms"),
     ("held_redraw_p50_ms", "Held frame redraw without input (p50)", "ms"),
     ("held_redraw_p95_ms", "Held frame redraw without input (p95)", "ms"),
 )
@@ -672,7 +677,9 @@ def run_scroll_bench(path: str, runs: int, errors: list[dict],
     base_series: dict[str, list[float]] = {key: [] for key, _label, _unit in SCROLL_ROWS}
     detail: dict | None = None
     base_detail: dict | None = None
-    deltas: dict[str, list[float]] = {key: [] for key in ("scroll_frame_p95_ms", "first_held_frame_ms")}
+    deltas: dict[str, list[float]] = {key: [] for key in (
+        "scroll_frame_p95_ms", "first_held_frame_ms", "scroll_input_to_frame_p95_ms", "first_input_to_frame_ms",
+    )}
     for index in range(runs):
         other = None
         if baseline and index % 2:
