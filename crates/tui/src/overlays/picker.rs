@@ -50,6 +50,13 @@ pub struct Row {
     pub current: bool,
     /// Lines the preview pane shows while this row is selected.
     pub preview: Vec<String>,
+    /// Lines the filter matches besides the name and the second column.
+    ///
+    /// Kept apart from the preview because a preview's first line is context
+    /// the rows of one list share — a directory, a time — and matching it
+    /// would make a filter on that context keep every row. Only the caller
+    /// knows which of a row's lines say something about the row itself.
+    search: Vec<String>,
 }
 
 impl Row {
@@ -61,6 +68,7 @@ impl Row {
             value: value.into(),
             current: false,
             preview: Vec::new(),
+            search: Vec::new(),
         }
     }
 
@@ -82,6 +90,15 @@ impl Row {
     /// panel, so a list whose rows say nothing extra still reads as one list.
     pub fn with_preview(mut self, lines: Vec<String>) -> Self {
         self.preview = lines;
+        self
+    }
+
+    /// The same row with lines the filter matches besides its name.
+    ///
+    /// A row whose lines are already searchable leaves this empty: the list
+    /// then matches the name and the second column only.
+    pub fn with_search(mut self, lines: Vec<String>) -> Self {
+        self.search = lines;
         self
     }
 }
@@ -146,7 +163,7 @@ impl Picker {
     }
 
     /// The title the panel is drawn with.
-    pub(super) fn title(&self) -> &str {
+    pub(crate) fn title(&self) -> &str {
         &self.title
     }
 
@@ -291,11 +308,14 @@ impl Picker {
 
     /// Recompute which rows the filter leaves, best match first.
     ///
-    /// A row matches when the filter is a subsequence of its name or of its
-    /// second column, so `/mdl` finds `model` and a bare `10:3` still finds the
-    /// time; the scores order the hits. Equal scores keep the row order the
-    /// caller gave, which is why the row in force stays on top while the filter
-    /// is empty.
+    /// A row matches when the filter is a subsequence of its name, of its
+    /// second column or of one of the lines it offers for searching, so `/mdl`
+    /// finds `model`, a bare `10:3` still finds the time, and a word a session
+    /// said finds that session even when its title says something else. The
+    /// drawn preview is not searched: its first line is context the rows share,
+    /// and matching it would keep the whole list. The scores order the hits;
+    /// equal scores keep the row order the caller gave, which is why the row in
+    /// force stays on top while the filter is empty.
     fn refilter(&mut self) {
         let needle = self.filter.as_str();
         let mut ranked: Vec<(i32, usize)> = Vec::with_capacity(self.rows.len());
@@ -306,9 +326,18 @@ impl Picker {
             } else {
                 fuzzy::find(needle, &row.detail).map(|found| found.score)
             };
+            let search = row
+                .search
+                .iter()
+                .filter_map(|line| fuzzy::find(needle, line).map(|found| found.score))
+                .max();
             let score = match (label, detail) {
                 (Some(label), Some(detail)) => Some(label.max(detail)),
                 (label, detail) => label.or(detail),
+            };
+            let score = match (score, search) {
+                (Some(found), Some(search)) => Some(found.max(search)),
+                (found, search) => found.or(search),
             };
             if let Some(score) = score {
                 ranked.push((score, index));

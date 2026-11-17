@@ -9,7 +9,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{Action, App};
-use crate::overlays::picker::Kind;
+use crate::overlays::picker::{Kind, Picker, Row};
 use crate::prompts::Prompt;
 use crate::sdk_bridge::{AttachedSession, SessionRow};
 use crate::transcript::Item;
@@ -41,6 +41,7 @@ fn sessions(rows: &[(&str, &str, &str)]) -> Vec<SessionRow> {
             label: (*label).to_string(),
             detail: (*detail).to_string(),
             current: false,
+            preview: Vec::new(),
         })
         .collect()
 }
@@ -216,17 +217,21 @@ fn attaching_clears_the_old_session_and_replays_the_stored_one() {
     });
     app.transcript.push_user("the old session said this");
 
-    app.attach_session(AttachedSession {
-        description: "socket · session_b".to_string(),
-        session_id: "session_b".to_string(),
-        status: "idle".to_string(),
-        model: Some("new-model".to_string()),
-        history: history(&[
-            ("user", "hello from before"),
-            ("assistant", "and the answer"),
-            ("tool", "a tool row"),
-        ]),
-    });
+    app.attach_session(
+        AttachedSession {
+            description: "socket · session_b".to_string(),
+            session_id: "session_b".to_string(),
+            status: "idle".to_string(),
+            model: Some("new-model".to_string()),
+            history: history(&[
+                ("user", "hello from before"),
+                ("assistant", "and the answer"),
+                ("tool", "a tool row"),
+            ]),
+            title: None,
+        },
+        false,
+    );
 
     assert!(!app.pending_turn, "the turn of the old session survived the switch");
     assert_eq!(app.session_status.as_deref(), Some("idle"));
@@ -398,5 +403,28 @@ fn a_failed_attach_warns_and_leaves_the_client_alone() {
             .items()
             .iter()
             .any(|item| matches!(item, Item::Warning(_)))
+    );
+}
+
+#[test]
+fn a_preview_a_row_of_another_kind_carries_is_not_a_match_target() {
+    // Model rows carry no preview today, and the filter must not read one if a
+    // later kind grows a body: a body is drawn beside a row, not something the
+    // row is chosen by.
+    let mut app = app();
+    app.picker = Some(Picker::new(
+        Kind::Models,
+        "Select model",
+        vec![Row::new("alpha", "alpha").with_preview(vec!["beta body".to_string()])],
+        "no models",
+    ));
+
+    for character in "beta".chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+    let picker = app.picker.as_ref().expect("the list went away");
+    assert!(
+        picker.is_empty(),
+        "a model row matched a preview body it never offered as searchable text"
     );
 }

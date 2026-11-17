@@ -97,9 +97,11 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
         "model" => "pick a model, or switch with /model <name>",
+        "new" => "start a new session in this directory",
         "quit" => "leave",
-        "resume" => "pick a session stored for this directory and replay it",
+        "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
+        "switch" => "move to another stored session, or pick one from the list",
         _ => "",
     }
 }

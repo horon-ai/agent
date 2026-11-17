@@ -4,8 +4,8 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
-//!    `/exit`, `/help`, `/keys`, `/clear`, `/model`, `/settings` and
-//!    `/resume`.
+//!    `/exit`, `/help`, `/keys`, `/clear`, `/model`, `/new`, `/settings`,
+//!    `/resume` and `/switch`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -53,10 +53,14 @@ pub enum Local {
     Clear,
     /// Open the model picker, or switch to the model named.
     Model,
+    /// Start a new session in this working directory.
+    New,
     /// Open the settings screen.
     Settings,
     /// Resume a session stored for this working directory.
     Resume,
+    /// Switch to another session, by id or from the list.
+    Switch,
 }
 
 impl Local {
@@ -69,8 +73,10 @@ impl Local {
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
             "model" => Some(Self::Model),
+            "new" => Some(Self::New),
             "settings" => Some(Self::Settings),
             "resume" => Some(Self::Resume),
+            "switch" => Some(Self::Switch),
             _ => None,
         }
     }
@@ -84,8 +90,10 @@ impl Local {
             Self::Keys => "keys",
             Self::Clear => "clear",
             Self::Model => "model",
+            Self::New => "new",
             Self::Settings => "settings",
             Self::Resume => "resume",
+            Self::Switch => "switch",
         }
     }
 }
@@ -479,7 +487,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 8] = ["clear", "exit", "help", "keys", "model", "quit", "resume", "settings"];
+const LOCAL_NAMES: [&str; 10] = [
+    "clear", "exit", "help", "keys", "model", "new", "quit", "resume", "settings", "switch",
+];
 
 /// Every runtime command, in declaration order.
 const SERVER_VARIANTS: &[RuntimeCommand] = &[

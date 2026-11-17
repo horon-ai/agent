@@ -346,13 +346,17 @@ fn attaching_a_session_clears_the_effort_the_old_model_reported() {
     });
     assert_eq!(app.reasoning_effort.as_deref(), Some("high"));
 
-    app.attach_session(AttachedSession {
-        description: "socket · session_b".to_string(),
-        session_id: "session_b".to_string(),
-        status: "idle".to_string(),
-        model: Some("gpt-5".to_string()),
-        history: Vec::new(),
-    });
+    app.attach_session(
+        AttachedSession {
+            description: "socket · session_b".to_string(),
+            session_id: "session_b".to_string(),
+            status: "idle".to_string(),
+            model: Some("gpt-5".to_string()),
+            history: Vec::new(),
+            title: None,
+        },
+        false,
+    );
 
     assert_eq!(app.model.as_deref(), Some("gpt-5"));
     assert!(

@@ -400,13 +400,56 @@ fn builtin_help_lists_every_built_in_command() {
         "/help",
         "/keys",
         "/model",
+        "/new",
         "/quit",
         "/resume",
         "/settings",
+        "/switch",
     ] {
         assert!(
             listing.contains(name),
             "`{name}` is missing from the listing:\n{listing}"
         );
     }
+}
+
+#[test]
+fn builtin_new_and_switch_resolve_to_the_local_commands() {
+    let (_user, _project, state) = registry();
+    assert_eq!(
+        state.resolve("/new"),
+        Invocation::Local {
+            command: Local::New,
+            arguments: String::new()
+        }
+    );
+    assert_eq!(
+        state.resolve("/switch session_b"),
+        Invocation::Local {
+            command: Local::Switch,
+            arguments: "session_b".to_string()
+        }
+    );
+}
+
+#[test]
+fn builtin_help_names_what_new_and_switch_do() {
+    let (_user, _project, mut app) = app_fixture();
+    assert_eq!(type_line(&mut app, "/help new"), None);
+    let detail = last_line(&app);
+    assert!(
+        detail.contains("start a new session"),
+        "the detail did not say what /new does:\n{detail}"
+    );
+    assert!(
+        detail.contains("group: built-in commands"),
+        "the detail named the wrong source:\n{detail}"
+    );
+
+    assert_eq!(type_line(&mut app, "/help switch"), None);
+    let detail = last_line(&app);
+    assert!(
+        detail.contains("stored session"),
+        "the detail did not say what /switch does:\n{detail}"
+    );
 }

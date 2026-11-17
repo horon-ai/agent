@@ -3,9 +3,9 @@
 //!
 //! The screen itself ([`crate::overlays::picker`]) knows only rows; the meaning
 //! of a row is decided here, where the rest of the client state is. A session
-//! switch is the one flow that resets this state: the queue, the parked prompts,
-//! the turn flag and the scroll offset all belong to the session that was open,
-//! so they are cleared before the stored conversation is replayed.
+//! switch or a new session is the one flow that resets this state: the queue, the
+//! parked prompts, the turn flag and the scroll offset all belong to the session
+//! that was open, so they are cleared before the stored conversation is replayed.
 
 use crossterm::event::KeyEvent;
 
@@ -46,37 +46,27 @@ impl App {
         self.fill(Kind::Models, rows);
     }
 
-    /// Open the session list for this directory.
-    ///
-    /// Refused while a turn is running: attaching elsewhere would leave the
-    /// running turn's events arriving for a session the client no longer shows,
-    /// and the queue it is still working through belongs to that turn.
-    pub(crate) fn open_sessions(&mut self) -> Option<Action> {
-        if self.pending_turn {
-            self.transcript
-                .push_notice("the turn is still running; /resume works once it ends");
-            return None;
-        }
-        if self.disconnected {
-            self.warn("the harness connection is gone; there is nothing to resume");
-            return None;
-        }
-        self.picker = Some(Picker::loading(
-            Kind::Sessions,
-            "Resume session",
-            "no sessions in this directory",
-        ));
-        Some(Action::Sessions)
-    }
-
     /// Fill the open session list, marking the session in force.
+    ///
+    /// The preview lines travel with the row: they are built from the stored
+    /// history the bridge already read, so drawing the list costs one map here
+    /// and no request at all. The head line is drawn but not searched: it is
+    /// the directory and the time, which every row of one directory shares, so
+    /// a filter on the path would otherwise keep the whole list.
     pub fn show_sessions(&mut self, sessions: Vec<SessionRow>) {
         let rows = sessions
             .into_iter()
             .map(|session| {
+                let preview = session.preview;
+                let mut search = Vec::new();
+                if let Some((_head, conversation)) = preview.split_first() {
+                    search.extend_from_slice(conversation);
+                }
                 Row::new(session.label, session.id)
                     .with_detail(session.detail)
                     .marked(session.current)
+                    .with_preview(preview)
+                    .with_search(search)
             })
             .collect();
         self.fill(Kind::Sessions, rows);
@@ -126,14 +116,20 @@ impl App {
     /// and replay the stored conversation.
     ///
     /// Nothing of the previous session survives on screen: the turn flag, the
-    /// queue, the in-flight message, the parked prompts and the scroll offset
-    /// would otherwise be read against a conversation they never described.
-    /// The transcript keeps its display settings and gains the stored messages,
-    /// which is why it is cleared rather than replaced.
-    pub fn attach_session(&mut self, session: AttachedSession) {
+    /// queue, the in-flight message, the parked prompts, the expanded tool call
+    /// and the scroll offset would otherwise be read against a conversation they
+    /// never described. The transcript keeps its display settings and gains the
+    /// stored messages, which is why it is cleared rather than replaced.
+    ///
+    /// `started` says the session was created rather than resumed: its empty
+    /// history is then the state it begins in, not a stored conversation with
+    /// nothing in it, and the notice says which of the two happened.
+    pub fn attach_session(&mut self, session: AttachedSession, started: bool) {
         let session_id = session.session_id;
         self.description = session.description;
         self.session_id = Some(session_id.clone());
+        self.session_title = session.title;
+        self.new_session_pending = false;
         self.pending_turn = false;
         self.in_flight = None;
         self.queue.clear();
@@ -160,10 +156,14 @@ impl App {
                 _ => {}
             }
         }
-        if session.history.is_empty() {
+        if session.history.is_empty() && !started {
             self.transcript.push_notice("the stored session has no messages");
         }
-        self.transcript.push_notice(format!("resumed {session_id}"));
+        self.transcript.push_notice(if started {
+            format!("started a new session {session_id}")
+        } else {
+            format!("resumed {session_id}")
+        });
     }
 
     /// A list or attach request the harness refused.
@@ -172,8 +172,10 @@ impl App {
     /// would swallow every key until the user found `esc`, so the error is
     /// reported once and the screen is usable again. The client itself stays
     /// up, since a refused list says nothing about the session it is attached
-    /// to.
+    /// to. The pending-session flag goes too: a create that failed must not
+    /// make the next successful attach claim it started a session.
     pub fn request_failed(&mut self, message: &str) {
+        self.new_session_pending = false;
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
             self.picker = None;
         }

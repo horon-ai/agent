@@ -31,10 +31,14 @@ mod keys;
 mod picker;
 mod prompts;
 mod sending;
+mod sessions;
 mod settings;
 
 #[cfg(test)]
 mod history_search_tests;
+
+#[cfg(test)]
+mod session_switch_tests;
 
 /// What the UI asks the bridge to do after a keystroke.
 ///
@@ -65,6 +69,8 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Start a new session in this working directory and follow it.
+    NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
     /// Leave.
@@ -158,6 +164,17 @@ pub struct App {
     pub session_status: Option<String>,
     /// Session the client is attached to, from the last event that named it.
     pub session_id: Option<String>,
+    /// The title the harness holds for the attached session, when it has one.
+    ///
+    /// It names the terminal window. A session the daemon never titled is named
+    /// after its working directory instead, so this stays `None`.
+    pub session_title: Option<String>,
+    /// Whether the session change in flight is a `/new` the client asked for.
+    ///
+    /// The bridge answers an attach and a create with the same message, and the
+    /// client has to say which happened: `resumed` claims a stored conversation
+    /// was replayed, which a session that was just created does not have.
+    new_session_pending: bool,
     /// Working directory the `path` segment shows.
     pub cwd: Option<String>,
     /// The user's home directory, shortened to `~` by the `path` segment.
@@ -219,6 +236,8 @@ impl App {
             reasoning_effort: None,
             session_status: None,
             session_id: None,
+            session_title: None,
+            new_session_pending: false,
             cwd: None,
             home: home_directory(),
             tokens: None,
@@ -264,6 +283,8 @@ impl App {
             reasoning_effort: None,
             session_status: None,
             session_id: None,
+            session_title: None,
+            new_session_pending: false,
             cwd: None,
             home: home_directory(),
             tokens: None,

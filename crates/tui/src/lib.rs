@@ -309,11 +309,11 @@ fn show_failure(message: &str) {
 
 /// The name the window carries for the app's state.
 ///
-/// The client is told the session's id, not any title the daemon holds for it,
-/// so the working directory names the window today; the title argument is the
-/// one thing to fill in once the app carries a title.
+/// The session's own title wins and the working directory names a session the
+/// daemon never titled, so a stack of terminals says which one belongs to which
+/// session and a fresh window still says where it is.
 fn window_label(app: &App) -> String {
-    title::label(None, app.cwd.as_deref())
+    title::label(app.session_title.as_deref(), app.cwd.as_deref())
 }
 
 /// Drive the real terminal until the user leaves.

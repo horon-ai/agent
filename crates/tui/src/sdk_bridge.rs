@@ -21,6 +21,11 @@ use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
 
+mod sessions;
+
+#[cfg(test)]
+mod sessions_tests;
+
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
 const COMMAND_POLL: Duration = Duration::from_millis(20);
@@ -69,6 +74,8 @@ pub enum Command {
     Models,
     /// List the sessions stored for a working directory.
     Sessions { working_dir: Option<String> },
+    /// Create a session and follow it; the directory is where it starts.
+    NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
 }
@@ -122,6 +129,11 @@ pub struct SessionRow {
     pub detail: String,
     /// Whether this is the session the client is attached to.
     pub current: bool,
+    /// The lines the picker's preview pane shows while this row is selected.
+    ///
+    /// Built once, when the row is: a preview assembled while drawing would
+    /// read the stored conversation again on every frame.
+    pub preview: Vec<String>,
 }
 
 /// A session the bridge attached to, and what the client needs to show it.
@@ -137,6 +149,11 @@ pub struct AttachedSession {
     pub model: Option<String>,
     /// The stored conversation, oldest first.
     pub history: Vec<HistoryMessage>,
+    /// The title the harness holds for it, trimmed, when it has one.
+    ///
+    /// It names the terminal window, so a stack of terminals says which session
+    /// each one belongs to.
+    pub title: Option<String>,
 }
 
 /// The handles one connected UI keeps.
@@ -167,7 +184,21 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         .socket_path
         .clone()
         .unwrap_or_else(horon_agent_sdk::api::api_socket_path);
+    // Kept before the connection takes the options: `/new` needs a connection
+    // of its own, because one connection gets one session from its first
+    // create.
+    let dial = sessions::Dial::of(&options);
     let client = HoronAgentClient::connect(options).map_err(|error| explain_connect(&error, &socket))?;
+    // Subscribed before the request, because the identity event (provider,
+    // model, reasoning effort) is published while the request is in flight: the
+    // daemon answers a create's catalog probe, and a stream opened after the
+    // answer only catches it when that reply happens to arrive last.
+    //
+    // Unfiltered in both cases: the daemon rewrites a typed session prefix to
+    // the full id, so a subscription filtered by what the user typed would drop
+    // every event of the session it just attached to. The worker applies the
+    // filter that matters, against the id the answer names.
+    let stream = client.events(None);
     let session = match attach {
         Some(session_id) => client
             .attach_session(session_id)
@@ -177,7 +208,6 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
             .map_err(|error| format!("the harness refused a new session: {error}"))?,
     };
     let session_id = session.session_id.clone();
-    let stream = client.events(Some(&session_id));
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let description = format!("{} · {}", socket.display(), session_id);
@@ -185,7 +215,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
     let worker_client = client.clone();
     thread::Builder::new()
         .name("horon-tui-bridge".to_string())
-        .spawn(move || run_worker(worker_client, stream, session_id, where_, command_rx, event_tx))
+        .spawn(move || run_worker(worker_client, stream, session_id, where_, dial, command_rx, event_tx))
         .map_err(|error| format!("could not start the harness bridge thread: {error}"))?;
     Ok(Runtime {
         commands: command_tx,
@@ -229,14 +259,18 @@ fn explain_attach(error: &Error, session_id: &str) -> String {
 /// The bridge thread: alternate between pumping events and reading commands.
 ///
 /// `session_id` and `stream` are the session the thread follows, so they move
-/// when an attach succeeds: the SDK retargets one connection rather than
-/// opening a second one, and everything after the switch (sends, cancels,
-/// answers) has to name the session that is now current.
+/// when the session changes, and everything after the move (sends, cancels,
+/// answers) names the session that is now current. The two changes differ in
+/// what they move: an attach retargets the one connection the SDK already
+/// holds, while a new session opens a second connection, creates its session
+/// there and leaves the first — a connection gets one session, from its first
+/// create.
 fn run_worker(
-    client: HoronAgentClient,
+    mut client: HoronAgentClient,
     mut stream: EventStream,
     mut session_id: String,
     socket: String,
+    dial: sessions::Dial,
     commands: Receiver<Command>,
     events: Sender<Incoming>,
 ) {
@@ -247,6 +281,7 @@ fn run_worker(
             &events,
             |timeout| stream.next_result_timeout(timeout),
             || client.is_closed(),
+            &session_id,
         ) {
             Step::UiGone | Step::Closed => return,
             flowing => match take_command(&commands, flowing == Step::Flowing) {
@@ -258,27 +293,48 @@ fn run_worker(
                         _ => None,
                     };
                     let description = describe(&command);
-                    // Subscribed before the attach is sent: the daemon
-                    // publishes the new session's identity (provider and model)
-                    // while the attach request is in flight, and a stream
-                    // filtered to the session being left would drop that event.
-                    // The old stream is kept until the attach is known to have
-                    // worked, so a refused attach loses nothing from it.
-                    let next_stream = match &command {
-                        Command::Attach(target) => Some(client.events(Some(target.as_str()))),
-                        _ => None,
-                    };
-                    match serve(&client, &session_id, &socket, command) {
-                        Ok(None) => {}
-                        Ok(Some(Incoming::Attached(attached))) => {
-                            if let Some(next) = next_stream {
-                                stream = next;
-                            }
-                            session_id = attached.session_id.clone();
-                            if events.send(Incoming::Attached(attached)).is_err() {
-                                return;
+                    // The two commands that change the session answer here
+                    // rather than in `serve`, because each also moves the
+                    // connection the worker holds. Both subscribe before the
+                    // request leaves: the daemon publishes the new session's
+                    // identity (provider, model, reasoning effort) while the
+                    // request is in flight, and a stream opened after the
+                    // answer would drop it. An attach retargets the one
+                    // connection; a create gets a connection of its own,
+                    // because the daemon answers a second subscribe on one
+                    // connection with the session it already has. A failed dial
+                    // or create moves nothing, which keeps the session the
+                    // client shows attached and answering.
+                    let served = match command {
+                        Command::NewSession { working_dir } => {
+                            match sessions::created(&dial, working_dir.as_deref(), &socket) {
+                                Ok((fresh, next, attached)) => {
+                                    client = fresh;
+                                    sessions::follow(&attached, next, &mut session_id, &mut stream);
+                                    Ok(Some(Incoming::Attached(Box::new(attached))))
+                                }
+                                Err(error) => Err(error),
                             }
                         }
+                        Command::Attach(id) => {
+                            // Unfiltered for the same reason as the start-up
+                            // subscription: a typed prefix is rewritten to the
+                            // full id, and a filter built from the typed text
+                            // would drop the identity event and the turn's own
+                            // output. `pump` keeps only the answer's session.
+                            let next = client.events(None);
+                            match sessions::resumed(&client, &id, &socket) {
+                                Ok(attached) => {
+                                    sessions::follow(&attached, next, &mut session_id, &mut stream);
+                                    Ok(Some(Incoming::Attached(Box::new(attached))))
+                                }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        other => serve(&client, &session_id, other),
+                    };
+                    match served {
+                        Ok(None) => {}
                         Ok(Some(incoming)) => {
                             if events.send(incoming).is_err() {
                                 return;
@@ -341,9 +397,16 @@ const CONNECTION_CLOSED: &str = "the harness connection closed";
 /// it an idle client would keep saying it is ready and poll a dead channel as
 /// fast as the loop goes round.
 ///
+/// The stream is subscribed unfiltered because the daemon rewrites a typed
+/// session prefix to the full id: a subscription filtered by what the user typed
+/// would drop every event of the session it attached to. The filter therefore
+/// lives here, against `session_id`, the id the answer named — borrowed, so an
+/// event that is forwarded costs no copy and the check itself allocates
+/// nothing.
+///
 /// `next` is the stream read, generic so the batch can be exercised without a
 /// daemon: `Ok(Some(event))` is a frame, `Ok(None)` is a timeout.
-fn pump<F, E>(events: &Sender<Incoming>, mut next: F, closed: impl Fn() -> bool) -> Step
+fn pump<F, E>(events: &Sender<Incoming>, mut next: F, closed: impl Fn() -> bool, session_id: &str) -> Step
 where
     F: FnMut(Duration) -> Result<Option<ApiEvent>, E>,
     E: std::fmt::Display,
@@ -353,11 +416,16 @@ where
     for _ in 0..EVENT_BATCH {
         match next(timeout) {
             Ok(Some(event)) => {
+                // The read succeeded, so the next one may poll rather than
+                // block, whether or not this event is kept.
+                timeout = Duration::ZERO;
+                if !sessions::belongs(&event, session_id) {
+                    continue;
+                }
                 if events.send(Incoming::Event(Box::new(event))).is_err() {
                     return Step::UiGone;
                 }
                 forwarded = true;
-                timeout = Duration::ZERO;
             }
             Ok(None) => {
                 if closed() {
@@ -415,15 +483,10 @@ fn take_command(commands: &Receiver<Command>, flowing: bool) -> CommandPoll {
 /// sentence: the bridge has to tell "the harness refused this command" apart
 /// from "the connection is gone", and only the error kind says which.
 ///
-/// The commands the pickers need carry a structure rather than a line, and the
-/// attach changes which session the thread follows, so they are answered before
-/// this point and the line-producing commands come through here.
-fn serve(
-    client: &HoronAgentClient,
-    session_id: &str,
-    socket: &str,
-    command: Command,
-) -> Result<Option<Incoming>, Error> {
+/// The commands the pickers need carry a structure rather than a line, so they
+/// are answered here; the two that change the session are answered by the worker
+/// itself, which also moves the connection and the stream they retarget.
+fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Result<Option<Incoming>, Error> {
     match command {
         Command::Models => {
             let (models, current) = client.list_models(session_id)?;
@@ -433,7 +496,6 @@ fn serve(
             let rows = session_rows(client, session_id, working_dir.as_deref())?;
             Ok(Some(Incoming::Sessions(rows)))
         }
-        Command::Attach(id) => Ok(Some(Incoming::Attached(Box::new(attach(client, &id, socket)?)))),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -448,10 +510,10 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
-        // Answered by `serve` before they reach this point: they carry a
-        // structure rather than a line, and the attach moves the session the
-        // thread follows.
-        Command::Models | Command::Sessions { .. } | Command::Attach(_) => Ok(None),
+        // Answered before they reach this point: they carry a structure rather
+        // than a line. The attach retargets the connection the worker holds and
+        // a create replaces it, so neither can produce a line here.
+        Command::Models | Command::Sessions { .. } | Command::NewSession { .. } | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -479,6 +541,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Model(_) => "could not switch the model",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",
         Command::Approval { .. } => "could not answer the approval",
@@ -486,45 +549,24 @@ fn describe(command: &Command) -> &'static str {
     }
 }
 
-/// How many stored messages are read to find the first thing a user said.
-const PEEK_MESSAGES: u32 = 20;
-
 /// How much of a derived label a row keeps.
 const LABEL_CHARS: usize = 80;
 
-/// Attach to a session and read back what the client has to show for it.
-///
-/// The stored conversation is read after the attach, so it is the one the
-/// connection now follows. The catalog is asked for the model in force because
-/// the status line has to stop naming the model of the session just left; a
-/// catalog the daemon refuses leaves it unknown rather than failing a switch
-/// that already happened, since the events the attach emits carry it too.
-fn attach(client: &HoronAgentClient, session_id: &str, socket: &str) -> Result<AttachedSession, Error> {
-    let session = client.attach_session(session_id)?;
-    let history = client.get_history(&session.session_id)?;
-    let model = match client.list_models(&session.session_id) {
-        Ok((_, current)) => current,
-        Err(_) => None,
-    };
-    Ok(AttachedSession {
-        description: format!("{socket} · {}", session.session_id),
-        session_id: session.session_id,
-        status: session.status,
-        model,
-        history,
-    })
-}
-
 /// One row per stored session in the client's directory, newest first.
+///
+/// The stored history is read once per session: a row's label, when the record
+/// carries no title, and its preview both come from those messages, so the list
+/// costs one read per row rather than one per thing a row shows.
 fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&str>) -> Result<Vec<SessionRow>, Error> {
     let mut sessions = client.list_sessions()?;
     sessions.retain(|session| in_directory(session, working_dir));
     sessions.sort_by_key(|session| std::cmp::Reverse(activity(session)));
     let mut rows = Vec::with_capacity(sessions.len());
     for session in &sessions {
+        let messages = sessions::peek(client, &session.session_id);
         let label = match title_of(session) {
             Some(title) => title,
-            None => match first_user_text(client, &session.session_id) {
+            None => match sessions::first_user_text(&messages) {
                 Some(line) => line,
                 None => session.session_id.clone(),
             },
@@ -534,36 +576,15 @@ fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&s
             label,
             detail: detail(session),
             current: session.session_id == current,
+            preview: sessions::preview(session, &messages),
         });
     }
     Ok(rows)
 }
 
-/// What the user said first in a session, read from its stored history.
-fn first_user_text(client: &HoronAgentClient, session_id: &str) -> Option<String> {
-    let messages = match client.peek_session(session_id, Some(PEEK_MESSAGES)) {
-        Ok(messages) => messages,
-        // A record whose history cannot be read is still a session somebody may
-        // want to resume: it keeps its id as the label instead of hiding every
-        // other row behind the one failure.
-        Err(_) => return None,
-    };
-    messages
-        .iter()
-        .filter(|message| message.role == "user")
-        .find_map(|message| {
-            message
-                .content
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .map(cut)
-        })
-}
-
 /// The second column of a session row: when it was last written, or what it is
 /// doing when it has no timestamp.
-fn detail(session: &SessionInfo) -> String {
+pub(super) fn detail(session: &SessionInfo) -> String {
     match activity(session).and_then(moment) {
         Some(time) => time,
         None => session.status.clone(),
@@ -621,7 +642,7 @@ fn title_of(session: &SessionInfo) -> Option<String> {
 }
 
 /// A label cut to what a row can carry.
-fn cut(text: &str) -> String {
+pub(super) fn cut(text: &str) -> String {
     text.chars().take(LABEL_CHARS).collect()
 }
 
@@ -697,7 +718,7 @@ mod tests {
         let (events, received) = mpsc::channel();
         let mut queue = burst(EVENT_BATCH * 2);
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
 
         assert_eq!(step, Step::Flowing);
         let text = forwarded_text(&received);
@@ -707,7 +728,7 @@ mod tests {
 
         // The rest arrives on the next pass, in the same order.
         assert_eq!(
-            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false),
+            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1"),
             Step::Flowing
         );
         let text = forwarded_text(&received);
@@ -726,7 +747,7 @@ mod tests {
         let mut queue = burst(EVENT_BATCH * 3);
 
         assert_eq!(
-            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false),
+            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1"),
             Step::Flowing
         );
         assert_eq!(forwarded_text(&received).len(), EVENT_BATCH);
@@ -750,6 +771,7 @@ mod tests {
                 Ok::<_, Error>(None)
             },
             || false,
+            "s1",
         );
 
         assert_eq!(step, Step::Idle);
@@ -772,6 +794,7 @@ mod tests {
                 Ok::<_, Error>(queue.pop_front())
             },
             || false,
+            "s1",
         );
 
         assert_eq!(step, Step::Flowing);
@@ -790,6 +813,7 @@ mod tests {
             &events,
             |_| Err::<Option<ApiEvent>, _>(Error::new(ErrorKind::EventBufferOverflow, "behind")),
             || false,
+            "s1",
         );
 
         assert_eq!(step, Step::Closed);
@@ -807,7 +831,7 @@ mod tests {
         drop(received);
         let mut queue = burst(2);
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
 
         assert_eq!(step, Step::UiGone, "no receiver is not a failure to report");
     }
@@ -828,6 +852,7 @@ mod tests {
                 Ok::<_, Error>(None)
             },
             || true,
+            "s1",
         );
 
         assert_eq!(step, Step::Closed);
@@ -844,10 +869,49 @@ mod tests {
     fn a_live_connection_that_timed_out_is_not_mistaken_for_a_closed_one() {
         let (events, received) = mpsc::channel();
 
-        let step = pump(&events, |_| Ok::<_, Error>(None), || false);
+        let step = pump(&events, |_| Ok::<_, Error>(None), || false, "s1");
 
         assert_eq!(step, Step::Idle);
         assert!(received.try_iter().next().is_none(), "a timeout is not a disconnection");
+    }
+
+    #[test]
+    fn an_event_of_another_session_is_not_forwarded() {
+        // The subscription is unfiltered because the daemon rewrites a typed
+        // prefix to the full id; the pass applies the filter against the id the
+        // answer named. An event that names no session (a pong, an error) is
+        // about the connection and still reaches the client.
+        let (events, received) = mpsc::channel();
+        let mut queue = burst(0);
+        queue.push_back(ApiEvent::TextDelta {
+            session_id: "s2".into(),
+            text: "another session".into(),
+            message_id: None,
+        });
+        queue.push_back(ApiEvent::Pong);
+        queue.push_back(delta(0));
+
+        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
+
+        assert_eq!(step, Step::Flowing);
+        let forwarded: Vec<Incoming> = received.try_iter().collect();
+        assert_eq!(forwarded.len(), 2, "a foreign event was forwarded: {forwarded:?}");
+        match &forwarded[0] {
+            Incoming::Event(event) => {
+                assert!(matches!(event.as_ref(), ApiEvent::Pong), "unexpected event: {event:?}");
+            }
+            other => panic!("unexpected incoming: {other:?}"),
+        }
+        match &forwarded[1] {
+            Incoming::Event(event) => match &**event {
+                ApiEvent::TextDelta { session_id, text, .. } => {
+                    assert_eq!(session_id.as_str(), "s1");
+                    assert_eq!(text.as_str(), "0");
+                }
+                other => panic!("unexpected event: {other:?}"),
+            },
+            other => panic!("unexpected incoming: {other:?}"),
+        }
     }
 
     #[test]

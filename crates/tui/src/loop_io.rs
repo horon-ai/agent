@@ -39,7 +39,12 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Models { models, current } => app.show_models(models, current),
             Incoming::Sessions(rows) => app.show_sessions(rows),
-            Incoming::Attached(session) => app.attach_session(*session),
+            Incoming::Attached(session) => {
+                // Read before the attach so the notice names what happened: the
+                // same answer covers a resumed session and one just created.
+                let started = app.take_pending_new_session();
+                app.attach_session(*session, started);
+            }
             Incoming::RequestFailed(message) => app.request_failed(&message),
             Incoming::Closed(message) => app.disconnect(&message),
         }
@@ -69,6 +74,11 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // makes the list the sessions of this project rather than of the
         // daemon's whole history.
         Action::Sessions => Command::Sessions {
+            working_dir: app.cwd.clone(),
+        },
+        // The new session starts where the client is working, so the list of
+        // sessions it appears in is the one `/switch` shows.
+        Action::NewSession => Command::NewSession {
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),

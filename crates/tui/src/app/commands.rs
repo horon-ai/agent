@@ -57,11 +57,18 @@ impl App {
                 "" => self.open_models(),
                 name => Some(Action::Model(name.to_string())),
             },
+            // `/new` asks the bridge for a session in the directory the client
+            // is in; nothing is claimed on screen until the daemon answers,
+            // because a create can be refused.
+            Local::New => self.start_new_session(),
             Local::Settings => {
                 self.open_settings();
                 None
             }
-            Local::Resume => self.open_sessions(),
+            // `/switch` and `/resume` are one flow under two names: the list
+            // when no id is given, the session itself when one is.
+            Local::Resume => self.change_session("resume", "Resume session", arguments),
+            Local::Switch => self.change_session("switch", "Switch session", arguments),
         }
     }
 
