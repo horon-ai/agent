@@ -36,6 +36,10 @@ description: "메모리 회귀 예산과 서버 메모리 사고 대응 절차�
 - 서버 전체 귀속: `server:memory`
   (`crates/app-core/src/server/debug_server_state.rs:179`)
 - 프로세스 수명 타임라인: `python scripts/perf/analyze_memory_log.py --days 1`
+- 세션 집단 비교: `python3 scripts/perf/bench_compare.py --scenarios sessions`가 idle과 턴 직후
+  표본마다 프로세스 트리 RSS 옆에 살아 있는 프로세스 수를 남긴다. 세션당 메모리 증가분을
+  그 세션이 데몬 안의 스레드인지 따로 뜬 프로세스인지와 함께 읽기 위해서다
+  (`docs/performance/BENCHMARK.ko.md`의 `process_count`)
 
 코드의 주요 출처:
 - `crates/base/src/runtime_memory_log.rs`

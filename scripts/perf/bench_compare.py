@@ -14,7 +14,8 @@ Measured:
                     carries the default core tool surface; a run whose first
                     request offered no tools is ``core surface missing``
   sessions_memory   idle and post-turn process-tree RSS for N concurrent
-                    sessions x K turns, plus the server's own thread and
+                    sessions x K turns, the number of live processes in those
+                    trees at the same samples, plus the server's own thread and
                     descriptor counts after the turns; "first session" and
                     "each additional session" (least-squares slope)
   skill             one headless prompt that loads and uses the fixture skill
@@ -1251,7 +1252,8 @@ def measure_daemon_sessions(
 
     ``probe`` optionally returns the daemon's ``server:memory`` payload; its
     thread and descriptor counts are sampled once every session has saved a
-    turn, so a per-session cost shows up in the population comparison.
+    turn, so a per-session cost shows up in the population comparison. The live
+    process count in the daemon's tree is read in the same walk as the bytes.
     """
     daemon = None
     sessions: list[UnixDebugSession] = []
@@ -1261,12 +1263,13 @@ def measure_daemon_sessions(
         daemon, sessions, create_errors = make_daemon(session_count)
         errors.extend(create_errors)
         time.sleep(1.0)
-        idle_rss = bc.process_tree_rss_bytes(daemon.proc.pid)
+        idle = bc.process_forest_observation([daemon.proc.pid])
         samples.append(
             {
                 "phase": "idle",
-                "rss_bytes": idle_rss,
-                "pss_bytes": bc.process_tree_pss_bytes(daemon.proc.pid),
+                "rss_bytes": idle["rss_bytes"],
+                "process_count": idle["process_count"],
+                "pss_bytes": idle["pss_bytes"],
                 "live_heap_bytes": live_heap_bytes(daemon.proc.pid),
             }
         )
@@ -1285,11 +1288,13 @@ def measure_daemon_sessions(
                 if error:
                     errors.append(f"turn {turn_index + 1} session {index}: {error}")
             time.sleep(0.5)
+            after = bc.process_forest_observation([daemon.proc.pid])
             samples.append(
                 {
                     "phase": f"turn{turn_index + 1}",
-                    "rss_bytes": bc.process_tree_rss_bytes(daemon.proc.pid),
-                    "pss_bytes": bc.process_tree_pss_bytes(daemon.proc.pid),
+                    "rss_bytes": after["rss_bytes"],
+                    "process_count": after["process_count"],
+                    "pss_bytes": after["pss_bytes"],
                     "turn_ms": round(elapsed, 2),
                 }
             )
@@ -1713,6 +1718,12 @@ class PiSession:
 
 
 def measure_proc_sessions(make_session, session_count: int, turns: int, timeout: float) -> dict:
+    """N sessions that are each their own process tree.
+
+    The roots are measured as one forest, so a process that two roots reach —
+    a helper both sessions were handed — is summed and counted once, and the
+    count reports only the processes that answer, not the roots that were named.
+    """
     sessions = []
     samples: list[dict] = []
     errors: list[str] = []
@@ -1727,11 +1738,13 @@ def measure_proc_sessions(make_session, session_count: int, turns: int, timeout:
             return {"sessions": session_count, "samples": samples, "errors": errors, "sessions_created": 0}
         time.sleep(2.0)
         roots = [s.handle.proc.pid for s in sessions]
+        idle = bc.process_forest_observation(roots)
         samples.append(
             {
                 "phase": "idle",
-                "rss_bytes": sum(bc.process_tree_rss_bytes(pid) for pid in roots),
-                "pss_bytes": sum_of_pss(roots),
+                "rss_bytes": idle["rss_bytes"],
+                "process_count": idle["process_count"],
+                "pss_bytes": idle["pss_bytes"],
             }
         )
         turn_times: list[list[float]] = []
@@ -1749,11 +1762,13 @@ def measure_proc_sessions(make_session, session_count: int, turns: int, timeout:
                 if error:
                     errors.append(f"turn {turn_index + 1} session {index}: {error}")
             time.sleep(0.5)
+            after = bc.process_forest_observation(roots)
             samples.append(
                 {
                     "phase": f"turn{turn_index + 1}",
-                    "rss_bytes": sum(bc.process_tree_rss_bytes(pid) for pid in roots),
-                    "pss_bytes": sum_of_pss(roots),
+                    "rss_bytes": after["rss_bytes"],
+                    "process_count": after["process_count"],
+                    "pss_bytes": after["pss_bytes"],
                     "turn_ms": round(elapsed, 2),
                 }
             )
@@ -1770,17 +1785,6 @@ def measure_proc_sessions(make_session, session_count: int, turns: int, timeout:
                 session.close()
             except Exception:  # noqa: BLE001
                 pass
-
-
-def sum_of_pss(roots: list[int]) -> int | None:
-    total = 0
-    seen = False
-    for pid in roots:
-        value = bc.process_tree_pss_bytes(pid)
-        if value is not None:
-            total += value
-            seen = True
-    return total if seen else None
 
 
 # ---- opencode HTTP harness ------------------------------------------------
@@ -1850,11 +1854,13 @@ def measure_opencode_sessions(
                 errors.append(f"session {index}: {exc}")
                 break
         time.sleep(1.0)
+        idle = bc.process_forest_observation([proc.pid])
         samples.append(
             {
                 "phase": "idle",
-                "rss_bytes": bc.process_tree_rss_bytes(proc.pid),
-                "pss_bytes": bc.process_tree_pss_bytes(proc.pid),
+                "rss_bytes": idle["rss_bytes"],
+                "process_count": idle["process_count"],
+                "pss_bytes": idle["pss_bytes"],
             }
         )
         turn_times: list[list[float]] = []
@@ -1887,11 +1893,13 @@ def measure_opencode_sessions(
                 if error:
                     errors.append(f"turn {turn_index + 1} session {index}: {error}")
             time.sleep(0.5)
+            after = bc.process_forest_observation([proc.pid])
             samples.append(
                 {
                     "phase": f"turn{turn_index + 1}",
-                    "rss_bytes": bc.process_tree_rss_bytes(proc.pid),
-                    "pss_bytes": bc.process_tree_pss_bytes(proc.pid),
+                    "rss_bytes": after["rss_bytes"],
+                    "process_count": after["process_count"],
+                    "pss_bytes": after["pss_bytes"],
                     "turn_ms": round(elapsed, 2),
                 }
             )
@@ -2460,8 +2468,9 @@ def slope_series(points: list[dict], key: str) -> float | None:
     A point whose turns timed out still records *some* RSS, but mixing that with
     a healthy point produces a meaningless "each additional session" figure,
     which reads as a real result. A negative slope means growth stayed inside
-    RSS sampling noise (a downsized heap or a freed cache between samples), so
-    it is reported as 0 rather than as a negative allocation.
+    RSS sampling noise (a downsized heap or a freed cache between samples) — or,
+    for a process count, that extra sessions reused processes instead of starting
+    them — so it is reported as 0 rather than as a negative allocation.
     """
     xs, ys = [], []
     for point in points:
@@ -2480,10 +2489,13 @@ def slope_series(points: list[dict], key: str) -> float | None:
 def summarize_sessions(points: list[dict], turns: int) -> dict:
     """Per-population summary: the first session's cost and each additional one.
 
-    Memory slopes come from the RSS/PSS tree samples. Thread and descriptor
-    slopes come from the daemon's own ``server:memory`` counters and stay
-    ``None`` for a tool that does not report them; the reason is kept beside the
-    null so a missing counter is not read as a zero-cost session.
+    Memory slopes come from the RSS/PSS tree samples. Live process counts come
+    from the same sample as those bytes, so the two describe one observation:
+    a tool that keeps sessions inside one daemon stays flat while a tool that
+    starts a process per session grows by about one per session. Thread and
+    descriptor slopes come from the daemon's own ``server:memory`` counters and
+    stay ``None`` for a tool that does not report them; the reason is kept beside
+    the null so a missing counter is not read as a zero-cost session.
     """
     skipped = sorted({point["counter_error"] for point in points if point.get("counter_error")})
     return {
@@ -2493,6 +2505,10 @@ def summarize_sessions(points: list[dict], turns: int) -> dict:
         "each_additional_idle_rss_bytes": slope_series(points, "idle_rss_bytes"),
         "first_session_post_turn_rss_bytes": plan_first_session(points, "post_turn_rss_bytes"),
         "each_additional_post_turn_rss_bytes": slope_series(points, "post_turn_rss_bytes"),
+        "first_session_idle_processes": plan_first_session(points, "idle_process_count"),
+        "each_additional_idle_processes": slope_series(points, "idle_process_count"),
+        "first_session_post_turn_processes": plan_first_session(points, "post_turn_process_count"),
+        "each_additional_post_turn_processes": slope_series(points, "post_turn_process_count"),
         "first_session_idle_pss_bytes": plan_first_session(points, "idle_pss_bytes"),
         "each_additional_idle_pss_bytes": slope_series(points, "idle_pss_bytes"),
         "each_additional_idle_live_heap_bytes": slope_series(points, "idle_live_heap_bytes"),
@@ -2662,8 +2678,10 @@ def _measure_session_point(runner: ToolRunner, mock: MockServer, root: str, cwd:
         "sessions": count,
         "idle_rss_bytes": (idle or {}).get("rss_bytes"),
         "idle_pss_bytes": (idle or {}).get("pss_bytes"),
+        "idle_process_count": (idle or {}).get("process_count"),
         "post_turn_rss_bytes": (post or {}).get("rss_bytes"),
         "post_turn_pss_bytes": (post or {}).get("pss_bytes"),
+        "post_turn_process_count": (post or {}).get("process_count"),
         "idle_live_heap_bytes": (idle or {}).get("live_heap_bytes"),
         "post_turn_live_heap_bytes": (post or {}).get("live_heap_bytes"),
         "thread_count": (post or {}).get("thread_count"),
@@ -2853,6 +2871,11 @@ def fmt_calls(value) -> str:
 def fmt_slope(value) -> str:
     """Per-session count slope; two decimals keep a sub-1 slope visible."""
     return f"{value:.2f}" if isinstance(value, (int, float)) else "—"
+
+
+def fmt_processes(value) -> str:
+    """A live process count; a sample that could not be read stays an em dash."""
+    return str(int(round(value))) if isinstance(value, (int, float)) else "—"
 
 
 def scenario_cell(text: str, limit: int = 90) -> str:
@@ -3063,6 +3086,12 @@ def render_markdown(
     if "sessions" in scenarios:
         # Sessions
         base_additional = baseline_value(results, ("sessions_memory", "each_additional_idle_rss_bytes"))
+        # A report recorded before the process count existed has no values for
+        # it and keeps the older, narrower table.
+        show_processes = any(
+            (result.get("sessions_memory") or {}).get("first_session_idle_processes") is not None
+            for result in results
+        )
         rows = []
         for result in results:
             memory = result.get("sessions_memory") or {}
@@ -3070,32 +3099,43 @@ def render_markdown(
             additional = memory.get("each_additional_idle_rss_bytes")
             post_first = memory.get("first_session_post_turn_rss_bytes")
             post_additional = memory.get("each_additional_post_turn_rss_bytes")
-            rows.append(
-                [
-                    result["label"],
-                    bc.fmt_bytes(first),
-                    bc.fmt_bytes(additional),
-                    relative(additional, base_additional) if result["name"] != "horon" else "baseline",
-                    fmt_slope(memory.get("each_additional_threads")),
-                    fmt_slope(memory.get("each_additional_fds")),
-                    bc.fmt_bytes(post_first),
-                    bc.fmt_bytes(post_additional),
+            row = [
+                result["label"],
+                bc.fmt_bytes(first),
+                bc.fmt_bytes(additional),
+                relative(additional, base_additional) if result["name"] != "horon" else "baseline",
+                fmt_slope(memory.get("each_additional_threads")),
+                fmt_slope(memory.get("each_additional_fds")),
+                bc.fmt_bytes(post_first),
+                bc.fmt_bytes(post_additional),
+            ]
+            if show_processes:
+                row[6:6] = [
+                    fmt_processes(memory.get("first_session_idle_processes")),
+                    fmt_slope(memory.get("each_additional_idle_processes")),
                 ]
-            )
+            rows.append(row)
+        process_note = (
+            " Processes are counted in the same tree walk as the RSS sample (PSS shares it on Linux), "
+            "so the count and the bytes describe one observation; a PID shared by two session roots "
+            "counts once, a root that already exited is counted as neither bytes nor process, and a "
+            "cell that could not be read is —, never 0."
+            if show_processes
+            else ""
+        )
         lines.append(
             f"**Session memory** (idle after {turns} turn(s) per session; sizes are process-tree sums, "
             f"RSS; PSS also recorded on Linux). \"Each additional\" is the least-squares slope across the "
             f"measured session counts; 0 B means growth stayed below RSS sampling noise. Threads and "
-            f"descriptors come from the daemon's own `server:memory` after the turns."
+            f"descriptors come from the daemon's own `server:memory` after the turns.{process_note}"
         )
         lines.append("")
-        lines.append(
-            bc.markdown_table(
-                ["Tool", "First session", "Each additional", "vs horon (additional)", "Threads/session",
-                 "FDs/session", "First (post-turn)", "Each additional (post-turn)"],
-                rows,
-            )
-        )
+        session_columns = ["Tool", "First session", "Each additional", "vs horon (additional)",
+                           "Threads/session", "FDs/session", "First (post-turn)",
+                           "Each additional (post-turn)"]
+        if show_processes:
+            session_columns[6:6] = ["Processes (idle)", "Processes/session"]
+        lines.append(bc.markdown_table(session_columns, rows))
         lines.append("")
         counter_skips = []
         for result in results:
@@ -3121,6 +3161,24 @@ def render_markdown(
         lines.append("")
         lines.append(bc.markdown_table(["Tool"] + [f"{n} session(s)" for n in session_counts], rows))
         lines.append("")
+
+        if show_processes:
+            rows = []
+            for result in results:
+                memory = result.get("sessions_memory") or {}
+                by_count = {p["sessions"]: p for p in memory.get("points") or []}
+                row = [result["label"]]
+                for count in session_counts:
+                    point = by_count.get(count) or {}
+                    row.append(
+                        f"{fmt_processes(point.get('idle_process_count'))} / "
+                        f"{fmt_processes(point.get('post_turn_process_count'))}"
+                    )
+                rows.append(row)
+            lines.append("**Live processes per session count** (idle / post-turn)")
+            lines.append("")
+            lines.append(bc.markdown_table(["Tool"] + [f"{n} session(s)" for n in session_counts], rows))
+            lines.append("")
 
     errors = []
     for result in results:

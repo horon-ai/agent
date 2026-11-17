@@ -140,7 +140,8 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `oneshot_core` | 같은 one-shot 질문에서 `--tools`를 뺀 실행. 요청이 기본 `core` 표면을 싣는다. 즉시 보내는 도구 7개와 `toolbox`, 시스템 프롬프트의 도구 인덱스다. 행마다 plain one-shot의 home과 작업 폴더를 다시 쓰므로 두 행은 도구 표면만 다르다. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`이고 실행마다 `oneshot_core.runs[*].request_bytes`가 남는다. 첫 요청이 도구를 하나도 싣지 않은 실행은 시간 없이 `core surface missing`으로 기록한다. core 프로필이 없는 도구(horon과 두 번째 horon 빌드를 뺀 모든 도구)는 `{"skipped": "<label> has no core tool profile"}`을 남긴다. `oneshot_ms` 행은 `RESULTS.md`와 비교할 수 있도록 `--tools bash`를 그대로 쓴다 |
 | `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `fsync_paths` | `--syscalls`를 켰을 때 행마다 one-shot을 한 번 더 돌린다. 시간도 재지 않고 호출 수에도 넣지 않는 이 실행을 `strace -f -y`로 추적해 `fsync`·`fdatasync`마다 그 fd 뒤의 파일이나 폴더 이름을 얻는다. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`이고 호출이 많은 순서다. 실행의 임시 루트는 `<root>`로, 세션 폴더 이름(`session_<word>_<millis>_<hex>`)은 `session_<id>`로, UUID와 긴 hex id, 긴 숫자열은 `<id>`로 적어 두 실행과 두 빌드가 같은 묶음으로 나뉜다. `strace`가 이름을 얻지 못한 fd는 `fd:<n>`이다. 묶음 수의 합은 추적한 그 실행이 한 flush 수와 같다. `strace`가 없으면 값은 `{"skipped": "strace unavailable"}`이다 |
-| `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
+| `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다. 표본마다 그 트리에 살아 있는 프로세스 수도 `idle_process_count`, `post_turn_process_count`로 함께 남긴다 |
+| `process_count` | 주어진 세션 수에서 도구가 살려 두는 프로세스 수. 지점별로는 `sessions_memory.points[*].{idle_process_count,post_turn_process_count}`에, 요약으로는 `first_session_idle_processes`·`each_additional_idle_processes`와 `post_turn` 쪽 같은 두 값에 남는다. 개수와 RSS를 한 번의 순회로 읽으므로 개수를 더 재는 일이 메모리 측정 시점을 흔들지 않는다. 두 세션 루트에서 닿는 PID는 한 번만 세고, 이미 끝난 루트는 바이트도 프로세스도 아닌 것으로 세지 않으며, 읽지 못한 표본은 `null`(보고서에서는 —)이지 0이 아니다. 세션당 기울기가 `0.00`이면 세션이 도구 자신의 프로세스(데몬이나 공유 서버) 안에 있고, `1.00` 안팎이면 세션마다 프로세스가 하나씩 늘어난다는 뜻이다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 | `skill_ms` | one-shot `run` 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
 | `mcp_ms` | one-shot `run` 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
@@ -156,7 +157,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
-세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세고 `fsync_paths`를 얻는 데만 쓴다.
+세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. 살아 있는 프로세스 수는 그 행이 실제로 쓰는 모델을 말해 준다. 데몬이나 공유 서버는 세션 수와 무관하게 프로세스 하나를 유지하고(세션당 `0.00`), 세션마다 프로세스가 뜨는 도구는 세션당 하나씩 는다(`1.00`). `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세고 `fsync_paths`를 얻는 데만 쓴다.
 
 ### omp와 omo
 
@@ -371,7 +372,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
 
 같은 잡이 dev 기준 빌드(`horon-base`)와 후보를 함께 빌드해 번갈아 재므로, 변경 전·후와 jcode가 한 러너를 공유한다.
 
-**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
+**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), 같은 표본의 살아 있는 프로세스 수, Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
 
 **원인은 측정으로 찾는다.** `request_offsets_ms`로 기동·도구 왕복·종료 구간을 나누고, `log_tail`로 종료 구간의 단계를, `thread_names`로 늘어나는 스레드를, `live_heap_bytes`로 살아 있는 데이터와 할당자 보유분을 가른다. 추측으로 코드를 바꾸지 않는다.
 
