@@ -1,0 +1,198 @@
+name: Install benchmark
+
+# Called by benchmark.yml when `suites` names `install`, never directly. On a
+# disposable GitHub-hosted machine with a real internet connection it measures
+# installing horon beside installing the competing tools, cold and warm, per OS
+# and architecture, and reports the total from the first install starting to the
+# first version call finishing with its two parts, install_ms and
+# first_version_ms.
+#
+# RELEASE_TAG pins one public release: install-release verifies, extracts and
+# activates those bytes from any tree, so the tree contributes only the install
+# path and a baseline_ref checkout is measured against the same assets in the
+# same job. Nothing compiles Rust or writes a release. A failed horon install
+# writes its report and fails the job; a competitor with no install path on the
+# platform is recorded as skipped. The Windows installer edits the per-user
+# PATH, so these jobs run only on disposable runners.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      os:
+        description: "Comma-separated OS groups: linux, macos, windows, freebsd, or all"
+        type: string
+        required: true
+      competitors:
+        description: "Comma-separated tools installed beside horon: jcode, claude_code, codex, opencode, pi, omp, omo"
+        type: string
+        required: true
+      runs:
+        type: string
+        default: "5"
+      baseline_ref:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: utf-8
+  RESULTS: install-results
+  # One public release for every platform of this round; another release is a
+  # one-line edit here, never an implicit lookup.
+  RELEASE_TAG: v0.1.14
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.map.outputs.matrix }}
+    steps:
+      - name: Map the os input to one job per OS and architecture
+        id: map
+        shell: bash
+        env:
+          OS_INPUT: ${{ inputs.os }}
+          RUNS: ${{ inputs.runs }}
+          COMPETITORS: ${{ inputs.competitors }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RUNS" =~ ^[0-9]+$ ]] || [ "$RUNS" -lt 1 ]; then
+            echo "::error::runs must be a positive integer (got '$RUNS')"; exit 1
+          fi
+          # The value reaches the FreeBSD guest's shell word for word.
+          if [[ ! "$COMPETITORS" =~ ^[a-z0-9_,.-]+$ ]]; then
+            echo "::error::competitors must match ^[a-z0-9_,.-]+$ (got '$COMPETITORS')"; exit 1
+          fi
+          python3 - "$GITHUB_OUTPUT" <<'PY'
+          import json, os
+          # OS group -> one entry per architecture; the platform label names the
+          # report and the artifact. FreeBSD runs in a VM on an Ubuntu machine.
+          GROUPS = {
+              "linux": [("linux-x86_64", "ubuntu-24.04"), ("linux-aarch64", "ubuntu-24.04-arm")],
+              "macos": [("macos-aarch64", "macos-latest"), ("macos-x86_64", "macos-15-intel")],
+              "windows": [("windows-x86_64", "windows-latest"), ("windows-aarch64", "windows-11-arm")],
+              "freebsd": [("freebsd-x86_64", "ubuntu-24.04")],
+          }
+          tokens = [p.strip().lower() for p in os.environ["OS_INPUT"].replace(" ", ",").split(",") if p.strip()]
+          tokens = list(GROUPS) if not tokens or "all" in tokens else tokens
+          unknown = sorted(set(tokens) - set(GROUPS))
+          if unknown:
+              raise SystemExit(f"unknown OS group(s): {', '.join(unknown)}; known: all, {', '.join(GROUPS)}")
+          entries = [{"platform": name, "runner": runner}
+                     for key in GROUPS if key in tokens for name, runner in GROUPS[key]]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("matrix=" + json.dumps({"include": entries}, separators=(",", ":")) + "\n")
+          PY
+
+  measure:
+    name: Install (${{ matrix.platform }})
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    # Cold and warm installs of up to seven tools, each a real download and
+    # checksum verification; the long bound also covers the FreeBSD VM boot.
+    timeout-minutes: 180
+    env:
+      COMPETITORS: ${{ inputs.competitors }}
+      RUNS: ${{ inputs.runs }}
+      PLATFORM: ${{ matrix.platform }}
+      BASELINE_DIR: ${{ inputs.baseline_ref != '' && '.bench-baseline' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          # Native installers and npm run third-party code here; the token stays
+          # out of the checkout's git config.
+          persist-credentials: false
+
+      - name: Check out the baseline install path
+        if: ${{ inputs.baseline_ref != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.baseline_ref }}
+          path: .bench-baseline
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        if: ${{ matrix.platform != 'freebsd-x86_64' }}
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: ${{ matrix.platform != 'freebsd-x86_64' }}
+        with:
+          node-version: "24"
+
+      - name: Measure install and first version (Unix shell)
+        if: ${{ matrix.platform != 'freebsd-x86_64' && runner.os != 'Windows' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RESULTS"
+          args=(scripts/perf/bench_install.py --tag "$RELEASE_TAG" --runs "$RUNS"
+                --competitors "$COMPETITORS" --output "$RESULTS/install-${PLATFORM}.json")
+          [ -z "${BASELINE_DIR:-}" ] || args+=(--baseline-dir "$BASELINE_DIR")
+          python3 "${args[@]}" | tee "$RESULTS/install-${PLATFORM}.txt"
+
+      - name: Measure install and first version (Windows PowerShell)
+        if: ${{ matrix.platform != 'freebsd-x86_64' && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path $env:RESULTS | Out-Null
+          $installArgs = @('scripts/perf/bench_install.py', '--tag', $env:RELEASE_TAG,
+            '--runs', $env:RUNS, '--competitors', $env:COMPETITORS,
+            '--output', "$env:RESULTS/install-$env:PLATFORM.json")
+          if ($env:BASELINE_DIR) { $installArgs += @('--baseline-dir', $env:BASELINE_DIR) }
+          & python @installArgs *>&1 | Tee-Object -FilePath "$env:RESULTS/install-$env:PLATFORM.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Measure install and first version in the FreeBSD VM
+        if: ${{ matrix.platform == 'freebsd-x86_64' }}
+        uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1
+        with:
+          release: "15.1"
+          usesh: true
+          mem: 4096
+          cpu: 2
+          # Python drives the harness, bash runs the installer, coreutils
+          # supplies the GNU tools the checksum probes look for, and Node plus
+          # npm are what the npm competitors install through.
+          prepare: |
+            pkg install -y python3 bash curl coreutils node npm git
+          # The guest sees the synced workspace and copies written files back;
+          # inputs are interpolated because it lacks the job environment.
+          run: |
+            set -e -o pipefail
+            mkdir -p install-results
+            baseline_flag=""
+            if [ -n "${{ env.BASELINE_DIR }}" ]; then
+              baseline_flag="--baseline-dir ${{ env.BASELINE_DIR }}"
+            fi
+            python3 scripts/perf/bench_install.py \
+              --tag "${{ env.RELEASE_TAG }}" --runs "${{ inputs.runs }}" \
+              --competitors "${{ inputs.competitors }}" \
+              --output install-results/install-freebsd-x86_64.json \
+              $baseline_flag | tee install-results/install-freebsd-x86_64.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        # Uploaded even when the measurement failed, so failed horon data stays
+        # beside the job's failing exit status.
+        if: ${{ always() }}
+        with:
+          name: install-${{ matrix.platform }}-${{ github.run_id }}
+          path: install-results/
+          retention-days: 30
