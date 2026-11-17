@@ -24,7 +24,7 @@ def child_env(root, tag):
     # The comparison invokes third-party npm installers. Give each pair a fresh
     # user environment, including its own package cache and install directory.
     inherited = ('PATH', 'SystemRoot', 'SystemDrive', 'WINDIR', 'COMSPEC', 'PATHEXT',
-                 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432', 'PSModulePath',
+                 'ProgramFiles', 'ProgramFiles(x86)', 'ProgramW6432',
                  'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432', 'NUMBER_OF_PROCESSORS',
                  'LANG', 'LC_ALL', 'SSL_CERT_FILE', 'SSL_CERT_DIR')
     env = {k: os.environ[k] for k in inherited if k in os.environ}
@@ -38,6 +38,10 @@ def child_env(root, tag):
                HORON_AGENT_VERSION=tag, HORON_AGENT_SKIP_SERVER_RELOAD='1',
                HORON_AGENT_NO_AUTO_UPDATE='1', npm_config_cache=str(root / 'npm-cache'),
                npm_config_update_notifier='false', CI='1', NO_COLOR='1')
+    if WINDOWS:
+        # The runner starts Python from pwsh 7. powershell.exe uses its own
+        # inbox modules (including the Get-FileHash cmdlet), even on ARM64.
+        env['PSModulePath'] = str(Path(env['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/Modules')
     return env
 
 
@@ -64,6 +68,31 @@ def original_user_path():
                     winreg.DeleteValue(key, 'Path')
             else:
                 winreg.SetValueEx(key, 'Path', 0, saved[1], saved[0])
+
+
+@contextlib.contextmanager
+def pair_directory():
+    with tempfile.TemporaryDirectory(prefix='bench-install-') as folder:
+        root = Path(folder)
+        try:
+            yield root
+        finally:
+            if WINDOWS:
+                # A CLI may leave a helper running from its install directory.
+                # Only handles to binaries installed in this pair belong to us.
+                cleanup = r'''
+$prefix = [IO.Path]::GetFullPath($env:BENCH_PAIR) + [IO.Path]::DirectorySeparatorChar
+foreach ($p in [Diagnostics.Process]::GetProcesses()) {
+    try {
+        if ($p.MainModule.FileName.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            $p.Kill()
+            [void]$p.WaitForExit(5000)
+        }
+    } catch [ComponentModel.Win32Exception] {} catch [InvalidOperationException] {}
+    finally { $p.Dispose() }
+}'''
+                subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', cleanup],
+                               env={**os.environ, 'BENCH_PAIR': str(root)}, check=True, timeout=30)
 
 
 def version_summary(values):
@@ -143,8 +172,7 @@ def main():
         offset = (i // 2) % len(order)
         for name in order[offset:] + order[:offset]:
             checkout = args.baseline_dir.resolve() if name == 'horon-base' else ROOT
-            with tempfile.TemporaryDirectory(prefix='bench-install-') as folder, original_user_path():
-                root = Path(folder)
+            with original_user_path(), pair_directory() as root:
                 env = child_env(root, args.tag)
                 cold_ok = True
                 for state in ('cold', 'warm'):

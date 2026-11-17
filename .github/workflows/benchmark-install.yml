@@ -168,25 +168,28 @@ jobs:
           usesh: true
           mem: 4096
           cpu: 2
+          envs: RELEASE_TAG RUNS COMPETITORS BASELINE_DIR
           # Python drives the harness, bash runs the installer, coreutils
           # supplies the GNU tools the checksum probes look for, and Node plus
           # npm are what the npm competitors install through.
           prepare: |
             pkg install -y python3 bash curl coreutils node npm git
-          # The guest sees the synced workspace and copies written files back;
-          # inputs are interpolated because it lacks the job environment.
           run: |
             set -e -o pipefail
             mkdir -p install-results
-            baseline_flag=""
-            if [ -n "${{ env.BASELINE_DIR }}" ]; then
-              baseline_flag="--baseline-dir ${{ env.BASELINE_DIR }}"
-            fi
-            python3 scripts/perf/bench_install.py \
-              --tag "${{ env.RELEASE_TAG }}" --runs "${{ inputs.runs }}" \
-              --competitors "${{ inputs.competitors }}" \
-              --output install-results/install-freebsd-x86_64.json \
-              $baseline_flag | tee install-results/install-freebsd-x86_64.txt
+            set -- --tag "$RELEASE_TAG" --runs "$RUNS" --competitors "$COMPETITORS" \
+              --output install-results/install-freebsd-x86_64.json
+            if [ -n "${BASELINE_DIR:-}" ]; then set -- "$@" --baseline-dir "$BASELINE_DIR"; fi
+            rc=0
+            python3 scripts/perf/bench_install.py "$@" >install-results/install-freebsd-x86_64.txt 2>&1 || rc=$?
+            cat install-results/install-freebsd-x86_64.txt
+            # Copy the guest's JSON back before turning a failed sample into a failed job.
+            echo "$rc" >install-results/freebsd-exit.txt
+
+      - name: Check FreeBSD samples
+        if: ${{ matrix.platform == 'freebsd-x86_64' }}
+        shell: bash
+        run: test "$(cat install-results/freebsd-exit.txt)" = 0
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         # Uploaded even when the measurement failed, so failed horon data stays
