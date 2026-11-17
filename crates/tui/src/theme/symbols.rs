@@ -49,6 +49,8 @@ impl SymbolPreset {
                 separator: "·",
                 quote: "│",
                 rule: "─",
+                bar_full: "█",
+                bar_empty: "░",
             },
             Self::Nerd => Symbols {
                 bullet: "\u{f111}",
@@ -61,6 +63,8 @@ impl SymbolPreset {
                 separator: "\u{e0b1}",
                 quote: "\u{2502}",
                 rule: "\u{2500}",
+                bar_full: "\u{2588}",
+                bar_empty: "\u{2591}",
             },
             Self::Ascii => Symbols {
                 bullet: "*",
@@ -73,6 +77,8 @@ impl SymbolPreset {
                 separator: "|",
                 quote: "|",
                 rule: "-",
+                bar_full: "#",
+                bar_empty: "-",
             },
         }
     }
@@ -101,6 +107,10 @@ pub struct Symbols {
     pub quote: &'static str,
     /// The mark a horizontal rule is drawn with, repeated across the pane.
     pub rule: &'static str,
+    /// A filled cell of a proportional bar, as the `/context` report draws.
+    pub bar_full: &'static str,
+    /// An empty cell of a proportional bar.
+    pub bar_empty: &'static str,
 }
 
 impl Default for Symbols {

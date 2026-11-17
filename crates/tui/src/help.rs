@@ -15,7 +15,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::commands::{Entry, Group, Registry};
 use crate::keys::{ACTIONS, Bindings, ids};
-use crate::theme::Theme;
+use crate::theme::{Symbols, Theme};
 
 /// Rows the popup may show at once.
 ///
@@ -25,6 +25,10 @@ pub const POPUP_ROWS: usize = 8;
 
 /// Spaces between the two columns of a listing.
 const GAP: usize = 2;
+
+/// What `/help` says when no command file was found.
+const NO_COMMAND_FILES: &str = "no command files; add .horon/commands/<name>.md to a project or \
+     $HORON_HOME/commands/<name>.md for every project";
 
 /// The action ids the interface answers to, with the line that explains each.
 ///
@@ -37,7 +41,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_CANCEL,
         "cancel the running turn, or leave when nothing is running",
     ),
-    (ids::APP_INTERRUPT, "interrupt the running turn and nothing else"),
+    (
+        ids::APP_INTERRUPT,
+        "interrupt the running turn, or send queued messages into it",
+    ),
     (ids::APP_QUIT, "leave"),
     (ids::APP_SCROLL_PAGE_UP, "hold the transcript one page higher"),
     (
@@ -47,6 +54,15 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::APP_SCROLL_UP, "hold the transcript one row higher"),
     (ids::APP_SCROLL_DOWN, "move the transcript one row back towards the end"),
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
+    (
+        ids::APP_EXPAND_TOOL,
+        "show the whole output of the newest cut tool call, or hide it again",
+    ),
+    (
+        ids::APP_CYCLE_EFFORT,
+        "step to the next reasoning effort, wrapping at the last one",
+    ),
+    (ids::APP_PICK_MODEL, "pick the model this session uses"),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -74,6 +90,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::EDITOR_COMPLETE,
         "fill the popup's selected command, or complete the prefix",
     ),
+    (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),
     (
         ids::PROMPT_ALLOW_ALWAYS,
@@ -88,13 +105,62 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
+        "effort" => "set the reasoning effort, or pick one from the ladder",
+        "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
+        "keys" => "list the keys in force and what each does",
         "model" => "pick a model, or switch with /model <name>",
+        "new" => "start a new session in this directory",
         "quit" => "leave",
-        "resume" => "pick a session stored for this directory and replay it",
+        "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
+        "skills" => "list the skills the harness reports, and put one in the draft",
+        "switch" => "move to another stored session, or pick one from the list",
         _ => "",
     }
+}
+
+/// The line shown when a typed name matches no command.
+///
+/// `/help` and the resolver share it, so a name that runs nothing reads the
+/// same whether it was typed as a command or asked about.
+pub(crate) fn unknown(name: &str) -> String {
+    format!("unknown command `/{name}`; /help lists the commands")
+}
+
+/// `/help <command>`: one command's label, description and group.
+///
+/// `name` carries no leading slash; the caller strips it so a `/model` typed
+/// after `/help` reads the same as `model`. A name nothing answers to gives
+/// `None`, which the caller shows as [`unknown`] rather than as an empty help
+/// block that would look like success.
+pub(crate) fn detail(entries: &[Entry], name: &str) -> Option<String> {
+    // The command `resolve` would answer, not the first row that happens to
+    // carry the name: a command file outranks the harness's own commands, and a
+    // built-in outranks both.
+    let entry = entries
+        .iter()
+        .filter(|entry| entry.name == name)
+        .min_by_key(|entry| match entry.group {
+            Group::Builtin => 0,
+            Group::File if !entry.shadowed => 1,
+            Group::Harness => 2,
+            Group::File => 3,
+            Group::Skill => 4,
+        })?;
+    let description = if entry.description.is_empty() {
+        entry.label()
+    } else {
+        format!("{}  {}", entry.label(), entry.description)
+    };
+    let mut lines = vec![description, format!("group: {}", header(entry.group))];
+    let shadowed = entries.iter().any(|other| other.name == name && other.shadowed);
+    if shadowed {
+        lines.push(format!(
+            "a command file named `{name}` is shadowed: the built-in runs, not the file"
+        ));
+    }
+    Some(lines.join("\n"))
 }
 
 /// The line that explains one harness command.
@@ -123,7 +189,6 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "resume_all" => "resume every paused session",
         "review" => "spawn a review of the working tree changes",
         "server_reload" => "upgrade the server in place, keeping its state",
-        "skills" => "reload the skills and list them",
         "subagent" => "spawn a subagent with the task given after the command",
         "subagent_model" => "show or set the model subagents run on",
         "swarm" => "show the swarm and its members",
@@ -145,10 +210,16 @@ pub struct Row {
 pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
     let commands = command_rows(entries);
     let width = column(&commands);
-    let mut lines: Vec<String> = Vec::with_capacity(commands.len() + ACTIONS.len() + 8);
+    let mut lines: Vec<String> = Vec::with_capacity(commands.len() + 3);
+    let has_files = entries.iter().any(|entry| entry.group == Group::File);
     let mut group = None;
     for (entry, row) in entries.iter().zip(commands.iter()) {
         if group != Some(entry.group) {
+            // The notice about command files stands where the file section
+            // would be, so a skills section after it still reads as its own.
+            if !has_files && entry.group == Group::Skill {
+                lines.push(NO_COMMAND_FILES.to_string());
+            }
             group = Some(entry.group);
             lines.push(format!("{}:", header(entry.group)));
         }
@@ -158,17 +229,26 @@ pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
         }
         lines.push(line);
     }
-    if !entries.iter().any(|entry| entry.group == Group::File) {
-        lines.push(
-            "no command files; add .horon/commands/<name>.md to a project or \
-             $HORON_HOME/commands/<name>.md for every project"
-                .to_string(),
-        );
+    let has_skills = entries.iter().any(|entry| entry.group == Group::Skill);
+    if !has_files && !has_skills {
+        lines.push(NO_COMMAND_FILES.to_string());
     }
-    let keys = key_rows(bindings);
-    let key_width = column(&keys);
+    let keys = key_text(bindings);
+    lines.push(keys);
+    lines.join("\n")
+}
+
+/// `/keys`: the header and rows of the listing's key section, and nothing else.
+///
+/// The action ids are the map's own names, not what a user types, so the
+/// listing shows the keys in force and the words for what each does; an action
+/// nobody bound still gets a row, marked unbound.
+pub(crate) fn key_text(bindings: &Bindings) -> String {
+    let rows = key_rows(bindings);
+    let width = column(&rows);
+    let mut lines: Vec<String> = Vec::with_capacity(rows.len() + 1);
     lines.push("keys:".to_string());
-    lines.extend(keys.iter().map(|row| aligned(row, key_width)));
+    lines.extend(rows.iter().map(|row| aligned(row, width)));
     lines.join("\n")
 }
 
@@ -224,6 +304,7 @@ fn header(group: Group) -> &'static str {
         Group::Builtin => "built-in commands",
         Group::Harness => "harness commands",
         Group::File => "command files",
+        Group::Skill => "skills",
     }
 }
 
@@ -261,30 +342,45 @@ pub fn prefix(draft: &str) -> Option<&str> {
     Some(rest)
 }
 
-/// The commands a prefix offers, in name order.
+/// The commands a draft offers, best match first.
 ///
 /// A shadowed command file is left out: the built-in answers that name, so
 /// offering the file would offer a line that never runs.
-pub fn popup_matches(entries: &[Entry], prefix: &str) -> Vec<Entry> {
-    let mut matches: Vec<Entry> = entries
+///
+/// The rank puts the names a prefix still spells out first, in name order, so
+/// the rows a typed word used to offer are the first rows it offers now; the
+/// names the letters only resemble follow, best first.
+pub fn popup_matches(entries: &[Entry], needle: &str) -> Vec<Entry> {
+    let mut matches: Vec<(i32, Entry)> = entries
         .iter()
-        .filter(|entry| !entry.shadowed && entry.name.starts_with(prefix))
-        .cloned()
+        .filter(|entry| !entry.shadowed)
+        .filter_map(|entry| {
+            let found = crate::fuzzy::find(needle, &entry.name)?;
+            Some((found.score, entry.clone()))
+        })
         .collect();
-    matches.sort_by(|left, right| left.name.cmp(&right.name));
-    matches.dedup_by(|left, right| left.name == right.name);
-    matches
+    matches.sort_by(|(left_score, left), (right_score, right)| {
+        right_score.cmp(left_score).then_with(|| left.name.cmp(&right.name))
+    });
+    // Equal names carry equal scores, so the duplicates a source can repeat sit
+    // next to each other once the sort is done.
+    matches.dedup_by(|(_, left), (_, right)| left.name == right.name);
+    matches.into_iter().map(|(_, entry)| entry).collect()
 }
 
 /// Drop the offer once the draft already names the command it would offer.
 ///
-/// A list of one row saying what the user has just finished typing is in the
-/// way: there is nothing left to choose, and the next key is the one that sends.
-fn settled(matches: Vec<Entry>, prefix: &str) -> Vec<Entry> {
-    match matches.as_slice() {
-        [only] if only.name == prefix => Vec::new(),
-        _ => matches,
-    }
+/// A list saying what the user has just finished typing is in the way: there is
+/// nothing left to choose, and the next key is the one that sends. A name that
+/// another match extends still leaves a choice (`resume` and `resume_all`), so
+/// the list stays; a row the letters only resemble (`autoreview` for `review`)
+/// is no choice at all and must not keep a finished name open.
+fn settled(matches: Vec<Entry>, needle: &str) -> Vec<Entry> {
+    let names = matches.iter().any(|entry| entry.name == needle);
+    let extended = matches
+        .iter()
+        .any(|entry| entry.name != needle && entry.name.starts_with(needle));
+    if names && !extended { Vec::new() } else { matches }
 }
 
 /// The rows the popup shows, and the first of them.
@@ -301,16 +397,33 @@ pub fn window(len: usize, selected: usize, rows: usize) -> (usize, usize) {
     (first, rows)
 }
 
+/// What a popup row is drawn with.
+///
+/// The matcher and the glyph preset travel together because both come from the
+/// same draft and the same settings, and a row cannot underline the right
+/// characters without the needle that ranked it.
+#[derive(Debug, Clone, Copy)]
+pub struct Look<'a> {
+    /// The needle the rows were ranked for; the characters it matched in a name
+    /// are underlined.
+    pub needle: &'a str,
+    /// The glyphs in force, so the marker follows the chosen preset.
+    pub symbols: Symbols,
+}
+
 /// The popup's rows as drawn: one line per command, cut to `width` cells.
 ///
 /// Each line is padded to the full width so the row clears whatever the frame
-/// left behind it, and the selected one carries the prompt's highlight.
+/// left behind it. The chosen row starts with the prompt's marker, so the row
+/// the keys act on is the one that looks chosen, and the characters the needle
+/// matched in the name are underlined on top of the row style.
 pub fn popup_lines(
     entries: &[Entry],
     selected: usize,
     first: usize,
     count: usize,
     width: usize,
+    look: Look<'_>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let visible: Vec<&Entry> = entries.iter().skip(first).take(count).collect();
@@ -320,16 +433,31 @@ pub fn popup_lines(
         .map(|label| UnicodeWidthStr::width(label.as_str()))
         .max()
         .unwrap_or(0);
+    // The marker and the space after it, which every row spends so the names
+    // line up whether or not the row is chosen.
+    let lead = usize::from(look.symbols.prompt_marker_width()) + 1;
     visible
         .iter()
         .enumerate()
         .map(|(offset, entry)| {
             let chosen = first + offset == selected;
-            let mut body = format!(" {}", labels[offset]);
+            let mut body = String::with_capacity(lead + labels[offset].len() + entry.description.len());
+            if chosen {
+                body.push_str(look.symbols.prompt_marker);
+            } else {
+                body.push_str(&" ".repeat(lead - 1));
+            }
+            body.push(' ');
+            body.push_str(&labels[offset]);
             body.push_str(
                 &" ".repeat(label_width.saturating_sub(UnicodeWidthStr::width(labels[offset].as_str())) + GAP),
             );
             body.push_str(&entry.description);
+            // The label starts with `/`; the name the matcher saw follows it.
+            let emphasise: Vec<usize> = match crate::fuzzy::find(look.needle, entry.name.as_str()) {
+                Some(found) => found.positions.iter().map(|position| position + lead + 1).collect(),
+                None => Vec::new(),
+            };
             let style = if chosen {
                 Style::default()
                     .fg(theme.prompt.prompt_border)
@@ -338,28 +466,45 @@ pub fn popup_lines(
             } else {
                 Style::default().fg(theme.prompt.prompt_text)
             };
-            Line::from(Span::styled(fit(&body, width), style))
+            let mark = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+            Line::from(marked_fit(&body, &emphasise, width, style, mark))
         })
         .collect()
 }
 
-/// `text` cut or padded to exactly `width` cells.
+/// `text` cut or padded to exactly `width` cells, with `emphasised` underlined.
 ///
 /// A character that would cross the edge starts no row: the cell stays a space,
-/// so a wide glyph is never split in half.
-fn fit(text: &str, width: usize) -> String {
-    let mut fitted = String::with_capacity(text.len() + width);
+/// so a wide glyph is never split in half. Runs of like characters share one
+/// span, so a row without an emphasis stays a single span.
+fn marked_fit(text: &str, emphasised: &[usize], width: usize, style: Style, mark: Style) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut run_marked = false;
     let mut used = 0;
-    for character in text.chars() {
+    for (index, character) in text.chars().enumerate() {
         let cell = UnicodeWidthChar::width(character).unwrap_or(0);
         if used + cell > width {
             break;
         }
         used += cell;
-        fitted.push(character);
+        let marked = emphasised.binary_search(&index).is_ok();
+        if !run.is_empty() && marked != run_marked {
+            spans.push(Span::styled(
+                std::mem::take(&mut run),
+                if run_marked { mark } else { style },
+            ));
+        }
+        run_marked = marked;
+        run.push(character);
     }
-    fitted.push_str(&" ".repeat(width.saturating_sub(used)));
-    fitted
+    if !run.is_empty() {
+        spans.push(Span::styled(run, if run_marked { mark } else { style }));
+    }
+    if used < width {
+        spans.push(Span::styled(" ".repeat(width - used), style));
+    }
+    spans
 }
 
 /// The slash popup: the commands the draft offers, and the row chosen.
@@ -479,6 +624,14 @@ impl SlashPopup {
     /// The name `editor.complete` fills in.
     pub fn selected_name(&self) -> Option<&str> {
         self.matches.get(self.selected).map(|entry| entry.name.as_str())
+    }
+
+    /// The needle the matches were ranked for, when the draft asks for a list.
+    ///
+    /// The rows are drawn from it: the characters it matched are the ones the
+    /// frame underlines.
+    pub fn needle(&self) -> Option<&str> {
+        prefix(&self.draft)
     }
 
     /// The rows the popup may show: the first one, and how many.

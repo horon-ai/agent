@@ -11,6 +11,8 @@
 
 pub mod app;
 pub mod commands;
+pub mod context;
+mod fuzzy;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -26,6 +28,8 @@ pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
 pub mod theme;
+mod title;
+mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
 mod wrap;
@@ -37,6 +41,14 @@ mod streaming_tests;
 #[cfg(test)]
 #[path = "tool_line_tests.rs"]
 mod tool_line_tests;
+
+#[cfg(test)]
+#[path = "tool_expand_tests.rs"]
+mod tool_expand_tests;
+
+#[cfg(test)]
+#[path = "title_tests.rs"]
+mod title_tests;
 
 #[cfg(test)]
 #[path = "turn_state_tests.rs"]
@@ -59,12 +71,20 @@ mod app_settings_tests;
 mod scroll_tests;
 
 #[cfg(test)]
+#[path = "context_tests.rs"]
+mod context_tests;
+
+#[cfg(test)]
 #[path = "markdown_tests.rs"]
 mod markdown_tests;
 
 #[cfg(test)]
 #[path = "help_tests.rs"]
 mod help_tests;
+
+#[cfg(test)]
+#[path = "fuzzy_tests.rs"]
+mod fuzzy_tests;
 
 use std::time::Duration;
 
@@ -106,25 +126,38 @@ Keys:
   Alt-Enter      start a new line (Ctrl-J does the same; most terminals
                  send Shift-Enter as a plain Enter, which sends)
   Tab            complete the slash command being typed
-  Esc            interrupt the running turn
+  Esc            send the queued messages into the running turn, or
+                 interrupt it when nothing is queued
   Ctrl-C         cancel a running turn, or leave when nothing is running
   Ctrl-D         leave
   Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
   Ctrl-W         delete the word before the cursor
+  Ctrl-R         search the drafts sent before this one
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-O         show or hide the whole output of the newest cut tool call
+  Shift-Tab      step to the next reasoning effort
+  Alt-P          pick the model this session uses
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force.
 
 Commands:
-  /help          list the commands, including the harness ones and the
-                 markdown files under .horon/commands and $HORON_HOME/commands
+  /help          list the commands (built-in, harness, command files),
+                 the skills and the keys in force; /help <command>
+                 describes one of them
   /clear         clear the transcript pane
+  /effort        set the reasoning effort, or pick one from the ladder
+  /exit          leave, the same as /quit
+  /keys          list the keys in force and what each does
   /model [name]  pick a model from a list, or switch to the one named
-  /resume        pick a session stored for this directory and replay it
-  /settings      open the settings screen, generated from the registry
+  /new           start a new session in this directory
   /quit          leave
+  /resume [id]   replay a stored session, or pick one from the list
+  /settings      open the settings screen, generated from the registry
+  /skills        list the skills the harness reports, and put one in the
+                 draft
+  /switch [id]   move to another stored session, or pick one from the list
   //text         send the literal message /text
 ";
 
@@ -291,6 +324,15 @@ fn show_failure(message: &str) {
     }
 }
 
+/// The name the window carries for the app's state.
+///
+/// The session's own title wins and the working directory names a session the
+/// daemon never titled, so a stack of terminals says which one belongs to which
+/// session and a fresh window still says where it is.
+fn window_label(app: &App) -> String {
+    title::label(app.session_title.as_deref(), app.cwd.as_deref())
+}
+
 /// Drive the real terminal until the user leaves.
 fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
     let mut themes = ThemeLoader::new();
@@ -320,18 +362,35 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
             return 1;
         }
     };
-    // The restore hook knows nothing about the paste mode or the mouse mode, so
-    // it is chained behind hooks that turn them off: a panic must not leave
-    // either mode on for the next program in this terminal.
+    // The restore hook knows nothing about the paste mode, the mouse mode or the
+    // window title, so it is chained behind hooks that undo those: a panic must
+    // not leave a mode on, or the window named after a session that is gone, for
+    // the next program in this terminal.
     paste::guard_panics();
     scroll::guard_panics();
+    title::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
         app.warn(format!("paste: {error}"));
     }
-    let (code, failure) = event_loop(&mut terminal, &mut app, &runtime.commands, reloader, &mut themes, keys);
+    let mut title = title::WindowTitle::stdout();
+    if let Err(error) = title.start(&window_label(&app)) {
+        app.warn(format!("title: {error}"));
+    }
+    let (code, failure) = event_loop(
+        &mut terminal,
+        &mut app,
+        &mut title,
+        &runtime.commands,
+        reloader,
+        &mut themes,
+        keys,
+    );
     paste::disable();
+    // The stack entry goes back with the screen: the title the shell set is the
+    // one the next prompt should be in.
+    title::pop();
     // Released on the normal exit as well as the error one: a captured terminal
     // does not hand a drag back to its own text selection.
     scroll::disable_mouse();
@@ -402,6 +461,7 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
+    title: &mut title::WindowTitle,
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
@@ -432,6 +492,16 @@ where
         if let Some(action) = app.take_queued() {
             loop_io::dispatch(app, commands, action);
             changed = true;
+        }
+        // The session and the working directory can change while the client
+        // runs; the window is renamed only when the label on it is not the one
+        // the app now names.
+        if changed {
+            let label = window_label(app);
+            if let Err(error) = title.show(&label) {
+                app.warn(format!("title: {error}"));
+                changed = true;
+            }
         }
         // The reloader throttles itself to one file check per second; the
         // theme loader, the key bindings and the command directories share
@@ -674,6 +744,10 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             first,
             count,
             usize::from(popup_area.width),
+            crate::help::Look {
+                needle: app.slash.needle().unwrap_or(""),
+                symbols,
+            },
             theme,
         );
         frame.render_widget(Paragraph::new(lines), popup_area);
@@ -842,9 +916,14 @@ fn blocks(app: &App) -> Vec<Block<'_>> {
 /// The wrapped height is what the scrollback measures, so a block means the same
 /// thing here and in `measure_transcript`. `first` is the oldest block, which has
 /// nothing above it to be separated from.
-fn block_rows(block: &Block<'_>, look: &item_lines::Look<'_>, first: bool) -> Vec<Line<'static>> {
+fn block_rows(
+    block: &Block<'_>,
+    look: &item_lines::Look<'_>,
+    expand: Option<&tool_expand::Frame<'_>>,
+    first: bool,
+) -> Vec<Line<'static>> {
     let lines = match block {
-        Block::Item(item) => item_lines::lines(item, look),
+        Block::Item(item) => item_lines::lines(item, look, expand),
         Block::Reasoning(text) => item_lines::reasoning(text, look),
         Block::Answer(text) => item_lines::answer(text, look),
     };
@@ -871,6 +950,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         theme,
         symbols,
         settings,
+        bindings,
         ..
     } = app;
     let look = item_lines::Look {
@@ -883,8 +963,12 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         open_rows(transcript.open_reasoning(), &look, true),
         open_rows(transcript.open_text(), &look, false),
     ];
+    // An expanded call is one row taller per row of its whole output, so the
+    // height measured here has to know about the expansion: a view held above
+    // the end counts this height, and a stale one would leave the offset short.
+    let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        Some(item) => block_rows(&Block::Item(item), &look, index == 0).len(),
+        Some(item) => block_rows(&Block::Item(item), &look, Some(&expand), index == 0).len(),
         None => 0,
     });
 }
@@ -901,10 +985,11 @@ fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -
 /// The newest rows, following the end of the conversation.
 fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
+    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let blocks = blocks(app);
     for (index, block) in blocks.iter().enumerate().rev() {
-        for row in block_rows(block, &look, index == 0).into_iter().rev() {
+        for row in block_rows(block, &look, Some(&expand), index == 0).into_iter().rev() {
             rows.push(row);
             if rows.len() >= capacity {
                 break;
@@ -925,6 +1010,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 /// edge of the view is wrapped, plus the blocks the pane actually fills with.
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
+    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
     let blocks = blocks(app);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
@@ -942,7 +1028,7 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
             }
             _ => {}
         }
-        let block = block_rows(block, &look, index == 0);
+        let block = block_rows(block, &look, Some(&expand), index == 0);
         let take_from = match heights.get(index) {
             Some(&height) if below > 0 => height.saturating_sub(below),
             _ => block.len(),

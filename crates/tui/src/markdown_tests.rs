@@ -268,7 +268,7 @@ fn a_user_line_keeps_its_prefix_and_indent() {
         markdown: true,
     };
     let item = Item::User("a **user** line".to_string());
-    let rows = item_lines::lines(&item, &look);
+    let rows = item_lines::lines(&item, &look, None);
     // Markdown is for the model's text only: the user's own words are as typed.
     assert_eq!(texts(&rows), vec!["> a **user** line"]);
     assert_eq!(rows[0].indent(), 2);

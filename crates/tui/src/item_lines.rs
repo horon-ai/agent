@@ -18,6 +18,7 @@ use crate::app::App;
 use crate::markdown;
 use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
+use crate::tool_expand;
 use crate::tool_line;
 use crate::transcript::Item;
 use crate::wrap::Indented;
@@ -59,7 +60,11 @@ pub(crate) fn markdown_enabled(settings: &Settings) -> bool {
 }
 
 /// The lines of one item, in display order.
-pub(crate) fn lines(item: &Item, look: &Look<'_>) -> Vec<Indented> {
+///
+/// `expand` is consulted for tool items only: the pane passes the frame it built
+/// for this draw, so a call whose output was cut is drawn in full without the
+/// look having to carry state that belongs to the transcript.
+pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::Frame<'_>>) -> Vec<Indented> {
     match item {
         Item::User(text) => prefixed(
             Span::styled("> ", Style::default().fg(look.theme.core.accent)),
@@ -77,27 +82,35 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>) -> Vec<Indented> {
                 .add_modifier(Modifier::DIM),
         ),
         Item::Assistant(text) => answer(text, look),
-        Item::Tool(call) => tool_line::lines(call, look.theme, look.symbols, look.width)
-            .into_iter()
-            .enumerate()
-            // The head row introduces the call; every row under it (the failure
-            // text, the output preview, the count of rows the preview hides) is
-            // written after a two-column pad, so a wrapped row has to stay
-            // under that text rather than slide back to the first column.
-            .map(|(index, line)| {
-                if index == 0 {
-                    Indented::plain(line)
-                } else {
-                    Indented::new(line, INDENT)
-                }
-            })
-            .collect(),
+        Item::Tool(call) => {
+            let retained = match expand {
+                Some(expand) => expand.retained(&call.call_id),
+                None => tool_line::Retained::default(),
+            };
+            tool_line::lines_with(call, look.theme, look.symbols, look.width, retained)
+                .into_iter()
+                .enumerate()
+                // The head row introduces the call; every row under it (the
+                // failure text, the output preview, the count of rows the
+                // preview hides) is written after a two-column pad, so a wrapped
+                // row has to stay under that text rather than slide back to the
+                // first column.
+                .map(|(index, line)| {
+                    if index == 0 {
+                        Indented::plain(line)
+                    } else {
+                        Indented::new(line, INDENT)
+                    }
+                })
+                .collect()
+        }
         Item::Notice(text) => notice(text, look),
         Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(look.theme.core.error)),
         // Reasoning is drawn dimmed and indented, and the theme gains no token:
         // a new required token would reject every theme file already written,
         // and the notice color is already the dimmest text the client has.
         Item::Reasoning(text) => reasoning(text, look),
+        Item::Context(report) => crate::context::lines(report, look),
     }
 }
 

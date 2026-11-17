@@ -20,6 +20,8 @@ use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
 
 #[cfg(test)]
+mod effort_tests;
+#[cfg(test)]
 mod tests;
 
 /// The segments a status line can show, in catalogue order.
@@ -132,6 +134,8 @@ pub struct StatusData<'a> {
     pub provider: Option<&'a str>,
     /// Model reported by the daemon.
     pub model: Option<&'a str>,
+    /// Reasoning effort the daemon reported for the model, e.g. `high`.
+    pub effort: Option<&'a str>,
     /// Session the client is attached to.
     pub session_id: Option<&'a str>,
     /// Whether a turn is in flight.
@@ -308,6 +312,9 @@ pub fn local_minute() -> (u32, u32) {
 struct Entry {
     id: SegmentId,
     text: String,
+    /// The same text without the part that gives way first under width
+    /// pressure, when the segment has such a part.
+    without_effort: Option<String>,
     style: Style,
 }
 
@@ -320,8 +327,8 @@ pub fn render(data: &StatusData<'_>, layout: &Layout, theme: &Theme, symbols: Sy
     if width == 0 {
         return Line::default();
     }
-    let mut left = collect(&layout.left, data, layout, theme);
-    let mut right = collect(&layout.right, data, layout, theme);
+    let mut left = collect(&layout.left, data, layout, theme, symbols);
+    let mut right = collect(&layout.right, data, layout, theme, symbols);
     let available = usize::from(width);
     let separator = Span::styled(
         format!(" {} ", symbols.separator),
@@ -335,8 +342,13 @@ pub fn render(data: &StatusData<'_>, layout: &Layout, theme: &Theme, symbols: Sy
             break;
         }
         // The last segment stays even when it is wider than the pane: a
-        // clipped model is more useful than an empty bar.
+        // clipped model is more useful than an empty bar. What it gives up
+        // first is the effort, so a clip lands inside the model name rather
+        // than cutting the line at a dangling separator.
         if left.len() + right.len() <= 1 {
+            if drop_effort(&mut left, &mut right) {
+                continue;
+            }
             break;
         }
         if !drop_lowest(&mut left, &mut right) {
@@ -356,16 +368,25 @@ pub fn render(data: &StatusData<'_>, layout: &Layout, theme: &Theme, symbols: Sy
 }
 
 /// The visible segments of one side, in order, without empty entries.
-fn collect(ids: &[SegmentId], data: &StatusData<'_>, layout: &Layout, theme: &Theme) -> Vec<Entry> {
+fn collect(ids: &[SegmentId], data: &StatusData<'_>, layout: &Layout, theme: &Theme, symbols: Symbols) -> Vec<Entry> {
     let mut entries = Vec::new();
     for id in ids {
-        let text = segment_text(*id, data, layout);
+        let text = segment_text(*id, data, layout, symbols, true);
         if text.is_empty() {
             continue;
         }
+        // The model's effort is what a narrow line gives up first: the model
+        // name alone still says which model answers, while the effort says
+        // how hard it thinks.
+        let without_effort = if *id == SegmentId::Model && effort_text(data).is_some() {
+            Some(segment_text(*id, data, layout, symbols, false))
+        } else {
+            None
+        };
         entries.push(Entry {
             id: *id,
             text,
+            without_effort,
             style: segment_style(*id, data, theme),
         });
     }
@@ -373,14 +394,23 @@ fn collect(ids: &[SegmentId], data: &StatusData<'_>, layout: &Layout, theme: &Th
 }
 
 /// The text of one segment, or the empty string when it has no data.
-fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout) -> String {
+fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: Symbols, with_effort: bool) -> String {
     match id {
-        SegmentId::Model => match (data.provider, data.model) {
-            (Some(provider), Some(model)) => format!("{provider}/{model}"),
-            (None, Some(model)) => model.to_string(),
-            (Some(provider), None) => provider.to_string(),
-            (None, None) => String::new(),
-        },
+        SegmentId::Model => {
+            let name = match (data.provider, data.model) {
+                (Some(provider), Some(model)) => format!("{provider}/{model}"),
+                (None, Some(model)) => model.to_string(),
+                (Some(provider), None) => provider.to_string(),
+                (None, None) => String::new(),
+            };
+            match effort_text(data) {
+                Some(effort) if with_effort && !name.is_empty() => {
+                    let separator = segment_separator(symbols);
+                    format!("{name} {separator} {effort}")
+                }
+                _ => name,
+            }
+        }
         SegmentId::Session => match data.session_id {
             Some(id) => short_id(id),
             None => String::new(),
@@ -405,6 +435,27 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout) -> String
         },
     }
 }
+
+/// The reasoning effort, when the daemon reported one worth drawing.
+///
+/// A blank effort is no effort: drawn as it is, it leaves a separator with
+/// nothing after it.
+fn effort_text<'a>(data: &StatusData<'a>) -> Option<&'a str> {
+    data.effort.filter(|effort| !effort.trim().is_empty())
+}
+
+/// The separator the model and its effort are joined with, as the preset draws
+/// it.
+fn segment_separator(symbols: Symbols) -> &'static str {
+    if symbols.separator.is_empty() {
+        DEFAULT_SEPARATOR
+    } else {
+        symbols.separator
+    }
+}
+
+/// The separator used when a preset draws none of its own.
+const DEFAULT_SEPARATOR: &str = "·";
 
 /// What the turn is doing, in the vocabulary the status segment uses.
 fn status_word<'a>(data: &StatusData<'a>) -> &'a str {
@@ -531,7 +582,7 @@ fn tail_cells(text: &str, budget: usize) -> String {
 }
 
 /// A token count in a compact form, e.g. `12.3k`.
-fn compact(value: u64) -> String {
+pub(crate) fn compact(value: u64) -> String {
     if value >= 1_000_000 {
         format!("{:.1}m", value as f64 / 1_000_000.0)
     } else if value >= 1_000 {
@@ -605,4 +656,16 @@ fn drop_lowest(left: &mut Vec<Entry>, right: &mut Vec<Entry>) -> bool {
         }
         (None, None) => false,
     }
+}
+
+/// Drop the effort a segment carries, leaving its name. Returns whether one was
+/// dropped.
+fn drop_effort(left: &mut [Entry], right: &mut [Entry]) -> bool {
+    for entry in left.iter_mut().chain(right.iter_mut()) {
+        if let Some(text) = entry.without_effort.take() {
+            entry.text = text;
+            return true;
+        }
+    }
+    false
 }

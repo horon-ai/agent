@@ -114,6 +114,7 @@ audit_ignores=(
   --ignore RUSTSEC-2026-0206 # rustybuzz: transitive via usvg/resvg (SVG text rendering)
   --ignore RUSTSEC-2026-0192 # ttf-parser: transitive via fontdb/usvg and lopdf
   --ignore RUSTSEC-2024-0449 # unsafe-libyaml: transitive via serde_yaml (horon-agent-base)
+  --ignore RUSTSEC-2026-0543 # chrono: unmaintained upstream (no patched version); dates are serialized into stored sessions, so the jiff/time migration is its own task (#377)
 )
 if command -v cargo-audit >/dev/null 2>&1 || cargo audit --version >/dev/null 2>&1; then
   # --deny warnings: unmaintained, unsound and yanked notices fail the job

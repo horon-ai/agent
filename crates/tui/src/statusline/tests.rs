@@ -36,6 +36,7 @@ fn sample() -> StatusData<'static> {
     StatusData {
         provider: Some("anthropic"),
         model: Some("claude-sonnet-4"),
+        effort: None,
         session_id: Some("abcdef1234567890"),
         pending_turn: false,
         disconnected: false,
