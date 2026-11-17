@@ -662,6 +662,7 @@ def stage_probe(
 
     per_stage = {name: [] for name in STAGE_PROBE_STAGES}
     details = None
+    counters = None
     failures = []
     measured = 0
     for index in range(samples):
@@ -680,6 +681,9 @@ def stage_probe(
         for stage in stages:
             per_stage[stage["name"]].append(float(stage.get("ms") or 0.0))
         details = {stage["name"]: stage.get("detail") for stage in stages}
+        # The counter delta is what proves which pass read the log: a stage that
+        # reports one log's worth of store_read_bytes read it, whatever its time.
+        counters = {stage["name"]: stage.get("delta") for stage in stages}
         log_sha = (run["report"].get("fixture") or {}).get("log_sha256")
         if fixture.get("sha256") and log_sha and log_sha != fixture["sha256"]:
             failures.append("stage probe read a different log (%s != %s)" % (log_sha, fixture["sha256"]))
@@ -712,6 +716,7 @@ def stage_probe(
         "anchor": anchor,
         "stages": stages,
         "detail": details,
+        "counters": counters,
         "failures": deduped,
     }
 

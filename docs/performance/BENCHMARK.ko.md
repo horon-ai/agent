@@ -384,7 +384,7 @@ HORON_HOME=<픽스처 홈> HORON_AGENT_PERF_COUNTERS=1 \
   --session perf-events-10000 --expect-events 10000 --expect-messages 9999
 ```
 
-`bench_loading.py`는 `--binary` 옆에서 이 프로브를 찾고, `cold` 모드의 세션 픽스처마다 콜드 통과 세 번을 그 픽스처의 `stage_probe` 블록으로 기록한다. 단계마다 `p50_ms`, `min_ms`, `max_ms`, `mad_ms`가 들어가고, 측정 회차가 콜드일 때만 `ratio_to_attach_history_pct`가 붙는다. 이 블록은 귀속 자료이고 예산이 아니다. 단계는 별도 프로세스에서 차례로 돌므로 합이 `attach_history`가 되지 않고, 합을 지연으로 인용하면 안 된다. 측정된 지연은 같은 리포트의 `anchor.attach_history_p50_ms` 하나뿐이다. 단계 하나가 실패하거나 회차가 돌지 않으면 블록 전체가 `status: failed`가 되고, 그 안의 수치는 진단용이며 증거가 아니다. `--stage-probe-samples 0`은 블록을 건너뛰고, 바이너리가 없으면 `status: skipped`를 기록하지 0으로 채우지 않는다. 단계별 절대 시간은 바이트 카운터와 같은 이유로 한 리포트 안에서만 비교하고, 읽기 단계는 모두 페이지 캐시에서 나오므로 디스크 지연 주장이 아니다.
+`bench_loading.py`는 `--binary` 옆에서 이 프로브를 찾고, `cold` 모드의 세션 픽스처마다 콜드 통과 세 번을 그 픽스처의 `stage_probe` 블록으로 기록한다. 단계마다 `p50_ms`, `min_ms`, `max_ms`, `mad_ms`와 `counters`의 카운터 델타가 들어가고, 측정 회차가 콜드일 때만 `ratio_to_attach_history_pct`가 붙는다. 이 블록은 귀속 자료이고 예산이 아니다. 단계는 별도 프로세스에서 차례로 돌므로 합이 `attach_history`가 되지 않고, 합을 지연으로 인용하면 안 된다. 측정된 지연은 같은 리포트의 `anchor.attach_history_p50_ms` 하나뿐이다. 단계 하나가 실패하거나 회차가 돌지 않으면 블록 전체가 `status: failed`가 되고, 그 안의 수치는 진단용이며 증거가 아니다. `--stage-probe-samples 0`은 블록을 건너뛰고, 바이너리가 없으면 `status: skipped`를 기록하지 0으로 채우지 않는다. 단계별 절대 시간은 바이트 카운터와 같은 이유로 한 리포트 안에서만 비교하고, 읽기 단계는 모두 페이지 캐시에서 나오므로 디스크 지연 주장이 아니다.
 
 수치를 함께 읽는 법은 이렇다. `log_read`는 복사 비용이고, `full_scan`은 이미 페이지에 올라온 바이트를 디코딩한 값이며, `graph_replay`는 투영, JSON 단계 셋은 로드의 직렬화와 역직렬화 절반이다. `checkpoint_recent`와 `history_rescan`은 로드가 이미 한 일을 되풀이하는 통과이므로, 재개가 읽는 바이트에 비해 느리면 여기부터 본다.
 
