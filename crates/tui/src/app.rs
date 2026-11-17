@@ -26,6 +26,7 @@ use crate::transcript::Decision;
 use crate::transcript::Transcript;
 
 mod commands;
+mod effort;
 mod history_search;
 mod keys;
 mod picker;
@@ -33,6 +34,9 @@ mod prompts;
 mod sending;
 mod sessions;
 mod settings;
+
+#[cfg(test)]
+mod effort_cmd_tests;
 
 #[cfg(test)]
 mod history_search_tests;
@@ -65,6 +69,8 @@ pub enum Action {
     },
     /// Switch to the model named.
     Model(String),
+    /// Set the reasoning effort to the level named.
+    Effort(String),
     /// Ask for the model list the picker offers.
     Models,
     /// Ask for the sessions stored for this working directory.
@@ -160,6 +166,27 @@ pub struct App {
     pub provider: Option<String>,
     /// Reasoning effort the daemon reported for the model, e.g. `high`.
     pub reasoning_effort: Option<String>,
+    /// The effort the client last asked for, until an answer names it.
+    ///
+    /// The cycle key steps from here rather than from the level last reported,
+    /// so two presses in quick succession walk two levels instead of asking for
+    /// the same one twice. It is cleared when an answer confirms a level or a
+    /// request fails.
+    effort_requested: Option<String>,
+    /// The reasoning effort asked for while a turn was running.
+    ///
+    /// The daemon answers an effort request only after the running turn
+    /// releases the agent, so a request sent mid-turn would hold the bridge
+    /// thread — every event and the cancel key with it — until the turn ended.
+    /// The level waits here instead and leaves with the next
+    /// [`App::take_queued`] pass. A newer level replaces a waiting one.
+    effort_after_turn: Option<String>,
+    /// The model asked for while a turn was running.
+    ///
+    /// Same reason as `effort_after_turn`: the daemon applies a switch after the
+    /// turn releases the agent. It leaves before the effort, because the report
+    /// that follows a switch clears an effort it does not name.
+    model_after_turn: Option<String>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
     /// Session the client is attached to, from the last event that named it.
@@ -234,6 +261,9 @@ impl App {
             model: None,
             provider: None,
             reasoning_effort: None,
+            effort_requested: None,
+            effort_after_turn: None,
+            model_after_turn: None,
             session_status: None,
             session_id: None,
             session_title: None,
@@ -281,6 +311,9 @@ impl App {
             model: None,
             provider: None,
             reasoning_effort: None,
+            effort_requested: None,
+            effort_after_turn: None,
+            model_after_turn: None,
             session_status: None,
             session_id: None,
             session_title: None,
@@ -331,6 +364,10 @@ impl App {
         self.exit_code = 1;
         self.disconnected = true;
         self.pending_turn = false;
+        // A change that was waiting for the turn can never leave: there is no
+        // connection left to send it over.
+        self.effort_after_turn = None;
+        self.model_after_turn = None;
         // A list that is still waiting for rows will never get them: with the
         // connection gone it can only swallow keys, so it goes with it.
         if self.picker.as_ref().is_some_and(Picker::is_loading) {

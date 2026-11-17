@@ -46,14 +46,34 @@ impl App {
         }
     }
 
-    /// The next queued message, as the action that sends it.
+    /// The next action a turn boundary releases, one per call.
+    ///
+    /// A model or an effort asked for during the turn goes first, the model
+    /// before the effort: the report that follows a switch clears an effort it
+    /// does not name, so an effort sent first could be wiped off the status line
+    /// by the answer to the model. Then comes the oldest queued message. The
+    /// waiting values are not held back by `resend_held`: a refused message
+    /// waits for the user, while these were asked for during the turn and are
+    /// the answer to that request.
     ///
     /// Called after a turn-end event: a message typed during a turn waits for
     /// that turn rather than racing it, and several of them keep their order.
     /// A message the harness refused holds the queue until the next turn ends
     /// or the user submits again, so a refused send cannot loop.
     pub fn take_queued(&mut self) -> Option<Action> {
-        if self.pending_turn || self.disconnected || self.resend_held {
+        if self.pending_turn || self.disconnected {
+            return None;
+        }
+        if let Some(model) = self.model_after_turn.take() {
+            return Some(Action::Model(model));
+        }
+        if let Some(level) = self.effort_after_turn.take() {
+            // The level steers the cycle key until an answer names it, exactly
+            // as one sent straight away does.
+            self.effort_requested = Some(level.clone());
+            return Some(Action::Effort(level));
+        }
+        if self.resend_held {
             return None;
         }
         let message = self.queue.first()?.clone();

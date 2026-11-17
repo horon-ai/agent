@@ -39,17 +39,18 @@ fn message(role: &str, content: &str) -> HistoryMessage {
 #[test]
 fn a_switch_carries_the_session_title_trimmed() {
     let session = record(r#"{"session_id":"s1","status":"idle","title":"  Fix the parser  "}"#);
-    let attached = described(session, Vec::new(), None, "/tmp/horon.sock");
+    let attached = described(session, Vec::new(), None, Some("high".to_string()), "/tmp/horon.sock");
     assert_eq!(attached.title.as_deref(), Some("Fix the parser"));
     assert_eq!(attached.description, "/tmp/horon.sock · s1");
+    assert_eq!(attached.effort.as_deref(), Some("high"));
 }
 
 #[test]
 fn a_blank_or_missing_title_is_no_title() {
     let blank = record(r#"{"session_id":"s1","status":"idle","title":"   "}"#);
-    assert_eq!(described(blank, Vec::new(), None, "s").title, None);
+    assert_eq!(described(blank, Vec::new(), None, None, "s").title, None);
     let untitled = record(r#"{"session_id":"s1","status":"idle"}"#);
-    assert_eq!(described(untitled, Vec::new(), None, "s").title, None);
+    assert_eq!(described(untitled, Vec::new(), None, None, "s").title, None);
 }
 
 #[test]
@@ -160,6 +161,7 @@ fn attached(session_id: &str) -> AttachedSession {
         session_id: session_id.to_string(),
         status: "idle".to_string(),
         model: None,
+        effort: None,
         history: Vec::new(),
         title: None,
     }

@@ -352,6 +352,7 @@ fn attaching_a_session_clears_the_effort_the_old_model_reported() {
             session_id: "session_b".to_string(),
             status: "idle".to_string(),
             model: Some("gpt-5".to_string()),
+            effort: None,
             history: Vec::new(),
             title: None,
         },

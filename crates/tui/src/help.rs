@@ -51,6 +51,11 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_EXPAND_TOOL,
         "show the whole output of the newest cut tool call, or hide it again",
     ),
+    (
+        ids::APP_CYCLE_EFFORT,
+        "step to the next reasoning effort, wrapping at the last one",
+    ),
+    (ids::APP_PICK_MODEL, "pick the model this session uses"),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -93,6 +98,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
+        "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",

@@ -41,6 +41,10 @@ pub mod ids {
     /// Show the whole output of the newest tool call whose preview was cut, and
     /// the preview again on the next press.
     pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
+    /// Step to the next reasoning-effort level, wrapping at the last one.
+    pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
+    /// Open the list of models this session can switch to.
+    pub const APP_PICK_MODEL: &str = "app.pick_model";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -138,6 +142,12 @@ pub const ACTIONS: &[ActionSpec] = &[
     // The key a cut tool preview names: reading the rest of one call's output
     // is the one thing the transcript cannot do with the scroll keys alone.
     ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
+    // `shift+tab` walks the effort ladder upwards. `tab` alone still completes
+    // the draft: an exact binding is looked up before an unshifted one, and the
+    // shift on the event stops `tab` from answering it.
+    ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
+    // The model list, one keystroke away from the draft being typed.
+    ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),

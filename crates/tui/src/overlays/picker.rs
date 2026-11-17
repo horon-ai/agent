@@ -1,8 +1,9 @@
 //! A filterable list drawn over the conversation.
 //!
-//! `/model`, `/resume` and the history search all ask the user to pick one row
-//! out of a list, so this screen knows nothing about models, sessions or drafts:
-//! it holds rows, the filter the user typed, and the row the selection is on.
+//! `/model`, `/effort`, `/resume` and the history search all ask the user to
+//! pick one row out of a list, so this screen knows nothing about models,
+//! efforts, sessions or drafts: it holds rows, the filter the user typed, and
+//! the row the selection is on.
 //! The caller decides what a chosen row means, which is what keeps the keys and
 //! the drawing identical for every list.
 //!
@@ -31,6 +32,8 @@ const FIRST_PAGE: usize = 10;
 pub enum Kind {
     /// The models this session can switch to.
     Models,
+    /// The reasoning-effort levels the client offers.
+    Efforts,
     /// The sessions stored for this working directory.
     Sessions,
     /// The drafts sent before this one.

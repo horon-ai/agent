@@ -223,6 +223,7 @@ fn attaching_clears_the_old_session_and_replays_the_stored_one() {
             session_id: "session_b".to_string(),
             status: "idle".to_string(),
             model: Some("new-model".to_string()),
+            effort: Some("high".to_string()),
             history: history(&[
                 ("user", "hello from before"),
                 ("assistant", "and the answer"),
@@ -246,6 +247,11 @@ fn attaching_clears_the_old_session_and_replays_the_stored_one() {
     assert_eq!(app.session_id.as_deref(), Some("session_b"));
     assert_eq!(app.description, "socket · session_b");
     assert_eq!(app.model.as_deref(), Some("new-model"));
+    assert_eq!(
+        app.reasoning_effort.as_deref(),
+        Some("high"),
+        "the effort the attached session reported is not on the status line"
+    );
     assert!(app.provider.is_none(), "the provider of the old session survived");
     assert!(app.tokens.is_none(), "the token counts of the old session survived");
 

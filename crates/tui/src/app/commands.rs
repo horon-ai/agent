@@ -52,11 +52,16 @@ impl App {
                 None
             }
             // No argument asks for the list the picker draws; a name still
-            // switches straight away, which is what a script or a habit uses.
+            // switches straight away, or waits for the turn to end, which is
+            // what a script or a habit uses.
             Local::Model => match arguments.trim() {
                 "" => self.open_models(),
-                name => Some(Action::Model(name.to_string())),
+                name => self.ask_model(name),
             },
+            // `/effort` answers itself: the ladder is the client's, so an
+            // unknown level is refused before a request is made, and the only
+            // thing that leaves the client is a level it holds.
+            Local::Effort => self.run_effort(arguments),
             // `/new` asks the bridge for a session in the directory the client
             // is in; nothing is claimed on screen until the daemon answers,
             // because a create can be refused.

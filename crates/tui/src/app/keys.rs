@@ -135,7 +135,12 @@ impl App {
                         self.slash.move_by(1);
                         return None;
                     }
-                    keys::ids::EDITOR_COMPLETE => {
+                    // `shift+tab` walks the effort ladder everywhere the draft
+                    // is not choosing a command. With the popup open `tab` is
+                    // the popup's own key, so its shifted form completes the
+                    // row on screen rather than changing the effort under the
+                    // list the user is reading.
+                    keys::ids::EDITOR_COMPLETE | keys::ids::APP_CYCLE_EFFORT => {
                         self.complete();
                         return None;
                     }
@@ -201,6 +206,8 @@ impl App {
                 self.expand_tool();
                 return None;
             }
+            Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
+            Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
             // Every edit ends a walk through the history: the draft on screen
             // is being changed, and a later `down` must not replace the change
             // with the entry the walk started from.

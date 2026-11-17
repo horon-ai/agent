@@ -12,7 +12,7 @@ use std::time::Duration;
 use horon_agent_sdk::api::ApiEvent;
 use horon_agent_sdk::{ConnectOptions, Error, EventStream, HistoryMessage, HoronAgentClient, SessionInfo};
 
-use super::{AttachedSession, cut, detail};
+use super::{AttachedSession, cut, detail, runtime};
 
 /// How to reach the harness, kept after the first connection took the options.
 ///
@@ -108,8 +108,8 @@ pub(super) fn created(
     let client = HoronAgentClient::connect(dial.options())?;
     let stream = client.events(None);
     let session = client.create_session(working_dir.map(str::to_owned))?;
-    let model = current_model(&client, &session.session_id);
-    Ok((client, stream, described(session, Vec::new(), model, socket)))
+    let (model, effort) = runtime::identity(&client, &session.session_id);
+    Ok((client, stream, described(session, Vec::new(), model, effort, socket)))
 }
 
 /// Attach to a session and read back what the client has to show for it.
@@ -119,8 +119,8 @@ pub(super) fn created(
 pub(super) fn resumed(client: &HoronAgentClient, session_id: &str, socket: &str) -> Result<AttachedSession, Error> {
     let session = client.attach_session(session_id)?;
     let history = client.get_history(&session.session_id)?;
-    let model = current_model(client, &session.session_id);
-    Ok(described(session, history, model, socket))
+    let (model, effort) = runtime::identity(client, &session.session_id);
+    Ok(described(session, history, model, effort, socket))
 }
 
 /// Move the worker to the session a change answered with.
@@ -235,22 +235,12 @@ pub(super) fn belongs(event: &ApiEvent, session_id: &str) -> bool {
     session_of(event).is_none_or(|named| named == session_id)
 }
 
-/// The model serving a session, when the catalog answers.
-///
-/// A catalog the daemon refuses leaves it unknown rather than failing a switch
-/// that already happened, since the events the switch emits carry it too.
-fn current_model(client: &HoronAgentClient, session_id: &str) -> Option<String> {
-    match client.list_models(session_id) {
-        Ok((_, current)) => current,
-        Err(_) => None,
-    }
-}
-
 /// A session the bridge moved to, in the shape the client shows.
 pub(super) fn described(
     session: SessionInfo,
     history: Vec<HistoryMessage>,
     model: Option<String>,
+    effort: Option<String>,
     socket: &str,
 ) -> AttachedSession {
     let title = session
@@ -264,6 +254,7 @@ pub(super) fn described(
         session_id: session.session_id,
         status: session.status,
         model,
+        effort,
         history,
         title,
     }

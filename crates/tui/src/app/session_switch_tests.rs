@@ -57,6 +57,7 @@ fn created(session_id: &str, title: Option<&str>) -> AttachedSession {
         session_id: session_id.to_string(),
         status: "idle".to_string(),
         model: None,
+        effort: None,
         history: Vec::new(),
         title: title.map(str::to_string),
     }

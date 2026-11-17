@@ -21,7 +21,11 @@ use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
 
+mod runtime;
 mod sessions;
+
+#[cfg(test)]
+mod runtime_tests;
 
 #[cfg(test)]
 mod sessions_tests;
@@ -70,6 +74,12 @@ pub enum Command {
     /// asks for `Command::Models`, which `serve` answers with a structure, so a
     /// name is the only thing this arm carries.
     Model(String),
+    /// Set how much the model deliberates before answering.
+    ///
+    /// The level is a name from the client's ladder rather than a type: which
+    /// levels a provider has is its own decision, and one it does not have is
+    /// refused with an error the transcript shows.
+    Effort(String),
     /// List the models the picker offers, with the one in force.
     Models,
     /// List the sessions stored for a working directory.
@@ -103,6 +113,20 @@ pub enum Incoming {
     Models {
         models: Vec<String>,
         current: Option<String>,
+    },
+    /// What the harness reports about the session it serves.
+    ///
+    /// `provider`, `model` and `effort` are what the status line shows, and each
+    /// is absent when the harness does not name it. `level` is the reasoning
+    /// effort this answer confirms, when it answers a request to set one: it
+    /// travels with the answer rather than in client state, so a report that
+    /// crossed a refusal cannot make the client claim a level the harness never
+    /// took.
+    RuntimeInfo {
+        provider: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
+        level: Option<String>,
     },
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
@@ -147,6 +171,12 @@ pub struct AttachedSession {
     pub status: String,
     /// The model serving it, when the catalog answered.
     pub model: Option<String>,
+    /// The reasoning effort the harness reported for that model, trimmed.
+    ///
+    /// It belongs to the session being attached to, so it is filled from the
+    /// session's own runtime report rather than left over from the one the
+    /// client is leaving.
+    pub effort: Option<String>,
     /// The stored conversation, oldest first.
     pub history: Vec<HistoryMessage>,
     /// The title the harness holds for it, trimmed, when it has one.
@@ -274,6 +304,25 @@ fn run_worker(
     commands: Receiver<Command>,
     events: Sender<Incoming>,
 ) {
+    // One answer before the first keystroke, so the first frame already names
+    // the model and the effort instead of waiting for a message to learn them.
+    // A failure is one notice and nothing else: the identity event that follows
+    // the connect fills the same fields, and a status line that stays blank is
+    // better than a client that cannot start.
+    match runtime::read(&client, &session_id) {
+        Ok(None) => {}
+        Ok(Some(incoming)) => {
+            if events.send(incoming).is_err() {
+                return;
+            }
+        }
+        Err(error) => {
+            let notice = Incoming::Notice(format!("could not read the runtime info: {error}"));
+            if events.send(notice).is_err() {
+                return;
+            }
+        }
+    }
     loop {
         // The connection flag is read by the pump so a dead transport is
         // reported even while the client sits idle with nothing to send.
@@ -496,6 +545,11 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             let rows = session_rows(client, session_id, working_dir.as_deref())?;
             Ok(Some(Incoming::Sessions(rows)))
         }
+        // The effort is answered here rather than in `apply` because the level
+        // on the status line comes from the runtime report, not from the set
+        // request: the harness stores the level and answers with the state it
+        // now reports.
+        Command::Effort(level) => runtime::set(client, session_id, &level),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -513,7 +567,11 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // Answered before they reach this point: they carry a structure rather
         // than a line. The attach retargets the connection the worker holds and
         // a create replaces it, so neither can produce a line here.
-        Command::Models | Command::Sessions { .. } | Command::NewSession { .. } | Command::Attach(_) => Ok(None),
+        Command::Effort(_)
+        | Command::Models
+        | Command::Sessions { .. }
+        | Command::NewSession { .. }
+        | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -539,6 +597,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
         Command::Model(_) => "could not switch the model",
+        Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
         Command::NewSession { .. } => "could not start a new session",

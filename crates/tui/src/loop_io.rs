@@ -38,6 +38,12 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             Incoming::SendFailed { text, message, lost } => app.send_failed(&text, &message, lost),
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Models { models, current } => app.show_models(models, current),
+            Incoming::RuntimeInfo {
+                provider,
+                model,
+                effort,
+                level,
+            } => app.runtime_info(provider, model, effort, level),
             Incoming::Sessions(rows) => app.show_sessions(rows),
             Incoming::Attached(session) => {
                 // Read before the attach so the notice names what happened: the
@@ -69,6 +75,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
         Action::Model(name) => Command::Model(name),
+        Action::Effort(level) => Command::Effort(level),
         Action::Models => Command::Models,
         // The directory is the one the client is working in, which is what
         // makes the list the sessions of this project rather than of the

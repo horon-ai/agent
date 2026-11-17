@@ -53,6 +53,8 @@ pub enum Local {
     Clear,
     /// Open the model picker, or switch to the model named.
     Model,
+    /// Set the reasoning effort, or pick one from the ladder.
+    Effort,
     /// Start a new session in this working directory.
     New,
     /// Open the settings screen.
@@ -73,6 +75,7 @@ impl Local {
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
             "model" => Some(Self::Model),
+            "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
             "settings" => Some(Self::Settings),
             "resume" => Some(Self::Resume),
@@ -90,6 +93,7 @@ impl Local {
             Self::Keys => "keys",
             Self::Clear => "clear",
             Self::Model => "model",
+            Self::Effort => "effort",
             Self::New => "new",
             Self::Settings => "settings",
             Self::Resume => "resume",
@@ -487,8 +491,8 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 10] = [
-    "clear", "exit", "help", "keys", "model", "new", "quit", "resume", "settings", "switch",
+const LOCAL_NAMES: [&str; 11] = [
+    "clear", "effort", "exit", "help", "keys", "model", "new", "quit", "resume", "settings", "switch",
 ];
 
 /// Every runtime command, in declaration order.

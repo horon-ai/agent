@@ -31,17 +31,25 @@ impl App {
     /// row for it: the list has to say what is in force, or the user cannot
     /// tell whether the top row is a change or the state they are already in.
     pub fn show_models(&mut self, models: Vec<String>, current: Option<String>) {
+        let provider = self.provider.clone();
         let mut rows: Vec<Row> = models
             .into_iter()
             .map(|model| {
                 let marked = current.as_deref() == Some(model.as_str());
-                Row::new(model.clone(), model).marked(marked)
+                let preview = model_preview(&model, provider.as_deref(), marked);
+                Row::new(model.clone(), model).marked(marked).with_preview(preview)
             })
             .collect();
         if let Some(current) = &current
             && !rows.iter().any(|row| row.current)
         {
-            rows.insert(0, Row::new(current.clone(), current.clone()).marked(true));
+            let preview = model_preview(current, provider.as_deref(), true);
+            rows.insert(
+                0,
+                Row::new(current.clone(), current.clone())
+                    .marked(true)
+                    .with_preview(preview),
+            );
         }
         self.fill(Kind::Models, rows);
     }
@@ -96,7 +104,10 @@ impl App {
             }
             Outcome::Closed => None,
             Outcome::Selected(value) => match picker.kind() {
-                Kind::Models => Some(Action::Model(value)),
+                // A choice made during a turn waits for it rather than freezing
+                // the stream; the app decides that, not the list.
+                Kind::Models => self.ask_model(&value),
+                Kind::Efforts => self.ask_effort(&value),
                 Kind::Sessions => {
                     let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
                     self.transcript.push_notice(format!("attaching to {label}"));
@@ -138,9 +149,17 @@ impl App {
         self.resend_held = false;
         self.session_status = Some(session.status);
         self.model = session.model;
-        // The effort belongs to the model that reported it, and a resumed
-        // session may be served by another one: the next ModelInfo fills it in.
-        self.reasoning_effort = None;
+        // The effort belongs to the session being attached to, so it is the
+        // one the bridge read for it. Nothing of the session left behind
+        // survives: a report that names no effort leaves it unknown until the
+        // identity event that follows names one.
+        self.reasoning_effort = session.effort;
+        // A level the old session was asked for says nothing about the one being
+        // attached to, and a change still waiting for the old turn has no turn
+        // to wait for here.
+        self.effort_requested = None;
+        self.effort_after_turn = None;
+        self.model_after_turn = None;
         self.provider = None;
         self.tokens = None;
         self.scroll = Scroll::new();
@@ -176,9 +195,33 @@ impl App {
     /// make the next successful attach claim it started a session.
     pub fn request_failed(&mut self, message: &str) {
         self.new_session_pending = false;
+        // A request that came back as a failure will never be answered, so the
+        // level it asked for must not steer the cycle key.
+        self.effort_requested = None;
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
             self.picker = None;
         }
         self.warn(message);
     }
+}
+
+/// The lines the model list shows while one of its rows is selected.
+///
+/// The provider is the session's own: the catalog lists model ids without
+/// repeating which provider serves them, and a session runs one provider at a
+/// time. None of these lines is searchable — the filter matches model names,
+/// and a preview says what a row means rather than being another way to find
+/// it.
+fn model_preview(model: &str, provider: Option<&str>, current: bool) -> Vec<String> {
+    let mut lines = vec![format!("model: {model}")];
+    if let Some(provider) = provider {
+        lines.push(format!("provider: {provider}"));
+    }
+    lines.push(if current {
+        "the current model of this session".to_string()
+    } else {
+        "not the current model".to_string()
+    });
+    lines.push(format!("enter switches this session to {model}"));
+    lines
 }
