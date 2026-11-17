@@ -197,6 +197,10 @@ impl App {
                 return None;
             }
             Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
+            Some(keys::ids::APP_EXPAND_TOOL) => {
+                self.expand_tool();
+                return None;
+            }
             // Every edit ends a walk through the history: the draft on screen
             // is being changed, and a later `down` must not replace the change
             // with the entry the walk started from.
@@ -279,6 +283,27 @@ impl App {
             _ => return false,
         }
         true
+    }
+
+    /// Show the whole output of the newest cut tool call, or the preview again.
+    ///
+    /// With nothing to expand the key says so, because a key that silently does
+    /// nothing reads as a broken key rather than an empty one.
+    fn expand_tool(&mut self) {
+        if self.transcript.toggle_expand() {
+            // The height of one block just changed, and a held view keeps its
+            // place from heights counted before the press: they are dropped so
+            // the next held frame recounts instead of trusting them.
+            self.scroll.invalidate();
+            // The view then goes back to the end. The newest kept call is
+            // usually at the end of what has been drawn, but not always: a
+            // message may have arrived after it, so this is a guess that the
+            // changed block is near the bottom, not a guarantee that the next
+            // frames show the expansion in full.
+            self.scroll.to_bottom();
+        } else {
+            self.transcript.push_notice(crate::tool_expand::NOTHING_TO_EXPAND);
+        }
     }
 
     /// Rows one scroll page covers: the transcript pane as it was last drawn.

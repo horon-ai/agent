@@ -406,8 +406,17 @@ impl App {
                 error,
                 ..
             } => {
-                self.transcript
-                    .tool_done(call_id, name, Some(output.as_str()), error.as_deref());
+                // Keeping this call's output folds the call that was open, which
+                // shrinks a block nothing else measures again: a held view would
+                // otherwise keep the height it counted while that call was open.
+                // The key label moving onto this call costs the call before it no
+                // rows, so it alone is not a reason to recount.
+                if self
+                    .transcript
+                    .tool_done(call_id, name, Some(output.as_str()), error.as_deref())
+                {
+                    self.scroll.invalidate();
+                }
                 // A refusal can reach the client before the event that parks
                 // it, so the line is parked from this side too: any request
                 // already waiting that the message names makes the call a

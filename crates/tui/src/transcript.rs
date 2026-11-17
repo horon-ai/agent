@@ -8,6 +8,7 @@
 
 use std::time::Instant;
 
+use crate::tool_expand::{self, ExpandState};
 use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
 
 /// What a tool call line says about its call.
@@ -176,6 +177,10 @@ pub struct Transcript {
     tool_output_lines: usize,
     /// When each call started, keyed by call id and dropped when it ends.
     starts: Vec<Start>,
+    /// The whole output of the calls whose preview was cut, and which of them is
+    /// drawn in full. Kept here rather than on the items so a line stays a plain
+    /// description of a call, and bounded in `tool_expand`.
+    expand: ExpandState,
     /// The requests this session has decided, newest last.
     ///
     /// A refusal can reach the client after its prompt was answered, and the
@@ -201,6 +206,7 @@ impl Default for Transcript {
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
+            expand: ExpandState::default(),
             decided: Vec::new(),
         }
     }
@@ -286,6 +292,23 @@ impl Transcript {
         self.streaming = Streaming::default();
         self.reasoned = Reasoned::default();
         self.starts.clear();
+        // The kept outputs belong to the calls just removed: a later call can
+        // reuse an id, and text from the old conversation must not be drawn
+        // under it.
+        self.expand.clear();
+    }
+
+    /// The kept outputs, for the pane to draw the calls they belong to.
+    pub(crate) fn expand_state(&self) -> &ExpandState {
+        &self.expand
+    }
+
+    /// Show, or hide again, the whole output of the newest cut call.
+    ///
+    /// Answers whether there was anything to toggle: the caller says so when
+    /// there was not, rather than leaving the key silently doing nothing.
+    pub(crate) fn toggle_expand(&mut self) -> bool {
+        self.expand.toggle()
     }
 
     /// Record an informational line.
@@ -599,6 +622,10 @@ impl Transcript {
     }
 
     /// Apply `restate` to every line naming `request_id`.
+    ///
+    /// A line that becomes parked or decided draws no output at all, so the text
+    /// kept for it goes too: the key must not report a press that changes
+    /// nothing on screen.
     fn restate_request(&mut self, request_id: &str, restate: impl Fn(ToolState) -> Option<ToolState>) {
         for item in &mut self.items {
             if let Item::Tool(call) = item
@@ -610,6 +637,16 @@ impl Transcript {
                 if let Some(next) = restate(state) {
                     call.state = next;
                 }
+            }
+        }
+        // A second pass, after the states are settled: only a line that ended up
+        // parked or decided loses its kept text, and the loop above cannot also
+        // touch the table while it holds the items.
+        for item in &self.items {
+            if let Item::Tool(call) = item
+                && Self::settled(&call.state)
+            {
+                self.expand.forget(&call.call_id);
             }
         }
     }
@@ -643,13 +680,27 @@ impl Transcript {
     /// The output is cut to the configured preview here, not at the renderer:
     /// only the preview is ever kept, so a tool returning megabytes cannot grow
     /// the transcript.
-    pub fn tool_done(&mut self, call_id: &str, name: &str, output: Option<&str>, error: Option<&str>) {
+    ///
+    /// A preview that hid part of the output keeps the whole of it, so the key
+    /// can show what the cut took away. A failure is kept as much as a success:
+    /// a tool that exits non-zero still produced output, and a note naming it
+    /// says nothing about how much the call wrote.
+    ///
+    /// Answers whether a line the pane already counted now draws different
+    /// rows: keeping this output folds the call that was open, and a held view
+    /// would otherwise keep the height it measured while that call was open. A
+    /// cut result with nothing open changes heights only on its own line, which
+    /// the scrollback re-measures as the newest item.
+    pub fn tool_done(&mut self, call_id: &str, name: &str, output: Option<&str>, error: Option<&str>) -> bool {
         let state = match error {
             Some(message) if !message.is_empty() => ToolState::Failed(message.to_string()),
             _ => ToolState::Done,
         };
         let elapsed = self.take_start(call_id, name);
         let preview = output.and_then(|text| tool_line::cut_output(text, self.tool_output_lines));
+        let hides = output
+            .zip(preview.as_ref())
+            .is_some_and(|(text, head)| tool_expand::cut(text, head));
         // A refusal can arrive after its prompt was answered, and the row still
         // has to say what happened to the request rather than that it failed.
         let state = match (&state, self.decided_for_name(&state)) {
@@ -661,8 +712,12 @@ impl Transcript {
             call.state = state;
             call.duration_ms = elapsed;
             call.output = preview;
+            // A line parked or decided by the gate draws no output at all, so
+            // its text is never kept: a key that expanded nothing would be a key
+            // that did nothing.
+            let draws = !Self::settled(&call.state);
             self.items.push(Item::Tool(call));
-            return;
+            return draws && hides && self.keep_output(call_id, output);
         };
         // A call finishes once, but the same result can reach the client twice
         // (a reconnect replays it). The second one must not overwrite the first:
@@ -678,8 +733,27 @@ impl Transcript {
         if call.duration_ms.is_none() {
             call.duration_ms = elapsed;
         }
-        if call.output.is_none() {
+        let stored = call.output.is_none();
+        if stored {
             call.output = preview;
+        }
+        let draws = !Self::settled(&call.state);
+        stored && draws && hides && self.keep_output(call_id, output)
+    }
+
+    /// Whether a call's line draws no output at all.
+    fn settled(state: &ToolState) -> bool {
+        matches!(state, ToolState::Waiting(_) | ToolState::Settled(_, _))
+    }
+
+    /// Keep the whole text behind a cut preview, for the key to show.
+    ///
+    /// Answers whether a line already on screen changed its rows, which is what
+    /// a held scroll view has to recount.
+    fn keep_output(&mut self, call_id: &str, output: Option<&str>) -> bool {
+        match output {
+            Some(text) => self.expand.record(call_id, text),
+            None => false,
         }
     }
 

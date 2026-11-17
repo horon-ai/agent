@@ -14,6 +14,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::keys::Key;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{Decision, ToolCall, ToolState};
 
@@ -57,6 +58,24 @@ impl OutputHead {
     pub fn hidden_rows(&self) -> usize {
         self.total_rows.saturating_sub(self.rows.len())
     }
+}
+
+/// What the client kept of a call's output beyond the preview.
+///
+/// Gathered here rather than on the call so a line's shape stays the same in
+/// every build: `key` is the key that expands the call, as the bindings in force
+/// name it, and `text` is the whole output while the call is drawn expanded.
+/// `kept` says the client still holds the text, which the marker needs even when
+/// the call no longer names the key: a line that hid output keeps its count row
+/// after the label moves to a newer call, so the two states take the same rows.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Retained<'a> {
+    /// The key that shows the rest of this call's output.
+    pub key: Option<Key>,
+    /// The whole output, when the call is drawn expanded.
+    pub text: Option<&'a str>,
+    /// Whether the client still holds this call's text.
+    pub kept: bool,
 }
 
 /// Append streamed argument bytes, stopping at [`MAX_INPUT_BYTES`].
@@ -246,6 +265,21 @@ pub fn format_elapsed(millis: u64) -> String {
 /// usually longer than the pane, and splicing it into the head would push the
 /// duration and the argument off the right edge where neither can be read.
 pub fn lines(call: &ToolCall, theme: &Theme, symbols: Symbols, width: u16) -> Vec<Line<'static>> {
+    lines_with(call, theme, symbols, width, Retained::default())
+}
+
+/// The rows one tool call occupies, with the output the client kept for it.
+///
+/// An expanded call is drawn as its whole output rather than as the preview, and
+/// its rows are left as the tool wrote them: the pane wraps them, so a column
+/// that lines up in the tool's own output still lines up on screen.
+pub fn lines_with(
+    call: &ToolCall,
+    theme: &Theme,
+    symbols: Symbols,
+    width: u16,
+    retained: Retained<'_>,
+) -> Vec<Line<'static>> {
     // A call the approval gate refused never ran, so it is never drawn as a
     // failure: it waits under the in-progress glyph, and once the request is
     // decided it says what the answer was. The dot is the quietest marker the
@@ -294,7 +328,16 @@ pub fn lines(call: &ToolCall, theme: &Theme, symbols: Symbols, width: u16) -> Ve
             Style::default().fg(color),
         )));
     }
-    if let Some(output) = call.output.as_ref().filter(|_| !settled) {
+    let style = Style::default().fg(theme.transcript.notice);
+    if let Some(text) = retained.text.filter(|_| !settled) {
+        // An expanded call draws every row it kept. That is true even where the
+        // preview would have repeated the failure text above it: the press was a
+        // request for the output itself, not for the summary the line already
+        // carries.
+        for row in text.lines() {
+            rows.push(Line::from(Span::styled(format!("  {row}"), style)));
+        }
+    } else if let Some(output) = call.output.as_ref().filter(|_| !settled) {
         // A failed call's stored output is the failure text itself, so drawing
         // it again would say the same thing twice.
         // The head row is cut with a marker, so the marker comes off before the
@@ -305,17 +348,37 @@ pub fn lines(call: &ToolCall, theme: &Theme, symbols: Symbols, width: u16) -> Ve
         });
         if !repeats_error {
             for row in &output.rows {
-                rows.push(Line::from(Span::styled(
-                    format!("  {row}"),
-                    Style::default().fg(theme.transcript.notice),
-                )));
+                rows.push(Line::from(Span::styled(format!("  {row}"), style)));
             }
-            let hidden = output.hidden_rows();
-            if hidden > 0 {
-                rows.push(Line::from(Span::styled(
-                    format!("  +{hidden} lines"),
-                    Style::default().fg(theme.transcript.notice),
-                )));
+            // A row cut at its right edge hides output with no rows to count, so
+            // the count alone would say the preview is whole. A call whose text
+            // the client no longer holds (it fell out of the window) gets no
+            // marker: a count promising a view that is gone is worse than none.
+            //
+            // The marker is one row in every state it is drawn in. The key label
+            // is added only where the whole marker still fits on that one row,
+            // because the label moves to a new call when the next output arrives
+            // and the line it leaves is never measured again: a label that pushed
+            // the marker onto a second row would shift a held view. The key keeps
+            // working where the hint is dropped.
+            let marker = match (output.hidden_rows(), retained.kept) {
+                (0, false) => None,
+                (0, true) => Some("  cut".to_string()),
+                (hidden, _) => Some(format!("  +{hidden} lines")),
+            };
+            let marker = marker.map(|plain| match retained.key {
+                Some(key) => {
+                    let labelled = format!("{plain} · {key} expands");
+                    if UnicodeWidthStr::width(labelled.as_str()) <= usize::from(width) {
+                        labelled
+                    } else {
+                        plain
+                    }
+                }
+                None => plain,
+            });
+            if let Some(marker) = marker {
+                rows.push(Line::from(Span::styled(marker, style)));
             }
         }
     }

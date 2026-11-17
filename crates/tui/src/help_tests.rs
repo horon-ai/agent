@@ -178,6 +178,7 @@ fn the_key_list_is_the_map_in_force() {
         "shift+up",
         "shift+down",
         "ctrl+end",
+        "ctrl+o",
     ] {
         assert!(
             rows.iter().any(|row| row.left.split(", ").any(|part| part == key)),
@@ -346,7 +347,7 @@ fn a_notice_keeps_its_hanging_indent() {
         markdown: true,
     };
     let text = "the transcript pane draws the newest rows first and stops when it fills";
-    let rows: Vec<String> = wrap::wrap_rows(item_lines::lines(&Item::Notice(text.to_string()), &look), 40)
+    let rows: Vec<String> = wrap::wrap_rows(item_lines::lines(&Item::Notice(text.to_string()), &look, None), 40)
         .iter()
         .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
         .collect();
@@ -726,7 +727,7 @@ fn listing_rows(line: &str, width: u16) -> Vec<String> {
         width,
         markdown: false,
     };
-    wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look), width)
+    wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look, None), width)
         .iter()
         .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
         .collect()

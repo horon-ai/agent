@@ -28,6 +28,7 @@ pub mod settings;
 pub mod statusline;
 pub mod theme;
 mod title;
+mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
 mod wrap;
@@ -39,6 +40,10 @@ mod streaming_tests;
 #[cfg(test)]
 #[path = "tool_line_tests.rs"]
 mod tool_line_tests;
+
+#[cfg(test)]
+#[path = "tool_expand_tests.rs"]
+mod tool_expand_tests;
 
 #[cfg(test)]
 #[path = "title_tests.rs"]
@@ -124,6 +129,7 @@ Keys:
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-O         show the whole output of the newest cut tool call
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force.
 
@@ -893,9 +899,14 @@ fn blocks(app: &App) -> Vec<Block<'_>> {
 /// The wrapped height is what the scrollback measures, so a block means the same
 /// thing here and in `measure_transcript`. `first` is the oldest block, which has
 /// nothing above it to be separated from.
-fn block_rows(block: &Block<'_>, look: &item_lines::Look<'_>, first: bool) -> Vec<Line<'static>> {
+fn block_rows(
+    block: &Block<'_>,
+    look: &item_lines::Look<'_>,
+    expand: Option<&tool_expand::Frame<'_>>,
+    first: bool,
+) -> Vec<Line<'static>> {
     let lines = match block {
-        Block::Item(item) => item_lines::lines(item, look),
+        Block::Item(item) => item_lines::lines(item, look, expand),
         Block::Reasoning(text) => item_lines::reasoning(text, look),
         Block::Answer(text) => item_lines::answer(text, look),
     };
@@ -922,6 +933,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         theme,
         symbols,
         settings,
+        bindings,
         ..
     } = app;
     let look = item_lines::Look {
@@ -934,8 +946,12 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         open_rows(transcript.open_reasoning(), &look, true),
         open_rows(transcript.open_text(), &look, false),
     ];
+    // An expanded call is one row taller per row of its whole output, so the
+    // height measured here has to know about the expansion: a view held above
+    // the end counts this height, and a stale one would leave the offset short.
+    let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        Some(item) => block_rows(&Block::Item(item), &look, index == 0).len(),
+        Some(item) => block_rows(&Block::Item(item), &look, Some(&expand), index == 0).len(),
         None => 0,
     });
 }
@@ -952,10 +968,11 @@ fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -
 /// The newest rows, following the end of the conversation.
 fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
+    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let blocks = blocks(app);
     for (index, block) in blocks.iter().enumerate().rev() {
-        for row in block_rows(block, &look, index == 0).into_iter().rev() {
+        for row in block_rows(block, &look, Some(&expand), index == 0).into_iter().rev() {
             rows.push(row);
             if rows.len() >= capacity {
                 break;
@@ -976,6 +993,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 /// edge of the view is wrapped, plus the blocks the pane actually fills with.
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
+    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
     let blocks = blocks(app);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
@@ -993,7 +1011,7 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
             }
             _ => {}
         }
-        let block = block_rows(block, &look, index == 0);
+        let block = block_rows(block, &look, Some(&expand), index == 0);
         let take_from = match heights.get(index) {
             Some(&height) if below > 0 => height.saturating_sub(below),
             _ => block.len(),

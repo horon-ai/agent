@@ -38,6 +38,9 @@ pub mod ids {
     pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
     /// Follow the end of the conversation again.
     pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
+    /// Show the whole output of the newest tool call whose preview was cut, and
+    /// the preview again on the next press.
+    pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -132,6 +135,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SCROLL_UP, Scope::App, &["shift+up"]),
     ActionSpec::new(ids::APP_SCROLL_DOWN, Scope::App, &["shift+down"]),
     ActionSpec::new(ids::APP_SCROLL_BOTTOM, Scope::App, &["ctrl+end"]),
+    // The key a cut tool preview names: reading the rest of one call's output
+    // is the one thing the transcript cannot do with the scroll keys alone.
+    ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
@@ -229,6 +235,15 @@ impl Bindings {
     /// which share the input line.
     pub fn resolve_editing(&self, key: &Key) -> Option<&'static str> {
         self.find(|entry| entry.scope != Scope::Prompt, key)
+    }
+
+    /// The first key an action answers to now.
+    ///
+    /// The one a hint or a marker names when an action may carry several: the
+    /// first is the one the declaration order settled on, and a frame that only
+    /// wants to name it must not build the whole list.
+    pub fn first_key(&self, id: &str) -> Option<Key> {
+        self.entries.iter().find(|entry| entry.id == id).map(|entry| entry.key)
     }
 
     /// The keys an action answers to now.
