@@ -86,6 +86,10 @@ on:
         default: ""
   workflow_dispatch:
     inputs:
+      install_ref:
+        description: "Installer branch or commit for the install suite (defaults to the dispatch commit)"
+        required: false
+        default: ""
       os:
         description: "Comma-separated OSes, each measured in its own job: linux, macos, windows, or all. The opt-in install suite also accepts freebsd and expands each OS to its architectures"
         required: false
@@ -219,7 +223,7 @@ jobs:
     if: ${{ needs.plan.outputs.install == 'true' }}
     uses: ./.github/workflows/benchmark-install.yml
     with:
-      ref: ${{ inputs.ref }}
+      ref: ${{ inputs.install_ref || inputs.ref }}
       os: ${{ inputs.os }}
       competitors: ${{ inputs.competitors }}
       # The install suite takes its sample count from oneshot_runs: five cold

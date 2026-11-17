@@ -67,12 +67,12 @@ jobs:
           COMPETITORS: ${{ inputs.competitors }}
         run: |
           set -euo pipefail
-          if [[ ! "$RUNS" =~ ^[0-9]+$ ]] || [ "$RUNS" -lt 1 ]; then
-            echo "::error::runs must be a positive integer (got '$RUNS')"; exit 1
+          if [[ ! "$RUNS" =~ ^[0-9]+$ ]] || [ "$RUNS" -lt 5 ]; then
+            echo '::error::runs must be an integer of at least 5'; exit 1
           fi
           # The value reaches the FreeBSD guest's shell word for word.
-          if [[ ! "$COMPETITORS" =~ ^[a-z0-9_,.-]+$ ]]; then
-            echo "::error::competitors must match ^[a-z0-9_,.-]+$ (got '$COMPETITORS')"; exit 1
+          if [[ -n "$COMPETITORS" && ! "$COMPETITORS" =~ ^[a-z0-9_,.-]+$ ]]; then
+            echo '::error::invalid competitor list'; exit 1
           fi
           python3 - "$GITHUB_OUTPUT" <<'PY'
           import json, os
@@ -109,13 +109,21 @@ jobs:
       COMPETITORS: ${{ inputs.competitors }}
       RUNS: ${{ inputs.runs }}
       PLATFORM: ${{ matrix.platform }}
+      CANDIDATE_DIR: ${{ inputs.ref != '' && '.bench-candidate' || '' }}
       BASELINE_DIR: ${{ inputs.baseline_ref != '' && '.bench-baseline' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
           # Native installers and npm run third-party code here; the token stays
           # out of the checkout's git config.
+          persist-credentials: false
+
+      - name: Check out the candidate install path
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          path: .bench-candidate
           persist-credentials: false
 
       - name: Check out the baseline install path
@@ -168,7 +176,7 @@ jobs:
           usesh: true
           mem: 4096
           cpu: 2
-          envs: RELEASE_TAG RUNS COMPETITORS BASELINE_DIR
+          envs: RELEASE_TAG RUNS COMPETITORS CANDIDATE_DIR BASELINE_DIR GITHUB_ACTIONS RUNNER_ENVIRONMENT
           # Python drives the harness, bash runs the installer, coreutils
           # supplies the GNU tools the checksum probes look for, and Node plus
           # npm are what the npm competitors install through.
@@ -199,3 +207,42 @@ jobs:
           name: install-${{ matrix.platform }}-${{ github.run_id }}
           path: install-results/
           retention-days: 30
+
+  summarize:
+    name: Install results
+    needs: [plan, measure]
+    if: ${{ always() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/perf
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: install-*-${{ github.run_id }}
+          path: collected
+
+      - name: Write the installation table
+        if: ${{ always() }}
+        shell: bash
+        env:
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+          RUNS: ${{ inputs.runs }}
+          COMPETITORS: ${{ inputs.competitors }}
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+        run: |
+          set -euo pipefail
+          python3 scripts/perf/install_summary.py --reports collected --matrix "$MATRIX" \
+            --runs "$RUNS" --competitors "$COMPETITORS" --baseline-ref "$BASELINE_REF" \
+            | tee install-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: ${{ always() }}
+        with:
+          name: install-summary-${{ github.run_id }}
+          path: install-summary.md
+          retention-days: 30
+          overwrite: true

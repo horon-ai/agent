@@ -53,6 +53,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f ones
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
 | `oneshot_runs` | `5` | one-shot·스킬·MCP 칸을 빌드마다 몇 번 잴지. `compare.md`의 Host 줄에 이 횟수가 적힌다. 중앙값의 최소 기준이 5이고, 가까운 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다. 설치 묶음은 이 값을 표본 수로 써서 도구마다 콜드 설치와 웜 설치를 그만큼씩 잰다 |
+| `install_ref` | 실행을 요청한 커밋 | `install`에서 잴 후보 설치기의 브랜치나 커밋. 측정 스크립트는 실행을 요청한 커밋에서 읽는다. |
 | `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 번갈아 잰다. `compare`에서는 `horon-base` 줄이 되고 `tools`에서는 두 번째 데몬이 된다. 설치 묶음은 같은 ref를 작업 안에 따로 체크아웃해 같은 릴리스 자산으로 설치 경로만 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
 | `features` | 빈 값 | **후보** release 빌드에만 붙는 cargo feature(`--features <값>`). `horon-base` 빌드에는 붙지 않으므로 두 줄을 계속 비교할 수 있다. 비우면 빌드 명령이 이 입력이 없던 때와 바이트까지 같고, 아티팩트의 `features.txt`에는 빈 줄이 남는다. 값은 `^[a-z0-9_,-]*$`를 만족해야 한다. `build` 작업의 rust-cache 항목이 이 값으로 갈리므로 feature 빌드가 기본 아티팩트를 재사용하지 않는다 |
 
@@ -92,7 +93,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 
 측정 대상은 **배포된 릴리스**이지 측정 중인 코드가 아니다. 릴리스는 `RELEASE_TAG`(`v0.1.14`)로 고정한다. `install-release`는 어느 작업 트리에서 불러도 같은 릴리스 바이트를 검증·압축 해제·활성화하므로 Rust 변경은 이 수치를 움직이지 못한다. 작업 트리가 기여하는 것은 설치 경로 자체(`scripts/install/install.sh`, `scripts/install/install.ps1`)이고, `baseline_ref` 쌍이 그 경로의 변경을 가려낸다.
 
-`os`는 네 묶음을 받고 묶음마다 아키텍처 수만큼 작업이 뜬다. `linux`(`linux-x86_64`, `linux-aarch64`), `macos`(`macos-aarch64`, `macos-15-intel`의 `macos-x86_64`), `windows`(`windows-x86_64`, `windows-11-arm`의 `windows-aarch64`), `freebsd`(`freebsd-x86_64`, 핀 고정한 `vmactions/freebsd-vm` 15.1 게스트)이다. `all`은 네 묶음 전부이고 기본값이다. 플랫폼마다 `install-<platform>-<run_id>` 아티팩트를 따로 올리고(30일), 합치는 작업은 없다.
+`os`는 운영체제 네 종류를 받고 아키텍처마다 작업 하나를 실행한다. `linux`는 `linux-x86_64`와 `linux-aarch64`, `macos`는 `macos-aarch64`와 `macos-15-intel`의 `macos-x86_64`, `windows`는 `windows-x86_64`와 `windows-11-arm`의 `windows-aarch64`, `freebsd`는 FreeBSD 15.1 가상 머신의 `freebsd-x86_64`를 선택한다. `all`은 네 종류를 모두 선택한다. 각 플랫폼은 원본 JSON과 로그를 `install-<platform>-<run_id>`에 올린다. **Install results** 작업은 실행 요약에 전체 표를 게시하고 같은 표를 `install-summary-<run_id>`에 저장한다. 보관 기간은 30일이다.
 
 **측정 구간.** `install_ms`는 설치 프로세스가 성공으로 종료할 때까지 걸린 시간이다. `first_version_ms`는 설치된 실행 파일의 첫 `--version` 프로세스가 종료할 때까지 걸린 시간이다. `total_ms`에는 두 구간과 그 사이에 실행 파일 경로를 찾는 시간이 들어간다. Horon은 고정한 태그와 같은 버전을 출력해야 한다. 실패한 표본에는 오류를 기록하고 통계에서 제외한다. Horon 표본이 실패하면 보고서를 쓴 뒤 작업을 실패로 처리한다.
 
@@ -110,20 +111,13 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 ```bash
 gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5
 gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=install -f competitors=jcode
-gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f baseline_ref=<이전 설치기 커밋>
+gh workflow run benchmark.yml --ref <benchmark-branch> -f suites=install -f os=linux,macos -f install_ref=<candidate-sha> -f baseline_ref=<base-sha>
 gh workflow run benchmark.yml --ref <branch> -f os=freebsd -f suites=install
 ```
 
 여기서는 Rust를 컴파일하지 않고, 릴리스에 쓰지 않고, 시크릿도 쓰지 않는다. 모든 다운로드는 공개 릴리스 자산이나 공개 npm 패키지다. Windows 설치기가 사용자별 `PATH`를 실제로 고치므로 작업은 버려지는 GitHub 호스티드 러너에서만 돈다. 계측은 보고서를 쓰기 전에 원래 값을 되돌린다.
 
-같은 스크립트를 로컬에서도 돌린다(`python3`, `bash`, `curl`, Node와 npm이 필요하다).
-
-```bash
-python3 scripts/perf/bench_install.py --tag v0.1.14 --runs 5 \
-  --competitors jcode,claude_code,codex,opencode,pi --output install.json
-python3 scripts/perf/bench_install.py --tag v0.1.14 --runs 5 \
-  --competitors jcode --output install-base.json --baseline-dir ../agent-b0
-```
+macOS를 포함한 모든 플랫폼에서 위 명령으로 측정을 시작한다. 측정 스크립트는 GitHub 호스팅 러너에서 첫 설치와 재설치를 적어도 다섯 쌍 실행한다. 전체 표에는 성공 수와 실제 시도 수, 건너뛴 재설치, 누락된 보고서를 표시한다. 설치와 첫 실행의 중앙값을 각각 싣고 전체 시간은 중앙값, 중앙 절대 편차(MAD), 범위를 싣는다. 각 표본과 오류 원문은 플랫폼별 JSON에 남는다.
 
 ### 자동 측정
 
