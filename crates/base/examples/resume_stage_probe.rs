@@ -232,7 +232,7 @@ fn run(options: &Options) -> Result<i32> {
         );
     }
     let before_sha = sha256_of(&log)?;
-    let before_bytes = std::fs::metadata(&log).map(|m| m.len()).ok();
+    let before_bytes = std::fs::metadata(&log).context("read the fixture log size")?.len();
 
     let mut stages = Stages::new();
     // A stage that failed must not feed the ones after it: a later number taken
@@ -267,10 +267,9 @@ fn run(options: &Options) -> Result<i32> {
     stages.stage("log_read", || {
         let bytes = std::fs::read(&log).context("read the fixture log")?;
         ensure!(
-            bytes.len() as u64 == before_bytes.unwrap_or(0),
-            "read {} bytes, metadata said {}",
-            bytes.len(),
-            before_bytes.unwrap_or(0)
+            bytes.len() as u64 == before_bytes,
+            "read {} bytes, metadata said {before_bytes}",
+            bytes.len()
         );
         Ok(json!({"bytes": bytes.len()}))
     });
