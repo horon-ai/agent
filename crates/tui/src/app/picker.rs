@@ -81,7 +81,7 @@ impl App {
     }
 
     /// Replace the rows of the open list, if it is the one that asked.
-    fn fill(&mut self, kind: Kind, rows: Vec<Row>) {
+    pub(super) fn fill(&mut self, kind: Kind, rows: Vec<Row>) {
         let Some(picker) = self.picker.as_mut() else {
             return;
         };
@@ -119,6 +119,12 @@ impl App {
                     self.recall_draft(&value);
                     None
                 }
+                // A skill is the same: the invocation goes into the draft, with
+                // the request still to be written after it.
+                Kind::Skills => {
+                    self.draft_skill(&value);
+                    None
+                }
             },
         }
     }
@@ -149,6 +155,11 @@ impl App {
         self.resend_held = false;
         self.session_status = Some(session.status);
         self.model = session.model;
+        // The skills belong to the session too, and the bridge asks for the new
+        // session's list right after this answer: until it arrives, a name the
+        // session just left behind must not resolve.
+        self.skills.clear();
+        self.commands.set_skills(Vec::new());
         // The effort belongs to the session being attached to, so it is the
         // one the bridge read for it. Nothing of the session left behind
         // survives: a report that names no effort leaves it unknown until the

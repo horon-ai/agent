@@ -23,12 +23,16 @@ use horon_agent_sdk::{
 
 mod runtime;
 mod sessions;
+mod skills;
 
 #[cfg(test)]
 mod runtime_tests;
 
 #[cfg(test)]
 mod sessions_tests;
+
+#[cfg(test)]
+mod skills_tests;
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -88,6 +92,13 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// List the skills the harness reports for the session.
+    ///
+    /// `announce` is the difference between a list the user asked for and one
+    /// the client reads for itself: `/skills` shows every failure, while the
+    /// list read after a connect or a session change stays quiet for a harness
+    /// too old to know the command and reports any other failure once.
+    Skills { announce: bool },
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -130,6 +141,8 @@ pub enum Incoming {
     },
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// The skills the harness reports for the session it serves.
+    Skills(Vec<SkillRow>),
     /// The bridge moved to another session, with its stored conversation.
     Attached(Box<AttachedSession>),
     /// A request the harness answered with an error; the client stops waiting.
@@ -158,6 +171,23 @@ pub struct SessionRow {
     /// Built once, when the row is: a preview assembled while drawing would
     /// read the stored conversation again on every frame.
     pub preview: Vec<String>,
+}
+
+/// One skill the harness reports, as the skill list shows it.
+///
+/// The fields are what the payload carries for every installed skill: an older
+/// harness may omit any of them but the name, so the rest are optional here
+/// rather than refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillRow {
+    /// The name the harness knows it by, and what `/skill:<name>` addresses.
+    pub name: String,
+    /// The description it gives it, on one line.
+    pub description: String,
+    /// The file the skill was read from, when the harness names one.
+    pub path: Option<String>,
+    /// The tools the skill may use, empty when the harness names none.
+    pub allowed_tools: Vec<String>,
 }
 
 /// A session the bridge attached to, and what the client needs to show it.
@@ -323,6 +353,11 @@ fn run_worker(
             }
         }
     }
+    // The list behind `/skills`, read once so the first `/skills` already has
+    // rows and so a listed name resolves before the user opens it.
+    if !report_skills(&events, skills::read(&client, &session_id, false)) {
+        return;
+    }
     loop {
         // The connection flag is read by the pump so a dead transport is
         // reported even while the client sits idle with nothing to send.
@@ -354,6 +389,11 @@ fn run_worker(
                     // connection with the session it already has. A failed dial
                     // or create moves nothing, which keeps the session the
                     // client shows attached and answering.
+
+                    // Whether the answer moves the worker to another session,
+                    // which is also when the skills of the one left behind stop
+                    // being the client's.
+                    let resets_session = matches!(&command, Command::NewSession { .. } | Command::Attach(_));
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
@@ -386,6 +426,13 @@ fn run_worker(
                         Ok(None) => {}
                         Ok(Some(incoming)) => {
                             if events.send(incoming).is_err() {
+                                return;
+                            }
+                            // Read against the connection and the id the worker
+                            // holds now, never the ones captured before the
+                            // request: a create replaced the client, and an
+                            // attach moved the id.
+                            if resets_session && !report_skills(&events, skills::read(&client, &session_id, false)) {
                                 return;
                             }
                         }
@@ -494,6 +541,24 @@ where
     if forwarded { Step::Flowing } else { Step::Idle }
 }
 
+/// Send the skill list the client did not ask for, reporting whether the UI is
+/// still listening.
+///
+/// A list read on the client's own behalf is not a command the user gave, so a
+/// failure is one notice rather than a refused command: `request_failed` also
+/// settles state that belongs to the user's own requests. A harness too old to
+/// know the command is silent, which `skills::read` decided by answering `None`.
+fn report_skills(events: &Sender<Incoming>, result: Result<Option<Incoming>, Error>) -> bool {
+    match result {
+        Ok(Some(incoming)) => events.send(incoming).is_ok(),
+        Ok(None) => true,
+        Err(error) => {
+            let notice = Incoming::Notice(format!("could not list the skills: {error}"));
+            events.send(notice).is_ok()
+        }
+    }
+}
+
 /// What waiting on the command queue produced.
 #[derive(Debug)]
 enum CommandPoll {
@@ -545,6 +610,10 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             let rows = session_rows(client, session_id, working_dir.as_deref())?;
             Ok(Some(Incoming::Sessions(rows)))
         }
+        // `/skills` asked for this list, so every failure is shown: a harness
+        // that does not know the command is an answer the user can act on,
+        // unlike the quiet read the client makes for itself.
+        Command::Skills { announce } => skills::read(client, session_id, announce),
         // The effort is answered here rather than in `apply` because the level
         // on the status line comes from the runtime report, not from the set
         // request: the harness stores the level and answers with the state it
@@ -570,6 +639,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::Skills { .. }
         | Command::NewSession { .. }
         | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
@@ -600,6 +670,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Skills { .. } => "could not list the skills",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",

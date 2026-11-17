@@ -45,6 +45,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                 level,
             } => app.runtime_info(provider, model, effort, level),
             Incoming::Sessions(rows) => app.show_sessions(rows),
+            Incoming::Skills(rows) => app.show_skills(rows),
             Incoming::Attached(session) => {
                 // Read before the attach so the notice names what happened: the
                 // same answer covers a resumed session and one just created.
@@ -89,6 +90,9 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        // The user opened the list, so a failure is theirs to see and the
+        // request announces itself.
+        Action::Skills => Command::Skills { announce: true },
         Action::Quit => {
             app.running = false;
             return;

@@ -18,7 +18,7 @@ use crate::overlays::picker::Picker;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
 use crate::scroll::Scroll;
-use crate::sdk_bridge::Incoming;
+use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
@@ -34,6 +34,7 @@ mod prompts;
 mod sending;
 mod sessions;
 mod settings;
+mod skills;
 
 #[cfg(test)]
 mod effort_cmd_tests;
@@ -79,6 +80,8 @@ pub enum Action {
     NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
+    /// Ask the harness for the skills it reports for the session.
+    Skills,
     /// Leave.
     Quit,
 }
@@ -221,6 +224,12 @@ pub struct App {
     pub slash: crate::help::SlashPopup,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
+    /// The skills the harness reported for the session in force.
+    ///
+    /// The registry holds the name and description for the resolver, while the
+    /// picker needs the file and the tool list the harness named, so the report
+    /// is kept whole here. It is cleared with the session it belongs to.
+    pub skills: Vec<SkillRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
     /// Where user theme files are read from, offered by the settings screen.
@@ -277,6 +286,7 @@ impl App {
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
+            skills: Vec::new(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
@@ -327,6 +337,7 @@ impl App {
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
+            skills: Vec::new(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,

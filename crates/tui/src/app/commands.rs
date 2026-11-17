@@ -66,6 +66,10 @@ impl App {
             // is in; nothing is claimed on screen until the daemon answers,
             // because a create can be refused.
             Local::New => self.start_new_session(),
+            // `/skills` shows the list the harness reports: the rows it already
+            // knows are drawn at once, and the answer to this request replaces
+            // them when it comes.
+            Local::Skills => self.open_skills(),
             Local::Settings => {
                 self.open_settings();
                 None

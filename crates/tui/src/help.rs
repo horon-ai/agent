@@ -26,6 +26,10 @@ pub const POPUP_ROWS: usize = 8;
 /// Spaces between the two columns of a listing.
 const GAP: usize = 2;
 
+/// What `/help` says when no command file was found.
+const NO_COMMAND_FILES: &str = "no command files; add .horon/commands/<name>.md to a project or \
+     $HORON_HOME/commands/<name>.md for every project";
+
 /// The action ids the interface answers to, with the line that explains each.
 ///
 /// The rows are generated from [`ACTIONS`] in its own order, so this table only
@@ -107,6 +111,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "quit" => "leave",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
+        "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",
         _ => "",
     }
@@ -138,6 +143,7 @@ pub(crate) fn detail(entries: &[Entry], name: &str) -> Option<String> {
             Group::File if !entry.shadowed => 1,
             Group::Harness => 2,
             Group::File => 3,
+            Group::Skill => 4,
         })?;
     let description = if entry.description.is_empty() {
         entry.label()
@@ -180,7 +186,6 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "resume_all" => "resume every paused session",
         "review" => "spawn a review of the working tree changes",
         "server_reload" => "upgrade the server in place, keeping its state",
-        "skills" => "reload the skills and list them",
         "subagent" => "spawn a subagent with the task given after the command",
         "subagent_model" => "show or set the model subagents run on",
         "swarm" => "show the swarm and its members",
@@ -203,9 +208,15 @@ pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
     let commands = command_rows(entries);
     let width = column(&commands);
     let mut lines: Vec<String> = Vec::with_capacity(commands.len() + 3);
+    let has_files = entries.iter().any(|entry| entry.group == Group::File);
     let mut group = None;
     for (entry, row) in entries.iter().zip(commands.iter()) {
         if group != Some(entry.group) {
+            // The notice about command files stands where the file section
+            // would be, so a skills section after it still reads as its own.
+            if !has_files && entry.group == Group::Skill {
+                lines.push(NO_COMMAND_FILES.to_string());
+            }
             group = Some(entry.group);
             lines.push(format!("{}:", header(entry.group)));
         }
@@ -215,12 +226,9 @@ pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
         }
         lines.push(line);
     }
-    if !entries.iter().any(|entry| entry.group == Group::File) {
-        lines.push(
-            "no command files; add .horon/commands/<name>.md to a project or \
-             $HORON_HOME/commands/<name>.md for every project"
-                .to_string(),
-        );
+    let has_skills = entries.iter().any(|entry| entry.group == Group::Skill);
+    if !has_files && !has_skills {
+        lines.push(NO_COMMAND_FILES.to_string());
     }
     let keys = key_text(bindings);
     lines.push(keys);
@@ -293,6 +301,7 @@ fn header(group: Group) -> &'static str {
         Group::Builtin => "built-in commands",
         Group::Harness => "harness commands",
         Group::File => "command files",
+        Group::Skill => "skills",
     }
 }
 
