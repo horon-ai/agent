@@ -13,7 +13,6 @@ use crate::session::{Session, StoredMessage};
 use crate::storage;
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, NaiveDate, Utc};
 use horon_agent_import_core::{
     ExternalMessageRecord, ExternalSessionRecord, ImportCoreResult, collect_recent_files_recursive,
     load_claude_external_messages, load_codex_external_session, load_cursor_external_session,
@@ -31,6 +30,7 @@ use horon_agent_session_types::{
     session_search_truncate_title_text as truncate_title_text,
     session_search_working_dir_matches as working_dir_matches,
 };
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -211,8 +211,8 @@ pub struct SearchOptions {
     source_filter: Option<String>,
     saved_filter: Option<bool>,
     debug_filter: Option<bool>,
-    after: Option<DateTime<Utc>>,
-    before: Option<DateTime<Utc>>,
+    after: Option<Timestamp>,
+    before: Option<Timestamp>,
     context_before: usize,
     context_after: usize,
     max_scan_sessions: usize,
@@ -597,22 +597,20 @@ fn normalize_source_filter(raw: Option<&str>) -> std::result::Result<Option<Stri
     }
 }
 
-fn parse_datetime_filter(raw: Option<&str>, name: &str) -> std::result::Result<Option<DateTime<Utc>>, String> {
+fn parse_datetime_filter(raw: Option<&str>, name: &str) -> std::result::Result<Option<Timestamp>, String> {
     let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
         return Ok(None);
     };
-    if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-        return Ok(Some(dt.with_timezone(&Utc)));
+    if let Ok(at) = Timestamp::parse_rfc3339(raw) {
+        return Ok(Some(at));
     }
-    if let Ok(date) = NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-        let Some(naive) = date.and_hms_opt(0, 0, 0) else {
-            return Err(format!("{name} has an invalid date: {raw}."));
-        };
-        return Ok(Some(DateTime::from_naive_utc_and_offset(naive, Utc)));
+    // A bare date means the start of that day, in UTC as the timestamp is stored.
+    match Timestamp::parse_naive_date(raw) {
+        Ok(at) => Ok(Some(at)),
+        Err(_) => Err(format!(
+            "{name} must be an RFC3339 timestamp or YYYY-MM-DD date; received {raw}."
+        )),
     }
-    Err(format!(
-        "{name} must be an RFC3339 timestamp or YYYY-MM-DD date; received {raw}."
-    ))
 }
 
 pub fn search_sessions_blocking(
@@ -1221,7 +1219,7 @@ fn load_claude_candidates_parallel(
                         continue;
                     }
                     let messages = load_claude_external_messages(&path, options.include_tools);
-                    let created_at = session.created.unwrap_or_else(Utc::now);
+                    let created_at = session.created.unwrap_or_else(Timestamp::now);
                     let updated_at = session.modified.or(session.created).unwrap_or(created_at);
                     let title = session
                         .summary

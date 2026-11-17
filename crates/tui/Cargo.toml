@@ -35,9 +35,11 @@ toml_edit = "0.20"
 # input. `ratatui` already depends on the same version.
 unicode-width = "0.2"
 serde_json = "1"
-# The `time` segment shows local wall-clock time; chrono is already in the
-# workspace lock through the harness crates.
-chrono = "0.4"
+# The `time` segment shows local wall-clock time. The client reaches no
+# workspace crate except the SDK and the tool contract crate, so it reads the
+# clock it already gets from `time` through the SDK's dependency graph and asks
+# for the local offset itself; the epoch-to-local conversion is this crate's.
+time = { version = "0.3.55", default-features = false, features = ["local-offset", "std"] }
 
 [dev-dependencies]
 tempfile = "3"

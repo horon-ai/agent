@@ -4,7 +4,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use uuid::Uuid;
 
 use super::record::{
@@ -649,7 +649,7 @@ impl DurableRuntimeStore {
             session_id: self.session_id.clone(),
             kind,
             id: id.to_string(),
-            at: Utc::now(),
+            at: Timestamp::now(),
             payload,
         };
         let mut state = self.state.clone();
@@ -860,7 +860,7 @@ fn checkpoint_record(
         session_id: session_id.to_string(),
         kind: RecordKind::Checkpoint,
         id: Uuid::new_v4().to_string(),
-        at: Utc::now(),
+        at: Timestamp::now(),
         payload: Payload::Checkpoint(Checkpoint {
             generation,
             start_seq: seq,

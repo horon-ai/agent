@@ -182,15 +182,15 @@ fn test_format_reset_time_past() {
 
 #[test]
 fn test_format_reset_time_under_one_minute_rounds_up() {
-    let timestamp = (chrono::Utc::now() + chrono::TimeDelta::seconds(30)).to_rfc3339();
+    let timestamp = (horon_agent_time::Timestamp::now() + horon_agent_time::Duration::seconds(30)).to_rfc3339();
     assert_eq!(format_reset_time(&timestamp), "1m");
 }
 
 #[test]
 fn test_format_reset_time_uses_days_for_long_windows() {
-    let timestamp = (chrono::Utc::now()
-        + chrono::TimeDelta::hours(109)
-        + chrono::TimeDelta::minutes(5))
+    let timestamp = (horon_agent_time::Timestamp::now()
+        + horon_agent_time::Duration::hours(109)
+        + horon_agent_time::Duration::minutes(5))
     .to_rfc3339();
     assert_eq!(format_reset_time(&timestamp), "4d 13h");
 }
@@ -593,4 +593,32 @@ fn test_account_usage_probe_detects_all_accounts_exhausted() {
     assert!(probe.all_accounts_exhausted());
     assert!(probe.best_available_alternative().is_none());
     assert!(probe.switch_guidance().is_none());
+}
+
+#[test]
+fn a_reset_stamp_keeps_the_forms_the_old_parser_read() {
+    // Unpadded fields, a leading space, a fraction longer than nanoseconds and
+    // a leap second are the shapes the previous naive pattern read after the
+    // strict parse refused them; all of them name a past instant.
+    for text in [
+        "2020-1-2T3:4:5Z",
+        " 2020-01-02T03:04:05Z",
+        "2020-01-02T03:04:05.1234567890Z",
+        "2016-12-31T23:59:60.5Z",
+    ] {
+        assert_eq!(format_reset_time(text), "now", "{text}");
+    }
+}
+
+#[test]
+fn a_reset_stamp_refuses_what_was_never_read() {
+    // A zone keyword, a colon-less offset and a stamp with no `Z` belong to no
+    // form the old pair of parsers accepted, so the text is returned as-is.
+    for text in [
+        "2020-01-02T03:04:05UTC",
+        "2020-01-02T03:04:0509:00",
+        "2020-01-02T03:04:05",
+    ] {
+        assert_eq!(format_reset_time(text), text, "{text} is not a reset stamp");
+    }
 }

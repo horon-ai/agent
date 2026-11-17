@@ -625,11 +625,11 @@ fn load_startup_stub_preserves_metadata_but_skips_heavy_vectors() -> Result<()> 
             text: "hello world".to_string(),
             cache_control: None,
         }],
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
         ..Default::default()
     });
     session.record_env_snapshot(EnvSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         reason: "resume".to_string(),
         session_id: session_id.to_string(),
         working_dir: Some(temp_home.path().to_string_lossy().to_string()),
@@ -688,11 +688,11 @@ fn load_for_remote_startup_preserves_messages_and_replay_but_skips_heavy_vectors
             text: "hello remote startup".to_string(),
             cache_control: None,
         }],
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
         ..Default::default()
     });
     session.record_env_snapshot(EnvSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         reason: "resume".to_string(),
         session_id: session_id.to_string(),
         working_dir: Some(temp_home.path().to_string_lossy().to_string()),
@@ -809,10 +809,10 @@ fn test_recover_crashed_sessions_by_ids_restores_only_selected_group() -> Result
     let _home = EnvVarGuard::set("HORON_HOME", temp_home.path().as_os_str());
     let _test_flag = EnvVarGuard::set("HORON_AGENT_TEST_SESSION", "0");
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     for (id, active_at) in [
         ("session_selected_crash", now),
-        ("session_stale_unselected_crash", now - chrono::Duration::minutes(5)),
+        ("session_stale_unselected_crash", now - Duration::minutes(5)),
     ] {
         let mut crashed = Session::create_with_id(id.to_string(), None, Some(id.to_string()));
         crashed.mark_crashed(Some("test crash".to_string()));
@@ -2425,7 +2425,7 @@ fn reasoning_trace_survives_session_save_and_load() -> Result<()> {
                 cache_control: None,
             },
         ],
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
         ..Default::default()
     });
     session.save()?;
@@ -3165,7 +3165,7 @@ fn first_visible_user_prompt_becomes_the_generated_title() {
 // Produces the superseded format only as an explicit legacy input fixture.
 fn save_legacy_fixture(session: &mut Session) -> Result<()> {
     use super::super::journal::{PersistVectorMode, SessionJournalEntry};
-    session.updated_at += chrono::Duration::seconds(1);
+    session.updated_at = session.updated_at + horon_agent_time::Duration::seconds(1);
     let snapshot = session_path(&session.id)?;
     let journal = session_journal_path(&session.id)?;
     if !snapshot.exists() || session.persist_state.messages_mode == PersistVectorMode::Full {

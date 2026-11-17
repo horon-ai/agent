@@ -100,7 +100,7 @@ pub fn write_owner_marker(checkout: &Path, kind: &str, base_head: &str, session_
     let marker = OwnerMarker {
         pid: std::process::id(),
         session_id: session_id.to_string(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: horon_agent_time::Timestamp::now().to_rfc3339(),
         base_head: base_head.to_string(),
         kind: kind.to_string(),
     };

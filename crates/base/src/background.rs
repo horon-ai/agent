@@ -7,7 +7,7 @@ use crate::bus::{
     BackgroundTaskCompleted, BackgroundTaskProgress, BackgroundTaskProgressEvent, BackgroundTaskStatus, Bus, BusEvent,
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -70,9 +70,19 @@ struct ArtifactTask {
 fn artifact_order_key(task: &ArtifactTask) -> u64 {
     task.status_file
         .as_ref()
-        .and_then(|status| DateTime::parse_from_rfc3339(&status.started_at).ok())
+        .and_then(|status| Timestamp::parse_rfc3339(&status.started_at).ok())
         .and_then(|started| u64::try_from(started.timestamp_millis()).ok())
         .unwrap_or(task.fallback_order)
+}
+
+/// Seconds from an RFC3339 stamp to `completed_at`, or `None` when the stamp is
+/// unreadable or the span is negative (the old `to_std()` failure). `time`
+/// reports whole seconds plus a nanosecond remainder, so the fraction is folded
+/// in by hand.
+fn elapsed_secs(started_at: &str, completed_at: Timestamp) -> Option<f64> {
+    let elapsed = completed_at - Timestamp::parse_rfc3339(started_at).ok()?;
+    let seconds = elapsed.whole_seconds() as f64 + f64::from(elapsed.subsec_nanoseconds()) / 1e9;
+    (seconds >= 0.0).then_some(seconds)
 }
 
 /// Counts a task's active `wait` calls so the sweep leaves its artifacts alone
@@ -274,13 +284,6 @@ impl BackgroundTaskManager {
             ),
             Some(format!("Background task started · {}", label)),
         )));
-    }
-
-    fn status_duration_secs(started_at: &str, completed_at: DateTime<Utc>) -> Option<f64> {
-        DateTime::parse_from_rfc3339(started_at)
-            .ok()
-            .and_then(|started| (completed_at - started.with_timezone(&Utc)).to_std().ok())
-            .map(|duration| duration.as_secs_f64())
     }
 
     fn parse_exit_code_from_output(output: &str) -> Option<i32> {
@@ -877,11 +880,7 @@ impl BackgroundTaskManager {
                 }
                 fired_this_episode = true;
 
-                let running_secs = DateTime::parse_from_rfc3339(&started_at)
-                    .ok()
-                    .and_then(|started| (Utc::now() - started.with_timezone(&Utc)).to_std().ok())
-                    .map(|duration| duration.as_secs_f64())
-                    .unwrap_or_default();
+                let running_secs = elapsed_secs(&started_at, Timestamp::now()).unwrap_or_default();
                 let output_tail = fs::read_to_string(&output_path)
                     .await
                     .map(|output| {
@@ -959,7 +958,7 @@ impl BackgroundTaskManager {
             &mut status,
             BackgroundTaskEventRecord {
                 kind: BackgroundTaskEventKind::DeliveryUpdated,
-                timestamp: Utc::now().to_rfc3339(),
+                timestamp: Timestamp::now().to_rfc3339(),
                 message: Some(format!("notify={}, wake={}", notify, wake)),
                 status: Some(event_status),
                 exit_code: event_exit_code,
@@ -1032,7 +1031,7 @@ impl BackgroundTaskManager {
                 exit_code: None,
                 error: Some("Cancelled by user".to_string()),
                 started_at: task.started_at_rfc3339,
-                completed_at: Some(chrono::Utc::now().to_rfc3339()),
+                completed_at: Some(Timestamp::now().to_rfc3339()),
                 duration_secs: Some(task.started_at.elapsed().as_secs_f64()),
                 pid: None,
                 owner_pid: Some(std::process::id()),
@@ -1094,12 +1093,12 @@ impl BackgroundTaskManager {
             });
             drop(termination.await);
 
-            let completed_at = Utc::now();
+            let completed_at = Timestamp::now();
             status.status = BackgroundTaskStatus::Failed;
             status.exit_code = None;
             status.error = Some("Cancelled by user".to_string());
             status.completed_at = Some(completed_at.to_rfc3339());
-            status.duration_secs = Self::status_duration_secs(&status.started_at, completed_at);
+            status.duration_secs = elapsed_secs(&status.started_at, completed_at);
             let event_status = status.status.clone();
             let event_exit_code = status.exit_code;
             let event_error = status.error.clone();
@@ -1164,7 +1163,7 @@ impl BackgroundTaskManager {
                 exit_code: None,
                 error: Some(error.clone()),
                 started_at: task.started_at_rfc3339,
-                completed_at: Some(chrono::Utc::now().to_rfc3339()),
+                completed_at: Some(Timestamp::now().to_rfc3339()),
                 duration_secs: Some(task.started_at.elapsed().as_secs_f64()),
                 pid: None,
                 owner_pid: Some(std::process::id()),

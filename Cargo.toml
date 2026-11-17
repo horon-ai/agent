@@ -51,6 +51,7 @@ members = [
     "crates/provider-openai",
     "crates/usage-types",
     "crates/task-types",
+    "crates/time-types",
     "crates/todo-policy",
     "crates/token-estimate",
     "crates/transport",
@@ -80,7 +81,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Memory allocator (reduces fragmentation for long-running server)
-tikv-jemallocator = { version = "0.6", features = ["unprefixed_malloc_on_supported_platforms"], optional = true }
+tikv-jemallocator = { git = "https://github.com/tikv/jemallocator", rev = "66b124bdf4f1c65f154135f4e9d4b25206540091", features = ["unprefixed_malloc_on_supported_platforms"], optional = true }
 
 # Async runtime
 tokio = { version = "1", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
@@ -102,9 +103,9 @@ clap = { version = "4", features = ["derive"] }
 # File operations
 
 # Utilities
-dirs = "5"               # home directory
+dirs = "6"               # home directory
 anyhow = "1"
-chrono = { version = "0.4", features = ["serde"] }
+horon-agent-time = { path = "crates/time-types" }
 
 # Embeddings (local inference) - behind feature flag (163 crates, slow to compile)
 

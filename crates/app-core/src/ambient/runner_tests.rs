@@ -74,7 +74,7 @@ fn ambient_gate_tracks_config_toggles_and_preserves_disabled_override() {
         assert_eq!(ambient_allowed(&AmbientStatus::Idle), enabled);
         assert_eq!(
             ambient_allowed(&AmbientStatus::Scheduled {
-                next_wake: chrono::Utc::now(),
+                next_wake: horon_agent_time::Timestamp::now(),
             }),
             enabled
         );
@@ -238,14 +238,14 @@ async fn spawn_target_creates_one_child_session_and_runs_task() {
 
     let item = ScheduledItem {
         id: "sched_spawn_test".to_string(),
-        scheduled_for: chrono::Utc::now(),
+        scheduled_for: horon_agent_time::Timestamp::now(),
         context: "Follow up later".to_string(),
         priority: Priority::Normal,
         target: ScheduleTarget::Spawn {
             parent_session_id: parent.id.clone(),
         },
         created_by_session: parent.id.clone(),
-        created_at: chrono::Utc::now(),
+        created_at: horon_agent_time::Timestamp::now(),
         working_dir: parent.working_dir.clone(),
         task_description: Some("Follow up later".to_string()),
         relevant_files: vec!["src/lib.rs".to_string()],

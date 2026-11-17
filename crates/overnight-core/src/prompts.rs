@@ -1,8 +1,8 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 
 use super::{OvernightManifest, OvernightPreflight, OvernightRunStatus, format_minutes, preflight_summary};
 
-pub(crate) fn overnight_phase(manifest: &OvernightManifest, now: DateTime<Utc>) -> &'static str {
+pub(crate) fn overnight_phase(manifest: &OvernightManifest, now: Timestamp) -> &'static str {
     match manifest.status {
         OvernightRunStatus::Completed => "completed",
         OvernightRunStatus::Failed => "failed",
@@ -23,8 +23,8 @@ pub(crate) fn overnight_phase(manifest: &OvernightManifest, now: DateTime<Utc>) 
     }
 }
 
-pub(crate) fn time_relation_to_target(manifest: &OvernightManifest, now: DateTime<Utc>) -> String {
-    let minutes = manifest.target_wake_at.signed_duration_since(now).num_minutes();
+pub(crate) fn time_relation_to_target(manifest: &OvernightManifest, now: Timestamp) -> String {
+    let minutes = (manifest.target_wake_at - now).whole_minutes();
     if minutes >= 0 {
         format!("target in {}", format_minutes(minutes as u32))
     } else {
@@ -32,8 +32,8 @@ pub(crate) fn time_relation_to_target(manifest: &OvernightManifest, now: DateTim
     }
 }
 
-pub(crate) fn relative_time(then: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    let minutes = now.signed_duration_since(then).num_minutes();
+pub(crate) fn relative_time(then: Timestamp, now: Timestamp) -> String {
+    let minutes = (now - then).whole_minutes();
     if minutes >= 0 {
         format!("{} ago", format_minutes(minutes as u32))
     } else {
@@ -41,35 +41,31 @@ pub(crate) fn relative_time(then: DateTime<Utc>, now: DateTime<Utc>) -> String {
     }
 }
 
-pub(crate) fn next_prompt_label(manifest: &OvernightManifest, now: DateTime<Utc>) -> String {
+pub(crate) fn next_prompt_label(manifest: &OvernightManifest, now: Timestamp) -> String {
     if !matches!(manifest.status, OvernightRunStatus::Running) {
         return "none".to_string();
     }
     if now < manifest.handoff_ready_at {
         return format!(
             "handoff mode in {} or after current turn",
-            format_minutes(
-                manifest
-                    .handoff_ready_at
-                    .signed_duration_since(now)
-                    .num_minutes()
-                    .max(0) as u32
-            )
+            format_minutes((manifest.handoff_ready_at - now).whole_minutes().max(0) as u32)
         );
     }
     if now < manifest.target_wake_at {
         return format!(
             "morning report in {} or after current turn",
-            format_minutes(manifest.target_wake_at.signed_duration_since(now).num_minutes().max(0) as u32)
+            format_minutes((manifest.target_wake_at - now).whole_minutes().max(0) as u32)
         );
     }
     if manifest.morning_report_posted_at.is_none() {
         return "morning report after current turn".to_string();
     }
     if now < manifest.post_wake_grace_until {
+        let grace = manifest.post_wake_grace_until.utc();
         return format!(
-            "final wrap by {} or after current turn",
-            manifest.post_wake_grace_until.format("%H:%M UTC")
+            "final wrap by {:02}:{:02} UTC or after current turn",
+            grace.hour(),
+            grace.minute()
         );
     }
     "final wrap after current turn".to_string()
@@ -185,11 +181,7 @@ Initial steps:
 }
 
 pub fn build_continuation_prompt(manifest: &OvernightManifest) -> String {
-    let remaining = manifest
-        .target_wake_at
-        .signed_duration_since(Utc::now())
-        .num_minutes()
-        .max(0) as u32;
+    let remaining = (manifest.target_wake_at - Timestamp::now()).whole_minutes().max(0) as u32;
     format!(
         "Overnight continuation: there is about {} remaining until the target wake/report time. If your current task is complete, run another discovery/scoring pass and choose another high-confidence, verifiable task. If you are stuck, record why in `{}` and the relevant task-card JSON, then switch to a smaller bounded task. Update review notes and task cards before continuing.",
         format_minutes(remaining),

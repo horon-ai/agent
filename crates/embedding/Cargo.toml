@@ -11,6 +11,6 @@ path = "src/lib.rs"
 anyhow = "1"
 horon-agent-platform = { path = "../platform" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "charset", "http2", "system-proxy", "rustls-tls-manual-roots"] }
-tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+tokenizers = { git = "https://github.com/huggingface/tokenizers", rev = "b43d8d734de6481d8a266e83ddeb90103f1ec355", default-features = false, features = ["onig"] }
 tract-hir = "0.23"
 tract-onnx = "0.23"

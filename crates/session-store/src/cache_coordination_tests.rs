@@ -3,6 +3,7 @@ use crate::checkpoint::SessionCache;
 use crate::{
     BlockingWriter, EventDraft, EventId, EventKind, IoPoint, KnownEventKind, OriginId, ReadProbe, SessionMetadata,
 };
+use horon_agent_time::Timestamp;
 use std::sync::{TryLockError, mpsc};
 use std::time::Duration;
 
@@ -27,7 +28,7 @@ fn seeded() -> Result<(SessionPaths, SessionId), StoreError> {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )

@@ -21,7 +21,7 @@ use crate::config::config;
 use crate::safety::PermissionRequest;
 use crate::tool::ToolEffects;
 use crate::tool::path_policy::{named_path_texts, named_paths};
-use chrono::{DateTime, Duration, Utc};
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
@@ -93,8 +93,8 @@ pub(crate) struct Grant {
     pub(crate) path: PathBuf,
     pub(crate) scope: GrantScope,
     pub(crate) capability: GrantCapability,
-    pub(crate) granted_at: DateTime<Utc>,
-    pub(crate) expires_at: DateTime<Utc>,
+    pub(crate) granted_at: Timestamp,
+    pub(crate) expires_at: Timestamp,
 }
 
 impl Grant {
@@ -229,7 +229,7 @@ pub(crate) fn covered(tool: &str, input: &serde_json::Value, working_dir: Option
     let Some(targets) = canonical_targets(tool, input, working_dir) else {
         return false;
     };
-    covered_by(&load_grants(), &workspace, &targets, needed, Utc::now())
+    covered_by(&load_grants(), &workspace, &targets, needed, Timestamp::now())
 }
 
 fn covered_by(
@@ -237,7 +237,7 @@ fn covered_by(
     workspace: &Path,
     targets: &[PathBuf],
     needed: GrantCapability,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> bool {
     if targets.is_empty() {
         return false;
@@ -282,13 +282,13 @@ pub fn names_single_path(tool: &str, input: &serde_json::Value) -> bool {
 /// on a patch that touches three files would silently decide two questions the
 /// user was never shown. Such a call is approved once and asks next time.
 pub(crate) fn grant_from_request(request: &PermissionRequest, scope: GrantScope) -> Option<Grant> {
-    grant_from_request_at(request, scope, Utc::now(), config().tools.approval_grant_ttl_days)
+    grant_from_request_at(request, scope, Timestamp::now(), config().tools.approval_grant_ttl_days)
 }
 
 fn grant_from_request_at(
     request: &PermissionRequest,
     scope: GrantScope,
-    now: DateTime<Utc>,
+    now: Timestamp,
     ttl_days: u64,
 ) -> Option<Grant> {
     if ttl_days == 0 {
@@ -322,7 +322,7 @@ fn grant_from_request_at(
         scope,
         capability,
         granted_at: now,
-        expires_at: now + Duration::days(i64::try_from(ttl_days).unwrap_or(i64::MAX)),
+        expires_at: now + TimeDelta::days(i64::try_from(ttl_days).unwrap_or(i64::MAX)),
     })
 }
 
@@ -333,7 +333,7 @@ fn grant_from_request_at(
 /// cannot drop one of them.
 pub(crate) fn store(grant: Grant) -> anyhow::Result<()> {
     let _lock = acquire_grant_lock(100, std::time::Duration::from_millis(2))?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut file = GrantFile {
         version: GRANT_FILE_VERSION,
         grants: load_grants(),

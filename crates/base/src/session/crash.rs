@@ -3,7 +3,7 @@ use crate::id::extract_session_name;
 use crate::message::{ContentBlock, Role};
 use crate::storage;
 use anyhow::Result;
-use chrono::{DateTime, Duration, Utc};
+use horon_agent_time::{Duration, Timestamp};
 use std::collections::HashSet;
 
 const RELEVANT_CRASH_GROUP_WINDOW_SECS: i64 = 60;
@@ -156,16 +156,16 @@ fn recover_loaded_crashed_sessions(mut crashed: Vec<Session>) -> Result<Vec<Stri
     Ok(new_ids)
 }
 
-fn crash_timestamp(session: &Session) -> DateTime<Utc> {
+fn crash_timestamp(session: &Session) -> Timestamp {
     session.last_active_at.unwrap_or(session.updated_at)
 }
 
-fn retain_relevant_crash_group(crashed: &mut Vec<Session>) -> Option<DateTime<Utc>> {
+fn retain_relevant_crash_group(crashed: &mut Vec<Session>) -> Option<Timestamp> {
     let most_recent = crashed.iter().map(crash_timestamp).max()?;
     let crash_window = Duration::seconds(RELEVANT_CRASH_GROUP_WINDOW_SECS);
     crashed.retain(|s| {
-        let delta = most_recent.signed_duration_since(crash_timestamp(s));
-        delta >= Duration::zero() && delta <= crash_window
+        let delta = most_recent - crash_timestamp(s);
+        delta >= Duration::ZERO && delta <= crash_window
     });
     Some(most_recent)
 }
@@ -178,7 +178,7 @@ pub struct CrashedSessionsInfo {
     /// Display names of sessions in the guessed relevant restore group.
     pub display_names: Vec<String>,
     /// When the most recent crash occurred
-    pub most_recent_crash: DateTime<Utc>,
+    pub most_recent_crash: Timestamp,
     /// Crashed sessions excluded because they were outside the relevant group.
     pub omitted_crashed_count: usize,
 }
@@ -225,7 +225,7 @@ pub fn detect_crashed_sessions() -> Result<Option<CrashedSessionsInfo>> {
     }
 
     let total_unrecovered_crashed = crashed.len();
-    let most_recent = retain_relevant_crash_group(&mut crashed).unwrap_or_else(Utc::now);
+    let most_recent = retain_relevant_crash_group(&mut crashed).unwrap_or_else(Timestamp::now);
 
     if crashed.is_empty() {
         return Ok(None);
@@ -269,8 +269,8 @@ fn find_crashed_via_pid_files() -> Option<Vec<(String, String)>> {
     }
 
     let entries = std::fs::read_dir(&dir).ok()?;
-    let cutoff = Utc::now() - Duration::hours(24);
-    let mut crashed: Vec<(String, String, DateTime<Utc>)> = Vec::new();
+    let cutoff = Timestamp::now() - Duration::hours(24);
+    let mut crashed: Vec<(String, String, Timestamp)> = Vec::new();
 
     for entry in entries.flatten() {
         let session_id = match entry.file_name().to_str() {
@@ -358,7 +358,7 @@ fn had_streaming_marker(session_id: &str) -> bool {
 }
 
 /// One crashed-session candidate: id, short name, updated at, last active at.
-type LegacyCandidate = (String, Option<String>, DateTime<Utc>, Option<DateTime<Utc>>);
+type LegacyCandidate = (String, Option<String>, Timestamp, Option<Timestamp>);
 
 /// Legacy fallback: scan the full sessions directory.
 ///
@@ -375,7 +375,7 @@ fn find_crashed_legacy_scan() -> Vec<(String, String)> {
         return Vec::new();
     }
 
-    let cutoff = Utc::now() - Duration::hours(24);
+    let cutoff = Timestamp::now() - Duration::hours(24);
     let cutoff_system = std::time::SystemTime::now()
         .checked_sub(std::time::Duration::from_secs(24 * 3600))
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -548,8 +548,8 @@ pub fn find_session_by_name_or_id(name_or_id: &str) -> Result<String> {
     }
 
     let normalized_query = normalize_resume_lookup_text(name_or_id);
-    let mut exact_matches: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
-    let mut title_matches: Vec<(String, chrono::DateTime<chrono::Utc>)> = Vec::new();
+    let mut exact_matches: Vec<(String, Timestamp)> = Vec::new();
+    let mut title_matches: Vec<(String, Timestamp)> = Vec::new();
 
     for source in horon_agent_session_store::reader::sources(&paths)? {
         let stem = source.session_id.as_str();
@@ -596,7 +596,7 @@ mod batch_crash_tests {
         let info = CrashedSessionsInfo {
             session_ids: vec!["session_test_1".to_string(), "session_test_2".to_string()],
             display_names: vec!["fox".to_string(), "oak".to_string()],
-            most_recent_crash: Utc::now(),
+            most_recent_crash: Timestamp::now(),
             omitted_crashed_count: 0,
         };
         assert_eq!(info.session_ids.len(), 2);
