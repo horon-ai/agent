@@ -280,12 +280,12 @@ pub(super) fn described(
 /// The stored messages of a session, newest last, or none when nothing answers.
 ///
 /// Two reads exist because the daemon stores two shapes. A current session is a
-/// folder whose conversation only the history page reports, while a legacy
-/// single-file record and a daemon without the `session_history_cursor_v1`
-/// capability are only reachable through the tail (`peek_session`). The page is
-/// asked first, and the tail answers when the page fails or is empty; a session
-/// neither read can answer shows its title, or its id when it has none, and a
-/// head-only preview.
+/// folder whose conversation only the history page reports, while a single-file
+/// record written by an earlier release and a daemon without the
+/// `session_history_cursor_v1` capability are only reachable through the tail
+/// (`peek_session`). The page is asked first, and the tail answers when the page
+/// fails or is empty; a session neither read can answer shows its title, or its
+/// id when it has none, and a head-only preview.
 pub(super) fn peek(client: &HoronAgentClient, session_id: &str) -> Vec<HistoryMessage> {
     let page = client
         .get_history_page(session_id, None, None, Some(PEEK_MESSAGES))
