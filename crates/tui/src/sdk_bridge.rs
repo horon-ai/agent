@@ -24,9 +24,13 @@ use horon_agent_sdk::{
 mod runtime;
 mod sessions;
 mod skills;
+mod steer;
 
 #[cfg(test)]
 mod runtime_tests;
+
+#[cfg(test)]
+mod steer_tests;
 
 #[cfg(test)]
 mod sessions_tests;
@@ -99,6 +103,12 @@ pub enum Command {
     /// list read after a connect or a session change stays quiet for a harness
     /// too old to know the command and reports any other failure once.
     Skills { announce: bool },
+    /// Send the queued messages into the running turn as one soft interrupt.
+    ///
+    /// The messages arrive as one body rather than as a new turn, so the model
+    /// reads them mid-turn; the answer echoes the text so the client settles
+    /// exactly the messages it held.
+    Steer(String),
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -143,6 +153,13 @@ pub enum Incoming {
     Sessions(Vec<SessionRow>),
     /// The skills the harness reports for the session it serves.
     Skills(Vec<SkillRow>),
+    /// The running turn took the text a steer carried, echoed back so the
+    /// client knows which held messages it settles.
+    Steered { text: String },
+    /// A steer the harness refused: the text it carried and the sentence
+    /// saying why, so the client can put the messages back in front of the
+    /// user instead of losing them.
+    SteerFailed { text: String, message: String },
     /// The bridge moved to another session, with its stored conversation.
     Attached(Box<AttachedSession>),
     /// A request the harness answered with an error; the client stops waiting.
@@ -619,6 +636,10 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // request: the harness stores the level and answers with the state it
         // now reports.
         Command::Effort(level) => runtime::set(client, session_id, &level),
+        // A steer answers with the text it carried rather than a line: the
+        // client matches that against the messages it is holding, so one
+        // refusal restores exactly the messages it was about.
+        Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -640,6 +661,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Models
         | Command::Sessions { .. }
         | Command::Skills { .. }
+        | Command::Steer(_)
         | Command::NewSession { .. }
         | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
@@ -671,6 +693,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
         Command::Skills { .. } => "could not list the skills",
+        Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",

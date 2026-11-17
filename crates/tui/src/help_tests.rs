@@ -187,7 +187,7 @@ fn the_key_list_is_the_map_in_force() {
     }
     let interrupt = rows
         .iter()
-        .find(|row| row.right == "interrupt the running turn and nothing else")
+        .find(|row| row.right == "interrupt the running turn, or send queued messages into it")
         .expect("the interrupt row");
     assert_eq!(interrupt.left, "esc");
 }
@@ -198,7 +198,7 @@ fn a_remapped_key_is_the_one_the_listing_shows() {
     let rows = help::key_rows(&bindings);
     let interrupt = rows
         .iter()
-        .find(|row| row.right == "interrupt the running turn and nothing else")
+        .find(|row| row.right == "interrupt the running turn, or send queued messages into it")
         .expect("the interrupt row");
     assert_eq!(interrupt.left, "ctrl+x");
     assert!(

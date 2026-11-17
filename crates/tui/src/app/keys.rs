@@ -195,9 +195,11 @@ impl App {
             }
             Some(keys::ids::APP_INTERRUPT) => {
                 // `esc` interrupts and never leaves: a stray key on an idle
-                // client must not end the session.
+                // client must not end the session. A queued message is what the
+                // turn can still take, so it goes into the running turn instead
+                // of the turn being stopped; with nothing queued it cancels.
                 if self.pending_turn {
-                    return self.cancel_turn();
+                    return self.steer_turn();
                 }
                 return None;
             }

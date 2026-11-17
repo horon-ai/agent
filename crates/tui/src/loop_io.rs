@@ -46,6 +46,10 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             } => app.runtime_info(provider, model, effort, level),
             Incoming::Sessions(rows) => app.show_sessions(rows),
             Incoming::Skills(rows) => app.show_skills(rows),
+            // The answer names the text it settles, so a steer the client no
+            // longer holds is dropped rather than restored into another turn.
+            Incoming::Steered { text } => app.steered(&text),
+            Incoming::SteerFailed { text, message } => app.steer_failed(&text, &message),
             Incoming::Attached(session) => {
                 // Read before the attach so the notice names what happened: the
                 // same answer covers a resumed session and one just created.
@@ -63,6 +67,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
 pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: Action) {
     let command = match action {
         Action::Send(text) => Command::Text(text),
+        Action::Steer(text) => Command::Steer(text),
         Action::Cancel => Command::Cancel,
         Action::Approval {
             request_id,

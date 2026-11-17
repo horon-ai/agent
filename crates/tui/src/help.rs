@@ -41,7 +41,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_CANCEL,
         "cancel the running turn, or leave when nothing is running",
     ),
-    (ids::APP_INTERRUPT, "interrupt the running turn and nothing else"),
+    (
+        ids::APP_INTERRUPT,
+        "interrupt the running turn, or send queued messages into it",
+    ),
     (ids::APP_QUIT, "leave"),
     (ids::APP_SCROLL_PAGE_UP, "hold the transcript one page higher"),
     (

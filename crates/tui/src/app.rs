@@ -45,6 +45,9 @@ mod history_search_tests;
 #[cfg(test)]
 mod session_switch_tests;
 
+#[cfg(test)]
+mod steer_tests;
+
 /// What the UI asks the bridge to do after a keystroke.
 ///
 /// Not `Eq`: an answer carries protocol selections, which only compare with
@@ -53,6 +56,12 @@ mod session_switch_tests;
 pub enum Action {
     /// Send this text as a user message.
     Send(String),
+    /// Send this text into the running turn as one soft interrupt.
+    ///
+    /// It carries the queued messages joined for the harness; what the
+    /// transcript shows is each message's own row, settled when the bridge
+    /// answers.
+    Steer(String),
     /// Cancel the running turn.
     Cancel,
     /// Answer a parked approval.
@@ -104,6 +113,22 @@ impl Message {
         let display = display.unwrap_or_else(|| text.clone());
         Self { text, display }
     }
+}
+
+/// The queued messages handed to a running turn as one soft interrupt.
+///
+/// Held until the bridge answers: their rows stay drawn as queued for that
+/// long, so a refusal needs no redraw and nothing is drawn twice. The session
+/// is the one they were queued for, so an answer that arrives after the client
+/// moved cannot put them into another conversation's queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingSteer {
+    /// The joined body sent to the harness, echoed back in the answer.
+    pub text: String,
+    /// The session the messages were queued for, when it was known.
+    pub session_id: Option<String>,
+    /// The messages, in the order they were queued.
+    pub messages: Vec<Message>,
 }
 
 /// The whole client state.
@@ -190,6 +215,13 @@ pub struct App {
     /// turn releases the agent. It leaves before the effort, because the report
     /// that follows a switch clears an effort it does not name.
     model_after_turn: Option<String>,
+    /// The queued messages a steer handed to the running turn, until the bridge
+    /// answers.
+    ///
+    /// Their rows are drawn as queued while it waits, so the answer settles
+    /// them in place: a confirmation turns each row into the message the model
+    /// received, and a refusal puts the messages back in front of the queue.
+    steer_pending: Option<PendingSteer>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
     /// Session the client is attached to, from the last event that named it.
@@ -273,6 +305,7 @@ impl App {
             effort_requested: None,
             effort_after_turn: None,
             model_after_turn: None,
+            steer_pending: None,
             session_status: None,
             session_id: None,
             session_title: None,
@@ -324,6 +357,7 @@ impl App {
             effort_requested: None,
             effort_after_turn: None,
             model_after_turn: None,
+            steer_pending: None,
             session_status: None,
             session_id: None,
             session_title: None,
@@ -387,6 +421,10 @@ impl App {
         self.session_status = Some("idle".to_string());
         self.withdraw_prompts("the connection was lost");
         self.transcript.end_running_tools();
+        // A steer the turn never took is a message the harness will not take
+        // now either, so it waits with the rest of the queue the notice below
+        // counts.
+        self.restore_steer();
         if !self.queue.is_empty() {
             let waiting = self.queue.len();
             self.transcript

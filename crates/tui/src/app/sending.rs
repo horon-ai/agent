@@ -1,7 +1,7 @@
 //! Getting a submitted line to the harness, and what happens when it
 //! cannot be sent: the queue, the in-flight slot, refusals and the turn start.
 
-use super::{Action, App, Message};
+use super::{Action, App, Message, PendingSteer};
 use crate::commands::Invocation;
 
 impl App {
@@ -138,6 +138,11 @@ impl App {
             self.refuse(&message.display);
             return None;
         }
+        // A message the user just sent is what they want to read next, so a
+        // view held above the end follows it again: otherwise the line and its
+        // answer are drawn below the window until `ctrl+end`. The commands that
+        // hold the view on purpose (`/keys`) never reach this function.
+        self.scroll.to_bottom();
         if self.pending_turn {
             self.transcript.push_queued(message.display.clone());
             self.queue.push(message);
@@ -157,6 +162,112 @@ impl App {
         Some(Action::Cancel)
     }
 
+    /// Hand the queued messages to the running turn instead of stopping it.
+    ///
+    /// `esc` means "this turn should hear what I have typed"; with nothing
+    /// queued there is nothing to send, so it cancels exactly as it always did.
+    /// The queue empties here, while the rows stay drawn as queued until the
+    /// bridge answers: a refusal then needs no redraw, and the text is never on
+    /// screen twice. One steer is in flight at a time, so a second `esc` while
+    /// one waits cancels rather than stacking messages the client could not put
+    /// back together.
+    pub(crate) fn steer_turn(&mut self) -> Option<Action> {
+        if self.disconnected || self.steer_pending.is_some() {
+            return self.cancel_turn();
+        }
+        let text = joined_text(&self.queue);
+        if text.is_empty() {
+            return self.cancel_turn();
+        }
+        self.steer_pending = Some(PendingSteer {
+            text: text.clone(),
+            session_id: self.session_id.clone(),
+            messages: std::mem::take(&mut self.queue),
+        });
+        Some(Action::Steer(text))
+    }
+
+    /// The running turn took the messages a steer carried.
+    ///
+    /// Each queued row becomes the message the model received, in the order the
+    /// messages were typed; the notice says what happened, so a reply that
+    /// answers text the user sent mid-turn reads as one.
+    pub(crate) fn steered(&mut self, text: &str) {
+        let Some(pending) = self.take_steer(text) else {
+            return;
+        };
+        if !self.carried_into(&pending) {
+            // The rows went with the session these messages were queued for.
+            return;
+        }
+        for message in &pending.messages {
+            self.transcript.promote_queued(&message.display);
+        }
+        self.transcript.push_notice("sent into the running turn");
+    }
+
+    /// The harness refused a steer: put the messages back where the user can
+    /// see them and say so.
+    ///
+    /// They go in front of the queue, in their own order, so messages typed
+    /// while the request was in flight keep their place behind them.
+    pub(crate) fn steer_failed(&mut self, text: &str, message: &str) {
+        let Some(pending) = self.take_steer(text) else {
+            return;
+        };
+        if !self.carried_into(&pending) {
+            // Restoring them would send one conversation's text into another:
+            // the queue was cleared when the session changed, and these belong
+            // to the session that was left.
+            self.warn(message);
+            return;
+        }
+        self.restore(pending);
+        self.warn(message);
+    }
+
+    /// The steer an answer about `text` settles, taken out of the slot.
+    ///
+    /// One steer is in flight at a time, so an answer naming other text is not
+    /// this client's and the held steer stays where it is.
+    fn take_steer(&mut self, text: &str) -> Option<PendingSteer> {
+        let pending = self.steer_pending.take()?;
+        if pending.text != text {
+            self.steer_pending = Some(pending);
+            return None;
+        }
+        Some(pending)
+    }
+
+    /// Whether a steer's messages still belong to the session in force.
+    ///
+    /// The ids are compared only when both are known: before the first identity
+    /// event the client names no session, and an unknown id never proves a
+    /// change.
+    fn carried_into(&self, pending: &PendingSteer) -> bool {
+        match (&pending.session_id, &self.session_id) {
+            (Some(queued_for), Some(current)) => queued_for == current,
+            _ => true,
+        }
+    }
+
+    /// Put a steer's messages back in front of the queue, in their own order.
+    fn restore(&mut self, pending: PendingSteer) {
+        let mut restored = pending.messages;
+        restored.append(&mut self.queue);
+        self.queue = restored;
+    }
+
+    /// Put a steer the connection lost back in front of the queue.
+    ///
+    /// The messages were never taken by the harness, so a connection that dies
+    /// with one in flight reports them with the rest of the queue.
+    pub(super) fn restore_steer(&mut self) {
+        if let Some(pending) = self.steer_pending.take() {
+            self.restore(pending);
+        }
+    }
+
     /// Say that a message went nowhere, and put it back in front of the user.
     fn refuse(&mut self, text: &str) {
         self.keep_text(text);
@@ -169,4 +280,23 @@ impl App {
         self.session_status = Some("generating".to_string());
         Action::Send(text)
     }
+}
+
+/// The queued messages as one body, one blank line between them.
+///
+/// A message that is empty once trimmed contributes no paragraph: the harness
+/// would read an empty one as a message of its own, and the turn would hear
+/// nothing the user said.
+fn joined_text(messages: &[Message]) -> String {
+    let mut body = String::new();
+    for message in messages {
+        if message.text.trim().is_empty() {
+            continue;
+        }
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        body.push_str(&message.text);
+    }
+    body
 }
