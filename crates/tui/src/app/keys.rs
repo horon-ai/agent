@@ -135,7 +135,12 @@ impl App {
                         self.slash.move_by(1);
                         return None;
                     }
-                    keys::ids::EDITOR_COMPLETE => {
+                    // `shift+tab` walks the effort ladder everywhere the draft
+                    // is not choosing a command. With the popup open `tab` is
+                    // the popup's own key, so its shifted form completes the
+                    // row on screen rather than changing the effort under the
+                    // list the user is reading.
+                    keys::ids::EDITOR_COMPLETE | keys::ids::APP_CYCLE_EFFORT => {
                         self.complete();
                         return None;
                     }
@@ -154,6 +159,15 @@ impl App {
                     return None;
                 }
                 let text = self.input.take();
+                // A backslash at the end of the draft asks for another line
+                // rather than a send: the escape comes off and the draft breaks
+                // there. Nothing is remembered or queued, because the message
+                // is not finished and the next Enter is the one that sends it.
+                if let Some(kept) = continued_draft(&text) {
+                    self.input.set_text(&kept);
+                    self.input.newline();
+                    return None;
+                }
                 if text.trim().is_empty() {
                     return None;
                 }
@@ -164,6 +178,10 @@ impl App {
             }
             Some(keys::ids::EDITOR_COMPLETE) => {
                 self.complete();
+                return None;
+            }
+            Some(keys::ids::EDITOR_HISTORY_SEARCH) => {
+                self.open_history_search();
                 return None;
             }
             Some(keys::ids::APP_CANCEL) => {
@@ -177,13 +195,21 @@ impl App {
             }
             Some(keys::ids::APP_INTERRUPT) => {
                 // `esc` interrupts and never leaves: a stray key on an idle
-                // client must not end the session.
+                // client must not end the session. A queued message is what the
+                // turn can still take, so it goes into the running turn instead
+                // of the turn being stopped; with nothing queued it cancels.
                 if self.pending_turn {
-                    return self.cancel_turn();
+                    return self.steer_turn();
                 }
                 return None;
             }
             Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
+            Some(keys::ids::APP_EXPAND_TOOL) => {
+                self.expand_tool();
+                return None;
+            }
+            Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
+            Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
             // Every edit ends a walk through the history: the draft on screen
             // is being changed, and a later `down` must not replace the change
             // with the entry the walk started from.
@@ -268,6 +294,27 @@ impl App {
         true
     }
 
+    /// Show the whole output of the newest cut tool call, or the preview again.
+    ///
+    /// With nothing to expand the key says so, because a key that silently does
+    /// nothing reads as a broken key rather than an empty one.
+    fn expand_tool(&mut self) {
+        if self.transcript.toggle_expand() {
+            // The height of one block just changed, and a held view keeps its
+            // place from heights counted before the press: they are dropped so
+            // the next held frame recounts instead of trusting them.
+            self.scroll.invalidate();
+            // The view then goes back to the end. The newest kept call is
+            // usually at the end of what has been drawn, but not always: a
+            // message may have arrived after it, so this is a guess that the
+            // changed block is near the bottom, not a guarantee that the next
+            // frames show the expansion in full.
+            self.scroll.to_bottom();
+        } else {
+            self.transcript.push_notice(crate::tool_expand::NOTHING_TO_EXPAND);
+        }
+    }
+
     /// Rows one scroll page covers: the transcript pane as it was last drawn.
     ///
     /// A held view spends the pane's bottom row on the follow indicator, so a
@@ -314,6 +361,21 @@ impl App {
             self.input.set_text(&entry);
         }
     }
+}
+
+/// The draft with the backslash that asks for another line taken off.
+///
+/// A draft ends in a continuation when its last character is a backslash that is
+/// not itself escaped, so an odd run of trailing backslashes breaks the line and
+/// an even run is that many literal backslashes and sends the draft as typed. A
+/// backslash anywhere else is text, and so is a space after the last backslash:
+/// the run has to reach the end of the draft.
+fn continued_draft(draft: &str) -> Option<String> {
+    let trailing = draft.chars().rev().take_while(|character| *character == '\\').count();
+    if trailing.is_multiple_of(2) {
+        return None;
+    }
+    draft.strip_suffix('\\').map(str::to_string)
 }
 
 /// The line the transcript keeps after an approval is answered.

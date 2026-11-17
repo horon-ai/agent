@@ -151,5 +151,5 @@ fn a_report_is_drawn_above_the_rest_of_the_conversation() {
         width: 60,
         markdown: true,
     };
-    assert!(item_lines::lines(&items[1], &look).len() > 1);
+    assert!(item_lines::lines(&items[1], &look, None).len() > 1);
 }

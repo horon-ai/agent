@@ -173,11 +173,13 @@ fn commands_review_with_a_project_file_expands_to_a_message() {
 #[test]
 fn commands_server_names_follow_the_protocol() {
     let (_user, _project, state) = registry();
+    // `/skills` is a built-in now: the harness's own `skills` command is not
+    // listed under a second row, so the name reaches the client instead.
     assert_eq!(
         state.resolve("/skills"),
-        Invocation::Server {
-            command: RuntimeCommand::Skills,
-            arguments: Vec::new()
+        Invocation::Local {
+            command: Local::Skills,
+            arguments: String::new()
         }
     );
     match state.resolve("/context notes") {
@@ -187,9 +189,15 @@ fn commands_server_names_follow_the_protocol() {
         }
         other => panic!("expected a server command: {other:?}"),
     }
-    // The names come from serde, so every variant is reachable and unique.
+    // The names come from serde, so every variant is reachable and unique,
+    // apart from the one the built-in list took over.
     let names = server_commands();
-    assert_eq!(names.len(), SERVER_VARIANTS.len());
+    assert_eq!(
+        names.len() + 1,
+        SERVER_VARIANTS.len(),
+        "the built-in `/skills` owns exactly one harness name"
+    );
+    assert!(!names.iter().any(|(name, _)| name == "skills"));
     let mut unique: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
     unique.sort_unstable();
     unique.dedup();
@@ -324,14 +332,14 @@ fn commands_typed_lines_become_actions() {
     write_project_command(project.path(), "review", "Review these paths: $ARGUMENTS");
     app.commands.load();
 
-    // A harness command keeps its arguments.
-    assert_eq!(
-        type_line(&mut app, "/skills"),
-        Some(Action::Runtime {
-            command: RuntimeCommand::Skills,
-            arguments: Vec::new()
-        })
-    );
+    // `/skills` is a built-in: it opens the list and asks the bridge for it,
+    // so the harness command of that name never answers.
+    assert_eq!(type_line(&mut app, "/skills"), Some(Action::Skills));
+    assert!(app.picker.is_some(), "/skills did not open the list");
+    // The open list owns every key, so it is closed before the next line is
+    // typed; closing it changes nothing, which is what `esc` promises.
+    assert!(app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)).is_none());
+    assert!(app.picker.is_none(), "escape did not close the list");
     match type_line(&mut app, "/context notes") {
         Some(Action::Runtime { command, arguments }) => {
             assert_eq!(command, RuntimeCommand::Context);

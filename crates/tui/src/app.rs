@@ -18,7 +18,7 @@ use crate::overlays::picker::Picker;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
 use crate::scroll::Scroll;
-use crate::sdk_bridge::Incoming;
+use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
@@ -26,11 +26,30 @@ use crate::transcript::Decision;
 use crate::transcript::Transcript;
 
 mod commands;
+mod effort;
+mod history_search;
 mod keys;
 mod picker;
 mod prompts;
 mod sending;
+mod sessions;
 mod settings;
+mod skills;
+
+#[cfg(test)]
+mod boundary_tests;
+
+#[cfg(test)]
+mod effort_cmd_tests;
+
+#[cfg(test)]
+mod history_search_tests;
+
+#[cfg(test)]
+mod session_switch_tests;
+
+#[cfg(test)]
+mod steer_tests;
 
 /// What the UI asks the bridge to do after a keystroke.
 ///
@@ -40,6 +59,12 @@ mod settings;
 pub enum Action {
     /// Send this text as a user message.
     Send(String),
+    /// Send this text into the running turn as one soft interrupt.
+    ///
+    /// It carries the queued messages joined for the harness; what the
+    /// transcript shows is each message's own row, settled when the bridge
+    /// answers.
+    Steer(String),
     /// Cancel the running turn.
     Cancel,
     /// Answer a parked approval.
@@ -57,12 +82,18 @@ pub enum Action {
     },
     /// Switch to the model named.
     Model(String),
+    /// Set the reasoning effort to the level named.
+    Effort(String),
     /// Ask for the model list the picker offers.
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Start a new session in this working directory and follow it.
+    NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
+    /// Ask the harness for the skills it reports for the session.
+    Skills,
     /// Leave.
     Quit,
 }
@@ -85,6 +116,22 @@ impl Message {
         let display = display.unwrap_or_else(|| text.clone());
         Self { text, display }
     }
+}
+
+/// The queued messages handed to a running turn as one soft interrupt.
+///
+/// Held until the bridge answers: their rows stay drawn as queued for that
+/// long, so a refusal needs no redraw and nothing is drawn twice. The session
+/// is the one they were queued for, so an answer that arrives after the client
+/// moved cannot put them into another conversation's queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PendingSteer {
+    /// The joined body sent to the harness, echoed back in the answer.
+    pub text: String,
+    /// The session the messages were queued for, when it was known.
+    pub session_id: Option<String>,
+    /// The messages, in the order they were queued.
+    pub messages: Vec<Message>,
 }
 
 /// The whole client state.
@@ -148,10 +195,59 @@ pub struct App {
     pub model: Option<String>,
     /// Provider reported by the daemon.
     pub provider: Option<String>,
+    /// Reasoning effort the daemon reported for the model, e.g. `high`.
+    pub reasoning_effort: Option<String>,
+    /// The effort the client last asked for, until an answer names it.
+    ///
+    /// The cycle key steps from here rather than from the level last reported,
+    /// so two presses in quick succession walk two levels instead of asking for
+    /// the same one twice. It is cleared when an answer confirms a level or a
+    /// request fails.
+    effort_requested: Option<String>,
+    /// The reasoning effort asked for while a turn was running.
+    ///
+    /// The daemon answers an effort request only after the running turn
+    /// releases the agent, so a request sent mid-turn would hold the bridge
+    /// thread — every event and the cancel key with it — until the turn ended.
+    /// The level waits here instead and leaves with the next
+    /// [`App::take_queued`] pass. A newer level replaces a waiting one.
+    effort_after_turn: Option<String>,
+    /// The model asked for while a turn was running.
+    ///
+    /// Same reason as `effort_after_turn`: the daemon applies a switch after the
+    /// turn releases the agent. It leaves before the effort, because the report
+    /// that follows a switch clears an effort it does not name.
+    model_after_turn: Option<String>,
+    /// The queued messages a steer handed to the running turn, until the bridge
+    /// answers.
+    ///
+    /// Their rows are drawn as queued while it waits, so the answer settles
+    /// them in place: a confirmation turns each row into the message the model
+    /// received, and a refusal puts the messages back in front of the queue.
+    steer_pending: Option<PendingSteer>,
+    /// Steers of sessions the client left that no answer has settled yet,
+    /// oldest first.
+    ///
+    /// The bridge answers steers in the order it received them, so the oldest
+    /// one is the one the next answer belongs to. Keeping them beside the slot
+    /// lets a steer of the session in force take it without dropping a record
+    /// whose answer is still on its way.
+    steer_left_behind: VecDeque<PendingSteer>,
     /// Latest session status string, e.g. `idle` or `generating`.
     pub session_status: Option<String>,
     /// Session the client is attached to, from the last event that named it.
     pub session_id: Option<String>,
+    /// The title the harness holds for the attached session, when it has one.
+    ///
+    /// It names the terminal window. A session the daemon never titled is named
+    /// after its working directory instead, so this stays `None`.
+    pub session_title: Option<String>,
+    /// Whether the session change in flight is a `/new` the client asked for.
+    ///
+    /// The bridge answers an attach and a create with the same message, and the
+    /// client has to say which happened: `resumed` claims a stored conversation
+    /// was replayed, which a session that was just created does not have.
+    new_session_pending: bool,
     /// Working directory the `path` segment shows.
     pub cwd: Option<String>,
     /// The user's home directory, shortened to `~` by the `path` segment.
@@ -171,6 +267,12 @@ pub struct App {
     pub slash: crate::help::SlashPopup,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
+    /// The skills the harness reported for the session in force.
+    ///
+    /// The registry holds the name and description for the resolver, while the
+    /// picker needs the file and the tool list the harness named, so the report
+    /// is kept whole here. It is cleared with the session it belongs to.
+    pub skills: Vec<SkillRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
     /// Where user theme files are read from, offered by the settings screen.
@@ -213,8 +315,16 @@ impl App {
             events,
             model: None,
             provider: None,
+            reasoning_effort: None,
+            effort_requested: None,
+            effort_after_turn: None,
+            model_after_turn: None,
+            steer_pending: None,
+            steer_left_behind: VecDeque::new(),
             session_status: None,
             session_id: None,
+            session_title: None,
+            new_session_pending: false,
             cwd: None,
             home: home_directory(),
             tokens: None,
@@ -224,6 +334,7 @@ impl App {
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
+            skills: Vec::new(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
@@ -260,8 +371,16 @@ impl App {
             events: receiver,
             model: None,
             provider: None,
+            reasoning_effort: None,
+            effort_requested: None,
+            effort_after_turn: None,
+            model_after_turn: None,
+            steer_pending: None,
+            steer_left_behind: VecDeque::new(),
             session_status: None,
             session_id: None,
+            session_title: None,
+            new_session_pending: false,
             cwd: None,
             home: home_directory(),
             tokens: None,
@@ -271,6 +390,7 @@ impl App {
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
             commands: Registry::default(),
+            skills: Vec::new(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
@@ -308,6 +428,10 @@ impl App {
         self.exit_code = 1;
         self.disconnected = true;
         self.pending_turn = false;
+        // A change that was waiting for the turn can never leave: there is no
+        // connection left to send it over.
+        self.effort_after_turn = None;
+        self.model_after_turn = None;
         // A list that is still waiting for rows will never get them: with the
         // connection gone it can only swallow keys, so it goes with it.
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
@@ -316,6 +440,10 @@ impl App {
         self.session_status = Some("idle".to_string());
         self.withdraw_prompts("the connection was lost");
         self.transcript.end_running_tools();
+        // A steer the turn never took is a message the harness will not take
+        // now either, so it waits with the rest of the queue the notice below
+        // counts.
+        self.restore_steer();
         if !self.queue.is_empty() {
             let waiting = self.queue.len();
             self.transcript
@@ -357,6 +485,7 @@ impl App {
         StatusData {
             provider: self.provider.as_deref(),
             model: self.model.as_deref(),
+            effort: self.reasoning_effort.as_deref(),
             session_id: self.session_id.as_deref(),
             pending_turn: self.pending_turn,
             disconnected: self.disconnected,
@@ -403,8 +532,17 @@ impl App {
                 error,
                 ..
             } => {
-                self.transcript
-                    .tool_done(call_id, name, Some(output.as_str()), error.as_deref());
+                // Keeping this call's output folds the call that was open, which
+                // shrinks a block nothing else measures again: a held view would
+                // otherwise keep the height it counted while that call was open.
+                // The key label moving onto this call costs the call before it no
+                // rows, so it alone is not a reason to recount.
+                if self
+                    .transcript
+                    .tool_done(call_id, name, Some(output.as_str()), error.as_deref())
+                {
+                    self.scroll.invalidate();
+                }
                 // A refusal can reach the client before the event that parks
                 // it, so the line is parked from this side too: any request
                 // already waiting that the message names makes the call a
@@ -414,7 +552,10 @@ impl App {
                     self.park_line_naming(message);
                 }
             }
-            ApiEvent::TurnDone { .. } => {
+            ApiEvent::TurnDone {
+                pending_soft_interrupts,
+                ..
+            } => {
                 self.transcript.text_done();
                 self.transcript.end_running_tools();
                 self.pending_turn = false;
@@ -427,6 +568,20 @@ impl App {
                 // question does not: the `ask` tool stops waiting when the turn
                 // it belongs to ends.
                 self.withdraw_asks("the turn ended");
+                // The turn ended before it reached everything the daemon was
+                // still holding for the session. The count is a number of queue
+                // items: a steer of several messages is one item, and a
+                // background result or another client's interrupt is one too.
+                // It says nothing about how many messages were typed or how
+                // they were sent, so the notice names neither a number nor a
+                // key — only that the next turn carries the rest.
+                if let Some(count) = *pending_soft_interrupts
+                    && count > 0
+                {
+                    self.transcript.push_notice(
+                        "the turn ended before reading everything sent into it; the next turn carries the rest",
+                    );
+                }
             }
             ApiEvent::TurnStopped { reason, message, .. } => {
                 self.transcript.end_running_tools();
@@ -501,6 +656,7 @@ impl App {
                 session_id,
                 provider,
                 model,
+                reasoning_effort,
                 ..
             } => {
                 self.session_id = Some(session_id.clone());
@@ -510,6 +666,14 @@ impl App {
                 if let Some(provider) = provider {
                     self.provider = Some(provider.clone());
                 }
+                // The effort describes the model this report names, so a
+                // report without one clears it rather than leaving the
+                // previous model's effort beside the new model.
+                self.reasoning_effort = reasoning_effort
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|effort| !effort.is_empty())
+                    .map(str::to_string);
             }
             ApiEvent::SessionStatus { session_id, status, .. } => {
                 self.session_id = Some(session_id.clone());

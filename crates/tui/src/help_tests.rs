@@ -7,6 +7,7 @@
 //! when it opens.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::style::Modifier;
 use toml::{Table, Value};
 
 use crate::app::{Action, App};
@@ -15,7 +16,7 @@ use crate::help::{self, SlashPopup};
 use crate::item_lines;
 use crate::keys::{ACTIONS, Bindings, ids};
 use crate::prompts::{Approval, Prompt};
-use crate::theme::{Symbols, Theme};
+use crate::theme::{SymbolPreset, Symbols, Theme};
 use crate::transcript::Item;
 use crate::wrap;
 
@@ -162,6 +163,7 @@ fn the_key_list_is_the_map_in_force() {
         "ctrl+c",
         "esc",
         "tab",
+        "ctrl+r",
         "ctrl+u",
         "ctrl+k",
         "ctrl+w",
@@ -176,6 +178,7 @@ fn the_key_list_is_the_map_in_force() {
         "shift+up",
         "shift+down",
         "ctrl+end",
+        "ctrl+o",
     ] {
         assert!(
             rows.iter().any(|row| row.left.split(", ").any(|part| part == key)),
@@ -184,7 +187,7 @@ fn the_key_list_is_the_map_in_force() {
     }
     let interrupt = rows
         .iter()
-        .find(|row| row.right == "interrupt the running turn and nothing else")
+        .find(|row| row.right == "interrupt the running turn, or send queued messages into it")
         .expect("the interrupt row");
     assert_eq!(interrupt.left, "esc");
 }
@@ -195,7 +198,7 @@ fn a_remapped_key_is_the_one_the_listing_shows() {
     let rows = help::key_rows(&bindings);
     let interrupt = rows
         .iter()
-        .find(|row| row.right == "interrupt the running turn and nothing else")
+        .find(|row| row.right == "interrupt the running turn, or send queued messages into it")
         .expect("the interrupt row");
     assert_eq!(interrupt.left, "ctrl+x");
     assert!(
@@ -263,7 +266,16 @@ fn matches_are_sorted_and_skip_a_shadowed_file() {
     let entries = state.entries();
     let matches = help::popup_matches(&entries, "he");
     let names: Vec<&str> = matches.iter().map(|entry| entry.name.as_str()).collect();
-    assert_eq!(names, vec!["help"], "a shadowed file is not offered: {matches:?}");
+    assert_eq!(
+        names.first().copied(),
+        Some("help"),
+        "the shadowed file is not offered, and the prefix hit comes first: {matches:?}"
+    );
+    assert_eq!(
+        names.iter().filter(|name| **name == "help").count(),
+        1,
+        "`help` is offered once: {names:?}"
+    );
     let all = help::popup_matches(&entries, "");
     let mut sorted: Vec<&str> = all.iter().map(|entry| entry.name.as_str()).collect();
     let offered = sorted.clone();
@@ -293,7 +305,18 @@ fn popup_rows_are_cut_to_the_width() {
     let matches = help::popup_matches(&entries, "");
     let theme = Theme::default();
     let width = 30;
-    let lines = help::popup_lines(&matches, 1, 0, 4, width, &theme);
+    let lines = help::popup_lines(
+        &matches,
+        1,
+        0,
+        4,
+        width,
+        help::Look {
+            needle: "",
+            symbols: Symbols::default(),
+        },
+        &theme,
+    );
     assert_eq!(lines.len(), 4);
     for line in &lines {
         let text: String = line.spans.iter().map(|span| span.content.as_ref()).collect();
@@ -324,7 +347,7 @@ fn a_notice_keeps_its_hanging_indent() {
         markdown: true,
     };
     let text = "the transcript pane draws the newest rows first and stops when it fills";
-    let rows: Vec<String> = wrap::wrap_rows(item_lines::lines(&Item::Notice(text.to_string()), &look), 40)
+    let rows: Vec<String> = wrap::wrap_rows(item_lines::lines(&Item::Notice(text.to_string()), &look, None), 40)
         .iter()
         .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
         .collect();
@@ -345,8 +368,17 @@ fn the_popup_offers_the_commands_a_prefix_matches() {
     assert!(app.slash.is_open(), "the popup is closed for a matching prefix");
     let names: Vec<String> = app.slash.matches().iter().map(|entry| entry.name.clone()).collect();
     assert_eq!(
-        names,
-        vec!["refresh_model_list", "remote", "resume", "resume_all", "review"]
+        names.iter().take(5).cloned().collect::<Vec<_>>(),
+        vec!["refresh_model_list", "remote", "resume", "resume_all", "review"],
+        "the prefix hits keep their order and come first: {names:?}"
+    );
+    assert!(
+        names.iter().skip(5).all(|name| !name.starts_with("re")),
+        "a prefix match was ranked below a fuzzy one: {names:?}"
+    );
+    assert!(
+        names.len() > 5,
+        "the letters `re` appear inside a command, so a fuzzy row was expected: {names:?}"
     );
     // A slash that matches nothing offers nothing.
     app.input.clear();
@@ -394,6 +426,155 @@ fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     assert!(app.slash.is_open(), "editing the draft did not bring the popup back");
     press(&mut app, KeyCode::Tab);
     assert_eq!(app.input.text(), "/refresh_model_list", "the first row is the default");
+}
+
+#[test]
+fn tab_fills_the_row_a_fuzzy_match_offers() {
+    let mut app = app();
+    type_text(&mut app, "/mdl");
+    assert!(app.slash.is_open(), "the letters of `/model` did not offer it");
+    assert_eq!(
+        app.slash.selected_name(),
+        Some("model"),
+        "the marker is not on the row Tab would fill"
+    );
+    assert_eq!(press(&mut app, KeyCode::Tab), None);
+    assert_eq!(app.input.text(), "/model", "tab did not fill the offered row");
+    assert!(
+        !app.slash.is_open(),
+        "the popup stayed open over the command it had just filled"
+    );
+}
+
+#[test]
+fn a_finished_name_with_a_longer_sibling_keeps_the_list_open() {
+    let mut app = app();
+    type_text(&mut app, "/resume");
+    assert!(
+        app.slash.is_open(),
+        "`/resume` has a sibling, so the list must stay for it"
+    );
+    assert_eq!(
+        app.slash.selected_name(),
+        Some("resume"),
+        "the exact name is not the first row"
+    );
+    let names: Vec<String> = app.slash.matches().iter().map(|entry| entry.name.clone()).collect();
+    assert!(
+        names.iter().any(|name| name == "resume_all"),
+        "the longer name left the list: {names:?}"
+    );
+    assert_eq!(press(&mut app, KeyCode::Down), None);
+    assert_eq!(press(&mut app, KeyCode::Tab), None);
+    assert_eq!(app.input.text(), "/resume_all");
+    assert!(!app.slash.is_open(), "the filled name left the popup open");
+}
+
+#[test]
+fn the_underscore_sibling_offers_its_longer_name() {
+    let mut app = app();
+    type_text(&mut app, "/subagent");
+    assert!(
+        app.slash.is_open(),
+        "`/subagent` has a sibling, so the list must stay for it"
+    );
+    assert_eq!(app.slash.selected_name(), Some("subagent"));
+    assert_eq!(press(&mut app, KeyCode::Down), None);
+    assert_eq!(press(&mut app, KeyCode::Tab), None);
+    assert_eq!(app.input.text(), "/subagent_model");
+}
+
+#[test]
+fn a_finished_name_closes_the_list_even_with_fuzzy_rows() {
+    let mut app = app();
+    type_text(&mut app, "/review");
+    assert!(
+        !app.slash.is_open(),
+        "a row the letters only resemble kept a finished name open"
+    );
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(app.input.text(), "/review", "tab moved a finished name");
+}
+
+#[test]
+fn the_selection_stays_inside_a_shorter_match_list() {
+    let mut app = app();
+    type_text(&mut app, "/re");
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Down);
+    }
+    assert_eq!(app.slash.selected(), 5);
+    // A letter no command holds empties the list, and the row number goes with
+    // it instead of pointing past the end of the next list.
+    type_text(&mut app, "z");
+    assert!(!app.slash.is_open(), "a letter no command holds left the popup open");
+    assert_eq!(app.slash.selected(), 0, "the old row outlived the list");
+    assert_eq!(press(&mut app, KeyCode::Backspace), None);
+    assert!(app.slash.is_open(), "the rows did not come back");
+    assert_eq!(app.slash.selected(), 0, "the old row number outlived its list");
+}
+
+#[test]
+fn the_selected_popup_row_carries_the_prompt_marker_in_every_preset() {
+    let (_user, _project, state) = registry();
+    let entries = state.entries();
+    let matches = help::popup_matches(&entries, "re");
+    assert!(matches.len() > 2, "too few rows to compare: {matches:?}");
+    let theme = Theme::default();
+    for preset in [SymbolPreset::Unicode, SymbolPreset::Nerd, SymbolPreset::Ascii] {
+        let symbols = preset.symbols();
+        let lines = help::popup_lines(&matches, 1, 0, 3, 40, help::Look { needle: "re", symbols }, &theme);
+        let text = |index: usize| -> String { lines[index].spans.iter().map(|span| span.content.as_ref()).collect() };
+        assert!(
+            text(1).starts_with(&format!("{} ", symbols.prompt_marker)),
+            "the chosen row lost its marker in {}: {:?}",
+            preset.as_str(),
+            text(1)
+        );
+        let blank = " ".repeat(usize::from(symbols.prompt_marker_width()) + 1);
+        assert!(
+            text(0).starts_with(&blank) && text(2).starts_with(&blank),
+            "an unchosen row did not line up under the marker in {}: {:?} {:?}",
+            preset.as_str(),
+            text(0),
+            text(2)
+        );
+    }
+}
+
+#[test]
+fn the_matched_characters_of_a_name_are_underlined() {
+    let (_user, _project, state) = registry();
+    let entries = state.entries();
+    let matches = help::popup_matches(&entries, "mdl");
+    assert_eq!(
+        matches.first().map(|entry| entry.name.as_str()),
+        Some("model"),
+        "the rows are not ranked as expected: {matches:?}"
+    );
+    let theme = Theme::default();
+    let lines = help::popup_lines(
+        &matches,
+        0,
+        0,
+        1,
+        40,
+        help::Look {
+            needle: "mdl",
+            symbols: Symbols::default(),
+        },
+        &theme,
+    );
+    let marked: String = lines[0]
+        .spans
+        .iter()
+        .filter(|span| span.style.add_modifier.contains(Modifier::UNDERLINED))
+        .map(|span| span.content.as_ref())
+        .collect();
+    assert_eq!(
+        marked, "mdl",
+        "the underline is not on the characters the needle matched"
+    );
 }
 
 #[test]
@@ -511,7 +692,11 @@ fn a_draft_that_names_a_command_offers_nothing() {
     let (_user, _project, state) = registry();
     let mut popup = SlashPopup::new();
     popup.sync(&state, "/he");
-    assert_eq!(popup.len(), 1, "an unfinished name still offers its command");
+    assert_eq!(
+        popup.selected_name(),
+        Some("help"),
+        "an unfinished name still offers its command first"
+    );
     assert!(popup.is_open());
     popup.sync(&state, "/help");
     assert!(
@@ -542,7 +727,7 @@ fn listing_rows(line: &str, width: u16) -> Vec<String> {
         width,
         markdown: false,
     };
-    wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look), width)
+    wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look, None), width)
         .iter()
         .map(|row| row.spans.iter().map(|span| span.content.as_ref()).collect::<String>())
         .collect()

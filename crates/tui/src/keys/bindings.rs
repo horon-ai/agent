@@ -24,7 +24,8 @@ pub mod ids {
     pub const APP_SUBMIT: &str = "app.submit";
     /// Cancel the running turn, or leave when nothing is running.
     pub const APP_CANCEL: &str = "app.cancel";
-    /// Interrupt the running turn and nothing else: no action when idle.
+    /// Send the queued messages into the running turn; with nothing queued,
+    /// interrupt it. No action when idle.
     pub const APP_INTERRUPT: &str = "app.interrupt";
     /// Leave.
     pub const APP_QUIT: &str = "app.quit";
@@ -38,6 +39,13 @@ pub mod ids {
     pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
     /// Follow the end of the conversation again.
     pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
+    /// Show the whole output of the newest tool call whose preview was cut, and
+    /// the preview again on the next press.
+    pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
+    /// Step to the next reasoning-effort level, wrapping at the last one.
+    pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
+    /// Open the list of models this session can switch to.
+    pub const APP_PICK_MODEL: &str = "app.pick_model";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -68,6 +76,8 @@ pub mod ids {
     pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
+    /// Search the drafts sent before this one.
+    pub const EDITOR_HISTORY_SEARCH: &str = "editor.history_search";
     /// Approve a parked tool call once.
     pub const PROMPT_ALLOW: &str = "prompt.allow";
     /// Approve a parked tool call and every later call like it.
@@ -130,6 +140,15 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SCROLL_UP, Scope::App, &["shift+up"]),
     ActionSpec::new(ids::APP_SCROLL_DOWN, Scope::App, &["shift+down"]),
     ActionSpec::new(ids::APP_SCROLL_BOTTOM, Scope::App, &["ctrl+end"]),
+    // The key a cut tool preview names: reading the rest of one call's output
+    // is the one thing the transcript cannot do with the scroll keys alone.
+    ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
+    // `shift+tab` walks the effort ladder upwards. `tab` alone still completes
+    // the draft: an exact binding is looked up before an unshifted one, and the
+    // shift on the event stops `tab` from answering it.
+    ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
+    // The model list, one keystroke away from the draft being typed.
+    ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
@@ -151,6 +170,7 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
     ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
+    ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
     ActionSpec::new(ids::PROMPT_DENY, Scope::Prompt, &["n"]),
@@ -226,6 +246,15 @@ impl Bindings {
     /// which share the input line.
     pub fn resolve_editing(&self, key: &Key) -> Option<&'static str> {
         self.find(|entry| entry.scope != Scope::Prompt, key)
+    }
+
+    /// The first key an action answers to now.
+    ///
+    /// The one a hint or a marker names when an action may carry several: the
+    /// first is the one the declaration order settled on, and a frame that only
+    /// wants to name it must not build the whole list.
+    pub fn first_key(&self, id: &str) -> Option<Key> {
+        self.entries.iter().find(|entry| entry.id == id).map(|entry| entry.key)
     }
 
     /// The keys an action answers to now.

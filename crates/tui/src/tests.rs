@@ -653,7 +653,7 @@ fn a_tool_preview_wraps_under_its_own_column() {
             total_rows: 1,
         }),
     };
-    let rows = item_lines::lines(&crate::transcript::Item::Tool(call), &look);
+    let rows = item_lines::lines(&crate::transcript::Item::Tool(call), &look, None);
     assert_eq!(rows.len(), 2, "the preview gained a row");
     assert_eq!(rows[0].indent(), 0, "the head row starts at the first column");
     assert_eq!(

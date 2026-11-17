@@ -44,6 +44,23 @@ impl History {
         }
     }
 
+    /// The drafts sent before this one, newest first.
+    ///
+    /// The history list reads the entries through this walk rather than a copy
+    /// of them: what `record` drops off the front must stop being offered.
+    pub fn drafts(&self) -> impl Iterator<Item = &str> {
+        self.entries.iter().rev().map(String::as_str)
+    }
+
+    /// The draft that `position` names when walking [`History::drafts`].
+    ///
+    /// A draft is named by its place, newest first, rather than by its text: the
+    /// same message can be sent more than once, and a multi-line draft is one
+    /// entry whose text is not one row.
+    pub fn draft_at(&self, position: usize) -> Option<&str> {
+        self.drafts().nth(position)
+    }
+
     /// Step to the draft before the one on screen, remembering `current`
     /// first, or `None` at the oldest entry.
     pub fn previous(&mut self, current: &str) -> Option<String> {

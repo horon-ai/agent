@@ -1,26 +1,25 @@
 //! A filterable list drawn over the conversation.
 //!
-//! `/model` and `/resume` both ask the user to pick one row out of a list the
-//! daemon owns, so this screen knows nothing about models or sessions: it holds
-//! rows, the filter the user typed, and the row the selection is on. The caller
-//! decides what a chosen row means, which is what keeps the keys and the drawing
-//! identical for both lists.
+//! `/model`, `/effort`, `/resume`, `/skills` and the history search all ask the
+//! user to pick one row out of a list, so this screen knows nothing about
+//! models, efforts, sessions, skills or drafts: it holds rows, the filter the
+//! user typed, and the row the selection is on.
+//! The caller decides what a chosen row means, which is what keeps the keys and
+//! the drawing identical for every list.
 //!
 //! Every key that arrives while the list is open is consumed here, including a
 //! plain letter: a filter that let characters through would type into the
 //! message being drafted underneath. `up`/`down`/`pageup`/`pagedown` move,
 //! typing narrows, `enter` reports the selected row and `esc` closes.
+//!
+//! The panel itself, its preview pane and the way a row reads once it has a
+//! width live in `picker_draw`; this module owns the state and the keys.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use unicode_width::UnicodeWidthStr;
 
-use crate::theme::{Symbols, Theme};
-use crate::tool_line::truncate_cells;
+use crate::fuzzy;
+
+pub use super::picker_draw::{draw, panel, panel_with_preview};
 
 /// Rows one page covers before the first frame has measured the list.
 ///
@@ -28,22 +27,19 @@ use crate::tool_line::truncate_cells;
 /// the first draw replaces this with the rows the list actually got.
 const FIRST_PAGE: usize = 10;
 
-/// Cells between a row's name and its second column.
-const COLUMN_GAP: usize = 2;
-
-/// Cells a name keeps before the second column gives way to it.
-///
-/// A row whose name would be cut shorter than this says nothing about itself,
-/// so the time is dropped and the name takes the whole row instead.
-const MIN_LABEL: usize = 10;
-
 /// What the list is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// The models this session can switch to.
     Models,
+    /// The reasoning-effort levels the client offers.
+    Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// The skills the harness reports for this session.
+    Skills,
+    /// The drafts sent before this one.
+    History,
 }
 
 /// One row of the list.
@@ -57,6 +53,15 @@ pub struct Row {
     pub value: String,
     /// Whether this row is the one in force.
     pub current: bool,
+    /// Lines the preview pane shows while this row is selected.
+    pub preview: Vec<String>,
+    /// Lines the filter matches besides the name and the second column.
+    ///
+    /// Kept apart from the preview because a preview's first line is context
+    /// the rows of one list share — a directory, a time — and matching it
+    /// would make a filter on that context keep every row. Only the caller
+    /// knows which of a row's lines say something about the row itself.
+    search: Vec<String>,
 }
 
 impl Row {
@@ -67,6 +72,8 @@ impl Row {
             detail: String::new(),
             value: value.into(),
             current: false,
+            preview: Vec::new(),
+            search: Vec::new(),
         }
     }
 
@@ -79,6 +86,24 @@ impl Row {
     /// The same row, marked as the one in force.
     pub fn marked(mut self, current: bool) -> Self {
         self.current = current;
+        self
+    }
+
+    /// The same row with the lines its preview pane shows.
+    ///
+    /// A row with no lines keeps the pane off and the list takes the whole
+    /// panel, so a list whose rows say nothing extra still reads as one list.
+    pub fn with_preview(mut self, lines: Vec<String>) -> Self {
+        self.preview = lines;
+        self
+    }
+
+    /// The same row with lines the filter matches besides its name.
+    ///
+    /// A row whose lines are already searchable leaves this empty: the list
+    /// then matches the name and the second column only.
+    pub fn with_search(mut self, lines: Vec<String>) -> Self {
+        self.search = lines;
         self
     }
 }
@@ -142,6 +167,11 @@ impl Picker {
         self.kind
     }
 
+    /// The title the panel is drawn with.
+    pub(crate) fn title(&self) -> &str {
+        &self.title
+    }
+
     /// The filter as typed.
     pub fn filter(&self) -> &str {
         &self.filter
@@ -183,6 +213,34 @@ impl Picker {
         self.loading = false;
         self.selected = 0;
         self.refilter();
+    }
+
+    /// Attach preview lines to the row that carries `value`.
+    ///
+    /// The body of a row often arrives after the list does, so a caller fills
+    /// it here once it knows what the row holds. A value the list no longer
+    /// holds is ignored: attaching a late answer to whatever row moved into its
+    /// place would show one row's body under another row's name.
+    pub fn set_preview(&mut self, value: &str, lines: Vec<String>) {
+        let Some(row) = self.rows.iter_mut().find(|row| row.value == value) else {
+            return;
+        };
+        row.preview = lines;
+    }
+
+    /// Indices into the rows the filter leaves, in display order.
+    pub(super) fn visible_indices(&self) -> &[usize] {
+        &self.visible
+    }
+
+    /// Position of the selection inside the rows the filter leaves.
+    pub(super) fn selection(&self) -> usize {
+        self.selected
+    }
+
+    /// One row by its index in the full list.
+    pub(super) fn row_at(&self, index: usize) -> Option<&Row> {
+        self.rows.get(index)
     }
 
     /// The line drawn where the rows would be when there are none.
@@ -253,20 +311,47 @@ impl Picker {
         self.refilter();
     }
 
-    /// Recompute which rows the filter leaves.
+    /// Recompute which rows the filter leaves, best match first.
+    ///
+    /// A row matches when the filter is a subsequence of its name, of its
+    /// second column or of one of the lines it offers for searching, so `/mdl`
+    /// finds `model`, a bare `10:3` still finds the time, and a word a session
+    /// said finds that session even when its title says something else. The
+    /// drawn preview is not searched: its first line is context the rows share,
+    /// and matching it would keep the whole list. The scores order the hits;
+    /// equal scores keep the row order the caller gave, which is why an empty
+    /// filter shows the list in its own order.
     fn refilter(&mut self) {
-        let needle = self.filter.to_lowercase();
-        self.visible = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| {
-                needle.is_empty()
-                    || row.label.to_lowercase().contains(&needle)
-                    || row.detail.to_lowercase().contains(&needle)
-            })
-            .map(|(index, _)| index)
-            .collect();
+        let needle = self.filter.as_str();
+        let mut ranked: Vec<(i32, usize)> = Vec::with_capacity(self.rows.len());
+        for (index, row) in self.rows.iter().enumerate() {
+            let label = fuzzy::find(needle, &row.label).map(|found| found.score);
+            let detail = if row.detail.is_empty() {
+                None
+            } else {
+                fuzzy::find(needle, &row.detail).map(|found| found.score)
+            };
+            let search = row
+                .search
+                .iter()
+                .filter_map(|line| fuzzy::find(needle, line).map(|found| found.score))
+                .max();
+            let score = match (label, detail) {
+                (Some(label), Some(detail)) => Some(label.max(detail)),
+                (label, detail) => label.or(detail),
+            };
+            let score = match (score, search) {
+                (Some(found), Some(search)) => Some(found.max(search)),
+                (found, search) => found.or(search),
+            };
+            if let Some(score) = score {
+                ranked.push((score, index));
+            }
+        }
+        // A stable sort keeps the rows that score the same in the order the
+        // caller listed them.
+        ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        self.visible = ranked.into_iter().map(|(_, index)| index).collect();
         self.selected = self.selected.min(self.visible.len().saturating_sub(1));
     }
 
@@ -276,186 +361,5 @@ impl Picker {
             return 0;
         }
         (self.selected + 1 - height).min(self.visible.len().saturating_sub(height))
-    }
-}
-
-/// Where the list is drawn inside `area`, for `rows` visible rows.
-///
-/// The panel is sized to its rows rather than to the screen, so a short list
-/// leaves the conversation readable around it, and the frame that clears the
-/// cells behind the list is this exact rectangle.
-pub fn panel(area: Rect, rows: usize) -> Rect {
-    if area.width < 12 || area.height < 5 {
-        return area;
-    }
-    let width = area.width.saturating_sub(4).min(78);
-    let wanted = u16::try_from(rows).unwrap_or(u16::MAX).saturating_add(4);
-    let height = wanted.min(area.height.saturating_sub(2)).max(5).min(area.height);
-    Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
-        width,
-        height,
-    }
-}
-
-/// Draw the list over `area`.
-pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Theme, symbols: Symbols) {
-    if area.width < 12 || area.height < 5 {
-        // No room for a border and one row. The list still owns every key, so
-        // it says it is there instead of disappearing and swallowing them.
-        frame.render_widget(Clear, area);
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " list hidden: window too small, esc closes",
-                Style::default().fg(theme.core.muted),
-            ))),
-            area,
-        );
-        return;
-    }
-    // The list is modal, so the conversation behind it is not being read: a
-    // character of it beside the panel (the panel is narrower than the pane)
-    // reads as part of the list. The whole pane is cleared, then the panel is
-    // drawn on the blank area.
-    frame.render_widget(Clear, area);
-    let rect = panel(area, picker.visible.len());
-    frame.render_widget(Clear, rect);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.core.border))
-        .title(Span::styled(
-            format!(" {} {} ", symbols.bullet, picker.title),
-            Style::default().fg(theme.core.accent),
-        ));
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    if inner.width == 0 || inner.height < 3 {
-        return;
-    }
-    let [filter_area, list_area, footer_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(inner);
-
-    let (filter, style) = if picker.filter.is_empty() {
-        ("type to filter".to_string(), Style::default().fg(theme.core.muted))
-    } else {
-        (picker.filter.clone(), Style::default().fg(theme.core.text))
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" filter: ", Style::default().fg(theme.core.muted)),
-            Span::styled(filter, style),
-        ])),
-        filter_area,
-    );
-
-    picker.set_page(list_area.height as usize);
-    if picker.visible.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                format!(" {}", picker.empty_text()),
-                Style::default().fg(theme.core.muted),
-            ))),
-            list_area,
-        );
-    } else {
-        let height = list_area.height as usize;
-        let start = picker.window_start(height);
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        for offset in 0..height {
-            let Some(index) = picker.visible.get(start + offset).copied() else {
-                break;
-            };
-            lines.push(picker.row_line(
-                index,
-                start + offset == picker.selected,
-                theme,
-                symbols,
-                list_area.width,
-            ));
-        }
-        frame.render_widget(Paragraph::new(lines), list_area);
-    }
-
-    let footer = if picker.visible.is_empty() {
-        " esc close".to_string()
-    } else {
-        format!(
-            " {}/{} · enter select · esc close · ↑↓ move · type to filter",
-            picker.selected + 1,
-            picker.visible.len()
-        )
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(footer, Style::default().fg(theme.core.muted)))),
-        footer_area,
-    );
-}
-
-impl Picker {
-    /// One row as it is drawn: the label, the marker for the row in force, and
-    /// the second column.
-    ///
-    /// The second column is flush with the row's right edge, so the times read
-    /// down the list instead of starting wherever the name before them ended;
-    /// the label is cut to leave it that room. A pane too narrow for both keeps
-    /// the name and drops the second column, because the name is what a row is
-    /// chosen by, and a clipped time says less than a clipped name.
-    fn row_line(&self, index: usize, chosen: bool, theme: &Theme, symbols: Symbols, width: u16) -> Line<'static> {
-        let Some(row) = self.rows.get(index) else {
-            return Line::default();
-        };
-        let base = if chosen {
-            Style::default()
-                .fg(theme.core.text)
-                .bg(theme.prompt.selected_bg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.core.text)
-        };
-        // The mark is the input line's own marker, repeated here so the
-        // selection is the row with the mark even where the theme's selection
-        // background is not drawn: a terminal without colour or with the
-        // `ascii` symbols still shows which row `enter` would take.
-        let mark = if chosen {
-            symbols.prompt_marker.to_string()
-        } else {
-            " ".repeat(symbols.prompt_marker.chars().count())
-        };
-        let lead = format!(" {mark} ");
-        let lead_width = UnicodeWidthStr::width(lead.as_str());
-        let current = if row.current { " (current)" } else { "" };
-        let current_width = UnicodeWidthStr::width(current);
-        let available = usize::from(width).saturating_sub(lead_width);
-        let name_room = available.saturating_sub(current_width);
-        let detail_width = UnicodeWidthStr::width(row.detail.as_str());
-        let column = if detail_width > 0 && name_room > detail_width + COLUMN_GAP + MIN_LABEL {
-            Some(detail_width + COLUMN_GAP)
-        } else {
-            None
-        };
-        let label_room = column.map_or(name_room, |column| name_room - column);
-        let label = truncate_cells(&row.label, label_room);
-        let mut spans = vec![
-            Span::styled(lead, Style::default().fg(theme.core.accent)),
-            Span::styled(label.clone(), base),
-        ];
-        if row.current {
-            spans.push(Span::styled(current, Style::default().fg(theme.core.accent)));
-        }
-        if column.is_some() {
-            // The pad is what puts the second column on the right edge; it
-            // carries the row's own style so a selected row stays one block.
-            let used = lead_width + UnicodeWidthStr::width(label.as_str()) + current_width + detail_width;
-            let pad = usize::from(width).saturating_sub(used);
-            spans.push(Span::styled(" ".repeat(pad), base));
-            let detail = if chosen {
-                base
-            } else {
-                Style::default().fg(theme.core.muted)
-            };
-            spans.push(Span::styled(row.detail.clone(), detail));
-        }
-        Line::from(spans)
     }
 }

@@ -39,8 +39,24 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Context(report) => app.transcript.push_context(*report),
             Incoming::Models { models, current } => app.show_models(models, current),
+            Incoming::RuntimeInfo {
+                provider,
+                model,
+                effort,
+                level,
+            } => app.runtime_info(provider, model, effort, level),
             Incoming::Sessions(rows) => app.show_sessions(rows),
-            Incoming::Attached(session) => app.attach_session(*session),
+            Incoming::Skills(rows) => app.show_skills(rows),
+            // The answer names the text it settles, so a steer the client no
+            // longer holds is dropped rather than restored into another turn.
+            Incoming::Steered { text } => app.steered(&text),
+            Incoming::SteerFailed { text, message } => app.steer_failed(&text, &message),
+            Incoming::Attached(session) => {
+                // Read before the attach so the notice names what happened: the
+                // same answer covers a resumed session and one just created.
+                let started = app.take_pending_new_session();
+                app.attach_session(*session, started);
+            }
             Incoming::RequestFailed(message) => app.request_failed(&message),
             Incoming::Closed(message) => app.disconnect(&message),
         }
@@ -52,6 +68,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
 pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command>, action: Action) {
     let command = match action {
         Action::Send(text) => Command::Text(text),
+        Action::Steer(text) => Command::Steer(text),
         Action::Cancel => Command::Cancel,
         Action::Approval {
             request_id,
@@ -65,6 +82,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
         Action::Model(name) => Command::Model(name),
+        Action::Effort(level) => Command::Effort(level),
         Action::Models => Command::Models,
         // The directory is the one the client is working in, which is what
         // makes the list the sessions of this project rather than of the
@@ -72,7 +90,15 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         Action::Sessions => Command::Sessions {
             working_dir: app.cwd.clone(),
         },
+        // The new session starts where the client is working, so the list of
+        // sessions it appears in is the one `/switch` shows.
+        Action::NewSession => Command::NewSession {
+            working_dir: app.cwd.clone(),
+        },
         Action::Attach(session_id) => Command::Attach(session_id),
+        // The user opened the list, so a failure is theirs to see and the
+        // request announces itself.
+        Action::Skills => Command::Skills { announce: true },
         Action::Quit => {
             app.running = false;
             return;
