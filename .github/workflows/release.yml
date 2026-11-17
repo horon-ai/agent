@@ -939,11 +939,21 @@ jobs:
             ./target/release/horon-agent --version
             echo "::endgroup::"
 
-            mkdir -p dist
-            cp target/release/horon-agent dist/horon-agent-freebsd-x86_64
-            cp LICENSE dist/LICENSE
-            chmod +x dist/horon-agent-freebsd-x86_64
-            cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64 LICENSE
+            # Packaging pins the archive format. A default-format archiver can
+            # record the executable as a GNU sparse member named
+            # `GNUSparseFile.0/<asset>`, which the installer refuses because no
+            # member may carry a path separator, and v0.1.14 shipped exactly that
+            # for FreeBSD (run 44170295810). scripts/release/agent_archive.sh
+            # writes POSIX ustar, checks the two top-level members, then installs
+            # the archive with the binary's own install-release into a throwaway
+            # HORON_HOME and compares the installed bytes with the member.
+            echo "::group::Package release archive"
+            sh scripts/release/agent_archive.sh pack dist target/release/horon-agent
+            echo "::endgroup::"
+
+            echo "::group::Install the packaged release"
+            sh scripts/release/agent_archive.sh install-verify dist target/release/horon-agent "${{ env.RELEASE_TAG }}"
+            echo "::endgroup::"
 
       - name: Upload artifact
         if: ${{ inputs.package_only != true }}

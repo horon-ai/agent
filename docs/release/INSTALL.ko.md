@@ -27,6 +27,12 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 
 검증이 끝나면 `stable`, `current`, 런처 링크와 업데이트 메타데이터를 함께 바꾼다. 중간 단계가 실패하면 롤백하므로 이전 설치가 그대로 남는다 (`crates/app-core/src/update/activation.rs`). 명령은 네트워크에서 아무것도 내려받지 않는다. 자산을 준비하는 일은 호출자 몫이다.
 
+## 압축 형식
+
+FreeBSD x64 압축 파일은 POSIX ustar 형식이며 최상위에 일반 파일 `horon-agent-freebsd-x86_64`와 `LICENSE`를 담는다. FreeBSD tar는 v0.1.14 배포물의 실행 파일 경로를 `GNUSparseFile.0/horon-agent-freebsd-x86_64`로 표시했고 셸 설치기는 이 경로를 거부했다. FreeBSD 릴리스 빌드는 업로드 전에 `scripts/release/agent_archive.sh pack <dist-dir> <binary>`로 압축 형식, 파일 이름, 실행 권한과 원본 바이트를 확인한다.
+
+`scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]`는 새 폴더에 설치한 뒤 같은 폴더에 다시 설치한다. 두 번 모두 설치본의 바이트가 원본과 일치하고 런처가 원본과 같은 버전을 출력해야 한다. FreeBSD 시험을 `official_asset=v0.1.14`로 요청하면 공개 체크섬을 확인한 뒤 그 릴리스의 실행 파일을 다시 포장해 설치를 다섯 쌍 검증한다. 로그와 압축 파일 목록은 `freebsd-archive-evidence-<tag>`에 저장한다.
+
 ## 설치 스크립트와의 관계
 
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 릴리스 자산과 `SHA256SUMS`를 임시 디렉터리에 받은 뒤 이 명령을 호출한다. `scripts/install/install_from_source.sh`는 같은 명령에 `--source-binary`를 붙여 로컬 빌드를 설치한다. 그래서 셸과 PowerShell이 서로 다른 설치 레이아웃을 만들지 않고, 실패하면 스크립트도 이전 설치를 건드리지 않는다.
