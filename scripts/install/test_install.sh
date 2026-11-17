@@ -64,6 +64,7 @@ esac
 EOF
 chmod +x "$tmp/bin/uname" "$tmp/bin/curl"
 
+
 # The release CLI the installer bootstraps. It records the arguments it is given
 # and reproduces what the real `install-release` leaves behind: an immutable
 # version directory and the PATH launcher.
@@ -79,6 +80,12 @@ if [ "${1:-}" = "install-release" ]; then
     if [ "$previous" = "--assets" ]; then
       for entry in "$argument"/*; do
         printf "asset:%s\n" "${entry##*/}" >> "$CLI_ARG_LOG"
+        # The verified downloads are published only after this executable has
+        # staged them, so an entry it is handed from a download must not be in
+        # the cache yet.
+        if [ -n "${CLI_CACHE_PROBE:-}" ] && [ -e "$CLI_CACHE_PROBE/${entry##*/}" ]; then
+          printf "cached-during-install:%s\n" "${entry##*/}" >> "$CLI_ARG_LOG"
+        fi
       done
     fi
     previous="$argument"
@@ -172,6 +179,7 @@ PATH="$tmp/bin:$PATH" \
   HORON_AGENT_INSTALL_DIR="$tmp/install" \
   ASSET_SOURCE_DIR="$assets" \
   CLI_ARG_LOG="$cli_arg_log" \
+  CLI_CACHE_PROBE="$tmp/home/.cache/horon-agent/release" \
   DESKTOP_SETUP_LOG="$desktop_setup_log" \
   DOWNLOAD_URL_LOG="$url_log" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
@@ -231,10 +239,21 @@ for cached in horon-agent-linux-x86_64.tar.gz horon-tui-linux-x86_64.tar.gz; do
   test -f "$cache_dir/$cached" \
     || { echo "installer did not cache $cached" >&2; exit 1; }
   test ! -L "$cache_dir/$cached"
+  mode=$(stat -c '%a' "$cache_dir/$cached" 2>/dev/null || stat -f '%Lp' "$cache_dir/$cached")
+  [ "$mode" = "600" ] \
+    || { echo "cached $cached has mode ${mode:-unknown}, not 600" >&2; exit 1; }
 done
 test ! -e "$cache_dir/SHA256SUMS"
 if grep -q 'Using cached' "$tmp/full.out"; then
   echo "installer reported a cache hit on an empty cache" >&2
+  exit 1
+fi
+# A verified download becomes a cache entry only after the release executable
+# has staged it, so the publish can move the file instead of copying bytes the
+# install still needs and a failed install leaves no entry behind.
+if grep -q '^cached-during-install:' "$cli_arg_log"; then
+  echo "installer published a verified download before the install consumed it" >&2
+  grep '^cached-during-install:' "$cli_arg_log" >&2
   exit 1
 fi
 
@@ -322,6 +341,40 @@ if grep -q 'Using cached' "$tmp/group-cache.out"; then
   exit 1
 fi
 grep -q '/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$group_url_log"
+
+# A failed install publishes nothing, so the next run downloads instead of
+# trusting bytes the release executable never staged.
+failed_home="$tmp/home-failed-install"
+if run_install_home "$failed_home" \
+  CLI_FAIL=1 \
+  CLI_ARG_LOG="$tmp/cli-args-install-failed.log" \
+  >"$tmp/publish-failed.out" 2>"$tmp/publish-failed.err"; then
+  echo "installer reported success for a failed install" >&2
+  exit 1
+fi
+test ! -e "$failed_home/.cache/horon-agent/release/horon-agent-linux-x86_64.tar.gz"
+test ! -e "$failed_home/.cache/horon-agent/release/horon-tui-linux-x86_64.tar.gz"
+
+# Check publication across real filesystems when the Linux runner has tmpfs.
+if [[ -d /dev/shm && -w /dev/shm ]] && [[ $(stat -c %d /dev/shm) != "$(stat -c %d "$tmp")" ]]; then
+  (
+    split_parent=$(mktemp -d /dev/shm/horon-cache.XXXXXX)
+    trap 'rm -rf "$split_parent"' EXIT
+    split_home="$tmp/home-split-device"
+    split_cache="$split_parent/cache"
+    run_install_home "$split_home" XDG_CACHE_HOME="$split_cache" \
+      CLI_ARG_LOG="$tmp/cli-args-split.log" >"$tmp/split.out" 2>"$tmp/split.err"
+    for archive in horon-agent-linux-x86_64.tar.gz horon-tui-linux-x86_64.tar.gz; do
+      entry="$split_cache/horon-agent/release/$archive"
+      cmp "$assets/$archive" "$entry"
+      test "$(stat -c %a "$entry")" = 600
+    done
+    run_install_home "$split_home" XDG_CACHE_HOME="$split_cache" \
+      FAIL_ASSET=horon-agent-linux-x86_64.tar.gz CLI_ARG_LOG="$tmp/cli-args-split-warm.log" \
+      >"$tmp/split-warm.out" 2>"$tmp/split-warm.err"
+    grep -Fq 'Using cached, SHA-256 verified: horon-agent-linux-x86_64.tar.gz' "$tmp/split-warm.out"
+  )
+fi
 
 # An explicit XDG_CACHE_HOME is used when it is private to this user...
 xdg_private="$tmp/xdg-private"

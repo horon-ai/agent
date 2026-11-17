@@ -208,10 +208,10 @@ verify_asset_checksum() {
 # the executable. A damaged copy, a name this release does not list, or a cache
 # location that cannot be shown to belong to this user alone falls through to
 # the existing download path; HORON_AGENT_NO_DOWNLOAD_CACHE=1 disables the cache
-# outright. Writes go to a temporary file inside the cache and are renamed into
-# place, so no partial entry is ever visible and a symbolic link is replaced
-# instead of being followed. Windows keeps its current path; install.ps1 is
-# unchanged.
+# outright. An entry is published only after the release executable has staged
+# the assets, so on one filesystem the verified archive is moved into the cache
+# instead of copied a second time, and no entry is ever visible half-written.
+# Windows keeps its current path; install.ps1 is unchanged.
 
 # Read the owner and octal permissions from one stat of the same object.
 cache_metadata() {
@@ -220,6 +220,7 @@ cache_metadata() {
     *) stat -c '%u %a' "$1" 2>/dev/null ;;
   esac
 }
+
 
 path_private() {
   local metadata mode
@@ -284,24 +285,23 @@ use_cached_asset() {
   return 0
 }
 
-# Keeps the verified bytes for the next run. Every failure leaves the cache as
-# it was and never fails the install. The bytes land in a temporary file and are
-# renamed over the entry, so a concurrent install sees either the old entry or
-# the complete new one, and a symbolic link is replaced instead of followed.
+# Move the consumed archive to a private staging name. Across filesystems mv
+# copies to that name first. The final rename stays on the cache filesystem.
 cache_asset() {
+  local cache_source="$assets_dir/$1" cache_entry="$asset_cache_dir/$1" cache_temp
   [ -n "$asset_cache_dir" ] || return 0
-  cache_source="$assets_dir/$1"
+  [[ ! -L $asset_cache_dir ]] && path_private "$asset_cache_dir" || return 0
   if [ ! -f "$cache_source" ] || [ -L "$cache_source" ]; then
     return 0
   fi
   # Portable mv treats an existing directory (including a link to one) as a destination directory.
-  [[ ! -d $asset_cache_dir/$1 ]] || return 0
+  [[ ! -d $cache_entry ]] || return 0
   cache_temp=$(mktemp "$asset_cache_dir/.$1.XXXXXX" 2>/dev/null) || return 0
-  if ! cp "$cache_source" "$cache_temp" 2>/dev/null; then
+  if ! chmod 600 "$cache_source" || ! mv -f "$cache_source" "$cache_temp" 2>/dev/null; then
     rm -f "$cache_temp"
     return 0
   fi
-  if ! mv -f "$cache_temp" "$asset_cache_dir/$1" 2>/dev/null; then
+  if ! mv -f "$cache_temp" "$cache_entry" 2>/dev/null; then
     rm -f "$cache_temp"
     return 0
   fi
@@ -413,6 +413,10 @@ fetch_release_asset "SHA256SUMS" "$assets_dir/SHA256SUMS" \
 download_mode=""
 downloaded_asset=""
 downloaded_from_cache=false
+# Assets this run downloaded and verified. They are published to the cache after
+# the release executable has staged them, so the publish can move the file
+# instead of copying bytes the install still has to read.
+verified_assets=()
 for candidate in "$ARTIFACT.tar.gz" "$ARTIFACT$EXE"; do
   case "$candidate" in
     *.tar.gz) candidate_mode="tar" ;;
@@ -436,7 +440,7 @@ done
 if [ -n "$download_mode" ] && [ "$downloaded_from_cache" = false ]; then
   verify_asset_checksum "$downloaded_asset" "$assets_dir/$downloaded_asset"
   info "Verified SHA-256: $downloaded_asset"
-  cache_asset "$downloaded_asset"
+  verified_assets+=("$downloaded_asset")
 fi
 
 # >>> horon-tui
@@ -453,7 +457,7 @@ if [ -n "$download_mode" ] && [ "$OS" != "FreeBSD" ]; then
   elif fetch_release_asset "$tui_archive" "$assets_dir/$tui_archive"; then
     if problem=$(checksum_problem "$tui_archive" "$assets_dir/$tui_archive"); then
       info "Verified SHA-256: $tui_archive"
-      cache_asset "$tui_archive"
+      verified_assets+=("$tui_archive")
     else
       warn "skipped the interactive client: $problem"
       rm -f "$assets_dir/$tui_archive"
@@ -509,6 +513,11 @@ HORON_AGENT_NO_AUTO_UPDATE=1 \
   "$bootstrap_bin" "$@" \
   || err "Failed to install $VERSION; the previous installation is unchanged"
 info "Installed horon-agent $VERSION"
+
+# Only completed installs may publish their verified downloads.
+for verified_asset in ${verified_assets[@]+"${verified_assets[@]}"}; do
+  cache_asset "$verified_asset"
+done
 
 if [ "$IS_TERMUX" = true ] && [ "$IS_WINDOWS" = false ]; then
   # Termux exports a preload that the glibc build must not inherit, so the
