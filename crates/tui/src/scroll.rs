@@ -82,6 +82,13 @@ pub struct Scroll {
     held_frame: bool,
     /// What the content held at the last frame.
     mark: Option<Mark>,
+    /// A command asked for the newest item's first row at the top of the view,
+    /// and the frame that can measure that item has not run yet.
+    ///
+    /// Kept here rather than worked out by the caller because only a frame knows
+    /// how many rows the item wraps to, and the row count is what the offset is
+    /// made of.
+    hold_newest: bool,
 }
 
 impl Scroll {
@@ -122,6 +129,10 @@ impl Scroll {
     /// takes, such as the Markdown renderer being switched off: the next held
     /// frame recounts the conversation rather than moving the view against
     /// heights that no longer describe what is drawn.
+    ///
+    /// A pending [`hold_newest`](Self::hold_newest) request survives: the rebuild
+    /// counts the same newest item, so the frame that recounts is also the frame
+    /// that can place it.
     pub fn invalidate(&mut self) {
         self.tally = None;
     }
@@ -140,6 +151,9 @@ impl Scroll {
         self.offset = self.offset.saturating_sub(rows.max(1));
         if self.offset == 0 {
             self.fresh = false;
+            // The view is following again, so a request that never reached a
+            // frame is spent: it would otherwise fire on a later item.
+            self.hold_newest = false;
         }
     }
 
@@ -147,6 +161,20 @@ impl Scroll {
     pub fn to_bottom(&mut self) {
         self.offset = 0;
         self.fresh = false;
+        self.hold_newest = false;
+    }
+
+    /// Ask the next frame to put the newest item's first row at the top.
+    ///
+    /// A listing taller than the pane (`/keys`) is drawn from its end, which
+    /// hides the rows a reader looks for first. How many rows the item wraps to
+    /// is only known once a frame has measured it, so the request waits for one:
+    /// the offset is taken from that measurement, and an item that fits the pane
+    /// leaves the view following the end.
+    pub fn hold_newest(&mut self) {
+        self.hold_newest = true;
+        // Only a held frame measures the content, so the request needs one.
+        self.up(1);
     }
 
     /// Pull a held view back into the content.
@@ -256,6 +284,36 @@ impl Scroll {
             } else {
                 self.offset = self.offset.saturating_sub(previous - height);
             }
+        }
+        // `view` here is the rows a held frame can fill, because the frame that
+        // measures is held (the request armed one) and the pane spends its last
+        // row on the "N rows below" line. The pane's first row is
+        // `height - offset - view`, and the newest item's first row is
+        // `height - below`, where `below` counts that item and the open
+        // reasoning and answer under it. Setting the two equal gives
+        // `offset = below - view`. When the item and its open rows fit the full
+        // pane (`below <= view + 1`, which is the capacity of a frame that
+        // follows the end) nothing has to be hidden, so the view stays at the
+        // end and the whole item is on screen.
+        if self.hold_newest
+            && let Some(tally) = self.tally.as_ref()
+        {
+            self.hold_newest = false;
+            let below = tally
+                .items
+                .last()
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(tally.open[0])
+                .saturating_add(tally.open[1]);
+            self.offset = if below > view.saturating_add(1) {
+                below - view
+            } else {
+                0
+            };
+            // A listing the user asked for is not output arriving: no "new
+            // output" line, whichever way the view lands.
+            self.fresh = false;
         }
         self.clamp(height, view);
         self.held_frame = true;

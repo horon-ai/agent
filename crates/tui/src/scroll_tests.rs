@@ -185,6 +185,115 @@ fn scroll_only_follows_growth_while_the_view_is_held() {
 }
 
 #[test]
+fn a_hold_request_starts_the_newest_item_at_the_top() {
+    let mut scroll = Scroll::new();
+    // Three items of one row, one row and ten rows; a held frame fills six of
+    // the pane's seven. The newest item's first row is row two of twelve, and a
+    // view that starts there has four rows below its bottom edge.
+    scroll.hold_newest();
+    assert_eq!(
+        scroll.measure(80, 3, [0, 0], 6, |index| if index == 2 { 10 } else { 1 }),
+        12
+    );
+    assert_eq!(scroll.offset(), 4);
+    assert!(!scroll.is_following());
+    assert!(
+        !scroll.has_fresh_output(),
+        "a listing the user asked for is not output arriving"
+    );
+}
+
+#[test]
+fn a_hold_request_for_a_list_that_fits_leaves_the_view_following() {
+    let mut scroll = Scroll::new();
+    // Five rows in the six a held frame fills: the whole item is on screen, so
+    // nothing is held and the next item still arrives in view.
+    scroll.hold_newest();
+    assert_eq!(
+        scroll.measure(80, 2, [0, 0], 6, |index| if index == 1 { 4 } else { 1 }),
+        5
+    );
+    assert!(scroll.is_following());
+    assert!(!scroll.has_fresh_output());
+}
+
+#[test]
+fn a_hold_request_counts_the_open_rows_below_the_item() {
+    let mut scroll = Scroll::new();
+    // Four rows of listing with a three-row and a two-row open buffer under it:
+    // nine rows from the item's first row, so the offset is nine minus six.
+    // Counting the item alone would leave the view following.
+    scroll.hold_newest();
+    assert_eq!(
+        scroll.measure(80, 2, [3, 2], 6, |index| if index == 1 { 4 } else { 1 }),
+        10
+    );
+    assert_eq!(scroll.offset(), 3);
+}
+
+#[test]
+fn a_hold_request_is_spent_by_the_frame_that_measures_it() {
+    let mut scroll = Scroll::new();
+    scroll.hold_newest();
+    scroll.measure(80, 3, [0, 0], 6, |index| if index == 2 { 10 } else { 1 });
+    assert_eq!(scroll.offset(), 4);
+    // One more one-row line: a held view keeps the rows it shows, so the offset
+    // grows by the row that landed. A request still pending would instead jump
+    // to the new line's first row, which is the end of the content.
+    assert_eq!(scroll.measure(80, 4, [0, 0], 6, |_| 1), 13);
+    assert_eq!(scroll.offset(), 5);
+}
+
+#[test]
+fn a_hold_request_recounts_rows_measured_at_another_width() {
+    let mut scroll = Scroll::new();
+    // A frame at eighty columns counts the conversation; the request's frame
+    // draws at forty, where every row boundary moved, so it counts them again
+    // instead of placing the view against the wider counts.
+    scroll.up(1);
+    scroll.measure(80, 2, [0, 0], 6, |index| if index == 1 { 4 } else { 1 });
+    let mut counted = 0usize;
+    scroll.hold_newest();
+    let height = scroll.measure(40, 2, [0, 0], 6, |index| {
+        counted += 1;
+        if index == 1 { 12 } else { 2 }
+    });
+    assert_eq!(height, 14);
+    assert_eq!(counted, 2, "the narrower frame reused rows counted at eighty columns");
+    assert_eq!(scroll.offset(), 6);
+}
+
+#[test]
+fn going_back_to_the_end_spends_a_pending_hold_request() {
+    let mut scroll = Scroll::new();
+    scroll.hold_newest();
+    // ctrl+end before the frame: the request was for a view the user has left,
+    // so the next held frame scrolls like any other.
+    scroll.to_bottom();
+    scroll.up(2);
+    assert_eq!(scroll.measure(80, 10, [0, 0], 6, |_| 1), 10);
+    assert_eq!(scroll.offset(), 2);
+}
+
+#[test]
+fn scrolling_back_to_the_end_spends_a_pending_hold_request() {
+    let mut scroll = Scroll::new();
+    scroll.hold_newest();
+    // The key that brings the view to the end also spends the request; a
+    // pending one would otherwise fire on whatever the newest item is by then.
+    scroll.down(10);
+    assert!(scroll.is_following());
+    assert_eq!(
+        scroll.measure(80, 10, [0, 0], 6, |index| if index == 9 { 10 } else { 1 }),
+        19
+    );
+    assert!(
+        scroll.is_following(),
+        "a request spent before its frame still held the view"
+    );
+}
+
+#[test]
 fn leaving_the_bottom_drops_the_stale_height() {
     let mut scroll = Scroll::new();
     // A held frame, then back to the end: the height that frame measured is the

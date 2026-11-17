@@ -93,13 +93,57 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
+        "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
+        "keys" => "list the keys in force and what each does",
         "model" => "pick a model, or switch with /model <name>",
         "quit" => "leave",
         "resume" => "pick a session stored for this directory and replay it",
         "settings" => "open the settings screen",
         _ => "",
     }
+}
+
+/// The line shown when a typed name matches no command.
+///
+/// `/help` and the resolver share it, so a name that runs nothing reads the
+/// same whether it was typed as a command or asked about.
+pub(crate) fn unknown(name: &str) -> String {
+    format!("unknown command `/{name}`; /help lists the commands")
+}
+
+/// `/help <command>`: one command's label, description and group.
+///
+/// `name` carries no leading slash; the caller strips it so a `/model` typed
+/// after `/help` reads the same as `model`. A name nothing answers to gives
+/// `None`, which the caller shows as [`unknown`] rather than as an empty help
+/// block that would look like success.
+pub(crate) fn detail(entries: &[Entry], name: &str) -> Option<String> {
+    // The command `resolve` would answer, not the first row that happens to
+    // carry the name: a command file outranks the harness's own commands, and a
+    // built-in outranks both.
+    let entry = entries
+        .iter()
+        .filter(|entry| entry.name == name)
+        .min_by_key(|entry| match entry.group {
+            Group::Builtin => 0,
+            Group::File if !entry.shadowed => 1,
+            Group::Harness => 2,
+            Group::File => 3,
+        })?;
+    let description = if entry.description.is_empty() {
+        entry.label()
+    } else {
+        format!("{}  {}", entry.label(), entry.description)
+    };
+    let mut lines = vec![description, format!("group: {}", header(entry.group))];
+    let shadowed = entries.iter().any(|other| other.name == name && other.shadowed);
+    if shadowed {
+        lines.push(format!(
+            "a command file named `{name}` is shadowed: the built-in runs, not the file"
+        ));
+    }
+    Some(lines.join("\n"))
 }
 
 /// The line that explains one harness command.
@@ -150,7 +194,7 @@ pub struct Row {
 pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
     let commands = command_rows(entries);
     let width = column(&commands);
-    let mut lines: Vec<String> = Vec::with_capacity(commands.len() + ACTIONS.len() + 8);
+    let mut lines: Vec<String> = Vec::with_capacity(commands.len() + 3);
     let mut group = None;
     for (entry, row) in entries.iter().zip(commands.iter()) {
         if group != Some(entry.group) {
@@ -170,10 +214,22 @@ pub fn text(entries: &[Entry], bindings: &Bindings) -> String {
                 .to_string(),
         );
     }
-    let keys = key_rows(bindings);
-    let key_width = column(&keys);
+    let keys = key_text(bindings);
+    lines.push(keys);
+    lines.join("\n")
+}
+
+/// `/keys`: the header and rows of the listing's key section, and nothing else.
+///
+/// The action ids are the map's own names, not what a user types, so the
+/// listing shows the keys in force and the words for what each does; an action
+/// nobody bound still gets a row, marked unbound.
+pub(crate) fn key_text(bindings: &Bindings) -> String {
+    let rows = key_rows(bindings);
+    let width = column(&rows);
+    let mut lines: Vec<String> = Vec::with_capacity(rows.len() + 1);
     lines.push("keys:".to_string());
-    lines.extend(keys.iter().map(|row| aligned(row, key_width)));
+    lines.extend(rows.iter().map(|row| aligned(row, width)));
     lines.join("\n")
 }
 
