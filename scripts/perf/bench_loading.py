@@ -485,6 +485,8 @@ def run_probe(binary: Path, fixture: dict, home: Path, timeout: float, mode: str
             run["reasons"].append("%s failed: %s" % (name, stage.get("failure")))
             continue
         run["stage_ms"][name] = float(stage.get("ms") or 0.0)
+        if name == "attach_history" and "history_ms" in (stage.get("detail") or {}):
+            run["attach_history_detail"] = stage["detail"]
         moved = stage.get("delta") or {}
         run["stage_delta"][name] = moved
         missing = [counter for counter in REQUIRED_COUNTERS if counter not in moved]
@@ -761,6 +763,11 @@ def measure_fixture(
         "status": "measurement_failure" if deduped else "measured",
         "reasons": deduped,
         "stages": stages,
+        "attach_history_samples": {
+            side: [run["attach_history_detail"] for run in runs[side]
+                   if run["status"] == "ok" and "attach_history_detail" in run]
+            for side in ("a", "b")
+        },
         "totals": {
             side: {counter: summarize([float(value) for value in values]) for counter, values in totals[side].items()}
             for side in ("a", "b")
