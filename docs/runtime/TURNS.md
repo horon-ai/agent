@@ -304,8 +304,10 @@ session's runtime host, including SSH and managed remote runtimes.
 - `skills`: loaded global and project overlay skills, descriptions, paths, active
   skills, shared approval recommendations. Refreshes the global registry.
 - `context`: the assembled static and dynamic system prompt, effective and current tools,
-  active conversation messages, context window metadata. It injects no memory guidance,
-  prewarms no provider, and runs no inference.
+  active conversation messages, context window metadata, and a `tokens` object with an
+  estimate per part (system, tools, messages) plus the window, so a client can draw a
+  breakdown instead of printing the payload. It injects no memory guidance, prewarms no
+  provider, and runs no inference.
 - `info`: the real provider and session identity plus token and cache counters.
   Cache expiry and content inspection are unavailable and say so.
 - `memory`: toggle, explicit on/off/status, or schedule an `extract`. An extraction
