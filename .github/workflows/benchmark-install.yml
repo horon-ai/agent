@@ -113,12 +113,14 @@ jobs:
       BASELINE_DIR: ${{ inputs.baseline_ref != '' && '.bench-baseline' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        id: harness
         with:
           # Native installers and npm run third-party code here; the token stays
           # out of the checkout's git config.
           persist-credentials: false
 
       - name: Check out the candidate install path
+        id: candidate
         if: ${{ inputs.ref != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -127,6 +129,7 @@ jobs:
           persist-credentials: false
 
       - name: Check out the baseline install path
+        id: baseline
         if: ${{ inputs.baseline_ref != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -171,12 +174,15 @@ jobs:
       - name: Measure install and first version in the FreeBSD VM
         if: ${{ matrix.platform == 'freebsd-x86_64' }}
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1
+        env:
+          INSTALL_CANDIDATE_HEAD: ${{ steps.candidate.outputs.commit || steps.harness.outputs.commit }}
+          INSTALL_BASELINE_HEAD: ${{ steps.baseline.outputs.commit }}
         with:
           release: "15.1"
           usesh: true
           mem: 4096
           cpu: 2
-          envs: RELEASE_TAG RUNS COMPETITORS CANDIDATE_DIR BASELINE_DIR GITHUB_ACTIONS RUNNER_ENVIRONMENT
+          envs: RELEASE_TAG RUNS COMPETITORS CANDIDATE_DIR BASELINE_DIR GITHUB_ACTIONS RUNNER_ENVIRONMENT INSTALL_CANDIDATE_HEAD INSTALL_BASELINE_HEAD
           # Python drives the harness, bash runs the installer, coreutils
           # supplies the GNU tools the checksum probes look for, and Node plus
           # npm are what the npm competitors install through.
@@ -224,6 +230,7 @@ jobs:
         with:
           pattern: install-*-${{ github.run_id }}
           path: collected
+          merge-multiple: true
 
       - name: Write the installation table
         if: ${{ always() }}

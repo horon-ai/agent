@@ -3,7 +3,6 @@
 import argparse
 import html
 import json
-import os
 from pathlib import Path
 
 
@@ -65,8 +64,7 @@ def main():
     complete = True
     for entry in args.matrix['include']:
         platform = entry['platform']
-        directory = args.reports / f"install-{platform}-{os.environ['GITHUB_RUN_ID']}"
-        path = directory / f'install-{platform}.json'
+        path = args.reports / f'install-{platform}.json'
         try:
             report = json.loads(path.read_text(encoding='utf-8'))
             if not write_platform(report, platform, tools, args.runs):

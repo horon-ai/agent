@@ -248,8 +248,8 @@ def main():
     rows, cleanup_errors = [], []
     report = {'suite': 'install', 'tag': args.tag, 'system': platform.system(), 'arch': platform.machine(),
               'release': platform.release(), 'runs': args.runs, 'samples': rows, 'summary_ms': {},
-              'candidate_head': checkout_revision(candidate_dir),
-              'baseline_head': checkout_revision(baseline_dir) if baseline_dir else None,
+              'candidate_head': os.environ.get('INSTALL_CANDIDATE_HEAD') or checkout_revision(candidate_dir),
+              'baseline_head': os.environ.get('INSTALL_BASELINE_HEAD') or (checkout_revision(baseline_dir) if baseline_dir else None),
               'cleanup_errors': cleanup_errors}
     try:
         for i in range(args.runs):
