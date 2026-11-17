@@ -46,7 +46,7 @@
     "mcp_config_user_rereads_max": 0,
     "hooks_unset_process_spawns_max": 0,
     "hooks_unset_message_copies_max": 0,
-    "prefix_tools_bytes_max": 9151,
+    "prefix_tools_bytes_max": 8975,
     "prompt_static_bytes_max": 1322,
     "prompt_unchanged_request_source_reads_max": 0,
     "prompt_index_clipped_rows_max": 1,
