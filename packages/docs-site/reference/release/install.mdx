@@ -36,6 +36,22 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 The Windows install locations and signing procedure are in [`WINDOWS.md`](/reference/release/windows).
 
+## Release download cache
+
+`scripts/install/install.sh` keeps the last verified copy of each asset it installs, so a reinstall does not download it a second time. `install.ps1` does not use this cache.
+
+| Item | Location |
+| --- | --- |
+| Cache root | `$XDG_CACHE_HOME`, otherwise `~/.cache` on Linux and FreeBSD and `~/Library/Caches` on macOS |
+| Entries | `<cache root>/horon-agent/release/<asset name>`, one file per asset name |
+
+- `SHA256SUMS` is fetched from `https://github.com/horon-ai/agent/releases/download/<tag>/` on every run and is never stored. An entry is reused only when this run's list gives the same digest for that exact asset name.
+- An entry is only a source. Its bytes are copied into the temporary asset directory and the copy is hashed against this run's list, so the file handed to `install-release` is the file that was verified.
+- The cache is used only when the directory that holds the cache root, the cache root itself and the directories created under it are all real directories owned by the current user with neither the group nor the world write bit set. A shared location such as `/tmp`, a symbolic link, an unreadable mode or an owner other than the current user disables the cache for that run instead of being written to.
+- Writes land in a temporary file inside the cache and are renamed over the entry. A concurrent install therefore sees either the old entry or the complete new one, and an entry that is a symbolic link is replaced instead of being followed.
+- A damaged entry, an entry this release does not list, or a cache that cannot be written falls back to the download path. The cache never fails an install.
+- `HORON_AGENT_NO_DOWNLOAD_CACHE=1` disables the cache for one run. `rm -rf <cache root>/horon-agent` removes it; the immutable version store, the launcher and uninstall do not depend on it.
+
 ## Installing from npm (not published yet)
 
 The npm distribution is built and tested, but nothing has been published: the registry holds only the `0.0.0` placeholder packages that reserve the seven names, and those carry no binaries, so `npm i -g @horon-ai/horon` installs a launcher that cannot find a runtime. Use the installers above, the container image, or a source checkout until publishing is enabled.

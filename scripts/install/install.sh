@@ -198,6 +198,128 @@ verify_asset_checksum() {
     || err "${problem:-SHA-256 verification failed for $1}"
 }
 
+# A reinstall normally pays for the same download as the first install. The
+# last verified copy of each asset is kept in a per-user cache, one file per
+# asset name, and reused only when the SHA256SUMS fetched in this run lists that
+# same digest for that exact name. SHA256SUMS is never cached: every run fetches
+# it from the canonical release over HTTPS. A cache entry is only a source: its
+# bytes are copied into the temporary asset directory and that isolated copy is
+# the one hashed and installed, so a file that changes underneath cannot reach
+# the executable. A damaged copy, a name this release does not list, or a cache
+# location that cannot be shown to belong to this user alone falls through to
+# the existing download path; HORON_AGENT_NO_DOWNLOAD_CACHE=1 disables the cache
+# outright. Writes go to a temporary file inside the cache and are renamed into
+# place, so no partial entry is ever visible and a symbolic link is replaced
+# instead of being followed. Windows keeps its current path; install.ps1 is
+# unchanged.
+
+# Read the owner and octal permissions from one stat of the same object.
+cache_metadata() {
+  case "$OS" in
+    Darwin|FreeBSD) stat -f '%u %Lp' "$1" 2>/dev/null ;;
+    *) stat -c '%u %a' "$1" 2>/dev/null ;;
+  esac
+}
+
+path_private() {
+  local metadata mode
+  metadata=$(cache_metadata "$1") || return 1
+  mode=${metadata#* }
+  [[ ${metadata%% *} == "$EUID" && $mode =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 0022) == 0 ))
+}
+
+# Enables the cache at "$1/horon-agent/release" only when every directory on the
+# way is owned by this user and private to them. A shared location such as /tmp,
+# or one whose owner or mode cannot be read, is skipped rather than written to:
+# an uncertain environment then costs a download and never a new risk.
+prepare_asset_cache() {
+  local cache_root=${1%/} parent ancestor metadata mode owner directory
+  [[ $cache_root == /* && ${cache_root##*/} != . && ${cache_root##*/} != .. ]] || return 0
+  parent=${cache_root%/*}
+  [[ -d $parent && ! -L $parent ]] && path_private "$parent" || return 0
+  parent=$(cd -P -- "$parent" && pwd -P) || return 0
+  cache_root="$parent/${cache_root##*/}"
+  ancestor=${parent%/*}
+  while [[ -n $ancestor ]]; do
+    metadata=$(cache_metadata "$ancestor") || return 0
+    owner=${metadata%% *}
+    mode=${metadata#* }
+    [[ $owner == "$EUID" || $owner == 0 ]] && [[ $mode =~ ^[0-7]{3,4}$ ]] || return 0
+    # A root-owned sticky temporary directory protects each private child from replacement.
+    (( (8#$mode & 0022) == 0 || (owner == 0 && (8#$mode & 01000) != 0) )) || return 0
+    ancestor=${ancestor%/*}
+  done
+  for directory in "$cache_root" "$cache_root/horon-agent" "$cache_root/horon-agent/release"; do
+    [[ ! -L $directory ]] || return 0
+    if [[ ! -d $directory ]]; then
+      (umask 077 && mkdir -- "$directory" 2>/dev/null) || [[ -d $directory ]] || return 0
+    fi
+    [[ ! -L $directory ]] && path_private "$directory" || return 0
+  done
+  asset_cache_dir=$directory
+}
+
+# Copies one cache entry into the asset directory, verifies that copy against
+# the manifest fetched in this run, and only then renames it into place. Returns
+# 1 and leaves nothing behind when the entry is absent, is not a private regular
+# file, or no longer matches this release, so the caller downloads instead.
+use_cached_asset() {
+  [ -n "$asset_cache_dir" ] || return 1
+  cache_entry="$asset_cache_dir/$1"
+  if [ ! -f "$cache_entry" ] || [ -L "$cache_entry" ]; then
+    return 1
+  fi
+  path_private "$cache_entry" || return 1
+  cache_copy="$assets_dir/.$1.cached"
+  rm -f "$cache_copy"
+  if ! cp "$cache_entry" "$cache_copy" 2>/dev/null; then
+    rm -f "$cache_copy"
+    return 1
+  fi
+  if ! problem=$(checksum_problem "$1" "$cache_copy"); then
+    rm -f "$cache_copy"
+    return 1
+  fi
+  mv -f "$cache_copy" "$assets_dir/$1" 2>/dev/null || { rm -f "$cache_copy"; return 1; }
+  return 0
+}
+
+# Keeps the verified bytes for the next run. Every failure leaves the cache as
+# it was and never fails the install. The bytes land in a temporary file and are
+# renamed over the entry, so a concurrent install sees either the old entry or
+# the complete new one, and a symbolic link is replaced instead of followed.
+cache_asset() {
+  [ -n "$asset_cache_dir" ] || return 0
+  cache_source="$assets_dir/$1"
+  if [ ! -f "$cache_source" ] || [ -L "$cache_source" ]; then
+    return 0
+  fi
+  # Portable mv treats an existing directory (including a link to one) as a destination directory.
+  [[ ! -d $asset_cache_dir/$1 ]] || return 0
+  cache_temp=$(mktemp "$asset_cache_dir/.$1.XXXXXX" 2>/dev/null) || return 0
+  if ! cp "$cache_source" "$cache_temp" 2>/dev/null; then
+    rm -f "$cache_temp"
+    return 0
+  fi
+  if ! mv -f "$cache_temp" "$asset_cache_dir/$1" 2>/dev/null; then
+    rm -f "$cache_temp"
+    return 0
+  fi
+  return 0
+}
+
+asset_cache_dir=""
+if [ "$IS_WINDOWS" = false ] && [ "${HORON_AGENT_NO_DOWNLOAD_CACHE:-}" != "1" ]; then
+  if [ -n "${XDG_CACHE_HOME:-}" ]; then
+    cache_root="$XDG_CACHE_HOME"
+  elif [ "$OS" = "Darwin" ]; then
+    cache_root="$HOME/Library/Caches"
+  else
+    cache_root="$HOME/.cache"
+  fi
+  prepare_asset_cache "$cache_root"
+fi
+
 # The downloaded executable is the only release payload this script runs, so it
 # is unpacked member by member with `tar -xOf` into the temp directory. No
 # archive is extracted as a tree: an archive cannot choose where its bytes land,
@@ -290,21 +412,31 @@ fetch_release_asset "SHA256SUMS" "$assets_dir/SHA256SUMS" \
 
 download_mode=""
 downloaded_asset=""
+downloaded_from_cache=false
 for candidate in "$ARTIFACT.tar.gz" "$ARTIFACT$EXE"; do
+  case "$candidate" in
+    *.tar.gz) candidate_mode="tar" ;;
+    *) candidate_mode="bin" ;;
+  esac
+  if use_cached_asset "$candidate"; then
+    downloaded_asset="$candidate"
+    download_mode="$candidate_mode"
+    downloaded_from_cache=true
+    info "Using cached, SHA-256 verified: $candidate"
+    break
+  fi
   if fetch_release_asset "$candidate" "$assets_dir/$candidate"; then
     downloaded_asset="$candidate"
-    case "$candidate" in
-      *.tar.gz) download_mode="tar" ;;
-      *) download_mode="bin" ;;
-    esac
+    download_mode="$candidate_mode"
     break
   fi
   rm -f "$assets_dir/$candidate"
 done
 
-if [ -n "$download_mode" ]; then
+if [ -n "$download_mode" ] && [ "$downloaded_from_cache" = false ]; then
   verify_asset_checksum "$downloaded_asset" "$assets_dir/$downloaded_asset"
   info "Verified SHA-256: $downloaded_asset"
+  cache_asset "$downloaded_asset"
 fi
 
 # >>> horon-tui
@@ -316,9 +448,12 @@ fi
 if [ -n "$download_mode" ] && [ "$OS" != "FreeBSD" ]; then
   tui_artifact="horon-tui${ARTIFACT#horon-agent}"
   tui_archive="$tui_artifact.tar.gz"
-  if fetch_release_asset "$tui_archive" "$assets_dir/$tui_archive"; then
+  if use_cached_asset "$tui_archive"; then
+    info "Using cached, SHA-256 verified: $tui_archive"
+  elif fetch_release_asset "$tui_archive" "$assets_dir/$tui_archive"; then
     if problem=$(checksum_problem "$tui_archive" "$assets_dir/$tui_archive"); then
       info "Verified SHA-256: $tui_archive"
+      cache_asset "$tui_archive"
     else
       warn "skipped the interactive client: $problem"
       rm -f "$assets_dir/$tui_archive"

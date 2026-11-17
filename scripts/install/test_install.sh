@@ -6,6 +6,11 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/home" "$tmp/install"
 
+# The installer keeps a per-user download cache. Every scenario below gets its
+# own HOME, so dropping an inherited XDG_CACHE_HOME keeps every run's cache
+# inside $tmp and away from the real user cache.
+unset XDG_CACHE_HOME
+
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -172,6 +177,22 @@ PATH="$tmp/bin:$PATH" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
   bash "$repo_dir/scripts/install/install.sh" >"$tmp/full.out" 2>"$tmp/full.err"
 
+# Cache scenarios reuse the shared environment but need their own HOME, and they
+# add per-scenario variables. `env` turns every NAME=VALUE argument into the
+# child's environment; prefix assignments cannot do that from an expansion.
+run_install_home() {
+  install_home="$1"
+  shift
+  env PATH="$tmp/bin:$PATH" \
+    HOME="$install_home" \
+    HORON_HOME="$install_home/.horon" \
+    HORON_AGENT_INSTALL_DIR="$tmp/install-scenarios" \
+    ASSET_SOURCE_DIR="$assets" \
+    HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+    "$@" \
+    bash "$repo_dir/scripts/install/install.sh"
+}
+
 test ! -e "$desktop_setup_log"
 test "$(cat "$tmp/home/.horon/builds/current-version")" = "1.2.3"
 
@@ -201,6 +222,163 @@ if grep -v -e '^https://github.com/horon-ai/agent/' "$url_log" | grep -q .; then
   echo "installer contacted a non-canonical release host" >&2
   exit 1
 fi
+
+# The first install into an empty cache downloads and keeps exactly the assets
+# it verified, one file per asset name. The manifest is fetched every run and is
+# never stored.
+cache_dir="$tmp/home/.cache/horon-agent/release"
+for cached in horon-agent-linux-x86_64.tar.gz horon-tui-linux-x86_64.tar.gz; do
+  test -f "$cache_dir/$cached" \
+    || { echo "installer did not cache $cached" >&2; exit 1; }
+  test ! -L "$cache_dir/$cached"
+done
+test ! -e "$cache_dir/SHA256SUMS"
+if grep -q 'Using cached' "$tmp/full.out"; then
+  echo "installer reported a cache hit on an empty cache" >&2
+  exit 1
+fi
+
+# A rerun with a warm cache downloads only the manifest. The cached bytes are
+# copied into the temporary asset directory and hashed there, so the check runs
+# against this run's manifest and not against the cache file.
+warm_url_log="$tmp/warm-urls.log"
+run_install_home "$tmp/home" \
+  CLI_ARG_LOG="$tmp/cli-args-warm.log" \
+  DOWNLOAD_URL_LOG="$warm_url_log" >"$tmp/warm.out" 2>"$tmp/warm.err"
+grep -Fq 'Using cached, SHA-256 verified: horon-agent-linux-x86_64.tar.gz' "$tmp/warm.out"
+grep -Fq 'Using cached, SHA-256 verified: horon-tui-linux-x86_64.tar.gz' "$tmp/warm.out"
+test -s "$warm_url_log"
+grep -q '/v1.2.3/SHA256SUMS$' "$warm_url_log"
+if grep -q '/releases/download/[^/]*/h' "$warm_url_log"; then
+  echo "installer downloaded an asset that was already cached" >&2
+  cat "$warm_url_log" >&2
+  exit 1
+fi
+if grep -q 'Verified SHA-256: horon-agent-linux-x86_64.tar.gz' "$tmp/warm.out"; then
+  echo "installer re-verified a download it never made" >&2
+  exit 1
+fi
+
+# A damaged cache entry is refused: the asset is downloaded again, the verified
+# bytes replace the entry, and the damaged file never reaches the executable.
+printf 'corrupted cache bytes' > "$cache_dir/horon-agent-linux-x86_64.tar.gz"
+corrupt_cache_url_log="$tmp/corrupt-cache-urls.log"
+run_install_home "$tmp/home" \
+  CLI_ARG_LOG="$tmp/cli-args-corrupt-cache.log" \
+  DOWNLOAD_URL_LOG="$corrupt_cache_url_log" >"$tmp/corrupt-cache.out" 2>"$tmp/corrupt-cache.err"
+if grep -q 'Using cached, SHA-256 verified: horon-agent-linux-x86_64.tar.gz' "$tmp/corrupt-cache.out"; then
+  echo "installer reused a damaged cache entry" >&2
+  exit 1
+fi
+grep -q '/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$corrupt_cache_url_log"
+test "$(sha256 "$cache_dir/horon-agent-linux-x86_64.tar.gz")" \
+  = "$(awk '$2 == "horon-agent-linux-x86_64.tar.gz" { print $1 }' "$assets/SHA256SUMS")"
+
+# A cache entry that does not match this release's manifest is refused the same
+# way even when the bytes are a complete, readable file.
+printf 'bytes from another release' > "$cache_dir/horon-agent-linux-x86_64.tar.gz"
+stale_cache_url_log="$tmp/stale-cache-urls.log"
+run_install_home "$tmp/home" \
+  CLI_ARG_LOG="$tmp/cli-args-stale-cache.log" \
+  DOWNLOAD_URL_LOG="$stale_cache_url_log" >"$tmp/stale-cache.out" 2>"$tmp/stale-cache.err"
+if grep -q 'Using cached, SHA-256 verified: horon-agent-linux-x86_64.tar.gz' "$tmp/stale-cache.out"; then
+  echo "installer reused a cache entry the manifest does not list" >&2
+  exit 1
+fi
+grep -q '/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$stale_cache_url_log"
+
+# A cache entry replaced by a symbolic link is neither followed nor written
+# through: the link target keeps its bytes and the entry becomes a regular file
+# holding the freshly verified download.
+link_target="$tmp/cache-link-target"
+printf 'link target bytes\n' > "$link_target"
+rm -f "$cache_dir/horon-agent-linux-x86_64.tar.gz"
+ln -s "$link_target" "$cache_dir/horon-agent-linux-x86_64.tar.gz"
+link_url_log="$tmp/link-cache-urls.log"
+run_install_home "$tmp/home" \
+  CLI_ARG_LOG="$tmp/cli-args-link-cache.log" \
+  DOWNLOAD_URL_LOG="$link_url_log" >"$tmp/link-cache.out" 2>"$tmp/link-cache.err"
+grep -q '/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$link_url_log"
+test "$(cat "$link_target")" = 'link target bytes'
+test ! -L "$cache_dir/horon-agent-linux-x86_64.tar.gz"
+test "$(sha256 "$cache_dir/horon-agent-linux-x86_64.tar.gz")" \
+  = "$(awk '$2 == "horon-agent-linux-x86_64.tar.gz" { print $1 }' "$assets/SHA256SUMS")"
+
+# A cache directory the group can write into is not trusted, because another
+# member of the group could replace an entry. The installer downloads instead
+# and leaves the directory alone.
+group_home="$tmp/home-group-cache"
+group_cache="$group_home/.cache/horon-agent/release"
+mkdir -p "$group_cache"
+cp "$assets/horon-agent-linux-x86_64.tar.gz" "$group_cache/"
+cp "$assets/horon-tui-linux-x86_64.tar.gz" "$group_cache/"
+chmod 0775 "$group_cache"
+group_url_log="$tmp/group-cache-urls.log"
+run_install_home "$group_home" \
+  CLI_ARG_LOG="$tmp/cli-args-group-cache.log" \
+  DOWNLOAD_URL_LOG="$group_url_log" >"$tmp/group-cache.out" 2>"$tmp/group-cache.err"
+if grep -q 'Using cached' "$tmp/group-cache.out"; then
+  echo "installer trusted a group-writable cache directory" >&2
+  exit 1
+fi
+grep -q '/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$group_url_log"
+
+# An explicit XDG_CACHE_HOME is used when it is private to this user...
+xdg_private="$tmp/xdg-private"
+mkdir -p "$xdg_private"
+chmod 0700 "$xdg_private"
+run_install_home "$tmp/home-xdg-private" \
+  XDG_CACHE_HOME="$xdg_private" \
+  CLI_ARG_LOG="$tmp/cli-args-xdg-private.log" \
+  >"$tmp/xdg-private.out" 2>"$tmp/xdg-private.err"
+test -f "$xdg_private/horon-agent/release/horon-agent-linux-x86_64.tar.gz"
+
+# ... and is skipped without being written into when it is a shared,
+# world-writable location.
+xdg_shared="$tmp/xdg-shared"
+mkdir -p "$xdg_shared"
+chmod 0777 "$xdg_shared"
+run_install_home "$tmp/home-xdg-shared" \
+  XDG_CACHE_HOME="$xdg_shared" \
+  CLI_ARG_LOG="$tmp/cli-args-xdg-shared.log" \
+  >"$tmp/xdg-shared.out" 2>"$tmp/xdg-shared.err"
+test "$(cat "$tmp/home-xdg-shared/.horon/builds/current-version")" = "1.2.3"
+test ! -e "$xdg_shared/horon-agent"
+
+# A private directory inside a shared parent is refused too, because the parent
+# could be replaced by another user.
+mkdir -p "$xdg_shared/nested"
+chmod 0700 "$xdg_shared/nested"
+run_install_home "$tmp/home-xdg-nested" \
+  XDG_CACHE_HOME="$xdg_shared/nested" \
+  CLI_ARG_LOG="$tmp/cli-args-xdg-nested.log" \
+  >"$tmp/xdg-nested.out" 2>"$tmp/xdg-nested.err"
+test "$(cat "$tmp/home-xdg-nested/.horon/builds/current-version")" = "1.2.3"
+test ! -e "$xdg_shared/nested/horon-agent"
+
+# A cache location that cannot be written to costs a download and nothing else.
+# A root-run suite ignores the mode bits, so this scenario is skipped there.
+if [ "$(id -u)" != "0" ]; then
+  readonly_root="$tmp/readonly-cache"
+  mkdir -p "$readonly_root"
+  chmod 0500 "$readonly_root"
+  run_install_home "$tmp/home-readonly-cache" \
+    XDG_CACHE_HOME="$readonly_root" \
+    CLI_ARG_LOG="$tmp/cli-args-readonly-cache.log" \
+    >"$tmp/readonly-cache.out" 2>"$tmp/readonly-cache.err"
+  test "$(cat "$tmp/home-readonly-cache/.horon/builds/current-version")" = "1.2.3"
+  test ! -e "$readonly_root/horon-agent"
+  chmod 0700 "$readonly_root"
+fi
+
+# The documented switch disables the cache outright and installs normally.
+disabled_home="$tmp/home-cache-disabled"
+run_install_home "$disabled_home" \
+  HORON_AGENT_NO_DOWNLOAD_CACHE=1 \
+  CLI_ARG_LOG="$tmp/cli-args-cache-disabled.log" \
+  >"$tmp/cache-disabled.out" 2>"$tmp/cache-disabled.err"
+test "$(cat "$disabled_home/.horon/builds/current-version")" = "1.2.3"
+test ! -e "$disabled_home/.cache"
 
 # A release without its checksum list is refused before anything is installed.
 missing_assets="$tmp/assets-missing-checksums"
