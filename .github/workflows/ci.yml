@@ -46,7 +46,8 @@ env:
   # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
   # merging. Warnings in registry dependencies are never reported by cargo.
   CARGO_BUILD_WARNINGS: deny
-  SCCACHE_GHA_ENABLED: "true"
+  # Keep per-compilation writes on the runner; share Cargo archives between runs.
+  SCCACHE_CACHE_SIZE: "512M"
   # Test and dev builds do not need debug info, and on a hosted runner every byte
   # is disk. The workspace profiles already set debug = 0; these make that hold
   # for member crates that might override the profile.
@@ -124,10 +125,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: quality-${{ runner.os }}
           cache-all-crates: "true"
 
@@ -522,10 +520,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
@@ -1791,10 +1786,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: windows-latest
           cache-all-crates: "true"
 
@@ -2208,10 +2200,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: windows-arm64-release-check
           cache-all-crates: "true"
 
@@ -2262,10 +2251,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: windows-cross-check
           cache-all-crates: "true"
 

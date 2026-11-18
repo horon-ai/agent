@@ -102,7 +102,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: structural-perf-${{ runner.os }}
-          save-if: ${{ github.event_name != 'pull_request' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
 
       - name: Contract test the structural gate
         # Fast and compile-free: proves the bounds file, the report template and
