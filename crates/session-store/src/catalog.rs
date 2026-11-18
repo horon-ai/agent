@@ -3,7 +3,7 @@ use crate::blobs::new_file;
 use crate::blobs::{Disk, checked_file, log_file};
 use crate::cache_io::{Stamp, decode, encode, publish_derived};
 use crate::catalog_row::CatalogEntry;
-pub use crate::catalog_row::Summary;
+pub use crate::catalog_row::{SessionListing, SkippedEntry, Summary};
 use crate::checkpoint::SessionCache;
 use crate::*;
 use std::collections::BTreeMap;
@@ -44,8 +44,25 @@ fn lock(paths: &SessionPaths) -> Result<CatalogLock, StoreError> {
     crate::writer::lock_exclusive_named(&file, "catalog index")?;
     Ok(CatalogLock(file))
 }
-fn sessions(paths: &SessionPaths) -> Result<Vec<SessionId>, StoreError> {
+/// The session directories one listing can read, and the entries it refused.
+struct Scan {
+    ids: Vec<SessionId>,
+    skipped: Vec<SkippedEntry>,
+}
+
+/// Whether a refusal is about this one entry rather than about the store.
+///
+/// A path the private-path check refuses says nothing about the other sessions:
+/// an older build left it permissive, and hiding every session behind it is
+/// worse than leaving it out. A malformed identity or an unreadable store stays
+/// fatal, because neither is confined to the entry that raised it.
+fn entry_local(error: &StoreError) -> bool {
+    error.code == StoreErrorCode::UnsafePath
+}
+
+fn sessions(paths: &SessionPaths) -> Result<Scan, StoreError> {
     let mut ids = Vec::new();
+    let mut skipped = Vec::new();
     for entry in fs::read_dir(paths.root())? {
         let entry = entry?;
         let name = entry.file_name();
@@ -59,16 +76,35 @@ fn sessions(paths: &SessionPaths) -> Result<Vec<SessionId>, StoreError> {
         }
         // This sibling contains edit-counter sidecars, not session originals.
         if name == "edit-stats" {
-            crate::legacy_bundle::safe_path(&entry.path())?;
-            continue;
+            match crate::legacy_bundle::safe_path(&entry.path()) {
+                Ok(()) => continue,
+                Err(error) if entry_local(&error) => {
+                    skipped.push(SkippedEntry {
+                        path: entry.path(),
+                        reason: error.message,
+                    });
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
         }
         let id = SessionId::parse(name.to_string_lossy().as_ref())?;
-        let directory = paths.session_dir(&id)?;
+        let directory = match paths.session_dir(&id) {
+            Ok(directory) => directory,
+            Err(error) if entry_local(&error) => {
+                skipped.push(SkippedEntry {
+                    path: entry.path(),
+                    reason: error.message,
+                });
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if directory.join("events.jsonl").exists() {
             ids.push(id);
         }
     }
-    Ok(ids)
+    Ok(Scan { ids, skipped })
 }
 
 fn rows(bytes: &[u8]) -> Result<BTreeMap<SessionId, CatalogEntry>, StoreError> {
@@ -93,7 +129,7 @@ fn row_bytes(rows: &BTreeMap<SessionId, CatalogEntry>) -> Result<Vec<u8>, StoreE
 fn summaries(paths: &SessionPaths) -> Result<BTreeMap<SessionId, CatalogEntry>, StoreError> {
     let probe = ReadProbe::default();
     let mut result = BTreeMap::new();
-    for id in sessions(paths)? {
+    for id in sessions(paths)?.ids {
         let file = paths.session_dir(&id)?.join("summary.json");
         if let Ok(row) = probe.bounded(&file).and_then(|b| decode::<CatalogEntry>(&b))
             && row.session_id == id
@@ -186,10 +222,10 @@ pub(crate) fn publish_row(
 
 /// One session's listing row, so a caller can isolate an unreadable original.
 ///
-/// [`list`] fails as a whole when any session cannot be summarized, which is the
-/// right contract for a caller that must report damage. A caller that only has to
-/// keep the rest of the listing (startup, a picker) resolves rows individually
-/// through here and drops the sessions it cannot read.
+/// [`list`] skips a directory the private-path check refuses and fails as a whole
+/// only when a listed session cannot be summarized, which is the right contract
+/// for a caller that must report damage. A caller that has to resolve one session
+/// on its own goes through here.
 /// # Errors
 /// Propagates the same errors as [`list`] for this one session.
 pub fn row(paths: &SessionPaths, id: &SessionId, probe: ReadProbe) -> Result<Summary, StoreError> {
@@ -198,10 +234,15 @@ pub fn row(paths: &SessionPaths, id: &SessionId, probe: ReadProbe) -> Result<Sum
     cache.catalog_entry(id)?.materialize(paths, &probe)
 }
 
-/// Lists bounded summary metadata; never parses a transcript on a clean hit.
+/// Lists bounded summary metadata and reports the entries it refused.
+///
+/// One directory the private-path check refuses must not hide every other
+/// session: the entry is skipped, its reason names the path and mode, and the
+/// rest of the listing is returned as usual. [`list`] drops that report; a caller
+/// with a log calls this and logs [`SkippedEntry::warning`].
 /// # Errors
 /// Dirty sessions owned by another writer return Busy, never stale success.
-pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, StoreError> {
+pub fn list_with_skipped(paths: &SessionPaths, probe: ReadProbe) -> Result<SessionListing, StoreError> {
     crate::legacy_completion::check(paths, &probe)?;
     let snapshot = {
         let _lock = lock(paths)?;
@@ -212,21 +253,22 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
     let mut repair_catalog = snapshot.is_err();
     let mut snapshot = snapshot.unwrap_or_default();
     let cache = SessionCache::new(paths.clone(), probe.clone());
-    let ids = sessions(paths)?;
+    let scan = sessions(paths)?;
+    let ids = scan.ids;
     let live: std::collections::HashSet<SessionId> = ids.iter().cloned().collect();
     snapshot.retain(|id, _| live.contains(id));
-    for id in ids {
-        let source = Stamp::read(&paths.events_log(&id)?)?;
-        let valid = snapshot.get(&id).is_some_and(|s| s.source == source);
-        let summary = paths.session_dir(&id)?.join("summary.json");
+    for id in &ids {
+        let source = Stamp::read(&paths.events_log(id)?)?;
+        let valid = snapshot.get(id).is_some_and(|s| s.source == source);
+        let summary = paths.session_dir(id)?.join("summary.json");
         let summary_valid = probe
             .bounded(&summary)
             .and_then(|b| decode::<CatalogEntry>(&b))
-            .is_ok_and(|s| s.session_id == id && s.source == source);
-        if !valid || !summary_valid || crate::cache_io::dirty_present(paths, Some(&id))? {
+            .is_ok_and(|s| s.session_id == *id && s.source == source);
+        if !valid || !summary_valid || crate::cache_io::dirty_present(paths, Some(id))? {
             repair_catalog |= !valid;
-            let row = cache.catalog_entry(&id)?;
-            snapshot.insert(id, row);
+            let row = cache.catalog_entry(id)?;
+            snapshot.insert(id.clone(), row);
         }
     }
     // Final snapshot is a linearization point. Never hold this lock during repair.
@@ -242,7 +284,18 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
         // index until some other session changes.
         snapshot.extend(current.into_iter().filter(|(id, _)| live.contains(id)));
     }
-    if crate::cache_io::dirty_present(paths, None)? {
+    // A marker means that session's row is due, so this listing is not
+    // authoritative for it. A marker left by a session this listing does not
+    // list — one it skipped, or one removed since — is not contention: reading
+    // it as contention would let one stale entry block the whole store again.
+    let mut due = false;
+    for id in &ids {
+        if crate::cache_io::dirty_present(paths, Some(id))? {
+            due = true;
+            break;
+        }
+    }
+    if due {
         return Err(StoreError::busy("catalog changed during listing; retry"));
     }
     if repair_catalog {
@@ -260,7 +313,20 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
         .map(|entry| entry.materialize(paths, &probe))
         .collect::<Result<_, _>>()?;
     result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.session_id.cmp(&b.session_id)));
-    Ok(result)
+    Ok(SessionListing {
+        rows: result,
+        skipped: scan.skipped,
+    })
+}
+
+/// Lists bounded summary metadata; never parses a transcript on a clean hit.
+///
+/// A caller that has to report what the listing refused uses
+/// [`list_with_skipped`]; this form keeps only the rows.
+/// # Errors
+/// Dirty sessions owned by another writer return Busy, never stale success.
+pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, StoreError> {
+    Ok(list_with_skipped(paths, probe)?.rows)
 }
 
 #[cfg(test)]

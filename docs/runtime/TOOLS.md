@@ -6,7 +6,7 @@ This covers tool loading tiers, effects and approval tiers, edit safety, the anc
 
 ## Tool discovery and deferred loading
 
-The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 9,151 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
+The `full` profile exposes every built-in tool but keeps the schema of non-core tools out of the request's cached prefix. The default `core` profile also carries schemas for only seven of the eighteen core tools; the rest are named in a system-prompt index. Three `LoadMode` tiers decide whether each tool is sent eagerly, deferred, or dropped, and `toolbox` is the window onto tools that are deferred or index-only. This document describes the behaviour of the current tree. In a listing `core` session the eight eager schemas (the seven tools and `toolbox`) serialize to 8,975 bytes, and the static system prompt of a session with no prompt files is 1,322 bytes; both are measured by the `prefix` and `prompt` rows of the structural gate ([`../performance/BENCHMARK.md`](../performance/BENCHMARK.md)).
 
 ### Three tiers
 
@@ -55,9 +55,9 @@ The static part of a listing `core` session's system prompt gains an `# Addition
 - Rows are filtered by the same rule the session sees from `toolbox list`. `mcp__*` proxies and `toolbox` itself are left out, and a tool the session policy would have `toolbox` refuse (outside the allow-list, disabled, or turned off by the SDK) is not listed (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
 - The index freezes once, when the first tool list is locked. A warm-up request before MCP servers register does not freeze it; it is rebuilt once at lock time and then pinned. Unlocking tools, compaction, MCP connections, provider switches, and configuration reloads afterwards do not change it (`turn_execution.rs:793` `ensure_listed_tools_index`).
 - Only a session restore resets the index and rebuilds it for the new session. Clearing the conversation with `/clear` is the same session, so the index survives (`crates/app-core/src/agent.rs:1129` `reset_listed_tools_index`).
-- When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:178`). An overridden session still keeps the names of listed tools.
+- When the SDK replaces the system prompt wholesale, the index is appended after it (`crates/app-core/src/agent/prompting.rs:246-251`). An overridden session still keeps the names of listed tools.
 - A row uses only the first sentence of the tool description and cuts at 60 characters with an ellipsis when that sentence is longer. Index rows and `toolbox list` rows share one helper, so both lists show the same wording (`one_line_description` in `crates/base/src/prompt.rs`). A model that picks a tool from the index gets its schema with `toolbox describe` and runs it with `toolbox run`. Each listed core tool opens its description with a sentence that fits, so no row stops mid-word; `todo` is the one row still cut, because its model-visible text is kept as written.
-- The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:247` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
+- The `todo` guidance sentence is appended for every session whose allow-list contains `todo` (`core` and `acp`), and is omitted when an SDK `enabled` list leaves `todo` out (`prompting.rs:313` `append_todo_hint`). When both are appended, the guidance sentence comes before the index.
 
 ### toolbox
 
@@ -179,7 +179,7 @@ State lives in a process-global map keyed by session id. It is not a field on th
 - `clear_state` removes the session entry (`crates/app-core/src/plan_mode.rs:105`).
 - `transition` changes the state and records the transition in the session replay timeline (`crates/app-core/src/plan_mode.rs:216`).
 
-`block_message` writes the refusal text (`crates/app-core/src/plan_mode.rs:173`). One paragraph says what was refused, that nothing changed, and the two ways out. It also notes that resending the same call gives the same result.
+`block_message` writes the refusal text (`crates/app-core/src/plan_mode.rs:204`). One paragraph says what was refused, that nothing changed, and the two ways out. It also notes that resending the same call gives the same result.
 
 Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:283`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
@@ -458,7 +458,7 @@ The switch is in the `[tools]` table of `config.toml`. It defaults to on (`crate
 nested_agents_md = true
 ```
 
-The environment override is `HORON_AGENT_NESTED_AGENTS_MD`. Values like `0` or `false` parse as off (`crates/base/src/config/env_overrides.rs:161-165`). The default configuration file carries the same key and description (`crates/base/src/config/default_file.rs:435-441`).
+The environment override is `HORON_AGENT_NESTED_AGENTS_MD`. Values like `0` or `false` parse as off (`crates/base/src/config/env_overrides.rs:56-59`). The default configuration file carries the same key and description (`crates/base/src/config/default_file.rs:216-221`).
 
 ### Session-scoped cache
 

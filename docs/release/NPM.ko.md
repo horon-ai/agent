@@ -4,7 +4,7 @@
 
 `@horon-ai/horon`은 CLI의 npm 배포본이다. 작은 런처 하나와, 플랫폼마다 `horon-agent`·`horon-tui` 실행 파일을 담은 패키지 하나로 이루어진다. 런처는 실행 중인 컴퓨터에 맞는 패키지의 실행 파일을 띄우고, npm은 다른 의존성과 마찬가지로 설치된 버전을 고정한다. 릴리스 태그를 고르는 일과 릴리스 자산을 내려받는 설치 스크립트는 [`INSTALL.ko.md`](INSTALL.ko.md)에 있다.
 
-**아직 게시되지 않았다.** 레지스트리에는 일곱 이름을 선점하는 `0.0.0` 자리표시 패키지만 있고 그 패키지에는 실행 파일이 없다. 그래서 지금 설치하면 런타임을 찾지 못하는 런처가 들어간다. 패키징과 게시 워크플로는 만들어져 드라이런으로 시험되며, 게시는 저장소 변수 `NPM_PUBLISH`를 `true`로 두면 시작한다("게시 워크플로" 절). 그때까지는 릴리스 설치 스크립트, 컨테이너 이미지, 소스 체크아웃 가운데 하나로 설치한다.
+**일곱 이름이 실제로 게시되어 있다.** `v0.1.16`이 npm에 처음 게시된 릴리스이며, 래퍼와 플랫폼 패키지 여섯이 그 릴리스의 `horon-agent`·`horon-tui` 실행 파일을 담는다. 이후 릴리스는 `main`의 "Release Tag" 실행에서 같은 일곱 패키지를 태그 버전으로 게시한다("게시 워크플로" 절). 이름을 선점하던 `0.0.0` 자리표시 패키지는 이 버전으로 대체됐다.
 
 ## 패키지 구성
 
@@ -53,23 +53,24 @@ npx @horon-ai/horon --help
 
 ## 게시 워크플로
 
-`.github/workflows/publish-npm.yml`이 레지스트리로 가는 유일한 경로다. 세 진입점이 이 파일에 닿고, 그중 하나만 게시할 수 있다.
+`.github/workflows/publish-npm.yml`이 레지스트리로 가는 유일한 경로다. 네 진입점이 이 파일에 닿고, 그중 둘이 게시할 수 있다.
 
 | 진입점 | 실행 시점 | 하는 일 |
 | --- | --- | --- |
 | `workflow_run` | `main`의 "Release Tag" 실행이 끝났을 때 | 릴리스한 커밋을 가리키는 태그를 찾고, 공개 릴리스인지 확인한 뒤 태그 버전으로 게시한다 |
 | `workflow_dispatch` | 운영자가 릴리스 태그를, 또는 `package_only` Release 실행과 버전을 지정했을 때 | 기본은 드라이런이고, 스위치가 켜져 있으면 `dry_run=false`가 게시한다 |
 | `pull_request` | `packages/npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
+| `release`(타입 `published`) | 사람이 초안 릴리스를 직접 공개했을 때 | 그 태그를 게시한다. `GITHUB_TOKEN`으로 공개한 릴리스는 워크플로를 시작하지 않으므로, "Release Tag"의 성공 실행 밖에서 공개된 릴리스는 `release.yml`이 이 워크플로를 직접 디스패치한다. 이미 올라간 버전은 건너뛴다 |
 
 워크플로는 npm 11.5.1 이상을 요구한다. provenance 서명과 trusted publishing에 이 버전이 필요하다. 계획 잡은 `contents: read`와 `actions: read`를 들고, 뒤의 권한으로 끝난 실행의 잡을 읽는다. `id-token: write`는 게시 잡만 받는다. 이 권한이 주는 단명 자격 증명을 npm이 한 번짜리 게시 허가로 바꾼다. `cancel-in-progress: false`인 동시성 그룹은 두 번째 실행을 취소하지 않고 줄 세우므로, 뒤 실행이 레지스트리를 다시 읽고 이미 올라간 것은 건너뛴다.
 
-다음 조건이 모두 성립할 때만 게시 실행이 된다. 이벤트가 pull request가 아니고, 계획 잡이 `mode=publish`로 정했고, 저장소 변수 `NPM_PUBLISH`가 정확히 `true`이다. 자동 경로는 여기에 더해 `horon-ai/agent`의 `main`에서 성공한 "Release Tag" 실행, 그 실행의 헤드 커밋을 가리키는 태그, 초안이 아닌 공개 릴리스를 요구한다.
+계획 잡이 모드 하나를 정하고, 두 모드는 대칭이 아니다. `mode=publish`로 정해진 실행은 저장소 변수 `NPM_PUBLISH`가 정확히 `true`일 때 게시하고, 그 밖의 값이면 `scripts/npm/release_npm_version.py gate`가 종료 코드 1과 복구 명령을 담은 `::error::`를 남겨 실행을 실패시킨다. npm 패키지 없이 나가는 릴리스는 깨진 릴리스이기 때문이다. `mode=dry-run`으로 정해진 실행, 즉 pull request이거나 `dry_run=true`인 디스패치는 패키징까지만 하고 게시하지 않는다. 자동 경로는 여기에 더해 `horon-ai/agent`의 `main`에서 성공한 "Release Tag" 실행, 그 실행의 헤드 커밋을 가리키는 태그, 초안이 아닌 공개 릴리스를 요구한다. 릴리스가 공개되기 전에 도착한 `workflow_run`은 건너뛴다. "Release Tag"의 성공 실행 밖에서 공개된 릴리스는 `release.yml`이 그 태그로 이 워크플로를 디스패치해 게시하고, 초안을 손으로 공개하면 이 워크플로가 직접 시작된다. 두 경로 모두 이미 올라간 버전은 건너뛴다.
 
 가짜 자산이 아닌 두 자산 출처는 압축 파일을 서로 다르게 받고, 그 차이가 패키지 내용을 정한다. `release_tag` 실행은 그 공개 릴리스에서 `horon-agent-*.tar.gz`, `horon-tui-*.tar.gz`, `SHA256SUMS`를 내려받는다. `run_id` 실행은 `package_only` Release 실행의 아티팩트를 내려받는데, 그런 실행은 체크섬 파일을 쓰는 잡을 건너뛰므로 받은 tarball로 `SHA256SUMS`를 만든다. 이어서 `scripts/npm/release_npm_version.py missing-assets`가 릴리스에 없는 압축 파일을 거부하므로, 패키지를 만들기 전에 모든 플랫폼의 두 실행 파일이 존재한다.
 
 두 흐름 모두 `scripts/npm/release_npm_version.py publish-order`가 출력하는 순서대로 플랫폼 패키지 여섯을 먼저, 래퍼를 마지막에 게시한다. 래퍼가 선택적 의존성을 이름으로 찾기 때문이다. 실제 경로는 게시 전에 `npm view <name>@<version> version`으로 그 버전이 이미 있는지 묻고, 답이 오면 건너뛰므로 재실행이 일부만 올라간 묶음을 실패 없이 마무리한다. 실행 끝에는 모든 `name@version`을 최대 10분 동안 확인한 뒤 래퍼의 `optionalDependencies`를 출력한다. 그래서 성공한 실행 자체가 일곱이 함께 올라갔다는 증거가 된다.
 
-드라이런은 패키지를 `npm pack`으로 묶은 뒤 `npm publish <tarball> --access public --provenance --dry-run`을 돌리고, 실행 전후의 래퍼 버전 목록을 비교해 레지스트리에 쓴 드라이런이 있으면 잡을 실패시킨다. pull request 경로는 여기에 가짜 버전 `0.0.1`을 쓴다. npm 11.5.1은 이미 레지스트리에 있는 버전의 드라이런 게시를 거부하고, 첫 준비 단계가 이름을 확보한 패키지는 `0.0.0` 자리 패키지를 들고 있으며, 프리릴리스 버전이라면 `--tag`를 따로 줘야 하기 때문이다.
+드라이런은 패키지를 `npm pack`으로 묶은 뒤 `npm publish <tarball> --access public --provenance --dry-run`을 돌리고, 실행 전후의 래퍼 버전 목록을 비교해 레지스트리에 쓴 드라이런이 있으면 잡을 실패시킨다. pull request 경로는 여기에 가짜 버전 `0.0.1`을 쓴다. npm 11.5.1은 이미 레지스트리에 있는 버전의 드라이런 게시를 거부하고, 첫 준비 단계가 이름을 확보한 패키지는 `0.0.0` 자리 패키지를 들고 있기 때문이다. 드라이런은 `--tag fixture`도 함께 준다. 실제 릴리스가 가짜 버전보다 높아지면 npm이 `latest` 태그를 암묵적으로 붙이지 않고 거부하기 때문이다.
 
 중간에 멈춘 릴리스를 다시 시작하려면 같은 태그로 다시 디스패치한다. 이미 있는 플랫폼 패키지와 래퍼를 건너뛰므로 게시 잡은 여러 번 실행해도 같은 결과에 이른다.
 
@@ -90,7 +91,7 @@ gh workflow run publish-npm.yml -f release_tag=vX.Y.Z -f dry_run=false
 
 2. 일곱 패키지 각각에 Trusted Publisher를 등록한다. npm → 패키지 → Settings → Trusted Publisher → GitHub Actions에서 저장소 `horon-ai/agent`, 워크플로 `publish-npm.yml`, 환경은 비워 둔다. 같은 게시자에게 `npm publish`도 허용해야 한다. 2026-09-03 이후에 만든 패키지 설정은 기본이 단계적 게시 전용이므로, 게시 권한을 켜지 않으면 단계적 승인 흐름을 쓴다.
 3. 게시자는 첫 릴리스 직전에 등록한다. 등록한 뒤 2일 안에 OIDC 게시가 성공하지 않으면 설정이 만료된다.
-4. 저장소 변수 `NPM_PUBLISH`를 `true`로 둔다. 그 전에는 `dry_run=false`인 디스패치까지 모든 경로가 드라이런으로 남는다.
+4. 저장소 변수 `NPM_PUBLISH`를 `true`로 둔다. 그 전에는 자동 경로와 `dry_run=false` 디스패치가 계획 잡에서 오류와 복구 명령을 남기며 실패하고, `dry_run=true` 디스패치만 통과한다.
 5. 첫 게시가 성공한 뒤 Publishing access를 "Require two-factor authentication and disallow tokens"로 바꾼다. 워크플로 어디에도 npm 토큰을 저장하지 않고, 게시 잡은 GitHub OIDC로만 인증한다.
 
 ## provenance 확인
@@ -105,7 +106,7 @@ npm view @horon-ai/horon --json | jq '.dist.attestations'
 
 ## TypeScript SDK
 
-TypeScript SDK는 `@horon-ai/agent-sdk`와 런타임 패키지 여섯 `@horon-ai/agent-<os>-<arch>`를 따로 게시한다. 버전은 같은 태그에서 오고, `Release Tag` 트리거와 `NPM_PUBLISH` 스위치도 같다. 파일은 `.github/workflows/publish-typescript-sdk.yml`로 나뉘어 있는데, npm이 최상위 워크플로 파일 이름을 신뢰하기 때문이다. SDK의 일곱 패키지는 `publish-typescript-sdk.yml`을 Trusted Publisher로 등록한다. 절차는 `packages/sdk/typescript/RELEASING.md`에 있으므로 여기서 되풀이하지 않는다.
+TypeScript SDK는 `@horon-ai/agent-sdk`와 런타임 패키지 여섯 `@horon-ai/agent-<os>-<arch>`를 따로 게시한다. 버전은 같은 태그에서 오고 `Release Tag` 트리거도 같지만, 게시 스위치는 CLI의 `NPM_PUBLISH`가 아니라 SDK 전용 `SDK_NPM_PUBLISH`다. 그래서 CLI 게시가 레지스트리에 이름조차 없는 SDK를 게시하는 일이 없다. 그 스위치를 켜기 전까지 SDK의 모든 경로는 드라이런이다. 파일은 `.github/workflows/publish-typescript-sdk.yml`로 나뉘어 있는데, npm이 최상위 워크플로 파일 이름을 신뢰하기 때문이다. SDK의 일곱 패키지는 `publish-typescript-sdk.yml`을 Trusted Publisher로 등록한다. 절차는 `packages/sdk/typescript/RELEASING.md`에 있으므로 여기서 되풀이하지 않는다.
 
 ## 알려진 한계
 

@@ -56,6 +56,23 @@ pub fn is_private_dir_owned_by(metadata: &Metadata, owner: &Metadata) -> bool {
     Current::is_private_dir_owned_by(metadata, owner)
 }
 
+/// The POSIX mode bits of `metadata`, when this platform has them.
+///
+/// A refusal that names a directory which is not owner-private has to state the
+/// mode the operator must change, and only Unix has a mode to name: Windows keeps
+/// a directory private through an inherited ACL.
+pub fn mode_bits(_metadata: &Metadata) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some(_metadata.mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
 /// Whether `metadata` describes a single-link regular file only its owner can
 /// read or write.
 pub fn is_private_file(metadata: &Metadata) -> bool {

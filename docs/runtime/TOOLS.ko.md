@@ -6,7 +6,7 @@
 
 ## 도구 발견과 지연 로딩
 
-`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열여덟 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다. 목록 모드 `core` 세션에서 즉시 보내는 스키마 여덟 개(일곱 도구와 `toolbox`)는 직렬화하면 9,151바이트이고, 프롬프트 파일이 없는 세션의 정적 시스템 프롬프트는 1,322바이트입니다. 두 값은 구조 게이트의 `prefix`와 `prompt` 행이 잽니다([`../performance/BENCHMARK.ko.md`](../performance/BENCHMARK.ko.md)).
+`full` 프로필은 내장 도구를 모두 노출하지만 코어 밖 도구의 스키마를 요청의 캐시 접두사에 넣지 않습니다. 기본 `core` 프로필도 코어 열여덟 도구 가운데 일곱 개만 스키마를 싣고, 나머지는 시스템 프롬프트의 색인에 이름만 적습니다. `LoadMode` 세 단계가 각 도구를 즉시 보낼지, 지연할지, 뺄지 정하고 `toolbox`가 지연되거나 색인에만 있는 도구에 닿는 창구입니다. 이 문서는 현재 트리의 동작을 설명합니다. 목록 모드 `core` 세션에서 즉시 보내는 스키마 여덟 개(일곱 도구와 `toolbox`)는 직렬화하면 8,975바이트이고, 프롬프트 파일이 없는 세션의 정적 시스템 프롬프트는 1,322바이트입니다. 두 값은 구조 게이트의 `prefix`와 `prompt` 행이 잽니다([`../performance/BENCHMARK.ko.md`](../performance/BENCHMARK.ko.md)).
 
 ### 세 단계
 
@@ -55,9 +55,9 @@ memory = "essential"
 - 행은 세션이 `toolbox list`로 보게 될 집합과 같은 기준으로 거릅니다. `mcp__*` 프록시와 `toolbox` 자신은 빠지고, 세션 정책으로 `toolbox`가 거부할 도구(허용 목록 밖, 비활성, SDK가 끈 도구)는 올라가지 않습니다 (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
 - 색인은 첫 도구 목록이 확정될 때 한 번 굳습니다. MCP 서버 등록 전의 워밍업 요청은 색인을 굳히지 않고, 확정 시점에 한 번 다시 만든 뒤 고정합니다. 이후 도구 잠금 해제, 압축, MCP 연결, 프로바이더 전환, 설정 재로드로는 바뀌지 않습니다 (`turn_execution.rs:793` `ensure_listed_tools_index`).
 - 세션을 복원할 때만 색인이 초기화되어 새 세션 기준으로 다시 만들어집니다. `/clear`로 대화를 지워도 같은 세션이므로 색인이 유지됩니다 (`crates/app-core/src/agent.rs:1129` `reset_listed_tools_index`).
-- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:178`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
+- SDK가 시스템 프롬프트를 통째로 덮어써도 색인은 그 뒤에 붙습니다 (`crates/app-core/src/agent/prompting.rs:246-251`). 덮어쓴 세션도 목록 도구의 이름을 잃지 않습니다.
 - 한 줄 설명은 도구 설명의 첫 문장까지만 쓰고, 그 문장이 60자를 넘으면 60자에서 줄임표로 자릅니다. 색인 행과 `toolbox list` 행이 같은 헬퍼를 공유하므로 두 목록은 같은 문구를 보여 줍니다 (`crates/base/src/prompt.rs`의 `one_line_description`). 색인에서 도구를 고른 모델은 `toolbox describe`로 스키마를 받고 `toolbox run`으로 실행합니다. 목록에 오르는 코어 도구는 설명을 행에 들어가는 문장으로 시작하므로 단어 중간에서 끊기는 행이 없습니다. 아직 잘리는 행은 `todo` 하나이고, 모델에게 보이는 그 문구를 쓴 그대로 두기 때문입니다.
-- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:247` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
+- `todo` 안내 문장은 허용 목록에 `todo`가 있는 세션(`core`, `acp`)에 붙고, SDK `enabled` 목록이 `todo`를 빼면 붙지 않습니다 (`prompting.rs:313` `append_todo_hint`). 두 가지가 함께 붙으면 안내 문장이 색인보다 앞에 옵니다.
 
 ### toolbox
 
@@ -179,7 +179,7 @@ memory = "essential"
 - `clear_state`는 세션 항목을 지웁니다 (`crates/app-core/src/plan_mode.rs:105`).
 - `transition`은 상태를 바꾸고 그 전이를 세션 재생 타임라인에 기록합니다 (`crates/app-core/src/plan_mode.rs:216`).
 
-거절 문구는 `block_message`가 만듭니다 (`crates/app-core/src/plan_mode.rs:173`). 무엇이 거절됐는지, 아무것도 바뀌지 않았는지, 빠져나갈 두 길이 무엇인지를 한 문단에 담습니다. 같은 호출을 다시 보내도 결과가 같다는 점도 적습니다.
+거절 문구는 `block_message`가 만듭니다 (`crates/app-core/src/plan_mode.rs:204`). 무엇이 거절됐는지, 아무것도 바뀌지 않았는지, 빠져나갈 두 길이 무엇인지를 한 문단에 담습니다. 같은 호출을 다시 보내도 결과가 같다는 점도 적습니다.
 
 계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:920`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:283`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
 
@@ -447,7 +447,7 @@ Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[too
 nested_agents_md = true
 ```
 
-환경변수로 덮어쓸 때는 `HORON_AGENT_NESTED_AGENTS_MD`를 씁니다. `0`이나 `false` 계열 값이 꺼짐으로 해석됩니다(`crates/base/src/config/env_overrides.rs:161-165`). 기본 설정 파일에도 같은 키와 설명이 들어 있습니다(`crates/base/src/config/default_file.rs:435-441`).
+환경변수로 덮어쓸 때는 `HORON_AGENT_NESTED_AGENTS_MD`를 씁니다. `0`이나 `false` 계열 값이 꺼짐으로 해석됩니다(`crates/base/src/config/env_overrides.rs:56-59`). 기본 설정 파일에도 같은 키와 설명이 들어 있습니다(`crates/base/src/config/default_file.rs:216-221`).
 
 ### 세션 범위 캐시
 
