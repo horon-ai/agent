@@ -292,11 +292,13 @@ jobs:
           fi
           if [[ "${{ steps.sel.outputs.loading }}" == "true" ]]; then
             cargo build --release --locked -p horon-agent-base --example loading_probe
+            cargo build --release --locked -p horon-agent-base --example resume_stage_probe
           fi
           exe=""
           [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
           files=("horon-agent$exe")
           [[ -f "target/release/examples/loading_probe$exe" ]] && files+=("examples/loading_probe$exe")
+          [[ -f "target/release/examples/resume_stage_probe$exe" ]] && files+=("examples/resume_stage_probe$exe")
           [[ -f "target/release/horon-tui$exe" ]] && files+=("horon-tui$exe")
           [[ -f "target/release/examples/render_bench$exe" ]] && files+=("examples/render_bench$exe")
           [[ -f "target/release/baseline/horon-agent$exe" ]] && files+=("baseline/horon-agent$exe")
@@ -506,9 +508,16 @@ jobs:
         env:
           MODE: ${{ matrix.unit == 'loading-cold' && 'cold' || 'warm' }}
         run: |
+          # The cold decomposition explains the cold resume, so it runs three
+          # times per session fixture there and not at all in the warm job (a
+          # cold pass divided by a warm load would be a ratio across cache states,
+          # and the warm job's rows are not the ones being decomposed).
+          stage_samples=0
+          if [[ "$MODE" == "cold" ]]; then stage_samples=3; fi
           python scripts/perf/bench_loading.py \
             --binary "$PROBE_BIN" \
             --mode "$MODE" --events 0,1000,10000 --skills 0,200 --iterations 10 \
+            --stage-probe-samples "$stage_samples" \
             --emit "$RESULTS/loading-$MODE.json" | tee "$RESULTS/loading-$MODE.txt"
 
       - name: "Suite: tools"
