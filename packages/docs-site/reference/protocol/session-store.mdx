@@ -168,7 +168,7 @@ The model that produces a structured summary can be changed with `summary_model`
 
 Each session's single `BlockingWriter` holds an `flock` on `.writer.lock` for the session's lifetime. A second writer, including one in another process, is answered `busy`. Catalog writes take `.catalog.lock`, and the catalog lock is never held while taking a session lock. A dirty session is rebuilt by whoever reads it, so a stale listing cannot outlive a failed cache refresh for long.
 
-Each catalog operation explicitly unlocks the file before closing its handle. A child process that inherits a copy of that handle cannot keep a finished operation's lock alive.
+Each catalog operation explicitly unlocks the file before closing its handle. A child process that inherits a copy of that handle cannot keep a finished operation's lock alive. The session writer releases the same way: its drop unlocks `.writer.lock` before the handle closes, because `fork` copies the open file description and a child that inherited it would otherwise keep the session owned until it execs or exits.
 
 Commit I/O does not create a dedicated thread per session. A process-wide writer pool creates `clamp(available_parallelism, 2, 4)` workers (`session-writer-0` and so on) once, and a session is pinned to one worker by the hash of its `registry_key` (the canonicalized session directory path). The key is canonicalized first so two spellings of the same session directory never land on different workers and open two `BlockingWriter`s. The hasher yields the same value for the life of the process, so a session stays on the same worker for its whole lifetime.
 

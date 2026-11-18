@@ -269,7 +269,7 @@
     {
       "package": "horon-agent-session-store",
       "target": "dirty_batches",
-      "min_passed": 9
+      "min_passed": 10
     },
     {
       "package": "horon-agent-session-store",
