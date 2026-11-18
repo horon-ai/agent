@@ -65,4 +65,4 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | 같은 내용이 두 문서에 있을 때 | 하나를 정본으로 두고 나머지는 그것을 가리킨다. |
 | 측정 기록·인수 기록·계획을 남기고 싶을 때 | 문서를 만들지 않고 PR 본문이나 이슈에 적는다. 성능 수치는 `performance/RESULTS.md`에만 적는다. |
 | 문서를 고칠 때 | 짝을 함께 맞춘다. 모든 `X.md` 옆에 한국어 `X.ko.md`를 두고, `python3 scripts/ci/check_docs_pairs.py`가 두 파일의 존재와 제목·표 행·코드 펜스·링크 수 일치, 상대 링크 해석을 확인한다. |
-| `docs/` 아래 파일을 고칠 때 | `python3 scripts/ci/sync_docs_site.py`를 실행해 다시 생성된 `packages/docs-site/reference/`와 `packages/docs-site/images/reference/`를 함께 커밋한다. 오래된 상태면 CI가 실패한다. |
+| `docs/` 아래 파일을 고칠 때 | `python3 scripts/ci/sync_docs_site.py`를 실행한다. `packages/docs-site/reference/`와 `packages/docs-site/ko/reference/`에서 바뀐 페이지를 커밋하고 `packages/docs-site/images/reference/`에서 다시 생성된 이미지도 함께 커밋한다. CI는 세 폴더를 모두 검사한다. |

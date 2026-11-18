@@ -6,7 +6,7 @@ description: Install horon agent from the release installer, npm, a container im
 ## Installer
 
 <Tabs>
-  <Tab title="macOS · Linux">
+  <Tab title="macOS · Linux · FreeBSD">
     ```sh
     curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
     ```
@@ -21,10 +21,19 @@ description: Install horon agent from the release installer, npm, a container im
 The installer downloads the release archive and `SHA256SUMS`, then hands them to
 `horon install-release`, which verifies the checksum, stages an immutable version
 directory and switches the `stable`/`current` links. A version directory that
-already holds different bytes is refused, not overwritten.
+already holds different bytes is refused, not overwritten; one that holds the
+same bytes is reused.
+
+An archive may yield only regular files and directories: symbolic links, hard
+links, absolute paths, `..` escapes and duplicate members are rejected, and the
+whole archive must stay inside the 512 MiB per-file and 2 GiB total budget. The
+FreeBSD asset adds one rule of its own, covered under
+[FreeBSD](#freebsd).
 
 Three launchers are linked: `horon` (used throughout these docs), `hrn` (shorter)
-and `horon-agent` (the executable's own name).
+and `horon-agent` (the executable's own name). A different program with the same
+name is never overwritten, and uninstall removes only links that point at this
+installation.
 
 ## npm
 
@@ -66,6 +75,28 @@ cargo build --release -p horon-agent
 Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows
 (x86_64, aarch64) and FreeBSD (x86_64). Data lives in `~/.horon`, overridden with
 `HORON_HOME`; releases up to v0.1.1 used `~/.horon-agent`.
+
+## FreeBSD
+
+`horon-agent-freebsd-x86_64.tar.gz` is a POSIX ustar archive with exactly two
+top-level regular files, the executable and `LICENSE`, so FreeBSD `tar` and
+`install-release` read the same names. FreeBSD publishes no `horon-tui` archive,
+so an installation there is headless only, and `install.sh` never asks for the
+client on that platform. Earlier releases wrote the FreeBSD asset in another tar
+flavour whose member path only some readers resolved; the packaging now refuses
+anything that is not ustar before upload.
+
+## Reinstalling
+
+`install.sh` keeps the last verified copy of each asset it installed, so
+reinstalling the same release does not download the archive again.
+`SHA256SUMS` is fetched on every run, a cached file is used only when this run's
+manifest lists the same digest, and its bytes are hashed again after copying.
+The cache is `$XDG_CACHE_HOME/horon-agent/release`, otherwise
+`~/.cache/horon-agent/release` on Linux and FreeBSD and
+`~/Library/Caches/horon-agent/release` on macOS; a shared or symbolic-link
+location disables it, and `HORON_AGENT_NO_DOWNLOAD_CACHE=1` turns it off for one
+run. `install.ps1` does not use the cache.
 
 ## Linux servers and TLS
 
