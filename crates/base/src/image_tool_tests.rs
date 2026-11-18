@@ -156,12 +156,3 @@ fn a_result_reports_completeness_from_the_requested_count() {
     assert_eq!(metadata["images"][0]["path"], "/tmp/a.png");
     assert_eq!(metadata["images"][0]["mime_type"], "image/png");
 }
-
-#[test]
-fn an_unconfigured_profile_is_not_an_error() {
-    // A profile that does not exist is an error the user should see; the `None`
-    // branch needs a real config, so this asserts the shape of the contract that
-    // the tool relies on rather than constructing one.
-    let result: Option<ImageResult> = None;
-    assert!(result.is_none());
-}
