@@ -341,12 +341,8 @@ if [ "$IS_WINDOWS" = false ] && [ "${HORON_AGENT_NO_DOWNLOAD_CACHE:-}" != "1" ];
   prepare_asset_cache "$cache_root"
 fi
 
-# The downloaded executable is the only release payload this script runs, so it
-# is unpacked member by member with `tar -xOf` into the temp directory. No
-# archive is extracted as a tree: an archive cannot choose where its bytes land,
-# and any member outside the names this platform needs is a hard failure. The
-# Linux x64 wrapper, its `.bin` payload and the OpenSSL libraries it links
-# against keep their archive names, because the wrapper resolves them by name.
+# Validate the complete listing before writing any bootstrap file. Only file
+# contents go into the private directory; tar never extracts an archive tree.
 extract_bootstrap_executable() {
   archive="$1"
   members=$(tar -tzf "$archive" 2>/dev/null) \
