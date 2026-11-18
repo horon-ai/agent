@@ -143,7 +143,7 @@ The shell installer verifies the checksum and checks every member name before pr
 
 ### CI guard
 
-`scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. That step runs only on GitHub-hosted runners (with `CI_SELF_HOSTED` set, only the macOS entry remains). The same command can run on a developer machine that has Docker.
+`scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. The same command can run on a developer machine that has Docker.
 
 ## Release numbers and automatic publishing
 
