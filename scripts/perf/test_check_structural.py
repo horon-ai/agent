@@ -70,8 +70,8 @@ HEALTHY_LINES = [
     "STRUCTURAL_PERF section=mcp_config source=mcp-config mcp_config_warmup_reads=3 mcp_config_user_rereads=0",
     "STRUCTURAL_PERF section=hooks source=request-messages request_messages_in_probe=8 hook_process_spawns=0 "
     "request_message_copies=0",
-    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8 "
-    "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2100,ls:500,agentgrep:1900,toolbox:1091",
+    "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=809 tool_count=8 eager_count=8 "
+    "per_tool=read:100,write:100,edit:100,apply_patch:100,bash:100,ls:100,agentgrep:100,toolbox:100",
     "STRUCTURAL_PERF section=prompt static_bytes=1322 "
     "static_sha256=380df8ba02b5de4cbdcc3ee203743df5887c004ca9591d3620a53a9593372936 static_tokens=305 "
     "index_bytes=585 index_clipped_rows=1 warm_source_reads=8 unchanged_request_source_reads=0",
@@ -477,19 +477,19 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_catalog_that_lost_a_tool_fails_even_under_the_ceiling(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9000 tool_count=7 eager_count=8 "
-            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:3092,ls:500,agentgrep:1900",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=708 tool_count=7 eager_count=8 "
+            "per_tool=read:100,write:100,edit:100,apply_patch:100,bash:100,ls:100,agentgrep:100",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
         named = {check["counter"] for check in run.result["checks"] if not check["ok"]}
-        self.assertIn("tool_count", named)
+        self.assertEqual(named, {"tool_count"})
 
     def test_prefix_per_tool_sum_mismatch_fails(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8 "
-            "per_tool=read:900,write:700,edit:1100,apply_patch:800,bash:2101,ls:500,agentgrep:1900,toolbox:1091",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=809 tool_count=8 eager_count=8 "
+            "per_tool=read:100,write:100,edit:100,apply_patch:100,bash:101,ls:100,agentgrep:100,toolbox:100",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 1, run.stderr)
@@ -499,7 +499,7 @@ class PrefixSectionTest(unittest.TestCase):
     def test_a_prefix_line_without_a_breakdown_is_not_a_measurement(self):
         lines = replace_line(
             "STRUCTURAL_PERF section=prefix",
-            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=9100 tool_count=8 eager_count=8",
+            "STRUCTURAL_PERF section=prefix source=tool-catalog tools_bytes=809 tool_count=8 eager_count=8",
         )
         run = run_gate(lines)
         self.assertEqual(run.code, 2, "a prefix line with no per-tool breakdown is not a pass")

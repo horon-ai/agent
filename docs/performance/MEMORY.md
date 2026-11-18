@@ -32,6 +32,11 @@ Do not add new temporary instrumentation; use the existing debug surfaces.
 - Whole-server attribution: `server:memory`
   (`crates/app-core/src/server/debug_server_state.rs:179`)
 - Process lifetime timeline: `python scripts/perf/analyze_memory_log.py --days 1`
+- Session population comparison: `python3 scripts/perf/bench_compare.py --scenarios sessions`
+  reports, at every idle and post-turn sample, how many processes were alive beside the
+  process-tree RSS, so a per-session memory increment can be read against whether that
+  session is a thread inside the daemon or its own process (`process_count` in
+  `docs/performance/BENCHMARK.md`)
 
 Main sources in the code:
 - `crates/base/src/runtime_memory_log.rs`
@@ -90,6 +95,10 @@ between, a frame that measures at all keeps the heights it already has except fo
 off and measures again every such frame, and any item the last measurement never saw. Measuring happens only while the view is held away from
 the end; a frame at the end counts nothing and leaves the tally alone. The tally grows with the number of items, not with the size of their
 text, and the code sets no cap on it. When a cache of rendered rows comes back, restore a cap and its reasoning in this section.
+
+The cost of that held path is measured: `crates/tui/examples/scroll_bench.rs` expands one long tool output and times every held
+frame a real `shift+up` draws, so a change to how the newest item or the block under the view is wrapped lands in the `tui` suite's
+`scroll` table instead of going unnoticed behind a frame-at-the-end number.
 
 ### Ratchet expectations
 

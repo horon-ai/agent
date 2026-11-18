@@ -939,11 +939,15 @@ jobs:
             ./target/release/horon-agent --version
             echo "::endgroup::"
 
-            mkdir -p dist
-            cp target/release/horon-agent dist/horon-agent-freebsd-x86_64
-            cp LICENSE dist/LICENSE
-            chmod +x dist/horon-agent-freebsd-x86_64
-            cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64 LICENSE
+            # POSIX ustar gives FreeBSD tar and the Rust installer the same
+            # top-level executable name. Install the finished archive before upload.
+            echo "::group::Package release archive"
+            sh scripts/release/agent_archive.sh pack dist target/release/horon-agent
+            echo "::endgroup::"
+
+            echo "::group::Install the packaged release"
+            sh scripts/release/agent_archive.sh install-verify dist target/release/horon-agent "${{ env.RELEASE_TAG }}"
+            echo "::endgroup::"
 
       - name: Upload artifact
         if: ${{ inputs.package_only != true }}

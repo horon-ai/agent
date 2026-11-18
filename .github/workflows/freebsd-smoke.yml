@@ -18,6 +18,14 @@ env:
 # the actual FreeBSD kernel and userland, giving a true build + run check
 # instead of a cross-compile that can never link platform C dependencies
 # (e.g. aws-lc-sys).
+#
+# The job also packages a release archive, installs it, and — for the published
+# release — re-packs the released FreeBSD bytes and installs those. Nothing is
+# uploaded to a release; the evidence is the job log and the
+# `freebsd-archive-evidence-<tag>` artifact. A manual run on a branch:
+#
+#   gh workflow run freebsd-smoke.yml --ref <branch> \
+#     -f release=true -f official_asset=v0.1.14
 
 on:
   workflow_dispatch:
@@ -27,6 +35,11 @@ on:
         required: false
         default: false
         type: boolean
+      official_asset:
+        description: Published release tag to re-pack and install in this guest (optional)
+        required: false
+        default: ''
+        type: string
   # A branch that edits this workflow is checked with
   # `gh workflow run freebsd-smoke.yml --ref <branch>`; `main` is covered by the
   # weekly schedule below, so a push only runs here on `dev`.
@@ -56,6 +69,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # The QEMU guest disk image plus the in-VM build needs more room than a
       # stock hosted runner has free on /.
@@ -67,10 +81,26 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost
           df -h /
 
+      - name: Resolve the published FreeBSD asset
+        if: ${{ inputs.official_asset != '' }}
+        id: published
+        shell: bash
+        env:
+          REQUESTED: ${{ inputs.official_asset }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::official_asset must be a vMAJOR.MINOR.PATCH release tag'; exit 1
+          fi
+          echo "tag=$REQUESTED" >> "$GITHUB_OUTPUT"
+
       - name: Build and test in FreeBSD VM
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1
+        env:
+          OFFICIAL_TAG: ${{ steps.published.outputs.tag }}
         with:
           release: "15.1"
+          envs: OFFICIAL_TAG GITHUB_REPOSITORY
           usesh: true
           # Give the build VM enough room: aws-lc-sys + tract pull in heavy C/Rust.
           mem: 6144
@@ -78,9 +108,10 @@ jobs:
           # Install the toolchain horon-agent needs. The project is OpenSSL-free
           # (rustls + aws-lc-rs), so we only need a C/C++ toolchain, cmake, perl
           # (aws-lc-sys CMake probes) and rust. pkgconf is handy for any
-          # transitive pkg-config probes.
+          # transitive pkg-config probes. gtar reads the published FreeBSD
+          # asset, which v0.1.14 wrote as a GNU sparse archive.
           prepare: |
-            pkg install -y rust cmake gmake pkgconf bash git perl5
+            pkg install -y rust cmake gmake pkgconf bash git perl5 gtar
           # CARGO_BUILD_JOBS keeps memory in check; aws-lc-sys is memory hungry.
           run: |
             set -e
@@ -130,3 +161,108 @@ jobs:
             echo "::group::Run platform unit tests"
             cargo test --locked $PROFILE_FLAG -p horon-agent-base --lib -- --nocapture platform
             echo "::endgroup::"
+
+            # Exercise the same pack and install steps as the release job.
+            if [ "$TARGET_DIR" = release ]; then
+              echo "::group::Package and install the release archive"
+              sh scripts/release/agent_archive.sh pack dist target/release/horon-agent
+              sh scripts/release/agent_archive.sh install-verify dist target/release/horon-agent
+              echo "::endgroup::"
+            fi
+
+            # The same VM then re-packs the *published* FreeBSD bytes and installs
+            # them, which is the only check that covers the asset a user actually
+            # downloads: v0.1.14's archive matched its published checksum and still
+            # failed the first install (run 44170295810, job 134347439308). Nothing
+            # here publishes; the downloaded, re-packed and installed files are the
+            # evidence this workflow exists to produce.
+            official=${OFFICIAL_TAG:-}
+            [ -n "$official" ] || exit 0
+            asset=horon-agent-freebsd-x86_64
+            version="${official#v}"
+            mkdir -p published evidence
+
+            echo "::group::Download the published FreeBSD asset ($official)"
+            base="https://github.com/$GITHUB_REPOSITORY/releases/download/$official"
+            curl -fsSL --retry 3 -o "published/$asset.tar.gz" "$base/$asset.tar.gz"
+            curl -fsSL --retry 3 -o published/SHA256SUMS "$base/SHA256SUMS"
+            # SHA256SUMS uses the `sha256sum` form: `<hash>  <name>` or `<hash> *<name>`.
+            expected=$(awk -v name="$asset.tar.gz" '
+              { file = $NF; sub(/^\*/, "", file)
+                if (file == name && length($1) == 64 && $1 !~ /[^0-9a-fA-F]/) print $1 }' published/SHA256SUMS)
+            [ -n "$expected" ] || { echo "::error::the $official SHA256SUMS lists no $asset.tar.gz"; exit 1; }
+            actual=$(sha256 -q "published/$asset.tar.gz")
+            [ "$actual" = "$expected" ] \
+              || { echo "::error::$asset.tar.gz hashes to $actual, but $official published $expected"; exit 1; }
+            echo "sha256 $actual matches the $official manifest"
+            # FreeBSD tar displays GNU.sparse.name for the v0.1.14 asset.
+            # Keep its listing alongside the release installer's own output.
+            tar -tzf "published/$asset.tar.gz" > published/members.txt \
+              || { echo "::error::$asset.tar.gz is not a readable tar.gz"; exit 1; }
+            cat published/members.txt
+            echo "::endgroup::"
+
+            echo "::group::Unpack the published original"
+            mkdir -p published/raw
+            # gtar restores the real member name of a GNU sparse entry, so the bytes
+            # installed below are the bytes that were published, not a rebuild.
+            original="$PWD/published/raw/$asset"
+            gtar -xOzf "published/$asset.tar.gz" -- "$asset" > "$original"
+            test -s "$original"
+            chmod 700 "$original"
+            file "$original"
+            echo "::endgroup::"
+
+            echo "::group::Hand the published bytes to their own installer"
+            mkdir -p published/assets published/home
+            cp "published/$asset.tar.gz" published/assets/
+            cp published/SHA256SUMS published/assets/
+            if HORON_HOME="$PWD/published/home" HORON_AGENT_NO_AUTO_UPDATE=1 \
+                "$original" install-release --assets "$PWD/published/assets" \
+                --agent-version "$version" > evidence/published-install.txt 2>&1; then
+              published_exit=0
+            else
+              published_exit=$?
+            fi
+            cat evidence/published-install.txt
+            echo "published install-release exit: $published_exit"
+            echo "::endgroup::"
+
+            echo "::group::Re-pack the published bytes and install them"
+            # Output is captured first: `| tee` would hide a failing exit status
+            # because sh has no pipefail.
+            sh scripts/release/agent_archive.sh pack repaired "$original" > evidence/pack.txt 2>&1 \
+              || { cat evidence/pack.txt; exit 1; }
+            cat evidence/pack.txt
+            # Start each cold/warm pair in a fresh installation home.
+            sh scripts/release/agent_archive.sh install-verify repaired "$original" "$official" 5 \
+              > evidence/install.txt 2>&1 || { cat evidence/install.txt; exit 1; }
+            cat evidence/install.txt
+            echo "::endgroup::"
+
+            {
+              echo "official release: $official"
+              echo "published archive sha256: $actual"
+              echo "published install-release exit: $published_exit"
+              echo "published members:"
+              sed 's/^/  /' published/members.txt
+              echo "original executable: $original"
+              echo "original sha256: $(sha256 -q "$original")"
+              echo "re-pack archive sha256: $(sha256 -q "repaired/$asset.tar.gz")"
+              echo "re-pack members:"
+              tar -tzf "repaired/$asset.tar.gz" | sed 's/^/  /'
+            } > evidence/summary.txt
+            cat evidence/summary.txt
+
+      # The VM syncs the workspace back with rsync, so the evidence file it wrote
+      # is on the runner here. The job publishes nothing.
+      - name: Upload FreeBSD archive evidence
+        if: ${{ always() && steps.published.outputs.tag != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: freebsd-archive-evidence-${{ steps.published.outputs.tag }}
+          path: |
+            evidence/
+            published/members.txt
+            repaired/*.tar.gz
+          if-no-files-found: warn
