@@ -261,7 +261,7 @@ The example commits 24 turns and a 4,000-row tool output, expands that output wi
 | `first_held_frame_ms` | The first held frame, which measures the whole conversation before it can show rows |
 | `held_redraw_p50_ms`, `held_redraw_p95_ms` | A redraw at the held view with no input between frames |
 
-Every timed screen is checked to be non-empty, different from the screen before it, and to carry rows of the expanded output, so a blank or unmoved view is an error instead of a fast sample. The report also records `steps`, `redraws`, `content_rows`, `items` and `tool_output_bytes`.
+Each scroll step must move the view and show rows of expanded output. After each timer stops, the example fingerprints every cell's grapheme, colors and modifiers. The fixture omits the status-line clock and uses completed calls without live durations. After timing, it also draws a narrower window, changes the output color, collapses and expands the call, switches sessions and reuses the call ID with multiline Unicode output. `screens_per_run` counts all compared frames. The first differing frame rejects the pair, and the paired run fails if it has fewer matching pairs than requested.
 
 These metrics need no PTY, so Linux, macOS and Windows all record them.
 

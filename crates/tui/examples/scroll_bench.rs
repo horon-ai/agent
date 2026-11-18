@@ -13,6 +13,8 @@
 //! The screens are checked as they are drawn: a frame that is blank or repeats
 //! the screen before it is an error, so a number is never taken from a view that
 //! did not move, and every timed screen carries rows of the expanded output.
+//! After the timer stops, each draw contributes a fingerprint of all cells.
+//! Paired runs compare them in order, including the untimed display changes.
 //!
 //! The output is a single line so a caller can read it with a plain split:
 //!
@@ -23,6 +25,7 @@
 //! Failures go to stderr with a non-zero exit; nothing here panics, because the
 //! benchmark harness treats a panic message as an unreadable measurement.
 
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -31,8 +34,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::ApiEvent;
 use horon_tui::app::App;
 use horon_tui::draw;
+use horon_tui::sdk_bridge::AttachedSession;
+use horon_tui::statusline::SegmentId;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 
 /// Terminal size the measurement assumes; the default TUI window in a CI runner.
 const WIDTH: u16 = 120;
@@ -67,7 +73,10 @@ fn main() -> ExitCode {
 fn measurement() -> Option<String> {
     let (_sender, receiver) = mpsc::channel();
     let mut app = App::new("scroll bench".to_string(), receiver);
-    fill(&mut app);
+    // Draw a deterministic status line even when a pair straddles a minute.
+    app.statusline.right.retain(|segment| *segment != SegmentId::Time);
+    let tool_output_bytes = fill(&mut app);
+    let items = app.transcript.items().len();
 
     let backend = TestBackend::new(WIDTH, HEIGHT);
     let mut terminal = match Terminal::new(backend) {
@@ -83,6 +92,8 @@ fn measurement() -> Option<String> {
         eprintln!("scroll_bench: warm-up draw failed: {message}");
         return None;
     }
+    let mut screens = Vec::with_capacity(2 + STEPS + REDRAWS + 8);
+    screens.push(screen_hash(&terminal));
     // The real key, so the output kept for expanding is drawn in full: this is
     // the long output the scroll steps run through.
     app.on_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
@@ -90,6 +101,7 @@ fn measurement() -> Option<String> {
         eprintln!("scroll_bench: expanded draw failed: {message}");
         return None;
     }
+    screens.push(screen_hash(&terminal));
 
     let mut inputs: Vec<f64> = Vec::with_capacity(STEPS);
     let mut frames: Vec<f64> = Vec::with_capacity(STEPS);
@@ -116,6 +128,7 @@ fn measurement() -> Option<String> {
             first_held = Some((elapsed, input_to_frame, rows(&app)));
         }
 
+        screens.push(screen_hash(&terminal));
         let screen = format!("{}", terminal.backend());
         if screen.trim().is_empty() {
             eprintln!("scroll_bench: step {step} drew a blank screen");
@@ -140,6 +153,7 @@ fn measurement() -> Option<String> {
             return None;
         }
         redraws.push(millis(started.elapsed()));
+        screens.push(screen_hash(&terminal));
     }
 
     let rows_floor = usize::from(HEIGHT) * 10;
@@ -152,6 +166,12 @@ fn measurement() -> Option<String> {
         return None;
     }
 
+    let timed_fixture_frames = screens.len();
+    if let Err(message) = check_transitions(&mut terminal, &mut app, &mut screens) {
+        eprintln!("scroll_bench: transition draw failed: {message}");
+        return None;
+    }
+    let transition_frames = screens.len() - timed_fixture_frames;
     inputs.sort_by(|left, right| left.total_cmp(right));
     frames.sort_by(|left, right| left.total_cmp(right));
     input_to_frames.sort_by(|left, right| left.total_cmp(right));
@@ -163,8 +183,9 @@ fn measurement() -> Option<String> {
          \"first_input_to_frame_ms\":{first_input_to_frame:.4},\
          \"held_redraw_p50_ms\":{:.4},\"held_redraw_p95_ms\":{:.4},\
          \"first_held_frame_ms\":{first_held:.4},\"steps\":{STEPS},\"redraws\":{REDRAWS},\
-         \"content_rows\":{content_rows},\"items\":{},\"tool_output_bytes\":{},\
-         \"width\":{WIDTH},\"height\":{HEIGHT}}}",
+         \"content_rows\":{content_rows},\"items\":{items},\"tool_output_bytes\":{tool_output_bytes},\
+         \"width\":{WIDTH},\"height\":{HEIGHT},\"transition_frames\":{transition_frames},\
+         \"screen_hashes\":{screens:?}}}",
         percentile(&inputs, 50.0) * 1000.0,
         percentile(&inputs, 95.0) * 1000.0,
         percentile(&frames, 50.0),
@@ -173,14 +194,70 @@ fn measurement() -> Option<String> {
         percentile(&input_to_frames, 95.0),
         percentile(&redraws, 50.0),
         percentile(&redraws, 95.0),
-        app.transcript.items().len(),
-        tool_output().len(),
     ))
+}
+
+/// Both binaries use this example and the same Rust toolchain on one runner.
+fn screen_hash(terminal: &Terminal<TestBackend>) -> u64 {
+    let buffer = terminal.backend().buffer();
+    let mut state = DefaultHasher::new();
+    buffer.area.hash(&mut state);
+    for cell in buffer.content() {
+        cell.symbol().hash(&mut state);
+        cell.style().hash(&mut state);
+        cell.diff_option.hash(&mut state);
+    }
+    state.finish()
+}
+
+/// Exercise changes that can invalidate a renderer's wrapped output.
+fn check_transitions(
+    terminal: &mut Terminal<TestBackend>,
+    app: &mut App,
+    screens: &mut Vec<u64>,
+) -> Result<(), String> {
+    let mut capture = |terminal: &mut Terminal<TestBackend>, app: &mut App| -> Result<(), String> {
+        draw(terminal, app)?;
+        screens.push(screen_hash(terminal));
+        Ok(())
+    };
+    terminal.backend_mut().resize(43, HEIGHT);
+    capture(terminal, app)?;
+    app.theme.transcript.notice = Color::LightCyan;
+    capture(terminal, app)?;
+    let toggle = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    app.on_key(toggle);
+    capture(terminal, app)?;
+    app.on_key(toggle);
+    capture(terminal, app)?;
+
+    app.attach_session(
+        AttachedSession {
+            description: "second scroll session".into(),
+            session_id: "scroll-next".into(),
+            status: "idle".into(),
+            model: None,
+            effort: None,
+            history: Vec::new(),
+            title: None,
+        },
+        true,
+    );
+    capture(terminal, app)?;
+    let reused_id = format!("call{:03}", TURNS - 1);
+    let output = "새 출력 · 全角 · e\u{301} · 👩‍💻\n\n오른쪽 경계를 넘는 긴 줄과 공백\t끝\n".repeat(32);
+    app.transcript.tool_done(&reused_id, "bash", Some(&output), None);
+    capture(terminal, app)?;
+    app.on_key(toggle);
+    capture(terminal, app)?;
+    terminal.backend_mut().resize(19, HEIGHT);
+    app.on_key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT));
+    capture(terminal, app)
 }
 
 /// Commit `TURNS` turns and one long tool output through the transcript's own
 /// entry points, the same ones the client's event and send paths use.
-fn fill(app: &mut App) {
+fn fill(app: &mut App) -> usize {
     let output = tool_output();
     for turn in 0..TURNS {
         app.transcript
@@ -198,11 +275,12 @@ fn fill(app: &mut App) {
             message_id: Some(MESSAGE.to_string()),
         });
         let call = format!("call{turn:03}");
-        app.transcript.tool_start(&call, "bash");
+        // A restored result has no live start time to vary between binaries.
+        app.transcript.tool_done(&call, "bash", Some(&output), None);
         app.transcript
             .tool_input(&call, "{\"command\":\"make test\",\"file_path\":\"build.log\"}");
-        app.transcript.tool_done(&call, "bash", Some(&output), None);
     }
+    output.len()
 }
 
 /// The long output every tool call returns. The rows are named so a drawn

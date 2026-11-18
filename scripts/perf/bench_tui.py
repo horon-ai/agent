@@ -51,8 +51,9 @@ first step reports the whole interval as `first_input_to_frame_ms` and its draw
 as `first_held_frame_ms`. That draw measures the conversation for the first time.
 `held_redraw_p50_ms`/`held_redraw_p95_ms` measure redraws at the held view with
 no input. `steps`, `redraws`, `content_rows`, `items` and `tool_output_bytes` say
-what was scrolled. A frame that draws a blank screen, repeats the screen before
-it, or misses the expanded output is an error instead of a fast sample.
+what was scrolled. A scroll step that draws a blank screen, repeats a screen,
+or misses the expanded output is an error. Paired runs also match the whole
+terminal buffer after every draw, including the untimed display transitions.
 
 Every repeatable metric reports median, p95, min, max and the sample count, the
 same shape the other suites use (`bench_common.summarize`).
@@ -271,8 +272,7 @@ def markdown(report: dict) -> str:
             f"({_fmt(detail.get('items'), 'count')} items, "
             f"{_fmt(detail.get('tool_output_bytes'), 'bytes')} of tool output, expanded) on a "
             f"{_fmt(detail.get('width'), 'count')}×{_fmt(detail.get('height'), 'count')} terminal. "
-            "Every timed screen was non-empty, different from the one before it, and "
-            "carried rows of the expanded output.",
+            "Every scroll step moved the expanded output.",
             "",
             "| Scroll metric | Median | Min–max | Samples |",
             "| --- | --- | --- | --- |",
@@ -290,7 +290,8 @@ def markdown(report: dict) -> str:
                 f"first held frame {_median_ms(base.get('first_held_frame_ms'))}. Delta (candidate "
                 f"minus baseline): held frame p95 "
                 f"{_median_ms((delta or {}).get('scroll_frame_p95_ms'))}, first held frame "
-                f"{_median_ms((delta or {}).get('first_held_frame_ms'))}.",
+                f"{_median_ms((delta or {}).get('first_held_frame_ms'))}. "
+                f"All {detail.get('screens_per_run')} full-screen fingerprints matched in each included pair.",
             ]
     skipped = [entry for entry in report.get("skipped", []) if isinstance(entry, dict)]
     if skipped:
@@ -621,8 +622,8 @@ def run_render_bench(path: str, runs: int, errors: list[dict]) -> dict | None:
     }
 
 
-def _scroll_sample(path: str, step: str, errors: list[dict]) -> tuple[dict[str, float], dict] | None:
-    """One run of the scroll example: its figures and what it scrolled."""
+def _scroll_sample(path: str, step: str, errors: list[dict]) -> tuple[dict[str, float], dict, list[int]] | None:
+    """Read one scroll run, including the full sequence of screen fingerprints."""
     try:
         completed = subprocess.run(
             [path], capture_output=True, text=True, timeout=300, check=False
@@ -657,8 +658,17 @@ def _scroll_sample(path: str, step: str, errors: list[dict]) -> tuple[dict[str, 
         "tool_output_bytes": decoded.get("tool_output_bytes"),
         "width": decoded.get("width"),
         "height": decoded.get("height"),
+        "transition_frames": decoded.get("transition_frames"),
     }
-    return values, detail
+    screens = decoded.get("screen_hashes")
+    counts = [detail[key] for key in ("steps", "redraws", "transition_frames")]
+    if (not all(type(count) is int and count > 0 for count in counts)
+            or not isinstance(screens, list) or len(screens) != 2 + sum(counts)
+            or any(type(value) is not int or not 0 <= value < 2**64 for value in screens)):
+        errors.append({"step": step, "error": "incomplete screen fingerprints"})
+        return None
+    detail["screens_per_run"] = len(screens)
+    return values, detail, screens
 
 
 def run_scroll_bench(path: str, runs: int, errors: list[dict],
@@ -687,12 +697,22 @@ def run_scroll_bench(path: str, runs: int, errors: list[dict],
         sample = _scroll_sample(path, f"scroll[{index}]", errors)
         if baseline and not index % 2:
             other = _scroll_sample(baseline, f"scroll-base[{index}]", errors)
+        if baseline:
+            if not sample or not other:
+                continue
+            if sample[1] != other[1]:
+                errors.append({"step": f"scroll-pair[{index}]", "error": "fixture dimensions or row counts differ"})
+                continue
+            if sample[2] != other[2]:
+                frame = next(i for i, (left, right) in enumerate(zip(sample[2], other[2])) if left != right)
+                errors.append({"step": f"scroll-pair[{index}]", "error": f"screen differs at frame {frame} (zero-based)"})
+                continue
         if sample:
-            values, detail = sample
+            values, detail, _screens = sample
             for key, value in values.items():
                 series[key].append(value)
         if other:
-            base_values, base_detail = other
+            base_values, base_detail, _base_screens = other
             for key, value in base_values.items():
                 base_series[key].append(value)
         if sample and other:
@@ -746,10 +766,7 @@ def measure(args: argparse.Namespace) -> dict:
     if scroll_reason:
         skipped.append({"name": "scroll", "reason": scroll_reason})
     elif scroll_path is not None:
-        base_scroll = (args.scroll_bench_baseline
-                       if args.scroll_bench_baseline and os.path.isfile(args.scroll_bench_baseline)
-                       else None)
-        measured = run_scroll_bench(scroll_path, args.runs, errors, base_scroll)
+        measured = run_scroll_bench(scroll_path, args.runs, errors, args.scroll_bench_baseline)
         if measured:
             metrics["scroll"] = measured
 
@@ -838,6 +855,10 @@ def main(argv: list[str] | None = None) -> int:
         common.write_markdown(args.markdown_out, text)
     if not args.json_out and not args.markdown_out:
         print(text)
+    if args.scroll_bench_baseline:
+        paired = (document.get("scroll") or {}).get("baseline") or {}
+        if (paired.get("detail") or {}).get("runs", 0) != args.runs:
+            return 1
     return 0
 
 

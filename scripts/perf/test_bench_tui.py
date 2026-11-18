@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -79,6 +80,30 @@ class HandoffTest(unittest.TestCase):
 
     def test_no_pairs_is_an_empty_series(self):
         self.assertEqual(bench_tui.paired_differences([], [1.0]), [])
+
+
+class ScrollPairTest(unittest.TestCase):
+    def test_a_different_or_missing_frame_excludes_both_timings(self):
+        def result(milliseconds, screens):
+            sample = {key: milliseconds for key, _, _ in bench_tui.SCROLL_ROWS}
+            sample.update(steps=1, redraws=1, transition_frames=1, screen_hashes=screens)
+            return bench_tui.subprocess.CompletedProcess([], 0, stdout=json.dumps(sample), stderr="")
+
+        complete = [10, 20, 30, 30, 40]
+        # Round one matches, round two changes only the last (transition) frame,
+        # and round three loses a frame. Order alternates between rounds.
+        samples = [result(7, complete), result(11, complete),
+                   result(2, complete), result(1, [*complete[:-1], 41]),
+                   result(3, complete[:-1]), result(4, complete)]
+        errors = []
+        with patch.object(bench_tui.subprocess, "run", side_effect=samples):
+            measured = bench_tui.run_scroll_bench("candidate", 3, errors, "baseline")
+        metric = "scroll_input_to_frame_p95_ms"
+        self.assertEqual(measured["metrics"][metric], bench_tui.summary([7]))
+        self.assertEqual(measured["baseline"]["metrics"][metric], bench_tui.summary([11]))
+        self.assertEqual(measured["delta"][metric], bench_tui.summary([-4]))
+        self.assertEqual([error["step"] for error in errors], ["scroll-pair[1]", "scroll[2]"])
+        self.assertIn("frame 4", errors[0]["error"])
 
 
 class SkipTest(unittest.TestCase):
