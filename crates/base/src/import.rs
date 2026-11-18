@@ -103,6 +103,10 @@ fn discover_projects() -> Result<Vec<PathBuf>> {
 }
 
 fn load_claude_code_entries(path: &Path) -> Result<Vec<ClaudeCodeEntry>> {
+    read_claude_entries(path, |_| {})
+}
+
+fn read_claude_entries(path: &Path, mut on_entry: impl FnMut(&str)) -> Result<Vec<ClaudeCodeEntry>> {
     let file = File::open(path).with_context(|| format!("Failed to read session file: {}", path.display()))?;
     let mut entries = Vec::new();
     for line in BufReader::new(file).lines() {
@@ -117,7 +121,10 @@ fn load_claude_code_entries(path: &Path) -> Result<Vec<ClaudeCodeEntry>> {
             continue;
         }
         match serde_json::from_str::<ClaudeCodeEntry>(&line) {
-            Ok(entry) => entries.push(entry),
+            Ok(entry) => {
+                on_entry(&line);
+                entries.push(entry);
+            }
             Err(e) => {
                 crate::logging::debug(&format!(
                     "Skipping malformed Claude Code entry in {}: {}",
@@ -477,11 +484,18 @@ fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (Str
 }
 
 fn normalize_imported_history(session: &mut Session, apply_limits: bool) -> bool {
-    let original_count = session.active_context().len();
+    let messages = session.take_active_messages();
+    let (normalized, changed) = normalize_imported_messages(messages, apply_limits);
+    session.replace_messages(normalized);
+    changed
+}
+
+fn normalize_imported_messages(messages: Vec<StoredMessage>, apply_limits: bool) -> (Vec<StoredMessage>, bool) {
+    let original_count = messages.len();
     let mut changed = false;
     let mut normalized = Vec::with_capacity(original_count);
 
-    for mut message in session.take_active_messages() {
+    for mut message in messages {
         let (text, message_changed) = imported_message_text(&message.content, apply_limits);
         changed |= message_changed;
         if text.trim().is_empty() {
@@ -541,12 +555,9 @@ fn normalize_imported_history(session: &mut Session, apply_limits: bool) -> bool
                 },
             );
         }
-        session.replace_messages(kept_reversed);
-    } else {
-        session.replace_messages(normalized);
+        return (kept_reversed, changed);
     }
-
-    changed || session.active_context().len() != original_count
+    (normalized, changed)
 }
 
 fn reuse_existing_imported_session(session_id: &str) -> bool {
@@ -704,42 +715,15 @@ pub fn import_external_resume_id(resume_id: &str) -> Result<Option<String>> {
 
 /// Import a Claude Code session from a file path
 pub fn import_session_from_file(path: &Path, session_id: &str) -> Result<Session> {
-    import_session_from_file_with_target(path, session_id, imported_claude_code_session_id(session_id), false)
+    let target_id = imported_claude_code_session_id(session_id);
+    if crate::session::session_exists(&target_id) {
+        return Session::load(&target_id);
+    }
+    let entries = load_claude_code_entries(path)?;
+    import_claude_entries(&ordered_claude_code_message_entries(&entries), session_id, target_id)
 }
 
-fn import_session_from_file_with_target(
-    path: &Path,
-    session_id: &str,
-    horon_agent_session_id: String,
-    require_source_identity: bool,
-) -> Result<Session> {
-    let entries = load_claude_code_entries(path)?;
-    if require_source_identity {
-        let mut saw_expected_session = false;
-        for entry in &entries {
-            let Some(source_session_id) = entry.session_id.as_deref() else {
-                continue;
-            };
-            if source_session_id != session_id {
-                anyhow::bail!(
-                    "Claude transcript {} belongs to session {}, not live session {}",
-                    path.display(),
-                    source_session_id,
-                    session_id
-                );
-            }
-            saw_expected_session = true;
-        }
-        if !saw_expected_session {
-            anyhow::bail!(
-                "Claude transcript {} does not identify live session {}",
-                path.display(),
-                session_id
-            );
-        }
-    }
-    let ordered_entries = ordered_claude_code_message_entries(&entries);
-
+fn import_claude_entries(ordered_entries: &[&ClaudeCodeEntry], session_id: &str, target_id: String) -> Result<Session> {
     // Extract metadata from entries
     let first_entry = ordered_entries.first().copied();
     let working_dir = first_entry.and_then(|e| e.cwd.clone());
@@ -774,54 +758,37 @@ fn import_session_from_file_with_target(
                 .and_then(|s| s.summary.or(Some(s.first_prompt)))
         });
 
-    // Convert messages from the external transcript.
-    let mut imported_messages: Vec<StoredMessage> = Vec::new();
-    for entry in ordered_entries {
-        if let Some(ref msg) = entry.message {
-            let role = match msg.role.as_str() {
-                "user" => Role::User,
-                "assistant" => Role::Assistant,
-                _ => continue,
-            };
-
-            let content_blocks = convert_content_blocks(&msg.content);
-
-            // Skip empty messages
-            if content_blocks.is_empty() {
-                continue;
-            }
-
-            // Generate message ID from uuid or create new
-            let msg_id = entry.uuid.clone().unwrap_or_else(|| crate::id::new_id("msg"));
-
-            imported_messages.push(StoredMessage {
-                original_input: None,
-                arg_repairs: None,
-                degradations: None,
-                turn_start: false,
-                id: msg_id,
-                role,
-                content: content_blocks,
-                display_role: None,
-                timestamp: None,
-                tool_duration_ms: None,
-                token_usage: None,
-            });
-        }
-    }
-
-    let mut session = Session::create_with_id(horon_agent_session_id, None, title);
+    let mut session = Session::create_with_id(target_id, None, title);
     session.provider_session_id = Some(session_id.to_string());
     session.provider_key = Some("claude-code".to_string());
     session.working_dir = working_dir;
     session.model = model;
     session.created_at = created_at;
 
-    for message in imported_messages {
+    for message in ordered_entries.iter().filter_map(|entry| claude_message(entry)) {
         session.append_stored_message(message);
     }
 
     finalize_imported_session(session, created_at, None)
+}
+
+fn claude_message(entry: &ClaudeCodeEntry) -> Option<StoredMessage> {
+    let message = entry.message.as_ref()?;
+    let role = match message.role.as_str() {
+        "user" => Role::User,
+        "assistant" => Role::Assistant,
+        _ => return None,
+    };
+    let content = convert_content_blocks(&message.content);
+    if content.is_empty() {
+        return None;
+    }
+    Some(StoredMessage {
+        id: entry.uuid.clone().unwrap_or_else(|| crate::id::new_id("msg")),
+        role,
+        content,
+        ..StoredMessage::default()
+    })
 }
 
 fn append_text_message(session: &mut Session, role: Role, text: String, timestamp: Option<DateTime<Utc>>) {
@@ -1295,6 +1262,7 @@ pub fn import_cursor_session_from_path(session_path: &Path, session_id_hint: Opt
     finalize_imported_session(session, created_at, Some(created_at))
 }
 
+mod refresh;
 mod takeover;
 #[cfg(test)]
 pub(crate) use takeover::remove_prepared_takeover_session;
@@ -1304,6 +1272,10 @@ mod text;
 #[cfg(test)]
 #[path = "import_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "import_refresh_tests.rs"]
+mod refresh_tests;
 
 #[cfg(test)]
 #[path = "import_takeover_tests.rs"]
