@@ -10,7 +10,7 @@
 //! off screen, and an expanded tool call drawing megabytes of output is exactly
 //! that case: [`Source`] keeps such a block as the text it came from,
 //! [`Source::height`] counts its rows without building any, and
-//! [`Source::from_end`] builds only the rows the pane shows.
+//! [`Source::rows_from_end`] builds only the rows the pane shows.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
@@ -142,7 +142,7 @@ pub fn wrap_rows(lines: Vec<Indented>, width: u16) -> Vec<Line<'static>> {
 /// A pane shows the rows near the end of a block, so what it does not show is
 /// the thing to name: `skip` rows at the end are left out and `count` rows above
 /// them are wanted. Counting the block first is not needed, which is what makes
-/// [`Source::from_end`] able to build a window without measuring the rest.
+/// [`Source::rows_from_end`] able to build a window without measuring the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FromEnd {
     /// Rows at the end of the block the caller does not want.
@@ -214,7 +214,7 @@ impl<'a> Source<'a> {
                 let rows: usize = text
                     .lines()
                     .map(|row| {
-                        fill_row(&mut cells, *prefix, *style, row);
+                        fill_row(&mut cells, prefix, *style, row);
                         break_rows(&cells, width, *indent, |_| {})
                     })
                     .sum();
@@ -228,7 +228,7 @@ impl<'a> Source<'a> {
     /// The block's rows are walked back from its last one, so a window near the
     /// end only reads the lines it draws; the rows skipped by [`FromEnd::skip`]
     /// are counted and dropped, never built.
-    pub fn from_end(&self, width: u16, want: FromEnd) -> Vec<Line<'static>> {
+    pub fn rows_from_end(&self, width: u16, want: FromEnd) -> Vec<Line<'static>> {
         let width = usize::from(width);
         let mut rows: Vec<Line<'static>> = Vec::with_capacity(want.count.min(64));
         let mut take = want.count;
@@ -262,7 +262,7 @@ impl<'a> Source<'a> {
                     if take == 0 {
                         break;
                     }
-                    fill_row(&mut cells, *prefix, *style, row);
+                    fill_row(&mut cells, prefix, *style, row);
                     let window = take_from_line(&cells, &plain, width, *indent, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
@@ -605,7 +605,7 @@ mod tests {
         let full = wrap_rows(lines.clone(), 20);
         for skip in [0, 1, 3, 7, 19, 20, 21, 500] {
             for count in [0, 1, 2, 6, 20, 21, 500] {
-                let window = Source::built(lines.clone()).from_end(20, FromEnd::new(skip, count));
+                let window = Source::built(lines.clone()).rows_from_end(20, FromEnd::new(skip, count));
                 let end = full.len().saturating_sub(skip);
                 let start = end.saturating_sub(count);
                 assert_eq!(
@@ -646,7 +646,7 @@ mod tests {
             assert_eq!(source.height(width), full.len(), "height at width {width}");
             for skip in [0, 3, 40] {
                 for count in [0, 1, 5, 40] {
-                    let window = source.from_end(width, FromEnd::new(skip, count));
+                    let window = source.rows_from_end(width, FromEnd::new(skip, count));
                     let end = full.len().saturating_sub(skip);
                     let start = end.saturating_sub(count);
                     assert_eq!(window, full[start..end], "width {width} skip {skip} count {count}");
@@ -659,7 +659,7 @@ mod tests {
     fn an_empty_block_has_no_rows() {
         let source = Source::built(Vec::new());
         assert_eq!(source.height(40), 0);
-        assert!(source.from_end(40, FromEnd::new(0, 40)).is_empty());
+        assert!(source.rows_from_end(40, FromEnd::new(0, 40)).is_empty());
     }
 
     #[test]
@@ -669,7 +669,7 @@ mod tests {
             .collect();
         reset_built();
         let source = Source::built(lines);
-        let window = source.from_end(120, FromEnd::new(0, 40));
+        let window = source.rows_from_end(120, FromEnd::new(0, 40));
         assert_eq!(window.len(), 40, "the window is the pane's own height");
         assert_eq!(built_rows(), 40, "a frame built rows it cannot show");
         assert_eq!(window.iter().map(text_of).next().as_deref(), Some("output row 1960"));
@@ -688,7 +688,7 @@ mod tests {
         };
         assert_eq!(source.height(120), 2001);
         assert_eq!(built_rows(), 0, "counting a block built rows");
-        let window = source.from_end(120, FromEnd::new(0, 40));
+        let window = source.rows_from_end(120, FromEnd::new(0, 40));
         assert_eq!(window.len(), 40);
         assert_eq!(built_rows(), 40, "a window built rows it cannot show");
     }

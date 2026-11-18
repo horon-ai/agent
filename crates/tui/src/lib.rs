@@ -1003,7 +1003,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
         // rows, not its own.
         let source = block_source(block, &look, Some(&expand), index == 0);
         let wanted = capacity - rows.len();
-        let window = source.from_end(width, wrap::FromEnd::new(0, wanted));
+        let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
         rows.extend(window.into_iter().rev());
     }
     rows.reverse();
@@ -1042,7 +1042,7 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
         let wanted = capacity - rows.len();
         // The rows below the view's bottom edge are counted and dropped; what
         // is built is the window above them that the pane fills with.
-        let window = source.from_end(width, wrap::FromEnd::new(below, wanted));
+        let window = source.rows_from_end(width, wrap::FromEnd::new(below, wanted));
         rows.extend(window.into_iter().rev());
         below = 0;
     }
