@@ -397,7 +397,7 @@ archive=""
 previous=""
 for argument in "\$@"; do
   case "\$previous" in
-    -xf|-xOf) mode="\$previous"; archive="\$argument" ;;
+    -xf|-xOf|-xzf) mode="\$previous"; archive="\$argument" ;;
   esac
   previous="\$argument"
 done
