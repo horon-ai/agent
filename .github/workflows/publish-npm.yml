@@ -371,7 +371,11 @@ jobs:
             # Platform packages first, the wrapper last: the wrapper's optional
             # dependencies resolve by name, so a wrapper published early would
             # install a package that does not exist yet.
-            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run
+            # `--tag fixture` keeps the dry run off `latest`: once a real
+            # release is higher than the fixture version, npm refuses to apply
+            # `latest` implicitly and the pull-request check would fail for a
+            # reason that has nothing to do with packaging.
+            npm publish "$RUNNER_TEMP/npm-pack/$tarball" --access public --provenance --dry-run --tag fixture
             echo "::endgroup::"
           done
           after="$(npm view @horon-ai/horon versions --json || echo '[]')"
