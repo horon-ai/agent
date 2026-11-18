@@ -84,7 +84,7 @@
     {
       "package": "horon-agent",
       "target": "session_event_lifecycle",
-      "min_passed": 6
+      "min_passed": 7
     },
     {
       "package": "horon-agent",
@@ -169,7 +169,7 @@
     {
       "package": "horon-agent-import-core",
       "target": "claude_adversarial",
-      "min_passed": 25
+      "min_passed": 26
     },
     {
       "package": "horon-agent-platform",

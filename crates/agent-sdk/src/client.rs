@@ -1188,7 +1188,9 @@ impl HoronAgentClient {
     ///
     /// The bridge answers `Ok` once the daemon has the message. This is the
     /// deterministic way to build a transcript for replication QA without a
-    /// provider call.
+    /// provider call. A message written on a turn's terminal event is stored
+    /// after that turn releases the session, so a caller that answers the event
+    /// does not have to wait it out first.
     pub fn send_context_message(&self, session_id: &str, content: &str) -> Result<()> {
         self.request_ok(ApiRequest::SendMessage {
             session_id: session_id.to_string(),

@@ -396,7 +396,7 @@ waiting call. A multi-member group registers no entry (`turn_streaming_mpsc.rs:1
 `running_tool_registry`), so a request raised while the group runs reports
 `moved: false` instead of moving a call (`turn_streaming_mpsc.rs:2562` `run_group`).
 The response is computed from the registry entry and the signal
-(`crates/app-core/src/server/client_lifecycle.rs:1521` `move_tool_to_background`), and
+(`crates/app-core/src/server/client_lifecycle.rs:1525` `move_tool_to_background`), and
 the event shape carries `moved` without `tool_call_id` or `tool_name`
 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 

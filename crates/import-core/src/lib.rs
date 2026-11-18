@@ -2,7 +2,7 @@ use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -270,27 +270,27 @@ pub fn claude_text_from_content(content: &ClaudeCodeContent) -> Option<String> {
 }
 
 pub fn ordered_claude_code_message_entries(entries: &[ClaudeCodeEntry]) -> Vec<&ClaudeCodeEntry> {
-    let message_entries: Vec<&ClaudeCodeEntry> = entries
+    let mut id_slots = HashMap::new();
+    let message_entries: Vec<_> = entries
         .iter()
         .filter(|e| (e.entry_type == "user" || e.entry_type == "assistant") && e.message.is_some() && !e.is_sidechain)
+        .enumerate()
+        .map(|(row, entry)| {
+            // Named rows share a slot for the same message. Each unnamed row is distinct.
+            let slot = entry
+                .uuid
+                .as_deref()
+                .map_or(row, |id| *id_slots.entry(id).or_insert(row));
+            (entry, slot)
+        })
         .collect();
 
-    let mut uuid_to_entry: HashMap<String, &ClaudeCodeEntry> = HashMap::new();
-    for entry in &message_entries {
-        if let Some(ref uuid) = entry.uuid {
-            uuid_to_entry.insert(uuid.clone(), entry);
-        }
-    }
-
-    let mut ordered_entries: Vec<&ClaudeCodeEntry> = Vec::new();
-    let mut visited: HashSet<String> = HashSet::new();
-
-    let mut roots: Vec<&ClaudeCodeEntry> = message_entries
+    let mut ordered_entries = Vec::with_capacity(message_entries.len());
+    let mut visited = vec![false; message_entries.len()];
+    let mut roots: Vec<_> = message_entries
         .iter()
-        .filter(|e| {
-            e.parent_uuid.is_none() || !uuid_to_entry.contains_key(e.parent_uuid.as_deref().unwrap_or_default())
-        })
         .copied()
+        .filter(|(entry, _)| entry.parent_uuid.as_deref().is_none_or(|id| !id_slots.contains_key(id)))
         .collect();
 
     // Multiple roots occur when a session's parent chain is broken (e.g. a
@@ -301,7 +301,7 @@ pub fn ordered_claude_code_message_entries(entries: &[ClaudeCodeEntry]) -> Vec<&
     // before its "user" prompt). Order roots by timestamp so the reconstructed
     // transcript stays chronological; entries without a timestamp keep their
     // relative file order behind timestamped ones.
-    roots.sort_by(|a, b| {
+    roots.sort_by(|(a, _), (b, _)| {
         let a_ts = parse_rfc3339_string(a.timestamp.as_deref());
         let b_ts = parse_rfc3339_string(b.timestamp.as_deref());
         match (a_ts, b_ts) {
@@ -313,30 +313,23 @@ pub fn ordered_claude_code_message_entries(entries: &[ClaudeCodeEntry]) -> Vec<&
     });
 
     for root in roots {
-        let mut current = root;
-        loop {
-            if let Some(ref uuid) = current.uuid {
-                if visited.contains(uuid) {
-                    break;
-                }
-                visited.insert(uuid.clone());
+        let mut next = Some(root);
+        while let Some((entry, slot)) = next {
+            if visited[slot] {
+                break;
             }
-            ordered_entries.push(current);
-
-            let next = message_entries.iter().find(|e| {
-                e.parent_uuid.as_ref() == current.uuid.as_ref()
-                    && e.uuid.as_ref().map(|u| !visited.contains(u)).unwrap_or(true)
-            });
-
-            match next {
-                Some(n) => current = n,
-                None => break,
-            }
+            visited[slot] = true;
+            ordered_entries.push(entry);
+            let Some(id) = entry.uuid.as_deref() else { break };
+            next = message_entries
+                .iter()
+                .copied()
+                .find(|(child, slot)| !visited[*slot] && child.parent_uuid.as_deref() == Some(id));
         }
     }
 
-    for entry in message_entries {
-        if entry.uuid.as_ref().map(|uuid| visited.contains(uuid)).unwrap_or(false) {
+    for (entry, slot) in message_entries {
+        if visited[slot] {
             continue;
         }
         ordered_entries.push(entry);
