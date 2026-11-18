@@ -154,6 +154,7 @@ The model that produces a structured summary can be changed with `summary_model`
 ### Derived caches
 
 - `checkpoint.json` holds the selected head, the source stamp (log epoch/inode, committed offset, anchor hash), the current metadata, the last compaction and the retained tail. A normal append does not rewrite the prefix.
+  On a cold rebuild the store verifies an indexed source for every active message, then counts compact JSON bytes from the newest message back to find the suffix that fits. A blob-backed message ends the inline suffix.
 - `sparse-index.jsonl` holds every 128th event plus message offsets, so old events can be fetched by byte range without a full replay.
 - `summary.json` and `.catalog.index.jsonl` are listing rows. Listing never parses a transcript.
 - `facade-cache.json` holds the session facade record and its hash. A session above the size cap keeps no cache and is rebuilt from the originals.
@@ -163,6 +164,8 @@ The model that produces a structured summary can be changed with `summary_model`
 ### Locks and the writer pool
 
 Each session's single `BlockingWriter` holds an `flock` on `.writer.lock` for the session's lifetime. A second writer, including one in another process, is answered `busy`. Catalog writes take `.catalog.lock`, and the catalog lock is never held while taking a session lock. A dirty session is rebuilt by whoever reads it, so a stale listing cannot outlive a failed cache refresh for long.
+
+Each catalog operation explicitly unlocks the file before closing its handle. A child process that inherits a copy of that handle cannot keep a finished operation's lock alive.
 
 Commit I/O does not create a dedicated thread per session. A process-wide writer pool creates `clamp(available_parallelism, 2, 4)` workers (`session-writer-0` and so on) once, and a session is pinned to one worker by the hash of its `registry_key` (the canonicalized session directory path). The key is canonicalized first so two spellings of the same session directory never land on different workers and open two `BlockingWriter`s. The hasher yields the same value for the life of the process, so a session stays on the same worker for its whole lifetime.
 

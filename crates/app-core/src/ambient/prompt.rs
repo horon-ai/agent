@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 
 use super::{AmbientState, Priority, ScheduleTarget, ScheduledItem};
 
@@ -15,7 +15,7 @@ pub struct MemoryGraphHealth {
     pub low_confidence: usize,
     pub contradictions: usize,
     pub missing_embeddings: usize,
-    pub last_consolidation: Option<DateTime<Utc>>,
+    pub last_consolidation: Option<Timestamp>,
 }
 
 /// Summary of a recent session for the ambient prompt.
@@ -123,7 +123,7 @@ pub fn gather_feedback_memories(memory_manager: &crate::memory::MemoryManager) -
             {
                 let status = format!("{:?}", transcript.status);
                 let summary = transcript.summary.as_deref().unwrap_or("no summary");
-                let age = format_duration_rough(Utc::now() - transcript.started_at);
+                let age = format_duration_rough(Timestamp::now() - transcript.started_at);
                 feedback.push(format!(
                     "Past cycle ({} ago, {}): {} memories modified, {} compactions — {}",
                     age,
@@ -156,7 +156,7 @@ pub fn gather_feedback_memories(memory_manager: &crate::memory::MemoryManager) -
 }
 
 /// Gather recent sessions since a given timestamp.
-pub fn gather_recent_sessions(since: Option<DateTime<Utc>>) -> Vec<RecentSessionInfo> {
+pub fn gather_recent_sessions(since: Option<Timestamp>) -> Vec<RecentSessionInfo> {
     let paths = match crate::session::store_paths() {
         Ok(paths) => paths,
         Err(_) => return Vec::new(),
@@ -165,7 +165,7 @@ pub fn gather_recent_sessions(since: Option<DateTime<Utc>>) -> Vec<RecentSession
         return Vec::new();
     }
 
-    let cutoff = since.unwrap_or_else(|| Utc::now() - chrono::Duration::hours(24));
+    let cutoff = since.unwrap_or_else(|| Timestamp::now() - TimeDelta::hours(24));
 
     // Pre-filter candidates by their original's modification stamps BEFORE
     // loading and parsing them. The sessions directory can hold tens of
@@ -175,7 +175,7 @@ pub fn gather_recent_sessions(since: Option<DateTime<Utc>>) -> Vec<RecentSession
     // or after the cutoff (minus a small margin for clock/write skew), then load
     // newest-first and stop once we have enough recent sessions.
     const RECENT_SESSION_LIMIT: usize = 20;
-    let mtime_cutoff = cutoff - chrono::Duration::hours(1);
+    let mtime_cutoff = cutoff - TimeDelta::hours(1);
 
     let Ok(sources) = horon_agent_session_store::reader::sources(&paths) else {
         return Vec::new();
@@ -183,7 +183,7 @@ pub fn gather_recent_sessions(since: Option<DateTime<Utc>>) -> Vec<RecentSession
     let mut candidates: Vec<horon_agent_session_store::reader::SessionSource> = sources
         .into_iter()
         .filter(|source| {
-            let modified_dt: DateTime<Utc> = source.modified.into();
+            let modified_dt: Timestamp = source.modified.into();
             modified_dt >= mtime_cutoff
         })
         .collect();
@@ -211,7 +211,7 @@ pub fn gather_recent_sessions(since: Option<DateTime<Utc>>) -> Vec<RecentSession
             if session.updated_at < cutoff {
                 continue;
             }
-            let duration = (session.updated_at - session.created_at).num_seconds().max(0);
+            let duration = (session.updated_at - session.created_at).whole_seconds().max(0);
             let extraction = if session.active_context().is_empty() {
                 "no messages"
             } else {
@@ -263,11 +263,16 @@ pub fn build_ambient_system_prompt(
     // --- Current State ---
     prompt.push_str("## Current State\n");
     if let Some(last_run) = state.last_run {
-        let ago = Utc::now() - last_run;
+        let ago = Timestamp::now() - last_run;
         let ago_str = format_duration_rough(ago);
+        // A stored record's calendar, not the folded instant: a cycle that
+        // ended on a leap second still names the `:60` second's date.
+        let utc = last_run.calendar_utc();
         prompt.push_str(&format!(
-            "- Last ambient cycle: {} ({} ago)\n",
-            last_run.format("%Y-%m-%d %H:%M UTC"),
+            "- Last ambient cycle: {} {:02}:{:02} UTC ({} ago)\n",
+            utc.date(),
+            utc.hour,
+            utc.minute,
             ago_str,
         ));
     } else {
@@ -287,7 +292,7 @@ pub fn build_ambient_system_prompt(
         prompt.push_str("Empty -- do general ambient work.\n");
     } else {
         for item in queue {
-            let age = Utc::now() - item.created_at;
+            let age = Timestamp::now() - item.created_at;
             let priority = match item.priority {
                 Priority::Low => "low",
                 Priority::Normal => "normal",
@@ -337,7 +342,7 @@ pub fn build_ambient_system_prompt(
     } else {
         for s in recent_sessions {
             let topic = s.topic.as_deref().unwrap_or("(no title)");
-            let dur = format_duration_rough(chrono::Duration::seconds(s.duration_secs));
+            let dur = format_duration_rough(TimeDelta::seconds(s.duration_secs));
             prompt.push_str(&format!(
                 "- {} | {} | {} | {} | extraction: {}\n",
                 s.id, s.status, dur, topic, s.extraction_status,
@@ -365,7 +370,7 @@ pub fn build_ambient_system_prompt(
         graph_health.missing_embeddings,
     ));
     if let Some(ts) = graph_health.last_consolidation {
-        let ago = format_duration_rough(Utc::now() - ts);
+        let ago = format_duration_rough(Timestamp::now() - ts);
         prompt.push_str(&format!("- Last consolidation: {} ago\n", ago));
     } else {
         prompt.push_str("- Last consolidation: never\n");
@@ -469,9 +474,9 @@ pub fn format_scheduled_session_message(item: &ScheduledItem) -> String {
     lines.join("\n")
 }
 
-/// Format a chrono::Duration into a rough human-readable string.
-pub(crate) fn format_duration_rough(d: chrono::Duration) -> String {
-    let secs = d.num_seconds().max(0);
+/// Format a [`TimeDelta`] into a rough human-readable string.
+pub(crate) fn format_duration_rough(d: TimeDelta) -> String {
+    let secs = d.whole_seconds().max(0);
     if secs < 60 {
         format!("{}s", secs)
     } else if secs < 3600 {

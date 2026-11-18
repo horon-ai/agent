@@ -56,7 +56,7 @@ fn chained_page(session: &Session, count: usize) -> SessionEventPage {
             store::EventId::new_v4(),
             parent.clone(),
             store::OriginId::new_v4(),
-            chrono::DateTime::UNIX_EPOCH,
+            horon_agent_time::Timestamp::UNIX_EPOCH,
             store::EventKind::new(store::KnownEventKind::MessageAppended),
             serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
             degradations: None,

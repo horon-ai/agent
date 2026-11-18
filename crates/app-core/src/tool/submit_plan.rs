@@ -11,7 +11,7 @@ use crate::plan_mode::{self, PlanState, SubmittedPlan};
 use crate::safety::{self, ApprovalDefault, PermissionRequest, PermissionResult, Urgency};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -148,7 +148,7 @@ impl Tool for SubmitPlanTool {
         let parsed: SubmitPlanInput = serde_json::from_value(input)?;
         let input = parsed.validate()?;
         let description = request_description(&input);
-        let now = Utc::now();
+        let now = Timestamp::now();
         let request = PermissionRequest {
             id: safety::new_request_id(),
             action: PLAN_ACTION.to_string(),

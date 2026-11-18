@@ -3,6 +3,7 @@ use crate::plan::VersionedPlan;
 use crate::protocol::ServerEvent;
 use horon_agent_agent_runtime::{InterruptSignal, SoftInterruptMessage, SoftInterruptQueue, SoftInterruptSource};
 use horon_agent_swarm_core::{SwarmLifecycleStatus, SwarmMemberRecord, SwarmRole};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -187,7 +188,7 @@ pub(crate) struct PendingFailoverEvent {
     pub attempt: u32,
     pub max: u32,
     pub reason: String,
-    pub emitted_at: chrono::DateTime<chrono::Utc>,
+    pub emitted_at: Timestamp,
 }
 
 impl PendingFailoverEvent {
@@ -471,7 +472,7 @@ fn persist_then_deliver(
             attempt: *attempt,
             max: *max,
             reason: reason.clone(),
-            emitted_at: chrono::Utc::now(),
+            emitted_at: Timestamp::now(),
         });
     }
     deliver(session_id, event)

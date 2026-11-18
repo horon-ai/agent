@@ -151,7 +151,7 @@ fn collect_read_exposure(
     context: &mut AgentGrepHarnessContext,
     focus: &mut HashSet<String>,
     exposure: ExposureDescriptor,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     let Some(file_path) = tool.input.get("file_path").and_then(|value| value.as_str()) else {
         return;
@@ -208,7 +208,7 @@ fn collect_agentgrep_exposure(
     context: &mut AgentGrepHarnessContext,
     focus: &mut HashSet<String>,
     exposure: ExposureDescriptor,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     let Some(mode) = tool.input.get("mode").and_then(|value| value.as_str()) else {
         return;
@@ -269,7 +269,7 @@ pub(super) fn collect_bash_exposure(
     context: &mut AgentGrepHarnessContext,
     focus: &mut HashSet<String>,
     exposure: ExposureDescriptor,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     let Some(command) = tool.input.get("command").and_then(|value| value.as_str()) else {
         return;
@@ -370,7 +370,7 @@ fn collect_outline_symbols(
     exposure: ExposureDescriptor,
     search_root: &Path,
     ctx: &ToolContext,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     for (kind, label, _start_line, _end_line) in parse_structure_items(content) {
         let symbol = tune_known_symbol(
@@ -401,7 +401,7 @@ pub(super) fn collect_trace_exposure(
     context: &mut AgentGrepHarnessContext,
     focus: &mut HashSet<String>,
     exposure: ExposureDescriptor,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     let mut current_file: Option<String> = None;
     let mut section: Option<&str> = None;
@@ -565,7 +565,7 @@ fn collect_shell_output_path_exposure(
     context: &mut AgentGrepHarnessContext,
     focus: &mut HashSet<String>,
     exposure: ExposureDescriptor,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     for (path, line_number) in parse_path_line_hits(content) {
         let Some(path) = normalize_context_path(&path, search_root, ctx) else {
@@ -613,7 +613,7 @@ pub(super) fn tune_known_file(
     exposure: ExposureDescriptor,
     search_root: &Path,
     ctx: &ToolContext,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) -> AgentGrepKnownFile {
     apply_exposure_tuning(
         Some(&mut known.structure_confidence),
@@ -635,7 +635,7 @@ pub(super) fn tune_known_region(
     exposure: ExposureDescriptor,
     search_root: &Path,
     ctx: &ToolContext,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) -> AgentGrepKnownRegion {
     apply_exposure_tuning(
         None,
@@ -657,7 +657,7 @@ fn tune_known_symbol(
     exposure: ExposureDescriptor,
     search_root: &Path,
     ctx: &ToolContext,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) -> AgentGrepKnownSymbol {
     apply_exposure_tuning(
         Some(&mut known.structure_confidence),
@@ -688,7 +688,7 @@ fn apply_exposure_tuning(
     exposure: ExposureDescriptor,
     search_root: &Path,
     ctx: &ToolContext,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) {
     let position_ratio = if exposure.total_messages <= 1 {
         1.0
@@ -729,10 +729,10 @@ fn apply_exposure_tuning(
 
 fn file_freshness_multiplier(
     path: &str,
-    exposure_time: Option<DateTime<Utc>>,
+    exposure_time: Option<Timestamp>,
     search_root: &Path,
     ctx: &ToolContext,
-    file_mtime_cache: &mut HashMap<String, Option<DateTime<Utc>>>,
+    file_mtime_cache: &mut HashMap<String, Option<Timestamp>>,
 ) -> f32 {
     let Some(exposure_time) = exposure_time else {
         return 0.7;
@@ -749,19 +749,19 @@ fn file_freshness_multiplier(
         return 1.0;
     }
 
-    let delta = modified_at.signed_duration_since(exposure_time);
-    if delta.num_seconds() <= 5 {
+    let delta = modified_at - exposure_time;
+    if delta.whole_seconds() <= 5 {
         0.92
-    } else if delta.num_minutes() <= 10 {
+    } else if delta.whole_minutes() <= 10 {
         0.68
-    } else if delta.num_hours() <= 6 {
+    } else if delta.whole_hours() <= 6 {
         0.45
     } else {
         0.25
     }
 }
 
-fn file_modified_at(path: &str, search_root: &Path, ctx: &ToolContext) -> Option<DateTime<Utc>> {
+fn file_modified_at(path: &str, search_root: &Path, ctx: &ToolContext) -> Option<Timestamp> {
     let candidate = if Path::new(path).is_absolute() {
         PathBuf::from(path)
     } else {
@@ -773,7 +773,7 @@ fn file_modified_at(path: &str, search_root: &Path, ctx: &ToolContext) -> Option
         }
     };
     let modified = std::fs::metadata(candidate).ok()?.modified().ok()?;
-    Some(DateTime::<Utc>::from(modified))
+    Some(Timestamp::from(modified))
 }
 
 fn push_known_file(context: &mut AgentGrepHarnessContext, known: AgentGrepKnownFile) {

@@ -2,10 +2,10 @@
 
 use std::time::Duration;
 
-use chrono::NaiveTime;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
+use time::Time;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
@@ -28,8 +28,8 @@ fn settings_from(text: &str) -> Settings {
         .clone()
 }
 
-fn time(hour: u32, minute: u32) -> NaiveTime {
-    NaiveTime::from_hms_opt(hour, minute, 0).expect("valid time")
+fn time(hour: u32, minute: u32) -> Time {
+    Time::from_hms(hour as u8, minute as u8, 0).expect("valid time")
 }
 
 fn sample() -> StatusData<'static> {

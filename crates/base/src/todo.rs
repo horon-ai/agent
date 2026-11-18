@@ -3,15 +3,12 @@
 
 use crate::storage;
 use anyhow::Result;
+use horon_agent_time::Timestamp;
 use std::path::PathBuf;
 
 pub use horon_agent_todo_policy::*;
 
 use horon_agent_todo_policy::store::{TodoFile, TodoReviewState, todo_file_path};
-
-#[cfg(test)]
-const TODO_LONG_SESSION_REVIEW_AFTER: chrono::Duration =
-    chrono::Duration::seconds(horon_agent_todo_policy::store::LONG_SESSION_REVIEW_AFTER_SECS);
 
 fn todo_state_path(session_id: &str, file: TodoFile) -> Result<PathBuf> {
     Ok(todo_file_path(&storage::horon_agent_dir()?, session_id, file))
@@ -62,7 +59,7 @@ pub fn update_todo_review_cycle(session_id: &str, previous: &[TodoItem], incomin
         storage::write_json_fast(
             &path,
             &TodoReviewState {
-                cycle_started_at: chrono::Utc::now(),
+                cycle_started_at: Timestamp::now(),
                 review_delivered: false,
             },
         )?;
@@ -78,7 +75,7 @@ pub fn take_long_session_review_if_due(session_id: &str) -> Result<bool> {
         return Ok(false);
     }
     let mut state: TodoReviewState = storage::read_json(&path)?;
-    if !state.is_due(chrono::Utc::now()) {
+    if !state.is_due(Timestamp::now()) {
         return Ok(false);
     }
     state.review_delivered = true;
@@ -186,6 +183,10 @@ fn gate_observations_path(session_id: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use horon_agent_time::Duration;
+
+    const TODO_LONG_SESSION_REVIEW_AFTER: Duration =
+        Duration::seconds(horon_agent_todo_policy::store::LONG_SESSION_REVIEW_AFTER_SECS);
 
     fn intent_observation(state: Option<IntentUnderstanding>) -> GateObservation {
         GateObservation {
@@ -292,7 +293,7 @@ mod tests {
         storage::write_json_fast(
             &path,
             &TodoReviewState {
-                cycle_started_at: chrono::Utc::now() - TODO_LONG_SESSION_REVIEW_AFTER - chrono::Duration::seconds(1),
+                cycle_started_at: Timestamp::now() - TODO_LONG_SESSION_REVIEW_AFTER - Duration::seconds(1),
                 review_delivered: false,
             },
         )

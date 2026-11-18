@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::session::event_store_api as store;
-use chrono::{DateTime, SecondsFormat, Utc};
+use horon_agent_time::{Precision, Timestamp};
 use std::path::Path;
 
 const PAGE_SIZE: usize = 50;
@@ -14,7 +14,7 @@ pub(super) struct ListRow {
     pub(super) session_id: String,
     pub(super) cwd: Option<String>,
     pub(super) title: Option<String>,
-    pub(super) updated_at: DateTime<Utc>,
+    pub(super) updated_at: Timestamp,
     pub(super) last_active_at_ms: Option<i64>,
     pub(super) archived: bool,
 }
@@ -64,7 +64,7 @@ impl ListRow {
     }
 
     fn updated_at_rfc3339(&self) -> String {
-        self.updated_at.to_rfc3339_opts(SecondsFormat::Millis, true)
+        self.updated_at.to_rfc3339_opts(Precision::Millis, true)
     }
 
     fn to_session_info(&self, cwd: &str) -> Value {

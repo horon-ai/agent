@@ -3,7 +3,7 @@
 //! This crate owns the durable, versioned event log contract for session history:
 //! the envelope shape, canonical JSON hashing, event identity, payload/blob record
 //! rules, and the typed store error surface. It depends only on
-//! `serde`, `serde_json`, `chrono`, `uuid`, `sha2` and
+//! `serde`, `serde_json`, `horon-agent-time`, `uuid`, `sha2` and
 //! the pure `horon-agent-session-types` / `horon-agent-message-types` types.
 //!
 //! It does not depend on `horon-agent-base`, `horon-agent-app-core`, or any
@@ -81,6 +81,11 @@ pub use history_page::HistoryPages;
 ///
 /// Derived files are never flushed, so this reaches only original writes.
 pub use horon_agent_platform::SyncMode;
+/// The stored instant every envelope and metadata field carries.
+///
+/// Re-exported because it is part of this crate's public signatures: a caller
+/// that builds or reads a record names the same type without a second import.
+pub use horon_agent_time::Timestamp;
 pub use paths::SessionPaths;
 pub use projection::{ProjectedMessage, Projection};
 pub use projection_operations::{EventStamp, ForkRequest, LocalHead, RewindPoint};

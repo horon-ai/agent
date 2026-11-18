@@ -3,7 +3,7 @@
 //! Tracks per-call token usage (user vs ambient), maintains a rolling usage log,
 //! and computes adaptive intervals for ambient cycles based on rate limit headroom.
 use crate::storage;
-use chrono::{Duration as ChronoDuration, Utc};
+use horon_agent_time::{Duration as ChronoDuration, Timestamp};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -79,7 +79,7 @@ impl UsageLog {
 
     /// Total tokens for a given source within a window.
     pub fn total_tokens_in_window(&self, source: &UsageSource, window: Duration) -> u64 {
-        let cutoff = Utc::now() - ChronoDuration::from_std(window).unwrap_or_default();
+        let cutoff = Timestamp::now() - ChronoDuration::try_from(window).unwrap_or_default();
         self.records
             .iter()
             .filter(|r| r.source == *source && r.timestamp >= cutoff)
@@ -115,7 +115,7 @@ impl UsageLog {
     // -- internal helpers ---------------------------------------------------
 
     fn rate_per_minute(&self, source: UsageSource, window: Duration) -> f32 {
-        let cutoff = Utc::now() - ChronoDuration::from_std(window).unwrap_or_default();
+        let cutoff = Timestamp::now() - ChronoDuration::try_from(window).unwrap_or_default();
         let total: u64 = self
             .records
             .iter()
@@ -127,7 +127,7 @@ impl UsageLog {
     }
 
     fn prune(&mut self) {
-        let cutoff = Utc::now() - ChronoDuration::hours(PRUNE_AGE_HOURS);
+        let cutoff = Timestamp::now() - ChronoDuration::hours(PRUNE_AGE_HOURS);
         self.records.retain(|r| r.timestamp >= cutoff);
     }
 }
@@ -195,8 +195,8 @@ impl AdaptiveScheduler {
         let window_remaining_secs = info
             .reset_at
             .map(|r| {
-                let diff = r - Utc::now();
-                diff.num_seconds().max(0) as f64
+                let diff = r - Timestamp::now();
+                diff.whole_seconds().max(0) as f64
             })
             .unwrap_or(3600.0); // default 1 hour if unknown
 
@@ -277,7 +277,7 @@ mod tests {
 
     fn make_record(source: UsageSource, tokens: u32, mins_ago: i64) -> UsageRecord {
         UsageRecord {
-            timestamp: Utc::now() - ChronoDuration::minutes(mins_ago),
+            timestamp: Timestamp::now() - ChronoDuration::minutes(mins_ago),
             source,
             tokens_input: tokens / 2,
             tokens_output: tokens / 2,
@@ -363,7 +363,7 @@ mod tests {
             remaining_tokens: Some(0),
             limit_requests: None,
             remaining_requests: None,
-            reset_at: Some(Utc::now() + ChronoDuration::hours(1)),
+            reset_at: Some(Timestamp::now() + ChronoDuration::hours(1)),
         };
         let interval = scheduler.calculate_interval(Some(&info));
         assert_eq!(interval, Duration::from_secs(120 * 60));
@@ -384,7 +384,7 @@ mod tests {
             remaining_tokens: Some(500_000),
             limit_requests: None,
             remaining_requests: None,
-            reset_at: Some(Utc::now() + ChronoDuration::hours(1)),
+            reset_at: Some(Timestamp::now() + ChronoDuration::hours(1)),
         };
 
         let interval = scheduler.calculate_interval(Some(&info));
@@ -408,7 +408,7 @@ mod tests {
             remaining_tokens: Some(500_000),
             limit_requests: None,
             remaining_requests: None,
-            reset_at: Some(Utc::now() + ChronoDuration::hours(1)),
+            reset_at: Some(Timestamp::now() + ChronoDuration::hours(1)),
         };
 
         let before = scheduler.calculate_interval(Some(&info));
@@ -462,7 +462,7 @@ mod tests {
 
         // Record from 25 hours ago (should be pruned).
         log.records.push(UsageRecord {
-            timestamp: Utc::now() - ChronoDuration::hours(25),
+            timestamp: Timestamp::now() - ChronoDuration::hours(25),
             source: UsageSource::User,
             tokens_input: 100,
             tokens_output: 100,

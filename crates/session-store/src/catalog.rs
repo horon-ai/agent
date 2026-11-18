@@ -15,7 +15,19 @@ pub fn needs_compaction(dead: u64, live: u64) -> bool {
     dead > live.saturating_mul(2) || dead > 64 * 1024 * 1024
 }
 
-fn lock(paths: &SessionPaths) -> Result<File, StoreError> {
+struct CatalogLock(File);
+
+impl Drop for CatalogLock {
+    fn drop(&mut self) {
+        // A concurrently spawned child can retain the same open file description
+        // until exec. Closing only our handle would leave the listing locked.
+        if let Err(error) = self.0.unlock() {
+            eprintln!("could not release the session catalog lock: {error}");
+        }
+    }
+}
+
+fn lock(paths: &SessionPaths) -> Result<CatalogLock, StoreError> {
     // The store root is the anchor for every other private path: a permissive
     // root would let another user replace the catalog underneath this lock.
     // Windows keeps it private through the agent home's inherited ACL, so only
@@ -30,7 +42,7 @@ fn lock(paths: &SessionPaths) -> Result<File, StoreError> {
         Err(e) => return Err(e.into()),
     };
     crate::writer::lock_exclusive_named(&file, "catalog index")?;
-    Ok(file)
+    Ok(CatalogLock(file))
 }
 fn sessions(paths: &SessionPaths) -> Result<Vec<SessionId>, StoreError> {
     let mut ids = Vec::new();
@@ -249,4 +261,28 @@ pub fn list(paths: &SessionPaths, probe: ReadProbe) -> Result<Vec<Summary>, Stor
         .collect::<Result<_, _>>()?;
     result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.session_id.cmp(&b.session_id)));
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_finished_catalog_owner_releases_the_listing_even_with_a_duplicate_handle() -> Result<(), StoreError> {
+        let root = std::env::temp_dir()
+            .canonicalize()?
+            .join(format!("catalog-owner-{}", uuid::Uuid::new_v4()));
+        horon_agent_platform::fs::create_private_dir(&root)?;
+        let paths = SessionPaths::new(&root);
+        let owner = lock(&paths)?;
+        let duplicate = owner.0.try_clone()?;
+        let held = list(&paths, ReadProbe::default());
+        drop(owner);
+        let released = list(&paths, ReadProbe::default());
+        drop(duplicate);
+        fs::remove_dir_all(root)?;
+        assert_eq!(held.unwrap_err().code, StoreErrorCode::Busy);
+        assert!(released?.is_empty());
+        Ok(())
+    }
 }

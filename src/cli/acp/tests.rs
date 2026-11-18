@@ -806,7 +806,7 @@ fn list_row(id: &str, cwd: Option<&str>, last_active_at_ms: i64, archived: bool)
         session_id: id.to_string(),
         cwd: cwd.map(str::to_string),
         title: Some(format!("title {id}")),
-        updated_at: chrono::DateTime::from_timestamp_millis(last_active_at_ms).unwrap(),
+        updated_at: horon_agent_time::Timestamp::from_timestamp_millis(last_active_at_ms).unwrap(),
         last_active_at_ms: Some(last_active_at_ms),
         archived,
     }

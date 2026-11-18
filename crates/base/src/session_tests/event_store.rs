@@ -617,7 +617,7 @@ fn resident_context_reports_the_released_prefix_after_compaction() -> Result<()>
         store::EventId::new_v4(),
         Some(head),
         store::OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
         store::EventKind::new(store::KnownEventKind::Compacted),
         serde_json::json!(payload),
     )

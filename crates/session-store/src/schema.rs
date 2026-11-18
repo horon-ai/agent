@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use horon_agent_session_types::{EnvSnapshot, StoredMemoryInjection, StoredMessage};
+use horon_agent_time::{Precision, Timestamp};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -237,7 +237,7 @@ pub struct EventEnvelope {
     pub parent_event_id: Option<EventId>,
     pub origin_id: OriginId,
     /// Display-only event time. It is hashed, so it is part of identity.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub kind: EventKind,
     /// Inline payload, mutually exclusive with payload_ref.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,7 +264,7 @@ pub struct EventDraft {
     pub event_id: EventId,
     pub parent_event_id: Option<EventId>,
     pub origin_id: OriginId,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub kind: EventKind,
     pub payload: Value,
 }
@@ -277,7 +277,7 @@ impl EventDraft {
         event_id: EventId,
         parent_event_id: Option<EventId>,
         origin_id: OriginId,
-        timestamp: DateTime<Utc>,
+        timestamp: Timestamp,
         kind: EventKind,
         payload: Value,
     ) -> Self {
@@ -701,8 +701,8 @@ pub struct SessionMetadata {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_title: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -944,8 +944,8 @@ pub fn canonical_json(value: &Value) -> Result<String, StoreError> {
 
 /// The canonical timestamp form used inside hashed content: UTC RFC3339 with
 /// fixed nanosecond precision, so equal instants never hash differently.
-pub fn canonical_timestamp(timestamp: &DateTime<Utc>) -> String {
-    timestamp.to_rfc3339_opts(SecondsFormat::Nanos, true)
+pub fn canonical_timestamp(timestamp: &Timestamp) -> String {
+    timestamp.to_rfc3339_opts(Precision::Nanos, true)
 }
 
 /// Lowercase hex SHA-256 of the given bytes.
@@ -1108,16 +1108,13 @@ pub fn legacy_event_id(session_id: &str, source_kind: &str, normalized_ordinal: 
 }
 
 /// The fixed timestamp for a migrated event with no recorded time.
-pub fn legacy_epoch_timestamp() -> DateTime<Utc> {
-    DateTime::UNIX_EPOCH
+pub fn legacy_epoch_timestamp() -> Timestamp {
+    Timestamp::UNIX_EPOCH
 }
 
 /// Pick a migrated event's timestamp: the original event time, else the session
 /// creation time, else the fixed epoch. Never the current time.
-pub fn pick_legacy_timestamp(
-    event_time: Option<DateTime<Utc>>,
-    session_created_at: Option<DateTime<Utc>>,
-) -> DateTime<Utc> {
+pub fn pick_legacy_timestamp(event_time: Option<Timestamp>, session_created_at: Option<Timestamp>) -> Timestamp {
     event_time.or(session_created_at).unwrap_or_else(legacy_epoch_timestamp)
 }
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use horon_agent_session_types::SessionStatus;
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -209,7 +209,7 @@ pub struct JournalRecord {
     pub session_id: String,
     pub kind: RecordKind,
     pub id: String,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub payload: Payload,
 }
 
@@ -220,7 +220,7 @@ struct RowRef<'a> {
     session_id: &'a str,
     kind: &'static str,
     id: &'a str,
-    at: DateTime<Utc>,
+    at: Timestamp,
     payload: Value,
 }
 
@@ -231,7 +231,7 @@ struct RawRow {
     session_id: String,
     kind: String,
     id: String,
-    at: DateTime<Utc>,
+    at: Timestamp,
     payload: Value,
 }
 
@@ -348,7 +348,7 @@ pub struct Binding {
     pub rev: u64,
     pub status: SessionStatus,
     pub last_pid: Option<u32>,
-    pub last_active_at: Option<DateTime<Utc>>,
+    pub last_active_at: Option<Timestamp>,
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
@@ -528,14 +528,14 @@ pub struct InputReceipt {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StopEntry {
     pub cause: StopCause,
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub seq: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RunEntry {
     pub seq: u64,
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

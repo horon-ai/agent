@@ -27,11 +27,35 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 
 검증이 끝나면 `stable`, `current`, 런처 링크와 업데이트 메타데이터를 함께 바꾼다. 중간 단계가 실패하면 롤백하므로 이전 설치가 그대로 남는다 (`crates/app-core/src/update/activation.rs`). 명령은 네트워크에서 아무것도 내려받지 않는다. 자산을 준비하는 일은 호출자 몫이다.
 
+## 압축 형식
+
+FreeBSD x64 압축 파일은 POSIX ustar 형식을 쓴다. FreeBSD `tar`와 `install-release`는 모두 최상위에서 일반 파일 `horon-agent-freebsd-x86_64`와 `LICENSE`를 읽는다. 업로드 전에 `scripts/release/agent_archive.sh pack <dist-dir> <binary>`로 압축 형식, 파일 이름, 실행 권한과 원본 바이트를 확인한다. 이어서 릴리스 작업은 압축 파일로 설치한 실행 파일이 빌드 결과와 일치하는지 확인하고 런처를 실행한다.
+
+`scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]`는 새 폴더에 설치한 뒤 같은 폴더에 다시 설치한다. 두 번 모두 설치본의 바이트가 원본과 일치하고 런처가 원본과 같은 버전을 출력해야 한다. FreeBSD 시험을 `official_asset=v0.1.14`로 요청하면 공개 체크섬을 확인한 뒤 그 릴리스의 실행 파일을 다시 포장해 설치를 다섯 쌍 검증한다. 로그와 압축 파일 목록은 `freebsd-archive-evidence-<tag>`에 저장한다.
+
 ## 설치 스크립트와의 관계
 
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 릴리스 자산과 `SHA256SUMS`를 임시 디렉터리에 받은 뒤 이 명령을 호출한다. `scripts/install/install_from_source.sh`는 같은 명령에 `--source-binary`를 붙여 로컬 빌드를 설치한다. 그래서 셸과 PowerShell이 서로 다른 설치 레이아웃을 만들지 않고, 실패하면 스크립트도 이전 설치를 건드리지 않는다.
 
+PowerShell 설치기는 릴리스 파일을 받는 동안만 진행 표시를 끈다. 스크립트를 `iex`로 실행해도 호출자의 `$ProgressPreference` 설정은 유지된다.
+
 Windows 설치 경로와 서명 절차는 [`WINDOWS.ko.md`](WINDOWS.ko.md)에 있다.
+
+## 릴리스 다운로드 캐시
+
+`scripts/install/install.sh`는 설치하는 자산의 마지막으로 검증된 사본을 보관해, 재설치 때 같은 파일을 다시 내려받지 않는다. `install.ps1`은 이 캐시를 쓰지 않는다.
+
+| 항목 | 위치 |
+| --- | --- |
+| 캐시 루트 | `$XDG_CACHE_HOME`, 없으면 Linux·FreeBSD는 `~/.cache`, macOS는 `~/Library/Caches` |
+| 보관 파일 | `<캐시 루트>/horon-agent/release/<자산 이름>`, 자산 이름마다 파일 하나 |
+
+- `SHA256SUMS`는 실행할 때마다 `https://github.com/horon-ai/agent/releases/download/<태그>/`에서 받고 저장하지 않는다. 보관한 사본은 이번 실행에서 받은 목록이 그 자산 이름에 같은 다이제스트를 줄 때만 재사용한다.
+- 보관한 사본은 재료일 뿐이다. 바이트를 임시 자산 디렉터리로 복사하고 그 사본을 이번 실행의 목록과 대조하므로, `install-release`에 넘어가는 파일은 검증한 파일과 같다.
+- 캐시는 캐시 루트를 담은 디렉터리, 캐시 루트, 그 아래 만든 디렉터리가 모두 현재 사용자 소유의 실제 디렉터리이고 그룹과 다른 사용자의 쓰기 비트가 꺼져 있을 때만 쓴다. `/tmp` 같은 공유 위치, 심볼릭 링크, 읽을 수 없는 모드, 다른 사용자 소유 디렉터리면 그 실행에서는 캐시를 쓰지 않고 아무것도 쓰지 않는다.
+- `install-release`가 성공하면 설치기는 검증한 파일을 캐시의 임시 이름으로 옮긴 뒤 최종 이름을 붙인다. 같은 파일시스템에서는 내려받은 파일을 그대로 옮긴다. 파일시스템이 다르면 임시 이름으로 복사를 마친 뒤 이름을 바꾼다. 동시에 실행한 설치기는 완성된 파일만 읽는다.
+- 훼손된 사본, 이번 릴리스가 목록에 넣지 않은 사본, 쓸 수 없는 캐시는 다운로드 경로로 넘어간다. 캐시 때문에 설치가 실패하지는 않는다.
+- `HORON_AGENT_NO_DOWNLOAD_CACHE=1`을 주면 그 실행에서 캐시를 쓰지 않는다. `rm -rf <캐시 루트>/horon-agent`로 지우며, 변경 불가 버전 디렉터리와 런처, 제거 절차는 이 캐시에 의존하지 않는다.
 
 ## npm에서 설치 (아직 게시되지 않음)
 
@@ -50,7 +74,7 @@ npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신�
 
 릴리스는 TUI 모드가 도는 클라이언트인 TUI 바이너리 `horon-tui`도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다. 두 바이너리는 같은 `release.yml` 실행이 같은 태그 커밋에서 빌드하고 같은 버전 디렉터리에 함께 놓이므로, 클라이언트만의 릴리스나 채널은 따로 없다. 버전 문자열은 다르다. `horon-agent --version`은 릴리스 태그에서 버전을 만들고(`crates/build-meta`), `horon-tui --version`은 `crates/tui` 패키지 버전을 출력한다(`crates/tui/src/lib.rs`).
 
-`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이고 각 압축이 담은 `LICENSE`도 같은 곳에 설치되므로, 한 버전 디렉터리가 두 실행 파일과 그 실행 파일을 규율하는 라이선스를 들고 활성화가 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
+`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. `install.sh`는 `SHA256SUMS`를 받은 직후 이 전송을 띄워 에이전트 다운로드와 겹치게 하고, 매니페스트에 이름이 올라간 압축 파일만 요청한다. 두 전송이 모두 끝나고 클라이언트 검증까지 마친 뒤에 `install-release`를 부른다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이고 각 압축이 담은 `LICENSE`도 같은 곳에 설치되므로, 한 버전 디렉터리가 두 실행 파일과 그 실행 파일을 규율하는 라이선스를 들고 활성화가 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
 
 클라이언트는 모든 단계에서 선택 사항이고, 검증하지 못한 사본은 에이전트 설치를 막지 않는다.
 
@@ -112,9 +136,11 @@ TypeScript·Python SDK의 `launch()`는 Linux에서 자기 인스턴스를 직�
 
 아카이브에는 래퍼, `<artifact>.bin`, `LICENSE`가 들어 있고 OpenSSL 라이브러리는 더 이상 들어가지 않는다. `scripts/install/install.sh`는 예전 아카이브도 설치하도록 `libssl.so*` 멤버를 계속 받는다.
 
+셸 설치기는 체크섬과 압축 파일 안의 모든 이름을 확인한 뒤 설치용 실행 파일을 준비한다. 리눅스에서는 임시 디렉터리에 압축을 푼 크기의 두 배가 들어갈 때만 압축을 한 번 풀고, 이름 확인과 추출이 그 결과를 함께 읽는다. 그럴 공간이 없으면 압축 파일을 단계마다 다시 읽는다. 그 이미지에서 꺼내다 실패하면 원래 압축 파일에서 한 번 다시 꺼낸다. 파일이 둘 이상 필요하면 GNU tar로 압축 파일을 한 번 읽어 필요한 파일을 모두 꺼낸다. 다른 tar 구현을 쓰면 파일을 하나씩 꺼낸다.
+
 ### CI 가드
 
-`scripts/ci/check_linux_bare_runtime.sh <binary>`가 바이너리를 `debian:trixie-slim`에서 돌린다. 컨테이너에서 OpenSSL 라이브러리와 CA 저장소를 지우고, `ldd` 결과가 glibc 계열과 libgcc 허용 목록 안에 있는지 확인한다. 이어서 `--version`과 모의 프로바이더를 상대로 `run` 한 턴을 실행한다. CI `build` 작업의 Linux 항목이 release 프로필 빌드 뒤에 이 스크립트를 돌린다. 이 단계는 GitHub 호스팅 러너에서만 돈다 (`CI_SELF_HOSTED`를 켜면 macOS 항목만 남는다). Docker가 있으면 개발자 기계에서도 같은 명령을 돌릴 수 있다.
+`scripts/ci/check_linux_bare_runtime.sh <binary>`가 바이너리를 `debian:trixie-slim`에서 돌린다. 컨테이너에서 OpenSSL 라이브러리와 CA 저장소를 지우고, `ldd` 결과가 glibc 계열과 libgcc 허용 목록 안에 있는지 확인한다. 이어서 `--version`과 모의 프로바이더를 상대로 `run` 한 턴을 실행한다. CI `build` 작업의 Linux 항목이 release 프로필 빌드 뒤에 이 스크립트를 돌린다. Docker가 있으면 개발자 기계에서도 같은 명령을 돌릴 수 있다.
 
 ## 릴리스 번호와 자동 발행
 

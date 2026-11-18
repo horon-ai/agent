@@ -1,5 +1,5 @@
 use super::*;
-use chrono::Duration;
+use horon_agent_time::{Duration, Timestamp};
 use std::fs;
 
 fn test_ctx(root: &Path) -> ToolContext {
@@ -16,7 +16,7 @@ fn test_ctx(root: &Path) -> ToolContext {
 
 fn test_exposure(message_index: usize, total_messages: usize) -> ExposureDescriptor {
     ExposureDescriptor {
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
         message_index,
         total_messages,
         compaction_cutoff: None,
@@ -892,7 +892,7 @@ fn tuning_penalizes_compacted_history() {
     let tuned = tune_known_file(
         known,
         ExposureDescriptor {
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
             message_index: 1,
             total_messages: 10,
             compaction_cutoff: Some(8),
@@ -928,7 +928,7 @@ fn tuning_detects_file_changed_since_seen() {
             reasons: vec!["test"],
         },
         ExposureDescriptor {
-            timestamp: Some(Utc::now() - Duration::hours(1)),
+            timestamp: Some(Timestamp::now() - Duration::hours(1)),
             message_index: 9,
             total_messages: 10,
             compaction_cutoff: None,

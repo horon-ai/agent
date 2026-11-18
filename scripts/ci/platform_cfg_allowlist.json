@@ -364,6 +364,10 @@
       "count": 1,
       "reason": "one `#[cfg(unix)]` test method asserting the client terminal-env snapshot captures set vars only; the spawn and launch surfaces were removed, so no OS primitive remains in the file."
     },
+    "crates/time-types/src/tests.rs": {
+      "count": 1,
+      "reason": "The historical system-offset test uses TZ in a child process to select a POSIX time zone. Windows uses the system zone independently of that variable."
+    },
     "crates/update-core/src/lib.rs": {
       "count": 7,
       "reason": "the release asset name and SHA-256 pin for each supported target triple (linux/macos/windows/freebsd x x86_64/aarch64); the mapping is the product of the updater."

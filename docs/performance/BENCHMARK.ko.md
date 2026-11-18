@@ -42,17 +42,19 @@ gh workflow run benchmark.yml --ref dev -f os=linux,macos -f suites=compare,tool
 gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
 gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=tools -f baseline_ref=dev   # 도구 호출당 데몬 CPU, 브랜치와 dev 비교
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5     # OS·아키텍처별 설치 시간(별도 선택)
 ```
 
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
-| `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. |
-| `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile` 중 쉼표로 고른다. |
+| `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. 설치 묶음은 `freebsd`도 받고 묶음마다 아키텍처 수만큼 작업을 띄운다. 일반 묶음은 이 자리에서 세 호스트 OS에서만 돈다. |
+| `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`, `install` 중 쉼표로 고른다. `all`은 일반 묶음 전부를 뜻하고 `install`은 넣지 않는다. 설치 묶음은 이름을 적어야만 도는 별도 선택이다 |
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
 | `turns` | `3` | 세션마다 보내는 턴 수 |
-| `oneshot_runs` | `5` | one-shot·스킬·MCP 칸을 빌드마다 몇 번 잴지. `compare.md`의 Host 줄에 이 횟수가 적힌다. 중앙값의 최소 기준이 5이고, 가까운 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다 |
-| `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 번갈아 잰다. `compare`에서는 `horon-base` 줄이 되고 `tools`에서는 두 번째 데몬이 된다. 같은 러너의 전후 비교가 된다 |
+| `oneshot_runs` | `5` | one-shot·스킬·MCP 칸을 빌드마다 몇 번 잴지. `compare.md`의 Host 줄에 이 횟수가 적힌다. 중앙값의 최소 기준이 5이고, 가까운 두 빌드의 중앙값을 가려야 하면 20 정도로 올린다. 설치 묶음은 이 값을 표본 수로 써서 도구마다 콜드 설치와 웜 설치를 그만큼씩 잰다 |
+| `install_ref` | 실행을 요청한 커밋 | `install`에서 잴 후보 설치기의 브랜치나 커밋. 측정 스크립트는 실행을 요청한 커밋에서 읽는다. |
+| `baseline_ref` | 빈 값 | 지정하면 그 커밋을 같은 작업 안에서 따로 빌드해 번갈아 잰다. `compare`에서는 `horon-base` 줄이 되고 `tools`에서는 두 번째 데몬이 된다. 설치 묶음은 같은 ref를 작업 안에 따로 체크아웃해 같은 릴리스 자산으로 설치 경로만 번갈아 잰다. 같은 러너의 전후 비교가 된다 |
 | `features` | 빈 값 | **후보** release 빌드에만 붙는 cargo feature(`--features <값>`). `horon-base` 빌드에는 붙지 않으므로 두 줄을 계속 비교할 수 있다. 비우면 빌드 명령이 이 입력이 없던 때와 바이트까지 같고, 아티팩트의 `features.txt`에는 빈 줄이 남는다. 값은 `^[a-z0-9_,-]*$`를 만족해야 한다. `build` 작업의 rust-cache 항목이 이 값으로 갈리므로 feature 빌드가 기본 아티팩트를 재사용하지 않는다 |
 
 모르는 OS나 묶음 이름이면 실행이 바로 실패한다(`scripts/perf/bench_select.py`). 결과는 OS별 `merge` 작업 요약과 `benchmark-<os>-<run_id>` 아티팩트(JSON, 마크다운)로 30일 남는다. 중간 아티팩트 이름은 `benchmark-`로 시작하지 않으므로 `benchmark-docs.yml`의 다운로드에 섞이지 않는다.
@@ -79,8 +81,43 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연, Linux에서는 호출당 데몬 CPU 시간과 문맥 전환 수도 잰다 |
 | `reload` | `bench_reload_storm.py` | 세션 N개(1, 10, 40)를 동시에 다시 열어 `history`가 올 때까지의 지연 |
-| `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 설치 크기 |
+| `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 별도 `scroll_bench` 예제로 큰 세션을 스크롤할 때의 held 프레임, 설치 크기 |
 | `compile` | `bench_compile.py` | `cargo check`의 변경 없음, `src/main.rs`·`crates/app-core`·build-meta 수정 뒤 재빌드 시간 |
+| `install` | `bench_install.py` | 배포 릴리스와 경쟁 도구의 설치 시간을 OS·아키텍처별로 콜드·웜으로 잰다. 이름을 적어야만 도는 별도 선택이고 `all`에는 들지 않는다([설치 시간](#설치-시간install) 참고) |
+
+### 설치 시간(`install`)
+
+`.github/workflows/benchmark-install.yml`이 소유하고, `suites`에 `install`을 적었을 때 `benchmark.yml`이 부른다. 위 묶음들과 다른 것을 묻는다. 깨끗한 기계가 실제 인터넷으로 horon을 설치하는 데 걸리는 시간, 그리고 경쟁 도구를 설치하는 시간과 견주면 어떤가다.
+
+이 묶음은 별도 선택이다. `suites=all`은 절대 고르지 않으므로 `main` 자동 측정과 기존 실행은 예전에 재던 것만 그대로 잰다.
+
+측정 대상은 **배포된 릴리스**이지 측정 중인 코드가 아니다. 릴리스는 `RELEASE_TAG`(`v0.1.14`)로 고정한다. `install-release`는 어느 작업 트리에서 불러도 같은 릴리스 바이트를 검증·압축 해제·활성화하므로 Rust 변경은 이 수치를 움직이지 못한다. 작업 트리가 기여하는 것은 설치 경로 자체(`scripts/install/install.sh`, `scripts/install/install.ps1`)이고, `baseline_ref` 쌍이 그 경로의 변경을 가려낸다.
+
+`os`는 운영체제 네 종류를 받고 아키텍처마다 작업 하나를 실행한다. `linux`는 `linux-x86_64`와 `linux-aarch64`, `macos`는 `macos-aarch64`와 `macos-15-intel`의 `macos-x86_64`, `windows`는 `windows-x86_64`와 `windows-11-arm`의 `windows-aarch64`, `freebsd`는 FreeBSD 15.1 가상 머신의 `freebsd-x86_64`를 선택한다. `all`은 네 종류를 모두 선택한다. 각 플랫폼은 원본 JSON과 로그를 `install-<platform>-<run_id>`에 올린다. **Install results** 작업은 실행 요약에 전체 표를 게시하고 같은 표를 `install-summary-<run_id>`에 저장한다. 보관 기간은 30일이다.
+
+**측정 구간.** `install_ms`는 설치 프로세스가 성공으로 종료할 때까지 걸린 시간이다. `first_version_ms`는 설치된 실행 파일의 첫 `--version` 프로세스가 종료할 때까지 걸린 시간이다. `total_ms`에는 두 구간과 그 사이에 실행 파일 경로를 찾는 시간이 들어간다. Horon은 고정한 태그와 같은 버전을 출력해야 한다. 실패한 표본에는 오류를 기록하고 통계에서 제외한다. Horon 표본이 실패하면 보고서를 쓴 뒤 작업을 실패로 처리한다.
+
+| 모드 | 시작 상태 |
+| --- | --- |
+| 콜드 | 새 임시 설치 폴더, 빈 릴리스 다운로드 폴더, 빈 npm 캐시. 압축 파일과 npm 타르볼이 모두 네트워크로 온다 |
+| 웜 | 첫 설치 때 사용한 설치 폴더와 패키지 캐시를 그대로 두고 같은 설치기를 다시 실행한다. 임시 배포물을 지우는 설치기는 다시 내려받는다 |
+
+모드마다 다섯 표본이 최소 기준이다(`oneshot_runs`, 기본 5). 칸마다 중앙값, 중앙값 절대 편차(MAD, 중앙값과의 차이의 중앙값), 최솟값, 최댓값, 표본 수를 적는다. 표준 편차 대신 MAD를 쓰는 이유는 공유 러너의 다운로드와 npm 꼬리 지연이 대칭이 아니기 때문이다. 두 값의 최솟값–최댓값 범위가 겹치는 칸은 우위가 아니라 무승부다. 플랫폼끼리, 실행끼리 절대값을 비교하지 않는다. 러너와 네트워크 경로, 레지스트리 미러가 달라진다.
+
+경쟁 도구 설치나 첫 실행이 실패하면 표본의 `error`에 원인을 기록하고 다른 도구를 계속 잰다. `omp`에 필요한 Bun처럼 운영체제에서 실행 파일과 런타임을 모두 구할 수 있어야 한다. FreeBSD 작업은 jcode의 FreeBSD x86_64 배포물을 사용한다.
+
+**기준선.** `-f baseline_ref=<ref>`를 주면 그 ref를 작업 안 `.bench-baseline`에 따로 체크아웃하고, 체크아웃한 트리와 그 설치 경로를 같은 고정 자산으로 견준다. 이 입력이 없으면 두 실행의 차이는 두 네트워크 경로의 차이일 뿐이다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5
+gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=install -f competitors=jcode
+gh workflow run benchmark.yml --ref <benchmark-branch> -f suites=install -f os=linux,macos -f install_ref=<candidate-sha> -f baseline_ref=<base-sha>
+gh workflow run benchmark.yml --ref <branch> -f os=freebsd -f suites=install
+```
+
+여기서는 Rust를 컴파일하지 않고, 릴리스에 쓰지 않고, 시크릿도 쓰지 않는다. 모든 다운로드는 공개 릴리스 자산이나 공개 npm 패키지다. Windows 설치기가 사용자별 `PATH`를 실제로 고치므로 작업은 버려지는 GitHub 호스티드 러너에서만 돈다. 계측은 보고서를 쓰기 전에 원래 값을 되돌린다.
+
+macOS를 포함한 모든 플랫폼에서 위 명령으로 측정을 시작한다. 측정 스크립트는 GitHub 호스팅 러너에서 첫 설치와 재설치를 적어도 다섯 쌍 실행한다. 전체 표에는 성공 수와 실제 시도 수, 건너뛴 재설치, 누락된 보고서를 표시한다. 설치와 첫 실행의 중앙값을 각각 싣고 전체 시간은 중앙값, 중앙 절대 편차(MAD), 범위를 싣는다. 각 표본과 오류 원문은 플랫폼별 JSON에 남는다.
 
 ### 자동 측정
 
@@ -140,7 +177,8 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `oneshot_core` | 같은 one-shot 질문에서 `--tools`를 뺀 실행. 요청이 기본 `core` 표면을 싣는다. 즉시 보내는 도구 7개와 `toolbox`, 시스템 프롬프트의 도구 인덱스다. 행마다 plain one-shot의 home과 작업 폴더를 다시 쓰므로 두 행은 도구 표면만 다르다. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`이고 실행마다 `oneshot_core.runs[*].request_bytes`가 남는다. 첫 요청이 도구를 하나도 싣지 않은 실행은 시간 없이 `core surface missing`으로 기록한다. core 프로필이 없는 도구(horon과 두 번째 horon 빌드를 뺀 모든 도구)는 `{"skipped": "<label> has no core tool profile"}`을 남긴다. `oneshot_ms` 행은 `RESULTS.md`와 비교할 수 있도록 `--tools bash`를 그대로 쓴다 |
 | `fsync_calls` | `--syscalls`를 켰을 때 질문 1건이 부르는 `fsync`·`fdatasync` 수. 시간을 재는 실행과 별도로, 같은 횟수만큼 `strace`를 씌운 실행을 더 돌려 센다. Linux에서 `strace`가 있을 때만 재고, 없으면 `skipped`에 사유가 남는다 |
 | `fsync_paths` | `--syscalls`를 켰을 때 행마다 one-shot을 한 번 더 돌린다. 시간도 재지 않고 호출 수에도 넣지 않는 이 실행을 `strace -f -y`로 추적해 `fsync`·`fdatasync`마다 그 fd 뒤의 파일이나 폴더 이름을 얻는다. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`이고 호출이 많은 순서다. 실행의 임시 루트는 `<root>`로, 세션 폴더 이름(`session_<word>_<millis>_<hex>`)은 `session_<id>`로, UUID와 긴 hex id, 긴 숫자열은 `<id>`로 적어 두 실행과 두 빌드가 같은 묶음으로 나뉜다. `strace`가 이름을 얻지 못한 fd는 `fd:<n>`이다. 묶음 수의 합은 추적한 그 실행이 한 flush 수와 같다. `strace`가 없으면 값은 `{"skipped": "strace unavailable"}`이다 |
-| `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다 |
+| `sessions_memory` | N개 동시 세션 × K턴 뒤 idle과 턴 직후의 프로세스 트리 메모리. 첫 세션 값과 세션당 증가분(최소제곱 기울기)을 낸다. 표본마다 그 트리에 살아 있는 프로세스 수도 `idle_process_count`, `post_turn_process_count`로 함께 남긴다 |
+| `process_count` | 주어진 세션 수에서 도구가 살려 두는 프로세스 수. 지점별로는 `sessions_memory.points[*].{idle_process_count,post_turn_process_count}`에, 요약으로는 `first_session_idle_processes`·`each_additional_idle_processes`와 `post_turn` 쪽 같은 두 값에 남는다. 개수와 RSS를 한 번의 순회로 읽으므로 개수를 더 재는 일이 메모리 측정 시점을 흔들지 않는다. 두 세션 루트에서 닿는 PID는 한 번만 세고, 이미 끝난 루트는 바이트도 프로세스도 아닌 것으로 세지 않으며, 읽지 못한 표본은 `null`(보고서에서는 —)이지 0이 아니다. 세션당 기울기가 `0.00`이면 세션이 도구 자신의 프로세스(데몬이나 공유 서버) 안에 있고, `1.00` 안팎이면 세션마다 프로세스가 하나씩 늘어난다는 뜻이다 |
 | `install_size_bytes` | 실행 파일 크기. npm 도구는 패키지와 설치된 의존성의 합 |
 | `skill_ms` | one-shot `run` 질문 1건이 픽스처 스킬을 찾아 본문까지 읽는 시간. `Via` 열이 그 도구가 쓴 경로(`skill-tool`/`skill-uri`/`file-read`)를 말한다 |
 | `mcp_ms` | one-shot `run` 질문 1건이 픽스처 stdio MCP 서버를 띄우고 `bench_echo`를 한 번 부르는 시간 |
@@ -156,7 +194,7 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 
 배수는 horon을 1.0×로 둔다. 도구마다 가짜 모델에 붙는 방법이 다르다. horon과 jcode는 임시 HOME의 `[providers.mock]`과 데몬 하나의 debug 소켓 세션, Claude Code는 `ANTHROPIC_BASE_URL`과 상주 `stream-json` 프로세스, Codex는 `model_providers`와 `app-server`, OpenCode는 `opencode.json`의 `baseURL`과 `serve`, pi와 omp와 omo는 임시 HOME 아래 `models.json`(`providers.mock`, `openai-completions`)을 쓰고 세션은 `--mode rpc`로 맡긴다.
 
-세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세고 `fsync_paths`를 얻는 데만 쓴다.
+세션 구현이 도구마다 다르므로(데몬 안의 세션과 세션마다 뜨는 프로세스) 절대값보다 세션당 증가분을 비교한다. 살아 있는 프로세스 수는 그 행이 실제로 쓰는 모델을 말해 준다. 데몬이나 공유 서버는 세션 수와 무관하게 프로세스 하나를 유지하고(세션당 `0.00`), 세션마다 프로세스가 뜨는 도구는 세션당 하나씩 는다(`1.00`). `strace`는 시스템 호출마다 도구를 멈추므로 씌운 실행의 시간은 호출 수에 비례해 늘어난다. 그래서 `oneshot_ms`는 `strace` 없이 잰 실행에서만 내고, `strace`를 씌운 실행은 `fsync_calls`를 세고 `fsync_paths`를 얻는 데만 쓴다.
 
 ### omp와 omo
 
@@ -245,7 +283,34 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui
 ```
 
-PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에서만 돈다. Windows는 렌더와 크기 지표는 그대로 기록하고 나머지에는 `pty unavailable on Windows`를 적으며, 묶음은 성공한다. `horon-tui`가 없으면 이 묶음만 건너뛴 것으로 기록하고 실행을 실패시키지 않는다. 시간 초과 단계는 오류와 함께 기록하고 그 지표에서 빼므로, 거절이 빠른 수치처럼 보이지 않는다.
+PTY 지표는 `pty`와 POSIX 실행 비트가 필요하므로 Linux와 macOS에서만 돈다. Windows는 렌더와 스크롤, 크기 지표는 그대로 기록하고 나머지에는 `pty unavailable on Windows`를 적으며, 묶음은 성공한다. `horon-tui`가 없으면 이 묶음만 건너뛴 것으로 기록하고 실행을 실패시키지 않는다. 시간 초과 단계는 오류와 함께 기록하고 그 지표에서 빼므로, 거절이 빠른 수치처럼 보이지 않는다.
+
+### 큰 세션 스크롤
+
+`render_p50_ms`와 `render_p95_ms`는 긴 스트리밍 답변의 끝을 따라가는 프레임 한 장을 잰다. 화면을 끝에서 떼어 두지 않고 도구 출력도 없는 대화라 두 수치는 스크롤을 덮지 않는다. 그 경로는 두 번째 예제 `crates/tui/examples/scroll_bench.rs`가 재고, `scroll` 키와 별도 표로 보고하며 프레임 칸에 섞지 않는다.
+
+예제는 턴 24개와 4,000줄 도구 출력을 쌓고, `ctrl+o`로 그 출력을 펼친 뒤 `shift+up`으로 화면을 끝에서 뗀다.
+
+| 스크롤 지표 | 재는 것 |
+| --- | --- |
+| `scroll_input_p50_us`, `scroll_input_p95_us` | `shift+up` 한 단계의 키 처리. 프레임을 그리기 전까지 |
+| `scroll_frame_p50_ms`, `scroll_frame_p95_ms` | 그 키 뒤에 이어 그린 프레임 |
+| `scroll_input_to_frame_p50_ms`, `scroll_input_to_frame_p95_ms`, `first_input_to_frame_ms` | `shift+up` 키를 전달한 순간부터 시험용 터미널에 그 프레임을 다 그릴 때까지 걸린 시간. 첫 입력은 대화 전체의 높이를 재는 시간도 포함한다. |
+| `first_held_frame_ms` | 첫 held 프레임. 줄을 보여 주기 전에 대화 전체를 세는 프레임 |
+| `held_redraw_p50_ms`, `held_redraw_p95_ms` | 프레임 사이에 입력 없이 held 화면을 다시 그리는 비용 |
+
+스크롤할 때마다 화면이 움직이고 펼친 출력의 줄이 보여야 한다. 시간을 잰 뒤 화면의 모든 칸에서 글자, 색상, 표시 속성을 읽어 프레임별 해시를 구한다. 결과를 재현할 수 있도록 상태줄에서 시계를 빼고 실행 시간이 붙지 않은 완료 상태의 도구 호출을 사용한다. 시간을 모두 잰 뒤에는 창 너비와 출력 색상을 바꾸고 출력을 접었다가 펼친다. 이어서 세션을 전환하고 같은 호출 ID에 여러 줄의 유니코드 출력을 표시한다. `screens_per_run`은 비교한 전체 프레임 수다. 화면 하나라도 다르면 그 쌍을 제외하고 일치한 쌍이 요청한 수보다 적으면 비교 실행이 실패한다.
+
+이 지표는 PTY가 필요 없어 Linux, macOS, Windows에서 모두 기록한다.
+
+비교 쌍은 `baseline_ref`를 준 한 번의 작업이다. 기준 트리의 `scroll_bench`를 후보와 함께 빌드해 두 실행을 번갈아 잰다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui \
+  -f baseline_ref=<merge-base sha>
+```
+
+러너는 두 버전의 렌더러에 같은 스크롤 예제를 빌드하고 회차마다 실행 순서를 바꾼다. 보고서에는 스크롤 후 프레임을 그리는 시간의 95백분위수와 첫 프레임 시간에 대해 기준 중앙값과 두 버전의 차이(후보 − 기준)를 싣는다. 차이는 같은 회차에서 양쪽 모두 성공했을 때 계산한다.
 
 ## 구조 게이트
 
@@ -350,6 +415,44 @@ python3 scripts/perf/bench_loading.py --compare baseline-warm.json candidate-war
 
 기준선은 같은 명령을 기준 커밋의 워크트리에서 빌드한 `loading_probe`로 돌린 결과다. 판정은 카운터가 먼저다. `skill_catalog`의 `skill_bytes_read`, `skill_request_overlay`의 `skill_file_reads`, `mcp_config_load`의 `mcp_config_reads`가 기준선보다 늘면 실패다. 시간은 같은 쌍을 번갈아 다시 재도 기준선의 p95 범위를 넘을 때만 후퇴로 본다.
 
+단계는 실제로 재는 것을 기준으로 읽는다. `attach_history`는 `Session::load`에 이어 모든 메시지를 `history_messages()`로 완전히 물질화하는 단계이고, `detail`이 두 부분을 `load_ms`와 `history_ms`로 나눠 `resident`, `history`, `released_prefix` 개수와 함께 보고한다. `resume_ready`는 별도 단계로 `Session::load_startup_stub`, 즉 로드에 트랜스크립트 제거를 더한 것이다. 둘 다 첫 페이지 수치가 아니다. 호스트의 첫 페이지는 `history_page`/`get_history_page`이고 헤드에 묶인 페이지 인덱스가 페이지 범위로 제한하며, `crates/harness-api-server/src/history_page_perf_tests.rs`가 그것을 잰다. cold 리포트는 warm 리포트가 치르지 않는 일회성 캐시 재구축(전체 스캔과 파생 파일 게시)을 함께 치르므로 비교는 warm 리포트로만 한다.
+
+측정 결과의 `attach_history_samples`에는 `a`와 `b`에서 성공한 각 회차의 상세 값이 들어간다. 이전 버전의 프로브를 쓰거나 세션이 비어 있으면 빈 목록을 기록한다.
+
+### 콜드 재개가 시간을 쓰는 곳
+
+`attach_history`는 함수 두 개를 통째로 잰 값이라, 그 밀리초가 바이트 이동에 쓰였는지, 레코드 디코딩에 쓰였는지, 투영 구성에 쓰였는지, 트랜스크립트를 다시 JSON으로 쓰는 데 쓰였는지 말해 주지 않는다. `crates/base/examples/resume_stage_probe.rs`가 그 답을 낸다. 로드 경로가 호출하는 것과 같은 저장소 함수를 같은 순서로 부르고 각각의 시간을 잰다. 제품 경로에는 타이머를 하나도 더하지 않는다. 로드와 이력 경로는 그대로이고, 측정은 전부 프로브가 들고 있다.
+
+프로브가 실행하는 단계는 다음 순서와 같다.
+
+| 단계 | 재는 것 | `Session::load`에서의 자리 |
+| --- | --- | --- |
+| `selection` | 선택 파일 두 개(`local-head-explicit.json`, `local-head.json`) | `selected()` |
+| `checkpoint_recent` | 파생 캐시 읽기. 콜드 홈은 스캔 한 번, 재생 한 번, 체크포인트 발행으로 다시 만든다 | `SessionCache::recent()`, 그 결과를 로드는 버린다 |
+| `log_read` | `events.jsonl`을 통째로 한 번 읽기. 디스크가 아니라 복사 비용이다. 픽스처를 방금 복사했고 `checkpoint_recent`가 이미 로그를 읽었다 | 로드에는 없다. `full_scan`을 디코딩으로 읽으려고 잰다 |
+| `full_scan` | 스트리밍 스캔. 레코드마다 JSON 디코드, 정규형 재인코딩으로 줄 검증, 부모 사슬 검증 | `graph()` |
+| `blob_read` | `payload_ref`가 가리키는 blob 전부 읽기. 그래프 구성과 분리해 잰다 | `graph()` |
+| `graph_replay` | 그래프 구성과 재생. 조상 추적, 페이로드 디코드, 메시지마다 복제 한 번 | `graph()`와 `replay()` |
+| `metadata_json` | 투영 메타데이터의 `serde_json::to_value` | `to_value(metadata)` |
+| `messages_json` | 트랜스크립트 전체로 JSON 트리 만들기 | `json!`의 메시지 배열 |
+| `messages_decode` | 그 트리를 저장된 메시지로 다시 디코드 | `from_value::<Session>` |
+| `source_hash` | 로그 전체를 다시 읽어 해시 | `source_hash()` |
+| `history_rescan` | 스캔, blob 읽기, 재생을 다시 한 번 | `history_messages()` |
+| `page_index` | 헤드에 묶인 인덱스를 열고 첫 페이지 반환 | `history_page()`, 로드는 부르지 않는다 |
+
+프로브는 JSON 리포트 하나를 출력하고, 모든 단계가 돌면 `0`, 픽스처나 단계 값이 어긋나면 `1`, 사전 확인 실패(잘못된 인자, `HORON_HOME` 불일치, 카운터 꺼짐)면 `2`로 끝난다. 손대지 않은 픽스처를 읽는다. `checkpoint_recent`, `history_rescan`, `page_index`는 제품과 같은 파생 캐시를 발행하고, `events.jsonl`은 절대 쓰지 않으며 리포트가 전후 SHA-256을 함께 남긴다. blob과 복구는 건드리지 않는다. 손상된 로그나 잘린 꼬리는 정리 대상이 아니라 실패다.
+
+```bash
+cargo build --release --locked -p horon-agent-base --example resume_stage_probe
+HORON_HOME=<픽스처 홈> HORON_AGENT_PERF_COUNTERS=1 \
+  target/release/examples/resume_stage_probe \
+  --session perf-events-10000 --expect-events 10000 --expect-messages 9999
+```
+
+`bench_loading.py`는 `--binary` 옆에서 이 프로브를 찾고, `cold` 모드의 세션 픽스처마다 콜드 통과 세 번을 그 픽스처의 `stage_probe` 블록으로 기록한다. 단계마다 `p50_ms`, `min_ms`, `max_ms`, `mad_ms`와 `counters`의 카운터 델타가 들어가고, 측정 회차가 콜드일 때만 `ratio_to_attach_history_pct`가 붙는다. 이 블록은 귀속 자료이고 예산이 아니다. 단계는 별도 프로세스에서 차례로 돌므로 합이 `attach_history`가 되지 않고, 합을 지연으로 인용하면 안 된다. 측정된 지연은 같은 리포트의 `anchor.attach_history_p50_ms` 하나뿐이다. 단계 하나가 실패하거나 회차가 돌지 않으면 블록 전체가 `status: failed`가 되고, 그 안의 수치는 진단용이며 증거가 아니다. `--stage-probe-samples 0`은 블록을 건너뛰고, 바이너리가 없으면 `status: skipped`를 기록하지 0으로 채우지 않는다. 단계별 절대 시간은 바이트 카운터와 같은 이유로 한 리포트 안에서만 비교하고, 읽기 단계는 모두 페이지 캐시에서 나오므로 디스크 지연 주장이 아니다.
+
+수치를 함께 읽는 법은 이렇다. `log_read`는 복사 비용이고, `full_scan`은 이미 페이지에 올라온 바이트를 디코딩한 값이며, `graph_replay`는 투영, JSON 단계 셋은 로드의 직렬화와 역직렬화 절반이다. `checkpoint_recent`와 `history_rescan`은 로드가 이미 한 일을 되풀이하는 통과이므로, 재개가 읽는 바이트에 비해 느리면 여기부터 본다.
+
 판정용 측정은 개발 기기가 아니라 `.github/workflows/loading-ab.yml`에서 한다. 이 워크플로는 `ubuntu-24.04` 잡 하나 안에서 기준 커밋과 후보 커밋을 각각 체크아웃해 릴리스로 빌드하고, 위 두 조건(본문 8 KiB와 `~/.claude.json` 300 KB, 둘 다 0)을 후보 쪽 `bench_loading.py`로 번갈아 잰 뒤 `--compare`한다. 이어 "Check counters" 단계가 세 카운터 조건을 확인한다. 본문이 있는 스킬 목록은 기준선보다 적게 읽고, 작업 폴더 스킬은 반복 요청에서 다시 읽지 않고, `~/.claude.json`이 있는 조건의 MCP 설정은 기준선보다 적게 읽어야 한다. 하나라도 어기면 잡이 실패한다. `bench_tools.py`도 두 바이너리로 돌리고, 결과는 `loading-ab-<run_id>` 아티팩트로 30일 남는다.
 
 ```bash
@@ -371,7 +474,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
 
 같은 잡이 dev 기준 빌드(`horon-base`)와 후보를 함께 빌드해 번갈아 재므로, 변경 전·후와 jcode가 한 러너를 공유한다.
 
-**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
+**비교하는 칸.** OS마다 질문 1건 시간과 최대 메모리, 스킬 호출 시간, MCP 호출 시간, `--version`, 설치 크기, 첫 세션과 세션당 증가 메모리(idle, 턴 직후), 같은 표본의 살아 있는 프로세스 수, Linux의 `fsync` 횟수다. 표본은 5회 이상의 중앙값이고, 두 값의 최솟값–최댓값 범위가 겹치면 동률로 보고 우위로 세지 않는다.
 
 **원인은 측정으로 찾는다.** `request_offsets_ms`로 기동·도구 왕복·종료 구간을 나누고, `log_tail`로 종료 구간의 단계를, `thread_names`로 늘어나는 스레드를, `live_heap_bytes`로 살아 있는 데이터와 할당자 보유분을 가른다. 추측으로 코드를 바꾸지 않는다.
 
@@ -402,7 +505,7 @@ jcode(`1jehuang/jcode`, 2026-11-05 커밋 `c725fa3`)의 `scripts/` 벤치마크�
 | `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | 경쟁 도구 비교로 이식. 헤드리스 모드로 잰다. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | 이미 있음 |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | 같은 축을 다른 스크립트가 잰다. |
-| TUI 화면 측정(`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh` 등) | `bench_tui.py` | 포팅하지 않고 클라이언트를 자체 스위트로 측정한다. 첫 프레임, 인계, 입력 에코, RSS, 한 프레임 그리기, 설치 크기를 잰다. 세션 선택기와 표시 준비 예산, 프레임 단위 스크립트는 대응물이 없다. |
+| TUI 화면 측정(`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh` 등) | `bench_tui.py` | 포팅하지 않고 클라이언트를 자체 스위트로 측정한다. 첫 프레임, 인계, 입력 에코, RSS, 한 프레임 그리기, 스크롤한 held 화면, 설치 크기를 잰다. 세션 선택기와 표시 준비 예산, 프레임 단위 스크립트는 대응물이 없다. |
 | `bench_resume_suite.py` | 없음 | 제외. 재개 지연은 reload storm이 잰다. |
 | 실제 모델·유료 API·외부 하네스가 필요한 것(`benchmark_swarm.py`, `run_terminal_bench_*`, `benchmark_discovery*.py`, `benchmark_browser_handoff.*` 등) | 없음 | 제외 |
 | `analyze_root_crate.py`, `analyze_openai_ws_cache.py` | 없음 | 제외. 해당 로그 줄이 없다. |

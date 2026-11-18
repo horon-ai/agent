@@ -7,7 +7,7 @@ use crate::session::{Session, SessionStatus};
 use crate::storage;
 use crate::tool::Registry;
 use anyhow::{Context, Result};
-use chrono::{Duration as ChronoDuration, Utc};
+use horon_agent_time::{Duration as ChronoDuration, Timestamp};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -53,7 +53,7 @@ pub struct OvernightStartOptions {
 
 pub fn start_overnight_run(options: OvernightStartOptions) -> Result<OvernightLaunch> {
     let run_id = crate::id::new_id("overnight");
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     let duration = ChronoDuration::minutes(options.duration.minutes as i64);
     let target_wake_at = started_at + duration;
     let handoff_ready_at = target_wake_at - ChronoDuration::minutes(30).min(duration / 4);
@@ -186,7 +186,7 @@ fn spawn_supervisor(manifest: OvernightManifest, child: Session, provider: Arc<d
         if let Err(err) = run_supervisor(manifest.clone(), child, provider, registry).await {
             let mut updated = load_manifest(&manifest.run_id).unwrap_or(manifest.clone());
             updated.status = OvernightRunStatus::Failed;
-            updated.completed_at = Some(Utc::now());
+            updated.completed_at = Some(Timestamp::now());
             let _ = save_manifest(&updated);
             let _ = record_event(
                 &updated,
@@ -255,7 +255,7 @@ async fn run_supervisor(
             break;
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let handoff = || agent.request_handoff_compaction(&handoff_stop);
         if let Some(prompt) = handoff_trigger::ready_pass(&current, handoff_notice_sent, now, handoff)? {
             next_prompt = prompt;
@@ -293,7 +293,7 @@ async fn run_supervisor(
             break;
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         if now >= after_turn.target_wake_at {
             if !morning_report_prompt_sent && after_turn.morning_report_posted_at.is_none() {
                 let mut updated = after_turn.clone();
@@ -351,7 +351,7 @@ async fn run_supervisor(
 }
 
 async fn run_turn_monitored(agent: &mut Agent, manifest: &OvernightManifest, prompt: &str) -> Result<String> {
-    let started = Utc::now();
+    let started = Timestamp::now();
     let mut sample_interval = tokio::time::interval_at(
         tokio::time::Instant::now() + RESOURCE_SAMPLE_INTERVAL,
         RESOURCE_SAMPLE_INTERVAL,
@@ -381,7 +381,7 @@ async fn run_turn_monitored(agent: &mut Agent, manifest: &OvernightManifest, pro
                 let _ = render_review_html(manifest);
             }
             _ = long_notice_interval.tick() => {
-                let elapsed = Utc::now().signed_duration_since(started).num_minutes().max(0);
+                let elapsed = (Timestamp::now() - started).whole_minutes().max(0);
                 let _ = record_event(
                     manifest,
                     "coordinator_turn_still_running",
@@ -401,7 +401,7 @@ async fn gather_preflight(manifest: &OvernightManifest) -> OvernightPreflight {
     let resources = gather_resource_snapshot(manifest.working_dir.as_deref().map(Path::new));
     let git = gather_git_snapshot(manifest.working_dir.as_deref().map(Path::new));
     OvernightPreflight {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         usage,
         resources,
         git,
@@ -434,12 +434,7 @@ fn build_usage_projection(reports: &[crate::usage::ProviderUsage], manifest: &Ov
         .fold(None::<f32>, |acc, value| Some(acc.unwrap_or(value).max(value)));
     let hard_limit = providers.iter().any(|provider| provider.hard_limit_reached);
     let has_errors = providers.iter().any(|provider| provider.error.is_some());
-    let hours = manifest
-        .target_wake_at
-        .signed_duration_since(manifest.started_at)
-        .num_minutes()
-        .max(1) as f32
-        / 60.0;
+    let hours = (manifest.target_wake_at - manifest.started_at).whole_minutes().max(1) as f32 / 60.0;
     let delta_min = (hours * 3.0).min(35.0);
     let delta_max = (hours * 7.0 * manifest.max_agents_guidance as f32 / 2.0).min(75.0);
     let projected_end_min = max_usage.map(|current| (current + delta_min).min(100.0));
@@ -476,7 +471,7 @@ fn build_usage_projection(reports: &[crate::usage::ProviderUsage], manifest: &Ov
     );
 
     UsageProjection {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         risk,
         confidence,
         projected_delta_min_percent: max_usage.map(|_| delta_min),
@@ -502,7 +497,7 @@ pub fn gather_resource_snapshot(working_dir: Option<&Path>) -> ResourceSnapshot 
         });
 
     ResourceSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         memory_total_mb: facts.memory_total_mb,
         memory_available_mb: facts.memory_available_mb,
         memory_used_percent,
@@ -518,7 +513,7 @@ pub fn gather_resource_snapshot(working_dir: Option<&Path>) -> ResourceSnapshot 
 }
 
 pub fn gather_git_snapshot(working_dir: Option<&Path>) -> GitSnapshot {
-    let captured_at = Utc::now();
+    let captured_at = Timestamp::now();
     let dir = working_dir.unwrap_or_else(|| Path::new("."));
     let branch = run_git(dir, &["branch", "--show-current"])
         .ok()
@@ -619,7 +614,7 @@ pub fn cancel_latest_run() -> Result<OvernightManifest> {
         return Ok(manifest);
     }
     manifest.status = OvernightRunStatus::CancelRequested;
-    manifest.cancel_requested_at = Some(Utc::now());
+    manifest.cancel_requested_at = Some(Timestamp::now());
     save_manifest(&manifest)?;
     record_event(
         &manifest,
@@ -703,7 +698,7 @@ pub fn build_progress_card(manifest: &OvernightManifest) -> OvernightProgressCar
     let events = read_events(manifest).unwrap_or_default();
     let preflight = read_preflight(manifest);
     let task_cards = read_task_cards(manifest).unwrap_or_default();
-    build_progress_card_from_parts(manifest, &events, preflight.as_ref(), &task_cards, Utc::now())
+    build_progress_card_from_parts(manifest, &events, preflight.as_ref(), &task_cards, Timestamp::now())
 }
 
 fn read_preflight(manifest: &OvernightManifest) -> Option<OvernightPreflight> {
@@ -711,6 +706,15 @@ fn read_preflight(manifest: &OvernightManifest) -> Option<OvernightPreflight> {
         return None;
     }
     storage::read_json(&manifest.preflight_path).ok()
+}
+
+/// The `HH:MM:SS` UTC clock an overnight event carries in the human-readable log.
+///
+/// The event's own stored calendar, so a record written on a leap second prints
+/// `:60` on the `:59` second's date instead of moving into the next minute.
+fn overnight_event_stamp(at: Timestamp) -> String {
+    let utc = at.calendar_utc();
+    format!("{:02}:{:02}:{:02}", utc.hour, utc.minute, utc.second)
 }
 
 pub fn record_event(
@@ -721,7 +725,7 @@ pub fn record_event(
     meaningful: bool,
 ) -> Result<()> {
     let event = OvernightEvent {
-        timestamp: Utc::now(),
+        timestamp: Timestamp::now(),
         run_id: manifest.run_id.clone(),
         session_id: Some(manifest.coordinator_session_id.clone()),
         kind: kind.to_string(),
@@ -749,7 +753,7 @@ pub fn record_event(
     writeln!(
         human,
         "{} [{}] {}",
-        event.timestamp.format("%H:%M:%S"),
+        overnight_event_stamp(event.timestamp),
         event.kind,
         summary
     )?;
@@ -766,8 +770,8 @@ pub fn record_event(
 fn mark_completed(manifest: &OvernightManifest, status: OvernightRunStatus, summary: &str) -> Result<()> {
     let mut updated = load_manifest(&manifest.run_id).unwrap_or_else(|_| manifest.clone());
     updated.status = status;
-    updated.completed_at = Some(Utc::now());
-    updated.last_activity_at = Utc::now();
+    updated.completed_at = Some(Timestamp::now());
+    updated.last_activity_at = Timestamp::now();
     save_manifest(&updated)?;
     record_event(
         &updated,
@@ -782,7 +786,7 @@ fn mark_completed(manifest: &OvernightManifest, status: OvernightRunStatus, summ
 
 pub fn format_status_markdown(manifest: &OvernightManifest) -> String {
     let task_summary = summarize_task_cards(manifest);
-    format_status_markdown_from_summary(manifest, &task_summary, Utc::now())
+    format_status_markdown_from_summary(manifest, &task_summary, Timestamp::now())
 }
 
 pub fn format_log_markdown(manifest: &OvernightManifest, max_lines: usize) -> String {
@@ -885,7 +889,7 @@ mod tests {
 
     fn test_manifest(root: &Path, run_id: &str) -> OvernightManifest {
         let run_dir = root.join("run");
-        let now = Utc::now();
+        let now = Timestamp::now();
         OvernightManifest {
             version: OVERNIGHT_VERSION,
             run_id: run_id.to_string(),
@@ -1079,7 +1083,7 @@ mod tests {
         )
         .expect("write card");
         let event = OvernightEvent {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             run_id: manifest.run_id.clone(),
             session_id: Some(manifest.coordinator_session_id.clone()),
             kind: "coordinator_turn_completed".to_string(),

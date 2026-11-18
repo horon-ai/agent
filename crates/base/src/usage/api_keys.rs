@@ -68,14 +68,15 @@ async fn probe_openai_compatible_key(api_base: &str, api_key: &str) -> String {
     }
 }
 
-fn month_start_utc() -> chrono::DateTime<chrono::Utc> {
-    use chrono::Datelike;
-    let now = chrono::Utc::now();
-    now.date_naive()
-        .with_day(1)
-        .and_then(|d: chrono::NaiveDate| d.and_hms_opt(0, 0, 0))
-        .map(|naive: chrono::NaiveDateTime| naive.and_utc())
-        .unwrap_or(now)
+fn month_start_utc() -> horon_agent_time::Timestamp {
+    let now = horon_agent_time::Timestamp::now().utc();
+    let first = time::Date::from_calendar_date(now.year(), now.month(), 1);
+    match first {
+        Ok(date) => horon_agent_time::Timestamp::from(date.midnight().assume_utc()),
+        // The first day of every month is a valid date, so this only guards the
+        // type's range; fall back to the current instant.
+        Err(_) => horon_agent_time::Timestamp::now(),
+    }
 }
 
 /// Enqueue one task per configured API key worth reporting on. Returns the
@@ -620,7 +621,7 @@ pub(super) fn parse_zai_coding_plan_limits(json: &serde_json::Value) -> Vec<Usag
 /// Anthropic org-wide cost for the current month. Requires an *admin* API key
 /// (`sk-ant-admin...`); regular keys cannot read cost reports.
 async fn fetch_anthropic_org_cost(admin_key: &str) -> Option<f64> {
-    let starting_at = month_start_utc().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let starting_at = month_start_utc().to_rfc3339_opts(horon_agent_time::Precision::Seconds, true);
     let client = crate::provider::shared_http_client();
     let response = client
         .get(format!(

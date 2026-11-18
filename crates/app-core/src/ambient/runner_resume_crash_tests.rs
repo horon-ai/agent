@@ -12,7 +12,7 @@ use super::{
     store,
 };
 use crate::provider::Provider;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use std::os::unix::process::ExitStatusExt;
 use std::sync::Arc;
 
@@ -53,7 +53,7 @@ fn seeded_decided(session_id: &str, request_id: &str) -> BlockedApproval {
 
 fn seeded_inline(session_id: &str, request_id: &str) -> BlockedApproval {
     let mut record = record(session_id, request_id);
-    record.inline_at = Some(Utc::now());
+    record.inline_at = Some(Timestamp::now());
     record.inline_approved = Some(true);
     record.outcome = Some("inline".to_string());
     record

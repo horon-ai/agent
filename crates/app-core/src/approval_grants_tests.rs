@@ -58,7 +58,7 @@ fn request(action: &str, input: serde_json::Value, working_dir: &Path, capabilit
         rationale: String::new(),
         urgency: crate::safety::Urgency::Normal,
         wait: false,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         context: Some(serde_json::json!({
             "working_dir": working_dir.display().to_string(),
             "input": input,
@@ -80,7 +80,7 @@ fn a_folder_grant_covers_a_second_file_in_that_folder() {
     let grant = grant_from_request_at(
         &request("write", serde_json::json!({ "file_path": first }), &workspace, "write"),
         GrantScope::Folder,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("a single-path write request can be granted");
@@ -91,7 +91,7 @@ fn a_folder_grant_covers_a_second_file_in_that_folder() {
     );
     assert_eq!(grant.workspace, workspace);
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let second_target = canonical_target(&second).expect("canonical second");
     assert!(
         covered_by(&[grant], &workspace, &[second_target], GrantCapability::Write, now),
@@ -117,7 +117,7 @@ fn a_stored_grant_answers_the_next_call_through_the_production_lookup() {
     let grant = grant_from_request_at(
         &request("write", input.clone(), &workspace, "write"),
         GrantScope::Path,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("grant");
@@ -147,12 +147,12 @@ fn a_path_grant_does_not_cover_a_sibling() {
     let grant = grant_from_request_at(
         &request("edit", serde_json::json!({ "file_path": first }), &workspace, "write"),
         GrantScope::Path,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("grant");
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     assert!(covered_by(
         &[grant.clone()],
         &workspace,
@@ -182,7 +182,7 @@ fn a_grant_does_not_cross_workspace_roots() {
     let grant = grant_from_request_at(
         &request("write", serde_json::json!({ "file_path": file }), &workspace, "write"),
         GrantScope::Folder,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("grant");
@@ -194,7 +194,7 @@ fn a_grant_does_not_cross_workspace_roots() {
             &other_root,
             &[canonical_target(&file).expect("target")],
             GrantCapability::Write,
-            Utc::now()
+            Timestamp::now()
         ),
         "the same absolute path must not be covered from another workspace"
     );
@@ -209,13 +209,13 @@ fn an_append_grant_does_not_authorise_a_write() {
     let grant = grant_from_request_at(
         &request("append", serde_json::json!({ "file_path": file }), &workspace, "append"),
         GrantScope::Path,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("grant");
 
     let target = canonical_target(&file).expect("target");
-    let now = Utc::now();
+    let now = Timestamp::now();
     assert!(covered_by(
         std::slice::from_ref(&grant),
         &workspace,
@@ -238,7 +238,7 @@ fn a_write_grant_also_answers_an_append() {
     let grant = grant_from_request_at(
         &request("write", serde_json::json!({ "file_path": file }), &workspace, "write"),
         GrantScope::Path,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("grant");
@@ -249,7 +249,7 @@ fn a_write_grant_also_answers_an_append() {
             &workspace,
             &[canonical_target(&file).expect("target")],
             GrantCapability::Append,
-            Utc::now()
+            Timestamp::now()
         ),
         "replacing a file is a stronger answer than appending to it"
     );
@@ -261,7 +261,7 @@ fn an_expired_grant_asks_again() {
     let workspace = sandbox.workspace();
     let file = sandbox.write("notes/first.md");
 
-    let then = Utc::now() - Duration::days(30);
+    let then = Timestamp::now() - TimeDelta::days(30);
     let grant = grant_from_request_at(
         &request("write", serde_json::json!({ "file_path": file }), &workspace, "write"),
         GrantScope::Path,
@@ -269,14 +269,14 @@ fn an_expired_grant_asks_again() {
         7,
     )
     .expect("grant");
-    assert!(grant.expires_at < Utc::now());
+    assert!(grant.expires_at < Timestamp::now());
 
     assert!(!covered_by(
         &[grant],
         &workspace,
         &[canonical_target(&file).expect("target")],
         GrantCapability::Write,
-        Utc::now()
+        Timestamp::now()
     ));
 }
 
@@ -290,7 +290,7 @@ fn a_zero_ttl_stores_no_grant() {
         grant_from_request_at(
             &request("write", serde_json::json!({ "file_path": file }), &workspace, "write"),
             GrantScope::Path,
-            Utc::now(),
+            Timestamp::now(),
             0
         )
         .is_none(),
@@ -321,7 +321,7 @@ fn storing_a_grant_then_reading_it_back_finds_it() {
     let grant = grant_from_request_at(
         &request("write", serde_json::json!({ "file_path": file }), &workspace, "write"),
         GrantScope::Folder,
-        Utc::now(),
+        Timestamp::now(),
         7,
     )
     .expect("grant");
@@ -355,7 +355,7 @@ fn a_request_naming_two_paths_is_approved_once_and_not_granted() {
         "write",
     );
     assert!(
-        grant_from_request_at(&request, GrantScope::Folder, Utc::now(), 7).is_none(),
+        grant_from_request_at(&request, GrantScope::Folder, Timestamp::now(), 7).is_none(),
         "one answer must not decide a place the user was never shown"
     );
 }
@@ -370,7 +370,7 @@ fn a_request_without_an_effect_capability_is_not_granted() {
         "input": { "file_path": "a.txt" },
     }));
     assert!(
-        grant_from_request_at(&request, GrantScope::Path, Utc::now(), 7).is_none(),
+        grant_from_request_at(&request, GrantScope::Path, Timestamp::now(), 7).is_none(),
         "a read has no effect for a grant to cover"
     );
 }

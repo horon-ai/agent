@@ -149,7 +149,6 @@ never from `horon-agent` (`scripts/ci/check_headless_graph.py`). `syntect` did n
 | `RUSTSEC-2026-0099` | `rustls-webpki` | `rustls` dependency stack | TLS certificate verification wherever rustls is used | Accepts name constraints on wildcard certificates. A transitive issue through the TLS library. | Raise the rustls/webpki stack when a compatible release ships. |
 | `RUSTSEC-2026-0104` | `rustls-webpki` | `rustls` dependency stack | TLS certificate revocation list parsing | A reachable panic in CRL parsing. A transitive issue through the TLS library. | Raise the rustls/webpki stack when a compatible release ships. |
 | `RUSTSEC-2026-0049` | `rustls-webpki` | `rustls` dependency stack (`aws-smithy` rustls 0.21) | TLS certificate revocation list handling | Because of faulty matching logic it does not treat the CRL named by a Distribution Point as authoritative. A transitive issue through an older rustls stack, and the fix requires rustls-webpki >=0.103.10, which needs a major upgrade of the `aws-sdk` stack. | Raise the rustls/webpki stack when a compatible release ships. |
-| `RUSTSEC-2026-0543` | `chrono` | Direct dependency of about twenty crates (`app-core`, `base`, `session-store`, type crates, `harness-api-server`, `crates/tui`, ...) | Timestamps in sessions, logs, memory and the harness API | Upstream abandonment notice, not a vulnerability: the advisory says every version is affected and no patched version exists. `DateTime<Utc>` is serialized into stored sessions and the harness API, so a replacement is a contract-sensitive refactor rather than a version bump. | Migrate to `jiff` or `time`, type crates first and the stored-session contract test as the gate, then remove the ignore. Tracked in #377. |
 | `RUSTSEC-2026-0187` | `lopdf` | `horon-agent-pdf -> pdf-extract 0.8.2 -> lopdf 0.34` | PDF text extraction (`/pdf`, image/PDF reading) | The stack overflows when parsing deeply nested PDF objects. Only reachable when extracting text from a PDF the user opens (which may be malicious), and not an auth/provider/network path. Because `pdf-extract 0.8.2` pins `lopdf 0.34`, it cannot move to the fixed `>=0.42` without an upstream `pdf-extract` release. | Raise it when `pdf-extract` ships a release that depends on `lopdf >=0.42`, and drop the ignore then. |
 
 ### Priority
@@ -171,13 +170,13 @@ This section is not a re-measurement of the table above; it only counts whether 
 | `bincode` | No | `RUSTSEC-2025-0141` |
 | `lru` | Yes, through `ratatui-core` | `RUSTSEC-2026-0002` |
 | `quick-xml` | No | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
-| `paste` | Yes | `RUSTSEC-2024-0436` |
+| `paste` | No | `RUSTSEC-2024-0436` |
 | `rand` | Yes | `RUSTSEC-2026-0097` |
 | `azure_core` | No | `RUSTSEC-2026-0097` |
 | `tungstenite` | Yes | `RUSTSEC-2026-0097` |
 | `tract-nnef` | Yes | `RUSTSEC-2026-0097`, the `RUSTSEC-2026-0217` item below |
 | `lopdf` | Yes | `RUSTSEC-2026-0187` |
-| `chrono` | Yes, a direct dependency of about twenty crates | `RUSTSEC-2026-0543` |
+| `chrono` | No | `RUSTSEC-2026-0543` |
 | `rustls-webpki` | Yes | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
 | `crossterm` | Yes, through `horon-tui` only | It left with the deletion of the terminal image crate (`horon-agent-terminal-image`) and came back with `crates/tui` |
 
@@ -203,16 +202,14 @@ This section is not a re-measurement of the table above; it only counts whether 
   warnings were cleaned up. The unsoundness advisories for `anyhow` (RUSTSEC-2026-0190),
   `event-listener` (RUSTSEC-2026-0221) and `tokio` (RUSTSEC-2026-0386), and the `chacha20`
   yanked warning, were fixed by bumping `Cargo.lock` (`anyhow` 1.0.104, `event-listener` 5.4.2,
-  `tokio` 1.53.3, `chacha20` 0.10.2). The five remaining unmaintained advisories (`paste`
-  RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441, `rustybuzz` RUSTSEC-2026-0206, `ttf-parser`
-  RUSTSEC-2026-0192, `unsafe-libyaml` RUSTSEC-2024-0449) are transitive dependencies this
-  repository cannot drop and that have no upstream replacement, so they are ignored in
-  `scripts/ci/check_security.sh`. That script runs `cargo audit --deny warnings`, so a new warning
-  (unmaintained, unsound, yanked) fails CI.
-- `scripts/ci/check_security.sh` ignores the vulnerability advisories explicitly classified
-  above (`rustls-webpki`, `lopdf`, `quick-xml`) so CI stays actionable
-  (`audit_ignores` in `scripts/ci/check_security.sh`). New
-  vulnerabilities still fail CI by default.
+  `tokio` 1.53.3, `chacha20` 0.10.2). At the time the audit excluded five unmaintained
+  dependencies: `paste`, `pin-utils`, `rustybuzz`, `ttf-parser`, and `unsafe-libyaml`.
+- The current lockfile drops all five. `futures` 0.3.34 and `hyper` 1.12 remove
+  `pin-utils`. `yaml_serde` reads skill frontmatter, and `resvg`/`usvg` 0.48 and
+  `lopdf` 0.45 replace the old YAML and font parser dependencies. The workspace pins
+  the upstream PDF, tokenizer and allocator revisions in its Cargo manifests until
+  compatible published versions carry those changes. The preflight runs
+  `cargo audit --deny warnings` with no advisory exclusions.
 - 2026-11-13: three advisories published the same day failed the preflight on a push that changed no
   dependency — `RUSTSEC-2026-0524` and `RUSTSEC-2026-0523` (`quinn-proto` 0.11.18) and
   `RUSTSEC-2026-0538` (`quinn-udp` 0.5.14), all reached through `reqwest`'s QUIC stack. They were
@@ -222,9 +219,7 @@ This section is not a re-measurement of the table above; it only counts whether 
 - 2026-11-17: `RUSTSEC-2026-0543` (`chrono` 0.4.42, unmaintained, all versions, no patched version,
   issued that day) failed the preflight on a pull request that changed no dependency: the same `dev`
   commit passed at 09:38 and failed at 14:14, because the advisory database gained the entry in
-  between. It is classified above as an upstream abandonment notice and ignored in
-  `scripts/ci/check_security.sh`; the work of replacing it is tracked in #377. `main` carries the same
-  version, so a `main` push failed the same way.
+  between. The migration in #377 removed the dependency and the temporary audit exception.
 - Before changing dependency versions, run:
   - `cargo check`
   - `cargo test -j 1`

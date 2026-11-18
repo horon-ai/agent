@@ -1,5 +1,5 @@
 use super::*;
-use chrono::Utc;
+use horon_agent_time::Duration;
 
 fn task_card(id: &str, title: &str, status: &str) -> OvernightTaskCard {
     OvernightTaskCard {
@@ -10,7 +10,7 @@ fn task_card(id: &str, title: &str, status: &str) -> OvernightTaskCard {
     }
 }
 
-fn test_manifest(now: DateTime<Utc>) -> OvernightManifest {
+fn test_manifest(now: Timestamp) -> OvernightManifest {
     let run_dir = PathBuf::from("/tmp/overnight-run");
     OvernightManifest {
         version: OVERNIGHT_VERSION,
@@ -18,10 +18,10 @@ fn test_manifest(now: DateTime<Utc>) -> OvernightManifest {
         parent_session_id: "parent".to_string(),
         coordinator_session_id: "coord".to_string(),
         coordinator_session_name: "coordinator".to_string(),
-        started_at: now - chrono::Duration::minutes(60),
-        target_wake_at: now + chrono::Duration::minutes(60),
-        handoff_ready_at: now - chrono::Duration::minutes(10),
-        post_wake_grace_until: now + chrono::Duration::hours(2),
+        started_at: now - Duration::minutes(60),
+        target_wake_at: now + Duration::minutes(60),
+        handoff_ready_at: now - Duration::minutes(10),
+        post_wake_grace_until: now + Duration::hours(2),
         morning_report_posted_at: None,
         completed_at: None,
         cancel_requested_at: None,
@@ -41,7 +41,7 @@ fn test_manifest(now: DateTime<Utc>) -> OvernightManifest {
         task_cards_dir: run_dir.join("task-cards"),
         issue_drafts_dir: run_dir.join("issues"),
         validation_dir: run_dir.join("validation"),
-        last_activity_at: now - chrono::Duration::minutes(5),
+        last_activity_at: now - Duration::minutes(5),
     }
 }
 
@@ -80,7 +80,7 @@ fn escape_and_event_class_helpers_are_stable() {
 #[test]
 fn resource_and_git_summaries_are_compact() {
     let resources = ResourceSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         memory_used_percent: Some(42.0),
         load_one: Some(1.5),
         cpu_count: Some(8),
@@ -94,7 +94,7 @@ fn resource_and_git_summaries_are_compact() {
     );
 
     let git = GitSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         branch: Some("master".to_string()),
         dirty_count: Some(2),
         dirty_summary: Vec::new(),
@@ -108,7 +108,7 @@ fn resource_summary_names_a_platform_gap_instead_of_calling_it_unknown() {
     // A fact named in `unavailable` reads as a property of the operating
     // system, so the report never presents a platform gap as a failed probe.
     let resources = ResourceSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         cpu_count: Some(8),
         unavailable: vec![
             "memory_available_mb".to_string(),
@@ -128,7 +128,7 @@ fn resource_summary_still_says_unknown_when_the_read_simply_failed() {
     // No fact is listed as unmeasurable, so an absent value is this sample's
     // own failure and must not be blamed on the platform.
     let resources = ResourceSnapshot {
-        captured_at: Utc::now(),
+        captured_at: Timestamp::now(),
         ..Default::default()
     };
     assert_eq!(
@@ -146,7 +146,7 @@ fn format_minutes_is_human_compact() {
 
 #[test]
 fn progress_card_builder_uses_supplied_runtime_parts() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let manifest = test_manifest(now);
     let events = vec![OvernightEvent {
         timestamp: now,
@@ -199,7 +199,7 @@ fn progress_card_builder_uses_supplied_runtime_parts() {
 
 #[test]
 fn status_and_log_markdown_builders_are_stable() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let manifest = test_manifest(now);
     let summary =
         summarize_task_cards_slice(&[task_card("1", "Done", "complete"), task_card("2", "Blocked", "blocked")]);
@@ -224,7 +224,7 @@ fn status_and_log_markdown_builders_are_stable() {
 
 #[test]
 fn review_html_builder_includes_core_sections() {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let run_dir = PathBuf::from("/tmp/overnight-run");
     let manifest = OvernightManifest {
         version: OVERNIGHT_VERSION,

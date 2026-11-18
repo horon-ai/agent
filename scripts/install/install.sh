@@ -5,6 +5,9 @@ REPO="horon-ai/agent"
 IS_WINDOWS=false
 IS_TERMUX=false
 tmpdir=""
+# Holds the pid of the one optional transfer that runs beside the required
+# download. It is the transfer process itself, so it can be stopped directly.
+background_fetch_pid=""
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -33,6 +36,15 @@ install_exit() {
   status=$?
   trap - EXIT
   set +e
+  # A transfer still running would keep writing into the temporary directory
+  # removed below, so it is stopped and reaped first. Every other exit path
+  # waits on the same pid; this is the one where a failure can arrive while the
+  # transfer is still in flight.
+  if [ -n "$background_fetch_pid" ]; then
+    kill "$background_fetch_pid" 2>/dev/null
+    wait "$background_fetch_pid" 2>/dev/null
+    background_fetch_pid=""
+  fi
   [ -z "$tmpdir" ] || rm -rf "$tmpdir"
   exit "$status"
 }
@@ -170,14 +182,23 @@ fetch_release_asset() {
   curl -fsSL --retry 2 --connect-timeout 10 "$GITHUB_RELEASE_BASE/$1" -o "$2" 2>/dev/null
 }
 
+# Prints the manifest digest for one asset, and succeeds only when `SHA256SUMS`
+# names it with a well-formed SHA-256 value. That exit status is what separates
+# "the release publishes this file" from "it does not", so an optional asset is
+# never requested when its bytes could not be verified anyway.
+manifest_digest() {
+  digest=$(awk -v asset="$1" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' \
+    "$assets_dir/SHA256SUMS") || return 1
+  printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  printf '%s' "$digest"
+}
+
 # Prints why an asset fails verification and returns 1, so an optional asset can
 # be skipped instead of aborting the install.
 checksum_problem() {
   asset_name="$1"
   file="$2"
-  expected=$(awk -v asset="$asset_name" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' \
-    "$assets_dir/SHA256SUMS")
-  if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+  if ! expected=$(manifest_digest "$asset_name"); then
     printf 'Could not find a trusted SHA-256 checksum for %s in %s' "$asset_name" "$VERSION"
     return 1
   fi
@@ -198,18 +219,254 @@ verify_asset_checksum() {
     || err "${problem:-SHA-256 verification failed for $1}"
 }
 
-# The downloaded executable is the only release payload this script runs, so it
-# is unpacked member by member with `tar -xOf` into the temp directory. No
-# archive is extracted as a tree: an archive cannot choose where its bytes land,
-# and any member outside the names this platform needs is a hard failure. The
-# Linux x64 wrapper, its `.bin` payload and the OpenSSL libraries it links
-# against keep their archive names, because the wrapper resolves them by name.
+# A reinstall normally pays for the same download as the first install. The
+# last verified copy of each asset is kept in a per-user cache, one file per
+# asset name, and reused only when the SHA256SUMS fetched in this run lists that
+# same digest for that exact name. SHA256SUMS is never cached: every run fetches
+# it from the canonical release over HTTPS. A cache entry is only a source: its
+# bytes are copied into the temporary asset directory and that isolated copy is
+# the one hashed and installed, so a file that changes underneath cannot reach
+# the executable. A damaged copy, a name this release does not list, or a cache
+# location that cannot be shown to belong to this user alone falls through to
+# the existing download path; HORON_AGENT_NO_DOWNLOAD_CACHE=1 disables the cache
+# outright. An entry is published only after the release executable has staged
+# the assets, so on one filesystem the verified archive is moved into the cache
+# instead of copied a second time, and no entry is ever visible half-written.
+# Windows keeps its current path; install.ps1 is unchanged.
+
+# Read the owner and octal permissions from one stat of the same object.
+cache_metadata() {
+  case "$OS" in
+    Darwin|FreeBSD) stat -f '%u %Lp' "$1" 2>/dev/null ;;
+    *) stat -c '%u %a' "$1" 2>/dev/null ;;
+  esac
+}
+
+
+path_private() {
+  local metadata mode
+  metadata=$(cache_metadata "$1") || return 1
+  mode=${metadata#* }
+  [[ ${metadata%% *} == "$EUID" && $mode =~ ^[0-7]{3,4}$ ]] && (( (8#$mode & 0022) == 0 ))
+}
+
+# Enables the cache at "$1/horon-agent/release" only when every directory on the
+# way is owned by this user and private to them. A shared location such as /tmp,
+# or one whose owner or mode cannot be read, is skipped rather than written to:
+# an uncertain environment then costs a download and never a new risk.
+prepare_asset_cache() {
+  local cache_root=${1%/} parent ancestor metadata mode owner directory
+  [[ $cache_root == /* && ${cache_root##*/} != . && ${cache_root##*/} != .. ]] || return 0
+  parent=${cache_root%/*}
+  [[ -d $parent && ! -L $parent ]] && path_private "$parent" || return 0
+  parent=$(cd -P -- "$parent" && pwd -P) || return 0
+  cache_root="$parent/${cache_root##*/}"
+  ancestor=${parent%/*}
+  while [[ -n $ancestor ]]; do
+    metadata=$(cache_metadata "$ancestor") || return 0
+    owner=${metadata%% *}
+    mode=${metadata#* }
+    [[ $owner == "$EUID" || $owner == 0 ]] && [[ $mode =~ ^[0-7]{3,4}$ ]] || return 0
+    # A root-owned sticky temporary directory protects each private child from replacement.
+    (( (8#$mode & 0022) == 0 || (owner == 0 && (8#$mode & 01000) != 0) )) || return 0
+    ancestor=${ancestor%/*}
+  done
+  for directory in "$cache_root" "$cache_root/horon-agent" "$cache_root/horon-agent/release"; do
+    [[ ! -L $directory ]] || return 0
+    if [[ ! -d $directory ]]; then
+      (umask 077 && mkdir -- "$directory" 2>/dev/null) || [[ -d $directory ]] || return 0
+    fi
+    [[ ! -L $directory ]] && path_private "$directory" || return 0
+  done
+  asset_cache_dir=$directory
+}
+
+# Copies one cache entry into the asset directory, verifies that copy against
+# the manifest fetched in this run, and only then renames it into place. Returns
+# 1 and leaves nothing behind when the entry is absent, is not a private regular
+# file, or no longer matches this release, so the caller downloads instead.
+use_cached_asset() {
+  [ -n "$asset_cache_dir" ] || return 1
+  cache_entry="$asset_cache_dir/$1"
+  if [ ! -f "$cache_entry" ] || [ -L "$cache_entry" ]; then
+    return 1
+  fi
+  path_private "$cache_entry" || return 1
+  cache_copy="$assets_dir/.$1.cached"
+  rm -f "$cache_copy"
+  if ! cp "$cache_entry" "$cache_copy" 2>/dev/null; then
+    rm -f "$cache_copy"
+    return 1
+  fi
+  if ! problem=$(checksum_problem "$1" "$cache_copy"); then
+    rm -f "$cache_copy"
+    return 1
+  fi
+  mv -f "$cache_copy" "$assets_dir/$1" 2>/dev/null || { rm -f "$cache_copy"; return 1; }
+  return 0
+}
+
+# Move the consumed archive to a private staging name. Across filesystems mv
+# copies to that name first. The final rename stays on the cache filesystem.
+cache_asset() {
+  local cache_source="$assets_dir/$1" cache_entry="$asset_cache_dir/$1" cache_temp
+  [ -n "$asset_cache_dir" ] || return 0
+  [[ ! -L $asset_cache_dir ]] && path_private "$asset_cache_dir" || return 0
+  if [ ! -f "$cache_source" ] || [ -L "$cache_source" ]; then
+    return 0
+  fi
+  # Portable mv treats an existing directory (including a link to one) as a destination directory.
+  [[ ! -d $cache_entry ]] || return 0
+  cache_temp=$(mktemp "$asset_cache_dir/.$1.XXXXXX" 2>/dev/null) || return 0
+  if ! chmod 600 "$cache_source" || ! mv -f "$cache_source" "$cache_temp" 2>/dev/null; then
+    rm -f "$cache_temp"
+    return 0
+  fi
+  if ! mv -f "$cache_temp" "$cache_entry" 2>/dev/null; then
+    rm -f "$cache_temp"
+    return 0
+  fi
+  return 0
+}
+
+asset_cache_dir=""
+if [ "$IS_WINDOWS" = false ] && [ "${HORON_AGENT_NO_DOWNLOAD_CACHE:-}" != "1" ]; then
+  if [ -n "${XDG_CACHE_HOME:-}" ]; then
+    cache_root="$XDG_CACHE_HOME"
+  elif [ "$OS" = "Darwin" ]; then
+    cache_root="$HOME/Library/Caches"
+  else
+    cache_root="$HOME/.cache"
+  fi
+  prepare_asset_cache "$cache_root"
+fi
+
+# The final four bytes of a gzip file are the ISIZE field of the last member's
+# trailer, stored little-endian: that member's uncompressed length modulo 2^32,
+# not a total over every member. A stream with several members therefore reports
+# less than it holds. The figure is used only to decide whether an image is
+# worth writing (see inflate_bootstrap_archive); it never decides that an
+# install fits. Anything that cannot be read as a positive number is reported as
+# unknown, and the caller keeps the compressed path. `gzip -l` is not used here:
+# its table differs between implementations, while reading the trailer costs
+# four bytes and no pass over the stream.
+gzip_uncompressed_size() {
+  local trailer size=0 index=0 byte
+  trailer=$(tail -c 4 -- "$1" 2>/dev/null | od -An -tu1 2>/dev/null) || return 1
+  for byte in $trailer; do
+    case "$index" in
+      0) size=$byte ;;
+      1) size=$((size + byte * 256)) ;;
+      2) size=$((size + byte * 65536)) ;;
+      3) size=$((size + byte * 16777216)) ;;
+    esac
+    index=$((index + 1))
+  done
+  [ "$index" -eq 4 ] || return 1
+  [ "$size" -gt 0 ] || return 1
+  printf '%s\n' "$size"
+}
+
+# Free KiB on the filesystem that holds "$1", read from the POSIX `df -P` table.
+# The whole table is consumed so no producer is killed early by a closed pipe,
+# and anything but one numeric figure is reported as unknown.
+free_kibibytes() {
+  local available
+  available=$(LC_ALL=C df -Pk "$1" 2>/dev/null \
+    | awk 'NR > 1 && $4 ~ /^[0-9]+$/ && !found { print $4; found = 1 }') || return 1
+  [ -n "$available" ] || return 1
+  printf '%s\n' "$available"
+}
+
+# Prints the path of one uncompressed image of the verified archive, or fails so
+# the caller reads the archive as it lies on disk. Listing and extraction then
+# share that image: the compressed stream is expanded once instead of twice.
+#
+# The image costs its size in the temporary directory, so it is only written
+# when that filesystem holds roughly twice the reported uncompressed length,
+# which leaves room for the members read back out of it. This is a choice about
+# speed alone: the reported length can understate the stream (see
+# gzip_uncompressed_size), so an extraction out of the image that runs out of
+# room is recovered from the download instead of failing the install. A
+# temporary filesystem too small for both keeps the previous path and never sees
+# the copy. Only Linux takes this path; it is the platform that was measured,
+# and no GNU tar behaviour is assumed anywhere else.
+inflate_bootstrap_archive() {
+  local size free
+  [ "$OS" = Linux ] || return 1
+  command -v gzip >/dev/null 2>&1 || return 1
+  command -v od >/dev/null 2>&1 || return 1
+  command -v df >/dev/null 2>&1 || return 1
+  size=$(gzip_uncompressed_size "$1") || return 1
+  free=$(free_kibibytes "$tmpdir") || return 1
+  # KiB against bytes; 1023 rounds the length up to whole KiB.
+  [ "$free" -ge $(( (size + 1023) / 1024 * 2 )) ] || return 1
+  rm -f -- "$tmpdir/bootstrap.tar"
+  if ! gzip -dc -- "$1" > "$tmpdir/bootstrap.tar" 2>/dev/null; then
+    rm -f -- "$tmpdir/bootstrap.tar"
+    return 1
+  fi
+  printf '%s\n' "$tmpdir/bootstrap.tar"
+}
+
+# Writes the already validated members out of one input into the private
+# bootstrap directory. "$2" is the tar flag word that matches the input: -xzf
+# for the downloaded archive, -xf for its image. Nothing here decides whether a
+# name is acceptable, and a failure returns 1 instead of exiting so the caller
+# can retry from the download once.
+bootstrap_member_failure=""
+extract_bootstrap_members() {
+  local archive="$1" flags="$2" member
+  shift 2
+  bootstrap_member_failure=""
+  if [ "$#" -gt 1 ] && [[ $(tar --version 2>/dev/null) == *'GNU tar'* ]]; then
+    # GNU tar streams each selected regular file on stdin, so the whole set is
+    # read in one pass whatever the input is. Member names are data, never
+    # command text.
+    HORON_BOOTSTRAP_DIR="$bootstrap_dir" tar "$flags" "$archive" --no-wildcards \
+      --no-ignore-command-error --to-command='
+        name=${TAR_REALNAME#./}
+        case "$name" in ""|.|..|*/*) exit 1 ;; esac
+        set -C
+        cat > "$HORON_BOOTSTRAP_DIR/$name"
+      ' -- "$@" || return 1
+    for member in "$@"; do
+      if [ ! -f "$bootstrap_dir/${member#./}" ]; then
+        bootstrap_member_failure="$member"
+        return 1
+      fi
+    done
+    return 0
+  fi
+  for member in "$@"; do
+    tar -xOf "$archive" "$member" > "$bootstrap_dir/${member#./}" || {
+      bootstrap_member_failure="$member"
+      return 1
+    }
+  done
+}
+
+# Validate the complete listing before writing any bootstrap file. Only file
+# contents go into the private directory; tar never extracts an archive tree.
 extract_bootstrap_executable() {
-  archive="$1"
-  members=$(tar -tzf "$archive" 2>/dev/null) \
-    || err "Downloaded agent archive is not a readable tar.gz file"
+  local archive="$1" image="" members member name
+  shift
+  # The listing must come out of one readable input, and a name it does not
+  # allow fails the install here, whichever input answered. A damaged image is
+  # dropped so the download answers instead.
+  if image=$(inflate_bootstrap_archive "$archive"); then
+    members=$(tar -tf "$image" 2>/dev/null) || members=""
+    if [ -z "$members" ]; then
+      rm -f -- "$image"
+      image=""
+    fi
+  fi
+  if [ -z "$image" ]; then
+    members=$(tar -tzf "$archive" 2>/dev/null) \
+      || err "Downloaded agent archive is not a readable tar.gz file"
+  fi
   [ -n "$members" ] || err "Downloaded agent archive is empty"
-  extracted=0
+  # Collect literal member arguments, including a leading ./ on older archives.
   while IFS= read -r member; do
     name="${member#./}"
     [ -n "$name" ] || continue
@@ -218,9 +475,7 @@ extract_bootstrap_executable() {
     esac
     case "$name" in
       "$ARTIFACT"|"$ARTIFACT$EXE"|"$ARTIFACT.bin"|libssl.so*|libcrypto.so*)
-        tar -xOf "$archive" "$member" > "$bootstrap_dir/$name" \
-          || err "Failed to extract $member from the downloaded agent archive"
-        extracted=$((extracted + 1))
+        set -- "$@" "$member"
         ;;
       LICENSE)
         # The licence travels with every archive; the executable that stages the
@@ -234,7 +489,24 @@ extract_bootstrap_executable() {
   done <<EOF
 $members
 EOF
-  [ "$extracted" -gt 0 ] || err "Downloaded agent archive did not contain ${ARTIFACT}${EXE}"
+  [ "$#" -gt 0 ] || err "Downloaded agent archive did not contain ${ARTIFACT}${EXE}"
+  if [ -n "$image" ]; then
+    if extract_bootstrap_members "$image" -xf "$@"; then
+      rm -f -- "$image"
+      return 0
+    fi
+    # The image could not be written out of — the space its reported length
+    # promised went elsewhere, or that length understated the stream. Only the
+    # image and the partial copies it was allowed to write are removed; the
+    # download and everything else stay as they are, and the same validated
+    # members are written once more from it.
+    rm -f -- "$image"
+    for member in "$@"; do
+      rm -f -- "$bootstrap_dir/${member#./}"
+    done
+  fi
+  extract_bootstrap_members "$archive" -xzf "$@" \
+    || err "Failed to extract ${bootstrap_member_failure:-${ARTIFACT}${EXE}} from the downloaded agent archive"
 }
 
 prepare_bootstrap_executable() {
@@ -288,37 +560,97 @@ patch_termux_bootstrap() {
 fetch_release_asset "SHA256SUMS" "$assets_dir/SHA256SUMS" \
   || err "Release $VERSION does not publish SHA256SUMS"
 
+# >>> horon-tui
+# The interactive client ships as its own archive beside the agent. It is
+# optional: a release that predates it, or a platform that does not publish it,
+# installs the headless agent alone. Its transfer starts here — after
+# `SHA256SUMS`, which every asset is verified against anyway, and before the
+# required archive — so the client arrives while the agent archive is still in
+# flight instead of adding its own round trip after it. Two conditions decide
+# that: the platform publishes the client, and the manifest names both archives
+# with valid digests. An archive the manifest does not name could never be
+# verified, so it is not requested at all. The transfer is settled and checked
+# below, before anything is handed to the release executable.
+tui_archive=""
+tui_fetch_state="unpublished"
+if [ "$OS" != "FreeBSD" ]; then
+  tui_archive="horon-tui${ARTIFACT#horon-agent}.tar.gz"
+  if manifest_digest "$tui_archive" >/dev/null \
+    && { manifest_digest "$ARTIFACT.tar.gz" >/dev/null || manifest_digest "$ARTIFACT$EXE" >/dev/null; }; then
+    if use_cached_asset "$tui_archive"; then
+      tui_fetch_state="cached"
+    else
+      # Track curl itself so cleanup can stop it before removing its output.
+      curl -fsSL --retry 2 --connect-timeout 10 \
+        "$GITHUB_RELEASE_BASE/$tui_archive" -o "$assets_dir/$tui_archive" 2>/dev/null &
+      background_fetch_pid=$!
+      tui_fetch_state="pending"
+    fi
+  fi
+fi
+# <<< horon-tui
+
 download_mode=""
 downloaded_asset=""
+downloaded_from_cache=false
+# Assets this run downloaded and verified. They are published to the cache after
+# the release executable has staged them, so the publish can move the file
+# instead of copying bytes the install still has to read.
+verified_assets=()
 for candidate in "$ARTIFACT.tar.gz" "$ARTIFACT$EXE"; do
+  case "$candidate" in
+    *.tar.gz) candidate_mode="tar" ;;
+    *) candidate_mode="bin" ;;
+  esac
+  if use_cached_asset "$candidate"; then
+    downloaded_asset="$candidate"
+    download_mode="$candidate_mode"
+    downloaded_from_cache=true
+    info "Using cached, SHA-256 verified: $candidate"
+    break
+  fi
   if fetch_release_asset "$candidate" "$assets_dir/$candidate"; then
     downloaded_asset="$candidate"
-    case "$candidate" in
-      *.tar.gz) download_mode="tar" ;;
-      *) download_mode="bin" ;;
-    esac
+    download_mode="$candidate_mode"
     break
   fi
   rm -f "$assets_dir/$candidate"
 done
 
-if [ -n "$download_mode" ]; then
+if [ -n "$download_mode" ] && [ "$downloaded_from_cache" = false ]; then
   verify_asset_checksum "$downloaded_asset" "$assets_dir/$downloaded_asset"
   info "Verified SHA-256: $downloaded_asset"
+  verified_assets+=("$downloaded_asset")
 fi
 
 # >>> horon-tui
-# The interactive client ships as its own archive beside the agent. It is
-# optional: a release that predates it, or a platform that does not publish it,
-# installs the headless agent alone. The release executable stages whatever
-# verified archives it finds in this directory, so the TUI is only downloaded
-# and checked here, never run.
-if [ -n "$download_mode" ] && [ "$OS" != "FreeBSD" ]; then
-  tui_artifact="horon-tui${ARTIFACT#horon-agent}"
-  tui_archive="$tui_artifact.tar.gz"
-  if fetch_release_asset "$tui_archive" "$assets_dir/$tui_archive"; then
+# Settle the client before the handoff, so the release executable only ever sees
+# a complete, verified archive. A transfer still running is waited on here, and
+# a failed one is a normal reported outcome — the release does not publish the
+# archive after all — never an error for the agent itself.
+if [ -n "$background_fetch_pid" ]; then
+  tui_fetch_status=0
+  wait "$background_fetch_pid" || tui_fetch_status=$?
+  background_fetch_pid=""
+  if [ "$tui_fetch_status" -eq 0 ]; then
+    tui_fetch_state="downloaded"
+  else
+    tui_fetch_state="unavailable"
+  fi
+fi
+
+if [ -n "$tui_archive" ]; then
+  if [ -z "$download_mode" ]; then
+    # A source build hands over the locally built binary only, so a client
+    # transferred beside a prebuilt agent that turned out to be unavailable is
+    # discarded exactly as a serial download never fetched it.
+    rm -f "$assets_dir/$tui_archive"
+  elif [ "$tui_fetch_state" = "cached" ]; then
+    info "Using cached, SHA-256 verified: $tui_archive"
+  elif [ "$tui_fetch_state" = "downloaded" ]; then
     if problem=$(checksum_problem "$tui_archive" "$assets_dir/$tui_archive"); then
       info "Verified SHA-256: $tui_archive"
+      verified_assets+=("$tui_archive")
     else
       warn "skipped the interactive client: $problem"
       rm -f "$assets_dir/$tui_archive"
@@ -374,6 +706,11 @@ HORON_AGENT_NO_AUTO_UPDATE=1 \
   "$bootstrap_bin" "$@" \
   || err "Failed to install $VERSION; the previous installation is unchanged"
 info "Installed horon-agent $VERSION"
+
+# Only completed installs may publish their verified downloads.
+for verified_asset in ${verified_assets[@]+"${verified_assets[@]}"}; do
+  cache_asset "$verified_asset"
+done
 
 if [ "$IS_TERMUX" = true ] && [ "$IS_WINDOWS" = false ]; then
   # Termux exports a preload that the glibc build must not inherit, so the

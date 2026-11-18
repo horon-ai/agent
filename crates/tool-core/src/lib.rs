@@ -6,7 +6,7 @@ use horon_agent_tool_types::ToolOutput;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-pub const TOOL_INTENT_DESCRIPTION: &str = "Short label shown in the UI: why this call is made.";
+pub const TOOL_INTENT_DESCRIPTION: &str = "Short reason shown in the UI.";
 
 /// Input key a caller sets to accept the token cost of an oversized result.
 ///

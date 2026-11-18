@@ -6,7 +6,7 @@ pub use crate::storage::{
 };
 use crate::storage::{active_pids_dir, register_active_pid, unregister_active_pid};
 
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -178,8 +178,8 @@ pub struct Session {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_title: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     #[serde(default)]
     messages: Vec<StoredMessage>,
     #[serde(skip)]
@@ -271,7 +271,7 @@ pub struct Session {
     pub last_pid: Option<u32>,
     /// Last time the session was marked active
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_active_at: Option<DateTime<Utc>>,
+    pub last_active_at: Option<Timestamp>,
     /// Whether this is a debug/test session (created via debug socket)
     #[serde(default)]
     pub is_debug: bool,
@@ -680,7 +680,7 @@ impl Session {
     }
 
     pub fn create_with_id(session_id: String, parent_id: Option<String>, title: Option<String>) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let is_debug = default_is_test_session();
         // Try to extract short name from ID if it's a memorable ID
         let short_name = extract_session_name(&session_id).map(|s| s.to_string());
@@ -744,7 +744,7 @@ impl Session {
     }
 
     pub fn create(parent_id: Option<String>, title: Option<String>) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         // Keep memorable identities distinct across all currently active
         // sessions. This naturally covers swarm members and survives a server
         // reload because active PID markers retain their encoded short names.
@@ -836,7 +836,7 @@ impl Session {
         if let Some(label) = label {
             self.custom_title = Some(label.clone());
             self.save_label = Some(label);
-            self.updated_at = Utc::now();
+            self.updated_at = Timestamp::now();
         }
     }
 
@@ -855,7 +855,7 @@ impl Session {
             let title = title.trim();
             (!title.is_empty()).then(|| title.to_string())
         });
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
     }
 
     /// Get the title users should see for this session: custom rename first,
@@ -1088,7 +1088,7 @@ request in this new forked session, using the inherited conversation only as con
         self.status = SessionStatus::Active;
         let pid = std::process::id();
         self.last_pid = Some(pid);
-        self.last_active_at = Some(Utc::now());
+        self.last_active_at = Some(Timestamp::now());
         register_active_pid(&self.id, pid);
         self.sync_internal_presence_flag();
     }
@@ -1097,7 +1097,7 @@ request in this new forked session, using the inherited conversation only as con
     pub fn mark_active_with_pid(&mut self, pid: u32) {
         self.status = SessionStatus::Active;
         self.last_pid = Some(pid);
-        self.last_active_at = Some(Utc::now());
+        self.last_active_at = Some(Timestamp::now());
         register_active_pid(&self.id, pid);
         self.sync_internal_presence_flag();
     }
@@ -1129,8 +1129,8 @@ request in this new forked session, using the inherited conversation only as con
             }
         } else {
             // No PID info (older sessions): fall back to age heuristic
-            let age = Utc::now().signed_duration_since(self.updated_at);
-            if age.num_seconds() > 120 {
+            let age = Timestamp::now() - self.updated_at;
+            if age.whole_seconds() > 120 {
                 self.mark_crashed(Some("Stale active session (possible abrupt termination)".to_string()));
                 return true;
             }
@@ -1300,7 +1300,7 @@ request in this new forked session, using the inherited conversation only as con
             role,
             content,
             display_role,
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms,
             token_usage,
         });
@@ -1514,7 +1514,7 @@ request in this new forked session, using the inherited conversation only as con
             memory_ids,
             age_ms: Some(age_ms),
             before_message: Some(self.messages.len()),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
         };
         self.memory_profile_cache.memory_injections_count += 1;
         self.memory_profile_cache.memory_injections_json_bytes += estimate_json_bytes(&injection);
@@ -1537,7 +1537,7 @@ request in this new forked session, using the inherited conversation only as con
         content: impl Into<String>,
     ) {
         let event = StoredReplayEvent {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             kind: StoredReplayEventKind::DisplayMessage {
                 role: role.into(),
                 title,
@@ -1556,7 +1556,7 @@ request in this new forked session, using the inherited conversation only as con
             return;
         }
         let event = StoredReplayEvent {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             kind,
         };
         self.memory_profile_cache.replay_events_count += 1;
@@ -1584,7 +1584,7 @@ request in this new forked session, using the inherited conversation only as con
             return;
         }
         let event = StoredReplayEvent {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             kind,
         };
         self.memory_profile_cache.replay_events_count += 1;
@@ -1599,7 +1599,7 @@ request in this new forked session, using the inherited conversation only as con
             return;
         }
         let event = StoredReplayEvent {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             kind,
         };
         self.memory_profile_cache.replay_events_count += 1;

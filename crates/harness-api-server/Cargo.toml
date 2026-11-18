@@ -22,7 +22,7 @@ horon-agent-session-store = { path = "../session-store" }
 horon-agent-transport = { path = "../transport" }
 serde = "1"
 serde_json = "1"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+horon-agent-time = { path = "../time-types" }
 tokio = { version = "1", features = ["net", "io-util", "io-std", "rt-multi-thread", "macros", "sync", "time"] }
 
 # Only the glibc allocator tuning in `allocator.rs` reaches libc.

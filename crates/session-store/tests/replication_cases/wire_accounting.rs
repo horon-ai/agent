@@ -29,7 +29,7 @@ fn externalized(n: u128, parent: u128) -> SealedEvent {
         eid(n),
         Some(eid(parent)),
         OriginId::parse(uuid::Uuid::from_u128(999).to_string()).unwrap(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::parse("Future-Event"),
         json!({"bytes":"x".repeat(64 * 1024)}),
     )

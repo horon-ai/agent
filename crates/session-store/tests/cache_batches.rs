@@ -2,6 +2,7 @@ use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::checkpoint::SessionCache;
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use std::fs;
 
 mod support;
@@ -19,7 +20,7 @@ fn created(id: &SessionId) -> SealedEvent {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )
@@ -32,7 +33,7 @@ fn appended(parent: &SealedEvent, text: &str) -> SealedEvent {
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
         serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
         degradations: None,
@@ -69,7 +70,7 @@ fn metadata_changed(parent: &SealedEvent) -> SealedEvent {
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MetadataChanged),
         serde_json::json!({"metadata": SessionMetadata::default()}),
     )

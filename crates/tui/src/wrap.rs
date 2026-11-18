@@ -4,19 +4,59 @@
 //! must be counted after wrapping, not before: a wrapped line occupies as many
 //! rows as its cells need. Doing it here also keeps the wrapper's own wrap out
 //! of the pane, where it would wrap after the tail was already chosen.
+//!
+//! A block is also wrapped only as far as a caller needs it. Wrapping all of a
+//! block to show its last rows builds a row for every cell of output that stays
+//! off screen, and an expanded tool call drawing megabytes of output is exactly
+//! that case: [`Source`] keeps such a block as the text it came from,
+//! [`Source::height`] counts its rows without building any, and
+//! [`Source::rows_from_end`] builds only the rows the pane shows.
 
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
-/// One character, its cell width, and the style of the span it came from.
+/// One character, the columns it takes, and the style of the span it came from.
 type Cell = (char, usize, Style);
+
+/// The cells of the line being broken, reused across the lines of a block so
+/// counting a block's height does not allocate once per line.
+type Cells = Vec<Cell>;
 
 /// Columns a continuation row keeps for its own text at the narrowest width.
 ///
 /// An indent that leaves less than this would hide the text it is aligning, so
 /// it gives way instead: the alignment is worth less than the words.
 const MIN_TEXT_COLUMNS: usize = 3;
+
+#[cfg(test)]
+mod built {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// Wrapped rows built on this thread.
+        static COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Wrapped rows built on this thread, so a test can check that a frame buys
+    /// only the rows it shows.
+    pub(crate) fn built_rows() -> usize {
+        COUNT.with(Cell::get)
+    }
+
+    /// Start counting built rows again.
+    pub(crate) fn reset() {
+        COUNT.with(|count| count.set(0));
+    }
+
+    /// Note one row built.
+    pub(crate) fn note() {
+        COUNT.with(|count| count.set(count.get() + 1));
+    }
+}
+
+#[cfg(test)]
+pub(crate) use built::{built_rows, reset as reset_built};
 
 /// A rendered line and the columns its continuation rows keep.
 ///
@@ -77,25 +117,269 @@ pub fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
 /// introduced. The indent gives way at a width too narrow to hold both it and a
 /// few columns of text.
 pub fn wrap_indented(line: &Line<'static>, width: usize, indent: usize) -> Vec<Line<'static>> {
+    let mut cells: Cells = Vec::new();
+    fill(&mut cells, line);
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    break_rows(&cells, width, indent, |row| {
+        rows.push(row_of(&cells[row.start..row.end], line, row.lead));
+    });
+    rows
+}
+
+/// Wrap a rendered block, keeping every line's own indent.
+#[cfg(test)]
+pub fn wrap_rows(lines: Vec<Indented>, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width);
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for line in lines {
+        rows.extend(wrap_indented(line.line(), width, line.indent()));
+    }
+    rows
+}
+
+/// Which rows of a block are wanted, counted back from its last row.
+///
+/// A pane shows the rows near the end of a block, so what it does not show is
+/// the thing to name: `skip` rows at the end are left out and `count` rows above
+/// them are wanted. Counting the block first is not needed, which is what makes
+/// [`Source::rows_from_end`] able to build a window without measuring the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FromEnd {
+    /// Rows at the end of the block the caller does not want.
+    pub skip: usize,
+    /// Rows wanted above those.
+    pub count: usize,
+}
+
+impl FromEnd {
+    /// `count` rows ending `skip` rows above the block's last row.
+    pub fn new(skip: usize, count: usize) -> Self {
+        Self { skip, count }
+    }
+}
+
+/// The lines of one block, before they are wrapped.
+///
+/// Most blocks are a short list of lines and arrive built. A tool call drawing
+/// its whole kept output is one line per row of that output, and building them
+/// all to show the pane's last few rows is what this type exists to avoid: the
+/// output stays the borrowed text and a line is made only where one is drawn.
+pub enum Source<'a> {
+    /// Every line is built already.
+    Built(Vec<Indented>),
+    /// `head` rows, then one line per row of `text`, each `prefix`ed in `style`
+    /// and keeping `indent` columns on its continuation rows.
+    Output {
+        /// The rows above the output: a tool call's head, and a failure.
+        head: Vec<Indented>,
+        /// The output itself, one row per line.
+        text: &'a str,
+        /// Columns every row of the output starts with.
+        prefix: &'static str,
+        /// The style every row of the output is drawn in.
+        style: Style,
+        /// Columns a continuation row of the output keeps.
+        indent: usize,
+    },
+}
+
+impl<'a> Source<'a> {
+    /// A block whose lines are all built.
+    pub fn built(lines: Vec<Indented>) -> Self {
+        Self::Built(lines)
+    }
+
+    /// Put `line` above the block.
+    pub fn prepend(&mut self, line: Indented) {
+        match self {
+            Self::Built(lines) => lines.insert(0, line),
+            Self::Output { head, .. } => head.insert(0, line),
+        }
+    }
+
+    /// Rows the block occupies once wrapped, counted without building any.
+    pub fn height(&self, width: u16) -> usize {
+        let width = usize::from(width);
+        let mut cells: Cells = Vec::new();
+        match self {
+            Self::Built(lines) => lines.iter().map(|line| line_height(&mut cells, line, width)).sum(),
+            Self::Output {
+                head,
+                text,
+                prefix,
+                style,
+                indent,
+            } => {
+                let above: usize = head.iter().map(|line| line_height(&mut cells, line, width)).sum();
+                let rows: usize = text
+                    .lines()
+                    .map(|row| {
+                        fill_row(&mut cells, prefix, *style, row);
+                        break_rows(&cells, width, *indent, |_| {})
+                    })
+                    .sum();
+                above + rows
+            }
+        }
+    }
+
+    /// The rows [`FromEnd`] names, top to bottom.
+    ///
+    /// The block's rows are walked back from its last one, so a window near the
+    /// end only reads the lines it draws; the rows skipped by [`FromEnd::skip`]
+    /// are counted and dropped, never built.
+    pub fn rows_from_end(&self, width: u16, want: FromEnd) -> Vec<Line<'static>> {
+        let width = usize::from(width);
+        let mut rows: Vec<Line<'static>> = Vec::with_capacity(want.count.min(64));
+        let mut take = want.count;
+        if take == 0 {
+            return rows;
+        }
+        let mut skip = want.skip;
+        let mut cells: Cells = Vec::new();
+        // An output row is a line of its own with no style of its own, so the
+        // row it breaks into carries the default line style and alignment.
+        let plain = Line::default();
+        match self {
+            Self::Built(lines) => {
+                for line in lines.iter().rev() {
+                    if take == 0 {
+                        break;
+                    }
+                    fill(&mut cells, line.line());
+                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    rows.extend(window.into_iter().rev());
+                }
+            }
+            Self::Output {
+                head,
+                text,
+                prefix,
+                style,
+                indent,
+            } => {
+                for row in text.lines().rev() {
+                    if take == 0 {
+                        break;
+                    }
+                    fill_row(&mut cells, prefix, *style, row);
+                    let window = take_from_line(&cells, &plain, width, *indent, &mut skip, &mut take);
+                    rows.extend(window.into_iter().rev());
+                }
+                for line in head.iter().rev() {
+                    if take == 0 {
+                        break;
+                    }
+                    fill(&mut cells, line.line());
+                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    rows.extend(window.into_iter().rev());
+                }
+            }
+        }
+        rows.reverse();
+        rows
+    }
+}
+
+/// The rows of one line that a window keeps, after dropping `skip` rows from the
+/// line's end, taken off `take`.
+///
+/// Answers the rows in the line's own order. `skip` and `take` carry the window
+/// across lines, so the caller walks lines from the block's end and stops when
+/// `take` reaches zero.
+fn take_from_line(
+    cells: &[Cell],
+    line: &Line<'static>,
+    width: usize,
+    indent: usize,
+    skip: &mut usize,
+    take: &mut usize,
+) -> Vec<Line<'static>> {
+    let height = break_rows(cells, width, indent, |_| {});
+    if *skip >= height {
+        *skip -= height;
+        return Vec::new();
+    }
+    let end = height - *skip;
+    let start = end.saturating_sub(*take);
+    let mut rows: Vec<Line<'static>> = Vec::with_capacity(end - start);
+    break_rows(cells, width, indent, |row| {
+        if (start..end).contains(&row.index) {
+            rows.push(row_of(&cells[row.start..row.end], line, row.lead));
+        }
+    });
+    *take -= rows.len();
+    *skip = 0;
+    rows
+}
+
+/// Rows one built line occupies, counted without building them.
+fn line_height(cells: &mut Cells, line: &Indented, width: usize) -> usize {
+    fill(cells, line.line());
+    break_rows(cells, width, line.indent(), |_| {})
+}
+
+/// Every cell of `line` in the order it is drawn.
+fn fill(cells: &mut Cells, line: &Line<'static>) {
+    cells.clear();
+    cells.extend(line.spans.iter().flat_map(|span| {
+        span.content
+            .chars()
+            .map(move |character| (character, UnicodeWidthChar::width(character).unwrap_or(0), span.style))
+    }));
+}
+
+/// Every cell of one output row: its prefix and then the row itself, in one
+/// style.
+fn fill_row(cells: &mut Cells, prefix: &str, style: Style, text: &str) {
+    cells.clear();
+    cells.extend(
+        prefix
+            .chars()
+            .chain(text.chars())
+            .map(|character| (character, UnicodeWidthChar::width(character).unwrap_or(0), style)),
+    );
+}
+
+/// One row a line breaks into.
+///
+/// `cells[start..end]` is what the row draws, and `lead` is the columns it
+/// spends in front of them, which is how a continuation row stays under the text
+/// its prefix introduced.
+#[derive(Debug, Clone, Copy)]
+struct Row {
+    /// The row's place in the line, counted from the top.
+    index: usize,
+    /// The first cell it draws.
+    start: usize,
+    /// One past the last cell it draws.
+    end: usize,
+    /// Columns it keeps in front of the cells.
+    lead: usize,
+}
+
+/// Walk `cells` as rows of at most `width` columns, answering how many there are.
+///
+/// `row` is handed each row in turn. Counting a line calls it with nothing to do,
+/// and building a window builds only the rows whose index falls in the window, so
+/// both always agree on where a row begins and ends.
+fn break_rows(cells: &[Cell], width: usize, indent: usize, mut row: impl FnMut(Row)) -> usize {
     let width = width.max(1);
     let indent = indent.min(width.saturating_sub(MIN_TEXT_COLUMNS));
-    let cells: Vec<Cell> = line
-        .spans
-        .iter()
-        .flat_map(|span| {
-            span.content
-                .chars()
-                .map(move |character| (character, UnicodeWidthChar::width(character).unwrap_or(0), span.style))
-        })
-        .collect();
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    let mut start = 0;
     // An empty line still occupies one row.
     if cells.is_empty() {
-        return vec![row(Vec::new(), line)];
+        row(Row {
+            index: 0,
+            start: 0,
+            end: 0,
+            lead: 0,
+        });
+        return 1;
     }
+    let mut count = 0;
+    let mut start = 0;
     while start < cells.len() {
-        let lead = if rows.is_empty() { 0 } else { indent };
+        let lead = if count == 0 { 0 } else { indent };
         let budget = width.saturating_sub(lead).max(1);
         let mut used = 0;
         let mut end = start;
@@ -119,29 +403,29 @@ pub fn wrap_indented(line: &Line<'static>, width: usize, indent: usize) -> Vec<L
         } else {
             end
         };
-        let mut built = row_of(&cells[start..end], line);
-        if lead > 0 {
-            built.spans.insert(0, Span::raw(" ".repeat(lead)));
-        }
-        rows.push(built);
+        row(Row {
+            index: count,
+            start,
+            end,
+            lead,
+        });
+        count += 1;
         start = end;
     }
-    rows
-}
-
-/// Wrap a rendered block, keeping every line's own indent.
-pub fn wrap_rows(lines: Vec<Indented>, width: u16) -> Vec<Line<'static>> {
-    let width = usize::from(width);
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for line in lines {
-        rows.extend(wrap_indented(line.line(), width, line.indent()));
-    }
-    rows
+    count
 }
 
 /// One row of cells, with adjacent cells of the same style in one span.
-fn row_of(cells: &[Cell], line: &Line<'static>) -> Line<'static> {
+///
+/// `lead` columns are spent in front of the cells, which is where a continuation
+/// row stays under the text its prefix introduced.
+fn row_of(cells: &[Cell], line: &Line<'static>, lead: usize) -> Line<'static> {
+    #[cfg(test)]
+    built::note();
     let mut spans: Vec<Span<'static>> = Vec::new();
+    if lead > 0 {
+        spans.push(Span::raw(" ".repeat(lead)));
+    }
     let mut text = String::new();
     let mut style: Option<Style> = None;
     for &(character, _, cell_style) in cells {
@@ -156,11 +440,6 @@ fn row_of(cells: &[Cell], line: &Line<'static>) -> Line<'static> {
     if let Some(previous) = style {
         spans.push(Span::styled(text, previous));
     }
-    row(spans, line)
-}
-
-/// One row keeps the line's alignment and style but only its own spans.
-fn row(spans: Vec<Span<'static>>, line: &Line<'static>) -> Line<'static> {
     Line {
         style: line.style,
         alignment: line.alignment,
@@ -304,5 +583,113 @@ mod tests {
         assert_eq!(rows[0].spans[0].style.fg, Some(Color::Green));
         assert_eq!(text_of(&rows[1]), "cd");
         assert_eq!(rows[1].spans[0].style.fg, Some(Color::Blue));
+    }
+
+    /// Lines that exercise every break rule at once: words, long words, wide
+    /// characters, blank rows and a row that fits exactly.
+    fn mixed() -> Vec<Indented> {
+        vec![
+            Indented::plain(Line::from("a line that is longer than the pane so it wraps")),
+            Indented::plain(Line::from("")),
+            Indented::new(Line::from("  a continuation row that keeps two columns of indent"), 2),
+            Indented::plain(Line::from("한글한글한글한글한글")),
+            Indented::plain(Line::from("abcdefghij")),
+            Indented::plain(Line::from("supercalifragilisticexpialidocious and then words")),
+            Indented::new(Line::from("tail"), 2),
+        ]
+    }
+
+    #[test]
+    fn a_window_is_the_tail_of_the_full_wrap() {
+        let lines = mixed();
+        let full = wrap_rows(lines.clone(), 20);
+        for skip in [0, 1, 3, 7, 19, 20, 21, 500] {
+            for count in [0, 1, 2, 6, 20, 21, 500] {
+                let window = Source::built(lines.clone()).rows_from_end(20, FromEnd::new(skip, count));
+                let end = full.len().saturating_sub(skip);
+                let start = end.saturating_sub(count);
+                assert_eq!(
+                    window,
+                    full[start..end],
+                    "skip {skip} count {count}: the window is not the tail of the full wrap"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn counting_rows_matches_wrapping_them() {
+        let lines = mixed();
+        assert_eq!(Source::built(lines.clone()).height(20), wrap_rows(lines, 20).len());
+    }
+
+    #[test]
+    fn an_output_window_is_the_tail_of_its_own_lines() {
+        let style = Style::default().fg(Color::Yellow);
+        let text = String::from("first row\n\n  a row that wraps over the pane's width\n한글한글한글\nlast");
+        let head = Indented::plain(Line::from("head"));
+        let source = Source::Output {
+            head: vec![head.clone()],
+            text: &text,
+            prefix: "  ",
+            style,
+            indent: 2,
+        };
+        // The same block with its output rows built: what the pane used to draw.
+        let mut eager = vec![head];
+        for row in text.lines() {
+            let line = Line::from(Span::styled(format!("  {row}"), style));
+            eager.push(Indented::new(line, 2));
+        }
+        for width in [4, 14, 20, 40] {
+            let full = wrap_rows(eager.clone(), width);
+            assert_eq!(source.height(width), full.len(), "height at width {width}");
+            for skip in [0, 3, 40] {
+                for count in [0, 1, 5, 40] {
+                    let window = source.rows_from_end(width, FromEnd::new(skip, count));
+                    let end = full.len().saturating_sub(skip);
+                    let start = end.saturating_sub(count);
+                    assert_eq!(window, full[start..end], "width {width} skip {skip} count {count}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_block_has_no_rows() {
+        let source = Source::built(Vec::new());
+        assert_eq!(source.height(40), 0);
+        assert!(source.rows_from_end(40, FromEnd::new(0, 40)).is_empty());
+    }
+
+    #[test]
+    fn a_window_builds_only_the_rows_it_returns() {
+        let lines: Vec<Indented> = (0..2000)
+            .map(|row| Indented::plain(Line::from(format!("output row {row}"))))
+            .collect();
+        reset_built();
+        let source = Source::built(lines);
+        let window = source.rows_from_end(120, FromEnd::new(0, 40));
+        assert_eq!(window.len(), 40, "the window is the pane's own height");
+        assert_eq!(built_rows(), 40, "a frame built rows it cannot show");
+        assert_eq!(window.iter().map(text_of).next().as_deref(), Some("output row 1960"));
+    }
+
+    #[test]
+    fn counting_a_block_builds_no_rows() {
+        let text: String = (0..2000).map(|row| format!("output row {row}\n")).collect();
+        reset_built();
+        let source = Source::Output {
+            head: vec![Indented::plain(Line::from("head"))],
+            text: &text,
+            prefix: "  ",
+            style: Style::default(),
+            indent: 2,
+        };
+        assert_eq!(source.height(120), 2001);
+        assert_eq!(built_rows(), 0, "counting a block built rows");
+        let window = source.rows_from_end(120, FromEnd::new(0, 40));
+        assert_eq!(window.len(), 40);
+        assert_eq!(built_rows(), 40, "a window built rows it cannot show");
     }
 }

@@ -711,7 +711,7 @@ fn read_linux_memory_info() -> Option<OsProcessMemoryInfo> {
 #[cfg(feature = "jemalloc-prof")]
 fn default_heap_profile_path() -> Result<PathBuf> {
     let base = crate::storage::horon_agent_dir()?.join("profiles").join("heap");
-    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let timestamp = crate::util::utc_stamp_seconds(horon_agent_time::Timestamp::now());
     let pid = std::process::id();
     Ok(base.join(format!("horon-agent-{}-{}.heap", pid, timestamp)))
 }

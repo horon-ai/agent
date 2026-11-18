@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use horon_agent_time::{Duration, Timestamp};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -600,7 +600,7 @@ impl Skill {
 
     pub fn as_memory_entry(&self) -> Result<crate::memory::MemoryEntry> {
         let prompt = self.get_prompt()?;
-        let now = Utc::now() - chrono::Duration::days(365);
+        let now = Timestamp::now() - Duration::days(365);
         let mut entry = crate::memory::MemoryEntry::new(
             crate::memory::MemoryCategory::Custom("Skills".to_string()),
             format!("Use skill `/{} ` when relevant.\n\n{}", self.name, prompt),
