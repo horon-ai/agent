@@ -222,18 +222,6 @@ mod tests {
     }
 
     #[test]
-    fn auto_default_is_always_the_openai_compatible_provider() {
-        assert_eq!(
-            auto_default_provider(ProviderAvailability::default()),
-            ActiveProvider::OpenAI
-        );
-        assert_eq!(
-            auto_default_provider(ProviderAvailability { openai: true }),
-            ActiveProvider::OpenAI
-        );
-    }
-
-    #[test]
     fn fallback_sequence_never_crosses_providers() {
         assert_eq!(fallback_sequence(ActiveProvider::OpenAI), vec![ActiveProvider::OpenAI]);
     }

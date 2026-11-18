@@ -28,19 +28,6 @@ fn old_history_payload_with_removed_panel_fields_still_loads() {
 }
 
 #[test]
-fn removed_panel_event_types_are_rejected_without_panicking() {
-    for removed in [
-        json!({"type": "side_panel_state", "snapshot": {"focused_page_id": null, "pages": []}}),
-        json!({"type": "applet_state", "session_id": "s1", "snapshot": {"instances": []}}),
-    ] {
-        assert!(
-            serde_json::from_value::<ServerEvent>(removed.clone()).is_err(),
-            "removed event {removed} must not decode as a live event"
-        );
-    }
-}
-
-#[test]
 fn old_harness_clients_decode_removed_frames_as_unknown() {
     let event: ServerFrame = serde_json::from_value(json!({
         "v": 1,

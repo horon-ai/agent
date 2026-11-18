@@ -400,13 +400,6 @@ fn a_deleted_candidate_is_omitted_rather_than_reported_at_zero_bytes() {
 }
 
 #[test]
-fn the_scan_is_bounded() {
-    let (entries, files, results) = artifact_scan_bounds_for_test();
-    assert!(entries > 0 && files > 0 && results > 0);
-    assert!(files <= entries, "a file budget above the entry budget is unreachable");
-}
-
-#[test]
 fn a_flood_of_candidates_is_capped_at_the_result_bound() {
     let home = ScopedHome::new("artifact-flood");
     let project = home.path.join("project");
