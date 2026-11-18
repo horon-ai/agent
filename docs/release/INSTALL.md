@@ -136,7 +136,7 @@ The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. The
 
 The archive holds the wrapper, `<artifact>.bin` and the `LICENSE`; the OpenSSL libraries are no longer included. `scripts/install/install.sh` still accepts `libssl.so*` members so it can install older archives.
 
-The shell installer verifies the checksum and checks every member name before preparing the bootstrap executable. When the bootstrap needs more than one file, GNU tar streams the selected files in one extraction pass. Other tar implementations stream one selected file at a time.
+The shell installer verifies the checksum and checks every member name before preparing the bootstrap executable. On Linux the verified archive is expanded once into the temporary directory and both the listing check and the extraction read that image, but only when the filesystem holds twice the uncompressed length; otherwise the compressed archive is read again for each pass. An extraction out of that image that fails is retried once from the archive itself. When the bootstrap needs more than one file, GNU tar streams the selected files in one extraction pass. Other tar implementations stream one selected file at a time.
 
 ### CI guard
 
