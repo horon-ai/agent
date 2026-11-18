@@ -84,7 +84,7 @@
     {
       "package": "horon-agent",
       "target": "session_event_lifecycle",
-      "min_passed": 6
+      "min_passed": 7
     },
     {
       "package": "horon-agent",

@@ -369,7 +369,7 @@ loop_guard = false
 않으므로(`turn_streaming_mpsc.rs:1913` `running_tool_registry`), 그룹이 도는 동안
 올린 요청은 호출을 옮기는 대신 `moved: false`로 보고합니다
 (`turn_streaming_mpsc.rs:2562` `run_group`). 응답은 레지스트리 항목과 시그널로
-계산하고(`crates/app-core/src/server/client_lifecycle.rs:1521` `move_tool_to_background`),
+계산하고(`crates/app-core/src/server/client_lifecycle.rs:1525` `move_tool_to_background`),
 이벤트 모양은 `moved`를 담고 `tool_call_id`와 `tool_name`은 없습니다 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 
 시그널은 그룹 뒤에 지우므로, 그룹 중에 들어온 시그널이 다음 구성원 하나짜리 호출을
