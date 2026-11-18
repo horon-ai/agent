@@ -344,11 +344,12 @@ fi
 # Validate the complete listing before writing any bootstrap file. Only file
 # contents go into the private directory; tar never extracts an archive tree.
 extract_bootstrap_executable() {
-  archive="$1"
+  local archive="$1" members member name
+  shift
   members=$(tar -tzf "$archive" 2>/dev/null) \
     || err "Downloaded agent archive is not a readable tar.gz file"
   [ -n "$members" ] || err "Downloaded agent archive is empty"
-  extracted=0
+  # Collect literal member arguments, including a leading ./ on older archives.
   while IFS= read -r member; do
     name="${member#./}"
     [ -n "$name" ] || continue
@@ -357,9 +358,7 @@ extract_bootstrap_executable() {
     esac
     case "$name" in
       "$ARTIFACT"|"$ARTIFACT$EXE"|"$ARTIFACT.bin"|libssl.so*|libcrypto.so*)
-        tar -xOf "$archive" "$member" > "$bootstrap_dir/$name" \
-          || err "Failed to extract $member from the downloaded agent archive"
-        extracted=$((extracted + 1))
+        set -- "$@" "$member"
         ;;
       LICENSE)
         # The licence travels with every archive; the executable that stages the
@@ -373,7 +372,26 @@ extract_bootstrap_executable() {
   done <<EOF
 $members
 EOF
-  [ "$extracted" -gt 0 ] || err "Downloaded agent archive did not contain ${ARTIFACT}${EXE}"
+  [ "$#" -gt 0 ] || err "Downloaded agent archive did not contain ${ARTIFACT}${EXE}"
+  if [ "$#" -gt 1 ] && [[ $(tar --version 2>/dev/null) == *'GNU tar'* ]]; then
+    # GNU tar streams each selected regular file on stdin, expanding the gzip
+    # stream once for the whole set. Member names are data, never command text.
+    HORON_BOOTSTRAP_DIR="$bootstrap_dir" tar -xzf "$archive" --no-wildcards \
+      --no-ignore-command-error --to-command='
+        name=${TAR_REALNAME#./}
+        case "$name" in ""|.|..|*/*) exit 1 ;; esac
+        set -C
+        cat > "$HORON_BOOTSTRAP_DIR/$name"
+      ' -- "$@" || err "Failed to extract the selected bootstrap files"
+    for member in "$@"; do
+      [ -f "$bootstrap_dir/${member#./}" ] || err "Failed to extract $member from the downloaded agent archive"
+    done
+  else
+    for member in "$@"; do
+      tar -xOf "$archive" "$member" > "$bootstrap_dir/${member#./}" \
+        || err "Failed to extract $member from the downloaded agent archive"
+    done
+  fi
 }
 
 prepare_bootstrap_executable() {
