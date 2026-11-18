@@ -211,15 +211,24 @@ jobs:
           ref: ${{ inputs.baseline_ref }}
           path: .bench-baseline
 
-      - name: Hide the baseline tree from the candidate's git status
+      - name: Hide benchmark outputs and any baseline tree from git status
         # build-meta marks a build dirty when `git status --porcelain` is not
-        # empty, so an untracked second checkout would label the measured
-        # candidate "dirty" in its own --version output. `.git/info/exclude` is
-        # local to this checkout, so no tracked file changes.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
+        # empty, so anything untracked in this checkout labels the measured
+        # candidate "dirty" in its own --version output. Two such paths appear
+        # before the candidate build: `$RESULTS`, which the baseline step below
+        # creates, and the second checkout when the job builds a baseline.
+        # `.git/info/exclude` is local to this checkout, so no tracked file
+        # changes.
         shell: bash
         run: |
-          printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
+          set -euo pipefail
+          case "$RESULTS" in
+            /*) ;; # an absolute results directory lives outside the checkout
+            *) printf '/%s/\n' "$RESULTS" >> .git/info/exclude ;;
+          esac
+          if [[ -e "$BASELINE_DIR/.git" ]]; then
+            printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
+          fi
           git status --porcelain
           test -z "$(git status --porcelain)"
 
