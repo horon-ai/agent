@@ -210,9 +210,10 @@ fn screen_hash(terminal: &Terminal<TestBackend>) -> u64 {
 /// Exercise changes that can invalidate a renderer's wrapped output.
 fn check_transitions(terminal: &mut Terminal<TestBackend>, app: &mut App, screens: &mut Vec<u64>) -> Option<()> {
     let mut capture = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
-        draw(terminal, app)
-            .inspect_err(|error| eprintln!("scroll_bench: transition draw failed: {error}"))
-            .ok()?;
+        if let Err(error) = draw(terminal, app) {
+            eprintln!("scroll_bench: transition draw failed: {error}");
+            return None;
+        }
         screens.push(screen_hash(terminal));
         Some(())
     };
