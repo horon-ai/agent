@@ -188,6 +188,10 @@
       "count": 1,
       "reason": "test premise is a read-only directory, which only exists where the filesystem carries POSIX write bits; Windows accepts the write."
     },
+    "crates/base/src/git_clone_isolation_tests.rs": {
+      "count": 1,
+      "reason": "The Linux clone backend requires a filesystem with FICLONE. The refusal test runs on a second filesystem without it."
+    },
     "crates/base/src/git_worktree.rs": {
       "count": 1,
       "reason": "test refuses a symlinked worktree destination created with std::os::unix::fs::symlink; the adapter copies on Windows, which the test must not exercise."

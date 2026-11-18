@@ -1,3 +1,11 @@
+//! Fixtures for the clone backend, which copies with a copy-on-write primitive.
+//!
+//! The success tests need a filesystem that provides one: macOS uses APFS, and
+//! the Linux job mounts btrfs and names it in `HORON_AGENT_CLONE_TEST_ROOT`. The
+//! refusal test needs the opposite and reads
+//! `HORON_AGENT_CLONE_TEST_NO_REFLINK_ROOT` (the Linux job's ext4
+//! `$RUNNER_TEMP`), falling back to tmpfs on a local Linux run.
+
 use super::*;
 use std::path::Path;
 use tempfile::TempDir;
@@ -16,8 +24,20 @@ impl CanonTemp {
     }
 }
 
+/// A temp directory on a filesystem whose copy primitive is reflink.
+///
+/// macOS uses APFS by default. Linux CI mounts a btrfs loopback and names it in
+/// `HORON_AGENT_CLONE_TEST_ROOT`; without such a filesystem the product refuses
+/// the copy and these tests fail with that message instead of skipping the
+/// success path.
 fn tempdir() -> CanonTemp {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = match std::env::var_os("HORON_AGENT_CLONE_TEST_ROOT") {
+        Some(root) => tempfile::Builder::new()
+            .prefix("horon-clone-test-")
+            .tempdir_in(root)
+            .expect("the clone test root is a writable reflink filesystem"),
+        None => tempfile::tempdir().unwrap(),
+    };
     let path = dir.path().canonicalize().unwrap();
     CanonTemp { _dir: dir, path }
 }
@@ -37,7 +57,11 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// Fixture repository with one commit and a `sub/` directory.
 fn repo() -> (CanonTemp, String) {
-    let temp = tempdir();
+    repo_in(tempdir())
+}
+
+/// [`repo`] inside an already chosen temporary directory.
+fn repo_in(temp: CanonTemp) -> (CanonTemp, String) {
     let path = temp.path().join("project");
     std::fs::create_dir(&path).unwrap();
     std::fs::create_dir(path.join("sub")).unwrap();
@@ -114,6 +138,27 @@ fn create_refuses_an_existing_destination() {
     let error = create(&path, "swarm/duplicate").unwrap_err().to_string();
     assert!(error.contains("already exists"), "{error}");
     assert!(Path::new(&first.root).is_dir());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn create_refuses_a_filesystem_without_reflink() {
+    let root = std::env::var_os("HORON_AGENT_CLONE_TEST_NO_REFLINK_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/dev/shm"));
+    let dir = tempfile::Builder::new()
+        .prefix("horon-clone-no-reflink-")
+        .tempdir_in(root)
+        .expect("a writable filesystem without reflink support");
+    let path = dir.path().canonicalize().unwrap();
+    let (_temp, repo_path) = repo_in(CanonTemp { _dir: dir, path });
+
+    let error = create(&repo_path, "swarm/no_reflink").unwrap_err().to_string();
+
+    assert!(error.contains("not available on this filesystem"), "{error}");
+    assert!(error.contains("use isolation=worktree"), "{error}");
+    let leftovers = clone_root(&repo_path, "swarm/no_reflink").exists();
+    assert!(!leftovers, "a refused clone leaves nothing behind");
 }
 
 #[test]

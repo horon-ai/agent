@@ -12,6 +12,12 @@ use crate::session::event_wire::mirror_writes;
 use anyhow::{Context, Result};
 use horon_agent_session_store as store;
 
+/// A record id the journal accepts: canonical lowercase hyphenated UUID form.
+///
+/// `DurableRuntimeStore::append` validates every row id this way, so a readable
+/// placeholder such as `"run-1"` is refused before the row is written.
+const RUN_ID: &str = "6f1c2f0a-9a4b-4f8e-8f0d-2c9b7a5e1d33";
+
 fn text(value: &str) -> Vec<ContentBlock> {
     vec![ContentBlock::Text {
         text: value.into(),
@@ -62,7 +68,7 @@ fn append_binding(home: &std::path::Path, session: &Session, rev: u64, status: &
         migration_epoch: Some(0),
         provider_session_id: None,
     };
-    journal.append_run_started("run-1", None, Some(binding))?;
+    journal.append_run_started(RUN_ID, None, Some(binding))?;
     Ok(())
 }
 
@@ -129,13 +135,16 @@ fn journal_confirmed_binding_publishes_without_a_flush() -> Result<()> {
     assert_eq!(read_mirror(&session)?["rev"], serde_json::json!(1));
     let _ = mirror_writes::take("confirmed");
 
-    // And a run row that already states the close this session is about to make.
+    // And a run row that already states the close this session is about to
+    // make. The owning pid is part of the binding a restart reads, so both the
+    // row and the adopted value carry the session's own pid rather than none.
     let closed = SessionStatus::Closed;
-    append_binding(&home_path, &session, 2, &closed, 0)?;
+    let owner = session.last_pid.context("a live session names its process")?;
+    append_binding(&home_path, &session, 2, &closed, owner)?;
     session.note_journal_binding(Binding {
         rev: 2,
         status: closed.clone(),
-        last_pid: None,
+        last_pid: Some(owner),
         last_active_at: None,
         working_dir: session.working_dir.clone(),
         migration_epoch: Some(session.migration_epoch),
@@ -271,9 +280,22 @@ fn listing_and_crash_scan_tolerate_a_stale_mirror() -> Result<()> {
         let paths = store_paths()?;
         let parsed = store::SessionId::parse(id)?;
         let row = store::catalog::row(&paths, &parsed, store::ReadProbe::default())?;
+        // A mirror that a crash left empty or removed states no activity clock,
+        // and the listing reports none rather than failing; a readable mirror
+        // still dates the row. Consumers read `updated_at` when the activity is
+        // absent, so either way the listing answers.
+        let dated_on_mirror = match damage {
+            "empty" | "lost" => row.last_active_at_ms.is_none(),
+            _ => row.last_active_at_ms.is_some(),
+        };
         assert!(
-            row.last_active_at_ms.is_some(),
-            "{id}: the listing falls back to the log"
+            dated_on_mirror,
+            "{id}: the mirror states the activity its damage allows"
+        );
+        assert_eq!(row.session_id, parsed, "{id}: the row names the session");
+        assert!(
+            row.updated_at.timestamp_millis() > 0,
+            "{id}: the log's own clock still dates the row"
         );
         drop(session);
         // The crash scan loads each candidate; a mirror it cannot use is not a failure.
@@ -299,7 +321,7 @@ fn run_boundary_binding_publishes_without_a_flush() -> Result<()> {
     assert_eq!(started.rev, 2, "one above the mirror's rev");
     assert_eq!(started.status, session.status);
     let root = home_path.join(crate::durable_runtime::JOURNAL_DIR_NAME);
-    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_started("run-1", None, Some(started.clone()))?;
+    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_started(RUN_ID, None, Some(started.clone()))?;
 
     // And the close states the same fields at the next version.
     let closed = session.closing_journal_binding()?;
@@ -307,7 +329,7 @@ fn run_boundary_binding_publishes_without_a_flush() -> Result<()> {
     assert_eq!(closed.last_pid, started.last_pid);
     assert_eq!(closed.rev, 3, "one above the row the start wrote");
     DurableRuntimeStore::open_in(&root, &session.id)?.append_run_stopped(
-        "run-1",
+        RUN_ID,
         crate::durable_runtime::StopCause::Completed,
         None,
         Some(closed.clone()),
@@ -367,7 +389,7 @@ fn first_commit_after_a_confirmed_start_publishes_without_a_flush() -> Result<()
     // When the start row states that binding before the commit, and the session
     // adopts it, the commit only renames the file into place.
     let root = home_path.join(crate::durable_runtime::JOURNAL_DIR_NAME);
-    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_started("run-1", None, Some(started.clone()))?;
+    DurableRuntimeStore::open_in(&root, &session.id)?.append_run_started(RUN_ID, None, Some(started.clone()))?;
     session.note_journal_binding(started.clone());
     session.save()?;
 

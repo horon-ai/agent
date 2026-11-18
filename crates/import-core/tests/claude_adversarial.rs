@@ -269,6 +269,24 @@ fn self_parent_entry_appears_exactly_once() {
 }
 
 #[test]
+fn unnamed_replies_with_identical_text_survive_once_per_row() {
+    let reply = r#"{"type":"assistant","parentUuid":"r","message":{"role":"assistant","content":"again"}}"#;
+    let entries = [
+        parse_ok(r#"{"type":"user","uuid":"r","message":{"role":"user","content":"start"}}"#),
+        parse_ok(reply),
+        parse_ok(reply),
+        parse_ok(r#"{"type":"user","message":{"role":"user","content":"new conversation"}}"#),
+    ];
+    let ordered = ordered_claude_code_message_entries(&entries);
+    let positions = ordered
+        .iter()
+        .map(|row| entries.iter().position(|entry| std::ptr::eq(entry, *row)).unwrap())
+        .collect::<Vec<_>>();
+    // Visit each root's first reply, then the next root, then the remaining fork.
+    assert_eq!(positions, [0, 1, 3, 2]);
+}
+
+#[test]
 fn branching_chain_keeps_all_children() {
     // root r with two children c1 and c2 (a fork). Both children must survive.
     let entries = vec![

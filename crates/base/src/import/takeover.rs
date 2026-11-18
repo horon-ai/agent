@@ -10,7 +10,7 @@ use crate::session::Session;
 use anyhow::{Context, Result};
 use std::path::Path;
 
-use super::import_session_from_file_with_target;
+use super::refresh::PreparedTakeover;
 
 /// Roll a staged takeover back.
 ///
@@ -83,9 +83,9 @@ pub(crate) fn take_over_live_claude_session_with_timeout(
     let takeover_id = Session::create(None, None).id;
     let path = Path::new(session_path);
 
-    let prepared = import_session_from_file_with_target(path, session_id, takeover_id.clone(), true)
+    let mut prepared = PreparedTakeover::prepare(path, session_id, takeover_id.clone())
         .with_context(|| format!("failed to prepare Claude Code session {session_id}"))?;
-    if prepared.visible_conversation_message_count() == 0 {
+    if prepared.session.visible_conversation_message_count() == 0 {
         remove_prepared_takeover_session(&takeover_id);
         anyhow::bail!("Claude Code session {session_id} has no complete conversation messages to take over");
     }
@@ -113,8 +113,8 @@ pub(crate) fn take_over_live_claude_session_with_timeout(
     // but do not report a fully successful handoff with an incomplete tail.
     let mut final_refresh_error = None;
     for attempt in 0..5 {
-        match import_session_from_file_with_target(path, session_id, takeover_id.clone(), true) {
-            Ok(_) => {
+        match prepared.refresh(path, session_id) {
+            Ok(()) => {
                 final_refresh_error = None;
                 break;
             }
