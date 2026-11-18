@@ -368,6 +368,10 @@
       "count": 1,
       "reason": "The historical system-offset test uses TZ in a child process to select a POSIX time zone. Windows uses the system zone independently of that variable."
     },
+    "crates/tui/src/terminal.rs": {
+      "count": 3,
+      "reason": "the client's signal teardown (#431): `SIGTERM`/`SIGHUP`/`SIGQUIT` handling is a POSIX feature with no Windows equivalent this client can install without a new Windows dependency, so one `#[cfg(unix)]` module and its `#[cfg(not(unix))]` stub are the whole surface."
+    },
     "crates/update-core/src/lib.rs": {
       "count": 7,
       "reason": "the release asset name and SHA-256 pin for each supported target triple (linux/macos/windows/freebsd x x86_64/aarch64); the mapping is the product of the updater."
