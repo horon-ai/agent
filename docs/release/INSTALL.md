@@ -27,6 +27,12 @@ horon install-release --assets <directory> --agent-version <version>
 
 Once verification passes, `stable`, `current`, the launcher links and the update metadata are swapped together. A failure midway rolls back, so the previous installation stays in place (`crates/app-core/src/update/activation.rs`). The command downloads nothing from the network. Preparing the assets is the caller's job.
 
+## Archive format
+
+The FreeBSD x64 archive uses POSIX ustar so FreeBSD `tar` and `install-release` read the same two top-level regular files, `horon-agent-freebsd-x86_64` and `LICENSE`. Before upload, `scripts/release/agent_archive.sh pack <dist-dir> <binary>` checks the format, names, executable permission and bytes. The release job then installs the archive, compares the installed executable with the build output and runs the launcher.
+
+`scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]` installs the archive into a fresh home and reinstalls into that home. Both installs must preserve the source bytes and the launcher's version output. A manual FreeBSD smoke run with `official_asset=v0.1.14` also verifies the published checksum, re-packs that release's own executable and checks five installation pairs. The workflow saves its logs and member listing in `freebsd-archive-evidence-<tag>`.
+
 ## How the install scripts use it
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch the release assets and `SHA256SUMS` into a temporary directory and then call this command. `scripts/install/install_from_source.sh` calls the same command with `--source-binary` to install a local build. The shell and PowerShell installers therefore never produce different layouts, and a failure leaves the previous installation alone.
