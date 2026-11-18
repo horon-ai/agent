@@ -1,4 +1,5 @@
 use super::*;
+use horon_agent_time::Duration;
 use std::ffi::OsString;
 
 pub(super) fn lock_env() -> std::sync::MutexGuard<'static, ()> {

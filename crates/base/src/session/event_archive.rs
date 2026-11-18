@@ -1,8 +1,8 @@
 //! Archive and restore as durable records on the session's own writer.
 use super::{Session, event_store};
 use anyhow::{Context, Result};
-use chrono::Utc;
 use horon_agent_session_store as store;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 
 impl Session {
@@ -39,7 +39,7 @@ impl Session {
             store::EventId::new_v4(),
             Some(head),
             origin,
-            Utc::now(),
+            Timestamp::now(),
             store::EventKind::new(store::KnownEventKind::ArchiveChanged),
             json!({"archived": archived, "reason": reason}),
         )

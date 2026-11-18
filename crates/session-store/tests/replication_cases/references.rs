@@ -36,7 +36,7 @@ fn reset_reference_closure_is_exported_before_the_new_root() {
         "session_created",
         json!({
             "metadata":SessionMetadata::default(),"branch_root":true,
-            "reset_provenance":{"reset_at":chrono::DateTime::UNIX_EPOCH,"cleared_head_event_id":eid(9)}
+            "reset_provenance":{"reset_at":Timestamp::UNIX_EPOCH,"cleared_head_event_id":eid(9)}
         }),
     );
     seed(&a, &[root(), unknown(9, 1), reset]);

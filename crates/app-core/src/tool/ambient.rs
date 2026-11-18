@@ -10,7 +10,7 @@ use crate::safety::{self, ApprovalDefault, Decision, PermissionRequest, Permissi
 use crate::server::{EmitOutcome, emit_session_event};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
@@ -236,7 +236,7 @@ impl Tool for EndAmbientCycleTool {
             additional_context: None,
         });
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let result = AmbientCycleResult {
             summary: params.summary.clone(),
             memories_modified: params.memories_modified,
@@ -355,7 +355,7 @@ impl Tool for ScheduleAmbientTool {
 
         let wake_at = if let Some(ref ts) = params.wake_at {
             Some(
-                ts.parse::<chrono::DateTime<Utc>>()
+                ts.parse::<Timestamp>()
                     .map_err(|e| anyhow::anyhow!("Invalid wake_at timestamp: {}", e))?,
             )
         } else {
@@ -718,11 +718,11 @@ async fn execute_request_permission(
     };
 
     let request_id = safety::new_request_id();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let timeout = settings.timeout;
     let expires_at = now
-        + chrono::Duration::from_std(timeout)
-            .unwrap_or_else(|_| chrono::Duration::seconds(safety::DEFAULT_APPROVAL_TIMEOUT.as_secs() as i64));
+        + TimeDelta::try_from(timeout)
+            .unwrap_or_else(|_| TimeDelta::seconds(safety::DEFAULT_APPROVAL_TIMEOUT.as_secs() as i64));
     let review = build_permission_review_context(
         &params.action,
         &params.description,
@@ -830,7 +830,7 @@ async fn execute_request_permission(
     emit_approval_pending(&ctx.session_id, &request_id, &params.action, expires_at);
 
     let outcome = wait_for_decision(&system, store.as_ref(), &request_id, std::process::id(), settings).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     match outcome {
         WaitOutcome::Superseded { decision } => {
@@ -977,7 +977,7 @@ async fn renew_waiter_lease(
                 lost = true;
                 return;
             }
-            stored.waiter_lease_expires_at = Some(Utc::now() + lease_delta(settings.lease_duration));
+            stored.waiter_lease_expires_at = Some(Timestamp::now() + lease_delta(settings.lease_duration));
         });
         if let Err(error) = update {
             crate::logging::warn(&format!(
@@ -1006,9 +1006,8 @@ fn waiter_was_superseded(store: Option<&BlockedApprovalStore>, request_id: &str,
     }
 }
 
-fn lease_delta(duration: Duration) -> chrono::Duration {
-    chrono::Duration::from_std(duration)
-        .unwrap_or_else(|_| chrono::Duration::seconds(WAITER_LEASE_DURATION.as_secs() as i64))
+fn lease_delta(duration: Duration) -> TimeDelta {
+    TimeDelta::try_from(duration).unwrap_or_else(|_| TimeDelta::seconds(WAITER_LEASE_DURATION.as_secs() as i64))
 }
 
 fn render_approval_result(
@@ -1063,12 +1062,7 @@ fn timeout_default_text(approved: bool, timeout: Duration) -> String {
 /// `pub(crate)` because the tool approval gate in `tool::mod` queues requests on
 /// the same system and needs the same event: without it the request exists but a
 /// plain `serve` session has no way to show it.
-pub(crate) fn emit_approval_pending(
-    session_id: &str,
-    request_id: &str,
-    action: &str,
-    expires_at: chrono::DateTime<Utc>,
-) {
+pub(crate) fn emit_approval_pending(session_id: &str, request_id: &str, action: &str, expires_at: Timestamp) {
     let event = ServerEvent::ApprovalPending {
         request_id: request_id.to_string(),
         action: action.to_string(),
@@ -1295,7 +1289,7 @@ impl ScheduleTool {
 
         let wake_at = if let Some(ref ts) = params.wake_at {
             Some(
-                ts.parse::<chrono::DateTime<Utc>>()
+                ts.parse::<Timestamp>()
                     .map_err(|e| anyhow::anyhow!("Invalid wake_at timestamp: {}", e))?,
             )
         } else {

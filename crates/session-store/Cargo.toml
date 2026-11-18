@@ -9,7 +9,7 @@ description = "Versioned session event log contracts: canonical JSON records, du
 legacy-session-index-import = ["dep:rusqlite"]
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+horon-agent-time = { path = "../time-types" }
 horon-agent-perf-counters = { path = "../perf-counters" }
 horon-agent-platform = { path = "../platform" }
 horon-agent-session-types = { path = "../session-types" }

@@ -5,7 +5,7 @@ use crate::bus::{BackgroundTaskProgress, BackgroundTaskProgressKind, BackgroundT
 use crate::util::truncate_str;
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -283,7 +283,7 @@ fn parse_progress_marker_with_checkpoint(line: &str) -> Option<(BackgroundTaskPr
             total: marker.total,
             unit: marker.unit,
             eta_seconds: marker.eta_seconds,
-            updated_at: Utc::now().to_rfc3339(),
+            updated_at: Timestamp::now().to_rfc3339(),
             source: BackgroundTaskProgressSource::Reported,
         }
         .normalize(),
@@ -318,7 +318,7 @@ fn parse_checkpoint_marker(line: &str) -> Option<BackgroundTaskProgress> {
             total: marker.total,
             unit: marker.unit,
             eta_seconds: marker.eta_seconds,
-            updated_at: Utc::now().to_rfc3339(),
+            updated_at: Timestamp::now().to_rfc3339(),
             source: BackgroundTaskProgressSource::Reported,
         }
         .normalize(),
@@ -354,7 +354,7 @@ fn progress_from_counts(
             total: Some(total),
             unit,
             eta_seconds: None,
-            updated_at: Utc::now().to_rfc3339(),
+            updated_at: Timestamp::now().to_rfc3339(),
             source: BackgroundTaskProgressSource::ParsedOutput,
         }
         .normalize(),
@@ -383,7 +383,7 @@ pub(super) fn parse_heuristic_progress(line: &str) -> Result<Option<BackgroundTa
                     total: None,
                     unit: captures.name("unit").map(|unit| unit.as_str().to_ascii_lowercase()),
                     eta_seconds: None,
-                    updated_at: Utc::now().to_rfc3339(),
+                    updated_at: Timestamp::now().to_rfc3339(),
                     source: BackgroundTaskProgressSource::ParsedOutput,
                 }
                 .normalize(),
@@ -434,7 +434,7 @@ pub(super) fn parse_heuristic_progress(line: &str) -> Result<Option<BackgroundTa
                 total: None,
                 unit: None,
                 eta_seconds: None,
-                updated_at: Utc::now().to_rfc3339(),
+                updated_at: Timestamp::now().to_rfc3339(),
                 source: BackgroundTaskProgressSource::ParsedOutput,
             }
             .normalize(),
@@ -461,7 +461,7 @@ pub(super) fn parse_heuristic_progress(line: &str) -> Result<Option<BackgroundTa
                 total: None,
                 unit: None,
                 eta_seconds: None,
-                updated_at: Utc::now().to_rfc3339(),
+                updated_at: Timestamp::now().to_rfc3339(),
                 source: BackgroundTaskProgressSource::ParsedOutput,
             }
             .normalize(),
@@ -2106,7 +2106,7 @@ impl BashTool {
 
     async fn execute_reload_persistable_foreground(&self, params: &BashInput, ctx: &ToolContext) -> Result<ToolOutput> {
         let timeout = resolve_bash_timeout(params.timeout);
-        let started_at = Utc::now().to_rfc3339();
+        let started_at = Timestamp::now().to_rfc3339();
         let started = Instant::now();
         let manager = crate::background::global();
         let info = manager.reserve_task_info();

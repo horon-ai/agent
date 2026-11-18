@@ -55,7 +55,7 @@ def cargo_metadata() -> dict:
 
 
 def is_type_crate(name: str) -> bool:
-    return name.startswith("horon-agent-") and name.endswith("-types")
+    return name == "horon-agent-time" or (name.startswith("horon-agent-") and name.endswith("-types"))
 
 
 def main() -> int:

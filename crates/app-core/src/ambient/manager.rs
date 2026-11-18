@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 
 use super::paths::{ambient_dir, queue_path, transcripts_dir};
 use super::{AmbientCycleResult, AmbientState, AmbientStatus, ScheduleRequest, ScheduledItem, ScheduledQueue};
@@ -40,7 +40,7 @@ impl AmbientManager {
             AmbientStatus::Disabled | AmbientStatus::Paused { .. } => false,
             AmbientStatus::Running { .. } => false, // already running
             AmbientStatus::Idle => true,
-            AmbientStatus::Scheduled { next_wake } => Utc::now() >= *next_wake,
+            AmbientStatus::Scheduled { next_wake } => Timestamp::now() >= *next_wake,
         }
     }
 
@@ -72,7 +72,7 @@ impl AmbientManager {
         let id = format!("sched_{:08x}", rand::random::<u32>());
         let scheduled_for = request
             .wake_at
-            .unwrap_or_else(|| Utc::now() + chrono::Duration::minutes(request.wake_in_minutes.unwrap_or(30) as i64));
+            .unwrap_or_else(|| Timestamp::now() + TimeDelta::minutes(request.wake_in_minutes.unwrap_or(30) as i64));
 
         let item = ScheduledItem {
             id: id.clone(),
@@ -81,7 +81,7 @@ impl AmbientManager {
             priority: request.priority,
             target: request.target,
             created_by_session: request.created_by_session,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             working_dir: request.working_dir,
             task_description: request.task_description,
             relevant_files: request.relevant_files,

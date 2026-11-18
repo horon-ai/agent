@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 /// Extra non-conversation UI/state events persisted for replay fidelity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StoredReplayEvent {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     #[serde(flatten)]
     pub kind: StoredReplayEventKind,
 }

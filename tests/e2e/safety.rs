@@ -47,7 +47,7 @@ fn test_safety_permission_flow() {
         rationale: "Found 3 failing auth tests".to_string(),
         urgency: Urgency::High,
         wait: false,
-        created_at: chrono::Utc::now(),
+        created_at: horon_agent_time::Timestamp::now(),
         context: None,
         run_id: None,
         expires_at: None,
@@ -82,8 +82,8 @@ fn test_safety_transcript() {
 
     let transcript = AmbientTranscript {
         session_id: "test_ambient_001".to_string(),
-        started_at: chrono::Utc::now(),
-        ended_at: Some(chrono::Utc::now()),
+        started_at: horon_agent_time::Timestamp::now(),
+        ended_at: Some(horon_agent_time::Timestamp::now()),
         status: TranscriptStatus::Complete,
         provider: "mock".to_string(),
         model: "mock-model".to_string(),
@@ -113,7 +113,7 @@ fn test_safety_summary_generation() {
         description: "Merged 2 duplicate memories".to_string(),
         tier: ActionTier::AutoAllowed,
         details: None,
-        timestamp: chrono::Utc::now(),
+        timestamp: horon_agent_time::Timestamp::now(),
     });
 
     safety.log_action(ActionLog {
@@ -121,7 +121,7 @@ fn test_safety_summary_generation() {
         description: "Pruned 1 stale memory".to_string(),
         tier: ActionTier::AutoAllowed,
         details: None,
-        timestamp: chrono::Utc::now(),
+        timestamp: horon_agent_time::Timestamp::now(),
     });
 
     let summary = safety.generate_summary();

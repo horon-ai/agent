@@ -402,7 +402,7 @@ async fn capture_runtime_memory_common_sample(
     trigger: RuntimeMemoryLogTrigger,
     sampling: RuntimeMemoryLogSampling,
 ) -> ServerRuntimeMemorySample {
-    let now = chrono::Utc::now();
+    let now = horon_agent_time::Timestamp::now();
     let process = crate::process_memory::snapshot_with_source(format!("server:runtime-log:{source}"));
     let connected_count = *client_count.read().await;
     let background_task_count = crate::background::global().list().await.len();
@@ -864,7 +864,7 @@ impl Server {
             git_hash: self.identity.git_hash.clone(),
             version: self.identity.version.clone(),
             pid: std::process::id(),
-            started_at: chrono::Utc::now().to_rfc3339(),
+            started_at: horon_agent_time::Timestamp::now().to_rfc3339(),
             sessions: Vec::new(),
         }
     }

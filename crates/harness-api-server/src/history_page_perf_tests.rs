@@ -92,7 +92,7 @@ fn install(home: &Path, id: &str, events: usize) -> Installed {
             store::EventId::new_v4(),
             parent.clone(),
             store::OriginId::new_v4(),
-            store::SessionMetadata::default().created_at + chrono::Duration::milliseconds(index as i64),
+            store::SessionMetadata::default().created_at + horon_agent_time::Duration::milliseconds(index as i64),
             store::EventKind::new(kind),
             payload,
         )

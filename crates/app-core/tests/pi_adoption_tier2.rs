@@ -1042,7 +1042,7 @@ async fn a_decision_written_to_disk_by_another_process_releases_the_call() {
     let history = json!([{
         "request_id": request_id,
         "approved": true,
-        "decided_at": chrono::Utc::now().to_rfc3339(),
+        "decided_at": horon_agent_time::Timestamp::now().to_rfc3339(),
         "decided_via": "api_client",
     }]);
     std::fs::write(

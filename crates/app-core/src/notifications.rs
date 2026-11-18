@@ -577,8 +577,8 @@ mod tests {
     fn test_format_cycle_body_safe() {
         let transcript = AmbientTranscript {
             session_id: "test_001".to_string(),
-            started_at: chrono::Utc::now(),
-            ended_at: Some(chrono::Utc::now()),
+            started_at: horon_agent_time::Timestamp::now(),
+            ended_at: Some(horon_agent_time::Timestamp::now()),
             status: crate::safety::TranscriptStatus::Complete,
             provider: "claude".to_string(),
             model: "claude-sonnet-4".to_string(),
@@ -603,8 +603,8 @@ mod tests {
     fn test_format_cycle_body_detailed() {
         let transcript = AmbientTranscript {
             session_id: "test_001".to_string(),
-            started_at: chrono::Utc::now(),
-            ended_at: Some(chrono::Utc::now()),
+            started_at: horon_agent_time::Timestamp::now(),
+            ended_at: Some(horon_agent_time::Timestamp::now()),
             status: crate::safety::TranscriptStatus::Complete,
             provider: "claude".to_string(),
             model: "claude-sonnet-4".to_string(),
@@ -631,8 +631,8 @@ mod tests {
     fn test_format_cycle_body_with_pending_permissions() {
         let transcript = AmbientTranscript {
             session_id: "test_002".to_string(),
-            started_at: chrono::Utc::now(),
-            ended_at: Some(chrono::Utc::now()),
+            started_at: horon_agent_time::Timestamp::now(),
+            ended_at: Some(horon_agent_time::Timestamp::now()),
             status: crate::safety::TranscriptStatus::Complete,
             provider: "claude".to_string(),
             model: "claude-sonnet-4".to_string(),

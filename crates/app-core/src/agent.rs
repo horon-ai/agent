@@ -122,6 +122,7 @@ use crate::skill::SkillRegistry;
 use crate::tool::{Registry, ToolContext, ToolExecutionMode};
 use anyhow::Result;
 use futures::StreamExt;
+use horon_agent_time::Timestamp;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -1394,7 +1395,7 @@ impl Agent {
         let already = std::mem::take(&mut self.session.pruned_tool_results);
         let planned = {
             let active = self.session.provider_messages();
-            plan_prunes(active, &already, chrono::Utc::now())
+            plan_prunes(active, &already, Timestamp::now())
         };
         let mut ledger = already;
         if !planned.is_empty() {
@@ -1558,7 +1559,7 @@ impl Agent {
                     role: Role::User,
                     content: vec![tool_block],
                     display_role: None,
-                    timestamp: Some(chrono::Utc::now()),
+                    timestamp: Some(Timestamp::now()),
                     tool_duration_ms: None,
                     token_usage: None,
                     ..StoredMessage::default()

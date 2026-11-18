@@ -13,7 +13,7 @@
 //! instead of resetting it: an unattended run must never be handed unlimited
 //! retries because its accounting file was truncated, corrupt, or unreadable.
 
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ pub(crate) struct FailoverBudget {
     pub session_id: String,
     pub chain_id: String,
     pub attempts: u32,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 /// Why a stored budget could not be trusted.
@@ -324,7 +324,7 @@ pub(crate) fn begin_chain(session_id: &str, chain_id: &str) -> Result<FailoverBu
         session_id: session_id.to_string(),
         chain_id: chain_id.to_string(),
         attempts: 0,
-        updated_at: Utc::now(),
+        updated_at: Timestamp::now(),
     };
     persist(session_id, &budget)?;
     Ok(budget)
@@ -421,7 +421,7 @@ pub(crate) fn try_consume(session_id: &str, chain_id: &str, max: u32) -> Consume
             session_id: session_id.to_string(),
             chain_id: chain_id.to_string(),
             attempts: 0,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         },
         Err(error) => return ConsumeOutcome::Unavailable(error),
     };
@@ -435,7 +435,7 @@ pub(crate) fn try_consume(session_id: &str, chain_id: &str, max: u32) -> Consume
         };
     }
     budget.attempts += 1;
-    budget.updated_at = Utc::now();
+    budget.updated_at = Timestamp::now();
     if let Err(error) = persist(session_id, &budget) {
         return ConsumeOutcome::Unavailable(error);
     }
@@ -715,7 +715,7 @@ mod tests {
                     session_id: session.to_string(),
                     chain_id: "chain-stale".to_string(),
                     attempts: default_max_attempts(),
-                    updated_at: Utc::now(),
+                    updated_at: Timestamp::now(),
                 };
                 std::fs::write(&path, serde_json::to_vec(&repaired).expect("json")).expect("repair the primary");
                 assert!(
@@ -839,7 +839,7 @@ mod tests {
             session_id: other.to_string(),
             chain_id: "chain-foreign".to_string(),
             attempts: 1,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         };
         let foreign_json = serde_json::to_string(&foreign).expect("json");
         std::fs::write(&path, &foreign_json).expect("write the foreign record");
@@ -924,7 +924,7 @@ mod tests {
             session_id: session.to_string(),
             chain_id: "chain-p".to_string(),
             attempts: 1,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         };
         std::fs::write(&path, serde_json::to_vec(&valid).expect("json")).expect("write");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");

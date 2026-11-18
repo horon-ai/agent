@@ -41,7 +41,7 @@ fn small_blob() -> SealedEvent {
         eid(2),
         Some(eid(1)),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::parse("Future-Event"),
         json!({"bytes":"x".repeat(2*1024*1024+20)}),
     )

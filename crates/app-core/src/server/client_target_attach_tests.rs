@@ -288,7 +288,7 @@ async fn target_subscribe_refused_by_a_busy_writer_sends_the_refusal() {
         store::EventId::new_v4(),
         Some(root.envelope().event_id.clone()),
         store::OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
         store::EventKind::new(store::KnownEventKind::MessageAppended),
         serde_json::json!({"message": crate::session::StoredMessage { original_input: None, arg_repairs: None,
         degradations: None,

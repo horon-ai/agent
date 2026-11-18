@@ -3,6 +3,7 @@ use crate::cache_values::{CachedValue, INLINE_TAIL_BYTES, PayloadField, PayloadS
 use crate::index::Index;
 use crate::projection_payload::Payload;
 use crate::*;
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -31,7 +32,7 @@ pub(crate) struct CachedContext {
     pub metadata: CachedValue<SessionMetadata>,
     pub archive: Option<CachedValue<ArchiveChangedPayload>>,
     pub compaction: Option<(EventId, CachedValue<CompactedPayload>)>,
-    pub activity_at: chrono::DateTime<chrono::Utc>,
+    pub activity_at: Timestamp,
     #[serde(default)]
     pub first_prompt_title: Option<String>,
     pub active_count: usize,

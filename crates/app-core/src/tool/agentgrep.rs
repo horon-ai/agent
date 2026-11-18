@@ -11,7 +11,7 @@ use ::agentgrep::smart_dsl::{SmartQuery, parse_smart_query};
 use ::agentgrep::smart_engine::{SmartResult, run_smart};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -157,13 +157,13 @@ struct PendingTraceRegion {
 struct ToolExposureObservation {
     tool: ToolCall,
     content: String,
-    timestamp: Option<DateTime<Utc>>,
+    timestamp: Option<Timestamp>,
     message_index: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct ExposureDescriptor {
-    timestamp: Option<DateTime<Utc>>,
+    timestamp: Option<Timestamp>,
     message_index: usize,
     total_messages: usize,
     compaction_cutoff: Option<usize>,

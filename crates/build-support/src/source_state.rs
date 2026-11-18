@@ -1,6 +1,6 @@
 use super::{BuildInfo, SourceState};
 use anyhow::Result;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -199,7 +199,7 @@ pub fn current_build_info(repo_dir: &Path) -> Result<BuildInfo> {
     Ok(BuildInfo {
         hash: source.short_hash,
         full_hash: source.full_hash,
-        built_at: Utc::now(),
+        built_at: Timestamp::now(),
         commit_message,
         dirty: source.dirty,
         source_fingerprint: Some(source.fingerprint),

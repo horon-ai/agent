@@ -204,7 +204,7 @@ fn extraction_context_keeps_tool_io_details() {
 #[test]
 fn memory_store_format_groups_by_category() {
     let mut store = MemoryStore::new();
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut correction = MemoryEntry::new(MemoryCategory::Correction, "Fix lint rules");
     correction.updated_at = now;
     let mut fact = MemoryEntry::new(MemoryCategory::Fact, "Uses tokio");
@@ -434,15 +434,15 @@ fn prompt_memories_scoped_keeps_only_most_recent_entries() {
         let manager = MemoryManager::new().with_project_dir("/tmp/horon-agent-prompt-topk");
 
         let mut oldest = MemoryEntry::new(MemoryCategory::Fact, "compile cache note");
-        oldest.created_at = Utc::now() - chrono::Duration::seconds(30);
+        oldest.created_at = Timestamp::now() - horon_agent_time::Duration::seconds(30);
         oldest.updated_at = oldest.created_at;
 
         let mut middle = MemoryEntry::new(MemoryCategory::Fact, "oauth refresh bug");
-        middle.created_at = Utc::now() - chrono::Duration::seconds(20);
+        middle.created_at = Timestamp::now() - horon_agent_time::Duration::seconds(20);
         middle.updated_at = middle.created_at;
 
         let mut newest = MemoryEntry::new(MemoryCategory::Fact, "terminal shortcut hint");
-        newest.created_at = Utc::now() - chrono::Duration::seconds(10);
+        newest.created_at = Timestamp::now() - horon_agent_time::Duration::seconds(10);
         newest.updated_at = newest.created_at;
 
         manager.upsert_project_memory(oldest).expect("remember oldest");

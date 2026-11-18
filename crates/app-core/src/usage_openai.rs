@@ -267,8 +267,8 @@ fn parse_wham_window(window: &serde_json::Value, fallback_name: &str) -> Option<
         .and_then(parse_f32_value)
         .map(clamp_percent)?;
     let resets_at = obj.get("reset_at").and_then(parse_f32_value).map(|ts| {
-        chrono::DateTime::from_timestamp(ts as i64, 0)
-            .map(|dt| dt.to_rfc3339())
+        horon_agent_time::Timestamp::from_timestamp(ts as i64, 0)
+            .map(|at| at.to_rfc3339())
             .unwrap_or_else(|| format!("{}", ts as i64))
     });
     Some(UsageLimit {

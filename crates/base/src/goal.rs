@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -47,7 +47,7 @@ struct GoalAttachment {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     project_hash: Option<String>,
     title: String,
-    attached_at: DateTime<Utc>,
+    attached_at: Timestamp,
 }
 
 /// Refuse a ceiling that cannot mean anything.
@@ -81,7 +81,7 @@ pub fn create_goal(input: GoalCreateInput, working_dir: Option<&Path>) -> Result
     goal.current_milestone_id = input.current_milestone_id;
     goal.progress_percent = input.progress_percent.map(|p| p.min(100));
     goal.budget_tokens = validate_budget(input.budget_tokens)?;
-    goal.updated_at = Utc::now();
+    goal.updated_at = Timestamp::now();
     save_goal(&goal, working_dir)?;
     sync_goal_memory(&goal, working_dir)?;
     Ok(goal)
@@ -137,11 +137,11 @@ pub fn update_goal(
         .filter(|s| !s.is_empty())
     {
         goal.updates.push(GoalUpdate {
-            at: Utc::now(),
+            at: Timestamp::now(),
             summary: summary.to_string(),
         });
     }
-    goal.updated_at = Utc::now();
+    goal.updated_at = Timestamp::now();
     save_goal(&goal, working_dir)?;
     sync_goal_memory(&goal, working_dir)?;
     Ok(Some(goal))
@@ -208,7 +208,7 @@ pub fn attach_goal_to_session(session_id: &str, goal: &Goal, working_dir: Option
             None
         },
         title: goal.title.clone(),
-        attached_at: Utc::now(),
+        attached_at: Timestamp::now(),
     };
     let path = session_attachment_path(session_id)?;
     crate::storage::write_json_fast(&path, &attachment)
@@ -266,7 +266,7 @@ pub fn render_goal_detail(goal: &Goal) -> String {
         goal.title,
         goal.status.as_str(),
         goal.scope.as_str(),
-        goal.updated_at.format("%Y-%m-%d %H:%M")
+        crate::util::utc_minutes(goal.updated_at)
     );
     if let Some(progress) = goal.progress_percent {
         out.push_str(&format!("**Progress:** {}%  \n", progress));
@@ -334,7 +334,7 @@ pub fn render_goal_detail(goal: &Goal) -> String {
     if !goal.updates.is_empty() {
         out.push_str("## Recent updates\n");
         for update in goal.updates.iter().rev().take(8) {
-            out.push_str(&format!("- {}: {}\n", update.at.format("%Y-%m-%d"), update.summary));
+            out.push_str(&format!("- {}: {}\n", crate::util::utc_date(update.at), update.summary));
         }
     }
     out

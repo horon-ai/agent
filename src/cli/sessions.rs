@@ -852,7 +852,7 @@ fn export_legacy(home: &Path, session: &str, output: &str, head: Option<&str>, j
             write_file(
                 &archive,
                 &serde_json::to_vec_pretty(&json!({
-                    "sessions": {id.as_str(): chrono::Utc::now().timestamp_millis()},
+                    "sessions": {id.as_str(): horon_agent_time::Timestamp::now().timestamp_millis()},
                     "restored": [],
                     "archive_after_days": Value::Null,
                 }))?,

@@ -1,21 +1,21 @@
 //! Host-local selection and non-destructive event construction.
 use crate::*;
-use chrono::{DateTime, Utc};
 use horon_agent_session_types::RenderedMessage;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 
 /// Identity reserved before a new event is passed to the durable writer.
 pub struct EventStamp {
     pub event_id: EventId,
     pub origin_id: OriginId,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// Identity of a genuinely independent fork, not another branch.
 pub struct ForkRequest {
     pub session_id: SessionId,
     pub origin_id: OriginId,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// A rendered row mapped to the exact current projection. Construct through

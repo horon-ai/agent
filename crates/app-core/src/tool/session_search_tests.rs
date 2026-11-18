@@ -1,7 +1,7 @@
 use super::*;
 use crate::message::{ContentBlock, Role};
 use crate::session::{Session, StoredDisplayRole};
-use chrono::Duration;
+use horon_agent_time::{Duration, Timestamp};
 use serde_json::json;
 use std::path::Path;
 use std::time::Instant;
@@ -425,7 +425,7 @@ fn filters_cover_role_provider_model_flags_and_dates() {
         options.model_filter = Some("sonnet".to_string());
         options.saved_filter = Some(true);
         options.debug_filter = Some(true);
-        options.before = Some(Utc::now() + Duration::days(1));
+        options.before = Some(Timestamp::now() + Duration::days(1));
         assert!(!run_search(home, "filterable-needle", &options).is_empty());
 
         options.model_filter = Some("nonexistent-model".to_string());
@@ -436,7 +436,7 @@ fn filters_cover_role_provider_model_flags_and_dates() {
         assert!(run_search(home, "filterable-needle", &options).is_empty());
 
         options.saved_filter = Some(true);
-        options.after = Some(Utc::now() + Duration::days(1));
+        options.after = Some(Timestamp::now() + Duration::days(1));
         assert!(run_search(home, "filterable-needle", &options).is_empty());
     });
 }
@@ -640,4 +640,43 @@ fn limit_validation_reports_friendly_errors() {
     let err = validate_bounded_usize(Some(-1), DEFAULT_LIMIT, 1, MAX_LIMIT, "limit")
         .expect_err("negative limit should be rejected");
     assert!(err.contains("received -1"));
+}
+
+#[test]
+fn date_filters_keep_the_forms_the_old_parser_accepted() {
+    let read = |text: &str| parse_datetime_filter(Some(text), "after").expect("a readable filter");
+    let fields = |text: &str| {
+        let at = read(text).expect("a parsed filter");
+        let c = at.calendar_utc();
+        (c.year, c.month, c.day, c.hour, c.minute, c.second)
+    };
+    // Padded and unpadded days, leading and inner spaces, all read as the same
+    // midnight the previous `%Y-%m-%d` reader produced.
+    for text in ["2024-01-02", "2024-1-2", "  2024-1-2", "2024- 1- 2", "2024-01-02 "] {
+        assert_eq!(fields(text), (2024, 1, 2, 0, 0, 0), "{text}");
+    }
+    // A signed year is how the extended form was spelled.
+    assert_eq!(fields("-0044-03-15"), (-44, 3, 15, 0, 0, 0));
+    // A full timestamp still goes through the strict RFC 3339 grammar first.
+    assert_eq!(fields("2024-01-02T03:04:05Z"), (2024, 1, 2, 3, 4, 5));
+    assert_eq!(fields("2024-01-02T03:04:05+09:00"), (2024, 1, 1, 18, 4, 5));
+}
+
+#[test]
+fn a_date_filter_refuses_what_was_never_read() {
+    for text in [
+        // No such day.
+        "2024-02-30",
+        // The filter trims surrounding whitespace, but trailing text is invalid.
+        "2024-01-02extra",
+        // A zone keyword and a colon-less offset belong to no accepted form.
+        "2024-01-02T03:04:05UTC",
+        "2024-01-02T03:04:05+0900",
+        "tomorrow",
+    ] {
+        assert!(
+            parse_datetime_filter(Some(text), "after").is_err(),
+            "{text} must be refused"
+        );
+    }
 }
