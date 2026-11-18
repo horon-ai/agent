@@ -1,10 +1,10 @@
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use std::collections::HashSet;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub fn new_id(prefix: &str) -> String {
-    let ts = Utc::now().timestamp_millis();
+    let ts = Timestamp::now().timestamp_millis();
     let rand: u64 = rand::random();
     format!("{}_{}_{}", prefix, ts, rand)
 }
@@ -220,7 +220,7 @@ pub fn server_icon(name: &str) -> &'static str {
 /// - full_id is the storage identifier like "server_blazing_1234567890_deadbeefcafebabe"
 /// - short_name is the memorable part like "blazing"
 pub fn new_memorable_server_id() -> (String, String) {
-    let ts = Utc::now().timestamp_millis();
+    let ts = Timestamp::now().timestamp_millis();
     let rand: u64 = rand::random();
 
     // Use the random value to pick a location noun.
@@ -261,7 +261,7 @@ pub fn new_memorable_session_id() -> (String, String) {
 /// When every portable identity is occupied, allocation gracefully wraps and
 /// permits reuse rather than preventing session creation.
 pub fn new_memorable_session_id_avoiding(used_names: &HashSet<String>) -> (String, String) {
-    let ts = Utc::now().timestamp_millis();
+    let ts = Timestamp::now().timestamp_millis();
     let rand: u64 = rand::random();
 
     let word = select_available_session_name(used_names, session_name_cursor(), |_| {});

@@ -1,6 +1,7 @@
 //! Host-local replica admission. The existing actor remains the only writer.
 use super::{Session, event_store};
 use anyhow::{Context, Result, ensure};
+use horon_agent_time::Timestamp;
 use std::sync::Arc;
 
 use event_store_api as store;
@@ -279,7 +280,7 @@ impl Session {
             store::EventId::new_v4(),
             Some(head),
             origin,
-            chrono::Utc::now(),
+            Timestamp::now(),
             store::EventKind::new(store::KnownEventKind::Compacted),
             serde_json::to_value(payload)?,
         )

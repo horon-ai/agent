@@ -3,6 +3,7 @@ use crate::cache_io::Stamp;
 use crate::cache_values::CachedValue;
 use crate::context_cache::CachedContext;
 use crate::*;
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -14,8 +15,8 @@ pub struct Summary {
     pub working_dir: Option<String>,
     pub saved: bool,
     pub save_label: Option<String>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub metadata_updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: Timestamp,
+    pub metadata_updated_at: Timestamp,
     pub last_active_at_ms: Option<i64>,
     pub generated_title: Option<String>,
     pub todo_title: Option<String>,
@@ -29,7 +30,7 @@ pub(crate) struct CatalogEntry {
     pub head: EventId,
     pub metadata: CachedValue<SessionMetadata>,
     pub archive: Option<CachedValue<ArchiveChangedPayload>>,
-    pub activity_at: chrono::DateTime<chrono::Utc>,
+    pub activity_at: Timestamp,
     #[serde(default)]
     pub first_prompt_title: Option<String>,
     pub source: Stamp,
@@ -42,7 +43,7 @@ pub(crate) struct CatalogEntry {
 fn recorded_activity(path: &std::path::Path, probe: &ReadProbe) -> Option<i64> {
     #[derive(Deserialize)]
     struct LocalActivity {
-        last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+        last_active_at: Option<Timestamp>,
     }
     // Both failures below are the documented fallback, not a lost error: an
     // unreadable or unparsable mirror means "no recorded activity", and the

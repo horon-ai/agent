@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use horon_agent_message_types::ToolCall;
+use horon_agent_time::{Precision, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -208,7 +208,7 @@ pub struct GitState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnvSnapshot {
-    pub captured_at: chrono::DateTime<chrono::Utc>,
+    pub captured_at: Timestamp,
     pub reason: String,
     pub session_id: String,
     pub working_dir: Option<String>,
@@ -244,7 +244,7 @@ pub struct StoredMemoryInjection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_message: Option<usize>,
     /// Timestamp when injection occurred
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -693,11 +693,7 @@ pub fn session_search_field_filter_matches(value: Option<&str>, filter: Option<&
         .unwrap_or(false)
 }
 
-pub fn session_search_datetime_matches(
-    value: chrono::DateTime<chrono::Utc>,
-    after: Option<chrono::DateTime<chrono::Utc>>,
-    before: Option<chrono::DateTime<chrono::Utc>>,
-) -> bool {
+pub fn session_search_datetime_matches(value: Timestamp, after: Option<Timestamp>, before: Option<Timestamp>) -> bool {
     if after.is_some_and(|after| value < after) {
         return false;
     }
@@ -754,7 +750,7 @@ impl SessionSearchResultKind {
 pub struct SessionSearchContextLine {
     pub message_index: usize,
     pub role: String,
-    pub timestamp: Option<DateTime<Utc>>,
+    pub timestamp: Option<Timestamp>,
     pub text: String,
 }
 
@@ -767,12 +763,12 @@ pub struct SessionSearchResult {
     pub working_dir: Option<String>,
     pub provider_key: Option<String>,
     pub model: Option<String>,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
     pub kind: SessionSearchResultKind,
     pub role: String,
     pub message_index: Option<usize>,
     pub message_id: Option<String>,
-    pub message_timestamp: Option<DateTime<Utc>>,
+    pub message_timestamp: Option<Timestamp>,
     pub snippet: String,
     pub score: f64,
     pub matched_terms: Vec<String>,
@@ -924,8 +920,8 @@ pub fn format_session_search_no_results(query: &str, options: &SessionSearchRend
     output
 }
 
-pub fn session_search_format_datetime(ts: DateTime<Utc>) -> String {
-    ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+pub fn session_search_format_datetime(ts: Timestamp) -> String {
+    ts.to_rfc3339_opts(Precision::Seconds, true)
 }
 
 pub fn longest_repeated_char_run(text: &str, needle: char) -> usize {

@@ -2,12 +2,12 @@
 //! line rather than the end of the run.
 
 use super::*;
-use chrono::{Duration as ChronoDuration, Utc};
+use horon_agent_time::{Duration as ChronoDuration, Timestamp};
 use std::cell::Cell;
 
 fn test_manifest(root: &std::path::Path, run_id: &str) -> OvernightManifest {
     let run_dir = root.join("run");
-    let now = Utc::now();
+    let now = Timestamp::now();
     OvernightManifest {
         version: OVERNIGHT_VERSION,
         run_id: run_id.to_string(),

@@ -683,7 +683,7 @@ This plan measured the request bytes and prompt surface a turn pays for, cut the
 | Session-context `git` processes, outside a repository / in a work tree | 1 / 3 | 0 / 1 |
 | GPU probe processes without a PCI display controller | 1 | 0 |
 
-The structural gate now bounds each of these at the after value (`prefix_tools_bytes_max` 9151, down from 9751).
+PR #332 set the tool catalog ceiling to 9,151 B. Shortening the shared `intent` description in `1dfdd06a` brought the eight schemas to 8,975 B, the current ceiling. The static prompt measured 1,322 B and nine unchanged requests made zero prompt-source reads. On the same Linux runner, the first request's `tools` field fell from 9,255 B at `83da1c39` to 9,079 B. This puts the catalog 25 B below the 9,000 B target and the first request 739 B below the original 9,818 B. [Structural measurements](https://github.com/horon-ai/agent/actions/runs/44190404248/job/134418534689) · [First requests sent to the mock server](https://github.com/horon-ai/agent/actions/runs/44190400494/artifacts/14378517143)
 
 ### Time and memory (median ms, min–max in parentheses)
 
@@ -711,7 +711,6 @@ The structural gate now bounds each of these at the after value (`prefix_tools_b
 ### What these numbers do not say
 
 - The time cut is not attributed. Fewer `git` processes per session context and less per-request prompt work both run on the measured paths, but no run splits the difference between them.
-- The plan targeted a catalog of at most 9,000 B and a core one-shot `tools` cut of at least 700 B. The `intent` description keeps "shown in the UI" because a contract test requires it, and `bash` keeps its note that `rg` skips hidden and ignored files, which another test pins, so the catalog is 9,151 B and the cut is 563 B.
 - `[features] foreign_rules` (off by default) still reads its rule files on every request and is not counted by the prompt source reads.
 - Both Windows benchmark builds print the same two `linker stdout` lines for the baseline and the candidate. They come from the benchmark's Windows release link, not from this change; the ci.yml runs of this branch have no warning.
 

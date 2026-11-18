@@ -83,7 +83,7 @@ impl Agent {
             session_provider_session_id: self.session.provider_session_id.clone(),
             visible_message_count: message_count,
         });
-        self.session.updated_at = chrono::Utc::now();
+        self.session.updated_at = Timestamp::now();
         self.provider_session_id = None;
         self.session.provider_session_id = None;
         self.cache_tracker.reset();
@@ -113,7 +113,7 @@ impl Agent {
         self.note_transcript_mutation(crate::compaction::jobs::CancelReason::Rewind);
         self.provider_session_id = snapshot.provider_session_id;
         self.session.provider_session_id = snapshot.session_provider_session_id;
-        self.session.updated_at = chrono::Utc::now();
+        self.session.updated_at = Timestamp::now();
         self.cache_tracker.reset();
         self.kv_cache_monitor.reset();
         self.locked_tools = None;

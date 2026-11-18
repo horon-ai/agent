@@ -2,8 +2,15 @@
 //!
 //! A rollback compares bytes on disk with the copy it took before activation, so both sides must
 //! be hashed the same way. The digest is streamed: a large binary is never held in memory.
+//!
+//! Reinstalling a version that is already installed hashes the freshly staged agent binary and the
+//! installed one back to back to prove they are identical, so the per-file cost is paid twice on
+//! ~100 MB of executable. `ring` is used because it selects the platform's SHA-256 instructions at
+//! run time (ARMv8 SHA-2 extensions, x86 SHA-NI) and falls back to portable code elsewhere, while
+//! `sha2` without its `asm` feature is a scalar Rust implementation on AArch64. The files hashed,
+//! the moment they are hashed, and the comparison performed are unchanged.
 
-use sha2::{Digest, Sha256};
+use ring::digest::{Context, SHA256};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
@@ -12,16 +19,16 @@ use std::path::Path;
 pub(crate) fn file_sha256(path: &Path) -> std::io::Result<String> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
+    let mut context = Context::new(&SHA256);
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let read = reader.read(&mut buffer)?;
         if read == 0 {
             break;
         }
-        hasher.update(&buffer[..read]);
+        context.update(&buffer[..read]);
     }
-    Ok(hex_lower(&hasher.finalize()))
+    Ok(hex_lower(context.finish().as_ref()))
 }
 
 /// Lowercase hex, one character per nibble, without allocating per byte.
@@ -49,6 +56,18 @@ mod tests {
         assert_eq!(
             file_sha256(&path).unwrap(),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn hashes_content_larger_than_the_read_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload");
+        std::fs::write(&path, vec![b'a'; 200_000]).unwrap();
+
+        assert_eq!(
+            file_sha256(&path).unwrap(),
+            "2287d207f24a941ff3b56c04c8a25ad56b63e3023207b3bb5b4ac0c9869d74be"
         );
     }
 

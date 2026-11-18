@@ -21,7 +21,7 @@ use crate::theme::{Symbols, Theme};
 use crate::tool_expand;
 use crate::tool_line;
 use crate::transcript::Item;
-use crate::wrap::Indented;
+use crate::wrap::{self, Indented};
 
 /// Columns a wrapped continuation row keeps under a prefixed item.
 ///
@@ -87,22 +87,13 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
                 Some(expand) => expand.retained(&call.call_id),
                 None => tool_line::Retained::default(),
             };
-            tool_line::lines_with(call, look.theme, look.symbols, look.width, retained)
-                .into_iter()
-                .enumerate()
-                // The head row introduces the call; every row under it (the
-                // failure text, the output preview, the count of rows the
-                // preview hides) is written after a two-column pad, so a wrapped
-                // row has to stay under that text rather than slide back to the
-                // first column.
-                .map(|(index, line)| {
-                    if index == 0 {
-                        Indented::plain(line)
-                    } else {
-                        Indented::new(line, INDENT)
-                    }
-                })
-                .collect()
+            indented(tool_line::lines_with(
+                call,
+                look.theme,
+                look.symbols,
+                look.width,
+                retained,
+            ))
         }
         Item::Notice(text) => notice(text, look),
         Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(look.theme.core.error)),
@@ -112,6 +103,53 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Reasoning(text) => reasoning(text, look),
         Item::Context(report) => crate::context::lines(report, look),
     }
+}
+
+/// The lines of one item, keeping a call's whole output as the text it came
+/// from.
+///
+/// Everything but a tool call drawn expanded is a short list of lines and is
+/// built here. That one case is one line per row of the output, and the pane
+/// shows only its last rows, so the output is handed over as the borrowed text
+/// and the pane makes the rows it draws; see [`wrap::Source`].
+pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::Frame<'a>>) -> wrap::Source<'a> {
+    let Item::Tool(call) = item else {
+        return wrap::Source::built(lines(item, look, expand));
+    };
+    let retained = match expand {
+        Some(expand) => expand.retained(&call.call_id),
+        None => tool_line::Retained::default(),
+    };
+    match tool_line::rows_with(call, look.theme, look.symbols, look.width, retained) {
+        tool_line::CallRows::Built(rows) => wrap::Source::built(indented(rows)),
+        tool_line::CallRows::Expanded { head, text, style } => wrap::Source::Output {
+            head: indented(head),
+            text,
+            prefix: tool_line::OUTPUT_PREFIX,
+            style,
+            indent: INDENT,
+        },
+    }
+}
+
+/// A tool call's rows as lines.
+///
+/// The head row introduces the call; every row under it (the failure text, the
+/// output preview, the count of rows the preview hides) is written after a
+/// two-column pad, so a wrapped row has to stay under that text rather than
+/// slide back to the first column.
+fn indented(lines: Vec<Line<'static>>) -> Vec<Indented> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index == 0 {
+                Indented::plain(line)
+            } else {
+                Indented::new(line, INDENT)
+            }
+        })
+        .collect()
 }
 
 /// An assistant message, committed or still streaming.

@@ -617,7 +617,7 @@ impl RunPlanReporter {
             total: Some(total as u64),
             unit: Some("nodes".to_string()),
             eta_seconds: None,
-            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
             source: crate::bus::BackgroundTaskProgressSource::Reported,
         }
         .normalize();
@@ -640,7 +640,7 @@ impl RunPlanReporter {
             total: None,
             unit: None,
             eta_seconds: None,
-            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
             source: crate::bus::BackgroundTaskProgressSource::Reported,
         }
         .normalize();

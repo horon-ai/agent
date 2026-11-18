@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 mod manager;
@@ -34,7 +34,7 @@ pub enum AmbientStatus {
         detail: String,
     },
     Scheduled {
-        next_wake: DateTime<Utc>,
+        next_wake: Timestamp,
     },
     Paused {
         reason: String,
@@ -73,13 +73,13 @@ impl ScheduleTarget {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledItem {
     pub id: String,
-    pub scheduled_for: DateTime<Utc>,
+    pub scheduled_for: Timestamp,
     pub context: String,
     pub priority: Priority,
     #[serde(default)]
     pub target: ScheduleTarget,
     pub created_by_session: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -96,7 +96,7 @@ pub struct ScheduledItem {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AmbientState {
     pub status: AmbientStatus,
-    pub last_run: Option<DateTime<Utc>>,
+    pub last_run: Option<Timestamp>,
     pub last_summary: Option<String>,
     pub last_compactions: Option<u32>,
     pub last_memories_modified: Option<u32>,
@@ -111,8 +111,8 @@ pub struct AmbientCycleResult {
     pub compactions: u32,
     pub proactive_work: Option<String>,
     pub next_schedule: Option<ScheduleRequest>,
-    pub started_at: DateTime<Utc>,
-    pub ended_at: DateTime<Utc>,
+    pub started_at: Timestamp,
+    pub ended_at: Timestamp,
     pub status: CycleStatus,
     /// Full conversation transcript (markdown) for cycle notifications
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,7 +129,7 @@ pub enum CycleStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduleRequest {
     pub wake_in_minutes: Option<u32>,
-    pub wake_at: Option<DateTime<Utc>>,
+    pub wake_at: Option<Timestamp>,
     pub context: String,
     pub priority: Priority,
     #[serde(default)]

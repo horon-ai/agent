@@ -1,6 +1,7 @@
 use super::helpers::*;
 use horon_agent_session_store::legacy::*;
 use horon_agent_session_store::*;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 use std::fs;
 
@@ -93,7 +94,7 @@ fn absent_times_use_epoch_and_large_auxiliary_uses_original_blob() {
     source(&home).migrate(&paths(&home)).unwrap();
     // Then timestamp fallback and full blob value are exact.
     let report = full_scan(&paths(&home), &SessionId::parse("old").unwrap()).unwrap();
-    assert_eq!(report.events[0].timestamp, chrono::DateTime::UNIX_EPOCH);
+    assert_eq!(report.events[0].timestamp, Timestamp::UNIX_EPOCH);
     assert!(report.events.iter().any(|e| e.payload_ref.is_some()));
     let view = view(&home);
     let AuxiliaryRecordedPayload::Legacy { value, .. } = &view.auxiliary()[0].1 else {

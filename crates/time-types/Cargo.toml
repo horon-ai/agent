@@ -1,0 +1,16 @@
+[package]
+name = "horon-agent-time"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = "1"
+# `large-dates` keeps `Date` as wide as the stored format allows (the year range
+# the persisted instants can name); `local-offset` reads the system zone through
+# `localtime_r`; `formatting` and `macros` back the log and prompt formatters the
+# consumers write against the re-exported `format_description!`.
+time = { version = "0.3.55", features = ["formatting", "large-dates", "local-offset", "macros"] }
+
+[dev-dependencies]
+serde_json = "1"

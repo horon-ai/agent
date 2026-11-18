@@ -217,7 +217,7 @@ fn write_bundle(info: &PanicHookInfo<'_>) -> io::Result<PathBuf> {
 fn bundle_stamp() -> String {
     format!(
         "{}-p{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
+        crate::util::utc_stamp_millis(horon_agent_time::Timestamp::now()),
         std::process::id()
     )
 }

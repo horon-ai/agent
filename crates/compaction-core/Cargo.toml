@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 horon-agent-message-types = { path = "../message-types" }
+horon-agent-time = { path = "../time-types" }
 horon-agent-token-estimate = { path = "../token-estimate" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-chrono = "0.4"

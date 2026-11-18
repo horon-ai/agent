@@ -36,6 +36,10 @@ description: "메모리 회귀 예산과 서버 메모리 사고 대응 절차�
 - 서버 전체 귀속: `server:memory`
   (`crates/app-core/src/server/debug_server_state.rs:179`)
 - 프로세스 수명 타임라인: `python scripts/perf/analyze_memory_log.py --days 1`
+- 세션 집단 비교: `python3 scripts/perf/bench_compare.py --scenarios sessions`가 idle과 턴 직후
+  표본마다 프로세스 트리 RSS 옆에 살아 있는 프로세스 수를 남긴다. 세션당 메모리 증가분을
+  그 세션이 데몬 안의 스레드인지 따로 뜬 프로세스인지와 함께 읽기 위해서다
+  (`docs/performance/BENCHMARK.ko.md`의 `process_count`)
 
 코드의 주요 출처:
 - `crates/base/src/runtime_memory_log.rs`
@@ -97,6 +101,10 @@ description: "메모리 회귀 예산과 서버 메모리 사고 대응 절차�
 프레임은 아무것도 세지 않아 측정값을 건드리지 않는다. 측정값은 항목 수를 따라가고 그 글의 크기를
 따라가지 않으며, 코드에 상한은 두지 않았다. 렌더된 행의 캐시를 다시 들이면 그때 상한과 근거를 이
 절에 되살린다.
+
+그 held 경로의 비용도 잰다. `crates/tui/examples/scroll_bench.rs`가 긴 도구 출력 하나를 펼친 뒤 실제 `shift+up`이
+그리는 held 프레임을 모두 재므로, 가장 새 항목이나 보기 아래 블록을 줄바꿈하는 방식이 바뀌면 끝을 따라가는
+프레임 숫자 뒤에 숨지 않고 `tui` 묶음의 `scroll` 표에 드러난다.
 
 ### 래칫 기대값
 

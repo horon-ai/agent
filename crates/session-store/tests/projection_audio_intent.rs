@@ -6,6 +6,7 @@
 use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 
 fn id(n: u128) -> EventId {
@@ -18,7 +19,7 @@ fn event(n: u128, parent: Option<u128>, body: (KnownEventKind, Value)) -> EventE
         id(n),
         parent.map(id),
         OriginId::parse(uuid::Uuid::from_u128(999).to_string()).unwrap(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(body.0),
         body.1,
     )

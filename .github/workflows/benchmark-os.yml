@@ -204,21 +204,31 @@ jobs:
         # second tree there would fold the baseline commit into the candidate's
         # cache key. A before/after pair has to be measured on one machine in
         # one job, so the second tree appears only once that key is settled.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true') }}
+        # The `tui` unit uses the tree for the scroll bench pair only.
+        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.baseline_ref }}
           path: .bench-baseline
 
-      - name: Hide the baseline tree from the candidate's git status
+      - name: Hide benchmark outputs and any baseline tree from git status
         # build-meta marks a build dirty when `git status --porcelain` is not
-        # empty, so an untracked second checkout would label the measured
-        # candidate "dirty" in its own --version output. `.git/info/exclude` is
-        # local to this checkout, so no tracked file changes.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true') }}
+        # empty, so anything untracked in this checkout labels the measured
+        # candidate "dirty" in its own --version output. Two such paths appear
+        # before the candidate build: `$RESULTS`, which the baseline step below
+        # creates, and the second checkout when the job builds a baseline.
+        # `.git/info/exclude` is local to this checkout, so no tracked file
+        # changes.
         shell: bash
         run: |
-          printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
+          set -euo pipefail
+          case "$RESULTS" in
+            /*) ;; # an absolute results directory lives outside the checkout
+            *) printf '/%s/\n' "$RESULTS" >> .git/info/exclude ;;
+          esac
+          if [[ -e "$BASELINE_DIR/.git" ]]; then
+            printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
+          fi
           git status --porcelain
           test -z "$(git status --porcelain)"
 
@@ -229,7 +239,7 @@ jobs:
         # invalidate the candidate's cached artifacts too. Two separate steps
         # rather than two restores inside one: the action keeps its config in
         # per-step state, so only the second step's post would save anything.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true') }}
+        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
         with:
           key: benchmark-baseline-${{ runner.os }}
           workspaces: ".bench-baseline -> target"
@@ -261,9 +271,27 @@ jobs:
           cp "$BASELINE_DIR/target/release/horon-agent$exe" "target/release/baseline/horon-agent$exe"
           "./target/release/baseline/horon-agent$exe" --version | tee "$RESULTS/baseline-version.txt"
 
-      - name: Build the TUI binary and its render bench
+      - name: Build the baseline scroll bench
+        # Compile the same input and measurement code against both renderer revisions.
+        if: ${{ !cancelled() && inputs.baseline_ref != '' && steps.sel.outputs.tui == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RESULTS"
+          exe=""
+          [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
+          mkdir -p target/release/baseline/examples
+          cp crates/tui/examples/scroll_bench.rs "$BASELINE_DIR/crates/tui/examples/scroll_bench.rs"
+          (
+            cd "$BASELINE_DIR" || exit
+            cargo build --release --locked -p horon-tui --example scroll_bench
+          )
+          cp "$BASELINE_DIR/target/release/examples/scroll_bench$exe" \
+            "target/release/baseline/examples/scroll_bench$exe"
+
+      - name: Build the TUI binary and its benches
         # Separate from the headless build on purpose: `tui` is the second
-        # binary's suite, and its two invocations never join the `-p horon-agent`
+        # binary's suite, and its invocations never join the `-p horon-agent`
         # command above, so a failure here is a TUI failure and nothing else.
         if: ${{ steps.sel.outputs.tui == 'true' }}
         shell: bash
@@ -271,6 +299,7 @@ jobs:
           set -euo pipefail
           cargo build --release --locked -p horon-tui
           cargo build --release --locked -p horon-tui --example render_bench
+          cargo build --release --locked -p horon-tui --example scroll_bench
 
       - name: Build release binary and probes
         shell: bash
@@ -283,14 +312,20 @@ jobs:
           fi
           if [[ "${{ steps.sel.outputs.loading }}" == "true" ]]; then
             cargo build --release --locked -p horon-agent-base --example loading_probe
+            cargo build --release --locked -p horon-agent-base --example resume_stage_probe
           fi
           exe=""
           [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
           files=("horon-agent$exe")
           [[ -f "target/release/examples/loading_probe$exe" ]] && files+=("examples/loading_probe$exe")
+          [[ -f "target/release/examples/resume_stage_probe$exe" ]] && files+=("examples/resume_stage_probe$exe")
           [[ -f "target/release/horon-tui$exe" ]] && files+=("horon-tui$exe")
           [[ -f "target/release/examples/render_bench$exe" ]] && files+=("examples/render_bench$exe")
+          [[ -f "target/release/examples/scroll_bench$exe" ]] && files+=("examples/scroll_bench$exe")
           [[ -f "target/release/baseline/horon-agent$exe" ]] && files+=("baseline/horon-agent$exe")
+          if [[ -f "target/release/baseline/examples/scroll_bench$exe" ]]; then
+            files+=("baseline/examples/scroll_bench$exe")
+          fi
           # A tar keeps the executable bit, which upload-artifact drops. The
           # archive path stays relative: Git Bash's tar reads `D:\...` as a
           # remote host (run 42387481942).
@@ -380,6 +415,12 @@ jobs:
           fi
           if [[ -f "bench-bin/examples/render_bench$exe" ]]; then
             echo "RENDER_BENCH_BIN=$root/bench-bin/examples/render_bench$exe" >> "$GITHUB_ENV"
+          fi
+          if [[ -f "bench-bin/examples/scroll_bench$exe" ]]; then
+            echo "SCROLL_BENCH_BIN=$root/bench-bin/examples/scroll_bench$exe" >> "$GITHUB_ENV"
+          fi
+          if [[ -f "bench-bin/baseline/examples/scroll_bench$exe" ]]; then
+            echo "SCROLL_BENCH_BASELINE_BIN=$root/bench-bin/baseline/examples/scroll_bench$exe" >> "$GITHUB_ENV"
           fi
           if [[ -f "bench-bin/baseline/horon-agent$exe" ]]; then
             echo "BASELINE_BIN=$root/bench-bin/baseline/horon-agent$exe" >> "$GITHUB_ENV"
@@ -497,9 +538,16 @@ jobs:
         env:
           MODE: ${{ matrix.unit == 'loading-cold' && 'cold' || 'warm' }}
         run: |
+          # The cold decomposition explains the cold resume, so it runs three
+          # times per session fixture there and not at all in the warm job (a
+          # cold pass divided by a warm load would be a ratio across cache states,
+          # and the warm job's rows are not the ones being decomposed).
+          stage_samples=0
+          if [[ "$MODE" == "cold" ]]; then stage_samples=3; fi
           python scripts/perf/bench_loading.py \
             --binary "$PROBE_BIN" \
             --mode "$MODE" --events 0,1000,10000 --skills 0,200 --iterations 10 \
+            --stage-probe-samples "$stage_samples" \
             --emit "$RESULTS/loading-$MODE.json" | tee "$RESULTS/loading-$MODE.txt"
 
       - name: "Suite: tools"
@@ -533,12 +581,15 @@ jobs:
         if: ${{ matrix.unit == 'tui' }}
         shell: bash
         run: |
-          python scripts/perf/bench_tui.py \
-            --binary "$HORON_BIN" \
-            --tui "${HORON_TUI_BIN:-}" \
-            --render-bench "${RENDER_BENCH_BIN:-}" \
-            --runs 5 \
-            --json-out "$RESULTS/tui.json" --markdown-out "$RESULTS/tui.md"
+          args=(--binary "$HORON_BIN" --tui "${HORON_TUI_BIN:-}"
+                --render-bench "${RENDER_BENCH_BIN:-}"
+                --scroll-bench "${SCROLL_BENCH_BIN:-}"
+                --runs 5
+                --json-out "$RESULTS/tui.json" --markdown-out "$RESULTS/tui.md")
+          if [[ -n "${SCROLL_BENCH_BASELINE_BIN:-}" ]]; then
+            args+=(--scroll-bench-baseline "$SCROLL_BENCH_BASELINE_BIN")
+          fi
+          python scripts/perf/bench_tui.py "${args[@]}"
 
       - name: Record job outcome
         if: ${{ always() }}

@@ -60,9 +60,5 @@ fn run_main() -> Result<()> {
     // the platform tunes that where the switch exists and does nothing when a
     // different global allocator is linked.
     horon_agent_platform::process::configure_system_allocator(!cfg!(feature = "jemalloc"));
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-
-    runtime.block_on(async { horon_agent::run().await })
+    horon_agent::cli::startup::run_standalone()
 }

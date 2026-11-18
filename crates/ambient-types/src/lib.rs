@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -9,7 +9,7 @@ pub enum UsageSource {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageRecord {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub source: UsageSource,
     pub tokens_input: u32,
     pub tokens_output: u32,
@@ -28,5 +28,5 @@ pub struct RateLimitInfo {
     pub remaining_tokens: Option<u64>,
     pub limit_requests: Option<u64>,
     pub remaining_requests: Option<u64>,
-    pub reset_at: Option<DateTime<Utc>>,
+    pub reset_at: Option<Timestamp>,
 }

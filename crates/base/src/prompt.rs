@@ -918,20 +918,37 @@ pub fn build_session_context(working_dir: Option<&Path>, additional_directories:
 }
 
 fn session_datetime_lines() -> [String; 3] {
-    std::panic::catch_unwind(|| format_session_datetime(chrono::Local::now()))
-        .unwrap_or_else(|_| format_session_datetime(chrono::Utc::now()))
+    let utc = time::OffsetDateTime::now_utc();
+    format_session_datetime(utc, time::UtcOffset::local_offset_at(utc))
 }
 
-fn format_session_datetime<Tz>(now: chrono::DateTime<Tz>) -> [String; 3]
-where
-    Tz: chrono::TimeZone,
-    Tz::Offset: std::fmt::Display,
-{
+/// A resolved local zone uses its numeric offset, including `+00:00`. Only
+/// the fallback for an unavailable local zone uses the name `UTC`.
+fn format_session_datetime(
+    utc: time::OffsetDateTime,
+    local_offset: Result<time::UtcOffset, time::error::IndeterminateOffset>,
+) -> [String; 3] {
+    let (now, zone) = match local_offset {
+        Ok(offset) => (utc.to_offset(offset), timezone_line(offset)),
+        Err(_) => (utc, String::from("Timezone: UTC")),
+    };
     [
-        format!("Date: {}", now.format("%Y-%m-%d")),
-        format!("Time: {}", now.format("%H:%M:%S")),
-        format!("Timezone: {}", now.format("%Z")),
+        format!("Date: {}", now.date()),
+        format!("Time: {:02}:{:02}:{:02}", now.hour(), now.minute(), now.second()),
+        zone,
     ]
+}
+
+fn timezone_line(offset: time::UtcOffset) -> String {
+    let seconds = offset.whole_seconds();
+    let sign = if seconds < 0 { '-' } else { '+' };
+    let magnitude = seconds.unsigned_abs();
+    let (hour, min, sec) = (magnitude / 3600, magnitude / 60 % 60, magnitude % 60);
+    if sec == 0 {
+        format!("Timezone: {sign}{hour:02}:{min:02}")
+    } else {
+        format!("Timezone: {sign}{hour:02}:{min:02}:{sec:02}")
+    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,9 @@ use crate::cache_values::{CachedValue, INLINE_TAIL_BYTES, PayloadField, PayloadS
 use crate::index::Index;
 use crate::projection_payload::Payload;
 use crate::*;
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub(crate) fn prompt_title(message: &horon_agent_session_types::StoredMessage) -> Option<String> {
     use horon_agent_message_types::{ContentBlock, Role};
@@ -30,7 +32,7 @@ pub(crate) struct CachedContext {
     pub metadata: CachedValue<SessionMetadata>,
     pub archive: Option<CachedValue<ArchiveChangedPayload>>,
     pub compaction: Option<(EventId, CachedValue<CompactedPayload>)>,
-    pub activity_at: chrono::DateTime<chrono::Utc>,
+    pub activity_at: Timestamp,
     #[serde(default)]
     pub first_prompt_title: Option<String>,
     pub active_count: usize,
@@ -83,6 +85,7 @@ impl CachedContext {
             )),
             None => None,
         };
+        let active = projection.active_messages();
         let mut context = Self {
             session_id: projection.session_id().clone(),
             head: projection.head().clone(),
@@ -94,18 +97,17 @@ impl CachedContext {
                 .ok_or_else(|| crate::recovery::corrupt("head absent"))?
                 .timestamp,
             first_prompt_title: projection.messages().iter().find_map(|m| prompt_title(&m.message)),
-            active_count: 0,
+            active_count: active.len(),
             inline_from: 0,
             tail: Vec::new(),
         };
-        for message in projection.active_messages() {
-            let active = index
-                .get(&message.event_id)?
-                .active
-                .as_ref()
-                .ok_or_else(|| crate::recovery::corrupt("active source absent"))?;
-            context.push(message, active.source.blob.is_none())?;
+        // `push` fills the title from the oldest active message that carries one
+        // when the full message list yielded none.
+        if context.first_prompt_title.is_none() {
+            context.first_prompt_title = active.iter().find_map(|m| prompt_title(&m.message));
         }
+        context.inline_from = inline_suffix(active, index)?;
+        context.tail = active[context.inline_from..].to_vec();
         Ok(context)
     }
 
@@ -195,3 +197,57 @@ impl CachedContext {
         })
     }
 }
+
+/// First resident index of the cold inline suffix.
+///
+/// [`CachedContext::push`] leaves the longest suffix whose canonical array
+/// bytes fit in [`INLINE_TAIL_BYTES`]: it only appends the newest message and
+/// drops from the front while the array is over budget, and a blob-backed
+/// message or one that cannot fit even alone clears the run. That fixpoint is
+/// the same suffix found by walking back from the newest active message once,
+/// so a cold rebuild never re-serializes the tail for every earlier message.
+fn inline_suffix(active: &[ProjectedMessage], index: &Index) -> Result<usize, StoreError> {
+    if active.is_empty() {
+        return Ok(0);
+    }
+    let mut rows = HashMap::with_capacity(index.rows.len());
+    for row in &index.rows {
+        // `Index::get` reports the first row carrying an identity.
+        rows.entry(&row.id).or_insert(row);
+    }
+    // Complete coverage: every active message still names an indexed original
+    // with a resident source, whether or not it survives into the suffix.
+    let mut after_blob = 0;
+    for (position, message) in active.iter().enumerate() {
+        let row = rows
+            .get(&message.event_id)
+            .ok_or_else(|| crate::recovery::corrupt("indexed event absent"))?;
+        let source = row
+            .active
+            .as_ref()
+            .ok_or_else(|| crate::recovery::corrupt("active source absent"))?;
+        if source.source.blob.is_some() {
+            after_blob = position + 1;
+        }
+    }
+    // The empty array is `[]`; each message adds its bytes and, after the
+    // first resident one, the separating comma.
+    let mut array_bytes = 2usize;
+    let mut start = active.len();
+    for message in active[after_blob..].iter().rev() {
+        let separator = usize::from(start < active.len());
+        let next = array_bytes
+            .saturating_add(separator)
+            .saturating_add(crate::cache_io::json_len(message)?);
+        if next > INLINE_TAIL_BYTES {
+            break;
+        }
+        array_bytes = next;
+        start -= 1;
+    }
+    Ok(start)
+}
+
+#[cfg(test)]
+#[path = "context_cache_tests.rs"]
+mod tests;

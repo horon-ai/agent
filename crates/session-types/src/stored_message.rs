@@ -1,9 +1,9 @@
 //! The message record a session stores, plus the schema-repair record a
 //! repaired tool call carries.
 
-use chrono::{DateTime, Utc};
 use horon_agent_message_types::degradation::DegradationReceipt;
 use horon_agent_message_types::{ContentBlock, Message, Role};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::{StoredDisplayRole, StoredTokenUsage};
@@ -22,7 +22,7 @@ pub struct StoredMessage {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub turn_start: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<DateTime<Utc>>,
+    pub timestamp: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

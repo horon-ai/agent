@@ -60,7 +60,7 @@ async fn session_replication_remote_pid_cwd_epoch_and_head_never_activate_runtim
         store::EventId::new_v4(),
         None,
         store::OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
         store::EventKind::new(store::KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": metadata, "branch_root": false}),
     )
@@ -130,7 +130,7 @@ fn session_replication_import_preserves_existing_local_binding_and_lease() {
         store::EventId::new_v4(),
         Some(store::EventId::parse(session.selected_event_head().unwrap()).unwrap()),
         store::OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
         store::EventKind::new(store::KnownEventKind::MetadataChanged),
         serde_json::json!({"metadata": metadata}),
     )
