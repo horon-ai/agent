@@ -309,6 +309,24 @@ Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 
 ## Tests
 
+- **A test guards behavior.** Keep a test only when it depends on intended
+  behavior: it changes only when that behavior changes, and fails only when it
+  regresses. Do not write, and delete when found, a test that depends on the
+  past (it asserts that removed code stays gone), on nothing (no code change
+  can make it fail: it tests the standard library, the type system, or a mock
+  of the unit under test), or on the implementation (its expected value
+  repeats the code's own logic, or it asserts private state, internal call
+  order, or which helper ran), or that duplicates another test reaching the
+  same code path and branch. When such a test also covers behavior callers
+  rely on, rewrite it against that behavior with literal expected values and
+  keep its name and module, because workflows and gates select tests by name.
+  Delete production code that exists only for tests (`#[cfg(test)]` helpers,
+  `*_for_tests` functions) when its tests go. Wire and storage contracts,
+  refusals a user sees, durability, concurrency and security tests, gate
+  contract tests, and source-scanning rule tests are behavior. Removing tests
+  lowers each `--min-passed` and `min_passed` floor that selected them by
+  that number, never below 1 (a removed test named in a `skipped` list leaves
+  that list instead), and the pull request names the change (#419).
 - **A test counts only when CI runs it.** An integration target (`tests/*.rs`,
   `crates/*/tests/*.rs`) is listed in `scripts/ci/integration_targets.json`
   with its `min_passed` count, or in `scripts/ci/test_target_allowlist.json`
