@@ -136,20 +136,29 @@ class GateTests(unittest.TestCase):
     message has to name the command that unblocks it.
     """
 
+    def run_gate(self, *args: str) -> tuple[int, str, str]:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = helper.main(["gate", *args])
+        return status, stdout.getvalue(), stderr.getvalue()
+
     def test_a_switch_on_release_is_allowed(self) -> None:
-        self.assertEqual(helper.main(["gate", "workflow_run", "publish", "true"]), 0)
+        self.assertEqual(self.run_gate("workflow_run", "publish", "true"), (0, "publish\n", ""))
 
     def test_a_blocked_release_fails_with_the_recovery_command(self) -> None:
-        stderr = io.StringIO()
-        with contextlib.redirect_stderr(stderr):
-            status = helper.main(["gate", "workflow_run", "publish", "", "release_tag", "0.1.16"])
+        status, stdout, stderr = self.run_gate("workflow_run", "publish", "", "release_tag", "0.1.16")
         self.assertEqual(status, 1)
-        self.assertIn("gh variable set NPM_PUBLISH --body true", stderr.getvalue())
-        self.assertIn("release_tag 0.1.16", stderr.getvalue())
+        self.assertEqual(stdout, "")
+        self.assertIn("gh variable set NPM_PUBLISH --body true", stderr)
+        self.assertIn("gh workflow run publish-npm.yml -f release_tag=v0.1.16 -f dry_run=false", stderr)
 
     def test_a_dry_run_request_is_not_a_failure(self) -> None:
-        self.assertEqual(helper.main(["gate", "workflow_dispatch", "dry-run", "", "", ""]), 0)
-        self.assertEqual(helper.main(["gate", "pull_request", "dry-run", "", "", ""]), 0)
+        self.assertEqual(
+            self.run_gate("workflow_dispatch", "dry-run", "", "", ""), (0, "dry-run\n", "")
+        )
+
+    def test_a_pull_request_is_never_a_blocked_release(self) -> None:
+        self.assertEqual(self.run_gate("pull_request", "publish", ""), (0, "dry-run\n", ""))
 
 
 class MissingAssetsTests(unittest.TestCase):

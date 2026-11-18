@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Release-time checks for the npm publish workflow.
 
-`publish-npm.yml` needs three things npm does not answer itself: the version a
-release tag names, validation of a manual dispatch before anything is built,
-and a statement that the seven generated packages agree on one version. Each
-rule is a pure function here so it can be proved without a runner, a registry
-or a network.
+`publish-npm.yml` needs four things npm does not answer itself: the version a
+release tag names, validation of a manual dispatch before anything is built, a
+statement that the seven generated packages agree on one version, and the mode
+a run may take once the owner's switch is read. Each rule is a pure function
+here so it can be proved without a runner, a registry or a network.
 
 Commands:
 
@@ -15,7 +15,6 @@ Commands:
   missing-assets DIR          name every required release asset DIR lacks
   check-packages DIR VERSION  assert the seven prepared packages agree
   publish-order               print the package directories in publishing order
-  mode EVENT REQUESTED SWITCH print the mode a run may take after the switch
   gate EVENT REQUESTED SWITCH [SOURCE [VERSION]]
                               print the mode, or fail when a publish is blocked
 
@@ -258,11 +257,6 @@ def main(argv: list[str] | None = None) -> int:
         "publish-order", help="print the package directories in publishing order"
     )
 
-    mode = commands.add_parser("mode", help="print the mode this run may take")
-    mode.add_argument("event")
-    mode.add_argument("requested")
-    mode.add_argument("npm_publish")
-
     gate = commands.add_parser(
         "gate", help="print the mode, or fail when a publish the run resolved is blocked"
     )
@@ -302,19 +296,21 @@ def main(argv: list[str] | None = None) -> int:
             print(directory)
         return 0
 
-    if args.command == "mode":
-        print(resolve_mode(args.event, args.requested, args.npm_publish))
-        return 0
-
     if args.command == "gate":
         allowed = resolve_mode(args.event, args.requested, args.npm_publish)
-        if args.requested == "publish" and allowed != "publish":
-            what = " ".join(part for part in (args.source, args.version) if part)
+        # A pull request never publishes by design, so it is not a blocked
+        # release; only a run that could have published and did not is.
+        if args.requested == "publish" and allowed != "publish" and args.event != "pull_request":
+            what = " ".join(part for part in (args.source, args.version) if part) or "this run"
             message = (
-                f"{what or 'this run'} resolved to publish, but the repository variable NPM_PUBLISH is not"
-                " 'true', so nothing was published to npm. Run 'gh variable set NPM_PUBLISH --body true'"
-                " and start this release again."
+                f"{what} resolved to publish, but the repository variable NPM_PUBLISH is not 'true', so"
+                " nothing was published to npm. Run 'gh variable set NPM_PUBLISH --body true'"
             )
+            if args.source == "release_tag" and args.version:
+                message += (
+                    f", then 'gh workflow run publish-npm.yml -f release_tag=v{args.version} -f dry_run=false'"
+                )
+            message += "."
             print(f"::error::{message}" if _in_actions() else message, file=sys.stderr)
             return 1
         print(allowed)
