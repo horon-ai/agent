@@ -29,6 +29,10 @@ pub const MAX_INPUT_BYTES: usize = 4096;
 /// Cells a summary needs before it is worth drawing at all.
 const MIN_SUMMARY_CELLS: usize = 12;
 
+/// Columns every row under a call's head starts with, and the one the wrapped
+/// rows after it keep.
+pub(crate) const OUTPUT_PREFIX: &str = "  ";
+
 /// Keys whose value is the interesting argument, most specific first.
 const PRIMARY_KEYS: &[&str] = &[
     "command",
@@ -280,6 +284,50 @@ pub fn lines_with(
     width: u16,
     retained: Retained<'_>,
 ) -> Vec<Line<'static>> {
+    match rows_with(call, theme, symbols, width, retained) {
+        CallRows::Built(rows) => rows,
+        CallRows::Expanded { mut head, text, style } => {
+            // The whole output, one row at a time: a caller that draws it builds
+            // every row, which is what the pane avoids by keeping the text.
+            for row in text.lines() {
+                head.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style)));
+            }
+            head
+        }
+    }
+}
+
+/// The rows one tool call occupies, before the whole output is expanded into
+/// them.
+///
+/// A cut output drawn in full is the one case where the rows are not all built:
+/// it is one row per line of the output, and the pane shows only the rows near
+/// its end, so [`CallRows::Expanded`] hands over the text instead and the pane
+/// makes the rows it draws.
+pub(crate) enum CallRows<'a> {
+    /// Every row is built: the head, a failure, the preview and its marker.
+    Built(Vec<Line<'static>>),
+    /// The rows above the output, and the output itself, drawn as one prefixed
+    /// row per line.
+    Expanded {
+        /// The rows above the output: the head, and a failure's message.
+        head: Vec<Line<'static>>,
+        /// The whole kept output, one row per line.
+        text: &'a str,
+        /// The style every output row is drawn in.
+        style: Style,
+    },
+}
+
+/// The rows one tool call occupies, keeping a cut output as the text it came
+/// from.
+pub(crate) fn rows_with<'a>(
+    call: &ToolCall,
+    theme: &Theme,
+    symbols: Symbols,
+    width: u16,
+    retained: Retained<'a>,
+) -> CallRows<'a> {
     // A call the approval gate refused never ran, so it is never drawn as a
     // failure: it waits under the in-progress glyph, and once the request is
     // decided it says what the answer was. The dot is the quietest marker the
@@ -324,7 +372,10 @@ pub fn lines_with(
     if let ToolState::Failed(message) = &call.state {
         error_text = Some(message.as_str());
         rows.push(Line::from(Span::styled(
-            format!("  {}", truncate_cells(display_error(message), MAX_PREVIEW_CELLS)),
+            format!(
+                "{OUTPUT_PREFIX}{}",
+                truncate_cells(display_error(message), MAX_PREVIEW_CELLS)
+            ),
             Style::default().fg(color),
         )));
     }
@@ -333,11 +384,15 @@ pub fn lines_with(
         // An expanded call draws every row it kept. That is true even where the
         // preview would have repeated the failure text above it: the press was a
         // request for the output itself, not for the summary the line already
-        // carries.
-        for row in text.lines() {
-            rows.push(Line::from(Span::styled(format!("  {row}"), style)));
-        }
-    } else if let Some(output) = call.output.as_ref().filter(|_| !settled) {
+        // carries. The output stays a borrowed str: a row is made only where the
+        // pane draws one.
+        return CallRows::Expanded {
+            head: rows,
+            text,
+            style,
+        };
+    }
+    if let Some(output) = call.output.as_ref().filter(|_| !settled) {
         // A failed call's stored output is the failure text itself, so drawing
         // it again would say the same thing twice.
         // The head row is cut with a marker, so the marker comes off before the
@@ -348,7 +403,7 @@ pub fn lines_with(
         });
         if !repeats_error {
             for row in &output.rows {
-                rows.push(Line::from(Span::styled(format!("  {row}"), style)));
+                rows.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style)));
             }
             // A row cut at its right edge hides output with no rows to count, so
             // the count alone would say the preview is whole. A call whose text
@@ -363,8 +418,8 @@ pub fn lines_with(
             // working where the hint is dropped.
             let marker = match (output.hidden_rows(), retained.kept) {
                 (0, false) => None,
-                (0, true) => Some("  cut".to_string()),
-                (hidden, _) => Some(format!("  +{hidden} lines")),
+                (0, true) => Some(format!("{OUTPUT_PREFIX}cut")),
+                (hidden, _) => Some(format!("{OUTPUT_PREFIX}+{hidden} lines")),
             };
             let marker = marker.map(|plain| match retained.key {
                 Some(key) => {
@@ -382,7 +437,7 @@ pub fn lines_with(
             }
         }
     }
-    rows
+    CallRows::Built(rows)
 }
 
 /// When a call started, so a finished line can say how long it took.

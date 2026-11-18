@@ -911,29 +911,33 @@ fn blocks(app: &App) -> Vec<Block<'_>> {
     blocks
 }
 
-/// The rows of one block, top to bottom, wrapped to the pane width.
+/// One block's lines, ready to be asked for the rows the pane shows.
 ///
 /// The wrapped height is what the scrollback measures, so a block means the same
 /// thing here and in `measure_transcript`. `first` is the oldest block, which has
 /// nothing above it to be separated from.
-fn block_rows(
+///
+/// A block is not wrapped here: the pane asks its source for the rows it draws,
+/// and a tool call drawing its whole output answers with only the rows near the
+/// end instead of a row for every line it kept.
+fn block_source<'a>(
     block: &Block<'_>,
     look: &item_lines::Look<'_>,
-    expand: Option<&tool_expand::Frame<'_>>,
+    expand: Option<&tool_expand::Frame<'a>>,
     first: bool,
-) -> Vec<Line<'static>> {
-    let lines = match block {
-        Block::Item(item) => item_lines::lines(item, look, expand),
-        Block::Reasoning(text) => item_lines::reasoning(text, look),
-        Block::Answer(text) => item_lines::answer(text, look),
+) -> wrap::Source<'a> {
+    let mut source = match block {
+        Block::Item(item) => item_lines::source(item, look, expand),
+        Block::Reasoning(text) => wrap::Source::built(item_lines::reasoning(text, look)),
+        Block::Answer(text) => wrap::Source::built(item_lines::answer(text, look)),
     };
-    let mut rows = wrap::wrap_rows(lines, look.width);
     // A turn starts one blank row below the previous one, so a new message is
-    // not read as more of the answer above it.
+    // not read as more of the answer above it. It is a line of the block, so a
+    // window that starts at the block's first row still counts it.
     if !first && matches!(block, Block::Item(Item::User(_))) {
-        rows.insert(0, Line::default());
+        source.prepend(wrap::Indented::plain(Line::default()));
     }
-    rows
+    source
 }
 
 /// Count the conversation's rows so a held view knows how far it may move.
@@ -968,7 +972,9 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        Some(item) => block_rows(&Block::Item(item), &look, Some(&expand), index == 0).len(),
+        // Counted, not built: the rows of a block that stays off screen are not
+        // made to measure it.
+        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0).height(width),
         None => 0,
     });
 }
@@ -976,8 +982,8 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
 /// Wrapped rows of one open buffer, as the pane would draw it.
 fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -> usize {
     match text {
-        Some(text) if reasoning => wrap::wrap_rows(item_lines::reasoning(text, look), look.width).len(),
-        Some(text) => wrap::wrap_rows(item_lines::answer(text, look), look.width).len(),
+        Some(text) if reasoning => wrap::Source::built(item_lines::reasoning(text, look)).height(look.width),
+        Some(text) => wrap::Source::built(item_lines::answer(text, look)).height(look.width),
         None => 0,
     }
 }
@@ -989,15 +995,16 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let mut rows: Vec<Line<'static>> = Vec::new();
     let blocks = blocks(app);
     for (index, block) in blocks.iter().enumerate().rev() {
-        for row in block_rows(block, &look, Some(&expand), index == 0).into_iter().rev() {
-            rows.push(row);
-            if rows.len() >= capacity {
-                break;
-            }
-        }
         if rows.len() >= capacity {
             break;
         }
+        // Only the rows this block contributes to the pane are built, and they
+        // are built from the end: a block taller than the pane costs the pane's
+        // rows, not its own.
+        let source = block_source(block, &look, Some(&expand), index == 0);
+        let wanted = capacity - rows.len();
+        let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
+        rows.extend(window.into_iter().rev());
     }
     rows.reverse();
     placeholder(app, rows, width)
@@ -1007,7 +1014,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 ///
 /// Blocks below the view are skipped by their measured height, so the rows the
 /// user scrolled past are not wrapped again. Only the block that holds the bottom
-/// edge of the view is wrapped, plus the blocks the pane actually fills with.
+/// edge of the view is wrapped, and only for the rows above that edge.
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
@@ -1028,21 +1035,16 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
             }
             _ => {}
         }
-        let block = block_rows(block, &look, Some(&expand), index == 0);
-        let take_from = match heights.get(index) {
-            Some(&height) if below > 0 => height.saturating_sub(below),
-            _ => block.len(),
-        };
-        below = 0;
-        for row in block.into_iter().take(take_from).rev() {
-            rows.push(row);
-            if rows.len() >= capacity {
-                break;
-            }
-        }
         if rows.len() >= capacity {
             break;
         }
+        let source = block_source(block, &look, Some(&expand), index == 0);
+        let wanted = capacity - rows.len();
+        // The rows below the view's bottom edge are counted and dropped; what
+        // is built is the window above them that the pane fills with.
+        let window = source.rows_from_end(width, wrap::FromEnd::new(below, wanted));
+        rows.extend(window.into_iter().rev());
+        below = 0;
     }
     rows.reverse();
     rows
