@@ -132,14 +132,29 @@ fn test_format_reset_time_past() {
 
 #[test]
 fn test_format_reset_time_under_one_minute_rounds_up() {
-    let timestamp = (chrono::Utc::now() + chrono::TimeDelta::seconds(30)).to_rfc3339();
+    let timestamp = (horon_agent_time::Timestamp::now() + horon_agent_time::Duration::seconds(30)).to_rfc3339();
     assert_eq!(format_reset_time(&timestamp), "1m");
 }
 
 #[test]
 fn test_format_reset_time_uses_days_for_long_windows() {
-    let timestamp = (chrono::Utc::now() + chrono::TimeDelta::hours(109) + chrono::TimeDelta::minutes(5)).to_rfc3339();
+    let timestamp = (horon_agent_time::Timestamp::now()
+        + horon_agent_time::Duration::hours(109)
+        + horon_agent_time::Duration::minutes(5))
+    .to_rfc3339();
     assert_eq!(format_reset_time(&timestamp), "4d 13h");
+}
+
+#[test]
+fn test_format_reset_time_accepts_the_naive_utc_fallback_grammar() {
+    // A reset time with an offset goes through the strict RFC 3339 reader.
+    assert_eq!(format_reset_time("2020-01-01T00:00:00Z"), "now");
+    // A reset time with the same shape but unpadded fields only parses on the
+    // shared `%Y-%m-%dT%H:%M:%S%.fZ` fallback, which keeps the previous
+    // formatter's leniency.
+    assert_eq!(format_reset_time("2020-1-2T3:4:5Z"), "now");
+    // A value neither grammar accepts is echoed back instead of being guessed.
+    assert_eq!(format_reset_time("2020-01-01T00:00:00"), "2020-01-01T00:00:00");
 }
 
 #[test]
@@ -310,14 +325,14 @@ fn reset_timestamp_from_json_value_handles_all_encodings() {
     // protobuf int64 JSON-encodes as a decimal string of milliseconds.
     let millis = serde_json::json!("1792835722000");
     assert_eq!(
-        chrono::DateTime::parse_from_rfc3339(&reset_timestamp_from_json_value(&millis).unwrap())
+        horon_agent_time::Timestamp::parse_rfc3339(&reset_timestamp_from_json_value(&millis).unwrap())
             .unwrap()
             .timestamp(),
         1792835722
     );
     let seconds = serde_json::json!(1792835722u64);
     assert_eq!(
-        chrono::DateTime::parse_from_rfc3339(&reset_timestamp_from_json_value(&seconds).unwrap())
+        horon_agent_time::Timestamp::parse_rfc3339(&reset_timestamp_from_json_value(&seconds).unwrap())
             .unwrap()
             .timestamp(),
         1792835722

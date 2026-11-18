@@ -98,3 +98,44 @@ fn a_broken_lock_file_is_reported_instead_of_overwritten() {
     assert!(error.to_string().contains("install lock"), "{error}");
     assert_eq!(std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap(), "not json");
 }
+
+#[test]
+fn a_lock_file_an_earlier_build_wrote_keeps_its_ref() {
+    // Given a lock file that spells the requested ref with the old `git_ref`
+    // key, the way a build before the rename wrote it.
+    let dir = tempfile::tempdir().unwrap();
+    let earlier = serde_json::json!({
+        "installs": [{
+            "name": "one",
+            "source": "a",
+            "git_ref": "v0.9",
+            "commit": "0".repeat(40),
+        }]
+    });
+    std::fs::write(dir.path().join(LOCK_FILE), serde_json::to_vec(&earlier).unwrap()).unwrap();
+
+    // When a newer install appends its own row.
+    write_lock(
+        dir.path(),
+        InstallRecord {
+            name: "two".to_string(),
+            source: "b".to_string(),
+            git_ref: None,
+            commit: "1".repeat(40),
+        },
+    )
+    .expect("a lock an earlier build wrote is extended");
+
+    // Then the earlier row keeps its pin and the file is rewritten in the
+    // current shape, so both builds read the same value.
+    let text = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
+    let lock: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = lock["installs"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "the earlier row is kept: {text}");
+    assert_eq!(rows[0]["name"], "one");
+    assert_eq!(rows[0]["ref"], "v0.9", "the old key is read as the pin: {text}");
+    assert!(
+        rows[0].get("git_ref").is_none(),
+        "the row is rewritten in the current shape: {text}"
+    );
+}

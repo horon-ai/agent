@@ -35,6 +35,16 @@ impl Drop for Sandbox {
 
 fn saved_session(parent: Option<String>) -> Session {
     let mut session = Session::create(parent, None);
+    // A session with no message and no metadata is not persisted: an empty
+    // facade nobody may read is not worth a file. Give every fixture one
+    // visible message so the spawn tree exists on disk.
+    session.add_message(
+        crate::message::Role::User,
+        vec![crate::message::ContentBlock::Text {
+            text: "first prompt".into(),
+            cache_control: None,
+        }],
+    );
     session.save().expect("a session saves");
     session
 }

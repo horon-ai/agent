@@ -503,7 +503,7 @@ async fn memory_learn_ranks_ahead_of_a_fact_of_the_same_age() {
     let ctx = test_ctx(project.path().to_path_buf());
     let tool = MemoryTool::new();
 
-    let stamp = chrono::Utc::now();
+    let stamp = horon_agent_time::Timestamp::now();
     for (category, content) in [
         (MemoryCategory::Fact, "the build script lives in scripts/ci"),
         (

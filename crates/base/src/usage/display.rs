@@ -83,37 +83,33 @@ pub(super) fn provider_usage_cache_is_fresh(now: Instant, fetched_at: Instant, r
         && !usage_reset_passed(report.limits.iter().map(|limit| limit.resets_at.as_deref()))
 }
 
-fn parse_reset_timestamp(timestamp: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    if let Ok(reset) = chrono::DateTime::parse_from_rfc3339(timestamp) {
-        Some(reset.with_timezone(&chrono::Utc))
-    } else if let Ok(reset) = chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S%.fZ") {
-        Some(reset.and_utc())
-    } else {
-        None
-    }
+fn parse_reset_timestamp(timestamp: &str) -> Result<horon_agent_time::Timestamp, horon_agent_time::ParseError> {
+    // The reset times some providers emit omit the offset; the shared parser
+    // reads that form with the same grammar the old fallback had.
+    horon_agent_time::Timestamp::parse_rfc3339(timestamp)
+        .or_else(|_| horon_agent_time::Timestamp::parse_naive_utc(timestamp))
 }
 
 pub(super) fn usage_reset_passed<'a>(timestamps: impl IntoIterator<Item = Option<&'a str>>) -> bool {
-    let now = chrono::Utc::now();
+    let now = horon_agent_time::Timestamp::now();
     timestamps
         .into_iter()
         .flatten()
-        .filter_map(parse_reset_timestamp)
-        .any(|reset| reset <= now)
+        .any(|stamp| parse_reset_timestamp(stamp).is_ok_and(|reset| reset <= now))
 }
 
 pub fn format_reset_time(timestamp: &str) -> String {
-    if let Some(reset) = parse_reset_timestamp(timestamp) {
-        let duration = reset.signed_duration_since(chrono::Utc::now());
-        if duration.num_seconds() <= 0 {
+    if let Ok(reset) = parse_reset_timestamp(timestamp) {
+        let duration = reset - horon_agent_time::Timestamp::now();
+        if duration.whole_seconds() <= 0 {
             return "now".to_string();
         }
-        if duration.num_seconds() < 60 {
+        if duration.whole_seconds() < 60 {
             return "1m".to_string();
         }
-        let days = duration.num_days();
-        let hours = duration.num_hours() % 24;
-        let minutes = duration.num_minutes() % 60;
+        let days = duration.whole_days();
+        let hours = duration.whole_hours() % 24;
+        let minutes = duration.whole_minutes() % 60;
         if days > 0 {
             if hours > 0 {
                 format!("{}d {}h", days, hours)

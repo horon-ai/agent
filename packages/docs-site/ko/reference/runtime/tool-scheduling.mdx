@@ -102,14 +102,14 @@ API 요청을 쓰기 때문입니다.
 ## 컨텍스트 예산
 
 실행된 도구는 출력을 도구 계층의 넘침 가드에 통과시킵니다
-(`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, `guard_context_overflow` 안의 검사, `tool/mod.rs:2330` `guard_context_overflow`).
+(`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, `guard_context_overflow` 안의 검사, `tool/mod.rs:2298` `guard_context_overflow`).
 그 가드는 출력을 `token_budget()` 곱하기 `CONTEXT_GUARD_THRESHOLD`와
-비교합니다(0.90, `tool/mod.rs:1754` `CONTEXT_GUARD_THRESHOLD`, 비교는 `tool/mod.rs:2352` `needs_truncation`).
+비교합니다(0.90, `tool/mod.rs:1716` `CONTEXT_GUARD_THRESHOLD`, 비교는 `tool/mod.rs:2319` `needs_truncation`).
 
 그 가드는 자기가 들고 있는 컴팩션 관리자를 읽습니다. `Registry::clone`은 그
 관리자를 새것으로 바꾸는 반면 `clone_sharing_compaction`은 부모의 관리자를
-공유합니다(`tool/mod.rs:780` `CompactionManager::new`,
-`tool/mod.rs:801` `clone_sharing_compaction`). 그래서 가드는 새 관리자가 보고할
+공유합니다(`tool/mod.rs:792` `CompactionManager::new`,
+`tool/mod.rs:813` `clone_sharing_compaction`). 그래서 가드는 새 관리자가 보고할
 바닥값이 아니라 실제 세션 예산과 토큰 수를 봅니다. 두 루프 모두 도구를 실행하는
 라운드에 공유 클론을 넘깁니다(`turn_loops.rs:1818` `run_group`, `turn_streaming_mpsc.rs:1895` `clone_sharing_compaction`, `turn_streaming_mpsc.rs:2562` `run_group`).
 
@@ -136,9 +136,9 @@ API 요청을 쓰기 때문입니다.
 
 상한값, 잘림 안내, 윈도 소진 거부와 과대 거부는 복사본이 아니라 도구 계층의
 것을 그대로 씁니다. `Registry::context_guard_threshold_tokens`
-(`tool/mod.rs:1759` `context_guard_threshold_tokens`)가 예산을 0.90 상한으로
+(`tool/mod.rs:1721` `context_guard_threshold_tokens`)가 예산을 0.90 상한으로
 바꾸고, `Registry::truncated_output_notice`
-(`tool/mod.rs:1792` `truncated_output_notice`)가 잘린 앞부분 뒤에 붙는 문장을
+(`tool/mod.rs:1754` `truncated_output_notice`)가 잘린 앞부분 뒤에 붙는 문장을
 씁니다. 라운드는 출력별 상한을 도구 계층에 맡기지 않고 두 상한을 직접
 강제합니다. `admit`은 예상 합계가 들어가고 이 출력이 단일 출력 상한 안에 있을
 때만 출력을 돌려줍니다(`round_budget.rs:189` `projected_tokens`). 그래서 도구
@@ -153,7 +153,7 @@ API 요청을 쓰기 때문입니다.
 `ceiling_bound`(`round_budget.rs:221` `ceiling_bound`)가 어느 문장이 진짜 이유를
 말할지 고릅니다. 단일 출력 상한이 둘 중 더 엄격하면
 (`single_max_tokens < remaining_tokens`) 라운드는 도구 계층의
-`Registry::oversized_output_refusal` (`tool/mod.rs:1942` `oversized_output_refusal`)을 출력합니다. 그래서 호출자는
+`Registry::oversized_output_refusal` (`tool/mod.rs:1904` `oversized_output_refusal`)을 출력합니다. 그래서 호출자는
 어느 계층이 거부했는지 알 수 없습니다. 아니면 라운드는 자기
 `withheld_output_refusal`(`round_budget.rs:298` `withheld_output_refusal`)을
 씁니다. 같은 "CONTEXT LIMIT REACHED" 접두사와 `/compact` 처방이지만,
@@ -373,7 +373,7 @@ loop_guard = false
 않으므로(`turn_streaming_mpsc.rs:1913` `running_tool_registry`), 그룹이 도는 동안
 올린 요청은 호출을 옮기는 대신 `moved: false`로 보고합니다
 (`turn_streaming_mpsc.rs:2562` `run_group`). 응답은 레지스트리 항목과 시그널로
-계산하고(`crates/app-core/src/server/client_lifecycle.rs:1521` `move_tool_to_background`),
+계산하고(`crates/app-core/src/server/client_lifecycle.rs:1525` `move_tool_to_background`),
 이벤트 모양은 `moved`를 담고 `tool_call_id`와 `tool_name`은 없습니다 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 
 시그널은 그룹 뒤에 지우므로, 그룹 중에 들어온 시그널이 다음 구성원 하나짜리 호출을

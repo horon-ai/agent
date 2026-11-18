@@ -1,8 +1,8 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -66,8 +66,8 @@ pub struct ClaudeCodeSessionInfo {
     pub first_prompt: String,
     pub summary: Option<String>,
     pub message_count: u32,
-    pub created: Option<DateTime<Utc>>,
-    pub modified: Option<DateTime<Utc>>,
+    pub created: Option<Timestamp>,
+    pub modified: Option<Timestamp>,
     pub project_path: Option<String>,
     pub full_path: String,
 }
@@ -201,10 +201,8 @@ fn tool_result_content_to_text(value: &serde_json::Value) -> String {
     }
 }
 
-pub fn parse_rfc3339_string(value: Option<&str>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+pub fn parse_rfc3339_string(value: Option<&str>) -> Option<Timestamp> {
+    value.and_then(|ts| Timestamp::parse_rfc3339(ts).ok())
 }
 
 pub fn clean_optional_text(value: Option<String>) -> Option<String> {
@@ -272,27 +270,27 @@ pub fn claude_text_from_content(content: &ClaudeCodeContent) -> Option<String> {
 }
 
 pub fn ordered_claude_code_message_entries(entries: &[ClaudeCodeEntry]) -> Vec<&ClaudeCodeEntry> {
-    let message_entries: Vec<&ClaudeCodeEntry> = entries
+    let mut id_slots = HashMap::new();
+    let message_entries: Vec<_> = entries
         .iter()
         .filter(|e| (e.entry_type == "user" || e.entry_type == "assistant") && e.message.is_some() && !e.is_sidechain)
+        .enumerate()
+        .map(|(row, entry)| {
+            // Named rows share a slot for the same message. Each unnamed row is distinct.
+            let slot = entry
+                .uuid
+                .as_deref()
+                .map_or(row, |id| *id_slots.entry(id).or_insert(row));
+            (entry, slot)
+        })
         .collect();
 
-    let mut uuid_to_entry: HashMap<String, &ClaudeCodeEntry> = HashMap::new();
-    for entry in &message_entries {
-        if let Some(ref uuid) = entry.uuid {
-            uuid_to_entry.insert(uuid.clone(), entry);
-        }
-    }
-
-    let mut ordered_entries: Vec<&ClaudeCodeEntry> = Vec::new();
-    let mut visited: HashSet<String> = HashSet::new();
-
-    let mut roots: Vec<&ClaudeCodeEntry> = message_entries
+    let mut ordered_entries = Vec::with_capacity(message_entries.len());
+    let mut visited = vec![false; message_entries.len()];
+    let mut roots: Vec<_> = message_entries
         .iter()
-        .filter(|e| {
-            e.parent_uuid.is_none() || !uuid_to_entry.contains_key(e.parent_uuid.as_deref().unwrap_or_default())
-        })
         .copied()
+        .filter(|(entry, _)| entry.parent_uuid.as_deref().is_none_or(|id| !id_slots.contains_key(id)))
         .collect();
 
     // Multiple roots occur when a session's parent chain is broken (e.g. a
@@ -303,7 +301,7 @@ pub fn ordered_claude_code_message_entries(entries: &[ClaudeCodeEntry]) -> Vec<&
     // before its "user" prompt). Order roots by timestamp so the reconstructed
     // transcript stays chronological; entries without a timestamp keep their
     // relative file order behind timestamped ones.
-    roots.sort_by(|a, b| {
+    roots.sort_by(|(a, _), (b, _)| {
         let a_ts = parse_rfc3339_string(a.timestamp.as_deref());
         let b_ts = parse_rfc3339_string(b.timestamp.as_deref());
         match (a_ts, b_ts) {
@@ -315,30 +313,23 @@ pub fn ordered_claude_code_message_entries(entries: &[ClaudeCodeEntry]) -> Vec<&
     });
 
     for root in roots {
-        let mut current = root;
-        loop {
-            if let Some(ref uuid) = current.uuid {
-                if visited.contains(uuid) {
-                    break;
-                }
-                visited.insert(uuid.clone());
+        let mut next = Some(root);
+        while let Some((entry, slot)) = next {
+            if visited[slot] {
+                break;
             }
-            ordered_entries.push(current);
-
-            let next = message_entries.iter().find(|e| {
-                e.parent_uuid.as_ref() == current.uuid.as_ref()
-                    && e.uuid.as_ref().map(|u| !visited.contains(u)).unwrap_or(true)
-            });
-
-            match next {
-                Some(n) => current = n,
-                None => break,
-            }
+            visited[slot] = true;
+            ordered_entries.push(entry);
+            let Some(id) = entry.uuid.as_deref() else { break };
+            next = message_entries
+                .iter()
+                .copied()
+                .find(|(child, slot)| !visited[*slot] && child.parent_uuid.as_deref() == Some(id));
         }
     }
 
-    for entry in message_entries {
-        if entry.uuid.as_ref().map(|uuid| visited.contains(uuid)).unwrap_or(false) {
+    for (entry, slot) in message_entries {
+        if visited[slot] {
             continue;
         }
         ordered_entries.push(entry);
@@ -419,11 +410,10 @@ pub fn collect_recent_files_recursive(root: &Path, extension: &str, limit: usize
     files.into_iter().map(|(_, path)| path).collect()
 }
 
-pub fn parse_rfc3339_json(value: Option<&serde_json::Value>) -> Option<DateTime<Utc>> {
+pub fn parse_rfc3339_json(value: Option<&serde_json::Value>) -> Option<Timestamp> {
     value
         .and_then(|v| v.as_str())
-        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+        .and_then(|ts| Timestamp::parse_rfc3339(ts).ok())
 }
 
 pub fn extract_external_text_from_json(value: &serde_json::Value, include_tools: bool) -> String {
@@ -524,18 +514,18 @@ pub fn extract_opencode_part_text(parts_base: &Path, message_id: &str, include_t
     out.join("\n")
 }
 
-pub fn file_modified_datetime(path: &Path) -> Option<DateTime<Utc>> {
+pub fn file_modified_datetime(path: &Path) -> Option<Timestamp> {
     std::fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok()
-        .map(DateTime::<Utc>::from)
+        .map(Timestamp::from)
 }
 
 #[derive(Debug, Clone)]
 pub struct ExternalMessageRecord {
     pub role: String,
     pub text: String,
-    pub timestamp: Option<DateTime<Utc>>,
+    pub timestamp: Option<Timestamp>,
     pub id: Option<String>,
 }
 
@@ -548,8 +538,8 @@ pub struct ExternalSessionRecord {
     pub working_dir: Option<String>,
     pub provider_key: Option<String>,
     pub model: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub path: PathBuf,
     pub messages: Vec<ExternalMessageRecord>,
 }
@@ -611,7 +601,7 @@ pub fn load_codex_external_session(
     }
     let created_at = parse_rfc3339_json(meta.get("timestamp"))
         .or_else(|| parse_rfc3339_json(header.get("timestamp")))
-        .unwrap_or_else(Utc::now);
+        .unwrap_or_else(Timestamp::now);
     let mut updated_at = file_modified_datetime(path).unwrap_or(created_at);
     let working_dir = meta.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
     let mut messages = Vec::new();
@@ -686,7 +676,7 @@ pub fn load_pi_external_session(path: &Path, include_tools: bool) -> ImportCoreR
     if session_id.is_empty() {
         return Ok(None);
     }
-    let created_at = parse_rfc3339_json(header.get("timestamp")).unwrap_or_else(Utc::now);
+    let created_at = parse_rfc3339_json(header.get("timestamp")).unwrap_or_else(Timestamp::now);
     let mut updated_at = file_modified_datetime(path).unwrap_or(created_at);
     let working_dir = header.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
     let mut provider_key = Some("pi".to_string());
@@ -768,13 +758,13 @@ pub fn load_opencode_external_session(
         .get("time")
         .and_then(|time| time.get("created"))
         .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
-        .unwrap_or_else(Utc::now);
+        .and_then(Timestamp::from_timestamp_millis)
+        .unwrap_or_else(Timestamp::now);
     let updated_at = value
         .get("time")
         .and_then(|time| time.get("updated"))
         .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
+        .and_then(Timestamp::from_timestamp_millis)
         .or_else(|| file_modified_datetime(path))
         .unwrap_or(created_at);
     let working_dir = value.get("directory").and_then(|v| v.as_str()).map(str::to_string);
@@ -992,7 +982,7 @@ pub fn load_cursor_external_session(
         return Ok(None);
     }
     let session_id = cursor_session_id_from_path(path);
-    let created_at = file_modified_datetime(path).unwrap_or_else(Utc::now);
+    let created_at = file_modified_datetime(path).unwrap_or_else(Timestamp::now);
     let updated_at = created_at;
     let working_dir = cursor_cwd_from_transcript_path(path);
     let title = messages

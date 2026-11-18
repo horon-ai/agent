@@ -22,7 +22,7 @@ fn created(id: &SessionId) -> SealedEvent {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )
@@ -54,7 +54,7 @@ fn appended(parent: &SealedEvent, text: &str) -> SealedEvent {
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
         serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
         degradations: None,
@@ -313,7 +313,7 @@ fn compaction_checkpoint_keeps_only_valid_active_tail_and_sparse_offsets() {
         EventId::new_v4(),
         Some(source.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::Compacted),
         serde_json::json!(CompactedPayload {
             summary_text: "source-bound summary".into(),
@@ -401,7 +401,7 @@ fn source_shrink_inode_and_same_length_valid_edit_invalidate_cache() {
             }
             2 => {
                 let original_length = fs::metadata(&log).unwrap().len();
-                events[1].timestamp = chrono::DateTime::from_timestamp(1, 0).unwrap();
+                events[1].timestamp = Timestamp::from_timestamp(1, 0).unwrap();
                 events[1].content_hash = events[1].content_hash_of().unwrap();
                 let bytes: Vec<_> = events.iter().flat_map(|e| encode_record_line(e).unwrap()).collect();
                 fs::write(&log, bytes).unwrap();
@@ -453,7 +453,7 @@ fn uncertain_cached_retry_preserves_reserved_identity() {
     let event = created(&id);
     assert!(writer.append(&event).is_err());
     let mut changed = event.envelope().clone();
-    changed.timestamp = chrono::DateTime::from_timestamp(1, 0).unwrap();
+    changed.timestamp = Timestamp::from_timestamp(1, 0).unwrap();
     changed.content_hash = changed.content_hash_of().unwrap();
     // When a conflicting identity is attempted before the correct retry.
     assert_eq!(
@@ -716,7 +716,7 @@ fn blob_damage_cannot_be_hidden_by_idempotent_cached_retry() {
         EventId::new_v4(),
         Some(root.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::AuxiliaryRecorded),
         serde_json::json!({"aux_kind":"legacy","schema_version":1,"value":"x".repeat(MAX_RECORD_BYTES)}),
     )
@@ -751,13 +751,13 @@ fn explicit_branch_and_reset_selections_survive_cache_rebuild() {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!(SessionCreatedPayload {
             branch_root: true,
             metadata: SessionMetadata::default(),
             reset_provenance: Some(ResetProvenance {
-                reset_at: chrono::DateTime::UNIX_EPOCH,
+                reset_at: Timestamp::UNIX_EPOCH,
                 cleared_head_event_id: Some(left.envelope().event_id.clone()),
                 reason: None,
             }),
@@ -857,7 +857,7 @@ fn original_blob_survives_all_disposable_cache_deletions() {
         EventId::new_v4(),
         Some(root.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::AuxiliaryRecorded),
         serde_json::json!({"aux_kind":"legacy","schema_version":1,"value":"x".repeat(MAX_RECORD_BYTES)}),
     )
@@ -1218,7 +1218,7 @@ fn r2_payload_event(parent: &SealedEvent, body: (KnownEventKind, serde_json::Val
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(body.0),
         body.1,
     )
@@ -1377,7 +1377,7 @@ fn r2_large_metadata_and_native_window_remain_complete_and_queryable() {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata":metadata,"branch_root":false}),
     )
@@ -1513,7 +1513,7 @@ fn diverged_heads_stay_listable_while_execution_needs_a_selection() {
             EventId::new_v4(),
             Some(parent.envelope().event_id.clone()),
             OriginId::new_v4(),
-            chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(offset),
+            Timestamp::UNIX_EPOCH + horon_agent_time::Duration::seconds(offset),
             EventKind::new(KnownEventKind::MessageAppended),
             serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
             degradations: None,

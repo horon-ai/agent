@@ -16,7 +16,7 @@ pub fn write_reload_marker() {
         hash: "unknown".to_string(),
         phase: ReloadPhase::Starting,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -104,7 +104,7 @@ pub fn write_reload_state(request_id: &str, hash: &str, phase: ReloadPhase, deta
         hash: hash.to_string(),
         phase,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail,
     }
     .write();
@@ -708,7 +708,7 @@ mod tests {
             hash: "hash-keep".to_string(),
             phase: ReloadPhase::Starting,
             pid: current,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
             detail: None,
         }
         .write();
@@ -735,7 +735,7 @@ mod tests {
             hash: "hash-foreign".to_string(),
             phase: ReloadPhase::Starting,
             pid: current.wrapping_add(1),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
             detail: None,
         }
         .write();
@@ -748,7 +748,7 @@ mod tests {
             hash: "hash-ready".to_string(),
             phase: ReloadPhase::SocketReady,
             pid: current,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
             detail: None,
         }
         .write();

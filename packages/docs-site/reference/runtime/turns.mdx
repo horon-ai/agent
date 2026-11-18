@@ -108,20 +108,33 @@ still answers `None` at once and the message takes the queue path, as before.
 ### A finished turn closes before the next prompt is read
 
 The request loop reads a finished turn's report ahead of client input
-(`crates/app-core/src/server/client_lifecycle.rs:825-829`, the biased
+(`crates/app-core/src/server/client_lifecycle.rs:829-833`, the biased
 `processing_done_rx.recv()` arm). The turn task sends that report before it
 sends its terminal event, so a client that answers `Done` with the next prompt
 finds the turn already closed instead of meeting `Already processing a
-message` (`crates/app-core/src/server/client_lifecycle.rs:3771-3779`). A rejected
+message` (`crates/app-core/src/server/client_lifecycle.rs:3827-3835`). A rejected
 turn reports in the same order, before its error event
-(`crates/app-core/src/server/client_lifecycle.rs:3705-3707`). The next turn's
+(`crates/app-core/src/server/client_lifecycle.rs:3761-3763`). The next turn's
 task still holds the agent until this turn's idle state is out, so its `running`
 cannot precede that idle.
+
+A `message` with `no_reply` written on that terminal event is a context message:
+it starts no turn, so it is not refused for the tail that is still releasing the
+session. Turn state decides first: this connection's own turn, or a turn any
+surface registered (`turn_cancel_registry::has_active_turn`), answers the busy
+error at once, so a running turn never parks the sequential request loop. With
+no turn registered the message takes the agent once, waiting at most
+`AGENT_LOCK_BACKGROUND_WAIT` (500 ms) for the hold to end: a completion tail
+frees in microseconds, and a hold that outlives the bound is answered busy
+instead of parking the loop
+(`crates/app-core/src/server/client_lifecycle.rs:3502-3549`). The append runs
+under that single guard, so the message is stored exactly once and acknowledged
+with `ContextMessageAdded`.
 
 A cancel is the one reply the request loop writes straight to the client rather
 than through the turn's forwarder, so it waits for the session's forwarders to
 drain first: `fanout_flush::flush` with a 500 ms bound, then `Interrupted` and
-`Done` (`crates/app-core/src/server/client_lifecycle.rs:3976-3978`). Without that
+`Done` (`crates/app-core/src/server/client_lifecycle.rs:4032-4034`). Without that
 wait the cancelled turn's last tool frame would land after its `Done`, inside
 the next prompt. A forwarder registers its flush channel at spawn, answers a
 flush only when its event queue was empty when the request arrived, and drops
@@ -194,7 +207,7 @@ configuration rather than session state.
 
 #### Urgent handling at point C
 
-When a message with the urgent flag set is pending, the tool round is not run to completion. The only decision function is `urgent_interrupt_pending` (`crates/app-core/src/agent/interrupts.rs:163-166`). Cutting a round first inserts a tool result with `is_error: true` for every call that has no result yet (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). The content is `[Skipped: user interrupted]` (`:12`). The user message follows, and the event reports the skipped count as `tools_skipped`.
+When a message with the urgent flag set is pending, the tool round is not run to completion. The only decision function is `urgent_interrupt_pending` (`crates/app-core/src/agent/interrupts.rs:163-166`). Cutting a round first inserts a tool result with `is_error: true` for every call that has no result yet (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2205-2227`). The content is `[Skipped: user interrupted]` (`:19`). The user message follows, and the event reports the skipped count as `tools_skipped`.
 
 Non-urgent interrupts are never inserted between tools. All of them wait for point D (`crates/app-core/src/agent/turn_streaming_mpsc.rs:2104-2106`).
 

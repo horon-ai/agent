@@ -16,7 +16,7 @@ pub(super) fn running_status_fixture(task_id: &str, session_id: &str) -> TaskSta
         status: BackgroundTaskStatus::Running,
         exit_code: None,
         error: None,
-        started_at: Utc::now().to_rfc3339(),
+        started_at: Timestamp::now().to_rfc3339(),
         completed_at: None,
         duration_secs: None,
         pid: None,
@@ -542,4 +542,16 @@ async fn unwritable_status_directory_still_reports_the_task_exactly_once() -> Re
     assert!(manager.live_tasks_for_session("session-unwritable").await.is_empty());
 
     Ok(())
+}
+
+#[test]
+fn elapsed_secs_keeps_the_fraction_and_rejects_a_negative_span() {
+    let completed = Timestamp::parse_rfc3339("2026-01-02T03:04:09.750Z").expect("fixed instant");
+    // A fractional start time and a strict `+00:00` offset both parse.
+    assert_eq!(elapsed_secs("2026-01-02T03:04:05.250Z", completed), Some(4.5));
+    assert_eq!(elapsed_secs("2026-01-02T03:04:05+00:00", completed), Some(4.75));
+    // A start after the completion is the old `to_std()` failure: the recorded
+    // start (03:04:10) is 0.25 s past `completed` (03:04:09.750).
+    assert_eq!(elapsed_secs("2026-01-02T03:04:10Z", completed), None);
+    assert_eq!(elapsed_secs("not a timestamp", completed), None);
 }

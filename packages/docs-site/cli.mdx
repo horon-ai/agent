@@ -19,8 +19,10 @@ prints the condition and the install hint instead, then exits non-zero.
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out. `--mode rpc` selects the same adapter. |
 | `horon server start\|reload\|stop\|promote` | Manage the daemon. Prefer `reload` after an upgrade: it hands live sessions to a freshly exec'd server instead of dropping them. `stop` requires `--force`. |
 
-`api-bridge` listens on `$XDG_RUNTIME_DIR/horon-agent-api.sock` by default;
-`--api-socket <path>` moves it, and `--stdio` serves one connection on
+`api-bridge` listens as `horon-agent-api.sock` in the runtime directory, which is
+`HORON_AGENT_RUNTIME_DIR` when set, else `XDG_RUNTIME_DIR`, else the platform's
+per-user runtime directory (on macOS, `$TMPDIR`); `--api-socket <path>` moves it,
+and `--stdio` serves one connection on
 stdin/stdout for SSH clients. The global `--socket` selects the *internal daemon*
 socket, which is a different socket.
 
@@ -70,9 +72,9 @@ and a session a running daemon has open is refused.
 | `horon update` | Update horon-agent to the latest version. |
 | `horon version [--json]` | Build and version information. |
 | `horon usage [--json]` | Usage limits for connected providers. |
-| `horon mcp` | List configured MCP servers and manage remote-server OAuth credentials. |
-| `horon memory` | Memory management. |
-| `horon cloud move\|return\|where\|attach` | Move a live session to a cloud host, bring its work back, and manage the transferred sessions. Hidden commands (`receive`, `activate`, `export`, `list`) exist but are not shown by `--help`. |
+| `horon mcp list` | Configured MCP servers and their local authentication state, without connecting. `test <server>`, `login <server>` and `logout <server>` manage one remote server's OAuth credentials; the bare `horon mcp` prints its usage because it needs a subcommand. |
+| `horon memory list\|search\|export\|import\|stats` | Stored memories: list them by scope and tag, search, export or import a JSON file, or print statistics. |
+| `horon cloud move\|return\|where\|attach` | Move a live session to a cloud host, bring its work back, and manage the transferred sessions. Hidden commands (`receive`, `activate`, `export`) are the remote ends of those moves and are not shown by `--help`. |
 | `horon pair [--list] [--revoke <name>]` | Pairing codes for the iOS and web clients. |
 | `horon permissions` | Review and answer pending ambient permission requests. |
 | `horon ambient status\|log\|trigger\|stop` | Show ambient mode, read its activity log, trigger one cycle by hand, or stop it. |

@@ -7,6 +7,7 @@ use super::*;
 use horon_agent_app_core::message::{ContentBlock, Role};
 use horon_agent_app_core::session::Session;
 use horon_agent_harness_api::ApiEvent;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -67,7 +68,7 @@ fn write_legacy_session(
     home: &Path,
     session_id: &str,
     working_dir: &Path,
-    created: chrono::DateTime<chrono::Utc>,
+    created: Timestamp,
     messages: serde_json::Value,
 ) {
     let path = home.join("sessions").join(format!("{session_id}.json"));
@@ -143,13 +144,7 @@ fn error_code(event: ApiEvent) -> (ErrorCode, String) {
 
 /// Seed a session the way the agent itself writes one, so the search engine
 /// sees the same records it sees in production.
-fn seed_session(
-    session_id: &str,
-    working_dir: &Path,
-    created: chrono::DateTime<chrono::Utc>,
-    title: &str,
-    prompt: &str,
-) {
+fn seed_session(session_id: &str, working_dir: &Path, created: Timestamp, title: &str, prompt: &str) {
     let mut session = Session::create_with_id(session_id.to_string(), None, Some(title.to_string()));
     session.mark_closed();
     session.created_at = created;
@@ -180,8 +175,8 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn started_ago(ms: u64) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp_millis(now_ms().saturating_sub(ms) as i64).expect("timestamp")
+fn started_ago(ms: u64) -> Timestamp {
+    Timestamp::from_timestamp_millis(now_ms().saturating_sub(ms) as i64).expect("timestamp")
 }
 
 #[test]

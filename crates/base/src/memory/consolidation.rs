@@ -13,7 +13,7 @@
 //! batched rather than run per session.
 
 use super::*;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -124,7 +124,7 @@ struct ConsolidationState {
     version: u32,
     /// When the last pass completed. Absent means it never ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_pass: Option<DateTime<Utc>>,
+    last_pass: Option<Timestamp>,
     /// Summary produced by the last pass for this scope.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     summary: String,
@@ -210,7 +210,7 @@ struct SubjectKey {
     terms: BTreeSet<String>,
     tags: BTreeSet<String>,
     category: MemoryCategory,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     strength: u32,
 }
 
@@ -350,7 +350,7 @@ fn run_scope(
         let merges = merge_subjects(&mut graph, scope.label());
         save_graph(manager, scope, &graph)?;
         report.merges.extend(merges);
-        state.last_pass = Some(Utc::now());
+        state.last_pass = Some(Timestamp::now());
         let (summary, entries) = build_summary(&graph, limits.summary_bytes);
         state.summary = summary;
         state.summary_entries = entries;
@@ -597,7 +597,7 @@ fn log_merge(merge: &MergeRecord) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+    use horon_agent_time::Duration;
 
     fn with_project_home<F, T>(f: F) -> T
     where
@@ -624,7 +624,7 @@ mod tests {
     }
 
     fn remember(manager: &MemoryManager, category: MemoryCategory, content: &str, hours_ago: u64) -> String {
-        let created = Utc::now() - Duration::from_secs(hours_ago * 3_600);
+        let created = Timestamp::now() - Duration::seconds((hours_ago * 3_600) as i64);
         manager
             .remember_project(MemoryEntry::new(category, content).with_timestamps(created, created))
             .expect("remember project memory")

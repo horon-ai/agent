@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -176,7 +176,7 @@ pub struct PermissionRequest {
     pub rationale: String,
     pub urgency: Urgency,
     pub wait: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<serde_json::Value>,
     /// Ambient run this request belongs to. `None` for interactive sessions,
@@ -186,7 +186,7 @@ pub struct PermissionRequest {
     /// Absolute instant after which the request must not be granted. `None`
     /// means "no deadline", which keeps pre-existing queue entries valid.
     #[serde(default)]
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<Timestamp>,
     /// Result to use when the wait elapses with no decision.
     #[serde(default)]
     pub default_on_timeout: ApprovalDefault,
@@ -197,7 +197,7 @@ impl PermissionRequest {
     ///
     /// A request without a deadline never expires this way; the owner-session
     /// check in [`SafetySystem::expire_dead_session_requests`] still applies.
-    pub fn is_expired_at(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_expired_at(&self, now: Timestamp) -> bool {
         self.expires_at.is_some_and(|expires_at| expires_at <= now)
     }
 }
@@ -215,7 +215,7 @@ pub enum PermissionResult {
 pub struct Decision {
     pub request_id: String,
     pub approved: bool,
-    pub decided_at: DateTime<Utc>,
+    pub decided_at: Timestamp,
     pub decided_via: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -268,7 +268,7 @@ pub struct ActionLog {
     pub tier: ActionTier,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -282,9 +282,9 @@ pub enum TranscriptStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AmbientTranscript {
     pub session_id: String,
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ended_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<Timestamp>,
     pub status: TranscriptStatus,
     pub provider: String,
     pub model: String,
@@ -394,9 +394,9 @@ impl SafetySystem {
         timeout: Duration,
     ) -> PermissionResult {
         if request.expires_at.is_none() {
-            let window = chrono::Duration::from_std(timeout)
-                .unwrap_or_else(|_| chrono::Duration::seconds(DEFAULT_APPROVAL_TIMEOUT.as_secs() as i64));
-            request.expires_at = Some(Utc::now() + window);
+            let window = horon_agent_time::Duration::try_from(timeout)
+                .unwrap_or_else(|_| horon_agent_time::Duration::seconds(DEFAULT_APPROVAL_TIMEOUT.as_secs() as i64));
+            request.expires_at = Some(Timestamp::now() + window);
         }
 
         let request_id = request.id.clone();
@@ -558,7 +558,7 @@ impl SafetySystem {
     /// because their originating session is no longer active, or because their
     /// own wait window has elapsed.
     pub fn expire_dead_session_requests(&self, via: &str) -> Result<Vec<String>> {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let snapshot = self.queue.lock().map(|q| q.clone()).unwrap_or_default();
 
         let mut expired: Vec<(PermissionRequest, String, bool)> = Vec::new();
@@ -679,7 +679,7 @@ impl SafetySystem {
         let dir = storage::horon_agent_dir()?.join("ambient").join("transcripts");
         storage::ensure_dir(&dir)?;
 
-        let filename = transcript.started_at.format("%Y-%m-%d-%H%M%S").to_string();
+        let filename = crate::util::utc_stamp_filename(transcript.started_at);
         let path = dir.join(format!("{}.json", filename));
         storage::write_json(&path, transcript)
     }
@@ -774,7 +774,7 @@ fn quarantine_corrupt_history(path: &Path, raw: &str, error: &serde_json::Error)
         seen.push(fingerprint);
     }
 
-    let stamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+    let stamp = crate::util::utc_stamp_millis(Timestamp::now());
     let target = path.with_file_name(format!("history.corrupt-{}.json", stamp));
     if let Err(copy_error) = std::fs::copy(path, &target) {
         // Let a later attempt retry the copy instead of believing the evidence
@@ -872,7 +872,7 @@ fn append_decision_to_history(
     let decision = Decision {
         request_id: request_id.to_string(),
         approved,
-        decided_at: Utc::now(),
+        decided_at: Timestamp::now(),
         decided_via: via,
         message,
     };
@@ -954,7 +954,7 @@ pub fn expire_stale_permissions_via_file(via: &str) -> Result<Vec<String>> {
         Vec::new()
     };
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut expired: Vec<(PermissionRequest, String, bool)> = Vec::new();
     let mut retained: Vec<PermissionRequest> = Vec::with_capacity(queue.len());
     for request in queue {

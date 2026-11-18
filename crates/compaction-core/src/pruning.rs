@@ -7,8 +7,8 @@
 //! and [`PRUNED_USELESS_TEXT`].
 
 use crate::message_token_count;
-use chrono::{DateTime, Utc};
 use horon_agent_message_types::{ContentBlock, Message, Role};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -72,7 +72,7 @@ struct ReadObservation<'a> {
 pub fn plan_prunes(
     messages: &[Message],
     already: &BTreeMap<String, PruneKind>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Vec<(String, PruneKind)> {
     if messages.is_empty() {
         return Vec::new();
@@ -101,7 +101,7 @@ pub fn plan_prunes(
         .iter()
         .rev()
         .find_map(|message| message.timestamp)
-        .is_some_and(|timestamp| now.signed_duration_since(timestamp).num_seconds() >= CACHE_GUARD_AGE_SECS);
+        .is_some_and(|timestamp| (now - timestamp).whole_seconds() >= CACHE_GUARD_AGE_SECS);
 
     let mut planned = Vec::new();
     let mut seen = HashSet::new();
@@ -330,6 +330,7 @@ pub fn is_turn_start(message: &Message) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use horon_agent_time::Duration;
     use serde_json::json;
 
     fn user(text: &str) -> Message {
@@ -387,7 +388,7 @@ mod tests {
             read_call("r3", "a.rs"),
             tool_result("r3", "1\tfn a() {}\n"),
         ];
-        let planned = plan_prunes(&messages, &BTreeMap::new(), Utc::now());
+        let planned = plan_prunes(&messages, &BTreeMap::new(), Timestamp::now());
         assert_eq!(
             planned,
             vec![
@@ -406,7 +407,7 @@ mod tests {
             read_call("r2", "a.rs"),
             tool_result("r2", "1\tfn a() {}\n"),
         ];
-        let planned = plan_prunes(&messages, &BTreeMap::new(), Utc::now());
+        let planned = plan_prunes(&messages, &BTreeMap::new(), Timestamp::now());
         assert_eq!(planned, vec![("r1".to_string(), PruneKind::Superseded)]);
     }
 
@@ -419,7 +420,7 @@ mod tests {
             read_call("r2", "a.rs"),
             tool_result("r2", "1\tfn a() {}\n"),
         ];
-        assert!(plan_prunes(&messages, &BTreeMap::new(), Utc::now()).is_empty());
+        assert!(plan_prunes(&messages, &BTreeMap::new(), Timestamp::now()).is_empty());
     }
 
     #[test]
@@ -431,7 +432,7 @@ mod tests {
             read_call("r2", "a.rs:8-9"),
             tool_result("r2", "8\th\n"),
         ];
-        let planned = plan_prunes(&messages, &BTreeMap::new(), Utc::now());
+        let planned = plan_prunes(&messages, &BTreeMap::new(), Timestamp::now());
         assert_eq!(planned, vec![("r1".to_string(), PruneKind::Superseded)]);
     }
 
@@ -448,13 +449,13 @@ mod tests {
         for _ in 0..2 {
             messages.push(user(&filler));
         }
-        assert!(plan_prunes(&messages, &BTreeMap::new(), Utc::now()).is_empty());
+        assert!(plan_prunes(&messages, &BTreeMap::new(), Timestamp::now()).is_empty());
 
-        let recent = Utc::now() - chrono::Duration::minutes(31);
+        let recent = Timestamp::now() - Duration::minutes(31);
         messages[4].timestamp = Some(recent);
         messages[3].timestamp = Some(recent);
         messages[0].timestamp = Some(recent);
-        let planned = plan_prunes(&messages, &BTreeMap::new(), Utc::now());
+        let planned = plan_prunes(&messages, &BTreeMap::new(), Timestamp::now());
         assert_eq!(planned, vec![("r1".to_string(), PruneKind::Superseded)]);
     }
 
@@ -468,9 +469,9 @@ mod tests {
         for index in 0..5 {
             messages.push(user(&format!("note {index}")));
         }
-        assert!(plan_prunes(&messages, &BTreeMap::new(), Utc::now()).is_empty());
+        assert!(plan_prunes(&messages, &BTreeMap::new(), Timestamp::now()).is_empty());
         messages.push(user("one more"));
-        let planned = plan_prunes(&messages, &BTreeMap::new(), Utc::now());
+        let planned = plan_prunes(&messages, &BTreeMap::new(), Timestamp::now());
         assert_eq!(planned, vec![("b1".to_string(), PruneKind::Useless)]);
     }
 
@@ -486,7 +487,7 @@ mod tests {
         for index in 0..6 {
             messages.push(user(&format!("note {index}")));
         }
-        let planned = plan_prunes(&messages, &BTreeMap::new(), Utc::now());
+        let planned = plan_prunes(&messages, &BTreeMap::new(), Timestamp::now());
         assert_eq!(planned, vec![("g1".to_string(), PruneKind::Useless)]);
 
         let mut errored = messages.clone();
@@ -496,7 +497,7 @@ mod tests {
             is_error: Some(true),
             verdict: None,
         }];
-        assert!(plan_prunes(&errored, &BTreeMap::new(), Utc::now()).is_empty());
+        assert!(plan_prunes(&errored, &BTreeMap::new(), Timestamp::now()).is_empty());
     }
 
     #[test]
@@ -510,7 +511,7 @@ mod tests {
         ];
         let mut already = BTreeMap::new();
         already.insert("r1".to_string(), PruneKind::Superseded);
-        assert!(plan_prunes(&messages, &already, Utc::now()).is_empty());
+        assert!(plan_prunes(&messages, &already, Timestamp::now()).is_empty());
     }
 
     #[test]
@@ -545,6 +546,6 @@ mod tests {
                 tool_duration_ms: None,
             },
         ];
-        assert!(plan_prunes(&messages, &BTreeMap::new(), Utc::now()).is_empty());
+        assert!(plan_prunes(&messages, &BTreeMap::new(), Timestamp::now()).is_empty());
     }
 }

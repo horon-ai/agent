@@ -11,9 +11,9 @@
 //! is dropped first. A misspelled segment is reported once and skipped instead
 //! of hiding the rest of the line.
 
-use chrono::{NaiveTime, Timelike};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use time::{OffsetDateTime, Time, UtcOffset};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::settings::Settings;
@@ -153,7 +153,7 @@ pub struct StatusData<'a> {
     /// Latest token totals.
     pub tokens: Option<TokenTotals>,
     /// Local time, from the clock.
-    pub now: Option<NaiveTime>,
+    pub now: Option<Time>,
 }
 
 /// A named arrangement of segments.
@@ -293,8 +293,12 @@ fn named_segments(settings: &Settings, key: &str, warnings: &mut Vec<String>) ->
 }
 
 /// The local wall-clock time, read once per frame by the renderer.
-pub fn local_now() -> NaiveTime {
-    chrono::Local::now().time()
+pub fn local_now() -> Time {
+    let now = OffsetDateTime::now_utc();
+    // A host with no usable time zone falls back to UTC rather than drawing
+    // nothing; the clock segment still shows a moving time.
+    let offset = UtcOffset::local_offset_at(now).unwrap_or(UtcOffset::UTC);
+    now.to_offset(offset).time()
 }
 
 /// The clock the status line shows, to the minute.
@@ -303,8 +307,8 @@ pub fn local_now() -> NaiveTime {
 /// that moves with no input at all: the idle loop reads them to know when a
 /// frame is due.
 pub fn local_minute() -> (u32, u32) {
-    let now = chrono::Local::now().time();
-    (now.hour(), now.minute())
+    let now = local_now();
+    (u32::from(now.hour()), u32::from(now.minute()))
 }
 
 /// One visible segment: its id, its text and its colour.
@@ -426,7 +430,7 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: 
         },
         SegmentId::ContextPct => context_text(data, layout.context_window),
         SegmentId::Time => match data.now {
-            Some(now) => now.format("%H:%M").to_string(),
+            Some(now) => format!("{:02}:{:02}", now.hour(), now.minute()),
             None => String::new(),
         },
         SegmentId::Pending => match data.prompt {

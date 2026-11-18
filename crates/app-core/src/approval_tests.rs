@@ -461,7 +461,7 @@ fn a_gate_approval_record_is_not_resumed_by_the_ambient_sweep() {
     use crate::ambient::BlockedApprovalStore;
     use crate::ambient::resume::{ResumeVerdict, classify_blocked_approval};
     use crate::safety::Decision;
-    use chrono::Utc;
+    use horon_agent_time::Timestamp;
 
     let _env = crate::storage::lock_test_env();
     let home = tempfile::tempdir().expect("home");
@@ -501,7 +501,7 @@ fn a_gate_approval_record_is_not_resumed_by_the_ambient_sweep() {
         written.outcome
     );
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let decision = Decision {
         request_id: request_id.clone(),
         approved: true,

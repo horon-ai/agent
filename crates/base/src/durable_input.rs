@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use horon_agent_agent_runtime::{SoftInterruptMessage, SoftInterruptSource};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -681,7 +682,7 @@ impl DurableInputStore {
         let marker = BaselineMarker {
             v: 1,
             imported,
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
         };
         crate::storage::write_json(&path, &marker)
             .map_err(|error| InputError::bookkeeping(format!("record the legacy baseline: {error}")))
@@ -704,7 +705,7 @@ impl DurableInputStore {
         let state = MirrorState {
             v: 1,
             dirty: true,
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
             error: Some(error.to_string()),
         };
         crate::storage::write_json(&path, &state)
@@ -719,7 +720,7 @@ impl DurableInputStore {
         let state = MirrorState {
             v: 1,
             dirty: false,
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
             error: None,
         };
         crate::storage::write_json(&path, &state)
@@ -736,7 +737,7 @@ impl DurableInputStore {
         book.entries.push(InjectedCopy {
             input_id: input_id.to_string(),
             message_id: message_id.to_string(),
-            at: chrono::Utc::now(),
+            at: Timestamp::now(),
         });
         while book.entries.len() > INJECTED_COPY_CAP {
             book.entries.remove(0);
@@ -788,14 +789,14 @@ impl DurableInputStore {
 struct BaselineMarker {
     v: u32,
     imported: u64,
-    at: chrono::DateTime<chrono::Utc>,
+    at: Timestamp,
 }
 
 #[derive(Serialize, Deserialize)]
 struct MirrorState {
     v: u32,
     dirty: bool,
-    at: chrono::DateTime<chrono::Utc>,
+    at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -810,7 +811,7 @@ struct InjectedCopyBook {
 struct InjectedCopy {
     input_id: String,
     message_id: String,
-    at: chrono::DateTime<chrono::Utc>,
+    at: Timestamp,
 }
 
 /// The source label the journal stores.

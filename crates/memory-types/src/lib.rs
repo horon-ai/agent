@@ -203,7 +203,7 @@ pub enum MemoryEventKind {
 }
 
 // Persistent memory model and pure search helpers.
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 /// Trust levels for memories
@@ -225,7 +225,7 @@ pub enum TrustLevel {
 pub struct Reinforcement {
     pub session_id: String,
     pub message_index: usize,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }
 
 /// A single memory entry
@@ -238,8 +238,8 @@ pub struct MemoryEntry {
     /// Pre-normalized lowercase search text for content + tags.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub search_text: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub access_count: u32,
     pub source: Option<String>,
     /// Trust level for this memory
@@ -299,14 +299,14 @@ fn default_active() -> bool {
 }
 
 fn new_memory_id() -> String {
-    let ts = Utc::now().timestamp_millis();
+    let ts = Timestamp::now().timestamp_millis();
     let rand: u64 = rand::random();
     format!("mem_{ts}_{rand}")
 }
 
 impl MemoryEntry {
     pub fn new(category: MemoryCategory, content: impl Into<String>) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let content = content.into();
         Self {
             id: new_memory_id(),
@@ -349,7 +349,7 @@ impl MemoryEntry {
     /// - Entity: 60 days (entities change moderately)
     /// - Lesson: 180 days (a learned procedure outlives a codebase fact)
     pub fn effective_confidence(&self) -> f32 {
-        let age_days = (Utc::now() - self.created_at).num_days() as f32;
+        let age_days = (Timestamp::now() - self.created_at).whole_days() as f32;
         let half_life = match self.category {
             MemoryCategory::Correction => 365.0,
             MemoryCategory::Preference => 90.0,
@@ -371,7 +371,7 @@ impl MemoryEntry {
     pub fn boost_confidence(&mut self, amount: f32) {
         self.confidence = (self.confidence + amount).min(1.0);
         self.access_count += 1;
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
     }
 
     /// Decay confidence (called when memory was retrieved but not relevant)
@@ -402,25 +402,25 @@ impl MemoryEntry {
     }
 
     /// Override created/updated timestamps (e.g. to backdate synthetic entries).
-    pub fn with_timestamps(mut self, created_at: DateTime<Utc>, updated_at: DateTime<Utc>) -> Self {
+    pub fn with_timestamps(mut self, created_at: Timestamp, updated_at: Timestamp) -> Self {
         self.created_at = created_at;
         self.updated_at = updated_at;
         self
     }
 
     pub fn touch(&mut self) {
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
         self.access_count += 1;
     }
 
     /// Reinforce this memory (called when same info is encountered again)
     pub fn reinforce(&mut self, session_id: &str, message_index: usize) {
         self.strength += 1;
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
         self.reinforcements.push(Reinforcement {
             session_id: session_id.to_string(),
             message_index,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
         });
     }
 
@@ -608,7 +608,7 @@ pub fn memory_score(entry: &MemoryEntry) -> f64 {
     }
 
     let mut score = 0.0;
-    let age_hours = (Utc::now() - entry.updated_at).num_hours() as f64;
+    let age_hours = (Timestamp::now() - entry.updated_at).whole_hours() as f64;
     score += 100.0 / (1.0 + age_hours / 24.0);
     score += (entry.access_count as f64).sqrt() * 10.0;
     score += match entry.category {
@@ -1020,7 +1020,7 @@ mod lesson_category_tests {
 
     #[test]
     fn a_lesson_scores_above_a_fact_with_the_same_timestamps() {
-        let stamp = Utc::now();
+        let stamp = Timestamp::now();
         let mut lesson = MemoryEntry::new(MemoryCategory::Lesson, "run the gate first");
         let mut fact = MemoryEntry::new(MemoryCategory::Fact, "the gate lives in scripts/ci");
         for entry in [&mut lesson, &mut fact] {
@@ -1037,7 +1037,7 @@ mod lesson_category_tests {
     fn a_lesson_survives_longer_than_a_fact() {
         let mut lesson = MemoryEntry::new(MemoryCategory::Lesson, "run the gate first");
         let mut fact = MemoryEntry::new(MemoryCategory::Fact, "the gate lives in scripts/ci");
-        let old = Utc::now() - chrono::Duration::days(120);
+        let old = Timestamp::now() - horon_agent_time::Duration::days(120);
         for entry in [&mut lesson, &mut fact] {
             entry.created_at = old;
             entry.updated_at = old;

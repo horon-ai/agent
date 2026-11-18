@@ -15,6 +15,7 @@
 use super::{BridgeState, Outbound};
 use horon_agent_harness_api::{ApiEvent, ArtifactEntry, ArtifactKind, ErrorCode, ServerFrame, SessionSearchHit};
 use horon_agent_session_store as store;
+use horon_agent_time::Timestamp;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -307,7 +308,7 @@ fn read_legacy_transcript(session_id: &str) -> Result<Transcript, (ErrorCode, St
 }
 
 fn parse_rfc3339_ms(raw: &str) -> Option<u64> {
-    match chrono::DateTime::parse_from_rfc3339(raw) {
+    match Timestamp::parse_rfc3339(raw) {
         Ok(at) => nonneg_millis(at.timestamp_millis()),
         Err(_) => None,
     }

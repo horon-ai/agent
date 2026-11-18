@@ -34,7 +34,23 @@ Once verification passes, `stable`, `current`, the launcher links and the update
 
 The FreeBSD x64 archive uses POSIX ustar so FreeBSD `tar` and `install-release` read the same two top-level regular files, `horon-agent-freebsd-x86_64` and `LICENSE`. Before upload, `scripts/release/agent_archive.sh pack <dist-dir> <binary>` checks the format, names, executable permission and bytes. The release job then installs the archive, compares the installed executable with the build output and runs the launcher.
 
-`scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]` installs the archive into a fresh home and reinstalls into that home. Both installs must preserve the source bytes and the launcher's version output. A manual FreeBSD smoke run with `official_asset=v0.1.14` also verifies the published checksum, re-packs that release's own executable and checks five installation pairs. The workflow saves its logs and member listing in `freebsd-archive-evidence-<tag>`.
+`scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]` installs the archive into a fresh home and reinstalls into that home. Both installs must preserve the source bytes and the launcher's version output. The final optional argument is the number of install samples, each one cold then warm, so the default is a single pair. A manual FreeBSD smoke run with `official_asset` set also verifies that release's published checksum, re-packs its own executable and checks five installation pairs. The recorded run uses `v0.1.14`, whose FreeBSD archive is the GNU-sparse case this packaging replaced, so the repair is proved on published bytes rather than on a fresh build. The workflow saves its logs and member listing in `freebsd-archive-evidence-<tag>`.
+
+## Platform assets
+
+`release.yml` builds every asset from the tagged commit and attaches it to a draft release. `Finalize release` publishes only when the complete set exists; a missing platform leaves the release in draft.
+
+| Platform | Agent asset | TUI asset |
+| --- | --- | --- |
+| Linux x86_64, glibc 2.17 baseline | `horon-agent-linux-x86_64.tar.gz` | `horon-tui-linux-x86_64.tar.gz` |
+| Linux aarch64 | `horon-agent-linux-aarch64.tar.gz` | `horon-tui-linux-aarch64.tar.gz` |
+| macOS Apple Silicon | `horon-agent-macos-aarch64.tar.gz` | `horon-tui-macos-aarch64.tar.gz` |
+| macOS Intel | `horon-agent-macos-x86_64.tar.gz` | `horon-tui-macos-x86_64.tar.gz` |
+| Windows x86_64 | `horon-agent-windows-x86_64.exe` and `.tar.gz` | `horon-tui-windows-x86_64.exe` and `.tar.gz` |
+| Windows ARM64 | `horon-agent-windows-aarch64.exe` and `.tar.gz` | `horon-tui-windows-aarch64.exe` and `.tar.gz` |
+| FreeBSD x86_64 | `horon-agent-freebsd-x86_64.tar.gz` | none |
+
+FreeBSD is the one platform with no interactive client: the release publishes the agent only, and the installer never looks for `horon-tui` there.
 
 ## How the install scripts use it
 
@@ -75,7 +91,7 @@ An npm installation is updated with npm, not with the agent's own updater: the l
 
 ## The TUI binary
 
-The release also publishes the TUI binary `horon-tui`, the client that TUI mode runs in, as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together. Both binaries are built by the same `release.yml` run from the same tagged commit and are staged into the same version directory, so there is no separate client release or channel. The version string differs: `horon-agent --version` derives its version from the release tag (`crates/build-meta`), while `horon-tui --version` prints the `crates/tui` package version (`crates/tui/src/lib.rs`).
+The release also publishes the TUI binary `horon-tui`, the client that TUI mode runs in, as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). Every platform except FreeBSD publishes one; FreeBSD is the agent alone. `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together. Both binaries are built by the same `release.yml` run from the same tagged commit and are staged into the same version directory, so there is no separate client release or channel. The version string differs: `horon-agent --version` derives its version from the release tag (`crates/build-meta`), while `horon-tui --version` prints the `crates/tui` package version (`crates/tui/src/lib.rs`).
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. `install.sh` starts that transfer right after `SHA256SUMS` and lets it run beside the agent download, and it requests the archive only when the manifest names it; both transfers are settled before `install-release` is called. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, and the `LICENSE` each archive carries is installed there too, so one version directory holds both binaries with the licence that covers them and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](/reference/runtime/tui).
 
@@ -152,11 +168,22 @@ The shell installer verifies the checksum and checks every member name before pr
 | Step | What happens |
 | --- | --- |
 | main push | `ci.yml` checks that commit. |
-| CI success | `release-tag.yml` picks the next tag with `scripts/release/next_version.py`. It adds one patch to the highest tag on the same MAJOR.MINOR, or uses the `Cargo.toml` version when the line has no tag. Commits already tagged and commits older than the latest release are skipped. |
+| CI success | `release-tag.yml` picks the next tag with `scripts/release/next_version.py`. The patch is one above the highest tag on the same MAJOR.MINOR line and never below the `Cargo.toml` patch; a line with no tag starts at the `Cargo.toml` version. Commits already tagged and commits older than the latest release are skipped. |
 | Tag creation | The same run creates the tag on that commit and calls `release.yml` through `workflow_call`. The remaining checks (CI success for the exact commit, draft, platform builds, `SHA256SUMS`, publishing, install verification) are the same as for a directly pushed tag. |
+| Release notes | The draft body is rendered from the commit subjects since the previous tag, grouped by conventional-commit prefix and ended with the compare link (`scripts/release/release_notes.sh`). |
 | Image publishing | The published release's Linux assets are verified against `SHA256SUMS`, packaged as a container image and pushed. |
 
 `prepare_source.py` allows a build only when the tag shares MAJOR.MINOR with `Cargo.toml` and its patch is at least that value. A new MINOR or MAJOR needs only the root version in `Cargo.toml` and `Cargo.lock` bumped and merged to main. With the repository variable `RELEASE_AUTO` set to `false` no tag is created. A manual run of `release-tag.yml` reports the tag it would create and creates nothing.
+
+### Rerunning a release
+
+A published tag is never moved. To rebuild a release that stopped, dispatch the reviewed workflow from `dev` with the existing tag; the checkout is detached at that tag's commit and `prepare_source.py` refuses a mismatched tree, while `check_ci.py` still requires the successful push CI run for that exact commit.
+
+```bash
+gh workflow run release.yml --ref dev -f tag=vX.Y.Z
+```
+
+Every asset is uploaded with `--clobber`, so a platform that failed is replaced and the ones that succeeded stay. The release remains a draft until the full asset set exists. The container image has its own path that touches neither the tag nor the release: `gh workflow run release-tag.yml --ref dev -f republish_container=vX.Y.Z` verifies the tag, its exact-commit CI and the published assets, then rebuilds and pushes the image.
 
 The update check only updates when the release version is higher than the current version. An installation built from 0.98.x therefore does not treat a 0.1.x release as newer. Such an installation is reinstalled once with `scripts/install/install.sh`.
 

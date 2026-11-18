@@ -170,7 +170,7 @@ A `*-types` crate holds:
 - Pure data structures shared by several crates or protocol layers.
 - Serialization shapes and small pure helper methods tied to the data contract.
 - No file system, network, process, TUI, provider client, global state, or storage access.
-- Dependencies limited to serde, chrono, and other type crates where needed.
+- Dependencies are limited to serde and shared data contracts. `horon-agent-time` (`crates/time-types`) owns the UTC timestamp used in stored records and wire messages, including fractional precision and leap-second spelling.
 
 Examples: `horon-agent-session-types`, `horon-agent-background-types`, `horon-agent-todo-policy`.
 
@@ -230,7 +230,7 @@ Use this checklist every time you move a type or pure helper. When the move is n
    - [ ] Can the root keep a compatibility re-export?
 3. Check the crate's state.
    - [ ] Does the target crate already have the needed dependency policy?
-   - [ ] Are new dependencies limited to libraries that fit a type crate, usually `serde`, `serde_json`, `chrono`, or a sibling type crate?
+   - [ ] Are new dependencies limited to libraries that fit a type crate, usually `serde`, `serde_json`, `horon-agent-time`, or a sibling type crate?
    - [ ] Does the target crate still have no circular dependency?
    - [ ] Did `cargo metadata` and `cargo check` avoid pulling root, TUI, provider, storage, server, or process dependencies into the type crate?
 4. Verify.

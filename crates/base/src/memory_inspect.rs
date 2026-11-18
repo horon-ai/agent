@@ -13,7 +13,7 @@
 use crate::memory::{MemoryCategory, MemoryEntry, MemoryManager, MemoryScope};
 use crate::memory_graph::{EdgeKind, MemoryGraph};
 use anyhow::Result;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use std::collections::HashSet;
 
 /// The fields an in-place update may replace. `None` means "leave as is".
@@ -254,7 +254,7 @@ fn apply_update(graph: &mut MemoryGraph, id: &str, update: &MemoryUpdate) -> Opt
         entry.set_embedding(None, None);
     }
     entry.refresh_search_text();
-    entry.updated_at = Utc::now();
+    entry.updated_at = Timestamp::now();
 
     let old_tags: HashSet<&String> = previous.tags.iter().collect();
     let new_tags: HashSet<&String> = entry.tags.iter().collect();

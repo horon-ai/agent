@@ -67,7 +67,18 @@ pub fn render_svg(report: &ProductivityReport) -> String {
 fn save_png(png: &[u8]) -> Result<PathBuf> {
     let dir = horon_agent_storage::horon_agent_dir()?.join("generated-images");
     std::fs::create_dir_all(&dir)?;
-    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let now = horon_agent_time::Timestamp::now().local();
+    // `YYYYMMDD-HHMMSS` in local time, the stamp the generated file has always
+    // carried.
+    let ts = format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    );
     let path = dir.join(format!("productivity-{ts}.png"));
     std::fs::write(&path, png)?;
     Ok(path)

@@ -127,7 +127,7 @@ fn path() -> Result<std::path::PathBuf> {
 }
 
 fn now() -> u64 {
-    chrono::Utc::now().timestamp().max(0) as u64
+    horon_agent_time::Timestamp::now().timestamp().max(0) as u64
 }
 
 fn record_at(db: &Connection, turn_id: &str, route: &ModelRoute, timestamp: u64) -> Result<ModelUsage> {

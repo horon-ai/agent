@@ -3,7 +3,6 @@
 //! Tracks request counts and token usage locally since GitHub Copilot
 //! doesn't expose a usage API. Data persists to ~/.horon/copilot_usage.json.
 
-use chrono::{Datelike, Utc};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -18,9 +17,9 @@ fn usage_path() -> PathBuf {
 pub use horon_agent_usage_types::{AllTimeUsage, CopilotUsageTracker, DayUsage, MonthUsage};
 
 fn roll_if_needed(tracker: &mut CopilotUsageTracker) {
-    let now = Utc::now();
-    let today = now.format("%Y-%m-%d").to_string();
-    let month = format!("{}-{:02}", now.year(), now.month());
+    let now = horon_agent_time::Timestamp::now();
+    let today = crate::util::utc_date(now);
+    let month = crate::util::utc_month(now);
 
     if tracker.today.date != today {
         tracker.today = DayUsage {

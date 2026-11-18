@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 anyhow = "1"
-dirs = "5"
+dirs = "6"
 horon-agent-core = { path = "../core" }
 horon-agent-platform = { path = "../platform" }
 libc = "0.2"

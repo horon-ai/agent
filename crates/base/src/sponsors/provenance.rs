@@ -59,7 +59,7 @@ fn with_state<R>(f: impl FnOnce(&mut ProvenanceState) -> R) -> R {
 }
 
 fn today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    crate::util::utc_date(horon_agent_time::Timestamp::now())
 }
 
 /// Record MCP setups from a discovery listing so a later `mcp connect`

@@ -7,6 +7,7 @@ use crate::context_cache::CachedContext;
 use crate::index::Index;
 use crate::projection_payload::Payload;
 use crate::*;
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -19,7 +20,7 @@ pub struct RecentContext {
     pub archive: Option<ArchiveChangedPayload>,
     pub compaction: Option<(EventId, CompactedPayload)>,
     pub tail: Vec<ProjectedMessage>,
-    pub activity_at: chrono::DateTime<chrono::Utc>,
+    pub activity_at: Timestamp,
 }
 
 /// Physical inline coverage, not a provider context cut or a history limit.

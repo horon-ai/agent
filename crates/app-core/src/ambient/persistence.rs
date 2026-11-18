@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ impl AmbientState {
             CycleStatus::Complete => {
                 if let Some(ref req) = result.next_schedule {
                     let next = req.wake_at.unwrap_or_else(|| {
-                        Utc::now() + chrono::Duration::minutes(req.wake_in_minutes.unwrap_or(30) as i64)
+                        Timestamp::now() + TimeDelta::minutes(req.wake_in_minutes.unwrap_or(30) as i64)
                     });
                     self.status = AmbientStatus::Scheduled { next_wake: next };
                 } else {
@@ -94,7 +94,7 @@ impl ScheduledQueue {
     /// Pop items whose `scheduled_for` is in the past, sorted by priority
     /// (highest first) then by time (earliest first).
     pub fn pop_ready(&mut self) -> Vec<ScheduledItem> {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let (ready, remaining): (Vec<_>, Vec<_>) = self.items.drain(..).partition(|i| i.scheduled_for <= now);
 
         self.items = remaining;
@@ -117,7 +117,7 @@ impl ScheduledQueue {
     /// Remove and return ready items targeted at a specific direct-delivery session,
     /// leaving ambient-targeted queue items intact for the ambient agent to process.
     pub fn take_ready_direct_items(&mut self) -> Vec<ScheduledItem> {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let mut ready_direct = Vec::new();
         let mut remaining = Vec::with_capacity(self.items.len());
 
@@ -236,23 +236,23 @@ pub struct BlockedApproval {
     /// Id of the permission request this record tracks.
     pub request_id: String,
     /// When the record was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When a decision (approval, denial, timeout default) was recorded.
-    pub decided_at: Option<DateTime<Utc>>,
+    pub decided_at: Option<Timestamp>,
     /// When the run was resumed after the decision.
-    pub resumed_at: Option<DateTime<Utc>>,
+    pub resumed_at: Option<Timestamp>,
     /// How many times a resume was attempted (the resume budget is 2).
     pub resume_attempts: u8,
     /// PID of the process currently waiting on the decision, if any.
     pub waiter_pid: Option<u32>,
     /// When the current waiter took ownership.
-    pub waiter_started_at: Option<DateTime<Utc>>,
+    pub waiter_started_at: Option<Timestamp>,
     /// Lease deadline; while this is in the future the runner must not step in.
-    pub waiter_lease_expires_at: Option<DateTime<Utc>>,
+    pub waiter_lease_expires_at: Option<Timestamp>,
     /// Ownership generation, bumped when the lease is taken over.
     pub owner_epoch: u64,
     /// When the decision was applied inline, in the waiting turn.
-    pub inline_at: Option<DateTime<Utc>>,
+    pub inline_at: Option<Timestamp>,
     /// Outcome of that inline application (`Some(true)` approved).
     pub inline_approved: Option<bool>,
     /// Terminal outcome (`inline`, `resumed`, `timeout_denied`, ...).
@@ -272,7 +272,7 @@ impl Default for BlockedApproval {
         Self {
             session_id: String::new(),
             request_id: String::new(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             decided_at: None,
             resumed_at: None,
             resume_attempts: 0,
@@ -594,10 +594,10 @@ pub struct ResumeClaim {
     /// How many times a resume turn was attempted (cap 2).
     pub attempts: u32,
     pub claimed_by_pid: Option<u32>,
-    pub claimed_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub claimed_at: Timestamp,
+    pub updated_at: Timestamp,
     /// When a needs-human stop was last reported, so the notice goes out once.
-    pub notified_at: Option<DateTime<Utc>>,
+    pub notified_at: Option<Timestamp>,
 }
 
 impl Default for ResumeClaim {
@@ -607,8 +607,8 @@ impl Default for ResumeClaim {
             state: ResumeClaimState::Claimed,
             attempts: 0,
             claimed_by_pid: None,
-            claimed_at: Utc::now(),
-            updated_at: Utc::now(),
+            claimed_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
             notified_at: None,
         }
     }
@@ -635,10 +635,10 @@ pub struct ResumeExecClaim {
     pub request_id: String,
     pub state: ResumeExecState,
     pub exec_owner_pid: Option<u32>,
-    pub exec_lease_expires_at: Option<DateTime<Utc>>,
+    pub exec_lease_expires_at: Option<Timestamp>,
     /// How many times the created turn was executed (cap 2).
     pub exec_attempts: u32,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 impl Default for ResumeExecClaim {
@@ -649,7 +649,7 @@ impl Default for ResumeExecClaim {
             exec_owner_pid: None,
             exec_lease_expires_at: None,
             exec_attempts: 0,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         }
     }
 }
@@ -782,8 +782,8 @@ impl ResumeExecClaimStore {
     pub fn try_acquire(
         &self,
         request_id: &str,
-        now: DateTime<Utc>,
-        lease: chrono::Duration,
+        now: Timestamp,
+        lease: TimeDelta,
         cap: u32,
     ) -> Result<ExecClaimOutcome> {
         with_records_lock(|| {
@@ -835,7 +835,7 @@ impl ResumeExecClaimStore {
             claim.state = ResumeExecState::Idle;
             claim.exec_owner_pid = None;
             claim.exec_lease_expires_at = None;
-            claim.updated_at = Utc::now();
+            claim.updated_at = Timestamp::now();
             storage::write_json(&path, &claim)
         })
     }
@@ -860,7 +860,7 @@ impl ResumeExecClaimStore {
             claim.state = state;
             claim.exec_owner_pid = None;
             claim.exec_lease_expires_at = None;
-            claim.updated_at = Utc::now();
+            claim.updated_at = Timestamp::now();
             storage::write_json(&path, &claim)
         })
     }
@@ -869,7 +869,6 @@ impl ResumeExecClaimStore {
 #[cfg(test)]
 mod blocked_approval_tests {
     use super::*;
-    use chrono::TimeDelta;
     use std::fs::OpenOptions;
 
     /// Point the process at a throwaway home for the duration of `f`. The
@@ -895,7 +894,7 @@ mod blocked_approval_tests {
         BlockedApproval {
             session_id: "sess_records".to_string(),
             request_id: request_id.to_string(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             ..BlockedApproval::default()
         }
     }
@@ -962,7 +961,7 @@ mod blocked_approval_tests {
             );
             assert_eq!(store.list().unwrap().len(), 1);
 
-            let now = Utc::now();
+            let now = Timestamp::now();
             let found = store
                 .update_with("req_one", |stored| {
                     stored.resume_attempts += 1;
@@ -1212,7 +1211,7 @@ mod blocked_approval_tests {
         use crate::safety::Decision;
         use crate::session::SessionStatus;
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let decision = Decision {
             request_id: "req_verdict".to_string(),
             approved: true,

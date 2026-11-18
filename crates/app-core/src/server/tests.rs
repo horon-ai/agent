@@ -800,7 +800,7 @@ async fn background_task_progress_notifies_attached_clients() {
             total: Some(50),
             unit: Some("tests".to_string()),
             eta_seconds: None,
-            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
             source: BackgroundTaskProgressSource::Reported,
         },
     };

@@ -1,6 +1,6 @@
 use crate::bus::{BackgroundTaskProgress, BackgroundTaskProgressEvent, BackgroundTaskStatus};
 use anyhow::Result;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -129,7 +129,7 @@ pub(super) fn progress_event_record(
 ) -> BackgroundTaskEventRecord {
     BackgroundTaskEventRecord {
         kind,
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: Timestamp::now().to_rfc3339(),
         message: progress.message.clone(),
         status: Some(BackgroundTaskStatus::Running),
         exit_code: None,
@@ -154,7 +154,7 @@ pub(super) fn terminal_event_record(
 ) -> BackgroundTaskEventRecord {
     BackgroundTaskEventRecord {
         kind: terminal_event_kind(&status, error),
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: Timestamp::now().to_rfc3339(),
         message: error.map(ToString::to_string),
         status: Some(status),
         exit_code,
