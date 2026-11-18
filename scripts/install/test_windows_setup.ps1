@@ -181,6 +181,29 @@ try {
         }
     }
 
+    Invoke-Case 'asset_transfers_run_without_the_progress_ui' {
+        $script:progressSeenDuringTransfer = $null
+        function Invoke-WebRequest {
+            param(
+                [switch]$UseBasicParsing,
+                [Parameter(Mandatory = $true)][string]$Uri,
+                [Parameter(Mandatory = $true)][string]$OutFile
+            )
+            $script:progressSeenDuringTransfer = $ProgressPreference
+            [System.IO.File]::WriteAllBytes($OutFile, [byte[]](0, 127, 255))
+        }
+        try {
+            $ProgressPreference = 'Continue'
+            $target = Join-Path $testRoot 'download.bin'
+            Invoke-HoronAgentDownload -Uri 'https://example.invalid/horon-agent-windows-x86_64.tar.gz' -OutFile $target
+            Assert-Equal 'SilentlyContinue' $script:progressSeenDuringTransfer 'asset transfers should run with the progress UI off'
+            Assert-Equal 'Continue' $ProgressPreference 'the download helper must not change the caller''s progress preference'
+            Assert-Equal '007FFF' ([BitConverter]::ToString([System.IO.File]::ReadAllBytes($target)).Replace('-', '')) 'the download helper should write the requested bytes'
+        } finally {
+            Remove-Item Function:\Invoke-WebRequest -ErrorAction SilentlyContinue
+        }
+    }
+
     Invoke-Case 'path_persistence_and_deduplication' {
         $profile = New-IsolatedWindowsProfile 'path-dedupe'
         $installVariant = ($profile.InstallDir.ToUpperInvariant() + '\')
