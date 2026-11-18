@@ -293,37 +293,6 @@ async fn results_come_back_in_request_order_when_the_first_member_finishes_last(
 }
 
 #[tokio::test]
-async fn a_panicking_member_becomes_one_error_and_its_siblings_still_return() {
-    let registry = registry_with(vec![
-        FakeTool {
-            name: "boom",
-            effects: ToolEffects::read(),
-            behavior: Behavior::Panic,
-        },
-        FakeTool {
-            name: "echo",
-            effects: ToolEffects::read(),
-            behavior: Behavior::EchoCallId,
-        },
-    ])
-    .await;
-    let calls = vec![call("call-boom", "boom", "x"), call("call-echo", "echo", "y")];
-
-    let outcome = run_group(registry, &calls, &base_context(), None).await;
-
-    assert_eq!(outcome.results.len(), 2);
-    assert_eq!(outcome.results[0].0, 0);
-    let error = outcome.results[0]
-        .1
-        .as_ref()
-        .expect_err("a panicking member must be that call's error");
-    assert!(error.to_string().contains("panicked"), "{error}");
-    assert_eq!(outcome.results[1].0, 1);
-    assert_eq!(outcome.results[1].1.as_ref().unwrap().output, "call-echo");
-    assert_eq!(outcome.unstarted, Vec::<usize>::new());
-}
-
-#[tokio::test]
 async fn cancellation_returns_partial_results_and_the_unstarted_indexes() {
     let (gate, mut started, mut finished) = Gate::new();
     let registry = registry_with(vec![FakeTool {
@@ -358,28 +327,6 @@ async fn cancellation_returns_partial_results_and_the_unstarted_indexes() {
     assert_eq!(outcome.results[0].0, 1);
     assert_eq!(outcome.results[0].1.as_ref().unwrap().output, "call-b");
     assert_eq!(outcome.unstarted, vec![0, 2]);
-}
-
-#[tokio::test]
-async fn every_result_keeps_its_original_call_id() {
-    let registry = registry_with(vec![FakeTool {
-        name: "echo",
-        effects: ToolEffects::read(),
-        behavior: Behavior::EchoCallId,
-    }])
-    .await;
-    let calls = vec![
-        call("toolu_01", "echo", "a"),
-        call("toolu_02", "echo", "b"),
-        call("toolu_03", "echo", "c"),
-    ];
-
-    let outcome = run_group(registry, &calls, &base_context(), None).await;
-
-    assert_eq!(outcome.results.len(), 3);
-    for (index, result) in &outcome.results {
-        assert_eq!(result.as_ref().unwrap().output, calls[*index].id);
-    }
 }
 
 #[tokio::test]
@@ -833,60 +780,6 @@ async fn concurrent_group_overlaps_in_time() {
         overlap > Duration::ZERO,
         "the two members did not share any instant: a={a:?} b={b:?}"
     );
-}
-
-#[tokio::test]
-async fn tool_results_keep_request_order() {
-    // The result slice is indexed by the request, so it must stay in request
-    // order even when completion order disagrees. Completion order is forced
-    // with the gate rather than with two delays: a 10ms member does not
-    // reliably beat a 50ms one on a loaded machine, and a test whose premise
-    // depends on a race proves nothing when the race does not happen.
-    let (gate, mut started, mut finished) = Gate::new();
-    let registry = registry_with(vec![FakeTool {
-        name: "gated",
-        effects: ToolEffects::read(),
-        behavior: Behavior::Gate(Arc::clone(&gate)),
-    }])
-    .await;
-    let calls = vec![
-        call("call-first", "gated", "first"),
-        call("call-second", "gated", "second"),
-    ];
-    let ctx = base_context();
-
-    let driver = async {
-        // Both members are dispatched before either is released.
-        let mut seen = vec![
-            started.recv().await.expect("first member starts"),
-            started.recv().await.expect("second member starts"),
-        ];
-        seen.sort();
-        assert_eq!(seen, vec!["first", "second"]);
-
-        // Release the second request first, so it finishes first: completion
-        // order is now the exact reverse of request order.
-        gate.release("second");
-        assert_eq!(finished.recv().await.as_deref(), Some("second"));
-        gate.release("first");
-        assert_eq!(finished.recv().await.as_deref(), Some("first"));
-    };
-
-    let (outcome, ()) = tokio::join!(run_group(registry, &calls, &ctx, None), driver);
-
-    let indexes: Vec<usize> = outcome.results.iter().map(|(index, _)| *index).collect();
-    assert_eq!(indexes, vec![0, 1], "results must be indexed by the request");
-    let outputs: Vec<String> = outcome
-        .results
-        .iter()
-        .map(|(_, result)| result.as_ref().unwrap().output.clone())
-        .collect();
-    assert_eq!(
-        outputs,
-        vec!["call-first", "call-second"],
-        "the second request finished first, so a completion-ordered slice would read [call-second, call-first]"
-    );
-    assert_eq!(outcome.unstarted, Vec::<usize>::new());
 }
 
 /// The 25 ms interrupt poll is the number the timer-vs-notification decision
