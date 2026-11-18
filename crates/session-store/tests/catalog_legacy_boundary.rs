@@ -160,30 +160,42 @@ fn session_symlinks_are_refused_even_when_named_like_legacy_files() {
         let link = home.paths().root().join("alias.json");
         symlink(&target, &link).unwrap();
         // When enumerating, the symlink is not classified as an ordinary file.
-        let error = catalog::list(&home.paths(), ReadProbe::default()).unwrap_err();
-        // Then path safety still fails closed and leaves both link and target unchanged.
-        assert_eq!(error.code, StoreErrorCode::UnsafePath);
+        let listing = catalog::list_with_skipped(&home.paths(), ReadProbe::default()).unwrap();
+        // Then path safety still refuses the link instead of following it, and the
+        // one real session beside it is still listed.
+        assert_eq!(listing.rows.len(), 1);
+        assert_eq!(listing.skipped.len(), 1);
+        let warning = listing.skipped[0].warning();
+        assert!(warning.contains("is a symlink"), "{warning}");
+        assert!(warning.contains(&link.display().to_string()), "{warning}");
+        assert_eq!(listing.skipped[0].path, link);
+        // And both the link and its target are untouched.
         assert_eq!(fs::read_link(&link).unwrap(), target);
         assert_eq!(fs::read(&legacy).unwrap(), b"legacy sentinel");
     }
 }
 
 #[test]
-fn unsafe_session_directory_permissions_are_still_refused() {
+fn unsafe_session_directory_permissions_are_skipped_not_repaired() {
     // Given an actual event directory made non-private after creation.
     let home = Home::new();
     let id = seed(&home, "unsafe");
+    let directory = home.paths().session_dir(&id).unwrap();
     let log = home.paths().events_log(&id).unwrap();
     let before = fs::read(&log).unwrap();
-    fs::set_permissions(
-        home.paths().session_dir(&id).unwrap(),
-        fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
-    // When the catalog tries to rebuild its missing derived row.
-    let error = catalog::list(&home.paths(), ReadProbe::default()).unwrap_err();
-    // Then normal writer permission checks are not bypassed by enumeration.
-    assert_eq!(error.code, StoreErrorCode::UnsafePath);
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+    // When the catalog enumerates the store.
+    let listing = catalog::list_with_skipped(&home.paths(), ReadProbe::default()).unwrap();
+    // Then normal writer permission checks are not bypassed by enumeration: the
+    // session is left out, and the skip names the directory and its mode.
+    assert!(listing.rows.is_empty());
+    assert_eq!(listing.skipped.len(), 1);
+    let warning = listing.skipped[0].warning();
+    assert!(warning.contains(&directory.display().to_string()), "{warning}");
+    assert!(warning.contains("0755"), "{warning}");
+    // And the decision stays with the operator: no mode was changed and the
+    // original log was not read into a listing.
+    assert_eq!(fs::metadata(&directory).unwrap().permissions().mode() & 0o777, 0o755);
     assert_eq!(fs::read(log).unwrap(), before);
 }
 
@@ -217,16 +229,23 @@ fn warm_catalog_and_recent_refuse_non_private_session_directory() {
     assert_eq!(catalog::list(&paths, ReadProbe::default()).unwrap().len(), 1);
     // When only directory permissions change, no log stamp or cached data changes.
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
-    let rows = catalog::list(&paths, ReadProbe::default());
+    let listing = catalog::list_with_skipped(&paths, ReadProbe::default());
     let recent = cache.recent(&id, None);
     println!(
         "WARM list={:?} recent={:?}",
-        rows.as_ref().map(Vec::len).map_err(|e| e.code),
+        listing.as_ref().map(|l| l.rows.len()).map_err(|e| e.code),
         recent.as_ref().map(|r| r.tail.len()).map_err(|e| e.code)
     );
-    // Then both public warm paths refuse without modifying or repairing originals.
+    // Then the warm cache does not bless the directory: the listing leaves the
+    // session out and names it, and reading it directly still refuses.
+    let listing = listing.unwrap();
+    assert!(listing.rows.is_empty());
+    assert_eq!(listing.skipped.len(), 1);
+    let warning = listing.skipped[0].warning();
+    assert!(warning.contains(&directory.display().to_string()), "{warning}");
+    assert!(warning.contains("0755"), "{warning}");
+    assert_eq!(recent.unwrap_err().code, StoreErrorCode::UnsafePath);
+    // And neither path modified or repaired the originals or the mode.
     assert_eq!(fs::read(&log).unwrap(), original);
     assert_eq!(fs::metadata(&directory).unwrap().permissions().mode() & 0o777, 0o755);
-    assert_eq!(rows.unwrap_err().code, StoreErrorCode::UnsafePath);
-    assert_eq!(recent.unwrap_err().code, StoreErrorCode::UnsafePath);
 }
