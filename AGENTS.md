@@ -17,8 +17,8 @@ this file, this file wins.
 |---|---|---|---|
 |`horon-agent`, the agent binary|root package (`src/`, `crates/*`)|headless mode, the daemon both modes attach to, and the plain `repl` line prompt|`horon-agent-<suffix>.tar.gz` on every release; every installation needs it|
 |`horon-tui`, the TUI binary|`crates/tui`, a client of `horon-agent-sdk`|TUI mode|`horon-tui-<suffix>.tar.gz` beside the agent in the same release; optional, never on FreeBSD|
-|`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true`, and fails the run with the recovery command instead of dry-running silently when it is not|
-|SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml` (same `NPM_PUBLISH` gate); Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
+|`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true` (and again on `release: published`, which heals a run that arrived while the release was a draft), and fails the run with the recovery command instead of dry-running silently when the switch is off|
+|SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml`, gated by its own `SDK_NPM_PUBLISH`; Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
 |Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
