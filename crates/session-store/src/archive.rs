@@ -1,7 +1,7 @@
 //! Durable archive and restore records. Hiding a session is an event, never a
 //! deletion: the original log, blobs and every earlier archive record stay.
 use crate::*;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -117,7 +117,7 @@ pub fn record(
         EventId::new_v4(),
         Some(head),
         origin_id(paths)?,
-        Utc::now(),
+        Timestamp::now(),
         EventKind::new(KnownEventKind::ArchiveChanged),
         json!({"archived": archived, "reason": reason}),
     )

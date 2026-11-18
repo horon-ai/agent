@@ -3,7 +3,7 @@
 
 use crate::model::{ProductivityReport, SessionSummary, Tally};
 use crate::scan::ScanResult;
-use chrono::{Datelike, Local, NaiveDate};
+use horon_agent_time::{Date, Timestamp};
 use std::collections::{BTreeSet, HashMap};
 
 fn top_n(map: HashMap<String, u64>, n: usize) -> Vec<Tally> {
@@ -17,8 +17,9 @@ fn top_n(map: HashMap<String, u64>, n: usize) -> Vec<Tally> {
 pub fn build_report(scan: ScanResult) -> ProductivityReport {
     let summaries = &scan.summaries;
 
+    let now = Timestamp::now().local();
     let mut r = ProductivityReport {
-        generated_at: Local::now().format("%Y-%m-%d %H:%M").to_string(),
+        generated_at: format!("{} {:02}:{:02}", now.date(), now.hour(), now.minute()),
         total_sessions: summaries.len() as u64,
         scanned_files: scan.scanned_files,
         parse_errors: scan.parse_errors,
@@ -117,12 +118,9 @@ pub fn build_report(scan: ScanResult) -> ProductivityReport {
     r.first_day = all_dates.iter().next().cloned();
     r.last_day = all_dates.iter().next_back().cloned();
     if let (Some(first), Some(last)) = (&r.first_day, &r.last_day)
-        && let (Ok(a), Ok(b)) = (
-            NaiveDate::parse_from_str(first, "%Y-%m-%d"),
-            NaiveDate::parse_from_str(last, "%Y-%m-%d"),
-        )
+        && let (Some(a), Some(b)) = (parse_day(first), parse_day(last))
     {
-        r.span_days = (b - a).num_days().max(0) as u64 + 1;
+        r.span_days = (b - a).whole_days().max(0) as u64 + 1;
     }
     let (cur, longest) = streaks(&all_dates);
     r.current_streak = cur;
@@ -159,10 +157,7 @@ pub fn build_report(scan: ScanResult) -> ProductivityReport {
 /// today (or yesterday). Current streak counts if the most recent active day is
 /// today or yesterday.
 fn streaks(dates: &BTreeSet<String>) -> (u64, u64) {
-    let parsed: Vec<NaiveDate> = dates
-        .iter()
-        .filter_map(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok())
-        .collect();
+    let parsed: Vec<Date> = dates.iter().filter_map(|d| parse_day(d)).collect();
     if parsed.is_empty() {
         return (0, 0);
     }
@@ -171,7 +166,7 @@ fn streaks(dates: &BTreeSet<String>) -> (u64, u64) {
     let mut longest = 1u64;
     let mut run = 1u64;
     for w in parsed.windows(2) {
-        if (w[1] - w[0]).num_days() == 1 {
+        if (w[1] - w[0]).whole_days() == 1 {
             run += 1;
             longest = longest.max(run);
         } else {
@@ -181,17 +176,17 @@ fn streaks(dates: &BTreeSet<String>) -> (u64, u64) {
 
     // Current streak: walk backwards from the last active day, but only counts
     // as "current" if it reaches today or yesterday.
-    let today = Local::now().date_naive();
+    let today = Timestamp::now().local().date();
     // `parsed` is guaranteed non-empty by the early return above.
     let Some(&last) = parsed.last() else {
         return (0, longest);
     };
     let mut current = 0u64;
-    if (today - last).num_days() <= 1 {
+    if (today - last).whole_days() <= 1 {
         current = 1;
         let mut idx = parsed.len() - 1;
         while idx > 0 {
-            if (parsed[idx] - parsed[idx - 1]).num_days() == 1 {
+            if (parsed[idx] - parsed[idx - 1]).whole_days() == 1 {
                 current += 1;
                 idx -= 1;
             } else {
@@ -201,6 +196,19 @@ fn streaks(dates: &BTreeSet<String>) -> (u64, u64) {
     }
 
     (current, longest)
+}
+
+/// Parse a stored `YYYY-MM-DD` day key.
+///
+/// Every key this crate writes comes from [`Date`]'s ISO 8601 display form, and
+/// the shared reader reproduces the `%Y-%m-%d` grammar the previous parser had,
+/// so an older or hand-edited key with different padding still reads.
+fn parse_day(key: &str) -> Option<Date> {
+    let at = match Timestamp::parse_naive_date(key) {
+        Ok(at) => at,
+        Err(_) => return None,
+    };
+    Some(at.utc().date())
 }
 
 fn chronotype(peak_hour: u8) -> &'static str {
@@ -331,5 +339,5 @@ pub fn report_from_summaries(summaries: Vec<SessionSummary>) -> ProductivityRepo
 /// Local weekday index (Mon=0) for today, used by some renderers.
 #[allow(dead_code)]
 pub(crate) fn today_weekday() -> usize {
-    Local::now().weekday().num_days_from_monday() as usize
+    usize::from(Timestamp::now().local().date().weekday().number_days_from_monday())
 }

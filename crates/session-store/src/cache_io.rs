@@ -236,8 +236,32 @@ pub(crate) fn decode<T: DeserializeOwned + Serialize>(bytes: &[u8]) -> Result<T,
     }
     Ok(checked.value)
 }
+/// Counts written bytes and drops them.
+#[derive(Default)]
+struct WireCounter {
+    bytes: usize,
+}
+
+impl std::io::Write for WireCounter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.bytes += buffer.len();
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub(crate) fn json_error(error: serde_json::Error) -> StoreError {
     StoreError::invalid_request(crate::StoreErrorCode::InvalidRecord, error.to_string())
+}
+
+/// Count the compact JSON representation without storing a copy of it.
+pub(crate) fn json_len<T: ?Sized + Serialize>(value: &T) -> Result<usize, StoreError> {
+    let mut count = WireCounter::default();
+    serde_json::to_writer(&mut count, value).map_err(json_error)?;
+    Ok(count.bytes)
 }
 
 pub(crate) fn dirty_present(paths: &crate::SessionPaths, id: Option<&crate::SessionId>) -> Result<bool, StoreError> {

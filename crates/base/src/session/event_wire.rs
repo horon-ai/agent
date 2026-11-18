@@ -3,6 +3,7 @@ use super::Session;
 use crate::durable_runtime::{Binding, JournalRecord, Payload, RuntimeState};
 use anyhow::{Context, Result};
 use horon_agent_session_store::{SessionId, SessionMetadata, SessionPaths};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -12,7 +13,7 @@ use std::path::PathBuf;
 pub(super) struct LocalRuntime {
     pub status: super::SessionStatus,
     pub last_pid: Option<u32>,
-    pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_active_at: Option<Timestamp>,
     #[serde(default)]
     pub working_dir: Option<String>,
     #[serde(default)]
@@ -150,6 +151,13 @@ fn mirror_path(paths: &SessionPaths, id: &SessionId) -> Result<PathBuf> {
 }
 
 fn read_mirror(paths: &SessionPaths, id: &SessionId) -> Result<MirrorRead> {
+    // A home that has never written a session has no store root yet, so it
+    // cannot hold a mirror. Treating that as "missing" keeps a first run's
+    // `next_journal_binding` from failing on a path the root would allow once
+    // the first save creates it.
+    if !paths.root().try_exists()? {
+        return Ok(MirrorRead::Missing);
+    }
     match std::fs::read(mirror_path(paths, id)?) {
         Ok(bytes) => Ok(match serde_json::from_slice(&bytes) {
             Ok(mirror) => MirrorRead::Parsed(mirror),

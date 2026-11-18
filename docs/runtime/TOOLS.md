@@ -32,7 +32,7 @@ memory = "essential"
 
 - The seven tools in `ESSENTIAL_TOOLS` (`read`, `write`, `edit`, `apply_patch`, `bash`, `ls`, `agentgrep`) are `essential` in every profile (`config.rs:679` `ESSENTIAL_TOOLS`). Almost every coding turn touches them, so their schemas stay in the cached prefix.
 - `CORE_TOOLS` holds eighteen entries and is the allow-list of the `core` profile (`config.rs:652` `CORE_TOOLS`). The list sets reachability; whether tools are sent eagerly depends on whether the session is a listing session. `swarm`, `todo` and `session_search` joined last; an SDK-driven session keeps `session_search` and `swarm` off unless its `enabled` list names them (`crates/app-core/src/tool/sdk.rs` `apply_defaults`).
-- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:647`, `config.rs:1093` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:763` `ToolLoadTiers::tier`).
+- A `core` session becomes a listing session under three conditions: the profile is the untouched default `core`, no allow-list is given explicitly, and `toolbox` is reachable (`crates/app-core/src/agent.rs:617`, `config.rs:1093` `ToolConfig::toolbox_reachable`). That session sends only the seven tools and `toolbox` with schemas, and the other eleven core tools (`replace`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`) become `discoverable` and are named in the index (`config.rs:763` `ToolLoadTiers::tier`).
 - Sessions that are not listing sessions send every core tool as `essential`. This covers `acp`, `minimal`/`lite`, `none`, an explicit `enabled` list, an SDK `enabled` list, and an allow-list passed to `new_with_session`. Their tool lists and tiers are unchanged and they have no index. When an SDK `enabled` list is attached to a listing `core` session, the client has named tools exactly, so listing mode turns off and every named tool is sent eagerly (`crates/app-core/src/agent/turn_execution.rs:759` `apply_builtin_load_tiers`).
 - `mcp_search` and `mcp_call` are sent eagerly by default (`config.rs:735` `ALWAYS_EAGER_TOOLS`). They are the path that discovers MCP schemas, so the provider-native deferred route still sends them eagerly. On providers without native deferred loading, a listing `core` session that has no active MCP server configured when it locks its first tool list does not send the two tools eagerly; they go into the index and are called through `toolbox`. With at least one server they are sent eagerly as before. This decision also never changes mid-session. A session pinned to a native provider has neither tool in its frozen index, so switching to a non-native provider later leaves both tools eager (so as not to advertise a name the index does not carry). The closing sentence of `mcp list`, of connection results, and of new-MCP-tool announcements that trims the rest past 32 items points at `toolbox` only in sessions where the two tools are in the index, and otherwise announces a direct call (`turn_execution.rs:608` `freeze_mcp_surface`, `turn_execution.rs:641` `mcp_surface_listed`). With `mcp_tools = "eager"` per-server definitions are shipped and this rule does not apply.
 - `toolbox` is always `essential`. An explicit `discoverable` entry is promoted to `essential`, and an `off` entry removes the tool (`config.rs:763` `ToolLoadTiers::tier`).
@@ -49,7 +49,7 @@ memory = "essential"
 
 ### The listing index
 
-The static part of a listing `core` session's system prompt gains an `# Additional tools` section. One short guidance sentence is followed by `- <name>: <one-line description>` rows in name order (`crates/base/src/prompt.rs:463` `build_additional_tools_section`). The guidance sentence says only how to call a listed tool through the `run` action of `toolbox`. A row's description is the first sentence of the tool description, capped at 60 characters, so the model fetches parameters separately with `toolbox describe`.
+The static part of a listing `core` session's system prompt gains an `# Additional tools` section. One short guidance sentence is followed by `- <name>: <one-line description>` rows in name order (`crates/base/src/prompt.rs:447` `build_additional_tools_section`). The guidance sentence says only how to call a listed tool through the `run` action of `toolbox`. A row's description is the first sentence of the tool description, capped at 60 characters, so the model fetches parameters separately with `toolbox describe`.
 
 - The same index is used regardless of provider. Providers with native deferred loading receive this index alongside the deferred definitions. Providers without it drop the deferred definitions, so this index is the only thing that names them.
 - Rows are filtered by the same rule the session sees from `toolbox list`. `mcp__*` proxies and `toolbox` itself are left out, and a tool the session policy would have `toolbox` refuse (outside the allow-list, disabled, or turned off by the SDK) is not listed (`turn_execution.rs:832` `build_listed_tools_index`, `crates/app-core/src/tool/toolbox.rs:232` `session_can_reach`).
@@ -71,7 +71,7 @@ There are three actions.
 
 #### Policy applies once, to the target tool
 
-`toolbox run` gets the same policy as a direct call, but it applies once, to the target tool rather than to the outer call. Plan mode, approval requests, and the `pre_tool`/`post_tool` hooks run inside the inner `Registry::execute` with the target tool's name and input. The outer `toolbox` call skips those steps, so approval is never asked twice and a hook never receives the name `toolbox` (`crates/app-core/src/tool/mod.rs:2015`). The allow-list and disabled-list checks remain on the outside to decide whether `toolbox` itself is reachable.
+`toolbox run` gets the same policy as a direct call, but it applies once, to the target tool rather than to the outer call. Plan mode, approval requests, and the `pre_tool`/`post_tool` hooks run inside the inner `Registry::execute` with the target tool's name and input. The outer `toolbox` call skips those steps, so approval is never asked twice and a hook never receives the name `toolbox` (`crates/app-core/src/tool/mod.rs:1977`). The allow-list and disabled-list checks remain on the outside to decide whether `toolbox` itself is reachable.
 
 Plan mode's test for a read-only call also follows the target. `list` and `describe` are read-only, `run` uses the effects the target tool declares, and an unknown target or a malformed action counts as a write barrier (`toolbox.rs:132` `effects_for_input`). So in plan mode `toolbox run write` is refused like a direct `write`, and `toolbox run ls` passes.
 
@@ -142,8 +142,8 @@ When a tool's footprint depends on its arguments, it overrides `effects_for_inpu
 
 The registry asks for effects with the call's input, not with the name alone.
 
-- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1269`).
-- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1281`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
+- `declared_effects` calls `effects_for_input(input)` (`crates/app-core/src/tool/mod.rs:1283`).
+- `declared_effects_sync` reads only `effects()` (`crates/app-core/src/tool/mod.rs:1295`). It runs before a round is dispatched and cannot await the map, so it returns `None` while the lock is held.
 - Both treat `None` as "cannot classify". Callers read that value as the write barrier. A read-only gate never opens because of a tool whose footprint it cannot see.
 
 ### Two gates
@@ -152,12 +152,12 @@ The plan-mode check exists in two places because the two paths call tools differ
 
 | Path | Location | What it does |
 | --- | --- | --- |
-| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1983`) | Resolves the name, checks session policy, passes the plan-mode gate (`:2027`), takes the tool, then passes the approval gate (`:2087`) and the `pre_tool` hook (`:2202`) in order. |
-| Agent | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1066`) | Checks one name before the round dispatches any call. The plan-mode gate is at `:1081`. |
+| Registry | `Registry::execute` (`crates/app-core/src/tool/mod.rs:1947`) | Resolves the name, checks session policy, passes the plan-mode gate (`:1991`), takes the tool, then passes the approval gate (`:2051`) and the `pre_tool` hook (`:2166`) in order. |
+| Agent | `Agent::validate_tool_allowed` (`crates/app-core/src/agent/turn_execution.rs:1227`) | Checks one name before the round dispatches any call. The plan-mode gate is at `:1248`. |
 
 The agent path puts the plan-mode check at the top of the function because of the SDK branch below it. SDK-enabled tools and callback tools exit straight to `Ok` from the allow-list check. A gate after that branch would let through exactly the calls whose footprint cannot be seen. So the plan-mode check runs before the branch, and the registry path uses the same default for the same reason.
 
-Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:2031`, `:2190`).
+Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` as `plan_mode` or `approval` (`crates/app-core/src/tool/mod.rs:1995`, `:2154`).
 
 ### The plan-mode state machine
 
@@ -170,22 +170,22 @@ Both paths log a `TOOL_LIFECYCLE` warning on refusal and record `block_reason` a
 | `PendingApproval` | `pending_approval` | Yes | A plan was submitted and the user has not decided. |
 | `Approved` | `approved` | No | The plan is approved, so effects are allowed again. |
 
-`is_read_only` decides read-only status (`crates/app-core/src/plan_mode.rs:50`). The gate decides with `allows_effects`, and in a read-only state it lets through only `parallel_safe` calls (`crates/app-core/src/plan_mode.rs:164`). A tool that declares nothing falls back to the trait's write barrier and is refused.
+`is_read_only` decides read-only status (`crates/app-core/src/plan_mode.rs:50`). The gate decides with `allows_effects`, and in a read-only state it lets through only `parallel_safe` calls (`crates/app-core/src/plan_mode.rs:195`). A tool that declares nothing falls back to the trait's write barrier and is refused.
 
 State lives in a process-global map keyed by session id. It is not a field on the registry because `Registry::Clone` copies per call; a field would split state across clones.
 
 - `state_for` returns `Off` for a session with no entry (`crates/app-core/src/plan_mode.rs:83`).
 - `set_state` stores no `Off`; it removes the entry (`crates/app-core/src/plan_mode.rs:94`).
 - `clear_state` removes the session entry (`crates/app-core/src/plan_mode.rs:105`).
-- `transition` changes the state and records the transition in the session replay timeline (`crates/app-core/src/plan_mode.rs:185`).
+- `transition` changes the state and records the transition in the session replay timeline (`crates/app-core/src/plan_mode.rs:216`).
 
 `block_message` writes the refusal text (`crates/app-core/src/plan_mode.rs:173`). One paragraph says what was refused, that nothing changed, and the two ways out. It also notes that resending the same call gives the same result.
 
-Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:455`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
+Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:283`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
 ### Approval tiers
 
-`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:368`). The default is `off` (`crates/base/src/config.rs:1023`), which is the same non-asking behaviour as before.
+`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:370`). The default is `off` (`crates/base/src/config.rs:1023`), which is the same non-asking behaviour as before.
 
 `evaluate` decides (`crates/app-core/src/approval.rs:232`). Order matters.
 
@@ -201,7 +201,7 @@ Danger classes are not reclassified; the existing command risk classifier's verd
 
 `dual_confirm_classes` defaults to an empty array (`crates/base/src/config.rs:1033`, `crates/base/src/config/default_file.rs:341`). Empty leaves every decision to the mode.
 
-The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2087`, hook at `:2202`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
+The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2051`, hook at `:2166`). The order keeps an outside gate from observing a call that should have been asked about as if it had already been dispatched. The hard refusal of dangerous commands inside a shell remains. Approval tiers only decide whether the user is asked.
 
 `irc` has the write bit, no process or network bit, and names no filesystem path, so `write` mode does not ask about it: there is no file to approve. `all` mode does ask, because an `irc` call is not read-only.
 
@@ -260,9 +260,9 @@ The journal belongs to the `horon-agent-edit-safety` crate (`crates/edit-safety/
 - One tool call is one mutation unit. A call touching several files holds per-file before/after in one unit.
 - When one call touches the same path twice, only the first before and the last after are kept, as one net change (`crates/app-core/src/tool/undo.rs:95` `record`).
 - Recording happens only after the write succeeds. A failed write leaves no unit.
-- `commit` moves the unit into the undo history, and `abort` discards the unit and its bytes (`store.rs:228`, `store.rs:261`).
+- `commit` moves the unit into the undo history, and `abort` discards the unit and its bytes (`crates/edit-safety/src/store.rs:228` `commit`, `:261` `abort`).
 - History is one per session and lives only for the process lifetime. A restart starts empty.
-- The budget is 64 MiB (`store.rs:25` `DEFAULT_BYTE_BUDGET`). When usage exceeds it at commit time, the oldest units are dropped whole. A unit just committed is never dropped by its own commit, so a unit larger than the budget survives while it is the newest (`store.rs:228` `commit`).
+- The budget is 64 MiB (`crates/edit-safety/src/store.rs:25` `DEFAULT_BYTE_BUDGET`). When usage exceeds it at commit time, the oldest units are dropped whole. A unit just committed is never dropped by its own commit, so a unit larger than the budget survives while it is the newest (`crates/edit-safety/src/store.rs:228` `commit`).
 - An active unit's bytes count toward store usage, but budget pruning happens only at commit.
 
 ### undo
@@ -271,7 +271,7 @@ The journal belongs to the `horon-agent-edit-safety` crate (`crates/edit-safety/
 
 1. Compare each file's current bytes with the unit's after state.
 2. If any differs, the call is refused by default. With `force: true` it overwrites and lists the overwritten paths in the result.
-3. If the recorded state holds a file that could not be read, the whole unit is refused. A partial restore is never reported as success (`store.rs:277` `undo`).
+3. If the recorded state holds a file that could not be read, the whole unit is refused. A partial restore is never reported as success (`crates/edit-safety/src/store.rs:277` `undo`).
 4. On success, files go back to their before state. A file that did not exist is deleted; a state with bytes writes those bytes.
 
 The journal never touches files itself. It returns the bytes to restore, and the calling `undo` tool writes them. That split lets crate-level tests run without a file system.
@@ -287,7 +287,7 @@ The journal never touches files itself. It returns the bytes to restore, and the
 
 ### hashline anchors
 
-Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:153`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
+Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:164`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
 
 - A line longer than 2000 bytes is cut and receives the `----` tag (`read_selector.rs:15` `MAX_LINE_LEN`). That anchor names no content, so it cannot be used for an edit.
 - `hashline_edit` is registered only when `[tools] hashline_edit = true`. The default is `false`, and it is outside the core set.
@@ -445,7 +445,7 @@ If any of the following holds, the result is the plain body.
 - The session has no working directory. If `ctx.working_dir.as_deref()` is `None` it returns immediately and logs `nested_agents: no working_dir; skipping ancestor AGENTS.md injection`.
 - The read file is outside the working directory, or a symlink points outward.
 - No `AGENTS.md` exists anywhere above.
-- The read result is already 32 KiB or larger (`base_output_bytes >= MAX_BASE_OUTPUT_BYTES`). This ceiling is not where the tool-result guard starts. The guard's real limit is `min(budget × 0.30, 50,000)` tokens from `single_output_max_tokens` (`crates/app-core/src/tool/mod.rs:1201-1203`, constants defined at `:1361` and `:1372`), converted at four characters per token (`APPROX_CHARS_PER_TOKEN = 4`, `crates/core/src/util.rs:17`), so it settles at 200,000 characters once the budget reaches about 166,667 tokens. In a session whose context is nearly full, the remaining headroom binds before that (`mod.rs:1668-1671`). At the context-window scale of real models, 32 KiB falls far short of that limit. The ceiling exists so the attachment cannot push a still-acceptable result past the guard. The cost is that a result between 32 KiB and the guard's real limit returns its body with no contracts and no marker saying so. Past the guard's limit the result itself is withheld and comes back truncated only when the caller passes `accept_large_output`.
+- The read result is already 32 KiB or larger (`base_output_bytes >= MAX_BASE_OUTPUT_BYTES`). This ceiling is not where the tool-result guard starts. The guard's real limit is `min(budget × 0.30, 50,000)` tokens from `single_output_max_tokens` (`crates/app-core/src/tool/mod.rs:1728`, constants at `:1882` and `:1893`), converted back at four characters per token (`max_chars = max_tokens * 4`, `:2352`), so it settles at 200,000 characters once the budget reaches about 166,667 tokens. In a session whose context is nearly full, the remaining headroom binds before that (`:2349`). At the context-window scale of real models, 32 KiB falls far short of that limit. The ceiling exists so the attachment cannot push a still-acceptable result past the guard. The cost is that a result between 32 KiB and the guard's real limit returns its body with no contracts and no marker saying so. Past the guard's limit the result itself is withheld and comes back truncated only when the caller passes `accept_large_output`.
 - The path was already injected in this session. See the session-scoped cache below.
 - `read` does not reach the text branch. `agent://` references return from `is_agent_url`, images from `is_image_file`, PDFs from `is_pdf_file`, and binaries from `is_binary_file` before the injection point.
 
@@ -831,7 +831,7 @@ Every other keyword is ignored. `additionalProperties`, `minLength`, `pattern`, 
 
 ### Tool registration
 
-The `aux_complete` tool is registered only when `[tools] aux_completion` is on (`crates/app-core/src/tool/mod.rs:2425`). The registration function reads the setting and returns immediately when it is off. Off means the tool does not appear in the tool list and cannot be found by name.
+The `aux_complete` tool is registered only when `[tools] aux_completion` is on (`crates/app-core/src/tool/mod.rs:3022`). The registration function reads the setting and returns immediately when it is off. Off means the tool does not appear in the tool list and cannot be found by name.
 
 It is not in `CORE_TOOLS` (`crates/base/src/config.rs:652`). The core profile's closed list does not grow. Every call spends one more side model request, which is why the switch defaults to off (`crates/base/src/config.rs:1030`).
 
@@ -843,7 +843,7 @@ When a credential leaves for the provider, a placeholder goes instead of the rea
 
 The same real value always receives the same placeholder. A value appearing several times in a conversation keeps its placeholder, so the cached prompt prefix does not shift. Because the key stays on disk, a session reopened after a restart restores the earlier placeholders too. Building a session vault pre-registers environment variables whose names contain `KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `PASS`, `AUTH`, `CREDENTIAL`, or `PRIVATE` and whose value is at least 8 characters, so credentials from the environment also resolve after a restart.
 
-There are three modes (`crates/config-types/src/lib.rs:488`).
+There are three modes (`crates/config-types/src/lib.rs:490`).
 
 | Mode | Behaviour |
 | --- | --- |
@@ -851,9 +851,9 @@ There are three modes (`crates/config-types/src/lib.rs:488`).
 | `obfuscate` | Replaces detected credentials with stable placeholders and gives tools that need the real value that value back. |
 | `block` | Refuses calls that would send a credential outward. |
 
-Mode names are read in kebab case, and an unknown value falls back to the default (`crates/config-types/src/lib.rs:509`). That keeps one bad entry from making the rest of the configuration unreadable. The setting is `secrets_mode` (`crates/base/src/config.rs:1032`), and the default configuration file also writes `secrets_mode = "off"` (`crates/base/src/config/default_file.rs:470`).
+Mode names are read in kebab case, and an unknown value falls back to the default (`crates/config-types/src/lib.rs:521`). That keeps one bad entry from making the rest of the configuration unreadable. The setting is `secrets_mode` (`crates/base/src/config.rs:1032`), and the default configuration file also writes `secrets_mode = "off"` (`crates/base/src/config/default_file.rs:335`).
 
-Detection rules are not new: the same table as the existing masking is used. The pattern list behind `redact_secrets` on the disk path is the wire path's list (`crates/base/src/message.rs:51`). With one table, a pattern added for disk applies to the wire automatically. Already-masked text is never masked again, because wrapping a placeholder in another pattern means restoring the outer layer returns only the inner placeholder.
+Detection rules are not new: the same table as the existing masking is used. The pattern list behind `redact_secrets` on the disk path is the wire path's list (`crates/base/src/message.rs:62`). With one table, a pattern added for disk applies to the wire automatically. Already-masked text is never masked again, because wrapping a placeholder in another pattern means restoring the outer layer returns only the inner placeholder.
 
 ### Three wiring points
 

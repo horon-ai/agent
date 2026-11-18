@@ -43,10 +43,10 @@ ignore = "0.4"
 similar = "2"            # diffing for edits
 
 # Utilities
-dirs = "5"               # home directory
+dirs = "6"               # home directory
 anyhow = "1"
 libc = "0.2"             # Unix system calls (flock)
-chrono = { version = "0.4", features = ["serde"] }
+horon-agent-time = { path = "../time-types" }
 regex = "1"
 # Interceptor rules need lookaround (e.g. `cat` followed by no redirection).
 fancy-regex = "0.20"
@@ -64,6 +64,10 @@ horon-agent-irc-core = { path = "../irc-core" }
 # OAuth
 base64 = "0.22"
 sha2 = "0.10"
+# The updater's file digests run on `ring`: it dispatches to the platform's SHA-256 instructions
+# (ARMv8 SHA-2 extensions, x86 SHA-NI) at run time, where `sha2` without `asm` is scalar on
+# AArch64. `ring` is already compiled for every target through reqwest's rustls backend.
+ring = "0.17"
 rand = "0.9.3"
 url = "2"
 horon-agent-agent-runtime = { path = "../agent-runtime" }

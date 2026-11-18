@@ -13,7 +13,8 @@ env:
   # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
+  # Keep per-compilation writes on the runner; share Cargo archives between runs.
+  SCCACHE_CACHE_SIZE: "512M"
   CARGO_INCREMENTAL: "0"
   # Optimize published binaries fully without changing local/selfdev profiles.
   CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
@@ -939,11 +940,15 @@ jobs:
             ./target/release/horon-agent --version
             echo "::endgroup::"
 
-            mkdir -p dist
-            cp target/release/horon-agent dist/horon-agent-freebsd-x86_64
-            cp LICENSE dist/LICENSE
-            chmod +x dist/horon-agent-freebsd-x86_64
-            cd dist && tar czf horon-agent-freebsd-x86_64.tar.gz horon-agent-freebsd-x86_64 LICENSE
+            # POSIX ustar gives FreeBSD tar and the Rust installer the same
+            # top-level executable name. Install the finished archive before upload.
+            echo "::group::Package release archive"
+            sh scripts/release/agent_archive.sh pack dist target/release/horon-agent
+            echo "::endgroup::"
+
+            echo "::group::Install the packaged release"
+            sh scripts/release/agent_archive.sh install-verify dist target/release/horon-agent "${{ env.RELEASE_TAG }}"
+            echo "::endgroup::"
 
       - name: Upload artifact
         if: ${{ inputs.package_only != true }}

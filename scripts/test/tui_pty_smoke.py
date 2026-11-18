@@ -13,6 +13,9 @@ against the mock model server:
 2. a piped stdin keeps the headless message, its install hint, and exit 1.
 3. a missing `horon-tui` does the same on a terminal.
 4. `HORON_NO_TUI=1` does the same on a terminal.
+5. a relaunch over the socket file a killed bridge left behind starts a new
+   bridge instead of dialling the dead one (#363); the case first proves the
+   stale state, so it cannot pass without reproducing the defect.
 
 `--layout build` (default) takes the two built binaries and copies them into one
 directory, which is what the compiler leaves behind. `--layout installed` takes
@@ -35,6 +38,7 @@ import re
 import select
 import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -61,6 +65,11 @@ APPROVAL_PROMPT = "approval needed"
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
 APPROVAL_RESOLVED = "approval approved"
+# The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
+# harness sends over the session event stream once the bridge is serving this
+# client, so seeing it means the client is past its first frame and talking to
+# a live bridge.
+SESSION_READY = "mock/mock-model"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
 
@@ -266,15 +275,27 @@ class Terminal:
 
     def wait(self, timeout: float) -> int:
         deadline = time.monotonic() + timeout
+        # A read of the master fails with EIO on Linux once every slave
+        # descriptor is closed and returns nothing on macOS; both mean "no more
+        # output", never "the child is gone". The exit status comes from poll(),
+        # so the wait keeps polling after the output side is finished.
+        master_open = True
         while time.monotonic() < deadline:
-            readable, _, _ = select.select([self.master], [], [], 0.1)
-            if readable:
-                try:
-                    chunk = os.read(self.master, 65536)
-                except OSError:
-                    break
-                if chunk:
-                    self.transcript += chunk.decode("utf-8", "replace")
+            if master_open:
+                readable, _, _ = select.select([self.master], [], [], 0.05)
+                if readable:
+                    try:
+                        chunk = os.read(self.master, 65536)
+                    except OSError:
+                        master_open = False
+                    else:
+                        if chunk:
+                            self.transcript += chunk.decode("utf-8", "replace")
+                        else:
+                            master_open = False
+            else:
+                # A finished master stays readable, so polling it would spin.
+                time.sleep(0.05)
             code = self.process.poll()
             if code is not None:
                 # Drain what the child wrote before exiting.
@@ -290,8 +311,6 @@ class Terminal:
                         break
                     self.transcript += chunk.decode("utf-8", "replace")
                 return code
-            if code is None and self.transcript and time.monotonic() >= deadline:
-                break
         self.process.kill()
         raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{self.transcript}")
 
@@ -393,6 +412,177 @@ def headless_case(
     return transcript
 
 
+def case_bridge_pids(case_root: str) -> list[int]:
+    """PIDs of the API bridges serving this case, and no other case's.
+
+    The bridge is spawned with `api-bridge` as its only argument and takes its
+    socket path from the environment, so the command line names the case only
+    through the binary, and every case copies the binaries under its own root.
+    Both readings are anchored on the whole argv[0] followed by `api-bridge`, so
+    a daemon (`<binary> serve`) or a shell that merely mentions the path is never
+    counted. Paths are compared after resolution because macOS `/tmp` is a
+    symlink to `/private/tmp` and `current_exe()` hands the resolved form on.
+    """
+    binary = os.path.join(case_root, "bin", "horon-agent")
+    resolved = os.path.realpath(binary)
+
+    def is_case_binary(argv0: str) -> bool:
+        return argv0 in (binary, resolved) or os.path.realpath(argv0) == resolved
+
+    if sys.platform == "darwin":
+        listing = subprocess.run(
+            ["ps", "-axww", "-o", "pid=,command="],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        # BSD `ps` renders argv space-separated and can append an escaped `\012`
+        # and environment bytes after it, so the line is matched on its prefix:
+        # this case's binary followed by the bridge's only argument. A daemon
+        # (`<binary> serve`) or a shell that mentions the path never matches.
+        prefixes = (f"{binary} api-bridge", f"{resolved} api-bridge")
+        pids = []
+        for line in listing.splitlines():
+            pid, _, command = line.strip().partition(" ")
+            if pid.isdigit() and command.startswith(prefixes):
+                pids.append(int(pid))
+        return pids
+    # Linux: /proc names argv exactly, which `ps` column output does not promise.
+    pids = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(os.path.join("/proc", entry, "cmdline"), "rb") as handle:
+                argv = handle.read().split(b"\0")
+        except OSError:
+            continue
+        argv = [os.fsdecode(argument) for argument in argv if argument]
+        if argv[1:] and "api-bridge" in argv[1:] and is_case_binary(argv[0]):
+            pids.append(int(entry))
+    return pids
+
+
+def wait_for_case_bridges(case_root: str, expected: int, timeout: float, what: str) -> None:
+    """Wait for this case to have `expected` bridge processes, or fail."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if len(case_bridge_pids(case_root)) == expected:
+            return
+        time.sleep(0.05)
+    raise Failure(f"{what}: expected {expected} api-bridge processes, found {case_bridge_pids(case_root)}")
+
+
+def wait_for_refused_connect(path: str, timeout: float, what: str) -> None:
+    """Wait until a connect to `path` is refused, or fail.
+
+    Only `ConnectionRefusedError` is the dead state; every other exception keeps
+    propagating, so a probe that fails for any other reason is a failure, not a
+    pass. The wait exists because a killed server's last descriptor can outlive
+    its process entry: a process-count check reaching zero says nothing about
+    the listening socket still accepting one more connect.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.settimeout(5.0)
+            probe.connect(path)
+        except ConnectionRefusedError:
+            return
+        finally:
+            probe.close()
+        if time.monotonic() >= deadline:
+            raise Failure(what)
+        time.sleep(0.05)
+
+
+def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript: str | None) -> str:
+    """A relaunch over the socket file a killed bridge left behind (#363).
+
+    Closing the terminal kills the group the bridge lives in, so the bridge dies
+    and its socket file stays on disk. A launch that read that file as "the
+    bridge is up" skipped starting a bridge and dialled the dead endpoint, which
+    is the reported `no harness answered at ...horon-agent-api.sock` refusal.
+    """
+
+    def note(line: str) -> None:
+        log(line)
+        if transcript:
+            with open(transcript, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+
+    home = write_config(launch.home, base_url)
+    env = horon_env(case_root, home)
+    env.pop("HORON_NO_TUI", None)
+    api_socket = env["HORON_AGENT_API_SOCKET"]
+
+    first = Terminal([launch.argv0], cwd=case_root, env=env)
+    second = None
+    try:
+        first.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        wait_for_case_bridges(case_root, 1, STEP_TIMEOUT, "one bridge for the first client")
+
+        # A second client must attach to the bridge already serving this case
+        # instead of adding one: the bridge's instance lock is what makes the
+        # on-demand spawn idempotent.
+        second = Terminal([launch.argv0], cwd=case_root, env=env)
+        second.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "second client's first screen")
+        wait_for_case_bridges(case_root, 1, STEP_TIMEOUT, "still one bridge with a second client")
+
+        # The first client still answers while the second one is attached, so
+        # the single bridge really serves both.
+        first.send("ping\r")
+        first.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "the first client still answers")
+
+        # SIGKILL both groups: the bridge dies with the terminal that started it,
+        # the daemon detaches itself with setsid, and the socket file stays.
+        second.close()
+        second = None
+        first.close()
+        first = None
+        wait_for_case_bridges(case_root, 0, STEP_TIMEOUT, "the bridge dies with its terminal")
+
+        # Prove the stale state before launching again, so this case cannot pass
+        # without reproducing the defect it guards.
+        if not os.path.exists(api_socket):
+            raise Failure(f"{api_socket} went away with its bridge: the stale state was not reproduced")
+        # A live bridge keeps answering, so this raises; the stale state only
+        # passes once the endpoint really refuses.
+        wait_for_refused_connect(
+            api_socket,
+            STEP_TIMEOUT,
+            f"{api_socket} still answered after its bridge died: the stale state was not reproduced",
+        )
+        note(f"stale socket reproduced: {api_socket} exists and refuses a connect")
+
+        relaunch = Terminal([launch.argv0], cwd=case_root, env=env)
+        try:
+            relaunch.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen after the stale socket")
+            # The first frame is drawn once the client is connected, which over
+            # a stale socket already says a bridge answered, but not that the
+            # session behind it works. The status line carries `provider/model`
+            # from the harness's session event, so seeing it means data reached
+            # this client through the bridge it started itself: a stronger
+            # proof of recovery than the first frame alone.
+            relaunch.read_until(SESSION_READY, STEP_TIMEOUT, "session ready after the stale socket")
+            relaunch.send("/quit\r")
+            code = relaunch.wait(STEP_TIMEOUT)
+            if code != 0:
+                raise Failure(
+                    f"a relaunch over a stale socket exited {code}\n--- transcript ---\n{relaunch.transcript}"
+                )
+            note("stale socket case passed: the relaunch started a new bridge and exited 0")
+            return relaunch.transcript
+        finally:
+            relaunch.close()
+    finally:
+        if second is not None:
+            second.close()
+        if first is not None:
+            first.close()
+
+
 def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript: str | None) -> int:
     log("case 1: bare horon hands a terminal over to horon-tui")
     launch = build_launch(os.path.join(root, "happy"), agent, tui)
@@ -430,6 +620,15 @@ def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript:
         extra_env={"HORON_NO_TUI": "1"},
     )
     log("case 4 passed")
+
+    log("case 5: a relaunch over the socket file a killed bridge left behind")
+    stale_socket_case(
+        build_launch(os.path.join(root, "dead"), agent, tui),
+        os.path.join(root, "dead"),
+        base_url,
+        transcript,
+    )
+    log("case 5 passed")
     return 0
 
 

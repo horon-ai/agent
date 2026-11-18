@@ -112,6 +112,8 @@ input = ["text", "image"]
 
 `default_model` 한 줄만으로도 호출은 된다. `models` 배열은 컨텍스트 크기와 입력 형식을 알려 모델 선택과 압축 계산을 돕는다.
 
+모델의 `reasoning_effort`는 그 모델이 활성화될 때 적용된다. 세션은 첫 요청 전에 그 값을 보고하고 요청에 실으므로, `/effort`를 실행하지 않아도 상태 줄이 `provider/model · high`를 그리고 값은 프로파일이 쓰는 방식([요청 방식](#요청-방식) 표의 둘째 열)에 맞는 자리에 들어간다. `/effort`, `shift+tab`, 클라이언트의 `set_reasoning_effort` 같은 명시적 지정은 설정 값을 덮어쓰고 유지된다. 그 뒤 다른 모델로 바꾸면 새로 고른 모델이 선언한 값을 받아들이고, 선언이 없는 모델이면 이미 적용 중인 값을 그대로 둔다. 저장소에서 복원한 세션은 설정이 다른 값을 적었더라도 기록해 둔 값을 유지한다.
+
 ## 모델 역할
 
 모델 역할은 세션 모델이 아닌 모델이 필요한 기능들이 함께 쓰는, 작업 이름과 모델의 대응이다. 역할은 설정에만 존재한다. 역할 표가 없는 파일은 이 빌드와 똑같이 모델을 고른다.
@@ -175,7 +177,7 @@ aux = "my-small-model"
 
 ### 구현 주체
 
-#73이 공유 타입을 쓴다. `crates/config-types/src/lib.rs`의 `NamedProviderConfig`에 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
+#73이 공유 타입을 쓴다. `crates/config-types/src/named_provider.rs:150-151`에서 `NamedProviderConfig`로 평면화되는 `roles` 표를 넣고, 모든 호출자가 쓰는 해석 함수 하나를 만든다. #70은 자기 `[prewalk]` 절만 더하고 `into`와 `from`에 그 함수를 부르며 역할을 `role:<name>`으로 적는다(`into = "role:aux"`). 이유: #73은 어차피 `NamedProviderConfig`를 바꾸고 #70의 선언된 의존성이다(`depends_on: [73, 112]`). 구현이 둘이면 서로 어긋나고, `role:` 접두사는 기존 `openai:`와 `<profile>:` 접두사처럼 역할 참조를 모델 id와 구분한다.
 
 역할 설정이 없으면 이 빌드와 정확히 같게 동작한다. `roles` 표도, 새 키도 없고, 기존 사슬이 모델을 고르며, 추가 시도도 없다.
 

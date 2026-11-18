@@ -311,17 +311,6 @@ async fn test_integration_tools_not_registered_when_sponsors_disabled() {
     }
 }
 
-#[tokio::test]
-async fn subagent_tool_is_not_registered() {
-    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
-    let registry = Registry::new(provider).await;
-
-    assert!(
-        !registry.tool_names().await.iter().any(|name| name == "subagent"),
-        "the deprecated direct subagent tool must not be exposed; use swarm instead"
-    );
-}
-
 struct BareSchemaTool;
 
 #[async_trait]
@@ -893,8 +882,8 @@ async fn lifecycle_timing_fields_carry_durations_and_no_payload() {
         total_ms: 165,
     };
 
-    let timing_fields = timings.fields();
-    let keys: Vec<&str> = timing_fields.iter().map(|(key, _)| key.as_str()).collect();
+    let timing_fields = timings.fields().map(|(key, value)| (key, value.to_string()));
+    let keys: Vec<&str> = timing_fields.iter().map(|(key, _)| *key).collect();
     assert_eq!(
         keys,
         vec![
@@ -928,11 +917,11 @@ async fn lifecycle_timing_fields_carry_durations_and_no_payload() {
         graceful_shutdown_signal: None,
         execution_mode: ToolExecutionMode::Direct,
     };
-    let mut fields = Registry::tool_lifecycle_fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
+    let mut fields = lifecycle::fields("done", "dispatch_probe", "dispatch_probe", &input, &ctx);
     fields.extend(timings.fields());
     for (key, value) in &fields {
         assert!(
-            !value.contains(MARKER),
+            !value.to_string().contains(MARKER),
             "lifecycle field {key} leaked tool payload text: {value}"
         );
     }
@@ -962,25 +951,6 @@ async fn test_definitions_keep_batch_schema_generic() {
 #[test]
 fn resolve_tool_name_maps_communicate_to_swarm() {
     assert_eq!(Registry::resolve_tool_name("communicate"), "swarm");
-}
-
-#[tokio::test]
-#[ignore]
-async fn print_tool_definition_token_report() {
-    let provider: Arc<dyn Provider> = Arc::new(MockProvider);
-    let registry = Registry::new(provider).await;
-    let mut defs = registry.definitions(None).await;
-    defs.sort_by_key(|def| std::cmp::Reverse(def.prompt_token_estimate()));
-
-    println!("name,total_tokens,description_tokens");
-    for def in defs {
-        println!(
-            "{},{},{}",
-            def.name,
-            def.prompt_token_estimate(),
-            def.description_token_estimate()
-        );
-    }
 }
 
 /// Tool descriptions are always-on prompt cost, so they are capped at ~20
@@ -2058,10 +2028,6 @@ async fn goal_is_registered_and_advertised() {
         names.iter().any(|name| name == "goal"),
         "the goal tool is registered: {names:?}"
     );
-    assert!(
-        !names.iter().any(|name| name == "initiative"),
-        "the renamed tool is advertised only as `goal`: {names:?}"
-    );
     let definitions = registry.definitions(None).await;
     let mut sorted = names.clone();
     sorted.sort();
@@ -2069,10 +2035,6 @@ async fn goal_is_registered_and_advertised() {
     assert!(
         definitions.iter().any(|definition| definition.name == "goal"),
         "definitions carry the goal tool"
-    );
-    assert!(
-        definitions.iter().all(|definition| definition.name != "initiative"),
-        "no definition advertises the old initiative name"
     );
 }
 

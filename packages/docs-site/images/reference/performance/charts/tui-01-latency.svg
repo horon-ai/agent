@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="842" viewBox="0 0 960 842" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', 'Apple SD Gothic Neo', Helvetica, Arial, sans-serif" role="img">
+<title>TUI latency (ms, lower is better)</title>
+<rect x="0.5" y="0.5" width="959" height="841" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<text x="32.0" y="44.0" font-size="22" fill="#1f2328" text-anchor="start" font-weight="bold">TUI latency (ms, lower is better)</text>
+<text x="32.0" y="68.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">Median per run. `first_frame_ms` is the bare agent until the first screen, `direct_tui` is `horon-tui` started on its</text>
+<text x="32.0" y="86.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">own, `input_echo_p95` is key press to echoed character, and `render` is one drawn frame with 1000 messages.</text>
+<rect x="32" y="118.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="136.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Linux</text>
+<line x1="173.2" y1="158.0" x2="173.2" y2="308.0" stroke="#eaeef2"/>
+<text x="173.2" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="329.4" y1="158.0" x2="329.4" y2="308.0" stroke="#eaeef2"/>
+<text x="329.4" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
+<line x1="485.6" y1="158.0" x2="485.6" y2="308.0" stroke="#eaeef2"/>
+<text x="485.6" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">20</text>
+<line x1="641.8" y1="158.0" x2="641.8" y2="308.0" stroke="#eaeef2"/>
+<text x="641.8" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">30</text>
+<line x1="798.0" y1="158.0" x2="798.0" y2="308.0" stroke="#eaeef2"/>
+<text x="798.0" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">40</text>
+<text x="163.2" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">agent first frame</text>
+<rect x="173.2" y="164.0" width="552.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="734.2" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">35.4</text>
+<text x="163.2" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui first frame</text>
+<rect x="173.2" y="194.0" width="614.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="795.5" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">39.3</text>
+<text x="163.2" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">input echo p95</text>
+<rect x="173.2" y="224.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="183.2" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.11</text>
+<text x="163.2" y="267.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p50</text>
+<rect x="173.2" y="254.0" width="11.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="193.0" y="267.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.75</text>
+<text x="163.2" y="297.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p95</text>
+<rect x="173.2" y="284.0" width="12.1" height="18" rx="3" fill="#d3d9e1"/>
+<text x="193.3" y="297.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.77</text>
+<rect x="32" y="338.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="356.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
+<line x1="173.2" y1="378.0" x2="173.2" y2="528.0" stroke="#eaeef2"/>
+<text x="173.2" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="298.2" y1="378.0" x2="298.2" y2="528.0" stroke="#eaeef2"/>
+<text x="298.2" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">25</text>
+<line x1="423.1" y1="378.0" x2="423.1" y2="528.0" stroke="#eaeef2"/>
+<text x="423.1" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">50</text>
+<line x1="548.1" y1="378.0" x2="548.1" y2="528.0" stroke="#eaeef2"/>
+<text x="548.1" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">75</text>
+<line x1="673.0" y1="378.0" x2="673.0" y2="528.0" stroke="#eaeef2"/>
+<text x="673.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">100</text>
+<line x1="798.0" y1="378.0" x2="798.0" y2="528.0" stroke="#eaeef2"/>
+<text x="798.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">125</text>
+<text x="163.2" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">agent first frame</text>
+<rect x="173.2" y="384.0" width="578.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="759.6" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">116</text>
+<text x="163.2" y="427.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui first frame</text>
+<rect x="173.2" y="414.0" width="369.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="550.7" y="427.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">73.9</text>
+<text x="163.2" y="457.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">input echo p95</text>
+<rect x="173.2" y="444.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="183.2" y="457.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.25</text>
+<text x="163.2" y="487.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p50</text>
+<rect x="173.2" y="474.0" width="4.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="185.7" y="487.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.88</text>
+<text x="163.2" y="517.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p95</text>
+<rect x="173.2" y="504.0" width="11.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="192.7" y="517.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">2.29</text>
+<rect x="32" y="558.0" width="5" height="22" rx="1" fill="#0b84de"/>
+<text x="46.0" y="576.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
+<line x1="173.2" y1="598.0" x2="173.2" y2="748.0" stroke="#eaeef2"/>
+<text x="173.2" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
+<line x1="329.4" y1="598.0" x2="329.4" y2="748.0" stroke="#eaeef2"/>
+<text x="329.4" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0.50</text>
+<line x1="485.6" y1="598.0" x2="485.6" y2="748.0" stroke="#eaeef2"/>
+<text x="485.6" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1</text>
+<line x1="641.8" y1="598.0" x2="641.8" y2="748.0" stroke="#eaeef2"/>
+<text x="641.8" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1.50</text>
+<line x1="798.0" y1="598.0" x2="798.0" y2="748.0" stroke="#eaeef2"/>
+<text x="798.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<text x="163.2" y="617.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">agent first frame</text>
+<rect x="173.2" y="604.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
+<text x="221.2" y="617.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
+<text x="163.2" y="647.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui first frame</text>
+<rect x="173.2" y="634.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
+<text x="221.2" y="647.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
+<text x="163.2" y="677.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">input echo p95</text>
+<rect x="173.2" y="664.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
+<text x="221.2" y="677.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
+<text x="163.2" y="707.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p50</text>
+<rect x="173.2" y="694.0" width="463.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="644.9" y="707.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.48</text>
+<text x="163.2" y="737.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p95</text>
+<rect x="173.2" y="724.0" width="480.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="661.3" y="737.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.54</text>
+<text x="32.0" y="784.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 729624b · measured 2026-11-18 18:24 UTC · run 44366651032</text>
+<text x="32.0" y="802.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
+</svg>

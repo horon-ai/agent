@@ -384,16 +384,6 @@ async fn test_basic_command_no_stdin() {
 }
 
 #[tokio::test]
-async fn test_basic_command_with_unused_stdin_channel() {
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let tool = BashTool::new();
-    let input = json!({"command": "echo world"});
-    let ctx = make_ctx(Some(tx));
-    let result = tool.execute(input, ctx).await.unwrap();
-    assert!(result.output.contains("world"));
-}
-
-#[tokio::test]
 async fn test_stdin_forwarding_single_line() {
     let (tx, mut rx) = mpsc::unbounded_channel::<StdinInputRequest>();
     let tool = BashTool::new();

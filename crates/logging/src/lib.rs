@@ -4,11 +4,14 @@
 //!
 //! Supports thread-local context for server, session, provider, and model info.
 
+mod event_buffer;
 pub mod watchdog;
 
-use chrono::Local;
+use horon_agent_time::{Calendar, Timestamp};
+use std::borrow::Cow;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -18,7 +21,7 @@ use std::time::{Duration, Instant};
 
 static LOGGER: Mutex<Option<Logger>> = Mutex::new(None);
 static CLEANUP_STARTED: AtomicBool = AtomicBool::new(false);
-static TASK_LOG_CONTEXTS: OnceLock<Mutex<HashMap<String, TaskLogContext>>> = OnceLock::new();
+static TASK_LOG_CONTEXTS: OnceLock<Mutex<HashMap<tokio::task::Id, TaskLogContext>>> = OnceLock::new();
 static RATE_LIMITS: OnceLock<Mutex<HashMap<String, RateLimitState>>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,21 +108,24 @@ pub fn set_provider_info(provider: &str, model: &str) {
     });
 }
 
-/// Get the current context as a prefix string
-fn context_prefix() -> String {
-    if let Some(task_ctx) = task_context_snapshot() {
-        return context_prefix_for(&task_ctx);
+/// Append the current context as a line prefix: the task's context when the
+/// running task has one, the thread's otherwise.
+fn push_context_prefix(line: &mut String) {
+    if let Some(task_id) = tokio::task::try_id()
+        && let Some(store) = TASK_LOG_CONTEXTS.get()
+        && let Ok(mut contexts) = store.lock()
+        && let Some(entry) = contexts.get_mut(&task_id)
+    {
+        entry.last_used = Instant::now();
+        push_context_prefix_for(line, &entry.context);
+        return;
     }
 
-    LOG_CONTEXT.with(|c| context_prefix_for(&c.borrow()))
-}
-
-fn current_task_id() -> Option<String> {
-    tokio::task::try_id().map(|id| id.to_string())
+    LOG_CONTEXT.with(|c| push_context_prefix_for(line, &c.borrow()));
 }
 
 fn with_task_context_mut(update: impl FnOnce(&mut LogContext)) -> bool {
-    let Some(task_id) = current_task_id() else {
+    let Some(task_id) = tokio::task::try_id() else {
         return false;
     };
 
@@ -151,7 +157,7 @@ struct TaskLogContext {
     last_used: Instant,
 }
 
-fn evict_stale_task_contexts(contexts: &mut HashMap<String, TaskLogContext>) {
+fn evict_stale_task_contexts<K>(contexts: &mut HashMap<K, TaskLogContext>) {
     let mut ages: Vec<Instant> = contexts.values().map(|entry| entry.last_used).collect();
     ages.sort_unstable();
     let cutoff = ages[ages.len() / 2];
@@ -159,7 +165,7 @@ fn evict_stale_task_contexts(contexts: &mut HashMap<String, TaskLogContext>) {
 }
 
 fn task_context_snapshot() -> Option<LogContext> {
-    let task_id = current_task_id()?;
+    let task_id = tokio::task::try_id()?;
     let store = TASK_LOG_CONTEXTS.get()?;
     let mut contexts = store.lock().ok()?;
     let entry = contexts.get_mut(&task_id)?;
@@ -173,35 +179,108 @@ pub fn current_context_snapshot() -> LogContext {
     task_context_snapshot().unwrap_or_else(|| LOG_CONTEXT.with(|c| c.borrow().clone()))
 }
 
-fn context_prefix_for(ctx: &LogContext) -> String {
-    let mut parts = Vec::new();
+fn push_context_prefix_for(line: &mut String, ctx: &LogContext) {
+    let start = line.len();
+    let mut push_part = |label: &str, value: &str| {
+        line.push(if line.len() == start { '[' } else { '|' });
+        line.push_str(label);
+        line.push_str(value);
+    };
 
     if let Some(ref server) = ctx.server {
-        parts.push(format!("srv:{}", server));
+        push_part("srv:", server);
     }
     if let Some(ref session) = ctx.session {
         // Truncate session name if too long
         let short = if session.len() > 20 { &session[..20] } else { session };
-        parts.push(format!("ses:{}", short));
+        push_part("ses:", short);
     }
     if let Some(ref provider) = ctx.provider {
-        parts.push(format!("prv:{}", provider));
+        push_part("prv:", provider);
     }
     if let Some(ref model) = ctx.model {
         // Just use first part of model name
         let short = model.split('-').next().unwrap_or(model);
-        parts.push(format!("mod:{}", short));
+        push_part("mod:", short);
     }
 
-    if parts.is_empty() {
-        String::new()
-    } else {
-        format!("[{}] ", parts.join("|"))
+    if line.len() != start {
+        line.push_str("] ");
     }
+}
+
+/// Append `value` in decimal, zero-padded to `width` digits.
+///
+/// A value with more digits than `width` keeps all of them.
+fn push_padded(line: &mut String, value: u32, width: u32) {
+    let mut digits = [0_u8; 10];
+    let mut start = digits.len();
+    let mut rest = value;
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    while digits.len() - start < width as usize {
+        start -= 1;
+        digits[start] = b'0';
+    }
+    for digit in &digits[start..] {
+        line.push(char::from(*digit));
+    }
+}
+
+/// Append `year` the way the log format has always printed it: four digits
+/// zero-padded inside `0..=9999`, and a mandatory sign plus four digits
+/// otherwise.
+fn push_padded_year(line: &mut String, year: i32) {
+    if (0..10_000).contains(&year) {
+        push_padded(line, year as u32, 4);
+        return;
+    }
+    line.push(if year < 0 { '-' } else { '+' });
+    push_padded(line, year.unsigned_abs(), 4);
+}
+
+/// Append `calendar` in the local log form `YYYY-MM-DD HH:MM:SS.mmm`.
+///
+/// Written by hand because the `time` formatter renders into a `String` it has
+/// to build on every line, while the logger keeps this `String` across writes.
+///
+/// [`Calendar`] is the one decomposition of the instant: it already carries a
+/// leap second as `:60` on its own date, so the seconds field is printed as
+/// stored instead of adding the leaping nanosecond back here.
+fn push_timestamp(line: &mut String, calendar: &Calendar) {
+    push_padded_year(line, calendar.year);
+    line.push('-');
+    push_padded(line, u32::from(calendar.month), 2);
+    line.push('-');
+    push_padded(line, u32::from(calendar.day), 2);
+    line.push(' ');
+    push_padded(line, u32::from(calendar.hour), 2);
+    line.push(':');
+    push_padded(line, u32::from(calendar.minute), 2);
+    line.push(':');
+    push_padded(line, u32::from(calendar.second), 2);
+    line.push('.');
+    push_padded(line, calendar.nanosecond / 1_000_000, 3);
+}
+
+/// The date stamp (`YYYY-MM-DD`) of the log file for this moment.
+///
+/// `Calendar::date` is the same ISO 8601 text the previous formatter produced,
+/// including the sign on a year outside `0..=9999`.
+fn log_date_stamp(now: Timestamp) -> Option<String> {
+    Some(now.calendar_local().0.date())
 }
 
 pub struct Logger {
     file: File,
+    /// The line being written, kept between writes.
+    line: String,
 }
 
 fn log_dir() -> Option<PathBuf> {
@@ -214,19 +293,33 @@ impl Logger {
         horon_agent_storage::ensure_dir(&log_dir).ok()?;
 
         // Use date-based log file
-        let date = Local::now().format("%Y-%m-%d");
+        let date = log_date_stamp(Timestamp::now())?;
         let path = log_dir.join(format!("horon-agent-{}.log", date));
 
         let file = OpenOptions::new().create(true).append(true).open(&path).ok()?;
 
-        Some(Self { file })
+        Some(Self {
+            file,
+            line: String::new(),
+        })
     }
 
     fn write(&mut self, level: &str, message: &str) {
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-        let ctx = context_prefix();
-        let line = format!("[{}] [{}] {}{}\n", timestamp, level, ctx, message);
-        if let Err(err) = self.file.write_all(line.as_bytes()) {
+        let mut line = std::mem::take(&mut self.line);
+        line.clear();
+        line.push('[');
+        push_timestamp(&mut line, &Timestamp::now().calendar_local().0);
+        line.push_str("] [");
+        line.push_str(level);
+        line.push_str("] ");
+        push_context_prefix(&mut line);
+        line.push_str(message);
+        line.push('\n');
+        let written = self.file.write_all(line.as_bytes());
+        if line.capacity() <= event_buffer::MAX_KEPT_BYTES {
+            self.line = line;
+        }
+        if let Err(err) = written {
             eprintln!("horon-agent logger write failed: {err}");
             return;
         }
@@ -350,7 +443,7 @@ pub fn debug(message: &str) {
 pub fn event_info<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Info, event_name, fields);
@@ -359,7 +452,7 @@ where
 pub fn event_warn<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Warn, event_name, fields);
@@ -368,7 +461,7 @@ where
 pub fn event_error<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Error, event_name, fields);
@@ -377,7 +470,7 @@ where
 pub fn event_debug<K, V, I>(event_name: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     event(LogLevel::Debug, event_name, fields);
@@ -386,19 +479,19 @@ where
 pub fn event<K, V, I>(level: LogLevel, event: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     if !level.is_enabled() {
         return;
     }
-    write_level(level, &format_structured_event(event, fields));
+    write_event(level, event, fields);
 }
 
 pub fn event_rate_limited<K, V, I>(level: LogLevel, rate_key: &str, min_interval: Duration, event: &str, fields: I)
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
     if !level.is_enabled() {
@@ -445,7 +538,7 @@ where
     if suppressed > 0 {
         fields.push(("suppressed".to_string(), suppressed.to_string()));
     }
-    write_level(level, &format_structured_event(event, fields));
+    write_event(level, event, fields);
 }
 
 fn write_level(level: LogLevel, message: &str) {
@@ -456,38 +549,41 @@ fn write_level(level: LogLevel, message: &str) {
     }
 }
 
+/// Assemble one structured line in this thread's kept buffers and write it.
+fn write_event<K, V, I>(level: LogLevel, event: &str, fields: I)
+where
+    K: AsRef<str>,
+    V: Display,
+    I: IntoIterator<Item = (K, V)>,
+{
+    event_buffer::with_event_buffers(|buffers| {
+        buffers.compose(structured_json_enabled(), event, fields);
+        write_level(level, buffers.message());
+    });
+}
+
+#[cfg(test)]
 fn format_structured_event<K, V, I>(event: &str, fields: I) -> String
 where
     K: AsRef<str>,
-    V: ToString,
+    V: Display,
     I: IntoIterator<Item = (K, V)>,
 {
-    let event = sanitize_log_value(event);
-    let mut ordered = BTreeMap::new();
-    for (key, value) in fields {
-        let raw_key = key.as_ref();
-        let key = sanitize_log_key(raw_key);
-        let value = redact_auth_field(raw_key, &value.to_string());
-        ordered.insert(key, value);
-    }
+    format_structured_event_as(structured_json_enabled(), event, fields)
+}
 
-    if structured_json_enabled() {
-        let mut object = serde_json::Map::new();
-        object.insert("event".to_string(), serde_json::Value::String(event));
-        for (key, value) in ordered {
-            object.insert(key, serde_json::Value::String(value));
-        }
-        return format!("EVENT_JSON {}", serde_json::Value::Object(object));
-    }
-
-    let mut parts = Vec::with_capacity(ordered.len() + 1);
-    parts.push(format!("event={}", format_log_field_value(&event)));
-    parts.extend(
-        ordered
-            .into_iter()
-            .map(|(key, value)| format!("{}={}", key, format_log_field_value(&value))),
-    );
-    format!("EVENT {}", parts.join(" "))
+/// The line [`write_event`] would write, as JSON or as `key=value` text.
+#[cfg(test)]
+fn format_structured_event_as<K, V, I>(json: bool, event: &str, fields: I) -> String
+where
+    K: AsRef<str>,
+    V: Display,
+    I: IntoIterator<Item = (K, V)>,
+{
+    event_buffer::with_event_buffers(|buffers| {
+        buffers.compose(json, event, fields);
+        buffers.take_message()
+    })
 }
 
 fn structured_json_enabled() -> bool {
@@ -497,33 +593,30 @@ fn structured_json_enabled() -> bool {
     )
 }
 
-fn sanitize_log_key(key: &str) -> String {
-    let sanitized: String = key
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if sanitized.is_empty() {
+fn sanitize_log_key(key: &str) -> Cow<'_, str> {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.';
+    if !key.is_empty() && key.len() <= MAX_LOG_KEY_BYTES && key.chars().all(allowed) {
+        return Cow::Borrowed(key);
+    }
+    let sanitized: String = key.chars().map(|c| if allowed(c) { c } else { '_' }).collect();
+    Cow::Owned(if sanitized.is_empty() {
         "field".to_string()
     } else {
-        truncate(&sanitized, 80)
-    }
+        truncate(&sanitized, MAX_LOG_KEY_BYTES)
+    })
 }
 
-fn format_log_field_value(value: &str) -> String {
+/// Append a value, JSON-quoted when it is empty or holds whitespace, `=` or a
+/// quote.
+fn push_log_field_value(line: &mut String, value: &str) {
     if value.is_empty()
         || value
             .chars()
             .any(|c| c.is_whitespace() || c == '=' || c == '"' || c == '\'')
     {
-        serde_json::to_string(value).unwrap_or_else(|_| "\"<unserializable>\"".to_string())
+        line.push_str(&serde_json::to_string(value).unwrap_or_else(|_| "\"<unserializable>\"".to_string()));
     } else {
-        value.to_string()
+        line.push_str(value);
     }
 }
 
@@ -592,7 +685,7 @@ pub fn current_session() -> Option<String> {
 /// Get path to today's log file
 pub fn log_path() -> Option<PathBuf> {
     let log_dir = log_dir()?;
-    let date = Local::now().format("%Y-%m-%d");
+    let date = log_date_stamp(Timestamp::now())?;
     Some(log_dir.join(format!("horon-agent-{}.log", date)))
 }
 
@@ -603,17 +696,17 @@ pub fn log_path() -> Option<PathBuf> {
 /// that must NOT be touched here, so we never blanket-delete by mtime.
 pub fn cleanup_old_logs() {
     if let Some(log_dir) = log_dir() {
-        cleanup_old_logs_in(&log_dir, Local::now());
+        cleanup_old_logs_in(&log_dir, Timestamp::now());
     }
 }
 
 /// Core of [`cleanup_old_logs`], parameterized on the directory and "now" so it
 /// can be unit-tested without touching the real log directory or process env.
-fn cleanup_old_logs_in(log_dir: &std::path::Path, now: chrono::DateTime<Local>) {
+fn cleanup_old_logs_in(log_dir: &std::path::Path, now: Timestamp) {
     let Ok(entries) = fs::read_dir(log_dir) else {
         return;
     };
-    let cutoff = now - chrono::Duration::days(7);
+    let cutoff = now - horon_agent_time::Duration::days(7);
     for entry in entries.flatten() {
         // Only consider our own date-stamped log files.
         let name = entry.file_name();
@@ -628,7 +721,7 @@ fn cleanup_old_logs_in(log_dir: &std::path::Path, now: chrono::DateTime<Local>) 
             && metadata.is_file()
             && let Ok(modified) = metadata.modified()
         {
-            let modified: chrono::DateTime<Local> = modified.into();
+            let modified = Timestamp::from(modified);
             if modified < cutoff
                 && let Err(err) = fs::remove_file(entry.path())
             {
@@ -646,28 +739,42 @@ fn truncate(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Whether a field name looks credential-like, compared without regard to
+/// ASCII case.
+fn is_credential_key(key: &str) -> bool {
+    const MARKERS: [&str; 10] = [
+        "token",
+        "secret",
+        "key",
+        "credential",
+        "callback",
+        "authorization",
+        "auth_code",
+        "oauth_code",
+        "code_verifier",
+        "code_challenge",
+    ];
+    let key = key.as_bytes();
+    MARKERS.iter().any(|marker| {
+        key.windows(marker.len())
+            .any(|window| window.eq_ignore_ascii_case(marker.as_bytes()))
+    })
+}
+
 fn redact_auth_field(key: &str, value: &str) -> String {
-    let key = key.to_ascii_lowercase();
-    if key.contains("token")
-        || key.contains("secret")
-        || key.contains("key")
-        || key.contains("credential")
-        || key.contains("callback")
-        || key.contains("authorization")
-        || key.contains("auth_code")
-        || key.contains("oauth_code")
-        || key.contains("code_verifier")
-        || key.contains("code_challenge")
-    {
+    if is_credential_key(key) {
         return "<redacted>".to_string();
     }
     sanitize_log_value(value)
 }
 
+const MAX_LOG_KEY_BYTES: usize = 80;
+const MAX_LOG_VALUE_BYTES: usize = 160;
+
 fn sanitize_log_value(value: &str) -> String {
     let value = value.replace(['\n', '\r', '\t'], " ");
     let value = redact_url_queries(&value);
-    truncate(&value, 160)
+    truncate(&value, MAX_LOG_VALUE_BYTES)
 }
 
 fn redact_url_queries(value: &str) -> String {
@@ -831,7 +938,7 @@ mod tests {
         let subdir = dir.join("memory");
         fs::create_dir_all(&subdir).expect("create subdir");
 
-        cleanup_old_logs_in(&dir, Local::now());
+        cleanup_old_logs_in(&dir, Timestamp::now());
 
         assert!(!old_log.exists(), "old horon-agent log should be deleted");
         assert!(!old_desktop.exists(), "old desktop log should be deleted");
@@ -842,4 +949,79 @@ mod tests {
 
         fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn timestamp_text_keeps_the_log_format() {
+        let cases = [
+            ((2026, 11, 16, 9, 5, 7, 4_000_000_u32), "2026-11-16 09:05:07.004"),
+            ((1999, 12, 31, 23, 59, 59, 999_999_999), "1999-12-31 23:59:59.999"),
+            ((987, 1, 2, 0, 0, 0, 0), "0987-01-02 00:00:00.000"),
+            // A leap second is its own 60th second, on the same date.
+            ((2016, 12, 31, 23, 59, 60, 500_000_000), "2016-12-31 23:59:60.500"),
+            // An extended year keeps its mandatory sign and four digits.
+            ((12345, 6, 7, 8, 9, 10, 11_000_000), "+12345-06-07 08:09:10.011"),
+            ((-44, 3, 15, 12, 0, 0, 0), "-0044-03-15 12:00:00.000"),
+        ];
+        for ((year, month, day, hour, minute, second, nanosecond), expected) in cases {
+            let mut line = String::new();
+            push_timestamp(
+                &mut line,
+                &Calendar {
+                    year,
+                    month,
+                    day,
+                    hour,
+                    minute,
+                    second,
+                    nanosecond,
+                },
+            );
+            assert_eq!(line, expected);
+        }
+    }
+
+    #[test]
+    fn timestamp_text_agrees_with_the_calendar_fields() {
+        let at = Timestamp::from_timestamp(1_763_280_000, 4_000_000).expect("a valid instant");
+        let calendar = at.calendar_local().0;
+        let expected = format!(
+            "{} {:02}:{:02}:{:02}.{:03}",
+            calendar.date(),
+            calendar.hour,
+            calendar.minute,
+            calendar.second,
+            calendar.nanosecond / 1_000_000,
+        );
+        let mut line = String::new();
+        push_timestamp(&mut line, &calendar);
+        assert_eq!(line, expected);
+    }
+
+    #[test]
+    fn context_prefix_text_keeps_its_shape() {
+        let mut line = String::from("x");
+        push_context_prefix_for(&mut line, &LogContext::default());
+        assert_eq!(line, "x");
+
+        let full = LogContext {
+            server: Some("main".to_string()),
+            session: Some("session-0123456789abcdef".to_string()),
+            provider: Some("openai".to_string()),
+            model: Some("gpt-5-mini".to_string()),
+        };
+        push_context_prefix_for(&mut line, &full);
+        assert_eq!(line, "x[srv:main|ses:session-0123456789ab|prv:openai|mod:gpt] ");
+
+        let mut line = String::new();
+        let partial = LogContext {
+            session: Some("short".to_string()),
+            ..LogContext::default()
+        };
+        push_context_prefix_for(&mut line, &partial);
+        assert_eq!(line, "[ses:short] ");
+    }
 }
+
+#[cfg(test)]
+#[path = "structured_line_tests.rs"]
+mod structured_line_tests;

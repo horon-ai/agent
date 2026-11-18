@@ -6,14 +6,14 @@ Language: **English** | [한국어](CRATES.ko.md)
 
 ## One engine, two binaries
 
-The workspace builds two executables from one engine. The split is the rule, not a build option: the agent binary `horon-agent` must never link terminal libraries, and the client must never grow its own engine.
+The workspace ships two executables built from one engine. The split is the rule, not a build option: the agent binary `horon-agent` must never link terminal libraries, and the client must never grow its own engine. A third bin target, `horon-agent-harness-api-bridge`, exists in `crates/harness-api-server` as a compatibility launcher for older installations; the released artifact carries only `horon-agent` and `horon-tui` and reaches the same bridge through `horon-agent api-bridge`.
 
 | Crate | Package | Binary | Owns |
 | --- | --- | --- | --- |
 | root (`src/`) | `horon-agent` | `horon-agent` | The agent loop, the daemon, the harness API bridge, the ACP adapter and the stdio RPC adapter. No `ratatui`, `crossterm` or `horon-tui` in its graph. |
 | `crates/agent-sdk` | `horon-agent-sdk` | — | The client contract: request and event types, the socket transport, reconnection. Nothing renders. |
 | `crates/harness-api` | `horon-agent-harness-api` | — | Harness API v1 request and event surface with its schema snapshots. |
-| `crates/harness-api-server` | `horon-agent-harness-api-server` | — | The bridge and translate layer between the daemon and the harness API. |
+| `crates/harness-api-server` | `horon-agent-harness-api-server` | `horon-agent-harness-api-bridge` | The bridge and translate layer between the daemon and the harness API. The shipped `horon-agent` binary hosts the same bridge as the `api-bridge` subcommand, and the standalone binary stays for older installations the SDK still looks for. |
 | `crates/tui` | `horon-tui` | `horon-tui` | The terminal client: transcript, input, approval prompt, settings screen, themes and key bindings. It depends on `horon-agent-sdk` and nothing of the engine. |
 
 `scripts/ci/check_headless_graph.py` walks every package reachable from `horon-agent` and fails on `ratatui`, `crossterm`, `horon-tui` and the `horon-agent-tui*` prefix, so the boundary is enforced rather than reviewed. The client is built with its own cargo invocation so its feature set never unifies into the `horon-agent` package, and `horon-agent` launches it by replacing its own process on a terminal (`src/cli/tui_handoff.rs`); [runtime/TUI.md](../runtime/TUI.md) documents that handoff and the client's user files.
@@ -170,7 +170,7 @@ A `*-types` crate holds:
 - Pure data structures shared by several crates or protocol layers.
 - Serialization shapes and small pure helper methods tied to the data contract.
 - No file system, network, process, TUI, provider client, global state, or storage access.
-- Dependencies limited to serde, chrono, and other type crates where needed.
+- Dependencies are limited to serde and shared data contracts. `horon-agent-time` (`crates/time-types`) owns the UTC timestamp used in stored records and wire messages, including fractional precision and leap-second spelling.
 
 Examples: `horon-agent-session-types`, `horon-agent-background-types`, `horon-agent-todo-policy`.
 
@@ -230,7 +230,7 @@ Use this checklist every time you move a type or pure helper. When the move is n
    - [ ] Can the root keep a compatibility re-export?
 3. Check the crate's state.
    - [ ] Does the target crate already have the needed dependency policy?
-   - [ ] Are new dependencies limited to libraries that fit a type crate, usually `serde`, `serde_json`, `chrono`, or a sibling type crate?
+   - [ ] Are new dependencies limited to libraries that fit a type crate, usually `serde`, `serde_json`, `horon-agent-time`, or a sibling type crate?
    - [ ] Does the target crate still have no circular dependency?
    - [ ] Did `cargo metadata` and `cargo check` avoid pulling root, TUI, provider, storage, server, or process dependencies into the type crate?
 4. Verify.
@@ -494,11 +494,13 @@ These boundaries hold when you move crates or widen the tool surface. Each item 
 ### The auto-continue budget belongs to turn state and is capped
 
 - The auto-continue budget lives in `TurnState` and returns to 0 on each new turn
-  (`crates/agent-runtime/src/turn_state_tests.rs:20-26`).
+  (`crates/agent-runtime/src/turn_state_tests.rs:201-208`).
 - The cap is 2 (`crates/agent-runtime/src/turn_recovery.rs:31`).
 - The auto-continue decision for an unexpected stop uses the same function in both turn loops (sequential and streaming)
-  (`crates/app-core/src/agent/turn_loops.rs:1392-1396`,
-  `crates/app-core/src/agent/interrupts.rs:679-683`).
+  (`crates/app-core/src/agent/turn_loops.rs:1522`,
+  `crates/app-core/src/agent/interrupts.rs:867`). Both call
+  `maybe_auto_continue_unexpected_stop`, which is defined in
+  `crates/app-core/src/agent/turn_recovery_wiring.rs:127`.
 
 ### Queue consumption commits memory and disk together
 

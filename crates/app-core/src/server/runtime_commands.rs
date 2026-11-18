@@ -413,6 +413,16 @@ mod tests {
             if command == RuntimeCommand::Context {
                 assert!(data.get("messages").is_some());
                 assert!(data["system_prompt"]["pending_memory_included"] == false);
+                // The breakdown the TUI draws: the prompt and the tool catalog
+                // cost something even before a turn, and the conversation it
+                // also prints is priced from its content blocks.
+                let tokens = &data["tokens"];
+                assert!(tokens["system"]["total"].as_u64().unwrap_or(0) > 0, "{tokens}");
+                assert!(tokens["tools"]["count"].as_u64().unwrap_or(0) > 0, "{tokens}");
+                assert!(tokens["tools"]["total"].as_u64().unwrap_or(0) > 0, "{tokens}");
+                assert_eq!(tokens["messages"]["count"].as_u64(), Some(0), "{tokens}");
+                assert_eq!(tokens["messages"]["total"].as_u64(), Some(0), "{tokens}");
+                assert_eq!(tokens["context_window"], data["context_window"], "{tokens}");
             }
         }
         execute(

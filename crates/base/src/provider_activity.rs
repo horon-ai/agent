@@ -18,7 +18,6 @@
 //!   - `openrouter`, `horon-agent`, `copilot`, `gemini`, `cursor`, `bedrock`,
 //!     `antigravity`, `azure-openai`
 
-use chrono::{Datelike, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -84,13 +83,13 @@ fn save_store(store: &ProviderActivityStore) {
 }
 
 fn now_unix_secs() -> u64 {
-    Utc::now().timestamp().max(0) as u64
+    horon_agent_time::Timestamp::now().timestamp().max(0) as u64
 }
 
 fn roll_spend(spend: &mut ProviderSpend) {
-    let now = Utc::now();
-    let today = now.format("%Y-%m-%d").to_string();
-    let month = format!("{}-{:02}", now.year(), now.month());
+    let now = horon_agent_time::Timestamp::now();
+    let today = crate::util::utc_date(now);
+    let month = crate::util::utc_month(now);
     if spend.day_date != today {
         spend.day_date = today;
         spend.day_usd = 0.0;

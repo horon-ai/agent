@@ -4,7 +4,7 @@
 //!
 //! `negotiate` and `shapes` touch no connection: each function takes plain
 //! values and returns one JSON value, and `tests.rs` validates every builder
-//! against the vendored `schema-v2.0.0-alpha.13` fixture. `prompt` and `state`
+//! against the vendored `schema-v2.0.0-alpha.16` fixture. `prompt` and `state`
 //! run a v2 session's prompts and its ordered update stream, `foreground` holds
 //! the state rules those updates follow, `replay` rebuilds a stored
 //! conversation for `session/resume`, `cancel` serves `tool_call/cancel`

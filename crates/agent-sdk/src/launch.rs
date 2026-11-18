@@ -499,9 +499,14 @@ fn ensure_instance_directory(root: &Path, relative: &Path) -> Result<PathBuf> {
 /// Progress while a shared runtime comes up.
 pub type Progress<'a> = dyn Fn(&str) + 'a;
 
-/// Whether anything is listening on a socket path.
+/// Whether anything is listening on a socket path right now.
+///
+/// A dead owner leaves its Unix socket file behind and nothing removes it, so
+/// the path existing proves nothing: a client that trusted it dialled a dead
+/// endpoint and reported "no harness answered". The transport probes instead,
+/// and on Windows the same name answers from the pipe's own presence probe.
 pub fn socket_accepts(path: &Path) -> bool {
-    horon_agent_transport::is_socket_path(path)
+    horon_agent_transport::socket_has_listener(path)
 }
 
 /// Locate a sibling executable next to our own, falling back to `$PATH`.
@@ -982,5 +987,33 @@ mod tests {
             .expect("a runtime that exits should fail startup");
         assert_eq!(error.kind, ErrorKind::StartupFailed);
         assert!(daemon.is_running(), "failed launch stopped a daemon it did not start");
+    }
+
+    /// The defect behind the reported "no harness answered" launch: the bridge
+    /// was killed with its terminal, the socket file stayed, and the next launch
+    /// skipped the bridge because the node existed.
+    #[test]
+    fn stale_socket_file_is_not_a_live_endpoint() {
+        let sandbox = tempfile::tempdir().expect("sandbox");
+        // A short name: macOS refuses a socket path near the 104-byte SUN_LEN.
+        let socket = sandbox.path().join("api.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind a socket");
+        drop(listener);
+        assert!(
+            socket.exists(),
+            "the socket node should outlive the listener that bound it"
+        );
+        assert!(
+            !socket_accepts(&socket),
+            "a socket node whose owner is gone was reported as a live endpoint"
+        );
+    }
+
+    #[test]
+    fn a_bound_listener_is_a_live_endpoint() {
+        let sandbox = tempfile::tempdir().expect("sandbox");
+        let socket = sandbox.path().join("api.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind a socket");
+        assert!(socket_accepts(&socket), "a bound listener was reported as absent");
     }
 }

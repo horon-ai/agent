@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: Chat Completions, Responses, Anthropic, Gemini 엔드포인트를 쓰는 코딩 에이전트" width="720">
+  <img src="docs/assets/hero.svg" alt="horon agent: 헤드리스와 TUI 두 모드가 동등한 에이전트 하나. Chat Completions, Responses, Anthropic Messages, Gemini generateContent 엔드포인트를 쓴다" width="720">
 </p>
 
 <p align="center">
@@ -17,9 +17,11 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent는 프로파일의 `type`이 고르는 네 가지 모델 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 말하는 헤드리스 코딩 에이전트다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다. 데몬 하나가 모든 클라이언트에 답하고, 한 번만 실행하는 명령과 SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램, 터미널 클라이언트 `horon-tui`가 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 누가 에이전트를 움직이느냐뿐이다.
+horon agent는 엔진 하나 위에 동등한 모드 두 개를 둔 에이전트다. 헤드리스 모드에서는 프로그램이 세션을 움직인다. 한 번만 실행하는 명령, SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램이 여기에 속한다. TUI 모드에서는 사람이 터미널 클라이언트 `horon-tui`로 직접 움직인다. 두 모드는 같은 데몬에 붙어 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 반대편에 누가 있느냐뿐이고, 어느 쪽도 다른 쪽의 축소판이 아니다.
 
-에이전트 바이너리는 `horon-agent`이고 스스로 터미널 화면을 그리지 않는다. 터미널 클라이언트 `horon-tui`는 에이전트 SDK 위에 만든 별도 패키지이며, 같은 릴리스 태그에서 자체 압축 파일로 나온다.
+모델은 프로파일의 `type`이 고르는 네 가지 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 부른다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다.
+
+릴리스마다 같은 태그에서 빌드한 바이너리 두 개가 나온다. 에이전트 바이너리 `horon-agent`는 헤드리스 모드를 맡고 두 모드가 붙는 데몬을 돌리며, 전체 화면 터미널 UI를 그리지 않는다. TUI 바이너리 `horon-tui`는 에이전트 SDK 위에 만든 별도 패키지이고, 에이전트 옆에 자체 압축 파일로 나온다.
 
 | 모드 | 누가 움직이나 | 진입 명령 |
 | --- | --- | --- |
@@ -92,7 +94,7 @@ horon run "summarize this repo"
 
 ## 실행 방법
 
-인자 없는 `horon`만 TUI 모드를 열고, 아래 하위 명령은 모두 헤드리스 모드다. `horon repl`은 전체 화면 클라이언트 없이 쓰려는 사람을 위해 에이전트 바이너리가 직접 제공하는 단순한 줄 입력 프롬프트다.
+인자 없는 `horon`만 TUI 모드를 열고, 아래 하위 명령은 모두 헤드리스 모드다. `horon repl`은 전체 화면 클라이언트 없이 쓰려는 사람을 위해 에이전트 바이너리가 직접 제공하는 단순한 줄 단위 입력 프롬프트다.
 
 | 명령 | 하는 일 |
 | --- | --- |
@@ -108,7 +110,7 @@ horon run "summarize this repo"
 
 ### 터미널 클라이언트
 
-`horon-tui`가 TUI 모드다. 대화 기록 창, 한 줄 입력, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이고 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 바이너리에 들어가지 않는다.
+`horon-tui`가 TUI 모드다. 거슬러 읽을 수 있고 모델의 마크다운을 렌더링하는 대화 기록 창, 여덟 행까지 자라는 여러 줄 편집기, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, 모델·세션 선택 목록, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이고 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 바이너리에 들어가지 않는다.
 
 터미널에서 `horon`, `hrn`, `horon-agent`를 인자 없이 실행하면 시작한다. 서버가 없으면 띄운 뒤 자기 프로세스를 에이전트 옆의 `horon-tui`로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬다면 세션 번호도 넘긴다. 먼저 조건 셋을 확인한다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션이면 클라이언트 대신 그 문장을 남기므로 스크립트와 CI는 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고, 대화형 클라이언트 설치 명령을 안내한 뒤 0이 아닌 코드로 끝난다.
 
@@ -165,26 +167,27 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
   <img src="docs/assets/architecture.svg" alt="구조: SDK와 ACP로 연결한 에디터는 하네스 API와 ACP 어댑터로, 터미널 클라이언트 horon-tui도 같은 경로로 에이전트 데몬에 닿고, 인자 없는 run은 에이전트를 프로세스 안에서 돌린다. 데몬은 세션을 이벤트 로그에 저장하며 프로파일의 엔드포인트를 직접 호출한다" width="860">
 </p>
 
-크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다. 헤드리스 그래프 규칙은 CI에서 `scripts/ci/check_headless_graph.py`가 확인하며, `horon-agent`에서 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트 중 하나라도 닿으면 실패한다.
+크레이트 경계와 플랫폼 어댑터는 [docs/architecture/CRATES.ko.md](docs/architecture/CRATES.ko.md), 데몬·세션·소켓은 [docs/architecture/SERVER.ko.md](docs/architecture/SERVER.ko.md)에 있다. 터미널 라이브러리가 에이전트 바이너리에 들어오지 않도록 CI에서 `scripts/ci/check_headless_graph.py`가 확인하며, `horon-agent`에서 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 크레이트 중 하나라도 닿으면 실패한다.
 
 ## 벤치마크
 
-`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `805b408`로 jcode v0.99.1과 비교해 한 턴을 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. OS마다 기계가 다르므로 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
+`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `729624b`(2026-11-18 측정)로 다른 에이전트 일곱 개와 비교해 한 턴을 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. 아래 표는 가장 가까운 경쟁 도구인 jcode v0.99.1과 비교한다. OS마다 기계가 다르므로 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
 
 <p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 55.9 ms, jcode 140.8 ms. macOS: horon 103.3 ms, jcode 413.7 ms. Windows: horon 208.5 ms, jcode 153.3 ms" width="780">
+  <img src="docs/performance/charts/03-oneshot-time.svg" alt="에이전트 여덟 개의 OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 42.5 ms, jcode 138 ms. macOS: horon 88.1 ms, jcode 377 ms. Windows: horon 142 ms, jcode 128 ms" width="780">
 </p>
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| 한 턴 실행, 중앙값 | 55.9 ms | 140.8 ms |
-| 스킬 호출, 중앙값 | 53.3 ms | 121.5 ms |
-| MCP 도구 호출, 중앙값 | 66.4 ms | 313.5 ms |
-| 한 턴 최대 프로세스 트리 RSS | 47.5 MB | 42.2 MB |
-| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 137.8 KB | 129.8 KB |
-| 설치 크기 | 114.5 MB | 163.4 MB |
+| 한 턴 실행, 중앙값 | 42.5 ms | 138.0 ms |
+| 스킬 호출, 중앙값 | 38.0 ms | 53.1 ms |
+| MCP 도구 호출, 중앙값 | 58.8 ms | 162.9 ms |
+| 한 턴 최대 프로세스 트리 RSS | 39.4 MB | 42.2 MB |
+| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 151.0 KB | 98.1 KB |
+| 첫 모델 요청, 본문 / 도구 목록 바이트 | 3,756 / 2,368 | 3,292 / 1,433 |
+| 설치 크기 | 110.6 MB | 163.4 MB |
 
-Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모양이었다. 한 턴 103.3 ms 대 413.7 ms, 스킬 84.5 ms 대 354.9 ms, MCP 95.5 ms 대 453.0 ms다. **Windows는 다르다. 한 턴(153.3 ms 대 208.5 ms)과 스킬 실행(200.9 ms 대 220.5 ms)에서 jcode가 앞섰고**, MCP 호출은 horon이 앞섰다(269.4 ms 대 318.5 ms). Linux에서는 최대 메모리와 세션 추가당 메모리 모두 jcode가 조금 덜 썼다.
+Linux에서는 시간 항목 셋과 한 턴 최대 메모리를 모두 horon이 앞섰고 macOS도 같은 모양이었다. 한 턴 88.1 ms 대 377.1 ms, 스킬 64.0 ms 대 357.6 ms, MCP 115.1 ms 대 486.4 ms다. **Windows는 예외다.** 한 턴 실행(128.4 ms 대 141.8 ms)과 스킬 호출(172.6 ms 대 220.0 ms)의 중앙값은 jcode가 낮았다. 두 항목 모두 최솟값·최댓값 범위가 겹치므로 어느 쪽도 뚜렷하게 앞섰다고 보지 않는다. MCP 호출(211.0 ms 대 318.3 ms)은 horon이 앞섰다. 세션 추가당 메모리는 Linux와 Windows에서 jcode가 덜 썼고(98.1 KB 대 151.0 KB, 63.8 KB 대 122.8 KB), Windows 한 턴 최대 메모리도 jcode가 덜 썼으며(26.9 MB 대 36.1 MB), 첫 요청은 모든 OS에서 jcode가 더 작았다.
 
 이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표, TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
 
@@ -205,13 +208,14 @@ Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모�
 
 ## 문서
 
-문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs](packages/docs)에서 따로 쓴 더 짧은 문서 묶음이다. `docs/`에서 생성하지 않으므로 동작이 바뀌면 둘 다 손으로 고친다.
+문서는 영어(기본)와 한국어(`.ko.md`, `docs/README.ko.md`처럼 같은 폴더에 나란히) 두 벌로 쓰여 있다. 영어본은 바이너리에 들어가 `horon_agent_docs` 도구가 제공한다. [agent.horon.ai](https://agent.horon.ai)는 [packages/docs-site](packages/docs-site)에 있는 Mintlify 사이트다. Reference 탭은 `scripts/ci/sync_docs_site.py`가 `docs/`, `PHILOSOPHY.md`, SDK·npm README에서 생성하고, 안내 페이지는 영어로 손수 쓴다. 그래서 안내 페이지가 되풀이하는 동작이 바뀌면 그 페이지도 함께 고친다.
 
 | 주제 | 문서 |
 | --- | --- |
 | 문서 사이트(`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
-| 문서 사이트 원본 | [packages/docs](packages/docs) |
+| 문서 사이트 원본 | [packages/docs-site](packages/docs-site) |
 | 색인과 고정 요구사항 | [docs/README.ko.md](docs/README.ko.md) |
+| 설계 원칙 | [PHILOSOPHY.ko.md](PHILOSOPHY.ko.md) |
 | 터미널 클라이언트와 사용자 파일 | [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md) |
 | 모델 엔드포인트와 API 키 | [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md) |
 | 에디터와 ACP | [docs/protocol/ACP.ko.md](docs/protocol/ACP.ko.md) |
@@ -224,10 +228,10 @@ Linux 세 가지 시간 항목은 모두 horon이 앞섰고 macOS도 같은 모�
 
 ## 기여
 
-먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. `horon-agent` 패키지에 터미널 UI 없음(TUI 모드는 `horon-tui`에 있다), ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
+먼저 [`AGENTS.md`](AGENTS.md)를 읽는다. 이 문서가 최상위 계약이다. 모든 변경은 세 가지를 지킨다. 에이전트 바이너리 `horon-agent`에 터미널 UI 없음(TUI 모드는 TUI 바이너리 `horon-tui`에 있다), ACP v1·v2 모두 지원, 기록된 기준선 대비 측정된 성능 회귀 없음.
 
-- `dev`에서 브랜치를 만들고 `dev`로 풀 리퀘스트를 연다. 모든 풀 리퀘스트는 이 저장소의 실제 이슈를 연결해야 한다(`Closes #123`). `Require Linked Issue` 검사가 이를 확인한다.
-- 푸시하기 전에 검사를 돌린다.
+- `dev`에서 브랜치를 만들고 `dev`로 풀 리퀘스트를 연다. `main`은 릴리스 풀 리퀘스트로 바뀐다. 모든 풀 리퀘스트는 이 저장소의 실제 이슈를 연결해야 한다(`Closes #123`). `Require Linked Issue` 검사가 이를 확인한다.
+- 푸시하기 전에 검사를 돌린다. `scripts/ci/check_all.sh`가 CI의 Format·Quality Guardrails 단계를 돌리고, Rust 검사는 다음과 같다.
 
   ```sh
   cargo fmt --all -- --check

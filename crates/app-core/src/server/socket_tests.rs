@@ -365,7 +365,7 @@ fn foreign_reload_marker_is_preserved_under_the_preserve_policy() {
         hash: "hash-foreign".to_string(),
         phase: ReloadPhase::Starting,
         pid: foreign_pid,
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -581,7 +581,7 @@ fn publish_reload_socket_ready_clears_marker_for_foreign_pid() {
         hash: "test-hash".to_string(),
         phase: ReloadPhase::Starting,
         pid: std::process::id().saturating_add(1_000_000),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -630,7 +630,7 @@ async fn inspect_reload_wait_status_keeps_waiting_while_starting_marker_is_activ
         hash: "test-hash".to_string(),
         phase: ReloadPhase::Starting,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -715,7 +715,7 @@ async fn inspect_reload_wait_status_reports_failed_when_reload_pid_is_dead() {
         hash: "test-hash".to_string(),
         phase: ReloadPhase::Starting,
         pid: dead_pid,
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -744,7 +744,7 @@ async fn await_reload_handoff_returns_ready_after_marker_transition() {
         hash: "test-hash".to_string(),
         phase: ReloadPhase::Starting,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -783,7 +783,7 @@ async fn await_reload_handoff_returns_failed_after_marker_transition() {
         hash: "test-hash".to_string(),
         phase: ReloadPhase::Starting,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();

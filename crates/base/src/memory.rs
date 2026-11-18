@@ -15,7 +15,7 @@ use crate::memory_types::{
 use crate::sidecar::Sidecar;
 use crate::storage;
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -98,7 +98,7 @@ struct LegacyNotesFile {
 struct LegacyNoteEntry {
     id: String,
     content: String,
-    created_at: DateTime<Utc>,
+    created_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tag: Option<String>,
 }

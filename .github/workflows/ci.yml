@@ -46,26 +46,14 @@ env:
   # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
   # merging. Warnings in registry dependencies are never reported by cargo.
   CARGO_BUILD_WARNINGS: deny
-  SCCACHE_GHA_ENABLED: "true"
+  # Keep per-compilation writes on the runner; share Cargo archives between runs.
+  SCCACHE_CACHE_SIZE: "512M"
   # Test and dev builds do not need debug info, and on a hosted runner every byte
   # is disk. The workspace profiles already set debug = 0; these make that hold
   # for member crates that might override the profile.
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
 
-# Runner selection. With the repository variable `CI_SELF_HOSTED` set to `true`,
-# the jobs that can run on macOS go to the self-hosted runner labelled
-# `horon-agent`, and the Linux-only and Windows-only jobs are skipped (shown as
-# skipped, never as passed). Unset the variable to return to GitHub-hosted
-# runners; nothing else changes.
-#
-# This repository is public, so a pull request from a fork is untrusted: its
-# workflow file and every script it runs come from the fork, not from `main`.
-# The self-hosted runner is a persistent machine, never a disposable VM, so fork
-# code must not run on it. Every self-hosted branch therefore requires either a
-# non-PR event or a PR whose head repository is this repository, and falls back
-# to `ubuntu-24.04` otherwise. The GitHub-hosted-only jobs use the negated
-# condition so a fork PR still gets them.
 jobs:
   # Decides which gates a change needs. A pull request is compared with its
   # base; a first-attempt push to `dev` with the head of the last successful
@@ -111,7 +99,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
@@ -125,8 +113,7 @@ jobs:
       - name: Free disk space
         # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
         # all-targets/all-features build does not fit. The pre-installed
-        # toolchains are unused here. Skipped on the self-hosted machine, whose
-        # toolchains belong to its owner.
+        # toolchains are unused here.
         if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
@@ -138,12 +125,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
-          # Keyed by runner OS: with CI_SELF_HOSTED this job runs on macOS, and a
-          # macOS cache restored on Linux (same branch) carries unusable artifacts.
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: quality-${{ runner.os }}
           cache-all-crates: "true"
 
@@ -171,12 +153,6 @@ jobs:
       # cache incremental units, and the profiles this job builds
       # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
       # true, so with incremental on nothing is ever cached.
-      #
-      # Hosted runners only: the self-hosted runner is a persistent machine
-      # whose toolchains and caches belong to its owner, and a pull request
-      # from a fork must not install or start a cache there. This step is one
-      # of the quality gates, so it must keep reporting failures: no
-      # continue-on-error below.
       - name: Setup sccache
         if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -245,7 +221,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -453,7 +429,7 @@ jobs:
     name: Release Automation
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -474,7 +450,7 @@ jobs:
     name: Build & Test (${{ matrix.os }})
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
     # known-good commit were cancelled at the cap, each getting further through
@@ -497,15 +473,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Build & Test (ubuntu-latest) and Build & Test (macos-latest). The
-        # matrix is one `include` list rather than `os` plus `include`, because
-        # `include` re-adds any combination `exclude` removes; with
-        # CI_SELF_HOSTED only the macOS entry exists. A fork PR falls back to
-        # both GitHub-hosted entries for the same reason as `runs-on` above.
-        # `os` stays the label in the job name, which scripts/release/check_ci.py
-        # requires verbatim; `runner` is the pinned image the job runs on, so
-        # the ubuntu-latest migration notice does not attach to the run.
-        include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]') }}
+        # Release verification requires the os labels in the job names.
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            runner: macos-latest
+            target: aarch64-apple-darwin
 
     steps:
       # The Linux cleanup runs after checkout because it is the shared script in
@@ -519,14 +494,11 @@ jobs:
         # Hosted ubuntu starts with about 14 GB on `/`. One job holds the release
         # build, both test harnesses, and the e2e binaries in a single target
         # dir, so the pre-installed toolchains this job never uses are removed.
-        # A self-hosted runner is macOS, so this never touches it.
         if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
 
       - name: Free disk space (macOS)
-        # The macOS hosted image has the least free space of the three. Skip on
-        # the self-hosted machine: its caches and toolchains are its owner's.
         if: ${{ !cancelled() && runner.os == 'macOS' && runner.environment == 'github-hosted' }}
         shell: bash
         run: |
@@ -548,10 +520,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
@@ -567,10 +536,6 @@ jobs:
       # units and both profiles this job builds ([profile.dev] and
       # [profile.release]) set incremental = true in Cargo.toml, so leaving
       # incremental on would mean zero cache hits.
-      #
-      # Hosted runners only. The self-hosted runner is a persistent machine
-      # whose caches belong to its owner, and a fork pull request must not
-      # install or start a cache on it.
       - name: Setup sccache
         if: runner.environment == 'github-hosted'
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -646,8 +611,9 @@ jobs:
         # terminal client's screen: the build above only proves the two binaries
         # link. This runs both through a real PTY against the mock model server
         # and checks the first screen, a streamed reply, the approval prompt, the
-        # retried tool call, `/quit`, and the three headless fallbacks. The
-        # client is built without `--release` above, next to the release daemon.
+        # retried tool call, `/quit`, the three headless fallbacks, and a relaunch
+        # over the socket file a killed bridge left behind. The client is built
+        # without `--release` above, next to the release daemon.
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -721,8 +687,7 @@ jobs:
         # XDG_RUNTIME_DIR, so a release binary that linked OpenSSL dynamically
         # (and could not load on a bare Debian server at all) passed every test
         # here. This runs the real binary in a Debian container with OpenSSL and
-        # the CA store removed. Linux only: with CI_SELF_HOSTED the matrix keeps
-        # just the macOS entry, and this guard is about the Linux artifact.
+        # the CA store removed.
         if: runner.os == 'Linux'
         shell: bash
         run: scripts/ci/check_linux_bare_runtime.sh target/${{ matrix.target }}/release/horon-agent
@@ -747,7 +712,7 @@ jobs:
           # Every package that owns a target in
           # `scripts/ci/integration_targets.json` must be built here, or
           # `run_integration_targets.py` finds no executable for it.
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -799,9 +764,11 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-import-core --min-passed 24 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-logging --min-passed 13 --timeout 600
+            --package horon-agent-logging --min-passed 28 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-platform --min-passed 11 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-productivity-core --min-passed 7 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-schema-dialect --min-passed 38 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -811,7 +778,72 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-session-types --min-passed 12 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-time --min-passed 46 --timeout 600
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-token-estimate --min-passed 16 --timeout 600
+
+      - name: Prepare a reflink filesystem for clone isolation (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        # `git_clone_isolation` copies a repository with `cp -a --reflink=always`
+        # and refuses when the filesystem cannot reflink. The hosted runner's
+        # root filesystem is ext4, so the success path needs a real reflink
+        # filesystem: btrfs on a loopback file, named by
+        # `HORON_AGENT_CLONE_TEST_ROOT`. A failure here fails the step instead
+        # of letting the clone tests pass on an unsupported filesystem.
+        run: |
+          set -euo pipefail
+          if ! command -v mkfs.btrfs >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq btrfs-progs
+          fi
+          fixture=$(mktemp -d "$RUNNER_TEMP/horon-clone.XXXXXXXX")
+          image="$fixture/disk.img"
+          mount_point="$fixture/mount"
+          truncate -s 256M "$image"
+          mkfs.btrfs -q "$image"
+          mkdir "$mount_point"
+          sudo mount -o loop "$image" "$mount_point"
+          sudo chown "$(id -u):$(id -g)" "$mount_point"
+          echo "HORON_AGENT_CLONE_TEST_ROOT=$mount_point" >> "$GITHUB_ENV"
+          # The refusal test needs a filesystem without reflink; the hosted
+          # runner's ext4 `$RUNNER_TEMP` is one.
+          echo "HORON_AGENT_CLONE_TEST_NO_REFLINK_ROOT=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Run horon-agent-base lib tests (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        # `horon-agent-base` owns config, memory, session, skill and storage
+        # tests that only filtered cohorts ever ran, so a module outside those
+        # filters could rot green: #321 collected eighteen failures, from stale
+        # tool-profile expectations to non-UUID journal ids and an explicit
+        # export save guard nothing exercised. No filter: the whole crate is the
+        # surface.
+        #
+        # The first Linux run executed 1605 cases (#321, job 134409170973).
+        # The five staged-import regressions and the filesystem refusal test
+        # bring that floor to 1611. The three ignored benchmarks are separate.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-base --min-passed 1611 --timeout 1200
+
+      - name: Run horon-agent-base lib tests (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # The previous macOS suite passed 1592 cases. Include the five
+        # staged-import regressions in the minimum for the complete suite.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-base --min-passed 1597 --timeout 1200
+
+      - name: Remove the reflink filesystem (Linux)
+        if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
+        shell: bash
+        run: |
+          sudo umount "$HORON_AGENT_CLONE_TEST_ROOT"
+          fixture=$(dirname "$HORON_AGENT_CLONE_TEST_ROOT")
+          rm "$fixture/disk.img"
+          rmdir "$HORON_AGENT_CLONE_TEST_ROOT" "$fixture"
 
       - name: Run CLI handoff cohort
         shell: bash
@@ -878,15 +910,25 @@ jobs:
         # model or session history had no CI check. The step previously ran a
         # filter inherited from upstream CI that matched nothing in this tree,
         # the looks-green-but-never-ran shape the warning budget and the stdin
-        # detector had, so it now requires at least one pass
-        # (`--min-passed 1`), which fails the step when a filter selects no
-        # test instead of reporting a green `0 passed`. The Windows groups stay
-        # out of scope: this step keeps `runner.os != 'Windows'`.
+        # detector had, so it now requires the measured count (`--min-passed`),
+        # which fails the step when a filter selects no test instead of
+        # reporting a green `0 passed`. `secrets::restore_tests` (7) pins the
+        # in-place restore of a tool input: the same text as replacing every
+        # placeholder longest first, keys untouched, and an input that holds no
+        # placeholder coming back equal. `crash::ring_tests` (7) pins the operation
+        # ring a crash bundle reads: redaction before the cut, the stored
+        # detail when a record's strings are reused, and nothing recorded while
+        # bundles are off. The Windows groups stay out of scope: this step
+        # keeps `runner.os != 'Windows'`.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --timeout 600 --min-passed 1 \
+            --timeout 600 --min-passed 18 \
             -- secrets:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 7 \
+            -- crash::ring_tests:: --nocapture
 
       - name: Run IRC cohorts
         shell: bash
@@ -1148,7 +1190,7 @@ jobs:
 
       - name: Run tool surface cohort
         shell: bash
-        # `tool::tests` (78 checked, 4 `#[ignore]` QA) covers the registry:
+        # `tool::tests` (76 checked, 4 `#[ignore]` QA) covers the registry:
         # profile filtering, the deterministic definition order that keeps the
         # prompt prefix cacheable, and the parameter-description token cap that
         # governs how many tokens every request pays for the schema.
@@ -1157,15 +1199,79 @@ jobs:
         # modules compiled in every run and no cohort selected them (#300), so
         # two failures sat on `dev` unexecuted until they were fixed.
         # `--min-passed` is the measured count; raise it with the module.
+        # It moved 78 -> 76 when prune-tests (#419) removed
+        # `print_tool_definition_token_report` and
+        # `subagent_tool_is_not_registered`, two tests that guarded no behavior.
+        # `tool::lifecycle::tests` (5) pins the `TOOL_LIFECYCLE` field list a
+        # dispatch builds once and relabels for its done or error line: names,
+        # order, values, and the input size counted without building the text.
+        # `tool::arg_repair::prepared_tests` (6) pins the prepared-schema cache
+        # every dispatch looks up: one entry per schema, a changed schema gets
+        # its own validator, and two schemas under one key never share one.
+        # `tool::arg_repair::tests` (16) are the repairs that lookup serves.
+        # `tool::policy_route_tests` (8) pins the session policy a dispatch
+        # reads as a shared snapshot: the allow and deny answers, the rejection
+        # text and its order, a writer while a snapshot is held, and an SDK
+        # overlay merged into a copy that is never stored.
+        # `tool::inflight::tests` (3) pins the in-flight marks every dispatch
+        # takes and releases, nested marks included.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 900 --min-passed 78 \
+            --timeout 900 --min-passed 76 \
             -- tool::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 48 \
             -- tool::read::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 5 \
+            -- tool::lifecycle::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 6 \
+            -- tool::arg_repair::prepared_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 16 \
+            -- tool::arg_repair::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 8 \
+            -- tool::policy_route_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- tool::inflight::tests:: --nocapture
+
+      - name: Run instant handling cohort
+        shell: bash
+        # The two modules that read and print stored instants through the shared
+        # time type compiled in every run and were selected by no step, so their
+        # timestamp behaviour was never executed (#377, the class of gap
+        # `check_lib_test_coverage.py` tracks). `tool::session_search::
+        # session_search_tests` holds the date-filter parser regressions:
+        # `date_filters_keep_the_forms_the_old_parser_accepted` pins the padded,
+        # unpadded, spaced, signed-year and full-RFC-3339 forms to the same UTC
+        # midnight, and `a_date_filter_refuses_what_was_never_read` pins what the
+        # two readers refuse. `agent::turn_execution::turn_token_usage_tests`
+        # sums per-turn usage from the turn's own start instant, through a
+        # compaction and a stub.
+        # Counts are the measured passes on this tree, not estimates: 22 tests
+        # list under the session-search module and one of them
+        # (`bench_real_session_search_corpus`) is `#[ignore]`, so 21 pass; the
+        # turn-usage module has 3. Keep one filter per call, as everywhere else
+        # in this file, and raise a number only after adding tests that pass.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 21 \
+            -- tool::session_search::session_search_tests --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- agent::turn_execution::turn_token_usage_tests --nocapture
 
       - name: Run prompt surface cohort
         shell: bash
@@ -1434,14 +1540,16 @@ jobs:
       - name: Run turn end race cohort
         shell: bash
         # A prompt a client sends on a turn's terminal event must find that turn
-        # closed, and a cancel's reply must follow the cancelled turn's queued
-        # events. These drive the daemon's request loop and the turn forwarder
-        # in process; the rest of `acp_v2_events` is still outside every cohort.
-        # `--min-passed` is the number of tests the filter matches.
+        # closed, a context message written on it must be stored after that
+        # turn's completion tail, and a cancel's reply must follow the cancelled
+        # turn's queued events. These drive the daemon's request loop and the
+        # turn forwarder in process; the rest of `acp_v2_events` is still
+        # outside every cohort. `--min-passed` is the number of tests the filter
+        # matches.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 3 \
+            --timeout 600 --min-passed 6 \
             -- server::client_lifecycle::tests::acp_v2_events::turn_end_race --nocapture
 
       - name: Run tool_done verdict cohort
@@ -1467,6 +1575,21 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
             --timeout 600 --min-passed 1 \
             -- tool_done_carries_ --nocapture
+
+      - name: Run stale API socket probe cohort
+        shell: bash
+        # A client that answered "is the bridge up?" from the socket file's
+        # existence dialled the bridge a closed terminal had killed, and reported
+        # "no harness answered". The SDK now probes with a connection, and that
+        # probe hangs up without sending a byte, so the bridge must end such a
+        # connection without an error frame or a log line. `stdio_tests` has no
+        # other cohort, `--min-passed` is the number of tests the filter matches,
+        # and a renamed test then fails instead of passing over an empty subset.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- stale_socket_probe --nocapture
 
       - name: Run session id prefix cohort
         shell: bash
@@ -1659,7 +1782,7 @@ jobs:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 75
     steps:
       - name: Report free disk space
@@ -1731,10 +1854,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: windows-latest
           cache-all-crates: "true"
 
@@ -1938,7 +2058,7 @@ jobs:
     name: Format
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1962,7 +2082,7 @@ jobs:
     name: TypeScript SDK
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2043,11 +2163,25 @@ jobs:
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # `packages/docs` builds the site served at agent.horon.ai. Nothing deploys
-    # from CI: a build failure here means the published site cannot be
-    # regenerated from the commit it claims to describe.
+    # `packages/docs-site` is the Mintlify project served at agent.horon.ai.
+    # Mintlify deploys it from the `deploy/docs` branch, which only
+    # `docs-site-deploy.yml` moves (from `main`), so this job deploys nothing:
+    # it fails when the project no longer validates, contains a broken internal
+    # link, or when its Reference pages are stale against `docs/`
+    # (`scripts/ci/sync_docs_site.py --check`).
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Reference pages are current
+        run: |
+          python3 -m unittest -v scripts/ci/test_sync_docs_site.py
+          python3 scripts/ci/sync_docs_site.py --check
+
+      # The Mintlify CLI (`mint`) runs on Node; pin it instead of inheriting the
+      # image's version.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -2055,17 +2189,17 @@ jobs:
 
       - name: Install
         run: bun install --frozen-lockfile
-        working-directory: packages/docs
+        working-directory: packages/docs-site
 
-      - name: Typecheck and build
+      - name: Validate and check links
         run: bun run check
-        working-directory: packages/docs
+        working-directory: packages/docs-site
 
   setup-friction:
     name: Setup Friction Eval (Linux installer)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2083,7 +2217,7 @@ jobs:
     name: PowerShell Syntax
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2102,7 +2236,7 @@ jobs:
     name: Windows ARM64 Release Configuration
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     env:
       # `dtolnay/rust-toolchain` installs components into the `stable` toolchain
@@ -2134,10 +2268,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: windows-arm64-release-check
           cache-all-crates: "true"
 
@@ -2160,7 +2291,7 @@ jobs:
     name: Windows Cross-Target Check (Linux)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     env:
       # The two Windows targets are installed into `stable`; the same pin makes
@@ -2188,10 +2319,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name != 'pull_request' }}
-          # A later step failing (an advisory, a flaky test) must not throw away
-          # the artifacts the earlier steps spent minutes compiling.
-          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
           key: windows-cross-check
           cache-all-crates: "true"
 

@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 720" width="960" height="720" role="img" aria-labelledby="t d">
+<title id="t">provider wires and credentials</title><desc id="d">A model call resolves a profile, then posts to the endpoint its type names: openai-compatible posts /chat/completions, openai-responses posts /responses, anthropic-compatible posts /messages, and gemini-compatible posts /models/{model}:streamGenerateContent?alt=sse. Credentials come from the api_key_env variable, then the env_file key file, and auth decides the header: Authorization Bearer for the two OpenAI wires, x-api-key for Anthropic, x-goog-api-key for Gemini, or none. The model is resolved through roles that inherit from default, then the profile's default_model and [provider] default_model, and fallback_models applies to whichever model the role resolved. generate_image is the one extra route, /images/generations and /images/edits on the same profile, and it exists only when roles.image is set and [tools] generate_image is true. With no profile configured the agent stops before the network and names the profile to add.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="720" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="28" font-size="12.5" class="m">Profile and call</text>
+<text x="330" y="28" font-size="12.5" class="m">Wire selected by the profile's type</text>
+
+<rect x="30" y="44" width="270" height="152" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="42" y="64" font-size="12.5" font-weight="600">which profile</text>
+<text x="42" y="84" font-size="11" class="m mono">[provider] default_provider</text>
+<text x="42" y="101" font-size="11" class="m mono">--provider-profile &lt;name&gt;</text>
+<text x="42" y="126" font-size="11" class="m">With no profile named and no</text>
+<text x="42" y="142" font-size="11" class="m">default_provider the call stops</text>
+<text x="42" y="158" font-size="11" class="m">before the network and prints</text>
+<text x="42" y="174" font-size="11" class="m">the profile to add.</text>
+
+<line x1="300" y1="110" x2="326" y2="110" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="330" y="44" width="600" height="64" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="344" y="65" font-size="12" font-weight="600" class="mono">openai-compatible</text>
+<text x="344" y="84" font-size="11" class="m mono">POST {base_url}/chat/completions</text>
+<text x="344" y="100" font-size="10.5" class="m">Chat Completions, the default</text>
+<text x="616" y="76" font-size="10.5" class="m mono">Authorization: Bearer</text>
+<text x="616" y="94" font-size="10.5" class="m">the default for the two OpenAI wires</text>
+
+<rect x="330" y="118" width="600" height="64" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="344" y="139" font-size="12" font-weight="600" class="mono">openai-responses</text>
+<text x="344" y="158" font-size="11" class="m mono">POST {base_url}/responses</text>
+<text x="344" y="174" font-size="10.5" class="m">OpenAI Responses</text>
+<text x="616" y="150" font-size="10.5" class="m mono">Authorization: Bearer</text>
+<text x="616" y="168" font-size="10.5" class="m mono">reasoning.effort</text>
+
+<rect x="330" y="192" width="600" height="64" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="344" y="213" font-size="12" font-weight="600" class="mono">anthropic-compatible</text>
+<text x="344" y="232" font-size="11" class="m mono">POST {base_url}/messages</text>
+<text x="344" y="248" font-size="10.5" class="m">Anthropic Messages</text>
+<text x="616" y="224" font-size="10.5" class="m mono">x-api-key</text>
+<text x="616" y="242" font-size="10.5" class="m mono">anthropic-version: 2023-06-01</text>
+
+<rect x="330" y="266" width="600" height="64" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="344" y="287" font-size="12" font-weight="600" class="mono">gemini-compatible</text>
+<text x="344" y="306" font-size="11" class="m mono">POST {base_url}/models/{model}</text>
+<text x="344" y="322" font-size="11" class="m mono">:streamGenerateContent?alt=sse</text>
+<text x="616" y="298" font-size="10.5" class="m mono">x-goog-api-key</text>
+<text x="616" y="316" font-size="10.5" class="m mono">generationConfig.thinkingConfig</text>
+
+<text x="330" y="352" font-size="11" class="m">A base_url that already ends with the wire's path is used unchanged. auth = "none" sends no key at all.</text>
+
+<rect x="30" y="374" width="270" height="130" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="42" y="394" font-size="12.5" font-weight="600">credential sources</text>
+<text x="42" y="414" font-size="11" class="m">1. the api_key_env variable</text>
+<text x="42" y="431" font-size="11" class="m">2. the env_file key file</text>
+<text x="42" y="448" font-size="11" class="m">3. a built-in profile's own pair</text>
+<text x="42" y="472" font-size="11" class="m mono">auth = bearer | header | none</text>
+<text x="42" y="492" font-size="11" class="m">An explicit auth always wins.</text>
+
+<rect x="330" y="374" width="290" height="130" rx="10" fill="var(--panel)" stroke="var(--a)" stroke-width="1.5"/>
+<text x="342" y="394" font-size="12.5" font-weight="600">model and roles</text>
+<text x="342" y="414" font-size="11" class="m">run override, then roles.&lt;role&gt;,</text>
+<text x="342" y="431" font-size="11" class="m">then inherited roles:</text>
+<text x="342" y="450" font-size="11" class="m mono">plan, aux → default</text>
+<text x="342" y="467" font-size="11" class="m mono">judge → aux → default</text>
+<text x="342" y="486" font-size="11" class="m">then the profile and [provider] default_model</text>
+
+<rect x="640" y="374" width="290" height="130" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="652" y="394" font-size="12.5" font-weight="600">fallback and failover</text>
+<text x="652" y="414" font-size="11" class="m mono">fallback_models = ["m2", "m3"]</text>
+<text x="652" y="433" font-size="11" class="m">1. next fallback entry, once each</text>
+<text x="652" y="450" font-size="11" class="m">2. same-provider account</text>
+<text x="652" y="467" font-size="11" class="m">3. cross-provider</text>
+<text x="652" y="486" font-size="11" class="m">the list sits on the profile, not a role</text>
+
+<rect x="30" y="522" width="600" height="120" rx="10" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="42" y="542" font-size="12.5" font-weight="600">generate_image, the one extra route</text>
+<text x="42" y="562" font-size="11" class="m">The same profile keeps the same base URL, credential, auth and extra_body:</text>
+<text x="42" y="583" font-size="11" class="m mono">POST {base_url}/images/generations</text>
+<text x="42" y="600" font-size="11" class="m mono">POST {base_url}/images/edits</text>
+<text x="42" y="620" font-size="11" class="m">Only the two OpenAI wires carry it; the model comes from roles.image,</text>
+<text x="42" y="635" font-size="11" class="m">which has no inherited fallback because a text model cannot answer it.</text>
+
+<line x1="630" y1="582" x2="662" y2="582" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<rect x="664" y="522" width="266" height="120" rx="10" fill="var(--panel)" stroke="var(--b)" stroke-width="1.5"/>
+<text x="676" y="542" font-size="12.5" font-weight="600">registered only when both hold</text>
+<text x="676" y="566" font-size="11" class="m mono">[tools] generate_image = true</text>
+<text x="676" y="586" font-size="11" class="m mono">roles.image = "&lt;model&gt;"</text>
+<text x="676" y="610" font-size="11" class="m">Off in the default configuration, so the</text>
+<text x="676" y="626" font-size="11" class="m">tool is not advertised at all.</text>
+
+<text x="30" y="680" font-size="11" class="m">One model path: a turn posts to the endpoint of the profile's type. No router process, no plugin host, and no second credential.</text>
+<text x="30" y="700" font-size="11" class="m">Every wire reports its own api_method in model routes, while the stored provider identity stays openai-compatible.</text>
+</svg>

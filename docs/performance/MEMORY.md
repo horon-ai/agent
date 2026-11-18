@@ -26,20 +26,26 @@ Where possible, the budgets below bind to counters and caps the codebase already
 Do not add new temporary instrumentation; use the existing debug surfaces.
 
 - Agent and session memory profile over the debug socket: `agent:memory`
-  (`crates/app-core/src/server/debug_command_exec.rs:401`)
+  (`crates/app-core/src/server/debug_command_exec.rs:434`)
 - Fast server incident triage: `server:memory-incident`
-  (`crates/app-core/src/server/debug_server_state.rs:170`)
+  (`crates/app-core/src/server/debug_server_state.rs:165`)
 - Whole-server attribution: `server:memory`
-  (`crates/app-core/src/server/debug_server_state.rs:184`)
+  (`crates/app-core/src/server/debug_server_state.rs:179`)
 - Process lifetime timeline: `python scripts/perf/analyze_memory_log.py --days 1`
+- Session population comparison: `python3 scripts/perf/bench_compare.py --scenarios sessions`
+  reports, at every idle and post-turn sample, how many processes were alive beside the
+  process-tree RSS, so a per-session memory increment can be read against whether that
+  session is a thread inside the daemon or its own process (`process_count` in
+  `docs/performance/BENCHMARK.md`)
 
 Main sources in the code:
 - `crates/base/src/runtime_memory_log.rs`
 - `crates/app-core/src/server/debug_server_state.rs`
 
 Terminal UI surfaces such as `:debug memory` and `:debug markdown:memory` do not exist in this build. The terminal client
-`horon-tui` draws plain styled text and keeps no markdown or diagram cache, so the caps that hung off those caches have no
-counterpart here and were lowered in this document for the same reason.
+`horon-tui` renders the assistant's Markdown while it draws and keeps no cache of rendered rows, sources, highlights or
+images, so the caps that hung off those caches have no counterpart here and were lowered in this document for the same
+reason.
 
 ### Budget model
 
@@ -60,14 +66,14 @@ Two kinds of budget are used.
 Source: `crates/base/src/runtime_memory_log.rs`
 
 The log file count, pending event queue, and sampling intervals are values the code enforces directly. A smaller value from config does not
-push the sampling interval cap below its floor (`crates/base/src/runtime_memory_log.rs:482-495`, `:521-524`).
+push the sampling interval cap below its floor (`crates/base/src/runtime_memory_log.rs:474-479`, `:513-518`).
 
 | Metric | Budget | Why |
 |---|---:|---|
-| Server log file count | `<= 90` | `MAX_SERVER_LOG_FILES`. Beyond that the oldest files are deleted (`:19`, `:602-606`) |
+| Server log file count | `<= 90` | `MAX_SERVER_LOG_FILES`. Beyond that the oldest files are deleted (`:19`, `:594-600`) |
 | Client log file count | `<= 90` | `MAX_CLIENT_LOG_FILES` (`:28`) |
-| Pending event count | `<= 64` | `MAX_PENDING_EVENTS`. Beyond that the oldest events are dropped (`:31`, `:343-344`) |
-| Pending category count | `<= 8` | `MAX_PENDING_CATEGORIES` (`:32`, `:364`) |
+| Pending event count | `<= 64` | `MAX_PENDING_EVENTS`. Beyond that the oldest events are dropped (`:31`, `:335-336`) |
+| Pending category count | `<= 8` | `MAX_PENDING_CATEGORIES` (`:32`, `:356`) |
 | Process sample interval | `>= 15s` | `MIN_PROCESS_INTERVAL_SECS` (`:10`) |
 | Attribution sample interval | `>= 60s` | `MIN_ATTRIBUTION_INTERVAL_SECS` (`:12`) |
 
@@ -79,14 +85,26 @@ Review steps required on a violation:
 #### Markdown cache budget
 
 An earlier TUI rendered markdown and diagrams and put explicit caps on its highlight, render, source, and image state caches. The shipped
-`horon-tui` draws plain styled text and holds none of those caches, so there is no cap to keep here. When a corresponding cache comes back,
-restore the cap and its reasoning in this section.
+`horon-tui` renders the assistant's Markdown as it draws and holds none of those caches: `crates/tui/src/markdown.rs` turns text into styled
+rows for the frame it is drawing and keeps nothing between frames, and the client has no highlight, source or image state to cap.
+
+What the client does keep per item is measured rather than rendered. `Scroll` holds a `Tally` with the wrapped row count of every committed
+transcript item and of the two open buffers (`crates/tui/src/scroll.rs`), which is what lets a held view stay still without wrapping the
+conversation again. That tally is one `usize` per item and is rebuilt when the pane width changes or the Markdown setting invalidates it. In
+between, a frame that measures at all keeps the heights it already has except for the newest committed item, which `Scroll::measure` truncates
+off and measures again every such frame, and any item the last measurement never saw. Measuring happens only while the view is held away from
+the end; a frame at the end counts nothing and leaves the tally alone. The tally grows with the number of items, not with the size of their
+text, and the code sets no cap on it. When a cache of rendered rows comes back, restore a cap and its reasoning in this section.
+
+The cost of that held path is measured: `crates/tui/examples/scroll_bench.rs` expands one long tool output and times every held
+frame a real `shift+up` draws, so a change to how the newest item or the block under the view is wrapped lands in the `tui` suite's
+`scroll` table instead of going unnoticed behind a frame-at-the-end number.
 
 ### Ratchet expectations
 
 #### Session and transcript memory
 
-Source: `crates/app-core/src/server/debug_server_state.rs:660-760`
+Source: `crates/app-core/src/server/debug_server_state.rs:641-745`
 
 These are not strict caps yet, but the relationship is expected. `agent:memory` and `server:memory` export these summed per session.
 

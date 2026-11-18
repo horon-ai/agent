@@ -1,4 +1,5 @@
 use anyhow::Result;
+use horon_agent_time::{Duration, Timestamp};
 use sha2::{Digest, Sha256};
 
 use crate::storage;
@@ -43,10 +44,11 @@ impl DeviceRegistry {
     pub fn generate_pairing_code(&mut self) -> String {
         use rand::Rng;
         let code: String = format!("{:06}", rand::rng().random_range(0..1_000_000u32));
-        let now = chrono::Utc::now();
-        let expires = now + chrono::Duration::minutes(5);
+        let now = Timestamp::now();
+        let expires = now + Duration::minutes(5);
 
-        // Clean up expired codes
+        // Clean up expired codes, compared as the RFC3339 text the previous
+        // implementation wrote and compared.
         let now_str = now.to_rfc3339();
         self.pending_codes.retain(|c| c.expires_at > now_str);
 
@@ -62,7 +64,7 @@ impl DeviceRegistry {
 
     /// Validate a pairing code and consume it. Returns true if valid.
     pub fn validate_code(&mut self, code: &str) -> bool {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Timestamp::now().to_rfc3339();
         if let Some(idx) = self
             .pending_codes
             .iter()
@@ -88,7 +90,7 @@ impl DeviceRegistry {
         hasher.update(token.as_bytes());
         let token_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Timestamp::now().to_rfc3339();
 
         // Remove existing device with same ID (re-pairing)
         self.devices.retain(|d| d.id != device_id);
@@ -120,7 +122,7 @@ impl DeviceRegistry {
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
         let token_hash = format!("sha256:{}", hex::encode(hasher.finalize()));
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = Timestamp::now().to_rfc3339();
 
         if let Some(device) = self.devices.iter_mut().find(|d| d.token_hash == token_hash) {
             device.last_seen = now;

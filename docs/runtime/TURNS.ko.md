@@ -102,6 +102,42 @@ cargo test -p horon-agent-base soft_interrupt_store
 기다리게 두지 않는다. 실제로 턴이 도는 중이면 예전처럼 즉시 `None`을 돌려주고
 메시지는 대기열로 간다.
 
+### 끝난 턴은 다음 프롬프트를 읽기 전에 닫힌다
+
+요청 루프는 끝난 턴의 보고를 클라이언트 입력보다 먼저 읽습니다
+(`crates/app-core/src/server/client_lifecycle.rs:829-833`, `biased`가 붙은
+`processing_done_rx.recv()` 갈래). 턴 태스크는 그 보고를 종료 이벤트보다 먼저
+보내므로, `Done`을 받고 곧바로 다음 프롬프트를 보낸 클라이언트는 `Already
+processing a message`를 만나지 않고 이미 닫힌 턴을 봅니다
+(`crates/app-core/src/server/client_lifecycle.rs:3827-3835`). 거부된 턴도 오류
+이벤트보다 보고를 먼저 보냅니다
+(`crates/app-core/src/server/client_lifecycle.rs:3761-3763`). 다음 턴의 태스크는
+이번 턴의 idle 상태가 나갈 때까지 에이전트를 계속 쥐므로, 다음 턴의 `running`이
+이번 턴의 idle보다 앞설 수 없습니다.
+
+종료 이벤트에 `no_reply` 메시지를 쓰면 그것은 문맥 메시지입니다. 턴을 시작하지
+않으므로 그 꼬리 구간에서 세션이 바쁘다는 답을 받으면 안 됩니다. 먼저 턴 상태를
+봅니다. 이 연결의 턴이거나 어느 클라이언트든 등록한 턴
+(`turn_cancel_registry::has_active_turn`)이면 곧바로 바쁨 오류로 답하고, 그래서
+실행 중인 턴이 순차 요청 루프를 잡아 두지 않습니다. 등록된 턴이 없으면 잠금을
+한 번만 잡는데, 잠금이 풀릴 때까지 `AGENT_LOCK_BACKGROUND_WAIT`(500밀리초)까지만
+기다립니다. 완료 꼬리는 보통 수 마이크로초에 끝나고, 한도를 넘긴 잠금은 루프를
+잡아 두지 않고 바쁨 오류로 답합니다
+(`crates/app-core/src/server/client_lifecycle.rs:3502-3549`). 저장은 그 하나의
+잠금 안에서 하므로 메시지는 정확히 한 번 저장되고 `ContextMessageAdded`로
+승인됩니다.
+
+취소 응답만은 요청 루프가 턴의 포워더를 거치지 않고 클라이언트로 바로 씁니다.
+그래서 세션의 포워더가 밀린 이벤트를 다 내보낼 때까지 먼저 기다립니다.
+`fanout_flush::flush`를 500밀리초 한도로 부른 뒤 `Interrupted`와 `Done`을
+보냅니다(`crates/app-core/src/server/client_lifecycle.rs:4032-4034`). 이 대기가
+없으면 취소된 턴의 마지막 도구 프레임이 그 턴의 `Done` 뒤, 다음 프롬프트 안에
+들어갑니다. 포워더는 생성될 때 플러시 채널을 등록하고, 요청이 도착한 시점에
+이벤트 대기열이 비어 있었을 때만 응답하며, 종료할 때 채널을 버립니다. 살아 있는
+포워더가 없는 세션은 곧바로 돌아오고, 한도를 다 쓴 플러시는 경고를 남기고 응답을
+그대로 보냅니다(`crates/app-core/src/server/fanout_flush.rs`,
+`crates/app-core/src/server/state.rs:996`).
+
 ## 소프트 인터럽트: 끊김 없는 메시지 주입
 
 ### 개요
@@ -286,8 +322,9 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 - `skills`: 로드된 전역/프로젝트 오버레이 스킬, 설명, 경로, 활성
   스킬, 공유 승인 추천. 전역 레지스트리를 새로 고친다.
 - `context`: 조립된 정적/동적 시스템 프롬프트, 유효/현재 도구,
-  활성 대화 메시지, 컨텍스트 창 메타데이터. 메모리 지침을 넣거나 프로바이더를
-  미리 데우거나 추론을 실행하지 않는다.
+  활성 대화 메시지, 컨텍스트 창 메타데이터, 그리고 부분별 추정치(시스템, 도구, 메시지)와
+  창 크기를 담은 `tokens` 객체. 클라이언트가 페이로드를 그대로 찍는 대신 내역을 그릴 수 있다.
+  메모리 지침을 넣거나 프로바이더를 미리 데우거나 추론을 실행하지 않는다.
 - `info`: 실제 프로바이더/세션 정체성과 토큰/캐시 카운터.
   캐시 만료/내용 검사는 쓸 수 없고 그렇게 명시한다.
 - `memory`: 토글, 명시적 on/off/status, 또는 `extract` 예약. 추출
@@ -356,7 +393,7 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
 `context_notes`는 모델에게 작은 메모 파일을 준다. `new_context`는 그 메모만으로 충분하다고
 모델이 판단해 다음 턴을 깨끗한 활성 컨텍스트에서 시작하게 한다. 이 도구는
 `[tools] context_notes`가 켜져 있을 때만 등록된다
-(`crates/app-core/src/tool/mod.rs:1095`). 전환이 유지하는 것이 바로 동적 시스템
+(`crates/app-core/src/tool/mod.rs:1107`). 전환이 유지하는 것이 바로 동적 시스템
 프롬프트가 싣는 메모이기 때문이다.
 
 호출 자체는 세션별 대기 요청만 기록한다(`crates/app-core/src/tool/new_context.rs`).

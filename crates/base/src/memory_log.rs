@@ -10,12 +10,13 @@
 //! Logs are kept for 14 days (separate from general log rotation).
 
 use crate::memory_types::MemoryEventKind;
-use chrono::Local;
+use horon_agent_time::Timestamp;
 use serde::Serialize;
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use time::OffsetDateTime;
 
 static MEMORY_LOGGER: Mutex<Option<MemoryLogger>> = Mutex::new(None);
 
@@ -76,15 +77,14 @@ fn current_session_id() -> Option<String> {
 }
 
 fn write_log(event: &str, detail: Option<serde_json::Value>) {
-    let now = Local::now();
-    let date = now.format("%Y-%m-%d").to_string();
+    let (date, timestamp) = crate::util::local_date_and_stamp_millis(Timestamp::now());
 
     if !ensure_logger(&date) {
         return;
     }
 
     let entry = LogEntry {
-        timestamp: now.format("%Y-%m-%dT%H:%M:%S%.3f%z").to_string(),
+        timestamp,
         session_id: current_session_id(),
         event: event.to_string(),
         detail,
@@ -383,17 +383,17 @@ pub fn log_judge_decision(session_id: &str, decision: &str, no_llm: bool, degrad
 /// that prunes them.
 pub fn cleanup_old_memory_logs() {
     if let Some(dir) = log_dir() {
-        cleanup_old_memory_logs_in(&dir, Local::now());
+        cleanup_old_memory_logs_in(&dir, Timestamp::now().local());
     }
 }
 
 /// Core of [`cleanup_old_memory_logs`], parameterized on the directory and
 /// "now" for unit testing without touching the real log directory.
-fn cleanup_old_memory_logs_in(dir: &std::path::Path, now: chrono::DateTime<Local>) {
+fn cleanup_old_memory_logs_in(dir: &std::path::Path, now: OffsetDateTime) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
-    let cutoff = now - chrono::Duration::days(14);
+    let cutoff = now - horon_agent_time::Duration::days(14);
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
@@ -404,7 +404,7 @@ fn cleanup_old_memory_logs_in(dir: &std::path::Path, now: chrono::DateTime<Local
             && metadata.is_file()
             && let Ok(modified) = metadata.modified()
         {
-            let modified: chrono::DateTime<Local> = modified.into();
+            let modified = OffsetDateTime::from(modified);
             if modified < cutoff {
                 let _ = fs::remove_file(entry.path());
             }
@@ -447,7 +447,7 @@ mod tests {
         // Old, but not a memory-events file -> must be left alone here.
         let other = write("horon-agent-2000-01-01.log", 20);
 
-        cleanup_old_memory_logs_in(&dir, Local::now());
+        cleanup_old_memory_logs_in(&dir, Timestamp::now().local());
 
         assert!(!old.exists(), "20-day-old memory log should be deleted");
         assert!(recent.exists(), "10-day-old memory log must survive");

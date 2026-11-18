@@ -1,6 +1,7 @@
 use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -44,7 +45,7 @@ fn fixture(
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )
@@ -65,7 +66,7 @@ fn message_after(session: &SessionId, parent: EventId) -> SealedEvent {
         EventId::new_v4(),
         Some(parent),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
         serde_json::json!({"message": StoredMessage { original_input: None, arg_repairs: None,
         degradations: None,
@@ -412,4 +413,86 @@ fn a_writer_killed_inside_a_save_leaves_originals_the_next_reader_serves() {
         assert_readers_serve(&paths, &id, &events[2].event_id, 2, case);
         fs::remove_dir_all(paths.root()).unwrap();
     }
+}
+
+unsafe extern "C" {
+    fn fork() -> i32;
+    fn pipe(fds: *mut i32) -> i32;
+    fn close(fd: i32) -> i32;
+    fn read(fd: i32, buffer: *mut std::ffi::c_void, count: usize) -> isize;
+    fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+    fn _exit(code: i32) -> !;
+}
+
+/// A forked child that keeps its copy of every open description, and with it the
+/// writer lock, until this value is dropped.
+struct ForkedCopy {
+    pid: i32,
+    release: i32,
+}
+
+impl ForkedCopy {
+    /// Forks the test process. The child runs nothing but async-signal-safe
+    /// calls: it waits for the release pipe to close, then leaves.
+    fn of_current_process() -> Self {
+        let mut ends = [0i32; 2];
+        assert_eq!(unsafe { pipe(ends.as_mut_ptr()) }, 0, "the release pipe must open");
+        let pid = unsafe { fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            let mut byte = [0u8; 1];
+            unsafe {
+                close(ends[1]);
+                while read(ends[0], byte.as_mut_ptr().cast(), 1) > 0 {}
+                close(ends[0]);
+                _exit(0);
+            }
+        }
+        unsafe { close(ends[0]) };
+        Self { pid, release: ends[1] }
+    }
+}
+
+impl Drop for ForkedCopy {
+    fn drop(&mut self) {
+        let mut status = 0;
+        unsafe {
+            close(self.release);
+            waitpid(self.pid, &mut status, 0);
+        }
+    }
+}
+
+/// A child of `fork` holds a copy of every open description, including the
+/// `flock` the writer owns, and the child keeps that copy until it exits.
+/// Releasing by closing only this process's handle therefore leaves the session
+/// owned past the writer's own drop, and the next save is refused with Busy.
+/// The failing macOS integration run of
+/// `a_marker_lost_to_power_loss_never_serves_a_stale_listing_or_context` is that
+/// window: a sibling test forked, the reader's temporary repair writer finished,
+/// and the save that followed saw the session still owned.
+#[test]
+fn a_finished_writer_releases_a_lock_a_forked_child_copied() {
+    let (paths, id, mut writer, root, _points, _) = fixture(None);
+    let first = message(&root);
+    writer.batched(|writer| writer.append(&first).map(|_| ())).unwrap();
+    // The fork happens while the writer holds the lock, so the child inherits it.
+    let child = ForkedCopy::of_current_process();
+    // A live writer still excludes a second one.
+    let busy = BlockingWriter::open(paths.clone(), id.clone())
+        .err()
+        .expect("a live writer must exclude a second writer");
+    assert_eq!(busy.code, StoreErrorCode::Busy);
+    drop(writer);
+    // The finished writer released the description itself, so the next save is
+    // served even though the child still holds its copy.
+    let mut writer = BlockingWriter::with_hook(paths.clone(), id.clone(), Box::new(|_| Ok(())))
+        .expect("a finished writer must not leave the session owned");
+    writer.enable_cache(ReadProbe::default());
+    let second = message(&first);
+    writer.append(&second).unwrap();
+    drop(writer);
+    assert_readers_serve(&paths, &id, &second.envelope().event_id, 2, "forked copy");
+    drop(child);
+    fs::remove_dir_all(paths.root()).unwrap();
 }

@@ -26,7 +26,12 @@ fn overrides(entries: &[(&str, LoadMode)]) -> BTreeMap<String, LoadMode> {
 #[test]
 fn core_profile_without_listing_keeps_every_allowed_tool_essential() {
     let cfg = core_config();
-    let allowed = cfg.allowed_tools().expect("core is an allow-list");
+    // Default ambient switches, not a developer's `~/.horon`: plan mode,
+    // clientless approvals, IRC and checkpoints each join a restricted list.
+    let allowed = cfg
+        .selection_with_ambient(&crate::config::AmbientConfig::default())
+        .allowed_tools
+        .expect("core is an allow-list");
     let tiers = cfg.load_tiers(Some(&allowed), false);
 
     assert_eq!(tiers.default_tier(), LoadMode::Essential);
@@ -67,7 +72,12 @@ fn core_profile_lists_the_core_tools_it_does_not_send_eagerly() {
         };
         assert_eq!(tiers.tier(name), expected, "{name} resolves to its listed tier");
     }
-    for name in ["batch", "memory", "swarm"] {
+    assert_eq!(
+        tiers.tier("swarm"),
+        LoadMode::Discoverable,
+        "swarm is a listed core tool, so the listing defers it like the rest"
+    );
+    for name in ["batch", "memory"] {
         assert_eq!(
             tiers.tier(name),
             LoadMode::Essential,
@@ -127,7 +137,12 @@ fn full_profile_defers_every_tool_outside_core() {
     for name in CORE_TOOLS {
         assert_eq!(tiers.tier(name), LoadMode::Essential, "{name} is a core tool");
     }
-    for name in ["memory", "swarm", "batch", "hashline_edit"] {
+    assert_eq!(
+        tiers.tier("swarm"),
+        LoadMode::Essential,
+        "swarm is core now, so full keeps it eager rather than deferring it"
+    );
+    for name in ["memory", "batch", "hashline_edit"] {
         assert_eq!(
             tiers.tier(name),
             LoadMode::Discoverable,
@@ -207,7 +222,10 @@ fn acp_profile_never_widens_and_stays_eager() {
         profile: "acp".to_string(),
         ..ToolConfig::default()
     };
-    let allowed = cfg.allowed_tools().expect("acp is an allow-list");
+    let allowed = cfg
+        .selection_with_ambient(&crate::config::AmbientConfig::default())
+        .allowed_tools
+        .expect("acp is an allow-list");
     let tiers = cfg.load_tiers(Some(&allowed), false);
 
     assert_eq!(allowed.len(), 12, "acp keeps its own twelve-tool allow-list");

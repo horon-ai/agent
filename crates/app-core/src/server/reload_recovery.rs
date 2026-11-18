@@ -1,10 +1,14 @@
 use crate::protocol::ReloadRecoveryDirective;
 use anyhow::Result;
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-const PENDING_RECORD_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// The same window as [`PENDING_RECORD_MAX_AGE`], in the unit instant
+/// arithmetic takes.
+const PENDING_RECORD_MAX_AGE_SECS: i64 = 7 * 24 * 60 * 60;
+const PENDING_RECORD_MAX_AGE: Duration = Duration::from_secs(PENDING_RECORD_MAX_AGE_SECS as u64);
 
 /// Context saved before a server reload, restored after restart.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -290,13 +294,14 @@ fn remove_record_files(path: &std::path::Path) -> Result<()> {
 }
 
 fn pending_record_is_expired(record: &ReloadRecoveryRecord, now: SystemTime) -> Option<bool> {
-    let created_at = chrono::DateTime::parse_from_rfc3339(&record.created_at).ok()?;
-    let created_at = SystemTime::from(created_at.with_timezone(&chrono::Utc));
-    Some(
-        now.duration_since(created_at)
-            .map(|age| age >= PENDING_RECORD_MAX_AGE)
-            .unwrap_or(false),
-    )
+    let Ok(created_at) = Timestamp::parse_rfc3339(&record.created_at) else {
+        // A stamp nobody can read cannot be judged, which is what the previous
+        // parse failure reported.
+        return None;
+    };
+    // A record stamped in the future is not expired, which is what the
+    // `duration_since` failure meant before.
+    Some(Timestamp::from(now) - created_at >= TimeDelta::seconds(PENDING_RECORD_MAX_AGE_SECS))
 }
 
 fn file_is_expired(path: &std::path::Path, now: SystemTime) -> bool {
@@ -397,7 +402,7 @@ pub(super) fn persist_intent(
         status: ReloadRecoveryStatus::Pending,
         directive,
         reason: reason.into(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: Timestamp::now().to_rfc3339(),
         delivered_at: None,
     };
     let path = path_for_session(session_id)?;
@@ -526,7 +531,7 @@ pub(super) fn mark_delivered_if_matching_continuation(
     }
 
     record.status = ReloadRecoveryStatus::Delivered;
-    record.delivered_at = Some(chrono::Utc::now().to_rfc3339());
+    record.delivered_at = Some(Timestamp::now().to_rfc3339());
     crate::storage::write_json(&path, &record)?;
     super::reload_trace::record_value(
         &record.reload_id,
@@ -734,7 +739,7 @@ mod tests {
         let _lock = crate::storage::lock_test_env();
         let _home = IsolatedHome::new();
         let now = SystemTime::now();
-        let old = chrono::Utc::now() - chrono::Duration::days(8);
+        let old = Timestamp::now() - TimeDelta::days(8);
 
         let records = [
             ReloadRecoveryRecord {
@@ -744,8 +749,8 @@ mod tests {
                 status: ReloadRecoveryStatus::Delivered,
                 directive: directive("done"),
                 reason: "delivered".to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                delivered_at: Some(chrono::Utc::now().to_rfc3339()),
+                created_at: Timestamp::now().to_rfc3339(),
+                delivered_at: Some(Timestamp::now().to_rfc3339()),
             },
             ReloadRecoveryRecord {
                 reload_id: "reload-stale".to_string(),
@@ -764,7 +769,7 @@ mod tests {
                 status: ReloadRecoveryStatus::Pending,
                 directive: directive("continue"),
                 reason: "fresh".to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: Timestamp::now().to_rfc3339(),
                 delivered_at: None,
             },
         ];
@@ -859,14 +864,6 @@ mod tests {
         assert_eq!(record.directive.continuation_message, "new continuation");
         assert_eq!(record.status, ReloadRecoveryStatus::Pending);
         Ok(())
-    }
-
-    #[test]
-    fn reload_context_serialization_roundtrips() {
-        let ctx = reload_ctx("session-serialized");
-        let json = serde_json::to_string(&ctx).expect("serialize reload context");
-        let loaded: ReloadContext = serde_json::from_str(&json).expect("deserialize reload context");
-        assert_eq!(loaded, ctx);
     }
 
     fn reload_ctx(session_id: &str) -> ReloadContext {

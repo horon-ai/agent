@@ -28,9 +28,15 @@ from .protocol import (
     API_VERSION_MAJOR,
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
+    ApprovalAckReceipt,
+    ArtifactEntry,
     CanonicalRecordRef,
+    FailoverAckReceipt,
     MessageModes,
+    SessionSearchHit,
     SessionToolDefinition,
+    UsageReport,
+    UsageTotals,
 )
 from .sockets import api_socket_path, transport_endpoint
 from .structured import (
@@ -76,6 +82,12 @@ class RuntimeInfo(TypedDict, total=False):
     model: str
     fallback_models: list[str]
     serving_model: str
+    # Reasoning effort the active route runs at, when the daemon reports one.
+    reasoning_effort: str
+    # Credential the session bills against (``oauth`` or ``api_key``), as
+    # resolved by the daemon. Prefer this over guessing from ``routes``, where
+    # one model can have both an OAuth and an API-key route.
+    auth_method: str
     providers: list[str]
     routes: list[dict[str, Any]]
 
@@ -483,6 +495,9 @@ class TurnUsage:
     input: int
     output: int
     cache_read_input: int | None = None
+    #: Cache tokens the provider wrote, when it reports them. ``None`` means the
+    #: provider omitted the count, which is not the same as zero.
+    cache_creation_input: int | None = None
 
 
 @dataclass
@@ -1405,6 +1420,22 @@ class HoronAgentClient:
     async def list_sessions_limited(self, limit: int) -> list[dict[str, Any]]:
         return await self.list_sessions(limit=limit)
 
+    async def search_sessions(self, query: str, limit: int | None = None) -> list[SessionSearchHit]:
+        """Search every stored transcript, attached or not.
+
+        The scan runs in the daemon's own session index, so a client sees the
+        same hits and ordering the agent's search tool returns. ``limit`` caps
+        the hit count and is clamped by the server; omit it for the server
+        default. An empty query rejects with ``invalid_request`` rather than
+        returning everything.
+        """
+        request: dict[str, Any] = {"req": "search_sessions", "query": query}
+        if limit is not None:
+            request["limit"] = limit
+        frame = await self._expect_reply(request, "session_search_results")
+        results = frame.get("results")
+        return list(results) if isinstance(results, list) else []
+
     async def archive_session(self, session_id: str) -> None:
         """Reversibly hide a session from the default list. No transcript is deleted."""
         await self._request_ok({"req": "archive_session", "session_id": session_id})
@@ -1817,6 +1848,61 @@ class HoronAgentClient:
             }
         )
 
+    async def ack_approval(self, session_id: str, request_id: str) -> ApprovalAckReceipt:
+        """Retire the daemon's durable copy of an ``approval_resolved`` event.
+
+        An approval stays parked until it is acked, so a client that resolves one
+        out of band calls this once the decision has landed; an empty id rejects
+        with ``invalid_request`` because it would clear nothing while reporting
+        success. The daemon only accepts the ack on a connection attached to
+        ``session_id``.
+
+        The reply is a bare ``ok`` and no event follows it: an acknowledgement
+        is a message a client sends, so the daemon never emits an
+        ``approval_ack`` event itself. The returned receipt is built from the
+        values that were sent.
+        """
+        await self._expect_reply(
+            {"req": "approval_ack", "session_id": session_id, "request_id": request_id},
+            "ok",
+        )
+        return {"request_id": request_id}
+
+    async def ack_failover(
+        self,
+        session_id: str,
+        chain_id: str,
+        from_: str,
+        to: str,
+        attempt: int,
+    ) -> FailoverAckReceipt:
+        """Retire the daemon's durable copy of a ``failover_switched`` event.
+
+        Echo the whole announcement: ``chain_id``, ``from``, ``to`` and
+        ``attempt`` all travel, because a partial key would either clear nothing
+        or read as a different switch. Empty strings reject with
+        ``invalid_request``, and the daemon only accepts the ack on a connection
+        attached to ``session_id``.
+
+        ``from_`` is the argument spelling because ``from`` is a keyword; the
+        wire key is ``from``, and the receipt carries it back as ``from_``.
+
+        Like :meth:`ack_approval`, the reply is a bare ``ok``, no
+        ``failover_ack`` event follows it, and the receipt echoes what was sent.
+        """
+        await self._expect_reply(
+            {
+                "req": "failover_ack",
+                "session_id": session_id,
+                "chain_id": chain_id,
+                "from": from_,
+                "to": to,
+                "attempt": attempt,
+            },
+            "ok",
+        )
+        return {"chain_id": chain_id, "from_": from_, "to": to, "attempt": attempt}
+
     async def list_models(self, session_id: str) -> dict[str, Any]:
         """Models this session can switch to, and which one is serving it."""
         frame = await self._expect_reply({"req": "list_models", "session_id": session_id}, "models")
@@ -1877,6 +1963,10 @@ class HoronAgentClient:
             info["fallback_models"] = [model for model in fallbacks if isinstance(model, str)]
         if isinstance(frame.get("serving_model"), str):
             info["serving_model"] = frame["serving_model"]
+        if isinstance(frame.get("reasoning_effort"), str):
+            info["reasoning_effort"] = frame["reasoning_effort"]
+        if isinstance(frame.get("auth_method"), str):
+            info["auth_method"] = frame["auth_method"]
         return info
 
     # --- credentials --------------------------------------------------------
@@ -1901,6 +1991,36 @@ class HoronAgentClient:
         if account_label is not None:
             request["account_label"] = account_label
         await self._expect_reply(request, "ok")
+
+    # --- usage --------------------------------------------------------------
+
+    async def usage_report(self, session_id: str | None = None) -> UsageReport:
+        """Token usage: durable per-request totals, per-model aggregates, the
+        active context window, and any subscription limits the daemon published.
+
+        Omit ``session_id`` for the whole account. A metric no request recorded
+        is ``None`` rather than zero, and ``pricing`` is always ``"unknown"``
+        because this harness carries no price table. A named session id with no
+        stored record rejects with ``unknown_session``.
+        """
+        request: dict[str, Any] = {"req": "usage_report"}
+        if session_id is not None:
+            request["session_id"] = session_id
+        frame = await self._expect_reply(request, "usage_report")
+        report: UsageReport = {
+            "sessions": list(frame.get("sessions") or []),
+            "totals": cast(UsageTotals, frame.get("totals") or {}),
+            "models": list(frame.get("models") or []),
+            "pricing": str(frame.get("pricing", "unknown")),
+            "estimated_cost": frame.get("estimated_cost"),
+        }
+        if isinstance(frame.get("session_id"), str):
+            report["session_id"] = frame["session_id"]
+        if isinstance(frame.get("context_window"), int):
+            report["context_window"] = frame["context_window"]
+        if isinstance(frame.get("limits"), list):
+            report["limits"] = list(frame["limits"])
+        return report
 
     # --- files --------------------------------------------------------------
 
@@ -1940,6 +2060,18 @@ class HoronAgentClient:
         frame = await self._expect_reply(request, "text_matches")
         matches = frame.get("matches")
         return list(matches) if isinstance(matches, list) else []
+
+    async def list_artifacts(self, session_id: str) -> list[ArtifactEntry]:
+        """Artifacts this session produced: HTML pages and images under its
+        working directory. Metadata only; :meth:`read_file` serves the bytes.
+
+        Served from the stored record, so the connection need not be attached,
+        but a session id with no stored transcript rejects with
+        ``unknown_session``.
+        """
+        frame = await self._expect_reply({"req": "list_artifacts", "session_id": session_id}, "artifacts")
+        artifacts = frame.get("artifacts")
+        return list(artifacts) if isinstance(artifacts, list) else []
 
     async def file_status(self, session_id: str, path: str) -> FileStatus:
         frame = await self._expect_reply(
@@ -2677,6 +2809,7 @@ class HoronAgentClient:
                         input=int(event.get("input", 0)),
                         output=int(event.get("output", 0)),
                         cache_read_input=event.get("cache_read_input"),
+                        cache_creation_input=event.get("cache_creation_input"),
                     )
                 elif kind == "permission_request":
                     if auto_approve:

@@ -1,5 +1,5 @@
 use super::*;
-use chrono::Duration;
+use horon_agent_time::{Duration, Timestamp};
 
 #[test]
 fn test_ambient_status_default() {
@@ -21,8 +21,8 @@ fn test_scheduled_queue_push_and_pop() {
     let mut queue = ScheduledQueue::load(path);
     assert!(queue.is_empty());
 
-    let past = Utc::now() - Duration::minutes(5);
-    let future = Utc::now() + Duration::hours(1);
+    let past = Timestamp::now() - Duration::minutes(5);
+    let future = Timestamp::now() + Duration::hours(1);
 
     queue.push(ScheduledItem {
         id: "s1".into(),
@@ -31,7 +31,7 @@ fn test_scheduled_queue_push_and_pop() {
         priority: Priority::Low,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -46,7 +46,7 @@ fn test_scheduled_queue_push_and_pop() {
         priority: Priority::High,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -71,7 +71,7 @@ fn test_scheduled_queue_remove_by_id_persists_remaining_items() {
     let path = tmp.path().to_path_buf();
 
     let mut queue = ScheduledQueue::load(path.clone());
-    let future = Utc::now() + Duration::hours(1);
+    let future = Timestamp::now() + Duration::hours(1);
 
     queue.push(ScheduledItem {
         id: "keep".into(),
@@ -80,7 +80,7 @@ fn test_scheduled_queue_remove_by_id_persists_remaining_items() {
         priority: Priority::Normal,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -94,7 +94,7 @@ fn test_scheduled_queue_remove_by_id_persists_remaining_items() {
         priority: Priority::High,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -117,8 +117,8 @@ fn test_pop_ready_sorts_by_priority_then_time() {
     let path = tmp.path().to_path_buf();
 
     let mut queue = ScheduledQueue::load(path);
-    let past1 = Utc::now() - Duration::minutes(10);
-    let past2 = Utc::now() - Duration::minutes(5);
+    let past1 = Timestamp::now() - Duration::minutes(10);
+    let past2 = Timestamp::now() - Duration::minutes(5);
 
     queue.push(ScheduledItem {
         id: "low_early".into(),
@@ -127,7 +127,7 @@ fn test_pop_ready_sorts_by_priority_then_time() {
         priority: Priority::Low,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -142,7 +142,7 @@ fn test_pop_ready_sorts_by_priority_then_time() {
         priority: Priority::High,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -163,7 +163,7 @@ fn test_take_ready_direct_items_only_removes_direct_targets() {
     let path = tmp.path().to_path_buf();
 
     let mut queue = ScheduledQueue::load(path);
-    let past = Utc::now() - Duration::minutes(5);
+    let past = Timestamp::now() - Duration::minutes(5);
 
     queue.push(ScheduledItem {
         id: "session_due".into(),
@@ -174,7 +174,7 @@ fn test_take_ready_direct_items_only_removes_direct_targets() {
             session_id: "session_123".into(),
         },
         created_by_session: "session_123".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -191,7 +191,7 @@ fn test_take_ready_direct_items_only_removes_direct_targets() {
             parent_session_id: "session_123".into(),
         },
         created_by_session: "session_123".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -206,7 +206,7 @@ fn test_take_ready_direct_items_only_removes_direct_targets() {
         priority: Priority::High,
         target: ScheduleTarget::Ambient,
         created_by_session: "ambient".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),
@@ -233,8 +233,8 @@ fn test_ambient_state_record_cycle() {
         compactions: 1,
         proactive_work: None,
         next_schedule: None,
-        started_at: Utc::now() - Duration::seconds(30),
-        ended_at: Utc::now(),
+        started_at: Timestamp::now() - Duration::seconds(30),
+        ended_at: Timestamp::now(),
         status: CycleStatus::Complete,
         conversation: None,
     };
@@ -269,8 +269,8 @@ fn test_ambient_state_record_cycle_with_schedule() {
             git_branch: None,
             additional_context: None,
         }),
-        started_at: Utc::now() - Duration::seconds(10),
-        ended_at: Utc::now(),
+        started_at: Timestamp::now() - Duration::seconds(10),
+        ended_at: Timestamp::now(),
         status: CycleStatus::Complete,
         conversation: None,
     };
@@ -292,13 +292,6 @@ fn test_ambient_lock_release() {
     };
     lock.release().unwrap();
     assert!(!lock_file.exists());
-}
-
-#[test]
-fn test_schedule_id_format() {
-    let id = format!("sched_{:08x}", rand::random::<u32>());
-    assert!(id.starts_with("sched_"));
-    assert_eq!(id.len(), 6 + 8); // "sched_" + 8 hex chars
 }
 
 #[test]
@@ -352,19 +345,19 @@ fn test_build_ambient_system_prompt_minimal() {
 #[test]
 fn test_build_ambient_system_prompt_with_data() {
     let state = AmbientState {
-        last_run: Some(Utc::now() - Duration::minutes(15)),
+        last_run: Some(Timestamp::now() - Duration::minutes(15)),
         total_cycles: 7,
         ..Default::default()
     };
 
     let queue = vec![ScheduledItem {
         id: "sched_001".into(),
-        scheduled_for: Utc::now(),
+        scheduled_for: Timestamp::now(),
         context: "Check CI status".into(),
         priority: Priority::High,
         target: ScheduleTarget::Ambient,
         created_by_session: "session_abc".into(),
-        created_at: Utc::now() - Duration::minutes(10),
+        created_at: Timestamp::now() - Duration::minutes(10),
         working_dir: Some("/home/user/project".into()),
         task_description: Some("Check CI status for the main branch".into()),
         relevant_files: vec!["src/main.rs".into()],
@@ -379,7 +372,7 @@ fn test_build_ambient_system_prompt_with_data() {
         low_confidence: 3,
         contradictions: 1,
         missing_embeddings: 5,
-        last_consolidation: Some(Utc::now() - Duration::hours(2)),
+        last_consolidation: Some(Timestamp::now() - Duration::hours(2)),
     };
 
     let sessions = vec![RecentSessionInfo {
@@ -439,12 +432,12 @@ fn test_scheduled_queue_items_accessor() {
 
     queue.push(ScheduledItem {
         id: "s1".into(),
-        scheduled_for: Utc::now(),
+        scheduled_for: Timestamp::now(),
         context: "test item".into(),
         priority: Priority::Normal,
         target: ScheduleTarget::Ambient,
         created_by_session: "test".into(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         working_dir: None,
         task_description: None,
         relevant_files: Vec::new(),

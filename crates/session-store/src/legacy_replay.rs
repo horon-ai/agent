@@ -3,7 +3,7 @@ use crate::legacy::{LegacyDiagnostic, LegacyRead, LegacySource, corrupt};
 use crate::legacy_bundle::Bundle;
 use crate::legacy_parse::{AUX, Entry, entry, message, metadata, salvage, snapshot};
 use crate::*;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
@@ -86,7 +86,7 @@ pub(crate) fn replay(source: &LegacySource, bundle: &Bundle) -> Result<Replay, S
                 }
             };
             for e in entries {
-                let updated: DateTime<Utc> =
+                let updated: Timestamp =
                     serde_json::from_value(e.meta["updated_at"].clone()).map_err(|error| corrupt(error.to_string()))?;
                 let ids = e
                     .append_messages

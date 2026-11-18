@@ -2,6 +2,7 @@ use horon_agent_session_store::catalog;
 use horon_agent_session_store::checkpoint::SessionCache;
 use horon_agent_session_store::legacy::LegacySource;
 use horon_agent_session_store::*;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt, symlink};
@@ -40,7 +41,7 @@ fn seed(home: &Home, name: &str) -> SessionId {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         json!({"metadata":SessionMetadata::default(),"branch_root":false}),
     )
@@ -101,7 +102,7 @@ fn same_home_migration_keeps_originals_and_updates_recent_summary_and_listing() 
         EventId::new_v4(),
         Some(recent.head),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MetadataChanged),
         json!({"metadata":metadata}),
     )

@@ -81,8 +81,8 @@ fn browser_unusable_here() -> bool {
 }
 
 /// True when the current process is a Rust test binary (`cargo test` /
-/// `cargo nextest`). Cargo places hashed test executables in `deps/` beneath
-/// its build directory, which can be relocated with `CARGO_TARGET_DIR`.
+/// `cargo nextest`). Unit tests keep their identity when CI moves the binary.
+/// Integration tests normally run from Cargo's `deps/` directory.
 ///
 /// Used to keep tests from opening real browser windows on the developer's
 /// desktop. Set `HORON_AGENT_ALLOW_BROWSER_IN_TESTS=1` to opt out.
@@ -90,6 +90,9 @@ pub fn running_in_test_harness() -> bool {
     static IN_TEST_HARNESS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
         if env_truthy("HORON_AGENT_ALLOW_BROWSER_IN_TESTS") {
             return false;
+        }
+        if cfg!(test) {
+            return true;
         }
         std::env::current_exe()
             .ok()

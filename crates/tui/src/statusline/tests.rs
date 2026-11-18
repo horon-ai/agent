@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
-use chrono::NaiveTime;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::widgets::Paragraph;
+use time::Time;
+use unicode_width::UnicodeWidthStr;
 
 use super::{
     Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, compact, render, shorten_path, status_word,
@@ -27,16 +28,18 @@ fn settings_from(text: &str) -> Settings {
         .clone()
 }
 
-fn time(hour: u32, minute: u32) -> NaiveTime {
-    NaiveTime::from_hms_opt(hour, minute, 0).expect("valid time")
+fn time(hour: u32, minute: u32) -> Time {
+    Time::from_hms(hour as u8, minute as u8, 0).expect("valid time")
 }
 
 fn sample() -> StatusData<'static> {
     StatusData {
         provider: Some("anthropic"),
         model: Some("claude-sonnet-4"),
+        effort: None,
         session_id: Some("abcdef1234567890"),
         pending_turn: false,
+        disconnected: false,
         session_status: Some("idle"),
         prompt: None,
         cwd: Some("/home/u/proj"),
@@ -204,8 +207,8 @@ fn statusline_path_option_shortens_the_directory() {
         ..layout
     };
     let text = rendered(&data, &only_path, 80);
-    assert_eq!(text, "…ts/deep");
-    assert_eq!(shorten_path("/home/u/projects/deep", Some("/home/u"), 8), "…ts/deep");
+    assert_eq!(text, "…/deep");
+    assert_eq!(shorten_path("/home/u/projects/deep", Some("/home/u"), 8), "…/deep");
     assert_eq!(shorten_path("/home/u", Some("/home/u"), 40), "~");
     assert_eq!(shorten_path("/other/dir", Some("/home/u"), 0), "/other/dir");
 }
@@ -269,4 +272,94 @@ fn statusline_catalogue_round_trips() {
         assert_eq!(preset.as_str(), name);
     }
     assert!(Preset::parse("bogus").is_none());
+}
+
+#[test]
+fn a_lost_connection_is_named_in_the_state_segment() {
+    let layout = Layout {
+        left: vec![SegmentId::Status],
+        right: Vec::new(),
+        ..Layout::default()
+    };
+    let mut data = StatusData {
+        pending_turn: true,
+        ..StatusData::default()
+    };
+    assert_eq!(rendered(&data, &layout, 80), "running");
+
+    data.disconnected = true;
+    assert_eq!(rendered(&data, &layout, 80), "disconnected");
+}
+
+#[test]
+fn the_path_cut_keeps_whole_segments_after_the_marker() {
+    let path = "/srv/alpha/beta/gamma";
+    // Twelve cells hold the marker and the last two names exactly.
+    assert_eq!(shorten_path(path, None, 12), "…/beta/gamma");
+    // One cell less drops the parent rather than half of it.
+    assert_eq!(shorten_path(path, None, 11), "…/gamma");
+    // The home form cuts the same way: the marker stands for the directories
+    // left out, never for half a name.
+    assert_eq!(shorten_path("/home/u/projects/deep", Some("/home/u"), 14), "…/deep");
+}
+
+#[test]
+fn a_name_longer_than_the_limit_is_cut_inside_itself() {
+    let path = "/srv/a/verylongsegmentname";
+    let cut = shorten_path(path, None, 10);
+    assert!(cut.starts_with("…/"), "the marker was dropped: {cut:?}");
+    assert!(cut.ends_with("tname"), "the leaf's tail was lost: {cut:?}");
+    assert_eq!(UnicodeWidthStr::width(cut.as_str()), 10, "{cut:?}");
+
+    // Wide characters are counted as the cells they draw and never split.
+    let cjk = shorten_path("/日本語/ディレクトリ", None, 8);
+    assert_eq!(cjk, "…/クトリ");
+    assert_eq!(UnicodeWidthStr::width(cjk.as_str()), 8, "{cjk:?}");
+    let emoji = shorten_path("/a/😀😀😀😀", None, 5);
+    assert_eq!(emoji, "…/😀");
+    assert!(UnicodeWidthStr::width(emoji.as_str()) <= 5, "{emoji:?}");
+}
+
+#[test]
+fn the_path_cut_never_passes_the_limit_and_never_panics() {
+    let paths = [
+        "/",
+        "~",
+        "/home/u",
+        "/home/u/projects/deep",
+        "/srv/verylongsegmentnamethatgoesonandon",
+        "/日本語/ディレクトリ/さらに深い",
+        "/a/😀😀😀😀",
+        "relative/name",
+        "namewithoutseparator",
+    ];
+    for path in paths {
+        for max in 0..60 {
+            let cut = shorten_path(path, Some("/home/u"), max);
+            if max == 0 {
+                // A zero limit keeps the whole path, home substitution and all.
+                assert_eq!(
+                    cut,
+                    shorten_path(path, Some("/home/u"), usize::MAX),
+                    "a zero limit must keep the path whole"
+                );
+                continue;
+            }
+            let width = UnicodeWidthStr::width(cut.as_str());
+            assert!(width <= max, "`{path}` at {max} drew {width} cells: {cut:?}");
+            assert!(!cut.is_empty(), "`{path}` at {max} drew nothing");
+        }
+    }
+    // The degenerate limits still say something.
+    assert_eq!(shorten_path("/a/b", None, 1), "…");
+    assert_eq!(shorten_path("/a/b", None, 2), "…/");
+    assert_eq!(shorten_path("/a/b", None, 4), "/a/b");
+    assert_eq!(shorten_path("/a/b", None, 3), "…/b");
+    assert_eq!(shorten_path("/", None, 1), "/");
+}
+
+#[test]
+fn a_lone_name_carries_no_separator_marker() {
+    assert_eq!(shorten_path("namewithoutseparator", None, 6), "…rator");
+    assert_eq!(shorten_path("~/alpha", None, 6), "…/lpha");
 }

@@ -120,7 +120,7 @@ fn seed_session(working_dir: Option<String>) -> crate::session::Session {
 }
 
 /// Serialized payload, message by message. Messages minted during request
-/// preparation carry `Utc::now()`, so their creation time is dropped before
+/// preparation carry `Timestamp::now()`, so their creation time is dropped before
 /// comparison; every transcript byte, including its own timestamps, is compared
 /// exactly.
 fn serialized_payload(messages: &[Message], transcript_len: usize) -> Vec<String> {

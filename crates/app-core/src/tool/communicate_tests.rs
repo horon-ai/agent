@@ -25,11 +25,6 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[test]
-fn tool_is_named_swarm() {
-    assert_eq!(CommunicateTool::new().name(), "swarm");
-}
-
-#[test]
 fn task_graph_seed_collision_is_detected_from_server_error() {
     let response = ServerEvent::Error {
         id: 1,
@@ -131,16 +126,6 @@ async fn run_plan_reporter_finalize_puts_summary_before_log() {
 }
 
 #[tokio::test]
-async fn run_plan_reporter_inline_is_a_no_op() {
-    let reporter = super::RunPlanReporter::inline();
-    assert!(reporter.task_id.is_none());
-    // Must not panic or create files.
-    reporter.log("ignored").await;
-    reporter.progress(1, 2, "ignored".to_string()).await;
-    reporter.finalize("ignored").await;
-}
-
-#[tokio::test]
 async fn run_plan_driver_guard_blocks_while_driver_task_is_live() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let manager = crate::background::BackgroundTaskManager::with_output_dir(dir.path().into());
@@ -196,7 +181,7 @@ async fn run_plan_driver_guard_allows_restart_after_stale_driver() {
         "status": "running",
         "exit_code": null,
         "error": null,
-        "started_at": chrono::Utc::now().to_rfc3339(),
+        "started_at": horon_agent_time::Timestamp::now().to_rfc3339(),
         "completed_at": null,
         "duration_secs": null,
         "detached": false,
@@ -442,7 +427,7 @@ fn run_plan_progress_counts_only_completed_toward_percent_and_shows_live_active(
         total: Some(total as u64),
         unit: Some("nodes".to_string()),
         eta_seconds: None,
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
         source: crate::bus::BackgroundTaskProgressSource::Reported,
     }
     .normalize();

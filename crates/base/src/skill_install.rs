@@ -33,7 +33,11 @@ pub struct InstallRecord {
     /// The repository or path the skill came from.
     pub source: String,
     /// The requested branch, tag, or commit, when one was given.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ///
+    /// The lock file spells the key `ref`, matching the tool argument and the
+    /// documented shape; `git_ref` is still accepted so a file an earlier build
+    /// wrote keeps its pinned ref instead of silently losing it.
+    #[serde(default, rename = "ref", alias = "git_ref", skip_serializing_if = "Option::is_none")]
     pub git_ref: Option<String>,
     /// The commit the clone resolved to.
     pub commit: String,

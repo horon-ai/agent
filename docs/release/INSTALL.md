@@ -27,11 +27,51 @@ horon install-release --assets <directory> --agent-version <version>
 
 Once verification passes, `stable`, `current`, the launcher links and the update metadata are swapped together. A failure midway rolls back, so the previous installation stays in place (`crates/app-core/src/update/activation.rs`). The command downloads nothing from the network. Preparing the assets is the caller's job.
 
+## Archive format
+
+The FreeBSD x64 archive uses POSIX ustar so FreeBSD `tar` and `install-release` read the same two top-level regular files, `horon-agent-freebsd-x86_64` and `LICENSE`. Before upload, `scripts/release/agent_archive.sh pack <dist-dir> <binary>` checks the format, names, executable permission and bytes. The release job then installs the archive, compares the installed executable with the build output and runs the launcher.
+
+`scripts/release/agent_archive.sh install-verify <dist-dir> <binary> [version] [pairs]` installs the archive into a fresh home and reinstalls into that home. Both installs must preserve the source bytes and the launcher's version output. The final optional argument is the number of install samples, each one cold then warm, so the default is a single pair. A manual FreeBSD smoke run with `official_asset` set also verifies that release's published checksum, re-packs its own executable and checks five installation pairs. The recorded run uses `v0.1.14`, whose FreeBSD archive is the GNU-sparse case this packaging replaced, so the repair is proved on published bytes rather than on a fresh build. The workflow saves its logs and member listing in `freebsd-archive-evidence-<tag>`.
+
+## Platform assets
+
+`release.yml` builds every asset from the tagged commit and attaches it to a draft release. `Finalize release` publishes only when the complete set exists; a missing platform leaves the release in draft.
+
+| Platform | Agent asset | TUI asset |
+| --- | --- | --- |
+| Linux x86_64, glibc 2.17 baseline | `horon-agent-linux-x86_64.tar.gz` | `horon-tui-linux-x86_64.tar.gz` |
+| Linux aarch64 | `horon-agent-linux-aarch64.tar.gz` | `horon-tui-linux-aarch64.tar.gz` |
+| macOS Apple Silicon | `horon-agent-macos-aarch64.tar.gz` | `horon-tui-macos-aarch64.tar.gz` |
+| macOS Intel | `horon-agent-macos-x86_64.tar.gz` | `horon-tui-macos-x86_64.tar.gz` |
+| Windows x86_64 | `horon-agent-windows-x86_64.exe` and `.tar.gz` | `horon-tui-windows-x86_64.exe` and `.tar.gz` |
+| Windows ARM64 | `horon-agent-windows-aarch64.exe` and `.tar.gz` | `horon-tui-windows-aarch64.exe` and `.tar.gz` |
+| FreeBSD x86_64 | `horon-agent-freebsd-x86_64.tar.gz` | none |
+
+FreeBSD is the one platform with no interactive client: the release publishes the agent only, and the installer never looks for `horon-tui` there.
+
 ## How the install scripts use it
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch the release assets and `SHA256SUMS` into a temporary directory and then call this command. `scripts/install/install_from_source.sh` calls the same command with `--source-binary` to install a local build. The shell and PowerShell installers therefore never produce different layouts, and a failure leaves the previous installation alone.
 
+The PowerShell installer hides progress while downloading release files. A caller that pipes the script into `iex` keeps its own `$ProgressPreference` setting.
+
 The Windows install locations and signing procedure are in [`WINDOWS.md`](WINDOWS.md).
+
+## Release download cache
+
+`scripts/install/install.sh` keeps the last verified copy of each asset it installs, so a reinstall does not download it a second time. `install.ps1` does not use this cache.
+
+| Item | Location |
+| --- | --- |
+| Cache root | `$XDG_CACHE_HOME`, otherwise `~/.cache` on Linux and FreeBSD and `~/Library/Caches` on macOS |
+| Entries | `<cache root>/horon-agent/release/<asset name>`, one file per asset name |
+
+- `SHA256SUMS` is fetched from `https://github.com/horon-ai/agent/releases/download/<tag>/` on every run and is never stored. An entry is reused only when this run's list gives the same digest for that exact asset name.
+- An entry is only a source. Its bytes are copied into the temporary asset directory and the copy is hashed against this run's list, so the file handed to `install-release` is the file that was verified.
+- The cache is used only when the directory that holds the cache root, the cache root itself and the directories created under it are all real directories owned by the current user with neither the group nor the world write bit set. A shared location such as `/tmp`, a symbolic link, an unreadable mode or an owner other than the current user disables the cache for that run instead of being written to.
+- After `install-release` succeeds, the installer moves each verified download to a temporary name in the cache and sets the entry's final name with a rename. A move on the same filesystem reuses the downloaded file. Across filesystems the move copies the bytes before the rename. Concurrent installs see only complete entries.
+- A damaged entry, an entry this release does not list, or a cache that cannot be written falls back to the download path. The cache never fails an install.
+- `HORON_AGENT_NO_DOWNLOAD_CACHE=1` disables the cache for one run. `rm -rf <cache root>/horon-agent` removes it; the immutable version store, the launcher and uninstall do not depend on it.
 
 ## Installing from npm (not published yet)
 
@@ -48,9 +88,9 @@ An npm installation is updated with npm, not with the agent's own updater: the l
 
 ## The TUI binary
 
-The release also publishes the TUI binary `horon-tui`, the client that TUI mode runs in, as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together. Both binaries are built by the same `release.yml` run from the same tagged commit and are staged into the same version directory, so there is no separate client release or channel. The version string differs: `horon-agent --version` derives its version from the release tag (`crates/build-meta`), while `horon-tui --version` prints the `crates/tui` package version (`crates/tui/src/lib.rs`).
+The release also publishes the TUI binary `horon-tui`, the client that TUI mode runs in, as its own archive beside the agent: `horon-tui-<suffix>.tar.gz`, with the same platform suffix the agent asset uses (`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz`, and so on). Every platform except FreeBSD publishes one; FreeBSD is the agent alone. `release_asset.rs` derives the name from the agent asset, and the suffix is what ties the two together. Both binaries are built by the same `release.yml` run from the same tagged commit and are staged into the same version directory, so there is no separate client release or channel. The version string differs: `horon-agent --version` derives its version from the release tag (`crates/build-meta`), while `horon-tui --version` prints the `crates/tui` package version (`crates/tui/src/lib.rs`).
 
-`scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, and the `LICENSE` each archive carries is installed there too, so one version directory holds both binaries with the licence that covers them and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
+`scripts/install/install.sh` and `scripts/install/install.ps1` fetch the archive into the same temporary directory as the agent asset and check it against `SHA256SUMS` before handing the directory to `install-release`. `install.sh` starts that transfer right after `SHA256SUMS` and lets it run beside the agent download, and it requests the archive only when the manifest names it; both transfers are settled before `install-release` is called. The staged client is placed in `builds/versions/<version>/` beside `horon-agent`, and the `LICENSE` each archive carries is installed there too, so one version directory holds both binaries with the licence that covers them and activation swaps them together. Installing the client is documented in [`../runtime/TUI.md`](../runtime/TUI.md).
 
 The client is optional at every step, and a copy that cannot be verified never blocks the agent:
 
@@ -112,9 +152,11 @@ The TypeScript and Python SDKs' `launch()` starts its own instance on Linux. The
 
 The archive holds the wrapper, `<artifact>.bin` and the `LICENSE`; the OpenSSL libraries are no longer included. `scripts/install/install.sh` still accepts `libssl.so*` members so it can install older archives.
 
+The shell installer verifies the checksum and checks every member name before preparing the bootstrap executable. On Linux the verified archive is expanded once into the temporary directory and both the listing check and the extraction read that image, but only when the filesystem holds twice the uncompressed length; otherwise the compressed archive is read again for each pass. An extraction out of that image that fails is retried once from the archive itself. When the bootstrap needs more than one file, GNU tar streams the selected files in one extraction pass. Other tar implementations stream one selected file at a time.
+
 ### CI guard
 
-`scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. That step runs only on GitHub-hosted runners (with `CI_SELF_HOSTED` set, only the macOS entry remains). The same command can run on a developer machine that has Docker.
+`scripts/ci/check_linux_bare_runtime.sh <binary>` runs the binary in `debian:trixie-slim`. It deletes the OpenSSL libraries and the CA store inside the container and checks that `ldd` lists only the allowed glibc family and libgcc entries. It then runs `--version` and one `run` turn against a mock provider. The Linux entry of the CI `build` job runs this script after the release-profile build. The same command can run on a developer machine that has Docker.
 
 ## Release numbers and automatic publishing
 
@@ -123,11 +165,22 @@ The archive holds the wrapper, `<artifact>.bin` and the `LICENSE`; the OpenSSL l
 | Step | What happens |
 | --- | --- |
 | main push | `ci.yml` checks that commit. |
-| CI success | `release-tag.yml` picks the next tag with `scripts/release/next_version.py`. It adds one patch to the highest tag on the same MAJOR.MINOR, or uses the `Cargo.toml` version when the line has no tag. Commits already tagged and commits older than the latest release are skipped. |
+| CI success | `release-tag.yml` picks the next tag with `scripts/release/next_version.py`. The patch is one above the highest tag on the same MAJOR.MINOR line and never below the `Cargo.toml` patch; a line with no tag starts at the `Cargo.toml` version. Commits already tagged and commits older than the latest release are skipped. |
 | Tag creation | The same run creates the tag on that commit and calls `release.yml` through `workflow_call`. The remaining checks (CI success for the exact commit, draft, platform builds, `SHA256SUMS`, publishing, install verification) are the same as for a directly pushed tag. |
+| Release notes | The draft body is rendered from the commit subjects since the previous tag, grouped by conventional-commit prefix and ended with the compare link (`scripts/release/release_notes.sh`). |
 | Image publishing | The published release's Linux assets are verified against `SHA256SUMS`, packaged as a container image and pushed. |
 
 `prepare_source.py` allows a build only when the tag shares MAJOR.MINOR with `Cargo.toml` and its patch is at least that value. A new MINOR or MAJOR needs only the root version in `Cargo.toml` and `Cargo.lock` bumped and merged to main. With the repository variable `RELEASE_AUTO` set to `false` no tag is created. A manual run of `release-tag.yml` reports the tag it would create and creates nothing.
+
+### Rerunning a release
+
+A published tag is never moved. To rebuild a release that stopped, dispatch the reviewed workflow from `dev` with the existing tag; the checkout is detached at that tag's commit and `prepare_source.py` refuses a mismatched tree, while `check_ci.py` still requires the successful push CI run for that exact commit.
+
+```bash
+gh workflow run release.yml --ref dev -f tag=vX.Y.Z
+```
+
+Every asset is uploaded with `--clobber`, so a platform that failed is replaced and the ones that succeeded stay. The release remains a draft until the full asset set exists. The container image has its own path that touches neither the tag nor the release: `gh workflow run release-tag.yml --ref dev -f republish_container=vX.Y.Z` verifies the tag, its exact-commit CI and the published assets, then rebuilds and pushes the image.
 
 The update check only updates when the release version is higher than the current version. An installation built from 0.98.x therefore does not treat a 0.1.x release as newer. Such an installation is reinstalled once with `scripts/install/install.sh`.
 

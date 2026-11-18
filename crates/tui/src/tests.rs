@@ -150,7 +150,12 @@ fn streams_text_and_finishes_turn() {
         screen.contains("Hello, world"),
         "assistant text missing from:\n{screen}"
     );
-    assert!(screen.contains("* bash"), "tool line missing from:\n{screen}");
+    // The lead mark is the theme's glyph now, not a hardcoded asterisk.
+    assert!(
+        screen.contains(&format!("{} bash", app.symbols.tool_lead)),
+        "tool line missing from:\n{screen}"
+    );
+    assert!(screen.contains("done"), "tool outcome missing from:\n{screen}");
     assert!(!app.pending_turn);
 }
 
@@ -182,7 +187,12 @@ fn approval_pending_shows_prompt_and_resolves() {
     });
     let screen = draw_to_string(&mut app);
     assert!(!screen.contains("approval needed"), "prompt still drawn:\n{screen}");
-    assert!(!screen.contains("rm -rf build"), "stale action still drawn:\n{screen}");
+    // The answer itself stays in the transcript: the line says what was allowed
+    // and that the call still has to be retried.
+    assert!(
+        screen.contains("you allowed bash"),
+        "the answer left no line:\n{screen}"
+    );
 }
 
 #[test]
@@ -242,12 +252,15 @@ fn tool_failure_is_visible() {
         error: Some("permission denied".into()),
         verdict: None,
     });
+    let items = app.transcript.items();
+    let Some(Item::Tool(call)) = items.last() else {
+        panic!("expected one tool line: {items:?}");
+    };
+    assert_eq!(call.name, "write");
     assert_eq!(
-        app.transcript.items().last(),
-        Some(&Item::Tool {
-            name: "write".into(),
-            state: ToolState::Failed("permission denied".into())
-        })
+        call.state,
+        ToolState::Failed("permission denied".into()),
+        "the failure text is what the user acts on"
     );
 }
 
@@ -353,7 +366,7 @@ fn settings_with(env: &[(&str, &str)]) -> crate::settings::Settings {
 }
 
 #[test]
-fn enter_inserts_nothing_when_the_editor_does_not_submit_on_it() {
+fn enter_starts_a_new_line_when_the_editor_does_not_submit_on_it() {
     let mut app = app_with(None);
     app.refresh_settings(&settings_with(&[("HORON_TUI_EDITOR_SUBMIT_ON_ENTER", "false")]));
 
@@ -367,10 +380,11 @@ fn enter_inserts_nothing_when_the_editor_does_not_submit_on_it() {
     );
     assert_eq!(
         app.input.text(),
-        "hi",
-        "and the draft is kept, not cleared: {:?}",
+        "hi\n",
+        "the key builds the draft instead: {:?}",
         app.input.text()
     );
+    assert_eq!(app.input.line_count(), 2, "and the pane has a second row");
     assert!(!app.pending_turn, "no turn started");
 }
 
@@ -582,14 +596,18 @@ fn a_long_input_scrolls_instead_of_leaving_the_pane() {
 }
 
 #[test]
-fn a_closed_bridge_ends_the_session_instead_of_spinning() {
+fn a_closed_bridge_shows_a_disconnection_and_leaves_on_ctrl_c() {
     // `app_with(None)` drops the sender, so the channel reports
     // `Disconnected` exactly as it does when the bridge thread exits.
     let mut app = app_with(None);
     assert!(app.running);
-    drain_events(&mut app);
-    assert!(!app.running, "a closed bridge must stop the loop");
-    assert_eq!(app.exit_code, 1);
+    crate::loop_io::drain_events(&mut app);
+    // The client stays up: the conversation is still worth reading, and the
+    // banner explaining the loss would be wiped by the terminal restore if the
+    // loop exited here.
+    assert!(app.running, "a closed bridge keeps the client up");
+    assert!(app.disconnected, "the status line has to say what happened");
+    assert_eq!(app.exit_code, 1, "the session still failed");
     match app.banner.as_deref() {
         Some(banner) => assert!(
             banner.contains("bridge"),
@@ -597,4 +615,88 @@ fn a_closed_bridge_ends_the_session_instead_of_spinning() {
         ),
         None => panic!("no banner for the closed bridge"),
     }
+
+    // The closed channel keeps reporting `Disconnected` on every poll, so the
+    // drain has to stay a no-op: one reason, one state change, nothing added to
+    // the transcript on the passes that follow.
+    let banner = app.banner.clone();
+    let items = app.transcript.items().len();
+    crate::loop_io::drain_events(&mut app);
+    crate::loop_io::drain_events(&mut app);
+    assert_eq!(app.banner, banner, "a later pass replaced the reason");
+    assert_eq!(app.transcript.items().len(), items, "a later pass added a line");
+
+    let quit = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('c'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    assert_eq!(app.on_key(quit), Some(Action::Quit), "Ctrl-C leaves an idle client");
+}
+
+#[test]
+fn a_tool_preview_wraps_under_its_own_column() {
+    let theme = crate::theme::Theme::default();
+    let look = item_lines::Look {
+        theme: &theme,
+        symbols: crate::theme::Symbols::default(),
+        width: 40,
+        markdown: false,
+    };
+    let call = crate::transcript::ToolCall {
+        call_id: "c1".to_string(),
+        name: "bash".to_string(),
+        state: ToolState::Done,
+        input: String::new(),
+        duration_ms: Some(120),
+        output: Some(crate::tool_line::OutputHead {
+            rows: vec!["a long output row that needs more than one row of the pane".to_string()],
+            total_rows: 1,
+        }),
+    };
+    let rows = item_lines::lines(&crate::transcript::Item::Tool(call), &look, None);
+    assert_eq!(rows.len(), 2, "the preview gained a row");
+    assert_eq!(rows[0].indent(), 0, "the head row starts at the first column");
+    assert_eq!(
+        rows[1].indent(),
+        2,
+        "a wrapped preview row does not keep the column of the preview's text"
+    );
+    // The visual rows the pane draws: the second one is the wrap, and it starts
+    // where the preview row's own text does.
+    let wrapped = wrap::wrap_rows(rows, 40);
+    assert!(wrapped.len() > 2, "the preview row did not wrap");
+    let second: String = wrapped[2].spans.iter().map(|span| span.content.as_ref()).collect();
+    assert_eq!(
+        second.len() - second.trim_start().len(),
+        2,
+        "the wrapped row slid back to the first column: {second:?}"
+    );
+    assert!(second.trim_start().starts_with("than"), "{second:?}");
+}
+
+#[test]
+fn clear_keeps_the_display_settings_the_transcript_owns() {
+    let mut app = app_with(None);
+    app.refresh_settings(&settings_with(&[
+        ("HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES", "10"),
+        ("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true"),
+    ]));
+    app.transcript.push_notice("a line that /clear has to remove");
+    assert!(
+        app.transcript.tool_output_lines() == 10,
+        "the setting did not reach the transcript"
+    );
+
+    app.run_local(crate::commands::Local::Clear, "");
+
+    assert_eq!(app.transcript.items().len(), 0, "/clear left a row behind");
+    assert_eq!(
+        app.transcript.tool_output_lines(),
+        10,
+        "/clear put the preview rows back to the default while /settings still shows the saved value"
+    );
+    assert!(
+        app.transcript.show_reasoning(),
+        "/clear turned reasoning off while /settings still shows it on"
+    );
 }

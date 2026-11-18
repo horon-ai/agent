@@ -6,14 +6,14 @@
 
 ## 엔진 하나, 실행 파일 둘
 
-워크스페이스는 엔진 하나에서 실행 파일 둘을 만든다. 이 분리는 빌드 옵션이 아니라 규칙이다. 에이전트 바이너리 `horon-agent`는 터미널 라이브러리를 절대 링크하지 않고, 클라이언트는 자기 엔진을 갖지 않는다.
+워크스페이스는 엔진 하나에서 배포 실행 파일 둘을 만든다. 이 분리는 빌드 옵션이 아니라 규칙이다. 에이전트 바이너리 `horon-agent`는 터미널 라이브러리를 절대 링크하지 않고, 클라이언트는 자기 엔진을 갖지 않는다. `crates/harness-api-server`에는 세 번째 bin 타깃 `horon-agent-harness-api-bridge`가 이전 설치를 위한 호환 실행 파일로 남아 있다. 배포 산출물은 `horon-agent`와 `horon-tui` 둘만 담고, 같은 브리지에 `horon-agent api-bridge`로 닿는다.
 
 | 크레이트 | 패키지 | 실행 파일 | 맡는 것 |
 | --- | --- | --- | --- |
 | 루트(`src/`) | `horon-agent` | `horon-agent` | 에이전트 루프, 데몬, 하네스 API 브리지, ACP 어댑터, 표준 입출력 RPC 어댑터. 의존성 그래프에 `ratatui`, `crossterm`, `horon-tui`가 없다. |
 | `crates/agent-sdk` | `horon-agent-sdk` | — | 클라이언트 계약. 요청·이벤트 타입, 소켓 전송, 재연결. 그리는 일은 없다. |
 | `crates/harness-api` | `horon-agent-harness-api` | — | 스키마 스냅숏을 포함한 하네스 API v1 요청·이벤트 표면. |
-| `crates/harness-api-server` | `horon-agent-harness-api-server` | — | 데몬과 하네스 API 사이의 브리지와 변환 계층. |
+| `crates/harness-api-server` | `horon-agent-harness-api-server` | `horon-agent-harness-api-bridge` | 데몬과 하네스 API 사이의 브리지와 변환 계층. 배포하는 `horon-agent` 바이너리가 같은 브리지를 `api-bridge` 하위 명령으로 품고 있고, SDK가 아직 찾는 독립 바이너리는 이전 설치를 위해 남아 있다. |
 | `crates/tui` | `horon-tui` | `horon-tui` | 터미널 클라이언트. 대화 기록, 입력, 승인 프롬프트, 설정 화면, 테마, 키 바인딩. 엔진이 아니라 `horon-agent-sdk`에 의존한다. |
 
 `scripts/ci/check_headless_graph.py`는 `horon-agent`에서 닿는 모든 패키지를 따라가며 `ratatui`, `crossterm`, `horon-tui`, `horon-agent-tui*` 접두사가 나오면 실패한다. 경계를 리뷰가 아니라 게이트로 지킨다는 뜻이다. 클라이언트는 별도 카고 호출로 빌드해서 기능 집합이 `horon-agent` 패키지로 합쳐지지 않게 하고, `horon-agent`는 터미널에서 자기 프로세스를 바꿔 클라이언트를 띄운다(`src/cli/tui_handoff.rs`). 그 인계와 클라이언트의 사용자 파일은 [runtime/TUI.ko.md](../runtime/TUI.ko.md)에 있다.
@@ -161,7 +161,7 @@ HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루�
 - 여러 크레이트나 프로토콜 계층이 쓰는 순수 데이터 구조.
 - 직렬화 형태와 데이터 계약에 묶인 작은 순수 헬퍼 메서드.
 - 파일 시스템, 네트워크, 프로세스, TUI, 제공자 클라이언트, 전역 상태, 저장소 접근이 없어야 한다.
-- 의존성은 serde, chrono, 필요할 때 다른 타입 크레이트로 제한한다.
+- 의존성은 serde와 여러 크레이트가 함께 쓰는 자료형으로 제한한다. `horon-agent-time`(`crates/time-types`)은 저장 기록과 통신 메시지에 쓰는 UTC 시각, 소수점 정밀도, 윤초 표기를 정의한다.
 
 예: `horon-agent-session-types`, `horon-agent-background-types`, `horon-agent-todo-policy`.
 
@@ -221,7 +221,7 @@ HTTPS 클라이언트가 신뢰하는 루트는 webpki 내장 루트와 OS 루�
    - [ ] 루트가 호환용 재내보내기를 유지할 수 있는가?
 3. 크레이트 상태를 확인한다.
    - [ ] 대상 크레이트에 필요한 의존성 정책이 이미 있는가?
-   - [ ] 새 의존성이 타입 크레이트에 맞는 라이브러리, 보통 `serde`, `serde_json`, `chrono` 또는 형제 타입 크레이트로 제한되는가?
+   - [ ] 새 의존성이 타입 크레이트에 맞는 라이브러리, 보통 `serde`, `serde_json`, `horon-agent-time` 또는 형제 타입 크레이트로 제한되는가?
    - [ ] 대상 크레이트가 여전히 순환 의존이 없는가?
    - [ ] `cargo metadata`와 `cargo check`가 루트, TUI, 제공자, 저장소, 서버, 프로세스 의존성을 타입 크레이트로 끌어오지 않았는가?
 4. 검증한다.
@@ -456,11 +456,13 @@ TUI가 에이전트 바이너리에서 분리되기 전 `src/gateway.rs`의 책�
 ### 자동 계속 예산은 턴 상태가 소유하고 상한이 있다
 
 - 자동 계속 예산은 `TurnState`가 들고 있으며 새 턴마다 0으로 돌아간다
-  (`crates/agent-runtime/src/turn_state_tests.rs:20-26`).
+  (`crates/agent-runtime/src/turn_state_tests.rs:201-208`).
 - 상한은 2회다(`crates/agent-runtime/src/turn_recovery.rs:31`).
 - 예기치 않은 정지의 자동 계속 판정은 두 턴 루프(순차·스트리밍)에서 같은 함수를 쓴다
-  (`crates/app-core/src/agent/turn_loops.rs:1392-1396`,
-  `crates/app-core/src/agent/interrupts.rs:679-683`).
+  (`crates/app-core/src/agent/turn_loops.rs:1522`,
+  `crates/app-core/src/agent/interrupts.rs:867`). 두 곳 모두
+  `crates/app-core/src/agent/turn_recovery_wiring.rs:127`에 정의된
+  `maybe_auto_continue_unexpected_stop`을 부른다.
 
 ### 큐 소비는 메모리와 디스크를 함께 커밋한다
 

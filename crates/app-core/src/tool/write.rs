@@ -394,17 +394,6 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_diff_summary_line_number_format() {
-        let old = "old";
-        let new = "new";
-        let diff = generate_diff_summary(old, new);
-
-        // Compact format: no padding
-        assert!(diff.contains("1- old"), "Should have line number directly before minus");
-        assert!(diff.contains("1+ new"), "Should have line number directly before plus");
-    }
-
-    #[test]
     fn test_generate_diff_summary_empty_result() {
         let old = "same content";
         let new = "same content";

@@ -1,0 +1,270 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Horon",
+  "description": "Guides to using horon from the terminal, SDKs and editors, with a reference for the agent, terminal client and model providers.",
+  "colors": {
+    "primary": "#3b617b",
+    "light": "#7199b6",
+    "dark": "#5a86a6"
+  },
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#0b0c0e"
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "languages": [
+      {
+        "language": "en",
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Get started",
+                "pages": [
+                  "index",
+                  "getting-started",
+                  "install",
+                  "configuration"
+                ]
+              },
+              {
+                "group": "Using horon",
+                "pages": [
+                  "cli",
+                  "sessions",
+                  "tools",
+                  "editors"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Reference",
+            "groups": [
+              {
+                "group": "Start here",
+                "pages": [
+                  "reference/index",
+                  "reference/diagram/index",
+                  "reference/philosophy"
+                ]
+              },
+              {
+                "group": "Architecture",
+                "pages": [
+                  "reference/architecture/server",
+                  "reference/architecture/crates"
+                ]
+              },
+              {
+                "group": "Protocols",
+                "pages": [
+                  "reference/protocol/acp",
+                  "reference/protocol/harness-api",
+                  "reference/protocol/rpc",
+                  "reference/protocol/session-store"
+                ]
+              },
+              {
+                "group": "Runtime",
+                "pages": [
+                  "reference/runtime/tools",
+                  "reference/runtime/tool-scheduling",
+                  "reference/runtime/turns",
+                  "reference/runtime/prompt",
+                  "reference/runtime/hooks",
+                  "reference/runtime/irc",
+                  "reference/runtime/tui",
+                  "reference/runtime/swarm-task-graph"
+                ]
+              },
+              {
+                "group": "Providers",
+                "pages": [
+                  "reference/provider/model",
+                  "reference/provider/integrations"
+                ]
+              },
+              {
+                "group": "Safety",
+                "pages": [
+                  "reference/safety/safety",
+                  "reference/safety/security"
+                ]
+              },
+              {
+                "group": "Performance",
+                "pages": [
+                  "reference/performance/benchmark",
+                  "reference/performance/results",
+                  "reference/performance/memory"
+                ]
+              },
+              {
+                "group": "Release",
+                "pages": [
+                  "reference/release/install",
+                  "reference/release/npm",
+                  "reference/release/windows"
+                ]
+              },
+              {
+                "group": "SDKs and packages",
+                "pages": [
+                  "reference/sdk/typescript",
+                  "reference/sdk/python",
+                  "reference/sdk/npm"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Developers",
+            "groups": [
+              {
+                "group": "SDKs",
+                "pages": [
+                  "sdk-typescript",
+                  "sdk-python"
+                ]
+              },
+              {
+                "group": "Internals",
+                "pages": [
+                  "architecture",
+                  "releasing",
+                  "repo-map"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "language": "ko",
+        "tabs": [
+          {
+            "tab": "레퍼런스",
+            "groups": [
+              {
+                "group": "시작",
+                "pages": [
+                  "ko/reference/index",
+                  "ko/reference/diagram/index",
+                  "ko/reference/philosophy"
+                ]
+              },
+              {
+                "group": "아키텍처",
+                "pages": [
+                  "ko/reference/architecture/server",
+                  "ko/reference/architecture/crates"
+                ]
+              },
+              {
+                "group": "프로토콜",
+                "pages": [
+                  "ko/reference/protocol/acp",
+                  "ko/reference/protocol/harness-api",
+                  "ko/reference/protocol/rpc",
+                  "ko/reference/protocol/session-store"
+                ]
+              },
+              {
+                "group": "런타임",
+                "pages": [
+                  "ko/reference/runtime/tools",
+                  "ko/reference/runtime/tool-scheduling",
+                  "ko/reference/runtime/turns",
+                  "ko/reference/runtime/prompt",
+                  "ko/reference/runtime/hooks",
+                  "ko/reference/runtime/irc",
+                  "ko/reference/runtime/tui",
+                  "ko/reference/runtime/swarm-task-graph"
+                ]
+              },
+              {
+                "group": "제공자",
+                "pages": [
+                  "ko/reference/provider/model",
+                  "ko/reference/provider/integrations"
+                ]
+              },
+              {
+                "group": "안전",
+                "pages": [
+                  "ko/reference/safety/safety",
+                  "ko/reference/safety/security"
+                ]
+              },
+              {
+                "group": "성능",
+                "pages": [
+                  "ko/reference/performance/benchmark",
+                  "ko/reference/performance/results",
+                  "ko/reference/performance/memory"
+                ]
+              },
+              {
+                "group": "릴리스",
+                "pages": [
+                  "ko/reference/release/install",
+                  "ko/reference/release/npm",
+                  "ko/reference/release/windows"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Releases",
+        "href": "https://github.com/horon-ai/agent/releases"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/horon-ai/agent"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Install",
+      "href": "/install"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/horon-ai/agent"
+    }
+  },
+  "seo": {
+    "indexing": "navigable",
+    "metatags": {
+      "canonical": "https://agent.horon.ai"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "cursor",
+      "vscode",
+      "mcp"
+    ]
+  }
+}

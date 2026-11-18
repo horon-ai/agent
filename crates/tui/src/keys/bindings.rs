@@ -24,8 +24,28 @@ pub mod ids {
     pub const APP_SUBMIT: &str = "app.submit";
     /// Cancel the running turn, or leave when nothing is running.
     pub const APP_CANCEL: &str = "app.cancel";
+    /// Send the queued messages into the running turn; with nothing queued,
+    /// interrupt it. No action when idle.
+    pub const APP_INTERRUPT: &str = "app.interrupt";
     /// Leave.
     pub const APP_QUIT: &str = "app.quit";
+    /// Hold the transcript view one page higher.
+    pub const APP_SCROLL_PAGE_UP: &str = "app.scroll_page_up";
+    /// Move the transcript view one page back towards the end.
+    pub const APP_SCROLL_PAGE_DOWN: &str = "app.scroll_page_down";
+    /// Hold the transcript view one row higher.
+    pub const APP_SCROLL_UP: &str = "app.scroll_up";
+    /// Move the transcript view one row back towards the end.
+    pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
+    /// Follow the end of the conversation again.
+    pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
+    /// Show the whole output of the newest tool call whose preview was cut, and
+    /// the preview again on the next press.
+    pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
+    /// Step to the next reasoning-effort level, wrapping at the last one.
+    pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
+    /// Open the list of models this session can switch to.
+    pub const APP_PICK_MODEL: &str = "app.pick_model";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -34,19 +54,38 @@ pub mod ids {
     pub const EDITOR_LEFT: &str = "editor.left";
     /// Move the cursor one character right.
     pub const EDITOR_RIGHT: &str = "editor.right";
-    /// Move the cursor to the start of the line.
+    /// Move the cursor to the start of its line.
     pub const EDITOR_HOME: &str = "editor.home";
-    /// Move the cursor to the end of the line.
+    /// Move the cursor to the end of its line.
     pub const EDITOR_END: &str = "editor.end";
+    /// Start a new line without sending the draft.
+    pub const EDITOR_NEWLINE: &str = "editor.newline";
+    /// Delete from the start of the line to the cursor.
+    pub const EDITOR_KILL_TO_START: &str = "editor.kill_to_start";
+    /// Delete from the cursor to the end of the line.
+    pub const EDITOR_KILL_TO_END: &str = "editor.kill_to_end";
+    /// Delete the word before the cursor.
+    pub const EDITOR_DELETE_WORD: &str = "editor.delete_word";
+    /// Move to the start of the word before the cursor.
+    pub const EDITOR_WORD_LEFT: &str = "editor.word_left";
+    /// Move past the word after the cursor.
+    pub const EDITOR_WORD_RIGHT: &str = "editor.word_right";
+    /// Step back through the drafts sent before this one.
+    pub const EDITOR_HISTORY_PREV: &str = "editor.history_prev";
+    /// Step forward, and back to the draft being typed.
+    pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
+    /// Search the drafts sent before this one.
+    pub const EDITOR_HISTORY_SEARCH: &str = "editor.history_search";
     /// Approve a parked tool call once.
     pub const PROMPT_ALLOW: &str = "prompt.allow";
     /// Approve a parked tool call and every later call like it.
     pub const PROMPT_ALLOW_ALWAYS: &str = "prompt.allow_always";
     /// Deny a parked tool call.
     pub const PROMPT_DENY: &str = "prompt.deny";
-    /// Ignore the prompt; the turn stays parked.
+    /// Answer a parked tool call with a denial; a question stays open, since
+    /// there is nothing to deny and the tool has its own deadline.
     pub const PROMPT_DISMISS: &str = "prompt.dismiss";
     /// Confirm a multi-choice question.
     pub const PROMPT_CONFIRM: &str = "prompt.confirm";
@@ -92,14 +131,46 @@ impl ActionSpec {
 pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SUBMIT, Scope::App, &["enter"]),
     ActionSpec::new(ids::APP_CANCEL, Scope::App, &["ctrl+c"]),
+    ActionSpec::new(ids::APP_INTERRUPT, Scope::App, &["esc"]),
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
+    // The transcript's own keys: `up` and `down` stay with the draft and its
+    // history, so the view moves on their shifted forms and on the page keys.
+    ActionSpec::new(ids::APP_SCROLL_PAGE_UP, Scope::App, &["pageup"]),
+    ActionSpec::new(ids::APP_SCROLL_PAGE_DOWN, Scope::App, &["pagedown"]),
+    ActionSpec::new(ids::APP_SCROLL_UP, Scope::App, &["shift+up"]),
+    ActionSpec::new(ids::APP_SCROLL_DOWN, Scope::App, &["shift+down"]),
+    ActionSpec::new(ids::APP_SCROLL_BOTTOM, Scope::App, &["ctrl+end"]),
+    // The key a cut tool preview names: reading the rest of one call's output
+    // is the one thing the transcript cannot do with the scroll keys alone.
+    ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
+    // `shift+tab` walks the effort ladder upwards. `tab` alone still completes
+    // the draft: an exact binding is looked up before an unshifted one, and the
+    // shift on the event stops `tab` from answering it.
+    ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
+    // The model list, one keystroke away from the draft being typed.
+    ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
-    ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left"]),
-    ActionSpec::new(ids::EDITOR_RIGHT, Scope::Editor, &["right"]),
-    ActionSpec::new(ids::EDITOR_HOME, Scope::Editor, &["home"]),
-    ActionSpec::new(ids::EDITOR_END, Scope::Editor, &["end"]),
+    ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
+    ActionSpec::new(ids::EDITOR_RIGHT, Scope::Editor, &["right", "ctrl+f"]),
+    ActionSpec::new(ids::EDITOR_HOME, Scope::Editor, &["home", "ctrl+a"]),
+    ActionSpec::new(ids::EDITOR_END, Scope::Editor, &["end", "ctrl+e"]),
+    ActionSpec::new(ids::EDITOR_WORD_LEFT, Scope::Editor, &["alt+left"]),
+    ActionSpec::new(ids::EDITOR_WORD_RIGHT, Scope::Editor, &["alt+right"]),
+    // `up` and `down` move between the lines of a draft first; the app hands
+    // them to the history only at the first and last line.
+    ActionSpec::new(ids::EDITOR_HISTORY_PREV, Scope::Editor, &["up"]),
+    ActionSpec::new(ids::EDITOR_HISTORY_NEXT, Scope::Editor, &["down"]),
+    ActionSpec::new(
+        ids::EDITOR_NEWLINE,
+        Scope::Editor,
+        &["shift+enter", "alt+enter", "ctrl+j"],
+    ),
+    ActionSpec::new(ids::EDITOR_KILL_TO_START, Scope::Editor, &["ctrl+u"]),
+    ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
+    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
+    ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
     ActionSpec::new(ids::PROMPT_DENY, Scope::Prompt, &["n"]),
@@ -177,6 +248,15 @@ impl Bindings {
         self.find(|entry| entry.scope != Scope::Prompt, key)
     }
 
+    /// The first key an action answers to now.
+    ///
+    /// The one a hint or a marker names when an action may carry several: the
+    /// first is the one the declaration order settled on, and a frame that only
+    /// wants to name it must not build the whole list.
+    pub fn first_key(&self, id: &str) -> Option<Key> {
+        self.entries.iter().find(|entry| entry.id == id).map(|entry| entry.key)
+    }
+
     /// The keys an action answers to now.
     pub fn keys_for(&self, id: &str) -> Vec<Key> {
         self.entries
@@ -193,7 +273,7 @@ impl Bindings {
         }
         self.entries
             .iter()
-            .find(|entry| in_scope(entry) && entry.key.covers(key))
+            .find(|entry| in_scope(entry) && extends(entry.key, key))
             .map(|entry| entry.id)
     }
 
@@ -241,6 +321,16 @@ impl Bindings {
         }
         (Self { entries }, warnings)
     }
+}
+
+/// Whether `binding` answers `event` when neither names the same key exactly.
+///
+/// A terminal reports `alt+left` for a plain arrow the interface has always
+/// moved on, so control and alt are inferred. Shift is not: it arrives as its
+/// own key, and `shift+up` scrolls the transcript while `up` stays with the
+/// draft, so a binding answers a shifted event only when it named shift itself.
+fn extends(binding: Key, event: &Key) -> bool {
+    binding.covers(event) && (!event.shift || binding.shift)
 }
 
 impl Default for Bindings {

@@ -154,7 +154,7 @@ async fn update_progress_persists_status_and_emits_bus_event() -> Result<()> {
         total: Some(50),
         unit: Some("tests".to_string()),
         eta_seconds: Some(8),
-        updated_at: Utc::now().to_rfc3339(),
+        updated_at: Timestamp::now().to_rfc3339(),
         source: BackgroundTaskProgressSource::Reported,
     };
 
@@ -210,7 +210,7 @@ async fn update_progress_keeps_the_determinate_high_water_mark() -> Result<()> {
         total: None,
         unit: None,
         eta_seconds: None,
-        updated_at: Utc::now().to_rfc3339(),
+        updated_at: Timestamp::now().to_rfc3339(),
         source: BackgroundTaskProgressSource::Reported,
     };
 
@@ -250,7 +250,7 @@ async fn update_progress_preserves_high_water_mark_through_reported_checkpoint()
         total: Some(10),
         unit: Some("tests".into()),
         eta_seconds: None,
-        updated_at: Utc::now().to_rfc3339(),
+        updated_at: Timestamp::now().to_rfc3339(),
         source: BackgroundTaskProgressSource::Reported,
     };
     manager.update_progress(&info.task_id, progress.clone()).await?;
@@ -300,7 +300,7 @@ async fn concurrent_progress_updates_cannot_overwrite_the_high_water_mark() -> R
         total: None,
         unit: None,
         eta_seconds: None,
-        updated_at: Utc::now().to_rfc3339(),
+        updated_at: Timestamp::now().to_rfc3339(),
         source: BackgroundTaskProgressSource::Reported,
     };
     let first = manager.update_progress(&info.task_id, update(80.0));
@@ -373,7 +373,7 @@ async fn wait_returns_on_progress_checkpoint() -> Result<()> {
         total: Some(4),
         unit: Some("steps".to_string()),
         eta_seconds: Some(3),
-        updated_at: Utc::now().to_rfc3339(),
+        updated_at: Timestamp::now().to_rfc3339(),
         source: BackgroundTaskProgressSource::Reported,
     };
 
@@ -1252,7 +1252,7 @@ async fn status_reads_never_observe_a_torn_write() -> Result<()> {
     status.event_history = (0..50)
         .map(|step| BackgroundTaskEventRecord {
             kind: BackgroundTaskEventKind::Progress,
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: Timestamp::now().to_rfc3339(),
             message: Some(format!("step {step} of a long running build")),
             status: None,
             exit_code: None,

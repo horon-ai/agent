@@ -111,7 +111,7 @@ fn local_runtime_skips_status_only_commits() -> Result<()> {
     let published = publication_token(&binding)?;
 
     // When a mid-turn batch appends originals and only the activity clock moves.
-    session.last_active_at = Some(session.updated_at + chrono::Duration::seconds(5));
+    session.last_active_at = Some(session.updated_at + horon_agent_time::Duration::seconds(5));
     session.add_message(Role::Assistant, text("mid-turn reply"));
     session.save()?;
     // Then no flush is spent on the binding.
@@ -197,7 +197,7 @@ fn skipped_binding_commits_keep_reader_visible_activity() -> Result<()> {
     let mut owner = std::process::Command::new("true").spawn()?;
     let owner_pid = owner.id();
     owner.wait()?;
-    let activation = chrono::Utc::now() - chrono::Duration::hours(3);
+    let activation = horon_agent_time::Timestamp::now() - horon_agent_time::Duration::hours(3);
     let mut session = Session::create_with_id("runtime_clock".into(), None, None);
     session.mark_active_with_pid(owner_pid);
     session.last_active_at = Some(activation);
@@ -215,7 +215,7 @@ fn skipped_binding_commits_keep_reader_visible_activity() -> Result<()> {
     // the listing reports the newest work instead of that frozen clock.
     let stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;
     assert_eq!(stored["last_pid"], serde_json::json!(owner_pid));
-    let recorded: chrono::DateTime<chrono::Utc> = serde_json::from_value(stored["last_active_at"].clone())?;
+    let recorded: horon_agent_time::Timestamp = serde_json::from_value(stored["last_active_at"].clone())?;
     assert_eq!(recorded, activation, "a mid-turn commit must not republish the binding");
     let paths = store_paths()?;
     let id = store::SessionId::parse("runtime_clock")?;
@@ -237,7 +237,7 @@ fn skipped_binding_commits_keep_reader_visible_activity() -> Result<()> {
     let mut abandoned = Session::load("runtime_clock")?;
     abandoned.mark_active_with_pid(dead_pid);
     abandoned.save()?;
-    let window_start = chrono::Utc::now() - chrono::Duration::hours(25);
+    let window_start = horon_agent_time::Timestamp::now() - horon_agent_time::Duration::hours(25);
     let mut stored: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;
     stored["last_active_at"] = serde_json::to_value(window_start)?;
     std::fs::write(&binding, serde_json::to_vec(&stored)?)?;

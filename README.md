@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero.svg" alt="horon-agent: a coding agent for Chat Completions, Responses, Anthropic and Gemini endpoints" width="720">
+  <img src="docs/assets/hero.svg" alt="horon agent: one agent with two equal modes, headless and TUI, over Chat Completions, Responses, Anthropic Messages and Gemini generateContent endpoints" width="720">
 </p>
 
 <p align="center">
@@ -17,9 +17,11 @@
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-DEA584?style=flat&amp;colorA=222222&amp;logo=rust&amp;logoColor=white" alt="Rust"></a>
 </p>
 
-horon agent is a headless coding agent that speaks one of four model wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. It POSTs straight to your endpoint, with no router process and no plugin host in between, and one daemon answers every client: a one-shot command, an SDK, an editor over ACP, a host program over stdio RPC, or the `horon-tui` terminal client. Sessions, tools, MCP servers and configuration are shared across all of them. Only the driver changes.
+horon agent is one agent with two equal modes on one engine. In headless mode a program drives a session: a one-shot command, an SDK, an editor over ACP, or a host program over stdio RPC. In TUI mode a person drives it from the terminal through the `horon-tui` client. Both modes attach to the same daemon and share its sessions, tools, MCP servers and configuration. They differ only in who is on the other end, and neither is a reduced form of the other.
 
-The agent binary is `horon-agent`, and it never draws a terminal of its own. The terminal client is `horon-tui`, a separate package built on the agent SDK and released from the same tag as its own archive.
+Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. The agent POSTs straight to your endpoint, with no router process and no plugin host in between.
+
+Each release ships two binaries built from the same tag. The agent binary `horon-agent` serves headless mode and runs the daemon both modes attach to; it never draws a full-screen terminal UI. The TUI binary `horon-tui` is a separate package built on the agent SDK and published beside it as its own archive.
 
 | Mode | Who drives it | Entry points |
 | --- | --- | --- |
@@ -108,7 +110,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 
 ### Terminal client
 
-`horon-tui` is TUI mode: a transcript pane, a one-line input, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) on `horon-agent-sdk` and attaches to the same daemon and sessions as every other client, which is what keeps terminal libraries out of the agent binary.
+`horon-tui` is TUI mode: a transcript pane that scrolls back and renders the model's Markdown, a multi-line editor that grows to eight rows, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, model and session pickers, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) on `horon-agent-sdk` and attaches to the same daemon and sessions as every other client, which is what keeps terminal libraries out of the agent binary.
 
 It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect prints that sentence instead, so scripts and CI get the reason rather than a client. When a condition fails, the command names it, prints the install hint for the interactive client, and exits non-zero.
 
@@ -165,26 +167,27 @@ Both talk the harness API (protocol v1) over the `api-bridge` socket and can sta
   <img src="docs/assets/architecture.svg" alt="Architecture: SDKs and editors over ACP reach the agent daemon through the harness API and the ACP adapter, and the terminal client horon-tui attaches the same way while a bare run hosts the agent in-process; the daemon stores sessions in an event log and calls the profile's endpoint directly" width="860">
 </p>
 
-Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs/architecture/CRATES.md); the daemon, sessions and sockets are in [docs/architecture/SERVER.md](docs/architecture/SERVER.md). The headless graph rule is checked in CI by `scripts/ci/check_headless_graph.py`, which fails if `ratatui`, `crossterm`, `horon-tui` or any `horon-agent-tui*` crate becomes reachable from `horon-agent`.
+Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs/architecture/CRATES.md); the daemon, sessions and sockets are in [docs/architecture/SERVER.md](docs/architecture/SERVER.md). CI keeps terminal libraries out of the agent binary: `scripts/ci/check_headless_graph.py` fails if `ratatui`, `crossterm`, `horon-tui` or any `horon-agent-tui*` crate becomes reachable from `horon-agent`.
 
 ## Benchmarks
 
-`.github/workflows/benchmark-docs.yml` runs a one-shot turn on GitHub-hosted runners at commit `805b408` against jcode v0.99.1, with a deterministic mock model and exactly one `ls` tool call per turn. Each OS runs on a different machine, so compare inside a row and never across rows.
+`.github/workflows/benchmark-docs.yml` runs a one-shot turn on GitHub-hosted runners at commit `729624b` (measured 2026-11-18) against seven other agents, with a deterministic mock model and exactly one `ls` tool call per turn. jcode v0.99.1 is the closest competitor and the one compared below. Each OS runs on a different machine, so compare inside a row and never across rows.
 
 <p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS. Linux: horon 55.9 ms, jcode 140.8 ms. macOS: horon 103.3 ms, jcode 413.7 ms. Windows: horon 208.5 ms, jcode 153.3 ms" width="780">
+  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS for eight agents. Linux: horon 42.5 ms, jcode 138 ms. macOS: horon 88.1 ms, jcode 377 ms. Windows: horon 142 ms, jcode 128 ms" width="780">
 </p>
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| One-shot turn, median | 55.9 ms | 140.8 ms |
-| Skill invocation, median | 53.3 ms | 121.5 ms |
-| MCP tool call, median | 66.4 ms | 313.5 ms |
-| Peak tree RSS, one-shot | 47.5 MB | 42.2 MB |
-| Memory per additional session, idle after 3 turns | 137.8 KB | 129.8 KB |
-| Install size | 114.5 MB | 163.4 MB |
+| One-shot turn, median | 42.5 ms | 138.0 ms |
+| Skill invocation, median | 38.0 ms | 53.1 ms |
+| MCP tool call, median | 58.8 ms | 162.9 ms |
+| Peak tree RSS, one-shot | 39.4 MB | 42.2 MB |
+| Memory per additional session, idle after 3 turns | 151.0 KB | 98.1 KB |
+| First model request, body / tool catalog bytes | 3,756 / 2,368 | 3,292 / 1,433 |
+| Install size | 110.6 MB | 163.4 MB |
 
-horon took all three Linux time rows, and macOS followed the same shape: one-shot 103.3 ms against 413.7 ms, skill 84.5 ms against 354.9 ms, MCP 95.5 ms against 453.0 ms. **Windows is the exception. There jcode won the one-shot (153.3 ms against 208.5 ms) and the skill run** (200.9 ms against 220.5 ms), while horon kept the MCP call (269.4 ms against 318.5 ms). On Linux jcode also used less peak memory and slightly less memory per extra session.
+horon took all three Linux time rows and the one-shot peak memory, and macOS followed the same shape: one-shot 88.1 ms against 377.1 ms, skill 64.0 ms against 357.6 ms, MCP 115.1 ms against 486.4 ms. **Windows is the exception.** jcode had the lower median on the one-shot (128.4 ms against 141.8 ms) and the skill run (172.6 ms against 220.0 ms). In both cells the min–max ranges overlap, so neither counts as a clear win; horon kept the MCP call (211.0 ms against 318.3 ms). jcode also used less memory per additional session on Linux and Windows (98.1 KB against 151.0 KB, 63.8 KB against 122.8 KB), less peak memory on the Windows one-shot (26.9 MB against 36.1 MB), and a smaller first request on every OS.
 
 These are single-commit CI samples, not a guarantee. The full tables for eight tools, the TUI suite, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
 
@@ -205,13 +208,14 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 
 ## Documentation
 
-The docs are written in English (default) and Korean (`.ko.md` next to each file, as in `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. [agent.horon.ai](https://agent.horon.ai) is a separate, shorter set of pages written in [packages/docs](packages/docs); it is not generated from `docs/`, so a behavior change updates both by hand.
+The docs are written in English (default) and Korean (`.ko.md` next to each file, as in `docs/README.ko.md`). The English files are compiled into the binary, where the `horon_agent_docs` tool serves them. [agent.horon.ai](https://agent.horon.ai) is the Mintlify site in [packages/docs-site](packages/docs-site). Its Reference tab is generated from `docs/`, `PHILOSOPHY.md` and the SDK and npm READMEs by `scripts/ci/sync_docs_site.py`; its guide pages are written by hand in English, so a behavior change that a guide repeats updates that guide too.
 
 | Topic | Read |
 | --- | --- |
 | Documentation site (`agent.horon.ai`) | [https://agent.horon.ai](https://agent.horon.ai) |
-| Documentation site source | [packages/docs](packages/docs) |
+| Documentation site source | [packages/docs-site](packages/docs-site) |
 | Index and fixed requirements | [docs/README.md](docs/README.md) |
+| Design principles | [PHILOSOPHY.md](PHILOSOPHY.md) |
 | Terminal client and its user files | [docs/runtime/TUI.md](docs/runtime/TUI.md) |
 | Model endpoints and API keys | [docs/provider/MODEL.md](docs/provider/MODEL.md) |
 | Editors and ACP | [docs/protocol/ACP.md](docs/protocol/ACP.md) |
@@ -224,10 +228,10 @@ The docs are written in English (default) and Korean (`.ko.md` next to each file
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no terminal UI in the `horon-agent` package, with TUI mode living in `horon-tui`; ACP v1 and v2 both served; and no measured performance regression against the recorded baseline.
+Read [`AGENTS.md`](AGENTS.md) first; it is the governing contract. Three requirements hold for every change: no terminal UI in the agent binary `horon-agent`, with TUI mode living in the TUI binary `horon-tui`; ACP v1 and v2 both served; and no measured performance regression against the recorded baseline.
 
-- Branch from `dev` and open the pull request against `dev`. Every pull request must link a real issue in this repository (`Closes #123`); the `Require Linked Issue` check enforces it.
-- Run the checks before pushing:
+- Branch from `dev` and open the pull request against `dev`; `main` changes through release pull requests. Every pull request must link a real issue in this repository (`Closes #123`); the `Require Linked Issue` check enforces it.
+- Run the checks before pushing. `scripts/ci/check_all.sh` runs the Format and Quality Guardrails steps of CI, and the Rust checks are:
 
   ```sh
   cargo fmt --all -- --check

@@ -1,6 +1,7 @@
 use super::*;
 use crate::memory::MemoryCategory;
 use crate::memory_graph::MemoryGraph;
+use horon_agent_time::Timestamp;
 use std::sync::Mutex;
 
 fn entry(id: &str, content: &str) -> MemoryEntry {
@@ -156,7 +157,7 @@ async fn scans_every_active_entry_without_embeddings_or_recency_top_k() {
     let mock = Mock::default();
     let mut entries: Vec<_> = (0..79).map(|i| entry(&format!("m{i:03}"), "nothing helpful")).collect();
     let mut old = entry("z_old", "relevant ancient memory");
-    old.created_at = chrono::DateTime::from_timestamp(0, 0).unwrap();
+    old.created_at = Timestamp::from_timestamp(0, 0).expect("epoch timestamp");
     old.updated_at = old.created_at;
     entries.push(old);
     let mut inactive = entry("inactive", "relevant but superseded");

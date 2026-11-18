@@ -65,11 +65,6 @@ impl NotificationDispatcher {
         }
     }
 
-    #[cfg(test)]
-    pub fn from_config(config: SafetyConfig) -> Self {
-        Self { config }
-    }
-
     /// Send a cycle summary notification (after ambient cycle completes).
     pub fn dispatch_cycle_summary(&self, transcript: &AmbientTranscript) {
         let title = format!(
@@ -577,8 +572,8 @@ mod tests {
     fn test_format_cycle_body_safe() {
         let transcript = AmbientTranscript {
             session_id: "test_001".to_string(),
-            started_at: chrono::Utc::now(),
-            ended_at: Some(chrono::Utc::now()),
+            started_at: horon_agent_time::Timestamp::now(),
+            ended_at: Some(horon_agent_time::Timestamp::now()),
             status: crate::safety::TranscriptStatus::Complete,
             provider: "claude".to_string(),
             model: "claude-sonnet-4".to_string(),
@@ -603,8 +598,8 @@ mod tests {
     fn test_format_cycle_body_detailed() {
         let transcript = AmbientTranscript {
             session_id: "test_001".to_string(),
-            started_at: chrono::Utc::now(),
-            ended_at: Some(chrono::Utc::now()),
+            started_at: horon_agent_time::Timestamp::now(),
+            ended_at: Some(horon_agent_time::Timestamp::now()),
             status: crate::safety::TranscriptStatus::Complete,
             provider: "claude".to_string(),
             model: "claude-sonnet-4".to_string(),
@@ -631,8 +626,8 @@ mod tests {
     fn test_format_cycle_body_with_pending_permissions() {
         let transcript = AmbientTranscript {
             session_id: "test_002".to_string(),
-            started_at: chrono::Utc::now(),
-            ended_at: Some(chrono::Utc::now()),
+            started_at: horon_agent_time::Timestamp::now(),
+            ended_at: Some(horon_agent_time::Timestamp::now()),
             status: crate::safety::TranscriptStatus::Complete,
             provider: "claude".to_string(),
             model: "claude-sonnet-4".to_string(),
@@ -657,13 +652,6 @@ mod tests {
         assert_eq!(Priority::Default.ntfy_value(), "3");
         assert_eq!(Priority::High.ntfy_value(), "4");
         assert_eq!(Priority::Urgent.ntfy_value(), "5");
-    }
-
-    #[test]
-    fn test_dispatcher_creation() {
-        // Just verify it doesn't panic
-        let cfg = SafetyConfig::default();
-        let _dispatcher = NotificationDispatcher::from_config(cfg);
     }
 
     /// One recorded decision: `(request_id, approved, via, message)`.

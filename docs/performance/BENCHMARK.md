@@ -26,8 +26,8 @@ Each OS calls `.github/workflows/benchmark-os.yml` once, and inside it the work 
 
 | Job | Count | What it does |
 | --- | --- | --- |
-| `build` | 1 per OS | Builds the `horon-agent` and `loading_probe` release binaries once and uploads them as the `bench-bin-<os>-<run_id>` artifact (tar, kept 1 day). With a `baseline_ref` and `compare` selected it also builds that commit separately into `baseline/` inside the same tar. Both builds use the values `release.yml` uses for shipped binaries (`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`). The repository's `[profile.release]` is for local rebuilds (`opt-level = 1`, incremental), and the competing tools run their own shipped release builds. |
-| `measure` | 1 per OS × measurement unit | Downloads the binaries and measures exactly one unit. The units are `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, and `tui`. With a baseline build, `compare` measures it as the `horon-base` row, alternating inside the same job. |
+| `build` | 1 per OS | Builds every binary the selected units consume and uploads them as the `bench-bin-<os>-<run_id>` artifact (tar, kept 1 day): `horon-agent`, the `loading_probe` and `resume_stage_probe` examples for a `loading` unit, and `horon-tui` with its `render_bench` and `scroll_bench` examples for `tui`. With a `baseline_ref` and `compare` or `tools` selected it also builds that commit's `horon-agent` into `baseline/`, and for `tui` it compiles the candidate's `scroll_bench` source against the baseline renderer into `baseline/examples/`, so both renderer revisions run the same measurement code. Both builds use the values `release.yml` uses for shipped binaries (`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`). The repository's `[profile.release]` is for local rebuilds (`opt-level = 1`, incremental), and the competing tools run their own shipped release builds. |
+| `measure` | 1 per OS × measurement unit | Downloads the binaries and measures exactly one unit. The units are `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, and `tui`. With a baseline build, `compare` measures it as the `horon-base` row, alternating inside the same job, and `tools` starts it as a second daemon and alternates the CPU windows of the two daemons case by case. |
 | `compile` | 1 per OS | Rebuilds from source itself, so it runs separately and does not share a machine with the other measurements. |
 | `merge` | 1 per OS | Collects the per-unit results `bench-part-<os>-<unit>-<run_id>` into the same `benchmark-<os>-<run_id>` artifact as before (`scripts/perf/bench_merge.py`). |
 
@@ -41,17 +41,20 @@ gh workflow run benchmark.yml --ref dev -f os=windows                     # Wind
 gh workflow run benchmark.yml --ref dev -f os=linux,macos -f suites=compare,tools
 gh workflow run benchmark.yml --ref dev -f competitors=claude_code,codex
 gh workflow run benchmark.yml --ref dev -f suites=compare -f competitors=omp,omo
+gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=tools -f baseline_ref=dev   # daemon CPU per tool call, branch against dev
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5     # install time on every OS/architecture (opt-in)
 ```
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `os` | `all` | Comma-separated choice of `linux`, `macos`, `windows`. The jobs above start for each chosen OS. |
-| `suites` | `all` | Comma-separated choice of `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`. |
+| `os` | `all` | Comma-separated choice of `linux`, `macos`, `windows`. The install suite also accepts `freebsd` and expands each group to its architectures; the regular suites run only on the three host OSes here. |
+| `suites` | `all` | Comma-separated choice of `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`, and `install`. `all` means every regular suite and never `install`: the install suite is opt-in, so a run that does not name it behaves exactly as before. |
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | Tools compared with horon. `omp` (oh-my-pi) and `omo` (oh-my-openagent) are included. A tool that failed to install or lacks its runtime stays as `skipped`. |
 | `sessions` | `1 5 10` | Concurrent session counts for the session memory comparison |
 | `turns` | `3` | Turns sent per session |
-| `oneshot_runs` | `5` | How many samples each build takes for the one-shot, skill and MCP cells; `compare.md` names the count on its Host line. Five is the floor for a median; raise it to about 20 when the median has to separate two close builds |
-| `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately as the `horon-base` row. That makes a before-and-after comparison on the same runner |
+| `oneshot_runs` | `5` | How many samples each build takes for the one-shot, skill and MCP cells; `compare.md` names the count on its Host line. Five is the floor for a median; raise it to about 20 when the median has to separate two close builds. The install suite uses it as its sample count too: that many cold and that many warm installs per tool. |
+| `install_ref` | dispatch commit | Candidate installer branch or commit for `install`. The benchmark scripts come from the dispatch commit. |
+| `baseline_ref` | empty | When set, builds that commit separately inside the same job and measures it alternately, as the `horon-base` row in `compare` and as a second daemon in `tools`. The install suite checks the same ref out beside the tree and measures its install path against the identical release assets. That makes a before-and-after comparison on the same runner |
 | `features` | empty | Cargo features added to the **candidate** release build only (`--features <value>`); the `horon-base` build never gets them, so the two rows stay comparable. Empty leaves the build command byte-identical to a run without this input, and the artifact then holds an empty `features.txt` line. The value must match `^[a-z0-9_,-]*$`. The `build` job keys its rust-cache entry on it, so a feature build never reuses the default artifacts |
 
 An unknown OS or group name fails the run immediately (`scripts/perf/bench_select.py`). Results stay for 30 days as the per-OS `merge` job summary and the `benchmark-<os>-<run_id>` artifact (JSON, Markdown). Intermediate artifact names do not start with `benchmark-`, so they do not mix into the `benchmark-docs.yml` download.
@@ -75,11 +78,46 @@ There are no secrets and no API charges. Every measurement that needs a model at
 | --- | --- | --- |
 | `compare` | `bench_compare.py`, `install_competitors.sh` | `--version` time, one-question latency and peak memory (once with the tool allow-list the recorded results use, and for horon once more as `oneshot_core` with the default core tool surface), the bytes of every model request (`request_bytes`), memory by concurrent session count, install size, skill invocation time, and MCP tool call time and tool round trip for horon and the competing tools (`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`). Linux also counts `fsync` calls and names the files they flush (`fsync_paths`). |
 | `startup` | `bench_startup.py` | `--help` and `--version` load, `serve` socket readiness, the `serve` startup stage table from one extra run with `HORON_AGENT_STARTUP_PROFILE=1`, and per-stage harness bridge readiness |
-| `loading` | `bench_loading.py` | Session loading of a fixed-seed fixture, COLD and WARM |
-| `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket |
+| `loading` | `bench_loading.py` | Session loading of a fixed-seed fixture, COLD and WARM, and on cold fixtures the per-stage attribution from `resume_stage_probe` |
+| `tools` | `bench_tools.py` | Latency of 14 cases of core tools (read, write, edit, ls, agentgrep, bash) over the debug socket, and on Linux the daemon's CPU time and context switches per call |
 | `reload` | `bench_reload_storm.py` | Latency until `history` arrives when reopening N sessions (1, 10, 40) at once |
-| `tui` | `bench_tui.py` | The interactive client `horon-tui`: first frame (bare `horon-agent` and a direct launch), the handoff between them, PTY input echo, idle and post-turn RSS, one drawn frame from the `render_bench` example, and install size |
+| `tui` | `bench_tui.py` | The interactive client `horon-tui`: first frame (bare `horon-agent` and a direct launch), the handoff between them, PTY input echo, idle and post-turn RSS, one drawn frame from the `render_bench` example, held frames scrolled through a large session from the separate `scroll_bench` example, and install size |
 | `compile` | `bench_compile.py` | `cargo check` with no change, and rebuild time after editing `src/main.rs`, `crates/app-core`, or build-meta |
+| `install` | `bench_install.py` | Install time of the published release and of the competing tools, cold and warm, per OS and architecture. Opt-in only: `all` never selects it (see [Install timing](#install-timing-install)) |
+
+### Install timing (`install`)
+
+`.github/workflows/benchmark-install.yml` owns this, called by `benchmark.yml` when `suites` names `install`. It answers a different question from the suites above: how long installing horon takes on a clean machine with a real internet connection, and how that compares with installing the competing agents.
+
+It is opt-in. `suites=all` never selects it, so the automatic `main` measurement and every existing dispatch keep measuring exactly what they measured before.
+
+The measured artifact is the **published release**, not the code under test, and the release is pinned in `RELEASE_TAG` (`v0.1.14`). That pin is a constant in `benchmark-install.yml`, not the newest tag: published install numbers stay comparable until the workflow moves it. `install-release` verifies, extracts, and activates those same bytes from any tree, so a Rust change cannot move these numbers; what the tree contributes is the install path itself (`scripts/install/install.sh`, `scripts/install/install.ps1`), and a `baseline_ref` pair is how a change to that path is attributed.
+
+`os` accepts four groups, with one job per architecture: `linux` (`linux-x86_64`, `linux-aarch64`), `macos` (`macos-aarch64`, `macos-x86_64` on `macos-15-intel`), `windows` (`windows-x86_64`, `windows-aarch64` on `windows-11-arm`), and `freebsd` (`freebsd-x86_64` in the FreeBSD 15.1 guest). `all` selects all four. Each platform uploads `install-<platform>-<run_id>` with its JSON and log. The **Install results** job publishes the combined table to the workflow summary and the `install-summary-<run_id>` artifact. Artifacts are retained for 30 days.
+
+**What is timed.** `install_ms` measures the installer process through successful exit. `first_version_ms` measures the installed executable's first `--version` process through exit. `total_ms` covers both plus the harness time to locate the executable. Horon must report the pinned tag. Failed samples retain the error and are excluded from the statistics. A failed Horon sample also fails the job after writing the report.
+
+| Mode | Starting state |
+| --- | --- |
+| cold | a fresh temporary install folder, a fresh home with an empty `XDG_CACHE_HOME`, an empty release download directory, and an empty npm cache, so the archive and every npm tarball come over the network |
+| warm | run the same installer again in the same home and destination, so both the npm cache and `install.sh`'s verified-download cache under that `XDG_CACHE_HOME` are left by the cold install; installers that discard their temporary archives fetch them again |
+
+Five samples per mode is the floor (`oneshot_runs`, default 5). Each cell reports the median, the median absolute deviation (MAD, the median of the absolute differences from the median), the minimum, the maximum, and the sample count. MAD replaces a standard deviation because download and npm tail latency on a shared runner is not symmetric; a cell whose min–max ranges overlap is a tie, not an advantage. Do not compare absolute values across platforms or across runs: the runner, its network path, and the registry mirror change.
+
+A competitor that fails to install or launch records an `error` in its sample. Other tools continue. Availability depends on both the binary and its runtime, including Bun for `omp`. The FreeBSD job uses jcode's FreeBSD x86_64 release.
+
+**Baseline.** `-f baseline_ref=<ref>` checks that ref out at `.bench-baseline` inside the same job and measures its install path against the checked-out tree, both against the same pinned assets. Without it, a difference between two runs is a difference between two network paths.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f oneshot_runs=5
+gh workflow run benchmark.yml --ref <branch> -f os=windows -f suites=install -f competitors=jcode
+gh workflow run benchmark.yml --ref <benchmark-branch> -f suites=install -f os=linux,macos -f install_ref=<candidate-sha> -f baseline_ref=<base-sha>
+gh workflow run benchmark.yml --ref <branch> -f os=freebsd -f suites=install
+```
+
+Nothing here compiles Rust, writes to a release, or needs a secret: every download is a public release asset or a public npm package. The jobs run only on disposable GitHub-hosted runners, because the Windows installer edits the per-user `PATH`; the harness restores the original value before it writes its report.
+
+Use the dispatch commands above for every measurement, including macOS. The harness requires a GitHub-hosted runner and at least five cold/warm pairs. The combined table shows successful and attempted samples, skipped warm installs and missing reports. It includes installation and first-launch medians and the median, MAD and range of the total time. The platform JSON retains each sample and its diagnostic.
 
 ### Automatic measurement
 
@@ -88,11 +126,13 @@ There are no secrets and no API charges. Every measurement that needs a model at
 1. **Check for code changes.** It looks at whether anything under `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, or `scripts/perf` changed since the last measuring commit (the `<!-- bench-auto:start commit=... -->` in `RESULTS.md`). With no record, or a commit missing from history, it compares against the parent commit. If nothing changed, it stops.
 2. **Wait for the structural gate.** It waits up to 80 minutes for the `structural-perf.yml` push run on the same commit to succeed.
 3. **Benchmark.** It dispatches `benchmark.yml` with `os=all` and `suites=all`. The three OSes run separately.
-4. **Update the documents.** It downloads every per-OS artifact, rewrites only the `bench-auto` section of `RESULTS.md` and `RESULTS.ko.md` with `scripts/perf/bench_docs.py render`, and pushes to `main` and `dev` with a `docs(perf): record benchmark for <sha>` commit.
+4. **Update the documents.** It downloads every per-OS artifact and rewrites only the `bench-auto` section of `RESULTS.md` and `RESULTS.ko.md` with `scripts/perf/bench_docs.py render`, redraws the charts under `docs/performance/charts`, and, when the branch carries `scripts/ci/sync_docs_site.py`, regenerates the documentation-site mirror from the same documents. It then pushes one `docs(perf): record benchmark for <sha> [skip ci]` commit to `main` and to `dev`. The benchmark scripts come from the measured commit, so an older copy on a branch cannot render differently.
 
 The document section holds an OS summary table (runner, binary, status) and a per-OS section in Linux, macOS, Windows order. A failed OS is marked "partial failure" and keeps what it measured. An OS with no results still keeps its section, marked "no results". Text outside the section stays byte-for-byte identical.
 
-The docs commit is pushed with `GITHUB_TOKEN`, so that push does not start the workflow again. A docs-only commit is filtered out at step 1. `workflow_run` only runs workflow files from the default branch, so this file must be on `main` to work.
+The mirror regenerates the English and Korean Reference pages together, `packages/docs-site/reference/performance/` and `packages/docs-site/ko/reference/performance/` plus `packages/docs-site/images/reference/`, because the renderer writes both `RESULTS.md` and `RESULTS.ko.md`. Staging only one language left the site stale and failed the next Documentation Site check.
+
+The docs commit is pushed with the Horon AI Bot app token, not `GITHUB_TOKEN`: the `main` and `dev` rulesets require the `CI Required` and `Structural performance required` checks, and only an identity on the bypass list can push a commit that will never run them. The commit message carries `[skip ci]`, so the push starts no CI run, no `release-tag.yml` and no second run of this workflow. A docs-only commit is filtered out at step 1 regardless. `workflow_run` only runs workflow files from the default branch, so this file must be on `main` to work.
 
 The numbers in the automatic section are a trend record, not a regression criterion. Do not edit them by hand. The next measurement overwrites them.
 
@@ -139,7 +179,8 @@ The jcode download handles transient errors (5xx). It retries the release downlo
 | `oneshot_core` | The same one-shot question with `--tools` removed, so the request carries the default `core` surface: seven eager tools plus `toolbox`, and the listed-tool index in the system prompt. Each row reuses the home and workspace of its plain one-shot, so the two differ only in the tool surface. JSON `oneshot_core.{ms,peak_rss_bytes,status,error,runs}`, with `oneshot_core.runs[*].request_bytes` per run. A run whose first request offered no tools is recorded as `core surface missing` with no time. A tool with no core profile (every tool but horon and a second horon build) records `{"skipped": "<label> has no core tool profile"}`. The `oneshot_ms` row keeps `--tools bash` so it stays comparable with `RESULTS.md` |
 | `fsync_calls` | Number of `fsync` and `fdatasync` calls one question makes when `--syscalls` is on. Counted by running the same number of extra `strace`-wrapped runs separately from the timed runs. Measured on Linux only when `strace` exists, otherwise `skipped` records the reason |
 | `fsync_paths` | With `--syscalls`, one more one-shot run per row, neither timed nor counted, traced with `strace -f -y` so every `fsync` and `fdatasync` names the file or directory behind its descriptor. JSON `oneshot.fsync_paths[*].{path,count,fsync,fdatasync}`, most calls first. The run's temporary root is written as `<root>`, a session directory name (`session_<word>_<millis>_<hex>`) as `session_<id>`, and UUIDs, long hex ids and long digit runs as `<id>`, so two runs and two builds group the same way; a descriptor `strace` could not name is `fd:<n>`. The counts add up to the flushes that traced run made. Without `strace` the value is `{"skipped": "strace unavailable"}` |
-| `sessions_memory` | Process tree memory after N concurrent sessions × K turns, both idle and right after a turn. It reports the first-session value and the per-session increment (least-squares slope) |
+| `sessions_memory` | Process tree memory after N concurrent sessions × K turns, both idle and right after a turn. It reports the first-session value and the per-session increment (least-squares slope). Each point also carries `idle_process_count` and `post_turn_process_count`, the live processes in those same trees |
+| `process_count` | How many processes the tool keeps alive for the sessions it was given: per point (`sessions_memory.points[*].{idle_process_count,post_turn_process_count}`) and summarized as `first_session_idle_processes`, `each_additional_idle_processes` and the `post_turn` pair. The count and the RSS are read in one traversal so the extra sample cannot move the memory reading: a PID reachable from two session roots is counted once, a root that already exited is counted as neither bytes nor process, and a sample that could not be read is `null` (an em dash in the report), never 0. A `0.00` per-session slope means the sessions live inside the tool's own process (a daemon or a shared server); about `1.00` means one process per session |
 | `install_size_bytes` | Executable size. For npm tools, the package plus installed dependencies |
 | `skill_ms` | Time for one one-shot `run` question to find the fixture skill and read its body. The `Via` column names the path the tool used (`skill-tool`/`skill-uri`/`file-read`) |
 | `mcp_ms` | Time for one one-shot `run` question to start the fixture stdio MCP server and call `bench_echo` once |
@@ -155,7 +196,7 @@ The jcode download handles transient errors (5xx). It retries the release downlo
 
 Multipliers keep horon at 1.0×. Each tool attaches to the fake model differently. horon and jcode use `[providers.mock]` in a temporary HOME plus a debug socket session on one daemon, Claude Code uses `ANTHROPIC_BASE_URL` and a resident `stream-json` process, Codex uses `model_providers` and `app-server`, OpenCode uses `baseURL` in `opencode.json` and `serve`, and pi, omp, and omo use `models.json` (`providers.mock`, `openai-completions`) under a temporary HOME with the session handed to `--mode rpc`.
 
-Session implementations differ per tool (a session inside the daemon versus a process per session), so compare the per-session increment rather than absolute values. `strace` stops the tool on every system call, so a wrapped run's time grows with the call count. `oneshot_ms` therefore comes only from runs without `strace`, and wrapped runs serve only to count `fsync_calls` and to collect `fsync_paths`.
+Session implementations differ per tool (a session inside the daemon versus a process per session), so compare the per-session increment rather than absolute values. The live process count names the model a row actually uses: a daemon or shared server holds one process for any session count (`0.00` per session), while a process-per-session tool grows by about one (`1.00`). `strace` stops the tool on every system call, so a wrapped run's time grows with the call count. `oneshot_ms` therefore comes only from runs without `strace`, and wrapped runs serve only to count `fsync_calls` and to collect `fsync_paths`.
 
 ### omp and omo
 
@@ -227,6 +268,7 @@ weasyprint /tmp/bench-report/report.html /tmp/bench-report/report.pdf   # pip in
 - Memory metrics differ per OS. Do not compare Linux PSS, macOS RSS, and Windows Working Set as the same number.
 - The Windows bash tool runs through `cmd.exe`. `bash (true)` becomes `exit 0` and `bash (ls fixture tree)` becomes `dir /b tree` to do the same work.
 - Tool latency is debug socket round trip plus `Agent::execute_tool` time. Model turns, approvals, and prompt assembly are not included.
+- Tool CPU per call is the daemon's own CPU, read from `/proc/<pid>` before and after a window of calls: on-CPU time summed over its threads (`schedstat`), CPU time of the children it reaped (the shell of a `bash` call) as a separate column, and voluntary and involuntary context switches. `--cpu-iterations` sets the calls per window and `--cpu-rounds` the windows per case; the workflow takes 5 windows of 50 calls. One window is one sample, so the table gives the median, minimum and maximum of the windows. When a daemon thread exits inside a window the window is retaken up to three times, and after that it falls back to the process tick counters (10 ms steps, no switch counts), which the `source` column names as `stat`. The counters exist on Linux only: macOS and Windows record `cpu: null` with the reason, never 0. A call that fails inside a window voids that case's CPU figure. With `--baseline-binary` the second daemon runs the same cases on its own throwaway root, and the comparison table marks a case `lower` or `higher` only when the two min–max ranges do not overlap; an overlap is a `tie`.
 - Repeating the reload storm at one level leaves the earlier opened sessions in the daemon and makes the second one slower. Read absolute values with `--iterations 1`.
 - The compile benchmark breaks the cargo fingerprint through mtime. With hash-based fingerprints it produces the same value as no change.
 - macOS temporary folder paths are long enough to exceed the Unix socket path limit of 104 bytes. The scripts use a short folder under `/tmp`.
@@ -258,7 +300,34 @@ Dispatch the suite the same way as the others:
 gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui
 ```
 
-The PTY metrics need `pty` and a POSIX executable bit, so they run on Linux and macOS only. Windows still records the render and size metrics and writes `pty unavailable on Windows` for the rest, and the suite succeeds. A missing `horon-tui` is recorded as a skip of this suite alone, never as a failure of the run. A step that times out is recorded with its error and left out of its metric, so a refusal never looks like a fast number.
+The PTY metrics need `pty` and a POSIX executable bit, so they run on Linux and macOS only. Windows still records the render, scroll and size metrics and writes `pty unavailable on Windows` for the rest, and the suite succeeds. A missing `horon-tui` is recorded as a skip of this suite alone, never as a failure of the run. A step that times out is recorded with its error and left out of its metric, so a refusal never looks like a fast number.
+
+### Scrolling a large session
+
+`render_p50_ms` and `render_p95_ms` time one frame that follows the end of a long streamed answer: the view is never held off the end and the transcript has no tool output, so neither number covers scrolling. That path is measured by a second example, `crates/tui/examples/scroll_bench.rs`, and reported under its own `scroll` key and its own table, never folded into the frame cells.
+
+The example commits 24 turns and a 4,000-row tool output, expands that output with `ctrl+o`, and holds the view off the end with `shift+up`.
+
+| Scroll metric | What it measures |
+| --- | --- |
+| `scroll_input_p50_us`, `scroll_input_p95_us` | Key handling of one `shift+up` step, before any frame is drawn |
+| `scroll_frame_p50_ms`, `scroll_frame_p95_ms` | Draw of the frame that followed that key |
+| `scroll_input_to_frame_p50_ms`, `scroll_input_to_frame_p95_ms`, `first_input_to_frame_ms` | Wall time from dispatching `shift+up` through completion of its frame on the test terminal. The first step includes conversation measurement. |
+| `first_held_frame_ms` | The first held frame, which measures the whole conversation before it can show rows |
+| `held_redraw_p50_ms`, `held_redraw_p95_ms` | A redraw at the held view with no input between frames |
+
+Each scroll step must move the view and show rows of expanded output. After each timer stops, the example fingerprints every cell's grapheme, colors and modifiers. The fixture omits the status-line clock and uses completed calls without live durations. After timing, it also draws a narrower window, changes the output color, collapses and expands the call, switches sessions and reuses the call ID with multiline Unicode output. `screens_per_run` counts all compared frames. The first differing frame rejects the pair, and the paired run fails if it has fewer matching pairs than requested.
+
+These metrics need no PTY, so Linux, macOS and Windows all record them.
+
+A before/after pair is one job with `baseline_ref`, which builds the baseline `scroll_bench` beside the candidate and alternates the two runs:
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui \
+  -f baseline_ref=<merge-base sha>
+```
+
+The runner builds the same scroll example against both renderer revisions and alternates their execution order. The report lists the baseline medians and the paired differences (candidate minus baseline) for the held frame p95 and first held frame. Each difference uses two successful samples from the same round.
 
 ## Structural gate
 
@@ -282,14 +351,15 @@ The gate asks "is the shape still bounded", not "is it fast". It therefore reads
 | Request prefix | `tools_bytes`, `tool_count`, `per_tool` | The `core` profile's tool catalog is at least 1 byte and at or below the committed ceiling, and the tool count equals the eager definitions it was built from. `per_tool` lists `name:bytes` in catalog order; the sizes plus the array's two brackets and the commas between entries must equal `tools_bytes`, and a line without `per_tool` is not a measurement |
 | Static prompt (`prompt`) | `static_bytes`, `static_sha256`, `static_tokens`, `index_bytes`, `index_clipped_rows`, `warm_source_reads`, `unchanged_request_source_reads` | Printed as `STRUCTURAL_PERF section=prompt`. `static_bytes` is at most `prompt_static_bytes_max`, a request after the session captured its prompt sources probes none of them (`prompt_unchanged_request_source_reads_max`, 0), and at most `prompt_index_clipped_rows_max` (1) index row is cut mid-sentence. The floors refuse a line that measured nothing: the static prompt, its token estimate and the listed-tool index are at least 1 byte, the digest is a SHA-256, and the session capture and the first build together probe at least one source file. `static_sha256` hashes the prompt without its clock line (`Time: `), so the same prefix reads the same on any run. Both read counters count attempts to read a prompt source file, found or not |
 | Session context (`session_context`) | `git_spawns_outside_repo`, `git_spawns_in_repo`, `gpu_probe_spawns_without_display`, `gpu_probe_spawns_here`, `gpu_reported` | A directory outside any repository starts no `git` (`session_context_git_spawns_outside_repo_max`, 0), a work tree starts one (`session_context_git_spawns_in_repo_max`, 1), and a PCI device list without a display controller starts no GPU probe (`session_context_gpu_probe_spawns_without_display_max`, 0). `git_spawns_in_repo` is also at least 1, because describing a repository takes a `git` process and a zero means the counters were off. Each counts attempts to start a child process, so a missing `git` or `lspci` still counts. `gpu_probe_spawns_without_display` is taken against an empty PCI device list, so it reads the same on every runner. `gpu_probe_spawns_here` and `gpu_reported` describe the machine that ran the test, and the gate reads neither |
+| Tool dispatch (`tool_dispatch`) | `dispatches`, `small_allocs`, `small_alloc_bytes`, `large_allocs`, `large_alloc_bytes` | Printed by the `tool_dispatch_perf` target, whose own allocator counts the heap requests the dispatching thread makes inside `Registry::execute`. A fixture tool is called 200 times with a short file-write input and 200 times with one carrying 10 KB of `content`; the input and the tool context are built outside the counted window. Requests per dispatch and requested bytes per dispatch, rounded up, stay at or below `tool_dispatch_small_allocs_per_dispatch_max`, `tool_dispatch_small_alloc_bytes_per_dispatch_max`, `tool_dispatch_large_allocs_per_dispatch_max` and `tool_dispatch_large_alloc_bytes_per_dispatch_max`. Each count is also at least one request per dispatch and one byte per request, so a counter that recorded nothing fails. The test asserts that every measured dispatch wrote its `start` and `done` lifecycle lines, so a run with logging off is not a measurement |
 
 The mock model server records `body_bytes`, `tools_bytes`, and `tool_count` for every request it answers (`GET /__stats`), and a `compare` run copies them into each run record as `request_bytes`, so a bench run reports the same per-request shape the `prefix` row bounds.
 
-An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`.
+An existing test in the repository prints each value as one `STRUCTURAL_PERF section=<name> k=v ...` line, and the gate reads that line. Because the counters are process-global, each measurement runs a single test with `--test-threads=1 --exact`. A test may also print `STRUCTURAL_PERF_NOTE ...` lines that say where its counts come from; the gate repeats them in its output and judges none of them. The `tool_dispatch_perf` target prints one per stage it can call on its own (one log line, one crash-ring record, a copy and the text of the input, the tool schema).
 
 ```bash
 python3 scripts/perf/check_structural.py                 # everything
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix, prompt, session_context
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix, prompt, session_context, tool_dispatch
 python3 scripts/perf/check_structural.py --print-plan    # only show the cargo commands that would run
 python3 -m unittest -v scripts/perf/test_check_structural.py   # the gate's contract tests
 ```
@@ -360,6 +430,44 @@ python3 scripts/perf/bench_loading.py --compare baseline-warm.json candidate-war
 
 The baseline comes from running the same command with a `loading_probe` built in a worktree of the baseline commit. Counters decide first. It fails if `skill_bytes_read` in `skill_catalog`, `skill_file_reads` in `skill_request_overlay`, or `mcp_config_reads` in `mcp_config_load` grows above the baseline. Time counts as a regression only when the same pair, measured alternately again, exceeds the baseline's p95 range.
 
+Read a stage for what it measures. `attach_history` is `Session::load` followed by a full `history_messages()` materialization of every message; its `detail` reports the halves separately as `load_ms` and `history_ms`, with `resident`, `history` and `released_prefix` counts. `resume_ready` is its own stage: `Session::load_startup_stub`, a load plus a transcript strip. Neither is a first-page number. The host's first page is `history_page`/`get_history_page`, bounded to the page by the head-bound page index, and `crates/harness-api-server/src/history_page_perf_tests.rs` measures it. A cold report also pays the one-time cache rebuild (a full scan plus derived publication) that a warm report does not, which is why only warm reports are compared.
+
+The fixture's `attach_history_samples` field retains the detail of each successful measured run for sides `a` and `b`. An older probe or an empty fixture produces an empty list.
+
+### Where a cold resume spends its time
+
+`attach_history` is two whole functions, so it cannot say whether the milliseconds went into moving bytes, decoding records, building the projection or writing the transcript back out. `crates/base/examples/resume_stage_probe.rs` answers that by calling the same store functions the load path calls, in the same order, and timing each one. It adds no timer to the product: the load and history path are untouched, and the probe carries the whole measurement.
+
+The stages, in the order the probe runs them:
+
+| Stage | What it times | Where it sits in `Session::load` |
+| --- | --- | --- |
+| `selection` | the two selection files (`local-head-explicit.json`, `local-head.json`) | `selected()` |
+| `checkpoint_recent` | the derived-cache read; a cold home rebuilds it with one scan, one replay and a published checkpoint | `SessionCache::recent()`, whose result the load then discards |
+| `log_read` | one whole-file read of `events.jsonl`, which measures the copy, not the disk: the fixture was just copied and `checkpoint_recent` already streamed the log | not in the load: measured so `full_scan` can be read as decode |
+| `full_scan` | the streaming scan: per record a JSON decode, a canonical re-encode to prove the line is canonical, and parent-chain validation | `graph()` |
+| `blob_read` | every `payload_ref` blob read, separated from graph construction | `graph()` |
+| `graph_replay` | graph construction and replay: ancestry walk, payload decode, one clone per message | `graph()` and `replay()` |
+| `metadata_json` | `serde_json::to_value` of the projection metadata | `to_value(metadata)` |
+| `messages_json` | one JSON tree built for the whole transcript | the `json!` messages array |
+| `messages_decode` | the tree decoded back into stored messages | `from_value::<Session>` |
+| `source_hash` | the whole log re-read and hashed | `source_hash()` |
+| `history_rescan` | the scan, the blob pass and the replay again | `history_messages()` |
+| `page_index` | the head-bound index opened and a first page returned | `history_page()`, which the load does not call |
+
+The probe prints one JSON report and exits `0` when every stage ran, `1` on a fixture or stage mismatch, and `2` on preflight (bad arguments, `HORON_HOME` mismatch, counters disabled). It reads a pristine fixture: `checkpoint_recent`, `history_rescan` and `page_index` publish the same derived caches the product does, `events.jsonl` is never written, and the report carries its SHA-256 before and after. Blobs and recovery are untouched: a damaged log or a torn tail is a failure, never a cleanup.
+
+```bash
+cargo build --release --locked -p horon-agent-base --example resume_stage_probe
+HORON_HOME=<fixture home> HORON_AGENT_PERF_COUNTERS=1 \
+  target/release/examples/resume_stage_probe \
+  --session perf-events-10000 --expect-events 10000 --expect-messages 9999
+```
+
+`bench_loading.py` finds the probe beside `--binary` and, for a session fixture in `cold` mode, records three cold passes per fixture as the fixture's `stage_probe` block: each stage's `p50_ms`, `min_ms`, `max_ms`, `mad_ms`, its counter delta under `counters`, and, when the measured runs were cold, `ratio_to_attach_history_pct`. The block is attribution, not a budget. The stages run one after another in a separate process, so their sum is not `attach_history` and must not be read as one; the only measured latency is `anchor.attach_history_p50_ms` from the same report. A stage that fails, or a sample that does not run, makes the whole block `status: failed`: its numbers stay for diagnosis and are not evidence. `--stage-probe-samples 0` skips the block and an absent binary records `status: skipped`, never a zero. Absolute stage times are comparable only inside one report, for the same reason the byte counters are. Every read stage is page-cached, so nothing here is a disk-latency claim.
+
+What the numbers mean together: `log_read` is the copy, `full_scan` is decode over page-cached bytes, `graph_replay` is the projection, and the three JSON stages are the serialise/deserialise half of the load. `checkpoint_recent` and `history_rescan` are the passes that repeat work the load has already done, so they are the first place to look when a resume is slower than the bytes it reads.
+
 The judging measurement runs in `.github/workflows/loading-ab.yml`, not on a development machine. That workflow checks out the baseline and candidate commits inside one `ubuntu-24.04` job, builds both as release, measures the two conditions above alternately with the candidate's `bench_loading.py` (an 8 KiB body and a 300 KB `~/.claude.json`, both 0), then runs `--compare`. A "Check counters" step then verifies three counter conditions: the skill catalog with bodies reads less than the baseline, workspace skills are not read again on repeated requests, and MCP config with `~/.claude.json` reads less than the baseline. Breaking any one fails the job. `bench_tools.py` also runs against both binaries, and the result stays for 30 days as the `loading-ab-<run_id>` artifact.
 
 ```bash
@@ -381,7 +489,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
 
 The same job builds the `dev` baseline (`horon-base`) and the candidate together and measures them alternately, so before, after, and jcode share one runner.
 
-**The cells compared.** Per OS: one-question latency and peak memory, skill invocation time, MCP call time, `--version`, install size, first-session and per-session memory growth (idle and right after a turn), and `fsync` counts on Linux. Samples are medians of 5 or more runs, and if the min–max ranges of the two values overlap the cell counts as a tie, not an advantage.
+**The cells compared.** Per OS: one-question latency and peak memory, skill invocation time, MCP call time, `--version`, install size, first-session and per-session memory growth (idle and right after a turn), the live process count at those same samples, and `fsync` counts on Linux. Samples are medians of 5 or more runs, and if the min–max ranges of the two values overlap the cell counts as a tie, not an advantage.
 
 **Find causes by measuring.** Split startup, tool round trip, and shutdown with `request_offsets_ms`, find the shutdown stages with `log_tail`, find growing threads with `thread_names`, and separate live data from allocator retention with `live_heap_bytes`. Do not change code on a guess.
 
@@ -412,7 +520,7 @@ jcode's (`1jehuang/jcode`, commit `c725fa3` from 2026-11-05) `scripts/` benchmar
 | `bench_headless_memory.py`, `bench_memory_cli.py`, `bench_jcode_maki.py` | `bench_compare.py` | Ported as the competitor comparison. Measured in headless mode. |
 | `bench_startup.py`, `check_startup_budget.sh`, `memory_regression_gate.sh`, `analyze_runtime_memory_log.py` | `bench_startup.py`, `check_startup.sh`, `check_memory.sh`, `analyze_memory_log.py` | Already present |
 | `jcode_memory_snapshot.py`, `repro_idle_session_rss.py` | `bench_common.py`, `bench_reload_storm.py` | Other scripts measure the same axis. |
-| TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | `bench_tui.py` | The client is measured on its own suite, not ported: first frame, handoff, input echo, RSS, one drawn frame and install size. The session picker, the visible-ready budget and the frame-by-frame scripts have no counterpart. |
+| TUI screen measurements (`bench_startup_visible_ready.py`, `bench_resume_picker.py`, `startup_frames.sh`, and others) | `bench_tui.py` | The client is measured on its own suite, not ported: first frame, handoff, input echo, RSS, one drawn frame, a scrolled held view and install size. The session picker, the visible-ready budget and the frame-by-frame scripts have no counterpart. |
 | `bench_resume_suite.py` | None | Excluded. The reload storm measures resume latency. |
 | Ones that need a real model, a paid API, or an external harness (`benchmark_swarm.py`, `run_terminal_bench_*`, `benchmark_discovery*.py`, `benchmark_browser_handoff.*`, and others) | None | Excluded |
 | `analyze_root_crate.py`, `analyze_openai_ws_cache.py` | None | Excluded. Those log lines do not exist. |

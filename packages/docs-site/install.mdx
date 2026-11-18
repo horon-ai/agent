@@ -1,0 +1,115 @@
+---
+title: Install
+description: Install horon agent from the release installer, npm, a container image, or a source checkout.
+---
+
+## Installer
+
+<Tabs>
+  <Tab title="macOS · Linux · FreeBSD">
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
+    ```
+  </Tab>
+  <Tab title="Windows (PowerShell)">
+    ```powershell
+    irm https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.ps1 | iex
+    ```
+  </Tab>
+</Tabs>
+
+The installer downloads the release archive and `SHA256SUMS`, then hands them to
+`horon install-release`, which verifies the checksum, stages an immutable version
+directory and switches the `stable`/`current` links. A version directory that
+already holds different bytes is refused, not overwritten; one that holds the
+same bytes is reused.
+
+An archive may yield only regular files and directories: symbolic links, hard
+links, absolute paths, `..` escapes and duplicate members are rejected, and the
+whole archive must stay inside the 512 MiB per-file and 2 GiB total budget. The
+FreeBSD asset adds one rule of its own, covered under
+[FreeBSD](#freebsd).
+
+Three launchers are linked: `horon` (used throughout these docs), `hrn` (shorter)
+and `horon-agent` (the executable's own name). A different program with the same
+name is never overwritten, and uninstall removes only links that point at this
+installation.
+
+## npm
+
+The npm distribution is built and tested, but no release has been published yet:
+the registry currently holds only the `0.0.0` placeholder packages that reserve
+the seven names, and those carry no binaries. Use the installer or a source
+checkout until `NPM_PUBLISH` is turned on.
+
+When it is on, the install is:
+
+```sh
+npm i -g @horon-ai/horon
+horon --version
+```
+
+The npm package is a small launcher plus one platform package carrying the
+`horon-agent` and `horon-tui` binaries, chosen through `optionalDependencies`.
+An npm installation is updated with npm, not with the agent's own updater: the
+launcher sets `HORON_AGENT_NO_AUTO_UPDATE=1` for the binary it starts, because
+the package pins one release for both binaries.
+
+## Container
+
+```sh
+docker run --rm ghcr.io/horon-ai/agent:latest --version
+```
+
+## From source
+
+Rust 1.99+ with edition 2024:
+
+```sh
+cargo build --release -p horon-agent
+./target/release/horon-agent --version
+```
+
+## Platforms and data
+
+Release assets cover Linux (x86_64, aarch64), macOS (aarch64, x86_64), Windows
+(x86_64, aarch64) and FreeBSD (x86_64). Data lives in `~/.horon`, overridden with
+`HORON_HOME`; releases up to v0.1.1 used `~/.horon-agent`.
+
+## FreeBSD
+
+`horon-agent-freebsd-x86_64.tar.gz` is a POSIX ustar archive with exactly two
+top-level regular files, the executable and `LICENSE`, so FreeBSD `tar` and
+`install-release` read the same names. FreeBSD publishes no `horon-tui` archive,
+so an installation there is headless only, and `install.sh` never asks for the
+client on that platform. Earlier releases wrote the FreeBSD asset in another tar
+flavour whose member path only some readers resolved; the packaging now refuses
+anything that is not ustar before upload.
+
+## Reinstalling
+
+`install.sh` keeps the last verified copy of each asset it installed, so
+reinstalling the same release does not download the archive again.
+`SHA256SUMS` is fetched on every run, a cached file is used only when this run's
+manifest lists the same digest, and its bytes are hashed again after copying.
+The cache is `$XDG_CACHE_HOME/horon-agent/release`, otherwise
+`~/.cache/horon-agent/release` on Linux and FreeBSD and
+`~/Library/Caches/horon-agent/release` on macOS; a shared or symbolic-link
+location disables it, and `HORON_AGENT_NO_DOWNLOAD_CACHE=1` turns it off for one
+run. `install.ps1` does not use the cache.
+
+## Linux servers and TLS
+
+The release binary starts with only glibc, libm and libgcc_s present. All TLS goes
+through rustls, so OpenSSL is not a dependency. Trusted roots are the union of the
+webpki roots built into the binary and the roots the OS trusts, so a private CA
+installed in the OS store is trusted too. No setting narrows the trust set or
+disables verification; to use an internal CA, put it in the OS store.
+
+## The TUI binary
+
+The release publishes `horon-tui`, the TUI binary, as its own archive
+(`horon-tui-<suffix>.tar.gz`) beside the agent, built from the same tag and
+verified against the same `SHA256SUMS`. It is optional for an installation that
+only uses headless mode. A copy that cannot be verified never blocks the agent:
+the installer prints one line and continues with `horon-agent` alone.

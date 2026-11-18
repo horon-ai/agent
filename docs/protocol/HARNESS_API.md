@@ -478,6 +478,20 @@ for every call it made. A background task's stop is confirmed by its final
 `background_work` event, not by the reply: the reply only says a cancellation
 was accepted.
 
+Two ordering rules hold on the daemon's side of the socket. A finished turn is
+closed before the next `message` for that session is read, so a client that
+answers a turn's terminal event with its next prompt is not refused with
+`Already processing a message` (`crates/app-core/src/server/client_lifecycle.rs:824-834`).
+A `no_reply` message answered with that terminal event is a context message: it
+starts no turn, so it waits out the finished turn's completion tail, is stored
+exactly once and answered with `context_message_added`. Only a turn that is
+really running - this connection's own, or one any surface registered - answers
+the busy error, and it answers it at once.
+And a cancel's `Interrupted` and the turn's `Done` are written only after the
+cancelled turn's own frames have been forwarded, waiting at most 500 ms for
+that (`crates/app-core/src/server/client_lifecycle.rs:4026-4036`,
+`crates/app-core/src/server/fanout_flush.rs:56-60`).
+
 ### Events
 
 ```json
@@ -621,11 +635,33 @@ timeout.
 
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
+## Ask requests a client declares in the handshake
+
+The `ask` tool shows a person a question and waits for the answer. The daemon draws no screen and cannot assume a client is attached, so the question goes only to a connection that said it can show one. The advertisement is one boolean field on `Hello`:
+
+| Field | Type | When absent | Meaning |
+| --- | --- | --- | --- |
+| `supports_ask_requests` | boolean | `false` | This connection draws the `ask` tool's questions and answers them |
+
+The bridge reads the field with `hello["supports_ask_requests"].as_bool().unwrap_or(false)` (`crates/harness-api-server/src/lib.rs`), so a client that predates the field advertises nothing and keeps working. The field is not a capability string and not a protocol-minor negotiation: it gates the direction the person is asked in. A session whose attached connection advertised it gets the question there and the call waits for the answer; a session without such a connection falls back to `ask_policy` (`docs/safety/SAFETY.md`).
+
+The SDKs expose it as one connect option, and all three default it to off:
+
+| SDK | Option | Default |
+| --- | --- | --- |
+| Rust | `ConnectOptions::supports_ask_requests` | `false` |
+| TypeScript | `supportsAskRequests` | `false` |
+| Python | `supports_ask_requests` | `False` |
+
+The Rust SDK copies the option into `Hello` (`crates/agent-sdk/src/client.rs`), TypeScript writes `options.supportsAskRequests ?? false` and Python passes the field straight through. The TUI binary `horon-tui` sets it to `true` in `connect_options` (`crates/tui/src/lib.rs`), because it draws the question and answers it. A client that only runs turns leaves the default in place, and a turn that reaches `ask` then resolves through the policy instead of parking on a question nobody can see.
+
 ## Harness API request and event surfaces: usage_report, search_sessions, list_artifacts, durable_runtime
 
 This document records the request surfaces added to the harness API. The first part covers the three requests of protocol 1.13 and their response events, the next covers the four durable runtime surfaces of 1.14, and the part after that covers the argument repair of 1.16. Field names and types are copied from the definitions in `crates/harness-api/src/requests.rs` and `crates/harness-api/src/events.rs`, and behaviour and limits are the values confirmed in the implementation under `crates/harness-api-server/src/translate/`.
 
 All three requests are additive. A client that sends none of them keeps working, and the bridge advertises `usage_report`, `session_search` and `artifacts` in the `capabilities` of `hello_ok` (`BRIDGE_CAPABILITIES` in `crates/harness-api-server/src/lib.rs`).
+
+`approval_ack` and `failover_ack` follow `list_artifacts`. Both are acks a client sends to retire a durable approval or failover announcement, so neither is behind a capability of its own: a daemon that does not know the ack answers it with an error instead of ignoring it.
 
 ### Common rules
 
@@ -705,6 +741,8 @@ The report merges three sources in order of authority: the attached session's da
 
 This build has no account subscription, so the daemon reports no limits and `limits` is always an empty array. An empty array means "this build has no limit source", not "this account has no limits".
 
+The three SDKs send it as `usage_report(session_id: Option<&str>)` in Rust, which returns a `UsageReport`, `usageReport` in TypeScript and `usage_report` in Python.
+
 ### search_sessions
 
 Searches the transcripts of every stored session, not just the attached one. The capability name is `session_search`. It is needed because filtering to sessions with a session switcher cannot answer "where was that conversation".
@@ -753,6 +791,8 @@ Searches the transcripts of every stored session, not just the attached one. The
 
 It uses the same engine, the same index and the same scoring as the agent's own session search, so a search from the agent and a search from a client return the same results. With no storage directory the result is empty, and an engine failure is `internal`.
 
+The three SDKs send it as `search_sessions(query, limit: Option<u32>)` in Rust, `searchSessions` in TypeScript and `search_sessions` in Python.
+
 ### list_artifacts
 
 Lists the files a conversation produced: images the conversation carried in, and HTML and image files written into the working directory after the session started. The capability name is `artifacts`.
@@ -799,6 +839,69 @@ Only metadata is returned. The client reads the bytes separately with `read_file
 
 The list is collected from two sources: paths named by the transcript and a scan of the working directory. Both reject paths that leave the session root and reject symbolic links, so a transcript naming `../../.ssh/id_rsa` never puts it on the list. When the session start time is not recorded, the session file's modification time stands in for it, and older files are excluded. The result is sorted by `mtime_ms` descending, by path ascending for equal times, and cut at 200 entries.
 
+The three SDKs send it as `list_artifacts(session_id)` in Rust, `listArtifacts` in TypeScript and `list_artifacts` in Python.
+
+### approval_ack
+
+Retires the daemon's durable copy of an `approval_resolved` event, so a later attach or restart does not deliver it again. An approval stays parked until it is acked. This is an ack a client sends, not a surface the server originates: the reply is a bare `ok` and no event follows it. `approval_ack` in the event vocabulary names this client acknowledgement, and the daemon never emits it.
+
+#### Request
+
+```json
+{ "v": 1, "id": 21, "req": "approval_ack", "session_id": "session_...", "request_id": "req_..." }
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the approval belongs to. The connection must be attached to it |
+| `request_id` | string | Yes | The `request_id` of the `approval_resolved` event |
+
+The legacy ack frame the bridge forwards carries no session field, so an empty or missing `session_id` on an attached connection applies the ack to the attached session.
+
+#### Response
+
+```json
+{ "v": 1, "reply_to": 21, "ev": "ok" }
+```
+
+#### Behaviour
+
+- The connection must be attached to the session. One that never asked to attach, or that names a `session_id` other than the attached one, is `unknown_session`. That check runs before the field checks, so an empty `request_id` on an unattached connection is `unknown_session` rather than `invalid_request`.
+- An empty or missing `request_id` is `invalid_request`. An ack with no identifier would clear nothing while reporting success.
+- A `request_id` whose record is already gone is still answered `ok`. The runner may delete the record first and the ack arrive late, so a late ack is not a failure.
+- The three SDKs send it as `ack_approval(session_id, request_id)` in Rust, which returns `()`, and as `ackApproval` in TypeScript and `ack_approval` in Python, which wait for the `ok` and return a receipt built from the values that were sent.
+
+### failover_ack
+
+Echoes a `failover_switched` announcement so the daemon can clear it. The whole announcement key travels, because a partial key would either clear nothing or read as a different switch.
+
+#### Request
+
+```json
+{ "v": 1, "id": 22, "req": "failover_ack", "session_id": "session_...", "chain_id": "chain_...", "from": "model-a", "to": "model-b", "attempt": 1 }
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the announcement belongs to. The connection must be attached to it |
+| `chain_id` | string | Yes | The switch chain the announcement belongs to, non-empty |
+| `from` | string | Yes | Model the chain switched away from, non-empty |
+| `to` | string | Yes | Model the chain switched to, non-empty |
+| `attempt` | number | Yes | Attempt number of this switch, a non-negative integer |
+
+#### Response
+
+```json
+{ "v": 1, "reply_to": 22, "ev": "ok" }
+```
+
+#### Behaviour
+
+- The connection must be attached to the session, with the same `unknown_session` answer and the same ordering before the field checks as `approval_ack`.
+- An empty or missing `chain_id`, `from` or `to` is `invalid_request`. So is a missing `attempt` or one that is not a non-negative integer.
+- A key the daemon holds no announcement for is still answered `ok`. A key that differs in any part clears nothing, which is why the client echoes all five values.
+- The three SDKs send it as `ack_failover(session_id, chain_id, from, to, attempt)` in Rust, which returns `()`, and as `ackFailover` in TypeScript and `ack_failover` in Python, which wait for the `ok` and return a receipt built from the values that were sent. The Python argument is spelled `from_` because `from` is a keyword; the wire key stays `from`.
+
 ### durable_runtime_v1 · monitor_v1 · snapshot_marker_v1 · ask_receipts_v1
 
 The four surfaces added by protocol minor 14. All four are **additive**, so a client that did not negotiate the capability neither sends nor receives these requests. Existing clients behave as before.
@@ -821,8 +924,8 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 
 ### Sources
 
-- Request definitions: `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot` and `AskResponse.answer_id` in `crates/harness-api/src/requests.rs`
-- Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`
+- Request definitions: `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot` and `AskResponse.answer_id` in `crates/harness-api/src/requests.rs`, and the `approval_ack` and `failover_ack` requests (`ApprovalAck` and `FailoverAck` in the same file)
+- Event definitions: `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary` and `ControlReceipt` in `crates/harness-api/src/events.rs`, and the typed `approval_ack` and `failover_ack` events in the same file
 - Implementation: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
 - Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`

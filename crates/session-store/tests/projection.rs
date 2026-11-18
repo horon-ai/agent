@@ -1,6 +1,7 @@
 use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::*;
 use horon_agent_session_types::{RenderedMessage, StoredMessage};
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 // allow: SIZE_OK - one explicitly assigned integration target owns the shared
 // sealed-event fixtures and all graph/durable replay acceptance scenarios.
@@ -17,7 +18,7 @@ fn event(n: u128, parent: Option<u128>, body: (KnownEventKind, Value)) -> EventE
         id(n),
         parent.map(id),
         OriginId::parse(uuid::Uuid::from_u128(999).to_string()).unwrap(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(body.0),
         body.1,
     )
@@ -378,7 +379,7 @@ fn reset_keeps_old_branch_when_new_empty_root_has_provenance() {
     let stamp = EventStamp {
         event_id: id(3),
         origin_id: OriginId::new_v4(),
-        timestamp: chrono::DateTime::UNIX_EPOCH,
+        timestamp: Timestamp::UNIX_EPOCH,
     };
     // When preparing and replaying a storage-level Clear.
     let reset = original.clear(None, &stamp).unwrap();
@@ -403,7 +404,7 @@ fn root_provenance_is_refused_when_initial_or_reset_identity_is_inconsistent() {
                 KnownEventKind::SessionCreated,
                 json!({
                     "branch_root":true,"metadata":SessionMetadata::default(),
-                    "reset_provenance":{"reset_at":chrono::DateTime::UNIX_EPOCH,"cleared_head_event_id":source}
+                    "reset_provenance":{"reset_at":Timestamp::UNIX_EPOCH,"cleared_head_event_id":source}
                 }),
             ),
         )
@@ -453,7 +454,7 @@ fn fork_copies_projected_conversation_when_new_identity_is_requested() {
     let request = ForkRequest {
         session_id: SessionId::parse("forked").unwrap(),
         origin_id: OriginId::new_v4(),
-        timestamp: chrono::DateTime::UNIX_EPOCH,
+        timestamp: Timestamp::UNIX_EPOCH,
     };
     // When creating independent sealed originals.
     let fork = source.replay(None).unwrap().fork(&request).unwrap();
@@ -631,7 +632,7 @@ fn unknown_kinds_and_blob_payloads_preserve_sealed_originals() {
         id(3),
         Some(id(1)),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
         json!({"message":message(&"x".repeat(4000))}),
     );
@@ -839,8 +840,8 @@ fn revised_source_and_latest_user_coverage_are_refused() {
 fn all_auxiliary_variants_and_blocked_outcomes_survive_replay() {
     // Given typed memory/env and versioned replay records, none registered as execution.
     let memory = json!({"aux_kind":"memory_injection","summary":"inert","content":"do not execute",
-        "count":1,"timestamp":chrono::DateTime::UNIX_EPOCH});
-    let env = json!({"aux_kind":"env_snapshot","captured_at":chrono::DateTime::UNIX_EPOCH,
+        "count":1,"timestamp":Timestamp::UNIX_EPOCH});
+    let env = json!({"aux_kind":"env_snapshot","captured_at":Timestamp::UNIX_EPOCH,
         "reason":"record","session_id":"legacy","working_dir":"/foreign","provider":"openai",
         "model":"other","horon_agent_version":"old","os":"foreign","arch":"other","pid":123,
         "is_debug":true});
@@ -919,7 +920,7 @@ fn durable_reopen_reset_fork_and_blob_replay_preserve_original_bytes() {
         id(3),
         Some(id(2)),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::AuxiliaryRecorded),
         json!({"aux_kind":"legacy","schema_version":1,"value":"x".repeat(MAX_RECORD_BYTES)}),
     )
@@ -969,7 +970,7 @@ fn durable_reopen_reset_fork_and_blob_replay_preserve_original_bytes() {
     let fork_request = ForkRequest {
         session_id: SessionId::parse("independent").unwrap(),
         origin_id: OriginId::new_v4(),
-        timestamp: chrono::DateTime::UNIX_EPOCH,
+        timestamp: Timestamp::UNIX_EPOCH,
     };
     let forked = projection.fork(&fork_request).unwrap();
     // When performing real durable branch/reset/fork writes and reopening everything.
@@ -984,7 +985,7 @@ fn durable_reopen_reset_fork_and_blob_replay_preserve_original_bytes() {
                         &EventStamp {
                             event_id: id(6),
                             origin_id: OriginId::new_v4(),
-                            timestamp: chrono::DateTime::UNIX_EPOCH,
+                            timestamp: Timestamp::UNIX_EPOCH,
                         },
                     )
                     .unwrap(),

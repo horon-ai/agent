@@ -13,7 +13,7 @@
 //! instead of resetting it: an unattended run must never be handed unlimited
 //! retries because its accounting file was truncated, corrupt, or unreadable.
 
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
@@ -25,7 +25,7 @@ pub(crate) struct FailoverBudget {
     pub session_id: String,
     pub chain_id: String,
     pub attempts: u32,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 /// Why a stored budget could not be trusted.
@@ -324,7 +324,7 @@ pub(crate) fn begin_chain(session_id: &str, chain_id: &str) -> Result<FailoverBu
         session_id: session_id.to_string(),
         chain_id: chain_id.to_string(),
         attempts: 0,
-        updated_at: Utc::now(),
+        updated_at: Timestamp::now(),
     };
     persist(session_id, &budget)?;
     Ok(budget)
@@ -421,7 +421,7 @@ pub(crate) fn try_consume(session_id: &str, chain_id: &str, max: u32) -> Consume
             session_id: session_id.to_string(),
             chain_id: chain_id.to_string(),
             attempts: 0,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         },
         Err(error) => return ConsumeOutcome::Unavailable(error),
     };
@@ -435,7 +435,7 @@ pub(crate) fn try_consume(session_id: &str, chain_id: &str, max: u32) -> Consume
         };
     }
     budget.attempts += 1;
-    budget.updated_at = Utc::now();
+    budget.updated_at = Timestamp::now();
     if let Err(error) = persist(session_id, &budget) {
         return ConsumeOutcome::Unavailable(error);
     }
@@ -715,7 +715,7 @@ mod tests {
                     session_id: session.to_string(),
                     chain_id: "chain-stale".to_string(),
                     attempts: default_max_attempts(),
-                    updated_at: Utc::now(),
+                    updated_at: Timestamp::now(),
                 };
                 std::fs::write(&path, serde_json::to_vec(&repaired).expect("json")).expect("repair the primary");
                 assert!(
@@ -839,7 +839,7 @@ mod tests {
             session_id: other.to_string(),
             chain_id: "chain-foreign".to_string(),
             attempts: 1,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         };
         let foreign_json = serde_json::to_string(&foreign).expect("json");
         std::fs::write(&path, &foreign_json).expect("write the foreign record");
@@ -924,7 +924,7 @@ mod tests {
             session_id: session.to_string(),
             chain_id: "chain-p".to_string(),
             attempts: 1,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         };
         std::fs::write(&path, serde_json::to_vec(&valid).expect("json")).expect("write");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("chmod");
@@ -1062,121 +1062,6 @@ mod tests {
         }
         // The corrupt file is left exactly as it was.
         assert_eq!(std::fs::read_to_string(&path).expect("still there"), "{not json");
-    }
-
-    /// Manual QA, happy path. Run it with a directory that stays on disk so the
-    /// persisted record can be inspected:
-    /// `HORON_AGENT_QA_HOME=/tmp/fb-qa cargo test -p horon-agent-app-core --lib manual_qa_happy -- --nocapture`
-    #[test]
-    fn manual_qa_happy() {
-        let _home = TestHome::new();
-        let session = "qa-happy";
-        fresh(session);
-        println!("load on a first run: {:?}", load(session).expect("first run"));
-
-        let chain = "qa-chain-1";
-        for attempt in 1..=4 {
-            println!(
-                "consume #{attempt}: {}",
-                matches!(
-                    try_consume(session, chain, default_max_attempts()),
-                    ConsumeOutcome::Allowed { .. }
-                )
-            );
-        }
-        let stored = load(session).expect("readable").expect("stored");
-        println!("stored record: {}", serde_json::to_string(&stored).expect("json"));
-        println!(
-            "record on disk: {}",
-            std::fs::read_to_string(budget_path(session).expect("path")).expect("read")
-        );
-
-        let began = begin_chain(session, "qa-chain-2").expect("begin chain");
-        println!(
-            "after a new chain: chain_id={} attempts={}",
-            began.chain_id, began.attempts
-        );
-        println!(
-            "consume on the new chain: {}",
-            matches!(
-                try_consume(session, "qa-chain-2", default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
-    }
-
-    /// Manual QA, failure paths.
-    /// `HORON_AGENT_QA_HOME=/tmp/fb-qa cargo test -p horon-agent-app-core --lib manual_qa_failure -- --nocapture`
-    #[test]
-    fn manual_qa_failure() {
-        let _home = TestHome::new();
-
-        let corrupt_session = "qa-corrupt";
-        fresh(corrupt_session);
-        let corrupt_path = budget_path(corrupt_session).expect("path");
-        std::fs::create_dir_all(corrupt_path.parent().expect("parent")).expect("dir");
-        std::fs::write(&corrupt_path, "{\"chain_id\":\"qa\"").expect("write corrupt");
-        println!("corrupt load: {:?}", load(corrupt_session));
-        println!("corrupt begin_chain: {:?}", begin_chain(corrupt_session, "qa-new"));
-        println!(
-            "corrupt consume: {}",
-            matches!(
-                try_consume(corrupt_session, "qa", default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
-        println!(
-            "corrupt file after the attempt: {}",
-            std::fs::read_to_string(&corrupt_path).expect("untouched")
-        );
-
-        let unreadable_session = "qa-unreadable";
-        fresh(unreadable_session);
-        let unreadable_path = budget_path(unreadable_session).expect("path");
-        std::fs::create_dir_all(&unreadable_path).expect("dir at record path");
-        println!("unreadable load: {:?}", load(unreadable_session));
-        println!(
-            "unreadable consume: {}",
-            matches!(
-                try_consume(unreadable_session, "qa", default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
-    }
-
-    /// Manual QA, restart recovery.
-    /// `HORON_AGENT_QA_HOME=/tmp/fb-qa cargo test -p horon-agent-app-core --lib manual_qa_restart -- --nocapture`
-    #[test]
-    fn manual_qa_restart() {
-        let _home = TestHome::new();
-        let session = "qa-restart";
-        fresh(session);
-        let chain = "qa-chain-r";
-        for attempt in 1..=3 {
-            println!(
-                "before the restart, consume #{attempt}: {}",
-                matches!(
-                    try_consume(session, chain, default_max_attempts()),
-                    ConsumeOutcome::Allowed { .. }
-                )
-            );
-        }
-
-        // Nothing but the file survives a restart.
-        let restored = FailoverBudgetState::restored(load(session).expect("readable").expect("stored"));
-        println!(
-            "restored: chain_id={:?} attempts={} unknown={}",
-            restored.chain_id(),
-            restored.attempts(),
-            restored.is_unknown()
-        );
-        println!(
-            "fourth attempt after the restart: {}",
-            matches!(
-                try_consume(session, chain, default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
     }
 
     /// A dangling symlink at the backup path is lost state, not a first run:

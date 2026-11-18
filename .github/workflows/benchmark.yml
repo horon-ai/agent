@@ -11,6 +11,16 @@ name: Benchmark
 #   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
 #     -f sessions="1 10 100" -f baseline_ref=<merge-base sha>
 #
+#   # Daemon CPU per tool call, branch against `dev`, both daemons in one job.
+#   gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=tools \
+#     -f baseline_ref=dev
+#
+#   # Install time of the pinned release and of the npm competitors, cold and
+#   # warm, on every OS and architecture (benchmark-install.yml). `install` is
+#   # opt-in: `suites=all` never selects it. `os` also accepts `freebsd` here.
+#   gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install \
+#     -f oneshot_runs=5 -f competitors=jcode,claude_code,codex,opencode,pi
+#
 # and `workflow_call` from benchmark-docs.yml, which runs every suite on every OS
 # for a `main` commit after its CI passed and writes the result into
 # docs/performance/RESULTS.md.
@@ -38,10 +48,12 @@ on:
         required: false
         default: ""
       os:
+        description: "Comma-separated OSes; the install suite additionally accepts freebsd and expands each OS to its architectures"
         type: string
         required: false
         default: all
       suites:
+        description: "Comma-separated suites; `all` means every regular suite and never install, which must be named explicitly"
         type: string
         required: false
         default: all
@@ -63,7 +75,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref built beside the measured commit and compared as a second horon row"
+        description: "Optional ref built beside the measured commit and compared as a second horon row (compare) or a second daemon (tools)"
         type: string
         required: false
         default: ""
@@ -74,12 +86,16 @@ on:
         default: ""
   workflow_dispatch:
     inputs:
+      install_ref:
+        description: "Installer branch or commit for the install suite (defaults to the dispatch commit)"
+        required: false
+        default: ""
       os:
-        description: "Comma-separated OSes, each measured in its own job: linux, macos, windows, or all"
+        description: "Comma-separated OSes, each measured in its own job: linux, macos, windows, or all. The opt-in install suite also accepts freebsd and expands each OS to its architectures"
         required: false
         default: all
       suites:
-        description: "Comma-separated suites: compare, startup, loading, tools, reload, tui, compile, or all"
+        description: "Comma-separated suites: compare, startup, loading, tools, reload, tui, compile, install, or all. `all` covers every regular suite and never install; name install to opt in"
         required: false
         default: all
       competitors:
@@ -99,7 +115,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row; empty measures one build"
+        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row (compare) or a second daemon (tools); empty measures one build"
         required: false
         default: ""
       features:
@@ -127,27 +143,59 @@ env:
 
 jobs:
   plan:
-    name: Select OSes
+    name: Select OSes and suites
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      matrix: ${{ steps.os.outputs.matrix }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      suites: ${{ steps.plan.outputs.suites }}
+      install: ${{ steps.plan.outputs.install }}
+      run: ${{ steps.plan.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref }}
           sparse-checkout: scripts/perf
 
-      - name: Turn the os input into a job matrix
-        id: os
+      - name: Split the suites input and map the host OSes
+        # `install` is opt-in and stays out of `all`. The regular suites run only
+        # on linux, macos and windows; `freebsd` belongs to the install suite.
+        # Every remaining name goes to bench_select.py, so an unknown suite or OS
+        # still fails the dispatch there.
+        id: plan
         shell: bash
         env:
+          SUITES_INPUT: ${{ inputs.suites }}
           OS_INPUT: ${{ inputs.os }}
-        run: python3 scripts/perf/bench_select.py --platforms "$OS_INPUT" | tee -a "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          strip() { sed -E 's/^,//; s/,$//; s/,,+/,/g; s/^,//; s/,$//'; }
+          raw="${SUITES_INPUT//[[:space:]]/}"
+          [ -n "$raw" ] || raw=all
+          install=false
+          [[ ",$raw," != *,install,* ]] || install=true
+          suites=",$raw,"
+          suites="$(printf '%s' "$suites" | sed -E 's/,install,/,/' | strip)"
+          hosts=",${OS_INPUT:-all},"
+          hosts="$(printf '%s' "$hosts" | tr -d '[:space:]' | sed -E 's/,freebsd,/,/' | strip)"
+          echo "install=$install" >> "$GITHUB_OUTPUT"
+          echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          # A matrix cannot be expanded from an empty include, so a skipped
+          # selection hands over one placeholder that the job's `if` skips.
+          placeholder='matrix={"include":[{"os":"none","runner":"ubuntu-24.04"}]}'
+          if [ -z "$suites" ] || [ -z "${hosts//,/}" ]; then
+            echo "::notice::the regular suites are skipped; only the install suite runs"
+            echo "$placeholder" >> "$GITHUB_OUTPUT"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python3 scripts/perf/bench_select.py --platforms "$hosts" | tee -a "$GITHUB_OUTPUT"
+          echo "run=true" >> "$GITHUB_OUTPUT"
 
   benchmark:
     name: Benchmark (${{ matrix.os }})
     needs: plan
+    if: ${{ needs.plan.outputs.run == 'true' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -156,10 +204,29 @@ jobs:
       ref: ${{ inputs.ref }}
       os: ${{ matrix.os }}
       runner: ${{ matrix.runner }}
-      suites: ${{ inputs.suites }}
+      # `install` is removed here so bench_select.py never sees a name it does
+      # not measure; benchmark-install.yml owns that suite.
+      suites: ${{ needs.plan.outputs.suites }}
       competitors: ${{ inputs.competitors }}
       sessions: ${{ inputs.sessions }}
       turns: ${{ inputs.turns }}
       oneshot_runs: ${{ inputs.oneshot_runs }}
       baseline_ref: ${{ inputs.baseline_ref }}
       features: ${{ inputs.features }}
+
+  install:
+    name: Install benchmark
+    needs: plan
+    # Opt-in only. This job installs the published release and the npm
+    # competitors over the real internet on seven OS/architecture targets, so it
+    # never rides along with an `all` run.
+    if: ${{ needs.plan.outputs.install == 'true' }}
+    uses: ./.github/workflows/benchmark-install.yml
+    with:
+      ref: ${{ inputs.install_ref || inputs.ref }}
+      os: ${{ inputs.os }}
+      competitors: ${{ inputs.competitors }}
+      # The install suite takes its sample count from oneshot_runs: five cold
+      # and five warm installs per tool.
+      runs: ${{ inputs.oneshot_runs }}
+      baseline_ref: ${{ inputs.baseline_ref }}

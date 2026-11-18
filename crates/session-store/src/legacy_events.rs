@@ -2,7 +2,7 @@
 use crate::legacy::{LegacyDiagnostic, corrupt};
 use crate::legacy_replay::Replay;
 use crate::*;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 
 pub(crate) fn build(id: &SessionId, state: &mut Replay) -> Result<(String, Vec<SealedEvent>), StoreError> {
@@ -30,7 +30,7 @@ pub(crate) fn build(id: &SessionId, state: &mut Replay) -> Result<(String, Vec<S
         None,
     )?;
     for raw in &state.messages {
-        let time: Option<DateTime<Utc>> = serde_json::from_value(raw.get("timestamp").cloned().unwrap_or(Value::Null))
+        let time: Option<Timestamp> = serde_json::from_value(raw.get("timestamp").cloned().unwrap_or(Value::Null))
             .map_err(|e| corrupt(e.to_string()))?;
         builder.push(KnownEventKind::MessageAppended, json!({"message":raw}), time)?;
     }
@@ -66,12 +66,12 @@ pub(crate) fn build(id: &SessionId, state: &mut Replay) -> Result<(String, Vec<S
 struct Builder<'a> {
     id: &'a SessionId,
     origin: OriginId,
-    created: DateTime<Utc>,
+    created: Timestamp,
     events: Vec<SealedEvent>,
 }
 impl Builder<'_> {
     // Kind, payload and source time form one event; identity/order are owned here.
-    fn push(&mut self, kind: KnownEventKind, payload: Value, time: Option<DateTime<Utc>>) -> Result<(), StoreError> {
+    fn push(&mut self, kind: KnownEventKind, payload: Value, time: Option<Timestamp>) -> Result<(), StoreError> {
         let ordinal = u64::try_from(self.events.len()).map_err(|e| corrupt(e.to_string()))?;
         self.events.push(
             EventDraft::new(

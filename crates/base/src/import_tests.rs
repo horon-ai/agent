@@ -287,13 +287,26 @@ fn explicit_takeover_preserves_history_and_stops_only_matching_process() {
     let transcript = external.join("projects/demo/takeover-live.jsonl");
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
     write_claude_transcript(&transcript, "takeover-live");
-    let mut claude = Command::new("sleep")
-        .arg("60")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
+    let final_reply = r#"{"type":"assistant","sessionId":"takeover-live","uuid":"a2","parentUuid":"a1","message":{"role":"assistant","content":"flushed on shutdown"}}"#;
+    let mut claude = Command::new("sh")
+        .args([
+            "-c",
+            r#"trap 'printf "%s\n" "$2" >> "$1"; exit 0' TERM; echo ready; read -r hold"#,
+            "takeover-fixture",
+        ])
+        .arg(&transcript)
+        .arg(final_reply)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    let ready = BufReader::new(claude.stdout.take().unwrap())
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready, "ready");
     let mut unrelated = Command::new("sleep")
         .arg("60")
         .stdin(Stdio::null())
@@ -330,6 +343,11 @@ fn explicit_takeover_preserves_history_and_stops_only_matching_process() {
         .join("\n");
     assert!(visible.contains("preserve this question"));
     assert!(visible.contains("preserve this answer"));
+    assert_eq!(
+        imported.active_context().last().unwrap().content_preview(),
+        "flushed on shutdown"
+    );
+    assert_eq!(imported.active_context().len(), 3);
 
     unrelated.kill().unwrap();
     unrelated.wait().unwrap();
@@ -419,13 +437,18 @@ fn takeover_timeout_preserves_the_staged_horon_agent_session_after_sigterm() {
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
     write_claude_transcript(&transcript, "slow-exit");
     let mut claude = Command::new("sh")
-        .args(["-c", "trap '' TERM; exec sleep 60"])
+        .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    let ready = BufReader::new(claude.stdout.take().unwrap())
+        .lines()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(ready, "ready");
     write_live_claude_record(&external.join("sessions"), &claude, "slow-exit");
     let target = horon_agent_session_types::ResumeTarget::ClaudeCodeSession {
         session_id: "slow-exit".to_string(),
@@ -438,13 +461,16 @@ fn takeover_timeout_preserves_the_staged_horon_agent_session_after_sigterm() {
     assert!(error.to_string().contains("was preserved"));
     assert!(claude.try_wait().unwrap().is_none());
 
-    let snapshots = std::fs::read_dir(temp.path().join("sessions"))
-        .unwrap()
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
-        .collect::<Vec<_>>();
-    assert_eq!(snapshots.len(), 1);
-    let staged = Session::load(snapshots[0].file_stem().and_then(|stem| stem.to_str()).unwrap()).unwrap();
+    // The staged session is discovered the way a reader discovers it: from the
+    // catalog, which enumerates the event store. Counting `sessions/*.json`
+    // would look at the retired snapshot layout instead.
+    let staged = horon_agent_session_store::catalog::list(
+        &crate::session::store_paths().unwrap(),
+        horon_agent_session_store::ReadProbe::default(),
+    )
+    .unwrap();
+    assert_eq!(staged.len(), 1, "the timed-out takeover preserves exactly one session");
+    let staged = Session::load(staged[0].session_id.as_str()).unwrap();
     assert_eq!(staged.provider_session_id.as_deref(), Some("slow-exit"));
     assert_eq!(staged.active_context().len(), 2);
 

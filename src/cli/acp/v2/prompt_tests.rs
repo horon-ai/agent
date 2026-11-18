@@ -150,7 +150,7 @@ async fn prompt_answers_message_id_on_insert_not_on_done() {
     client.close_stdin().await;
 }
 
-/// alpha.13 `PromptRequest.prompt` is `minItems: 1`: the adapter refuses an
+/// alpha.16 `PromptRequest.prompt` is `minItems: 1`: the adapter refuses an
 /// empty array with `-32602` before the daemon sees a `message`, so no turn
 /// starts and no empty `user_message` is ever written.
 #[tokio::test]

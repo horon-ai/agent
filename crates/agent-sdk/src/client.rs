@@ -27,34 +27,9 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, SyncSender, TrySendErr
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-/// How a client reaches the harness.
-pub struct ConnectOptions {
-    /// Defaults to the resolved harness API socket path.
-    pub socket_path: Option<std::path::PathBuf>,
-    /// Client identity sent in the handshake, e.g. "my-app/1.0".
-    pub client_name: String,
-    /// How long a request waits for its reply. `None` disables the timeout.
-    pub request_timeout: Option<Duration>,
-    /// Start the daemon and bridge if they are not already listening.
-    ///
-    /// On by default: an app that only works once the user has launched two
-    /// daemons by hand is indistinguishable from a broken one.
-    pub ensure_runtime: bool,
-    /// Desktop inline Markdown response renderer. Other clients leave false.
-    pub supports_user_response: bool,
-}
-
-impl Default for ConnectOptions {
-    fn default() -> Self {
-        Self {
-            socket_path: None,
-            client_name: concat!("horon-agent-sdk-rs/", env!("CARGO_PKG_VERSION")).to_string(),
-            request_timeout: Some(Duration::from_secs(30)),
-            ensure_runtime: true,
-            supports_user_response: false,
-        }
-    }
-}
+// `ConnectOptions` lives in its own module because this file is at the size
+// budget; re-exported here so every path that named it keeps working.
+pub use crate::connect_options::ConnectOptions;
 
 /// Options fixed when a session is created.
 #[derive(Clone, Debug, Default)]
@@ -736,6 +711,9 @@ impl HoronAgentClient {
             socket_path: None,
             client_name: options.client_name.clone(),
             supports_user_response: options.supports_user_response,
+            // `SshConnectOptions` has no ask flag, so a remote session cannot
+            // claim a question screen this connection never offered.
+            supports_ask_requests: false,
             request_timeout: options.request_timeout,
             ensure_runtime: false,
         };
@@ -785,6 +763,7 @@ impl HoronAgentClient {
         let connect = ConnectOptions {
             socket_path: Some(instance.socket_path.clone()),
             supports_user_response: false,
+            supports_ask_requests: false,
             client_name: options.client_name.clone(),
             request_timeout: options.request_timeout,
             ensure_runtime: false,
@@ -862,7 +841,7 @@ impl HoronAgentClient {
                 max_version: API_VERSION_MAJOR,
                 client: options.client_name.clone(),
                 supports_user_response: options.supports_user_response,
-                supports_ask_requests: false,
+                supports_ask_requests: options.supports_ask_requests,
             },
             hello_timeout,
         )?;
@@ -1209,7 +1188,9 @@ impl HoronAgentClient {
     ///
     /// The bridge answers `Ok` once the daemon has the message. This is the
     /// deterministic way to build a transcript for replication QA without a
-    /// provider call.
+    /// provider call. A message written on a turn's terminal event is stored
+    /// after that turn releases the session, so a caller that answers the event
+    /// does not have to wait it out first.
     pub fn send_context_message(&self, session_id: &str, content: &str) -> Result<()> {
         self.request_ok(ApiRequest::SendMessage {
             session_id: session_id.to_string(),
@@ -2485,6 +2466,7 @@ fn start_global_child(parent: &HoronAgentClient, control: &Arc<GlobalEventContro
     } else {
         HoronAgentClient::connect(ConnectOptions {
             supports_user_response: false,
+            supports_ask_requests: false,
             socket_path: Some(parent.inner.socket_path.clone()),
             client_name: format!("{}/global-events", parent.inner.client_name),
             request_timeout: parent.inner.request_timeout,

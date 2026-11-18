@@ -15,6 +15,9 @@ Commands:
   missing-assets DIR          name every required release asset DIR lacks
   check-packages DIR VERSION  assert the seven prepared packages agree
   publish-order               print the package directories in publishing order
+  mode EVENT REQUESTED SWITCH print the mode a run may take after the switch
+  gate EVENT REQUESTED SWITCH [SOURCE [VERSION]]
+                              print the mode, or fail when a publish is blocked
 
 Exit status is 0 when the answer is good, 1 when a check fails (every failure
 is named) and 2 for a usage error.
@@ -112,6 +115,24 @@ def dispatch_plan(
         "version": resolved,
         "mode": "dry-run" if dry_run else "publish",
     }
+
+
+def resolve_mode(event: str, requested: str, npm_publish: str) -> str:
+    """Return the mode a run may take: `publish` or `dry-run`.
+
+    The repository variable is the owner's master switch: a run that resolved
+    `publish` keeps it only when the variable is exactly `true`, and a pull
+    request never publishes. The workflow fails a `publish` request that
+    resolves to `dry-run`, because a release that ships without npm packages is
+    a broken release; only an explicitly requested dry run stays green.
+    """
+    if requested != "publish":
+        return "dry-run"
+    if event == "pull_request":
+        return "dry-run"
+    if (npm_publish or "").strip() != "true":
+        return "dry-run"
+    return "publish"
 
 
 def publish_order() -> list[str]:
@@ -237,6 +258,20 @@ def main(argv: list[str] | None = None) -> int:
         "publish-order", help="print the package directories in publishing order"
     )
 
+    mode = commands.add_parser("mode", help="print the mode this run may take")
+    mode.add_argument("event")
+    mode.add_argument("requested")
+    mode.add_argument("npm_publish")
+
+    gate = commands.add_parser(
+        "gate", help="print the mode, or fail when a publish the run resolved is blocked"
+    )
+    gate.add_argument("event")
+    gate.add_argument("requested")
+    gate.add_argument("npm_publish")
+    gate.add_argument("source", nargs="?", default="")
+    gate.add_argument("version", nargs="?", default="")
+
     args = parser.parse_args(argv)
 
     if args.command == "tag-version":
@@ -265,6 +300,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "publish-order":
         for directory in publish_order():
             print(directory)
+        return 0
+
+    if args.command == "mode":
+        print(resolve_mode(args.event, args.requested, args.npm_publish))
+        return 0
+
+    if args.command == "gate":
+        allowed = resolve_mode(args.event, args.requested, args.npm_publish)
+        if args.requested == "publish" and allowed != "publish":
+            what = " ".join(part for part in (args.source, args.version) if part)
+            message = (
+                f"{what or 'this run'} resolved to publish, but the repository variable NPM_PUBLISH is not"
+                " 'true', so nothing was published to npm. Run 'gh variable set NPM_PUBLISH --body true'"
+                " and start this release again."
+            )
+            print(f"::error::{message}" if _in_actions() else message, file=sys.stderr)
+            return 1
+        print(allowed)
         return 0
 
     if args.command == "missing-assets":

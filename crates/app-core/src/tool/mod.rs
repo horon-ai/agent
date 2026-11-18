@@ -37,6 +37,7 @@ mod horon_agent_docs;
 pub mod inflight;
 mod invalid;
 mod irc;
+mod lifecycle;
 mod ls;
 mod lsp;
 pub mod mcp;
@@ -228,7 +229,7 @@ struct SessionToolPolicy {
     owner: Option<u64>,
 }
 
-static SESSION_TOOL_POLICIES: LazyLock<StdRwLock<HashMap<String, SessionToolPolicy>>> =
+static SESSION_TOOL_POLICIES: LazyLock<StdRwLock<HashMap<String, Arc<SessionToolPolicy>>>> =
     LazyLock::new(|| StdRwLock::new(HashMap::new()));
 static NEXT_SESSION_TOOL_POLICY_OWNER: AtomicU64 = AtomicU64::new(1);
 
@@ -325,14 +326,15 @@ impl DispatchTimings {
     /// `elapsed_ms` keeps its name and now means the dispatch total, so existing
     /// log consumers read real dispatch latency; the execute span stays
     /// available, unchanged in meaning, as `execute_ms`.
-    pub(crate) fn fields(&self) -> Vec<(String, String)> {
-        vec![
-            ("elapsed_ms".to_string(), self.total_ms.to_string()),
-            ("execute_ms".to_string(), self.execute_ms.to_string()),
-            ("hook_transform_ms".to_string(), self.hook_transform_ms.to_string()),
-            ("hook_gate_ms".to_string(), self.hook_gate_ms.to_string()),
-            ("post_feedback_ms".to_string(), self.post_feedback_ms.to_string()),
-            ("overflow_guard_ms".to_string(), self.overflow_guard_ms.to_string()),
+    pub(crate) fn fields(&self) -> [(&'static str, lifecycle::FieldValue<'static>); 6] {
+        use lifecycle::FieldValue::Millis;
+        [
+            ("elapsed_ms", Millis(self.total_ms)),
+            ("execute_ms", Millis(self.execute_ms)),
+            ("hook_transform_ms", Millis(self.hook_transform_ms)),
+            ("hook_gate_ms", Millis(self.hook_gate_ms)),
+            ("post_feedback_ms", Millis(self.post_feedback_ms)),
+            ("overflow_guard_ms", Millis(self.overflow_guard_ms)),
         ]
     }
 
@@ -433,7 +435,7 @@ pub(crate) fn allow_session_tool(session_id: &str, tool_name: &str) {
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(policy) = policies.get_mut(session_id) {
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
         if let Some(allowed) = policy.allowed_tools.as_mut() {
             allowed.insert(tool_name.to_string());
         }
@@ -452,13 +454,13 @@ pub(crate) fn register_session_tool_policy(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     policies.insert(
         session_id.to_string(),
-        SessionToolPolicy {
+        Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
             owner: Some(owner),
-        },
+        }),
     );
     SessionToolPolicyRegistration {
         session_id: session_id.to_string(),
@@ -477,7 +479,7 @@ pub(crate) fn register_session_load_tiers(session_id: &str, tiers: crate::config
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(policy) = policies.get_mut(session_id) {
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
         policy.load_tiers = Some(tiers);
     }
 }
@@ -491,7 +493,7 @@ pub(crate) fn register_session_listed_mcp(session_id: &str, listed: bool) {
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(policy) = policies.get_mut(session_id) {
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
         policy.listed_mcp_surface = listed;
     }
 }
@@ -516,13 +518,13 @@ pub(crate) fn set_session_tool_policy(
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     policies.insert(
         session_id.to_string(),
-        SessionToolPolicy {
+        Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
             owner: None,
-        },
+        }),
     );
 }
 
@@ -531,7 +533,7 @@ pub(crate) fn set_session_listed_mcp_for_test(session_id: &str, listed: bool) {
     let mut policies = SESSION_TOOL_POLICIES
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    policies.entry(session_id.to_string()).or_default().listed_mcp_surface = listed;
+    Arc::make_mut(policies.entry(session_id.to_string()).or_default()).listed_mcp_surface = listed;
 }
 
 #[cfg(test)]
@@ -542,24 +544,34 @@ pub(crate) fn clear_session_tool_policy(session_id: &str) {
     policies.remove(session_id);
 }
 
-fn session_tool_policy(session_id: &str) -> Option<SessionToolPolicy> {
-    let mut policy = SESSION_TOOL_POLICIES
+/// The session's policy as one shared snapshot.
+///
+/// A session without an SDK overlay gets the stored policy itself, so a
+/// dispatch reads it without copying the name sets. An overlay is merged into
+/// a copy: the stored policy never carries the client's entries.
+fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>> {
+    let stored = SESSION_TOOL_POLICIES
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
-    if let Some(config) = sdk::config(session_id) {
-        let policy = policy.get_or_insert_with(SessionToolPolicy::default);
-        if let Some(enabled) = config.enabled {
-            policy.allowed_tools = Some(enabled.into_iter().collect());
-            policy.disabled_tools.clear();
-        }
-        policy.disabled_tools.extend(config.disabled);
-        if let Some(allowed) = policy.allowed_tools.as_mut() {
-            allowed.extend(config.custom.into_iter().map(|t| t.name));
-        }
+    let Some(config) = sdk::config(session_id) else {
+        return stored;
+    };
+    let mut policy = stored.map_or_else(SessionToolPolicy::default, Arc::unwrap_or_clone);
+    if let Some(enabled) = config.enabled {
+        policy.allowed_tools = Some(enabled.into_iter().collect());
+        policy.disabled_tools.clear();
     }
-    policy
+    policy.disabled_tools.extend(config.disabled);
+    if let Some(allowed) = policy.allowed_tools.as_mut() {
+        allowed.extend(config.custom.into_iter().map(|t| t.name));
+    }
+    Some(Arc::new(policy))
+}
+
+fn session_tool_policy(session_id: &str) -> Option<SessionToolPolicy> {
+    session_tool_policy_shared(session_id).map(Arc::unwrap_or_clone)
 }
 
 #[cfg(test)]
@@ -1484,9 +1496,9 @@ impl Registry {
                     "approval-gate",
                 );
                 if decision.approved {
-                    let mut fields = Self::tool_lifecycle_fields("approved", resolved_name, resolved_name, input, ctx);
-                    fields.push(("block_reason".to_string(), "approval".to_string()));
-                    fields.push(("approval_request_id".to_string(), request_id));
+                    let mut fields = lifecycle::fields("approved", resolved_name, resolved_name, input, ctx);
+                    fields.push(("block_reason", lifecycle::FieldValue::Text("approval")));
+                    fields.push(("approval_request_id", lifecycle::FieldValue::Owned(request_id)));
                     crate::logging::event_info("TOOL_LIFECYCLE", fields);
                     return None;
                 }
@@ -1549,7 +1561,7 @@ impl Registry {
                     &ctx.session_id,
                     &request_id,
                     resolved_name,
-                    chrono::Utc::now() + chrono::Duration::seconds(1800),
+                    horon_agent_time::Timestamp::now() + horon_agent_time::Duration::seconds(1800),
                 );
                 crate::safety::dispatch_permission_notification(resolved_name, &description, &request_id);
                 Some(format!(
@@ -1599,7 +1611,7 @@ impl Registry {
         let reason = prompt.reason;
         let is_dual_confirm = prompt.is_dual_confirm;
         let input = prompt.input;
-        let now = chrono::Utc::now();
+        let now = horon_agent_time::Timestamp::now();
         // A scoped answer ("allow this file", "allow this folder") is written by
         // whoever records the decision, and that writer has only the queued
         // request to read: it cannot ask the registry for effects. So the
@@ -1670,7 +1682,7 @@ impl Registry {
         let record = BlockedApproval {
             session_id: session_id.to_string(),
             request_id: request_id.to_string(),
-            created_at: chrono::Utc::now(),
+            created_at: horon_agent_time::Timestamp::now(),
             // `wait: false` - the gate does not block the turn, so there is no
             // waiter pid to lease.
             //
@@ -1697,56 +1709,6 @@ impl Registry {
                 "approval record for request {request_id} could not be created: {error}"
             ));
         }
-    }
-
-    fn tool_lifecycle_fields(
-        phase: &str,
-        requested_name: &str,
-        resolved_name: &str,
-        input: &Value,
-        ctx: &ToolContext,
-    ) -> Vec<(String, String)> {
-        let cwd = ctx
-            .working_dir
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "none".to_string());
-        let input_json = serde_json::to_string(input).unwrap_or_default();
-        let mut fields = vec![
-            ("phase".to_string(), phase.to_string()),
-            ("tool_name".to_string(), requested_name.to_string()),
-            ("resolved_tool_name".to_string(), resolved_name.to_string()),
-            ("session_id".to_string(), ctx.session_id.clone()),
-            ("message_id".to_string(), ctx.message_id.clone()),
-            ("tool_call_id".to_string(), ctx.tool_call_id.clone()),
-            ("execution_mode".to_string(), format!("{:?}", ctx.execution_mode)),
-            ("cwd".to_string(), cwd),
-            ("input_json_bytes".to_string(), input_json.len().to_string()),
-        ];
-
-        if let Some(object) = input.as_object() {
-            let mut keys = object.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            fields.push(("input_keys".to_string(), keys.join(",")));
-
-            let touched_paths = path_policy::touched_paths(input, ctx)
-                .into_iter()
-                .map(|(key, path)| format!("{key}:{}", path.display()))
-                .collect::<Vec<_>>();
-            if !touched_paths.is_empty() {
-                fields.push(("touched_paths".to_string(), touched_paths.join(",")));
-                fields.push(("touched_path_count".to_string(), touched_paths.len().to_string()));
-            }
-
-            for text_key in ["command", "prompt", "task", "query", "content"] {
-                if let Some(text) = object.get(text_key).and_then(Value::as_str) {
-                    fields.push((format!("{text_key}_bytes"), text.len().to_string()));
-                    fields.push((format!("{text_key}_chars"), text.chars().count().to_string()));
-                }
-            }
-        }
-
-        fields
     }
 
     /// Maximum fraction of context budget a single tool output may consume.
@@ -2006,7 +1968,7 @@ impl Registry {
                 return Err(ToolRejected(format!("Tool '{}' is disabled", resolved_name)).into());
             }
         }
-        if !is_custom && let Some(policy) = session_tool_policy(&ctx.session_id) {
+        if !is_custom && let Some(policy) = session_tool_policy_shared(&ctx.session_id) {
             if let Some(allowed) = policy.allowed_tools.as_ref()
                 && !self.tool_is_allowed(allowed, resolved_name)
             {
@@ -2029,8 +1991,8 @@ impl Registry {
         if policy_on_self
             && !crate::plan_mode::allows_effects(&ctx.session_id, plan_effects.unwrap_or(ToolEffects::write()))
         {
-            let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
-            fields.push(("block_reason".to_string(), "plan_mode".to_string()));
+            let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
+            fields.push(("block_reason", lifecycle::FieldValue::Text("plan_mode")));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
             return Err(ToolRejected(crate::plan_mode::block_message(resolved_name)).into());
         }
@@ -2110,8 +2072,8 @@ impl Registry {
             if let Some(verdict) = bash_pattern.as_ref()
                 && verdict.approval == crate::config::BashPatternApproval::Deny
             {
-                let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
-                fields.push(("block_reason".to_string(), "bash_pattern".to_string()));
+                let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
+                fields.push(("block_reason", lifecycle::FieldValue::Text("bash_pattern")));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Blocked by bash pattern '{}' (deny).", verdict.pattern)).into());
             }
@@ -2188,8 +2150,8 @@ impl Registry {
             None
         };
         if let Some(refusal) = refusal {
-            let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &input, &ctx);
-            fields.push(("block_reason".to_string(), "approval".to_string()));
+            let mut fields = lifecycle::fields("blocked", name, resolved_name, &input, &ctx);
+            fields.push(("block_reason", lifecycle::FieldValue::Text("approval")));
             crate::logging::event_warn("TOOL_LIFECYCLE", fields);
             return Err(ToolRejected(refusal).into());
         }
@@ -2216,8 +2178,8 @@ impl Registry {
                 })
                 .await;
             if let crate::hooks::GateDecision::Block { reason } = decision {
-                let mut fields = Self::tool_lifecycle_fields("blocked", name, resolved_name, &restored, &ctx);
-                fields.push(("block_reason".to_string(), reason.clone()));
+                let mut fields = lifecycle::fields("blocked", name, resolved_name, &restored, &ctx);
+                fields.push(("block_reason", lifecycle::FieldValue::Text(&reason)));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(ToolRejected(format!("Tool call blocked by pre_tool hook: {reason}")).into());
             }
@@ -2227,10 +2189,10 @@ impl Registry {
         };
         let hook_gate_ms = elapsed_ms(gate_started_at);
 
-        crate::logging::event_info(
-            "TOOL_LIFECYCLE",
-            Self::tool_lifecycle_fields("start", name, resolved_name, &input, &ctx),
-        );
+        // Input and context stay as they are from here on, so the lifecycle
+        // fields are built once: lent to the start line, relabelled below.
+        let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
+        crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
 
         let execute_started_at = std::time::Instant::now();
         let result = tool.execute(input.clone(), ctx.clone()).await;
@@ -2256,9 +2218,12 @@ impl Registry {
                     ..DispatchTimings::default()
                 };
                 observe_dispatch_timings(&ctx.tool_call_id, timings);
-                let mut fields = Self::tool_lifecycle_fields("error", name, resolved_name, &input, &ctx);
+                lifecycle::set_phase(&mut fields, "error");
                 fields.extend(timings.fields());
-                fields.push(("error".to_string(), crate::util::format_error_chain(&error)));
+                fields.push((
+                    "error",
+                    lifecycle::FieldValue::Owned(crate::util::format_error_chain(&error)),
+                ));
                 crate::logging::event_warn("TOOL_LIFECYCLE", fields);
                 return Err(error);
             }
@@ -2308,11 +2273,14 @@ impl Registry {
         };
         observe_dispatch_timings(&ctx.tool_call_id, timings);
 
-        let mut fields = Self::tool_lifecycle_fields("done", name, resolved_name, &input, &ctx);
+        lifecycle::set_phase(&mut fields, "done");
         fields.extend(timings.fields());
-        fields.push(("output_bytes".to_string(), output.output.len().to_string()));
-        fields.push(("output_chars".to_string(), output.output.chars().count().to_string()));
-        fields.push(("image_count".to_string(), output.images.len().to_string()));
+        fields.push(("output_bytes", lifecycle::FieldValue::Count(output.output.len())));
+        fields.push((
+            "output_chars",
+            lifecycle::FieldValue::Count(output.output.chars().count()),
+        ));
+        fields.push(("image_count", lifecycle::FieldValue::Count(output.images.len())));
         crate::logging::event_info("TOOL_LIFECYCLE", fields);
 
         Ok(output)
@@ -2596,28 +2564,26 @@ impl Registry {
         names
     }
 
-    fn policy_names(&self, name: &str) -> HashSet<String> {
+    /// Whether `matches` holds for `name` or for any name the MCP tool behind
+    /// it has been registered under.
+    fn any_policy_name(&self, name: &str, matches: impl Fn(&str) -> bool) -> bool {
+        if matches(name) {
+            return true;
+        }
         let index = self.mcp_policy.read().unwrap_or_else(|e| e.into_inner());
-        let mut names = index
+        index
             .current
             .get(name)
             .and_then(|identity| index.history.get(identity))
-            .cloned()
-            .unwrap_or_default();
-        names.insert(name.to_string());
-        names
+            .is_some_and(|names| names.iter().any(|known| matches(known)))
     }
 
     pub(crate) fn tool_is_allowed(&self, allowed: &HashSet<String>, name: &str) -> bool {
-        self.policy_names(name)
-            .iter()
-            .any(|name| tool_name_is_allowed(allowed, name))
+        self.any_policy_name(name, |known| tool_name_is_allowed(allowed, known))
     }
 
     pub(crate) fn tool_is_disabled(&self, disabled: &HashSet<String>, name: &str) -> bool {
-        self.policy_names(name)
-            .iter()
-            .any(|name| tool_name_is_disabled(disabled, name))
+        self.any_policy_name(name, |known| tool_name_is_disabled(disabled, known))
     }
 
     /// Original `(server, tool)` for a registered MCP alias. Aliases are
@@ -3183,6 +3149,8 @@ mod lazy_activation;
 #[cfg(test)]
 #[path = "monitor_tests.rs"]
 mod monitor_tool;
+#[cfg(test)]
+mod policy_route_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

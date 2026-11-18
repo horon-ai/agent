@@ -472,6 +472,8 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 남고 모델은 자기가 낸 모든 호출에 결과를 받는다. 백그라운드 작업의 정지는 응답이 아니라 마지막
 `background_work` 이벤트가 확인한다. 응답은 취소가 접수됐다는 것만 말한다.
 
+소켓 뒤 데몬 쪽에서는 순서 규칙이 두 가지 적용된다. 끝난 턴은 그 세션의 다음 `message`를 읽기 전에 닫히므로, 턴의 종료 이벤트에 다음 prompt로 답하는 클라이언트가 `Already processing a message`로 거절되지 않는다(`crates/app-core/src/server/client_lifecycle.rs:824-834`). 그 종료 이벤트에 `no_reply` 메시지로 답하면 그것은 문맥 메시지다. 턴을 시작하지 않으므로 끝난 턴의 완료 꼬리를 기다렸다가 정확히 한 번 저장하고 `context_message_added`로 답한다. 실제로 도는 턴, 즉 이 연결의 턴이나 어느 클라이언트든 등록한 턴만 바쁨 오류로 답하며 그 답도 곧바로 한다. 그리고 취소의 `Interrupted`와 그 턴의 `Done`은 취소한 턴 자신의 프레임이 모두 전달된 뒤에 쓰이며, 그 대기는 500ms가 상한이다(`crates/app-core/src/server/client_lifecycle.rs:4026-4036`, `crates/app-core/src/server/fanout_flush.rs:56-60`).
+
 ### 이벤트
 
 ```json
@@ -655,11 +657,33 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 전체 저장 형식, 한도, 레거시 마이그레이션 규칙은
 `docs/protocol/SESSION_STORE.ko.md`에 있다.
 
+## 핸드셰이크에서 클라이언트가 알리는 질문 처리
+
+`ask` 도구는 사람에게 질문을 보여 주고 답을 기다린다. 데몬은 화면을 그리지 않고 클라이언트가 붙어 있다고 가정할 수도 없으므로, 질문은 보여 줄 수 있다고 알린 연결로만 간다. 그 광고는 `Hello`의 불리언 필드 하나다.
+
+| 필드 | 타입 | 없을 때 | 뜻 |
+| --- | --- | --- | --- |
+| `supports_ask_requests` | 불리언 | `false` | 이 연결이 `ask` 도구의 질문을 그리고 답한다 |
+
+브리지는 이 필드를 `hello["supports_ask_requests"].as_bool().unwrap_or(false)`로 읽으므로(`crates/harness-api-server/src/lib.rs`), 이 필드가 없던 클라이언트는 아무것도 알리지 않은 채로 계속 동작한다. 이 필드는 능력 문자열도 프로토콜 마이너 협상도 아니다. 사람에게 묻는 방향을 정할 뿐이다. 붙어 있는 연결이 이 필드를 알린 세션은 그 연결에서 질문을 받고 호출이 답을 기다리며, 그런 연결이 없는 세션은 `ask_policy`로 넘어간다(`docs/safety/SAFETY.md`).
+
+SDK 셋은 이 값을 연결 옵션 하나로 내주고, 모두 기본값을 끔으로 둔다.
+
+| SDK | 옵션 | 기본값 |
+| --- | --- | --- |
+| Rust | `ConnectOptions::supports_ask_requests` | `false` |
+| TypeScript | `supportsAskRequests` | `false` |
+| Python | `supports_ask_requests` | `False` |
+
+Rust SDK는 이 옵션을 `Hello`로 옮기고(`crates/agent-sdk/src/client.rs`), TypeScript는 `options.supportsAskRequests ?? false`를 쓰며, Python은 필드를 그대로 넘긴다. TUI 바이너리 `horon-tui`는 질문을 그리고 답하므로 `connect_options`에서 이 값을 `true`로 둔다(`crates/tui/src/lib.rs`). 턴만 돌리는 클라이언트는 기본값을 그대로 두고, `ask`에 닿은 턴은 아무도 볼 수 없는 질문에 멈춰 서는 대신 정책으로 결론 난다.
+
 ## 하네스 API 요청·이벤트 표면: usage_report, search_sessions, list_artifacts, durable_runtime
 
 이 문서는 하네스 API에서 추가된 요청 표면을 적습니다. 앞부분은 프로토콜 1.13의 세 요청과 그 응답 이벤트이고, 그다음은 1.14의 내구 런타임 표면 넷이고, 마지막은 1.16의 인자 복구입니다. 필드 이름과 타입은 `crates/harness-api/src/requests.rs`와 `crates/harness-api/src/events.rs`의 정의를 그대로 옮겼고, 동작과 한도는 `crates/harness-api-server/src/translate/`의 구현에서 확인한 값입니다.
 
 세 요청 모두 추가형입니다. 이 요청들을 보내지 않는 클라이언트는 계속 동작하고, 브리지는 `hello_ok`의 `capabilities`에 `usage_report`, `session_search`, `artifacts`를 광고합니다(`crates/harness-api-server/src/lib.rs`의 `BRIDGE_CAPABILITIES`).
+
+`approval_ack`과 `failover_ack`은 `list_artifacts` 다음에 옵니다. 둘 다 클라이언트가 내구 승인이나 전환 알림을 정리하려고 보내는 ack이므로 자체 능력 뒤에 있지 않습니다. ack 태그를 모르는 데몬은 그 요청을 무시하지 않고 오류로 답합니다.
 
 ### 공통 규칙
 
@@ -739,6 +763,8 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 이 빌드에는 계정 구독이 없으므로 데몬은 한도를 알리지 않고 `limits`는 항상 빈 배열입니다. 빈 배열은 "이 계정에 한도가 없다"가 아니라 "이 빌드에 한도 출처가 없다"는 뜻입니다.
 
+세 SDK는 Rust에서 `usage_report(session_id: Option<&str>)`로 보내며 `UsageReport`를 돌려주고, TypeScript에서는 `usageReport`, Python에서는 `usage_report`입니다.
+
 ### search_sessions
 
 첨부된 세션이 아니라 저장된 모든 세션의 트랜스크립트를 검색합니다. 능력 이름은 `session_search`입니다. 세션 전환기가 붙은 세션만 거르면 "그 대화가 어디 있었더라"에 답할 수 없기 때문에 필요합니다.
@@ -787,6 +813,8 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 에이전트 자신의 세션 검색과 같은 엔진, 같은 인덱스, 같은 점수를 씁니다. 그래서 에이전트에서 검색한 결과와 클라이언트에서 검색한 결과가 같습니다. 저장 디렉터리가 없으면 빈 결과이고, 엔진이 실패하면 `internal`입니다.
 
+세 SDK는 Rust에서 `search_sessions(query, limit: Option<u32>)`, TypeScript에서 `searchSessions`, Python에서 `search_sessions`로 보냅니다.
+
 ### list_artifacts
 
 대화가 만든 파일, 즉 대화가 실어 온 이미지와 세션이 시작된 뒤 작업 디렉터리에 쓰인 HTML·이미지 파일을 나열합니다. 능력 이름은 `artifacts`입니다.
@@ -833,6 +861,69 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 목록은 두 경로에서 모읍니다. 트랜스크립트가 지목한 경로와 작업 디렉터리 스캔입니다. 두 경로 모두 세션 루트 밖으로 나가는 경로와 심볼릭 링크를 거부하므로, 트랜스크립트가 `../../.ssh/id_rsa`를 지목해도 목록에 오르지 않습니다. 세션 시작 시각을 기록이 없으면 세션 파일의 수정 시각으로 대신하고, 그보다 오래된 파일은 제외합니다. 결과는 `mtime_ms` 내림차순, 같은 시각이면 경로 오름차순으로 정렬하고 200개에서 자릅니다.
 
+세 SDK는 Rust에서 `list_artifacts(session_id)`, TypeScript에서 `listArtifacts`, Python에서 `list_artifacts`로 보냅니다.
+
+### approval_ack
+
+`approval_resolved` 이벤트의 내구 사본을 정리해, 나중에 붙거나 재시작할 때 다시 보내지 않게 합니다. 승인은 ack 전까지 남습니다. 이것은 클라이언트가 보내는 ack이고 서버가 시작하는 표면이 아니므로, 응답은 `ok` 하나이고 그 뒤에 이벤트는 오지 않습니다. 이벤트 어휘의 `approval_ack`은 이 클라이언트 확인 응답에 붙은 이름이고, 데몬은 그 이벤트를 보내지 않습니다.
+
+#### 요청
+
+```json
+{ "v": 1, "id": 21, "req": "approval_ack", "session_id": "session_...", "request_id": "req_..." }
+```
+
+| 필드 | 타입 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | string | 예 | 승인이 속한 세션. 연결이 그 세션에 붙어 있어야 합니다 |
+| `request_id` | string | 예 | `approval_resolved` 이벤트의 `request_id` |
+
+브리지가 넘기는 레거시 ack 프레임에는 세션 필드가 없으므로, 붙어 있는 연결에서 `session_id`를 빼거나 비우면 ack은 붙어 있는 세션에 적용됩니다.
+
+#### 응답
+
+```json
+{ "v": 1, "reply_to": 21, "ev": "ok" }
+```
+
+#### 동작
+
+- 연결이 세션에 붙어 있어야 합니다. 붙으려 한 적이 없는 연결이나 붙어 있는 세션과 다른 `session_id`를 보낸 연결은 `unknown_session`입니다. 이 검사가 필드 검사보다 먼저이므로, 붙지 않은 연결이 빈 `request_id`를 보내면 `invalid_request`가 아니라 `unknown_session`입니다.
+- `request_id`가 비었거나 없으면 `invalid_request`입니다. 식별자 없는 ack은 아무것도 지우지 않으면서 성공을 보고하기 때문입니다.
+- 이미 레코드가 없는 `request_id`도 `ok`로 답합니다. 러너가 먼저 레코드를 지우고 ack이 늦게 도착할 수 있으므로 늦은 ack은 실패가 아닙니다.
+- 세 SDK는 Rust에서 `ack_approval(session_id, request_id)`로 보내고 `()`를 돌려주며, TypeScript에서는 `ackApproval`, Python에서는 `ack_approval`로 보내 `ok`를 기다린 뒤 보낸 값으로 만든 영수증을 돌려줍니다.
+
+### failover_ack
+
+`failover_switched` 알림을 그대로 되받아 데몬이 지울 수 있게 합니다. 일부만 보내면 아무것도 지우지 못하거나 다른 전환으로 읽히므로, 알림 키 전체가 함께 갑니다.
+
+#### 요청
+
+```json
+{ "v": 1, "id": 22, "req": "failover_ack", "session_id": "session_...", "chain_id": "chain_...", "from": "model-a", "to": "model-b", "attempt": 1 }
+```
+
+| 필드 | 타입 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | string | 예 | 알림이 속한 세션. 연결이 그 세션에 붙어 있어야 합니다 |
+| `chain_id` | string | 예 | 알림이 속한 전환 체인. 비어 있으면 안 됩니다 |
+| `from` | string | 예 | 그 체인이 벗어난 모델. 비어 있으면 안 됩니다 |
+| `to` | string | 예 | 그 체인이 옮겨 간 모델. 비어 있으면 안 됩니다 |
+| `attempt` | number | 예 | 이 전환의 시도 번호. 음이 아닌 정수입니다 |
+
+#### 응답
+
+```json
+{ "v": 1, "reply_to": 22, "ev": "ok" }
+```
+
+#### 동작
+
+- 연결이 세션에 붙어 있어야 하며, `unknown_session` 응답과 필드 검사보다 앞선 순서는 `approval_ack`과 같습니다.
+- `chain_id`, `from`, `to`가 비었거나 없으면 `invalid_request`입니다. `attempt`가 없거나 음이 아닌 정수가 아니어도 `invalid_request`입니다.
+- 데몬이 그런 알림을 들고 있지 않은 키도 `ok`로 답합니다. 한 부분이라도 다른 키는 아무것도 지우지 않으므로, 클라이언트가 다섯 값을 모두 되돌려 보냅니다.
+- 세 SDK는 Rust에서 `ack_failover(session_id, chain_id, from, to, attempt)`로 보내고 `()`를 돌려주며, TypeScript에서는 `ackFailover`, Python에서는 `ack_failover`로 보내 `ok`를 기다린 뒤 보낸 값으로 만든 영수증을 돌려줍니다. Python 인자 이름은 `from`이 키워드라 `from_`이고, 전선 키는 `from`입니다.
+
 ### durable_runtime_v1 · monitor_v1 · snapshot_marker_v1 · ask_receipts_v1
 
 프로토콜 minor 14가 추가한 네 표면입니다. 넷 다 **추가형**이라, 능력을 협상하지 않은 클라이언트는
@@ -861,8 +952,8 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 ### 근거
 
-- 요청 정의: `crates/harness-api/src/requests.rs`의 `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot`, `AskResponse.answer_id`
-- 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`
+- 요청 정의: `crates/harness-api/src/requests.rs`의 `GetRuntimeState`, `ApplyControl`, `GetControlReceipt`, `GetSnapshot`, `AskResponse.answer_id`, 그리고 같은 파일의 `approval_ack`·`failover_ack` 요청(`ApprovalAck`·`FailoverAck`)
+- 이벤트 정의: `crates/harness-api/src/events.rs`의 `SnapshotMarker`, `Snapshot`, `RuntimeStateSummary`, `ControlReceipt`, 그리고 같은 파일의 `approval_ack`·`failover_ack` 이벤트
 - 구현: `crates/app-core/src/server/control_receipts.rs`, `crates/app-core/src/server/session_observation.rs`, `crates/base/src/durable_runtime/`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1`, `CAPABILITY_ASK_RECEIPTS_V1`
 - 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`

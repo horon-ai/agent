@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -110,7 +110,7 @@ pub struct GoalMilestone {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GoalUpdate {
-    pub at: DateTime<Utc>,
+    pub at: Timestamp,
     pub summary: String,
 }
 
@@ -144,15 +144,15 @@ pub struct Goal {
     /// field existed means, so an old file loads unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u64>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub updates: Vec<GoalUpdate>,
 }
 
 impl Goal {
     pub fn new(title: &str, scope: GoalScope) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let trimmed = title.trim();
         Self {
             id: sanitize_goal_id(trimmed),
@@ -660,7 +660,7 @@ pub struct CatchupBrief {
     pub validation_notes: Vec<String>,
     pub latest_agent_response: Option<String>,
     pub needs_from_user: String,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 #[cfg(test)]

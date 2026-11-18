@@ -16,9 +16,9 @@ Three files in the workspace are gated (`crates/base/src/workspace_trust.rs:22` 
 - `.mcp.json`
 - `.claude/mcp.json`
 
-User-level configuration is not gated. `~/.horon/mcp.json`, `~/.claude.json`, and `~/.claude/mcp.json` are the user's own configuration, not something a repository decides.
+User-level configuration is not gated. `~/.horon/mcp.json`, `~/.claude.json`, and `~/.claude/mcp.json` are the user's own configuration, not something a repository decides. Those Claude Code files are read only when `[mcp] claude_user` is on, `~/.codex/config.toml` only when `[mcp] codex_user` is on, and the per-project entries in `~/.claude.json` are matched to the session's project directory, so one repository's entry never reaches another (`crates/base/src/mcp/sources.rs:1-14`).
 
-There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
+There is a single enforcement point. When `McpConfig` reads project-local configuration, `load_authorized_project_locals` calls `authorize_project_config` and parses only the bytes of the authorized snapshot (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:258`). If all three files are absent there is nothing to gate, so the result is `Absent`; if the decision is denial, it logs one warning line and does not load project configuration.
 
 ### Digest rules
 
@@ -64,7 +64,7 @@ When a process panics, horon agent leaves a local diagnostic bundle. The bundle 
 
 ### Location
 
-The bundle is written under `crashes/` below the agent directory (`crates/base/src/crash.rs:121` `crash_root`). The agent directory defaults to `~/.horon` and can be changed with `HORON_HOME`.
+The bundle is written under `crashes/` below the agent directory (`crates/base/src/crash.rs:180` `crash_root`). The agent directory defaults to `~/.horon` and can be changed with `HORON_HOME`.
 
 One bundle is one directory.
 
@@ -90,13 +90,13 @@ The time format is `YYYYMMDDTHHMMSS.mmmZ` with the PID appended (`crash.rs:158` 
 | `panic.thread` | The name or ID of the thread that panicked. |
 | `operations` | Up to the last 64 tool dispatches, oldest first. |
 
-`operations` is a process-wide ring buffer (`crash.rs:25` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the serialized input JSON string. When the feature is off, dispatches are not recorded at all.
+`operations` is a process-wide ring buffer (`crash.rs:25` `OPERATION_RING_CAPACITY`). Each entry carries an increasing `seq`, the tool name, and the input text after redaction and truncation (`crash.rs:42-46` `OperationRecord`). When the feature is off, dispatches are not recorded at all.
 
 `report.txt` lays out the same contents for humans. Its first line is `horon-agent crash bundle (local only; nothing was transmitted)` (`crash.rs:205` `render_report`).
 
 ### Redaction
 
-Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:51`).
+Every string that goes into a bundle passes through `redact_secrets`, the existing secret-removal pass (`crates/base/src/message.rs:45`).
 
 - The same pass applies to the panic message, location, thread name, tool names, and tool input JSON.
 - Fields are truncated at 2048 characters with `[truncated]` appended. Tool names are truncated at 128 characters (`crash.rs:241` `truncate_chars`).
@@ -112,7 +112,7 @@ The bundle is written to a local directory with `std::fs::write` only. There are
 
 `[features] crash_bundles` defaults to `true` (`crates/config-types/src/feature.rs:54`). Setting it to `false` means the panic hook writes no bundle and tool dispatches are not recorded either.
 
-The hook is installed once at startup (`src/cli/startup.rs:52`). Later calls only update the enabled flag (`crash.rs:67` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
+The hook is installed once at startup (`src/cli/startup.rs:38`). Later calls only update the enabled flag (`crash.rs:67` `install_panic_hook`). So re-reading configuration and turning the feature on or off still leaves the already installed hook following that flag.
 
 ### Limits
 
@@ -170,12 +170,13 @@ This section is not a re-measurement of the table above; it only counts whether 
 | `bincode` | No | `RUSTSEC-2025-0141` |
 | `lru` | Yes, through `ratatui-core` | `RUSTSEC-2026-0002` |
 | `quick-xml` | No | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
-| `paste` | Yes | `RUSTSEC-2024-0436` |
+| `paste` | No | `RUSTSEC-2024-0436` |
 | `rand` | Yes | `RUSTSEC-2026-0097` |
 | `azure_core` | No | `RUSTSEC-2026-0097` |
 | `tungstenite` | Yes | `RUSTSEC-2026-0097` |
 | `tract-nnef` | Yes | `RUSTSEC-2026-0097`, the `RUSTSEC-2026-0217` item below |
 | `lopdf` | Yes | `RUSTSEC-2026-0187` |
+| `chrono` | No | `RUSTSEC-2026-0543` |
 | `rustls-webpki` | Yes | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
 | `crossterm` | Yes, through `horon-tui` only | It left with the deletion of the terminal image crate (`horon-agent-terminal-image`) and came back with `crates/tui` |
 
@@ -201,22 +202,24 @@ This section is not a re-measurement of the table above; it only counts whether 
   warnings were cleaned up. The unsoundness advisories for `anyhow` (RUSTSEC-2026-0190),
   `event-listener` (RUSTSEC-2026-0221) and `tokio` (RUSTSEC-2026-0386), and the `chacha20`
   yanked warning, were fixed by bumping `Cargo.lock` (`anyhow` 1.0.104, `event-listener` 5.4.2,
-  `tokio` 1.53.3, `chacha20` 0.10.2). The five remaining unmaintained advisories (`paste`
-  RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441, `rustybuzz` RUSTSEC-2026-0206, `ttf-parser`
-  RUSTSEC-2026-0192, `unsafe-libyaml` RUSTSEC-2024-0449) are transitive dependencies this
-  repository cannot drop and that have no upstream replacement, so they are ignored in
-  `scripts/ci/check_security.sh`. That script runs `cargo audit --deny warnings`, so a new warning
-  (unmaintained, unsound, yanked) fails CI.
-- `scripts/ci/check_security.sh` ignores the vulnerability advisories explicitly classified
-  above (`rustls-webpki`) so CI stays actionable
-  (`audit_ignores` in `scripts/ci/check_security.sh`). New
-  vulnerabilities still fail CI by default.
+  `tokio` 1.53.3, `chacha20` 0.10.2). At the time the audit excluded five unmaintained
+  dependencies: `paste`, `pin-utils`, `rustybuzz`, `ttf-parser`, and `unsafe-libyaml`.
+- The current lockfile drops all five. `futures` 0.3.34 and `hyper` 1.12 remove
+  `pin-utils`. `yaml_serde` reads skill frontmatter, and `resvg`/`usvg` 0.48 and
+  `lopdf` 0.45 replace the old YAML and font parser dependencies. The workspace pins
+  the upstream PDF, tokenizer and allocator revisions in its Cargo manifests until
+  compatible published versions carry those changes. The preflight runs
+  `cargo audit --deny warnings` with no advisory exclusions.
 - 2026-11-13: three advisories published the same day failed the preflight on a push that changed no
   dependency — `RUSTSEC-2026-0524` and `RUSTSEC-2026-0523` (`quinn-proto` 0.11.18) and
   `RUSTSEC-2026-0538` (`quinn-udp` 0.5.14), all reached through `reqwest`'s QUIC stack. They were
   fixed in `Cargo.lock` rather than ignored (`quinn-proto` 0.11.19, `quinn-udp` 0.5.16), so no
   `audit_ignores` entry was added. `main` carried the same versions, so the failure was not
   specific to `dev`.
+- 2026-11-17: `RUSTSEC-2026-0543` (`chrono` 0.4.42, unmaintained, all versions, no patched version,
+  issued that day) failed the preflight on a pull request that changed no dependency: the same `dev`
+  commit passed at 09:38 and failed at 14:14, because the advisory database gained the entry in
+  between. The migration in #377 removed the dependency and the temporary audit exception.
 - Before changing dependency versions, run:
   - `cargo check`
   - `cargo test -j 1`

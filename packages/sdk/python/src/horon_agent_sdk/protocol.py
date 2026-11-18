@@ -136,6 +136,14 @@ class SessionInfo(TypedDict, total=False):
     user_connected: bool
     # Approximate size of the stored transcript, in bytes.
     transcript_bytes: int
+    # Whether the user pinned/saved this session. Omitted when false.
+    saved: bool
+    # Optional label given alongside the save, shown and searched by pickers.
+    save_label: str
+    # Persisted transcript update time, the newest-first ordering key.
+    updated_at_ms: int
+    # Most recent active-process timestamp, when the daemon has one.
+    last_active_at_ms: int
     archived: bool
     archived_at_ms: int
 
@@ -285,6 +293,32 @@ class UsageLimitInfo(TypedDict, total=False):
     limit: float | None
     unit: str
     resets_at: str | None
+
+
+class UsageReport(TypedDict, total=False):
+    """Reply to ``usage_report``: durable per-request totals, per-model
+    aggregates, the active context window, and any published subscription limits.
+
+    ``sessions``, ``totals``, ``models``, ``pricing`` and ``estimated_cost`` are
+    always present. A metric no request recorded is ``None``, never zero.
+    ``pricing`` is always ``"unknown"`` and ``estimated_cost`` always ``None``:
+    this harness carries no price table.
+    """
+
+    # Present when the request named one session; absent for the whole account.
+    session_id: str
+    # One row per session in scope, ordered by session id.
+    sessions: list[UsageSession]
+    # Sums across ``sessions``. A metric no session recorded stays absent.
+    totals: UsageTotals
+    # Per-model aggregates, ordered by model id.
+    models: list[UsageModel]
+    # Context window of the active route, when the daemon knows it.
+    context_window: int
+    # Subscription limits the daemon published; empty when it reports none.
+    limits: list[UsageLimitInfo]
+    pricing: str
+    estimated_cost: float | None
 
 
 class RenderedImageSource(TypedDict, total=False):
@@ -562,6 +596,25 @@ class RuntimeControlReceipt(TypedDict, total=False):
     result: Any
     # Ready-to-display one-line status.
     message: str
+
+
+class ApprovalAckReceipt(TypedDict):
+    """The approval id the daemon confirmed as acked."""
+
+    request_id: str
+
+
+class FailoverAckReceipt(TypedDict):
+    """The failover announcement the daemon confirmed as acked.
+
+    ``from_`` mirrors the ``ack_failover`` argument name; on the wire the same
+    value travels as ``from``.
+    """
+
+    chain_id: str
+    from_: str
+    to: str
+    attempt: int
 
 
 class SnapshotMarkerInfo(TypedDict):

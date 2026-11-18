@@ -137,6 +137,107 @@ class SessionAggregateTests(unittest.TestCase):
         self.assertEqual(counters, {})
         self.assertIn("thread_count", reason or "")
 
+    def test_live_process_counts_get_a_first_session_value_and_a_slope(self) -> None:
+        # A process per session grows by one per session; a daemon that keeps its
+        # sessions in one process stays flat, and both readings come from the
+        # sample that also produced the RSS numbers.
+        points = [
+            {"sessions": 1, "idle_process_count": 1, "post_turn_process_count": 2},
+            {"sessions": 10, "idle_process_count": 10, "post_turn_process_count": 11},
+            {"sessions": 100, "idle_process_count": 100, "post_turn_process_count": 101},
+        ]
+        summary = bench.summarize_sessions(points, 1)
+        self.assertEqual(summary["first_session_idle_processes"], 1)
+        self.assertAlmostEqual(summary["each_additional_idle_processes"], 1.0, delta=1e-6)
+        self.assertEqual(summary["first_session_post_turn_processes"], 2)
+        self.assertAlmostEqual(summary["each_additional_post_turn_processes"], 1.0, delta=1e-6)
+
+        flat = [{"sessions": n, "idle_process_count": 1, "post_turn_process_count": 3}
+                for n in (1, 10, 100)]
+        flat_summary = bench.summarize_sessions(flat, 1)
+        self.assertEqual(flat_summary["first_session_idle_processes"], 1)
+        self.assertEqual(flat_summary["each_additional_idle_processes"], 0.0)
+
+    def test_an_unread_process_count_stays_null(self) -> None:
+        # "could not be read" is not "no process is running": the slope must be
+        # None so no one reads it as a zero-cost session.
+        points = [
+            {"sessions": 1, "idle_process_count": None, "post_turn_process_count": None},
+            {"sessions": 10, "idle_process_count": None, "post_turn_process_count": None},
+        ]
+        summary = bench.summarize_sessions(points, 1)
+        self.assertIsNone(summary["first_session_idle_processes"])
+        self.assertIsNone(summary["each_additional_idle_processes"])
+        self.assertIsNone(summary["first_session_post_turn_processes"])
+        self.assertIsNone(summary["each_additional_post_turn_processes"])
+
+    def test_session_point_carries_the_process_count_of_its_samples(self) -> None:
+        class FakeRunner:
+            name = "fake"
+            label = "fake"
+
+            def sessions(self, mock, root, cwd, count, turns, timeout) -> dict:
+                return {
+                    "samples": [
+                        {"phase": "idle", "rss_bytes": 40e6, "process_count": 1},
+                        {"phase": "turn1", "rss_bytes": 44e6, "process_count": 3},
+                    ],
+                    "errors": [],
+                    "sessions_created": count,
+                    "counter_error": None,
+                }
+
+        class FakeMock:
+            def reset(self) -> None:
+                pass
+
+        point = bench._measure_session_point(FakeRunner(), FakeMock(), "/tmp", "/tmp", 4, 1, 10.0)
+        self.assertEqual(point["idle_process_count"], 1)
+        self.assertEqual(point["post_turn_process_count"], 3)
+        self.assertEqual(point["sessions"], 4)
+
+
+class ProcessForestTests(unittest.TestCase):
+    """RSS and the live process count must come from one walk of the same trees."""
+
+    def test_a_pid_two_roots_reach_is_counted_once(self) -> None:
+        tree = {10: [11], 11: [12], 12: [], 20: [12]}
+        with mock.patch.object(bc, "_forest_lookup",
+                               lambda: (lambda pid: tree.get(pid, []))):
+            self.assertEqual(bc.process_forest_pids([10, 20]), [10, 11, 12, 20])
+            self.assertEqual(bc.process_forest_pids([20, 10]), [10, 11, 12, 20])
+
+    def test_count_and_bytes_come_from_the_same_read(self) -> None:
+        sizes = {20: 1000, 21: 2000}
+        with mock.patch.object(bc, "process_forest_pids", lambda roots: [20, 21]), \
+                mock.patch.object(bc, "_resident_reader", lambda: lambda pid: sizes.get(pid)):
+            sample = bc.process_forest_observation([20])
+        self.assertEqual(sample["rss_bytes"], 3000)
+        self.assertEqual(sample["process_count"], 2)
+
+    def test_a_root_that_exited_is_not_counted_as_live(self) -> None:
+        # The tree walk names the root unconditionally; a read that finds
+        # nothing means it is gone, not that it is a live process of 0 bytes.
+        sizes = {31: 4096}
+        with mock.patch.object(bc, "process_forest_pids", lambda roots: [30, 31]), \
+                mock.patch.object(bc, "_resident_reader", lambda: lambda pid: sizes.get(pid)):
+            sample = bc.process_forest_observation([30])
+        self.assertEqual(sample["rss_bytes"], 4096)
+        self.assertEqual(sample["process_count"], 1)
+
+    def test_nothing_readable_is_null_not_zero(self) -> None:
+        with mock.patch.object(bc, "process_forest_pids", lambda roots: [40, 41]), \
+                mock.patch.object(bc, "_resident_reader", lambda: lambda pid: None):
+            sample = bc.process_forest_observation([40])
+        self.assertIsNone(sample["rss_bytes"])
+        self.assertIsNone(sample["process_count"])
+        self.assertIsNone(sample["pss_bytes"])
+
+    def test_a_single_tree_keeps_the_integer_rss_contract(self) -> None:
+        with mock.patch.object(bc, "process_forest_pids", lambda roots: [50]), \
+                mock.patch.object(bc, "_resident_reader", lambda: lambda pid: None):
+            self.assertEqual(bc.process_tree_rss_bytes(50), 0)
+
 
 class InstallSizeTests(unittest.TestCase):
     def test_package_directory_is_measured(self) -> None:
@@ -361,6 +462,58 @@ class ExtraHoronRowTests(unittest.TestCase):
         self.assertIn("| 40 |", markdown)
         self.assertIn("0.02", markdown)
         self.assertIn("1.00", markdown)
+
+    def test_report_shows_live_process_counts_per_session(self) -> None:
+        def row(name: str, processes: float) -> dict:
+            return {
+                "name": name,
+                "label": name,
+                "sessions_memory": {
+                    "points": [
+                        {"sessions": 1, "post_turn_rss_bytes": 45e6,
+                         "idle_process_count": 1, "post_turn_process_count": 2},
+                        {"sessions": 10, "post_turn_rss_bytes": 60e6,
+                         "idle_process_count": 10, "post_turn_process_count": 11},
+                    ],
+                    "first_session_idle_rss_bytes": 40e6,
+                    "each_additional_idle_rss_bytes": 3e6,
+                    "first_session_post_turn_rss_bytes": 45e6,
+                    "each_additional_post_turn_rss_bytes": 4e6,
+                    "first_session_idle_processes": 1,
+                    "each_additional_idle_processes": processes,
+                    "first_session_post_turn_processes": 2,
+                    "each_additional_post_turn_processes": processes,
+                    "skipped": [],
+                },
+            }
+
+        results = [row("horon", 0.0), row("pi", 1.0)]
+        report = bc.build_report("compare", results, [])
+        markdown = bench.render_markdown(report, [1, 10], 1)
+        # The daemon row says "sessions are not processes" and the process-per-
+        # session row says the opposite; both readings sit beside the RSS cells.
+        self.assertIn("Processes (idle)", markdown)
+        self.assertIn("Processes/session", markdown)
+        self.assertIn("Live processes per session count", markdown)
+        self.assertIn("1 / 2", markdown)
+        self.assertIn("10 / 11", markdown)
+
+    def test_report_without_process_counts_keeps_the_older_table(self) -> None:
+        # A report recorded before this measurement existed must not grow an
+        # empty columns or a table of em dashes.
+        results = [{
+            "name": "horon",
+            "label": "horon",
+            "sessions_memory": {
+                "points": [{"sessions": 1, "post_turn_rss_bytes": 45e6}],
+                "first_session_idle_rss_bytes": 40e6,
+                "each_additional_idle_rss_bytes": 3e6,
+            },
+        }]
+        report = bc.build_report("compare", results, [])
+        markdown = bench.render_markdown(report, [1], 1)
+        self.assertNotIn("Processes", markdown)
+        self.assertNotIn("Live processes per session count", markdown)
 
     def test_each_horon_row_carries_its_own_threads_fds_and_fsync(self) -> None:
         # The report has to answer "did the candidate stop growing a thread per

@@ -7,7 +7,7 @@
 //! - BFS cascade retrieval through the graph
 
 use crate::{MemoryEntry, MemoryStore};
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
@@ -147,7 +147,7 @@ pub struct TagEntry {
     /// Number of memories with this tag
     pub count: u32,
     /// When the tag was first created
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 impl TagEntry {
@@ -158,7 +158,7 @@ impl TagEntry {
             name,
             description: None,
             count: 0,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 
@@ -182,15 +182,15 @@ pub struct ClusterEntry {
     /// Number of memories in this cluster
     pub member_count: u32,
     /// When the cluster was discovered
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the cluster was last updated
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 impl ClusterEntry {
     pub fn new(id: impl Into<String>) -> Self {
         let id = id.into();
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: format!("cluster:{}", id),
             name: None,
@@ -207,7 +207,7 @@ impl ClusterEntry {
 pub struct GraphMetadata {
     /// When clusters were last updated
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_cluster_update: Option<DateTime<Utc>>,
+    pub last_cluster_update: Option<Timestamp>,
     /// Total retrieval operations
     #[serde(default)]
     pub retrieval_count: u64,

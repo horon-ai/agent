@@ -16,9 +16,9 @@
 - `.mcp.json`
 - `.claude/mcp.json`
 
-사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다.
+사용자 수준 설정은 게이트하지 않습니다. `~/.horon/mcp.json`, `~/.claude.json`, `~/.claude/mcp.json`은 사용자 자신의 설정이지 저장소가 정한 것이 아닙니다. 이 가운데 Claude Code 파일은 `[mcp] claude_user`가 켜져 있을 때만 읽고, `~/.codex/config.toml`은 `[mcp] codex_user`가 켜져 있을 때만 읽습니다. `~/.claude.json`의 프로젝트별 항목은 세션의 프로젝트 디렉터리와 맞춰 고르므로 한 저장소의 항목이 다른 저장소로 새지 않습니다 (`crates/base/src/mcp/sources.rs:1-14`).
 
-강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:649`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
+강제 지점은 하나입니다. `McpConfig`가 프로젝트 로컬 설정을 읽을 때 `load_authorized_project_locals`가 `authorize_project_config`를 부르고, 허용된 스냅샷의 바이트만 파싱합니다 (`crates/base/src/mcp/protocol.rs:706`, `workspace_trust.rs:258`). 세 파일이 모두 없으면 게이트할 것이 없으므로 `Absent`이고, 거부되면 경고 한 줄을 남기고 프로젝트 설정을 싣지 않습니다.
 
 ### 다이제스트 규칙
 
@@ -64,7 +64,7 @@
 
 ### 위치
 
-번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:121` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
+번들은 에이전트 디렉터리 아래 `crashes/`에 씁니다 (`crates/base/src/crash.rs:180` `crash_root`). 에이전트 디렉터리는 기본값이 `~/.horon`이고 `HORON_HOME`으로 바꿀 수 있습니다.
 
 한 번들은 디렉터리 하나입니다.
 
@@ -90,13 +90,13 @@
 | `panic.thread` | 패닉이 난 스레드 이름 또는 ID. |
 | `operations` | 마지막 도구 디스패치 최대 64건. 오래된 것부터. |
 
-`operations`는 프로세스 전역 링 버퍼입니다 (`crash.rs:25` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 입력 JSON 직렬화 문자열을 담습니다. 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않습니다.
+`operations`는 프로세스 전역 링 버퍼입니다 (`crash.rs:25` `OPERATION_RING_CAPACITY`). 각 항목은 증가하는 `seq`, 도구 이름, 리댁션과 자르기를 거친 입력 텍스트를 담습니다 (`crash.rs:42-46` `OperationRecord`). 기능이 꺼져 있으면 디스패치 기록 자체를 하지 않습니다.
 
 `report.txt`는 같은 내용을 사람이 읽기 좋게 편다. 첫 줄은 `horon-agent crash bundle (local only; nothing was transmitted)`입니다 (`crash.rs:205` `render_report`).
 
 ### 리댁션
 
-번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:51`).
+번들에 들어가는 모든 문자열은 기존 비밀 값 제거 패스인 `redact_secrets`를 거칩니다 (`crates/base/src/message.rs:45`).
 
 - 패닉 메시지, 위치, 스레드 이름, 도구 이름, 도구 입력 JSON에 같은 패스를 적용합니다.
 - 필드마다 2048자에서 자르고 `[truncated]`를 붙입니다. 도구 이름은 128자입니다 (`crash.rs:241` `truncate_chars`).
@@ -112,7 +112,7 @@
 
 `[features] crash_bundles`의 기본값은 `true`입니다 (`crates/config-types/src/feature.rs:54`). `false`로 두면 패닉 훅이 번들을 쓰지 않고 도구 디스패치도 기록하지 않습니다.
 
-훅은 시작할 때 한 번 설치됩니다 (`src/cli/startup.rs:52`). 이후 호출은 활성 플래그만 갱신합니다 (`crash.rs:67` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
+훅은 시작할 때 한 번 설치됩니다 (`src/cli/startup.rs:38`). 이후 호출은 활성 플래그만 갱신합니다 (`crash.rs:67` `install_panic_hook`). 그래서 설정을 다시 읽어 기능을 켜거나 꺼도 이미 설치된 훅은 그 플래그를 따릅니다.
 
 ### 한계
 
@@ -170,12 +170,13 @@
 | `bincode` | 없다 | `RUSTSEC-2025-0141` |
 | `lru` | 있다. `ratatui-core`를 거친다 | `RUSTSEC-2026-0002` |
 | `quick-xml` | 없다 | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
-| `paste` | 있다 | `RUSTSEC-2024-0436` |
+| `paste` | 없다 | `RUSTSEC-2024-0436` |
 | `rand` | 있다 | `RUSTSEC-2026-0097` |
 | `azure_core` | 없다 | `RUSTSEC-2026-0097` |
 | `tungstenite` | 있다 | `RUSTSEC-2026-0097` |
 | `tract-nnef` | 있다 | `RUSTSEC-2026-0097`, 아래 `RUSTSEC-2026-0217` 항목 |
 | `lopdf` | 있다 | `RUSTSEC-2026-0187` |
+| `chrono` | 없다 | `RUSTSEC-2026-0543` |
 | `rustls-webpki` | 있다 | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
 | `crossterm` | 있다. `horon-tui`로만 들어온다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다가 `crates/tui`와 함께 돌아왔다 |
 
@@ -201,20 +202,21 @@
   `anyhow`(RUSTSEC-2026-0190), `event-listener`(RUSTSEC-2026-0221), `tokio`(RUSTSEC-2026-0386)의
   불건전성 권고와 `chacha20` yanked 경고는 `Cargo.lock`을 올려 해결했다
   (`anyhow` 1.0.104, `event-listener` 5.4.2, `tokio` 1.53.3, `chacha20` 0.10.2).
-  남은 유지보수 중단 권고 다섯 건(`paste` RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441,
-  `rustybuzz` RUSTSEC-2026-0206, `ttf-parser` RUSTSEC-2026-0192, `unsafe-libyaml`
-  RUSTSEC-2024-0449)은 업스트림 대체 없이 이 저장소에서 뺄 수 없는 전이 의존성이라
-  `scripts/ci/check_security.sh`에서 무시했다. 이 스크립트는 `cargo audit --deny warnings`로
-  돌기 때문에 새 경고(유지보수 중단, 불건전성, yanked)는 CI를 실패시킨다.
-- `scripts/ci/check_security.sh`는 위에서 명시적으로 분류한 취약점 권고
-  (`rustls-webpki`)를 무시해 CI가 계속 조치 가능하게 유지한다
-  (`scripts/ci/check_security.sh`의 `audit_ignores`). 새
-  취약점은 기본적으로 여전히 CI를 실패시킨다.
+  당시에는 유지보수가 중단된 `paste`, `pin-utils`, `rustybuzz`, `ttf-parser`,
+  `unsafe-libyaml` 다섯 개를 검사에서 제외했다.
+- 현재 잠금 파일에는 다섯 패키지가 모두 없다. `futures` 0.3.34와 `hyper` 1.12에서
+  `pin-utils` 의존성이 사라졌다. 스킬 파일의 YAML 머리말은 `yaml_serde`로 읽고,
+  `resvg`/`usvg` 0.48과 `lopdf` 0.45에서는 이전 글꼴 파서를 사용하지 않는다.
+  호환되는 배포판이 나올 때까지 PDF, 토크나이저, 할당기는 각 프로젝트의 커밋으로
+  고정한다. 보안 검사에서는 모든 권고에 `cargo audit --deny warnings`를 적용한다.
 - 2026-11-13: 같은 날 공개된 권고 세 건이 의존성을 바꾸지 않은 push에서도 preflight를 실패시켰다.
   `RUSTSEC-2026-0524`, `RUSTSEC-2026-0523`(`quinn-proto` 0.11.18)과 `RUSTSEC-2026-0538`
   (`quinn-udp` 0.5.14)이고 모두 `reqwest`의 QUIC 스택을 통해 들어온다. 무시하지 않고
   `Cargo.lock`에서 고쳤다(`quinn-proto` 0.11.19, `quinn-udp` 0.5.16). 그래서 `audit_ignores`
   항목은 추가하지 않았다. `main`도 같은 버전을 들고 있었으므로 이 실패는 `dev`에 한정된 것이 아니다.
+- 2026-11-17: `RUSTSEC-2026-0543`(`chrono` 0.4.42, 유지보수 중단, 모든 버전 영향, 패치 버전 없음,
+  같은 날 발행)이 의존성을 바꾸지 않은 PR에서도 preflight를 실패시켰다. 같은 `dev` 커밋이 09:38에는
+  통과하고 14:14에는 실패했다. 그사이 권고 데이터베이스에 항목이 추가됐다. #377에서 시간 라이브러리를 교체하고 임시 검사 예외를 삭제했다.
 - 의존성 버전을 바꾸기 전에 다음을 실행한다.
   - `cargo check`
   - `cargo test -j 1`

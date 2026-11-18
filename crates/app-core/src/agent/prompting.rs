@@ -1,6 +1,7 @@
 use super::Agent;
 use crate::logging;
 use crate::message::{Message, ToolDefinition};
+use crate::session::StoredMessage;
 
 impl Agent {
     pub(crate) fn runtime_skills_snapshot(&self) -> serde_json::Value {
@@ -34,8 +35,12 @@ impl Agent {
 
     pub(crate) async fn runtime_context_snapshot(&self) -> serde_json::Value {
         let mut context = self.debug_context().await;
-        context["messages"] = serde_json::json!(self.session.visible_conversation_messages());
-        context["context_window"] = serde_json::json!(self.provider_context_window());
+        let messages = self.session.visible_conversation_messages();
+        let context_window = self.provider_context_window();
+        let tokens = Self::context_token_estimate(&context, &messages, context_window);
+        context["tokens"] = tokens;
+        context["messages"] = serde_json::json!(messages);
+        context["context_window"] = serde_json::json!(context_window);
         context
     }
 
@@ -71,6 +76,67 @@ impl Agent {
             "locked_tool_names": locked_tool_names,
             "effective_tools": effective_tools,
             "current_tools": current_tools,
+        })
+    }
+
+    /// Token estimates for the `/context` report.
+    ///
+    /// The payload the command returns carries the text of the prompt, the tools and
+    /// the conversation but no counts, and the terminal client may not link an
+    /// estimator (its only workspace dependencies are the SDK and the contract
+    /// crate). One measurement therefore lives here, priced by the same
+    /// content-aware estimator the prompt prefix log uses: the system prompt by its
+    /// text, each tool by its name, description and schema, and each visible message
+    /// by its content blocks plus one token of framing.
+    ///
+    /// These are estimates, not provider-reported usage: only a completed request
+    /// reports that, and it covers a request that already carried the conversation.
+    fn context_token_estimate(
+        context: &serde_json::Value,
+        messages: &[&StoredMessage],
+        context_window: usize,
+    ) -> serde_json::Value {
+        let price = crate::util::estimate_tokens;
+        let prompt = &context["system_prompt"];
+        let static_tokens = prompt["static"].as_str().map_or(0, price);
+        let dynamic_tokens = prompt["dynamic"].as_str().map_or(0, price);
+        let mut eager = 0;
+        let mut deferred = 0;
+        let mut count = 0;
+        let mut deferred_count = 0;
+        for tool in context["effective_tools"].as_array().into_iter().flatten() {
+            let tokens = tool["name"].as_str().map_or(0, price)
+                + tool["description"].as_str().map_or(0, price)
+                + tool.get("input_schema").map_or(0, |schema| price(&schema.to_string()));
+            if tool["defer_loading"].as_bool().unwrap_or(false) {
+                deferred += tokens;
+                deferred_count += 1;
+            } else {
+                eager += tokens;
+            }
+            count += 1;
+        }
+        // One token per message for the framing `message_token_count` charges,
+        // without building a `Message` for every stored row.
+        let message_tokens: usize = messages
+            .iter()
+            .map(|message| crate::compaction::content_token_count(&message.content) + 1)
+            .sum();
+        serde_json::json!({
+            "system": {
+                "static": static_tokens,
+                "dynamic": dynamic_tokens,
+                "total": static_tokens + dynamic_tokens,
+            },
+            "tools": {
+                "eager": eager,
+                "deferred": deferred,
+                "total": eager + deferred,
+                "count": count,
+                "deferred_count": deferred_count,
+            },
+            "messages": { "total": message_tokens, "count": messages.len() },
+            "context_window": context_window,
         })
     }
 
@@ -365,5 +431,30 @@ mod tests {
             memory_guidance(None).is_none(),
             "with no digest written yet, a turn carries no memory guidance of its own"
         );
+    }
+
+    #[test]
+    fn context_token_estimate_prices_each_part_of_the_next_request() {
+        // This module is the lib-test cohort CI runs for this file, so the
+        // breakdown the terminal client draws is asserted here rather than only
+        // beside the command handler.
+        let context = serde_json::json!({
+            "system_prompt": {"static": "You are HoronAgent. ".repeat(8), "dynamic": ""},
+            "effective_tools": [
+                {"name": "bash", "description": "run a command", "input_schema": {"type": "object"}},
+                {"name": "slow", "description": "a deferred tool", "input_schema": {}, "defer_loading": true},
+            ],
+        });
+        let tokens = Agent::context_token_estimate(&context, &[], 200_000);
+        assert!(tokens["system"]["total"].as_u64().unwrap_or(0) > 0, "{tokens}");
+        assert_eq!(tokens["tools"]["count"], 2, "{tokens}");
+        assert_eq!(tokens["tools"]["deferred_count"], 1, "{tokens}");
+        assert!(
+            tokens["tools"]["total"].as_u64().unwrap_or(0) > tokens["tools"]["eager"].as_u64().unwrap_or(0),
+            "{tokens}"
+        );
+        assert_eq!(tokens["messages"]["count"], 0, "{tokens}");
+        assert_eq!(tokens["messages"]["total"], 0, "{tokens}");
+        assert_eq!(tokens["context_window"], 200_000, "{tokens}");
     }
 }

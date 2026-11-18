@@ -4,7 +4,7 @@ Language: **English** | [한국어](README.ko.md)
 
 This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
 
-The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) is a separate set of pages written in `packages/docs`; nothing generates it from this folder, so a behavior change that the site also describes is edited in both places.
+The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) shows them under its Reference tab: `scripts/ci/sync_docs_site.py` writes `packages/docs-site/reference/` from this folder, and the guides in the rest of `packages/docs-site` are written by hand, so a behavior change that a guide also describes is edited in both places.
 
 ## Two modes, one agent
 
@@ -25,6 +25,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | Folder | Document | Contents |
 | --- | --- | --- |
 | `docs/` | [`README.md`](README.md) | This index and the update rules |
+| `diagram/` | [`README.md`](diagram/README.md) | Eight hand-written SVG diagrams with the code paths each one draws: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading, branch and release flow |
 | `architecture/` | [`SERVER.md`](architecture/SERVER.md) | Server, session, and socket structure |
 | | [`CRATES.md`](architecture/CRATES.md) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
@@ -35,7 +36,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
-| | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, commands, the settings screen, installing the optional asset, limits |
+| | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, the multi-line editor, the transcript and its scrollback, turn state, prompts, the slash popup, the model and session pickers, commands, the settings screen, installing the optional asset, limits |
 | | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
 | | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
@@ -54,9 +55,10 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 
 | When this changes | Do this |
 | --- | --- |
-| Current behavior changes | Edit the document that describes that behavior. |
+| Current behavior changes | Edit the document that describes that behavior, and the diagram in `diagram/` that draws it, in the same change. |
 | You want a new document | First consider adding a section to an existing document in the right folder. A new file gets an uppercase name and a row in this table. |
 | A document moves or is deleted | Fix this table and the paths in code, scripts, and tests in the same change. |
 | The same content appears in two documents | Make one the source of truth and have the other point at it. |
 | You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
 | You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
+| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the changed pages under `packages/docs-site/reference/` and `packages/docs-site/ko/reference/`, together with any regenerated images under `packages/docs-site/images/reference/`. CI checks all three directories. |

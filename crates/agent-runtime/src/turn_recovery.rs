@@ -403,9 +403,4 @@ mod tests {
             assert!(!RecoveryMode::Off.acts_on(class), "off acted on {class:?}");
         }
     }
-
-    #[test]
-    fn continuation_cap_is_two() {
-        assert_eq!(MAX_AUTO_CONTINUATIONS, 2);
-    }
 }

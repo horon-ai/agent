@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" width="960" height="700" role="img" aria-labelledby="t d">
+<title id="t">턴 생명주기</title><desc id="d">데몬의 요청 루프가 읽은 프롬프트가 턴을 시작한다. 에이전트는 새 TurnState를 열고 프로필의 type이 가리키는 회선으로 요청을 하나 보낸 뒤 응답을 이벤트로 흘려보낸다. 도구 호출은 요청에 실려 있던 즉시 스키마로 바로 실행하거나, 지연된 도구는 toolbox를 거쳐 실행하고 결과는 모두 다음 요청으로 돌아간다. 남은 도구 호출이 없으면 턴이 끝나고 마지막 이벤트가 턴을 닫는다. 이벤트는 세션 저장소에 추가되고 세션에 붙은 클라이언트로 팬아웃된다. #339(0f2711ef) 이후로 턴은 종료 이벤트보다 먼저 완료 보고를 요청 루프로 보내므로 Done을 받고 보낸 프롬프트가 바쁜 세션을 만나지 않고, 취소는 500ms까지만 세션 팬아웃 전달자를 비운 뒤 Interrupted와 Done을 쓴다.</desc>
+<style>
+:root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
+@media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
+text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;fill:var(--fg)}
+.m{fill:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+</style>
+<rect width="960" height="700" rx="14" fill="var(--bg)"/>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>
+
+<text x="30" y="30" font-size="12.5" class="m">턴</text>
+<text x="560" y="30" font-size="12.5" class="m">단계마다 남는 것</text>
+
+<rect x="30" y="44" width="470" height="620" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+
+<rect x="44" y="60" width="380" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="79" font-size="13" font-weight="600" text-anchor="middle">프롬프트</text>
+<text x="234" y="96" font-size="11" class="m mono" text-anchor="middle">message 프레임</text>
+<line x1="234" y1="106" x2="234" y2="118" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="118" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="138" font-size="12.5" font-weight="600" text-anchor="middle">요청 루프가 턴을 가져감</text>
+<text x="234" y="157" font-size="11" class="m mono" text-anchor="middle">handle_client</text>
+<line x1="234" y1="170" x2="234" y2="182" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="182" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--a)" stroke-width="1.5"/>
+<text x="234" y="202" font-size="12.5" font-weight="600" text-anchor="middle">턴 상태</text>
+<text x="234" y="221" font-size="11" class="m mono" text-anchor="middle">begin_turn_state → TurnState</text>
+<line x1="234" y1="234" x2="234" y2="246" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="246" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="266" font-size="12.5" font-weight="600" text-anchor="middle">프로바이더 요청</text>
+<text x="234" y="285" font-size="11" class="m mono" text-anchor="middle">프로필 type의 회선으로 POST</text>
+<line x1="234" y1="298" x2="234" y2="310" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="310" width="380" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="330" font-size="12.5" font-weight="600" text-anchor="middle">스트리밍 응답</text>
+<text x="234" y="349" font-size="11" class="m mono" text-anchor="middle">텍스트 델타, 추론, 도구 호출</text>
+<line x1="234" y1="362" x2="234" y2="374" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="374" width="380" height="66" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="394" font-size="12.5" font-weight="600" text-anchor="middle">도구 호출</text>
+<text x="234" y="412" font-size="11" class="m mono" text-anchor="middle">즉시 스키마는 그대로 실행</text>
+<text x="234" y="429" font-size="11" class="m mono" text-anchor="middle">지연 도구는 toolbox로 실행</text>
+<line x1="234" y1="440" x2="234" y2="452" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<rect x="44" y="452" width="380" height="46" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="471" font-size="12.5" font-weight="600" text-anchor="middle">도구 결과</text>
+<text x="234" y="488" font-size="11" class="m mono" text-anchor="middle">호출과 짝을 이룬다</text>
+
+<path d="M424 475 H470 V272 H424" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="492" y="382" font-size="10" class="m" transform="rotate(90 492 382)">도구가 남음</text>
+
+<line x1="234" y1="498" x2="234" y2="520" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="244" y="514" font-size="10" class="m">남은 도구 호출 없음</text>
+
+<rect x="44" y="520" width="380" height="60" rx="8" fill="var(--bg)" stroke="var(--ok)" stroke-width="1.5"/>
+<text x="234" y="541" font-size="12.5" font-weight="600" text-anchor="middle">종료</text>
+<text x="234" y="559" font-size="11" class="m mono" text-anchor="middle">완료 보고를 먼저,</text>
+<text x="234" y="574" font-size="11" class="m mono" text-anchor="middle">그다음 종료 이벤트 Done</text>
+
+<rect x="44" y="592" width="380" height="56" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="234" y="612" font-size="11.5" text-anchor="middle">다음 프롬프트는 이미 닫힌 턴을 만나므로</text>
+<text x="234" y="630" font-size="11.5" text-anchor="middle">"Already processing a message"가 나오지 않는다</text>
+
+<rect x="560" y="44" width="370" height="196" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="574" y="66" font-size="12.5" class="m">세션 저장소, 추가 전용</text>
+<rect x="574" y="78" width="342" height="52" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="745" y="98" font-size="12" class="mono" text-anchor="middle">~/.horon/sessions/&lt;id&gt;/events.jsonl</text>
+<text x="745" y="117" font-size="11" class="m" text-anchor="middle">원본. 턴의 모든 이벤트가 여기 붙는다</text>
+<rect x="574" y="140" width="342" height="86" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="745" y="160" font-size="12" text-anchor="middle">이 로그에서 다시 만드는 파생 캐시</text>
+<text x="745" y="179" font-size="11" class="m mono" text-anchor="middle">checkpoint.json  sparse-index.jsonl</text>
+<text x="745" y="197" font-size="11" class="m mono" text-anchor="middle">summary.json  facade-cache.json</text>
+<text x="745" y="215" font-size="11" class="m" text-anchor="middle">각 캐시는 로그의 Stamp를 함께 보관한다</text>
+
+<rect x="560" y="256" width="370" height="150" rx="12" fill="var(--panel)" stroke="var(--line)" stroke-width="1"/>
+<text x="574" y="278" font-size="12.5" class="m">세션에 붙은 클라이언트로 가는 팬아웃</text>
+<rect x="574" y="290" width="342" height="100" rx="8" fill="var(--bg)" stroke="var(--line)" stroke-width="1"/>
+<text x="745" y="309" font-size="11" class="mono" text-anchor="middle">session_event_fanout_sender</text>
+<text x="745" y="325" font-size="11" class="mono" text-anchor="middle">_with_fallback</text>
+<text x="745" y="346" font-size="11" class="m" text-anchor="middle">턴마다 전달자 작업 하나. 살아 있는 클라이언트</text>
+<text x="745" y="364" font-size="11" class="m" text-anchor="middle">모두에게 보내고, 없으면 대체 경로로 넘긴다</text>
+
+<rect x="560" y="422" width="370" height="226" rx="12" fill="var(--panel)" stroke="var(--b)" stroke-width="1.5"/>
+<text x="574" y="444" font-size="12.5" font-weight="600">순서 규칙 (#339, 0f2711ef)</text>
+<text x="574" y="470" font-size="11.5">루프는 끝난 턴의 보고를 클라이언트 입력보다</text>
+<text x="574" y="487" font-size="11.5">먼저 읽고, 턴은 그 보고를 종료 이벤트보다</text>
+<text x="574" y="504" font-size="11.5">먼저 보낸다.</text>
+<text x="574" y="530" font-size="11.5">취소는 세션 전달자를 500ms까지만 비운 뒤</text>
+<text x="574" y="547" font-size="11.5">다음을 쓴다.</text>
+<text x="574" y="566" font-size="11.5" class="mono">Interrupted</text>
+<text x="662" y="566" font-size="11.5">와</text>
+<text x="686" y="566" font-size="11.5" class="mono">Done</text>
+<text x="574" y="602" font-size="11.5">그래서 취소된 턴의 마지막 도구 프레임이</text>
+<text x="574" y="619" font-size="11.5">다음 프롬프트 안으로 들어가지 않는다.</text>
+<text x="574" y="637" font-size="11" class="m mono">fanout_flush.rs · state.rs · client_lifecycle.rs</text>
+
+<line x1="520" y1="331" x2="556" y2="331" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+<text x="480" y="686" font-size="12" class="m" text-anchor="middle">모델이 도구를 그만 요구하면 턴이 끝난다. 저장소는 로그를, 전달자는 클라이언트를 맞춰 둔다.</text>
+</svg>

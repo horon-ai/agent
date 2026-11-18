@@ -3,6 +3,7 @@
 use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -18,7 +19,7 @@ fn event(
         EventId::new_v4(),
         parent.map(|event| event.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(kind),
         payload,
     )

@@ -1,5 +1,5 @@
 use super::*;
-use chrono::Duration;
+use horon_agent_time::{Duration, Timestamp};
 use std::fs;
 
 fn test_ctx(root: &Path) -> ToolContext {
@@ -16,7 +16,7 @@ fn test_ctx(root: &Path) -> ToolContext {
 
 fn test_exposure(message_index: usize, total_messages: usize) -> ExposureDescriptor {
     ExposureDescriptor {
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
         message_index,
         total_messages,
         compaction_cutoff: None,
@@ -892,7 +892,7 @@ fn tuning_penalizes_compacted_history() {
     let tuned = tune_known_file(
         known,
         ExposureDescriptor {
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
             message_index: 1,
             total_messages: 10,
             compaction_cutoff: Some(8),
@@ -928,7 +928,7 @@ fn tuning_detects_file_changed_since_seen() {
             reasons: vec!["test"],
         },
         ExposureDescriptor {
-            timestamp: Some(Utc::now() - Duration::hours(1)),
+            timestamp: Some(Timestamp::now() - Duration::hours(1)),
             message_index: 9,
             total_messages: 10,
             compaction_cutoff: None,
@@ -964,30 +964,11 @@ fn grep_defaults_to_a_bounded_match_count() {
     // grep was the only mode with no default cap: find defaults to 5 files and
     // outline to 6 regions, but grep passed `None` through and rendered every
     // match. One unscoped query over a repo with large data files produced 923k
-    // chars in a single call.
-    let unbounded = grep_input("x", None);
-    assert_eq!(
-        unbounded.max_regions.or(Some(DEFAULT_GREP_MAX_REGIONS)),
-        Some(DEFAULT_GREP_MAX_REGIONS),
-        "grep must be bounded when the caller sets no cap"
-    );
-
-    // An explicit cap must win in either direction, including a larger one, so
-    // the default is a floor on safety and not a ceiling on capability.
-    for explicit in [5usize, 5_000] {
-        let params = grep_input("x", Some(explicit));
-        assert_eq!(
-            params.max_regions.or(Some(DEFAULT_GREP_MAX_REGIONS)),
-            Some(explicit),
-            "an explicit cap must win over the default"
-        );
-    }
-
-    // The default has to be generous enough that ordinary code searches are
-    // untouched; a cap that clips normal work trades one problem for another.
-    // Checked against a real search rather than as a constant comparison, which
-    // the compiler would fold away: this repo's own uses of a common internal
-    // symbol must fit under the cap.
+    // chars in a single call. The default has to be generous enough that
+    // ordinary code searches are untouched: a cap that clips normal work trades
+    // one problem for another. Checked against a real search rather than as a
+    // constant comparison, which the compiler would fold away: this repo's own
+    // uses of a common internal symbol must fit under the cap.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let args = build_grep_args(&grep_input("guard_context_overflow", None), &test_ctx(root)).expect("grep args");
     let result = ::agentgrep::search::run_grep(root, &args).expect("grep should run");

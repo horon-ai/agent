@@ -13,8 +13,9 @@
 //! [`install_panic_hook`] runs. Tool operations are recorded only while bundles
 //! are enabled, so the ring stays empty otherwise.
 
-use crate::message::redact_secrets;
+use crate::message::{redact_secrets, redact_secrets_cow};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::panic::{self, PanicHookInfo};
@@ -27,6 +28,24 @@ pub const OPERATION_RING_CAPACITY: usize = 64;
 const BUNDLE_SCHEMA: u32 = 1;
 const MAX_FIELD_CHARS: usize = 2_048;
 const MAX_TOOL_CHARS: usize = 128;
+
+/// Largest serialization buffer a thread keeps between dispatches.
+const SCRATCH_KEEP_BYTES: usize = 64 * 1024;
+
+const UNSERIALIZABLE_INPUT: &str = "<unserializable input>";
+
+/// Appended to a field that was cut at its character limit.
+const TRUNCATED_SUFFIX: &str = "[truncated]";
+
+thread_local! {
+    /// The serialized input of the dispatch being recorded.
+    ///
+    /// The text is scanned for secrets and at most [`MAX_FIELD_CHARS`] of it is
+    /// kept, so a buffer per call would be allocated, filled and dropped on
+    /// every tool dispatch. Each thread reuses one buffer instead, and gives it
+    /// back to the allocator when one input grew it past [`SCRATCH_KEEP_BYTES`].
+    static SERIALIZE_SCRATCH: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
 
 static OPERATION_SEQ: AtomicU64 = AtomicU64::new(1);
 
@@ -93,17 +112,57 @@ pub fn record_tool_operation(tool: &str, input: &serde_json::Value) {
         return;
     }
 
-    let serialized = serde_json::to_string(input).unwrap_or_else(|_| "<unserializable input>".to_string());
-    let record = OperationRecord {
-        seq: OPERATION_SEQ.fetch_add(1, Ordering::Relaxed),
-        tool: truncate_chars(&redact_secrets(tool), MAX_TOOL_CHARS),
-        detail: truncate_chars(&redact_secrets(&serialized), MAX_FIELD_CHARS),
-    };
+    let recorded = SERIALIZE_SCRATCH.try_with(|scratch| {
+        // Taking the buffer leaves an empty one behind, so a dispatch that
+        // re-enters on this thread serializes into its own.
+        let mut buffer = scratch.take();
+        buffer.clear();
+        record_serialized_operation(tool, serialize_input(&mut buffer, input));
+        if buffer.capacity() <= SCRATCH_KEEP_BYTES {
+            scratch.replace(buffer);
+        }
+    });
+    if recorded.is_err() {
+        // The thread's locals are being destroyed: record without the scratch.
+        let mut buffer = Vec::new();
+        record_serialized_operation(tool, serialize_input(&mut buffer, input));
+    }
+}
+
+/// Serialize `input` into `buffer` and return the text, as `serde_json::to_string` would.
+fn serialize_input<'a>(buffer: &'a mut Vec<u8>, input: &serde_json::Value) -> &'a str {
+    match serde_json::to_writer(&mut *buffer, input) {
+        Ok(()) => std::str::from_utf8(buffer).unwrap_or(UNSERIALIZABLE_INPUT),
+        Err(_) => UNSERIALIZABLE_INPUT,
+    }
+}
+
+/// Redact, truncate and store one dispatch.
+///
+/// The stored text is `truncate_chars(&redact_secrets(..), limit)` for both
+/// fields. A slot evicted from a full ring gives its two strings to the new
+/// record, so a steady stream of dispatches stops allocating for the ring.
+fn record_serialized_operation(tool: &str, serialized: &str) {
+    let seq = OPERATION_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tool = redact_secrets_cow(tool);
+    let detail = redact_secrets_cow(serialized);
+    let tool_cut = cut_index(&tool, MAX_TOOL_CHARS);
+    let detail_cut = cut_index(&detail, MAX_FIELD_CHARS);
 
     let mut operations = operations();
-    if operations.len() == OPERATION_RING_CAPACITY {
-        operations.pop_front();
-    }
+    let evicted = if operations.len() == OPERATION_RING_CAPACITY {
+        operations.pop_front()
+    } else {
+        None
+    };
+    let mut record = evicted.unwrap_or_else(|| OperationRecord {
+        seq,
+        tool: String::new(),
+        detail: String::new(),
+    });
+    record.seq = seq;
+    replace_truncated(&mut record.tool, &tool, tool_cut);
+    replace_truncated(&mut record.detail, &detail, detail_cut);
     operations.push_back(record);
 }
 
@@ -158,7 +217,7 @@ fn write_bundle(info: &PanicHookInfo<'_>) -> io::Result<PathBuf> {
 fn bundle_stamp() -> String {
     format!(
         "{}-p{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
+        crate::util::utc_stamp_millis(horon_agent_time::Timestamp::now()),
         std::process::id()
     )
 }
@@ -238,15 +297,28 @@ fn redact_field(text: &str) -> String {
     truncate_chars(&redact_secrets(text), MAX_FIELD_CHARS)
 }
 
-fn truncate_chars(text: &str, limit: usize) -> String {
-    match text.char_indices().nth(limit) {
-        Some((index, _)) => {
-            let mut truncated = text[..index].to_string();
-            truncated.push_str("[truncated]");
-            truncated
+/// Byte offset of the cut when `text` is longer than `limit` characters.
+fn cut_index(text: &str, limit: usize) -> Option<usize> {
+    text.char_indices().nth(limit).map(|(index, _)| index)
+}
+
+/// Overwrite `target` with `text`, cut at `cut` and marked when it was cut.
+fn replace_truncated(target: &mut String, text: &str, cut: Option<usize>) {
+    target.clear();
+    match cut {
+        Some(index) => {
+            target.reserve(index + TRUNCATED_SUFFIX.len());
+            target.push_str(&text[..index]);
+            target.push_str(TRUNCATED_SUFFIX);
         }
-        None => text.to_string(),
+        None => target.push_str(text),
     }
+}
+
+fn truncate_chars(text: &str, limit: usize) -> String {
+    let mut truncated = String::new();
+    replace_truncated(&mut truncated, text, cut_index(text, limit));
+    truncated
 }
 
 fn single_line(text: &str) -> String {
@@ -256,3 +328,7 @@ fn single_line(text: &str) -> String {
 #[cfg(test)]
 #[path = "crash_tests.rs"]
 mod crash_tests;
+
+#[cfg(test)]
+#[path = "crash_ring_tests.rs"]
+mod ring_tests;

@@ -1,4 +1,4 @@
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 
 use super::model::{StoredReplayEvent, StoredReplayEventKind};
 
@@ -15,7 +15,7 @@ impl super::Session {
             refused: refused.map(str::to_string),
         };
         let event = StoredReplayEvent {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             kind,
         };
         self.memory_profile_cache.replay_events_count += 1;

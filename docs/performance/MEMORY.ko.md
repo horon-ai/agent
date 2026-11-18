@@ -26,20 +26,25 @@
 임시 계측을 새로 넣지 말고 기존 디버그 표면을 쓴다.
 
 - 디버그 소켓을 통한 에이전트·세션 메모리 프로필: `agent:memory`
-  (`crates/app-core/src/server/debug_command_exec.rs:401`)
+  (`crates/app-core/src/server/debug_command_exec.rs:434`)
 - 서버 사고 빠른 분류: `server:memory-incident`
-  (`crates/app-core/src/server/debug_server_state.rs:170`)
+  (`crates/app-core/src/server/debug_server_state.rs:165`)
 - 서버 전체 귀속: `server:memory`
-  (`crates/app-core/src/server/debug_server_state.rs:184`)
+  (`crates/app-core/src/server/debug_server_state.rs:179`)
 - 프로세스 수명 타임라인: `python scripts/perf/analyze_memory_log.py --days 1`
+- 세션 집단 비교: `python3 scripts/perf/bench_compare.py --scenarios sessions`가 idle과 턴 직후
+  표본마다 프로세스 트리 RSS 옆에 살아 있는 프로세스 수를 남긴다. 세션당 메모리 증가분을
+  그 세션이 데몬 안의 스레드인지 따로 뜬 프로세스인지와 함께 읽기 위해서다
+  (`docs/performance/BENCHMARK.ko.md`의 `process_count`)
 
 코드의 주요 출처:
 - `crates/base/src/runtime_memory_log.rs`
 - `crates/app-core/src/server/debug_server_state.rs`
 
 터미널 UI를 쓰던 `:debug memory`, `:debug markdown:memory` 같은 표면은 이 빌드에 없다.
-터미널 클라이언트 `horon-tui`는 스타일만 입힌 평문을 그리고 마크다운·다이어그램 캐시를 두지
-않으므로, 그 캐시에 걸려 있던 상한도 여기에 대응하는 자리가 없어 이 문서에서 내렸다.
+터미널 클라이언트 `horon-tui`는 그리는 동안 어시스턴트의 마크다운을 렌더링하고, 렌더된 행과
+소스, 하이라이트, 이미지의 캐시는 두지 않으므로, 그 캐시에 걸려 있던 상한도 여기에 대응하는
+자리가 없어 이 문서에서 내렸다.
 
 ### 예산 모델
 
@@ -60,14 +65,14 @@
 출처: `crates/base/src/runtime_memory_log.rs`
 
 로그 파일, 보류 이벤트 큐, 샘플링 간격은 코드가 직접 막는 값이다. 샘플링 간격
-상한은 설정에서 더 작은 값을 줘도 그 아래로 내려가지 않는다 (`crates/base/src/runtime_memory_log.rs:482-495`, `:521-524`).
+상한은 설정에서 더 작은 값을 줘도 그 아래로 내려가지 않는다 (`crates/base/src/runtime_memory_log.rs:474-479`, `:513-518`).
 
 | 지표 | 예산 | 이유 |
 |---|---:|---|
-| 서버 로그 파일 수 | `<= 90` | `MAX_SERVER_LOG_FILES`. 넘으면 오래된 파일부터 지운다(`:19`, `:602-606`) |
+| 서버 로그 파일 수 | `<= 90` | `MAX_SERVER_LOG_FILES`. 넘으면 오래된 파일부터 지운다(`:19`, `:594-600`) |
 | 클라이언트 로그 파일 수 | `<= 90` | `MAX_CLIENT_LOG_FILES`(`:28`) |
-| 보류 이벤트 수 | `<= 64` | `MAX_PENDING_EVENTS`. 넘으면 오래된 이벤트를 버린다(`:31`, `:343-344`) |
-| 보류 범주 수 | `<= 8` | `MAX_PENDING_CATEGORIES`(`:32`, `:364`) |
+| 보류 이벤트 수 | `<= 64` | `MAX_PENDING_EVENTS`. 넘으면 오래된 이벤트를 버린다(`:31`, `:335-336`) |
+| 보류 범주 수 | `<= 8` | `MAX_PENDING_CATEGORIES`(`:32`, `:356`) |
 | 프로세스 샘플 간격 | `>= 15s` | `MIN_PROCESS_INTERVAL_SECS`(`:10`) |
 | 귀속 샘플 간격 | `>= 60s` | `MIN_ATTRIBUTION_INTERVAL_SECS`(`:12`) |
 
@@ -79,14 +84,29 @@
 #### Markdown 캐시 예산
 
 이전 TUI는 마크다운과 다이어그램을 그리고 하이라이트·렌더·소스·이미지 상태 캐시에 명시적
-상한을 두었다. 배포되는 `horon-tui`는 스타일만 입힌 평문을 그리고 그 캐시를 두지 않으므로
-지킬 상한도 없다. 대응하는 캐시를 다시 들이면 그때 상한과 근거를 이 절에 되살린다.
+상한을 두었다. 배포되는 `horon-tui`는 그리는 동안 어시스턴트의 마크다운을 렌더링하고 그 캐시를
+두지 않는다. `crates/tui/src/markdown.rs`는 그리는 프레임을 위해 글을 스타일 입힌 행으로 바꾸고
+프레임 사이에는 아무것도 남기지 않으며, 상한을 걸 하이라이트·소스·이미지 상태도 없다.
+
+항목마다 남기는 것은 렌더 결과가 아니라 측정값이다. `Scroll`이 확정된 트랜스크립트 항목과 열려
+있는 버퍼 둘의 줄바꿈된 행 수를 `Tally`로 들고 있고(`crates/tui/src/scroll.rs`), 이것이 붙잡아
+둔 보기를 대화를 다시 줄바꿈하지 않고 제자리에 두게 한다. 그 측정값은 항목마다 `usize` 하나이고,
+화면 너비가 바뀌거나 마크다운 설정이 바뀌어 무효가 될 때 다시 만든다. 그 사이에 측정하는 프레임은
+이미 가진 높이를 그대로 두되, 마지막으로 확정된 항목 하나는 매번 잘라 내고 다시 재며(`Scroll::measure`),
+마지막 측정이 보지 못한 항목도 함께 잰다. 측정은 보기를 끝에서 떼어 둔 동안에만 돌고, 끝에 있는
+프레임은 아무것도 세지 않아 측정값을 건드리지 않는다. 측정값은 항목 수를 따라가고 그 글의 크기를
+따라가지 않으며, 코드에 상한은 두지 않았다. 렌더된 행의 캐시를 다시 들이면 그때 상한과 근거를 이
+절에 되살린다.
+
+그 held 경로의 비용도 잰다. `crates/tui/examples/scroll_bench.rs`가 긴 도구 출력 하나를 펼친 뒤 실제 `shift+up`이
+그리는 held 프레임을 모두 재므로, 가장 새 항목이나 보기 아래 블록을 줄바꿈하는 방식이 바뀌면 끝을 따라가는
+프레임 숫자 뒤에 숨지 않고 `tui` 묶음의 `scroll` 표에 드러난다.
 
 ### 래칫 기대값
 
 #### 세션과 트랜스크립트 메모리
 
-출처: `crates/app-core/src/server/debug_server_state.rs:660-760`
+출처: `crates/app-core/src/server/debug_server_state.rs:641-745`
 
 아직 엄격한 상한은 아니지만 기대하는 관계는 있다. `agent:memory`와
 `server:memory`가 세션별로 합산해 내보내는 값이다.

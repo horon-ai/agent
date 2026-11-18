@@ -135,12 +135,14 @@
 mod cancellable_work;
 mod client;
 pub mod collections;
+mod connect_options;
 mod diagnostics;
 mod errors;
 mod export;
 mod handoff;
 mod launch;
 mod message_modes;
+mod reports;
 mod ssh;
 mod structured;
 pub mod turn_retry;
@@ -172,6 +174,7 @@ pub use launch::{
     LaunchOptions, LaunchedInstance, WakeMode, ensure_runtime, inherit_credentials, launch_instance, socket_accepts,
     user_app_config_dir, user_horon_agent_home, wait_for_socket,
 };
+pub use reports::UsageReport;
 pub use ssh::SshConnectOptions;
 #[cfg(unix)]
 pub use ssh::{SharedSshTransport, WeakSharedSshTransport};

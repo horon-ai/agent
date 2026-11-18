@@ -58,7 +58,7 @@
 
 나머지는 기본값인 장벽에 남는데, `write`, `edit`, `replace`, `apply_patch`,
 `batch`, `mcp`, `skill_manage`가 그렇습니다. 레지스트리
-조회는 제공자 별칭을 해석하고, 자기에게 없는 이름에는 `ToolEffects::write()`로 답합니다 (`crates/app-core/src/tool/mod.rs:1320` `Registry::effects_for_call`).
+조회는 제공자 별칭을 해석하고, 자기에게 없는 이름에는 `ToolEffects::write()`로 답합니다 (`crates/app-core/src/tool/mod.rs:1332` `Registry::effects_for_call`).
 
 ## 그룹당 상한 두 개
 
@@ -98,7 +98,7 @@ API 요청을 쓰기 때문입니다.
 ## 컨텍스트 예산
 
 실행된 도구는 출력을 도구 계층의 넘침 가드에 통과시킵니다
-(`crates/app-core/src/tool/mod.rs:2295` `self.guard_context_overflow`, `guard_context_overflow` 안의 검사, `tool/mod.rs:2330` `guard_context_overflow`).
+(`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, `guard_context_overflow` 안의 검사, `tool/mod.rs:2330` `guard_context_overflow`).
 그 가드는 출력을 `token_budget()` 곱하기 `CONTEXT_GUARD_THRESHOLD`와
 비교합니다(0.90, `tool/mod.rs:1754` `CONTEXT_GUARD_THRESHOLD`, 비교는 `tool/mod.rs:2352` `needs_truncation`).
 
@@ -369,7 +369,7 @@ loop_guard = false
 않으므로(`turn_streaming_mpsc.rs:1913` `running_tool_registry`), 그룹이 도는 동안
 올린 요청은 호출을 옮기는 대신 `moved: false`로 보고합니다
 (`turn_streaming_mpsc.rs:2562` `run_group`). 응답은 레지스트리 항목과 시그널로
-계산하고(`crates/app-core/src/server/client_lifecycle.rs:1517` `move_tool_to_background`),
+계산하고(`crates/app-core/src/server/client_lifecycle.rs:1525` `move_tool_to_background`),
 이벤트 모양은 `moved`를 담고 `tool_call_id`와 `tool_name`은 없습니다 (`crates/protocol/src/wire/events.rs:320` `BackgroundToolResult`).
 
 시그널은 그룹 뒤에 지우므로, 그룹 중에 들어온 시그널이 다음 구성원 하나짜리 호출을
@@ -398,7 +398,7 @@ loop_guard = false
 직접 읽습니다(`turn_streaming_mpsc.rs:1663` `has_urgent_interrupt`). 여러 구성원
 그룹이 도는 동안에는 종료 시그널과 인터럽트 큐를 모두 지켜보는 취소를
 `run_group`에 넘깁니다(`turn_streaming_mpsc.rs:2558` `watching_interrupt`,
-`tool_round.rs:74` `GroupCancel::new`). 그 감시는 큐에 대한 술어이고, 구성원이
+`tool_round.rs:84` `GroupCancel::new`). 그 감시는 큐에 대한 술어이고, 구성원이
 실행 중인 동안 그룹이 `INTERRUPT_POLL_INTERVAL`마다 다시 읽으므로
 (`tool_round.rs:68` `INTERRUPT_POLL_INTERVAL`, `tool_round.rs:424` `poll_for_interrupt`), 정지가 나면 끝나지 않은 구성원을 중단시키고 모든 유료 요청을 끝까지 돌리지
 않습니다. 25 ms는 폴링 간격이지 보장된 지연이 아닙니다. 정지는 다음 틱에

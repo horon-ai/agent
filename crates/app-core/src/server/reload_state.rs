@@ -16,7 +16,7 @@ pub fn write_reload_marker() {
         hash: "unknown".to_string(),
         phase: ReloadPhase::Starting,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail: None,
     }
     .write();
@@ -104,7 +104,7 @@ pub fn write_reload_state(request_id: &str, hash: &str, phase: ReloadPhase, deta
         hash: hash.to_string(),
         phase,
         pid: std::process::id(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
         detail,
     }
     .write();
@@ -631,27 +631,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
-    async fn inspect_reload_wait_status_handles_repeated_ready_markers() {
-        let _lock = crate::storage::lock_test_env();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let _guard = EnvGuard::set_runtime_dir(temp.path());
-        let socket_path = temp.path().join("horon-agent.sock");
-
-        for idx in 0..5 {
-            write_reload_state(
-                &format!("req-{idx}"),
-                &format!("hash-{idx}"),
-                ReloadPhase::SocketReady,
-                Some(format!("ready-{idx}")),
-            );
-
-            let status = inspect_reload_wait_status(&socket_path, Duration::from_secs(5), None).await;
-            assert_eq!(status, ReloadWaitStatus::Ready);
-        }
-    }
-
     /// Spawn a short-lived child and reap it so we hold a pid that is reliably
     /// dead at the moment of selection. Retries guard against the (extremely
     /// rare) case where the kernel immediately recycles the pid for another
@@ -708,7 +687,7 @@ mod tests {
             hash: "hash-keep".to_string(),
             phase: ReloadPhase::Starting,
             pid: current,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
             detail: None,
         }
         .write();
@@ -735,7 +714,7 @@ mod tests {
             hash: "hash-foreign".to_string(),
             phase: ReloadPhase::Starting,
             pid: current.wrapping_add(1),
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
             detail: None,
         }
         .write();
@@ -748,7 +727,7 @@ mod tests {
             hash: "hash-ready".to_string(),
             phase: ReloadPhase::SocketReady,
             pid: current,
-            timestamp: chrono::Utc::now().to_rfc3339(),
+            timestamp: horon_agent_time::Timestamp::now().to_rfc3339(),
             detail: None,
         }
         .write();

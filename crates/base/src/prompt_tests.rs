@@ -449,28 +449,26 @@ fn test_session_context_includes_time_timezone_and_system_info() {
 
 #[test]
 fn session_datetime_uses_the_supplied_local_date_time_and_offset() {
-    use chrono::TimeZone;
-
-    let local = chrono::FixedOffset::east_opt(5 * 60 * 60 + 30 * 60)
-        .unwrap()
-        .with_ymd_and_hms(2026, 8, 23, 0, 10, 9)
-        .unwrap();
+    let utc = time::macros::datetime!(2026-08-22 18:40:09 UTC);
+    let offset = time::UtcOffset::from_hms(5, 30, 0).expect("fixed offset");
 
     assert_eq!(
-        format_session_datetime(local),
+        format_session_datetime(utc, Ok(offset)),
         ["Date: 2026-08-23", "Time: 00:10:09", "Timezone: +05:30",]
     );
 }
 
 #[test]
 fn session_datetime_formats_utc_fallback_deterministically() {
-    use chrono::TimeZone;
-
-    let utc = chrono::Utc.with_ymd_and_hms(2026, 8, 22, 18, 40, 6).unwrap();
+    let utc = time::macros::datetime!(2026-08-22 18:40:06 UTC);
 
     assert_eq!(
-        format_session_datetime(utc),
+        format_session_datetime(utc, Err(time::error::IndeterminateOffset)),
         ["Date: 2026-08-22", "Time: 18:40:06", "Timezone: UTC"]
+    );
+    assert_eq!(
+        format_session_datetime(utc, Ok(time::UtcOffset::UTC))[2],
+        "Timezone: +00:00"
     );
 }
 

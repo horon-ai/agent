@@ -102,6 +102,43 @@ while `ForegroundGuard::close` forwards its idle state to every attachment (boun
 leaving the session idle until some unrelated turn drains it. A turn genuinely in flight
 still answers `None` at once and the message takes the queue path, as before.
 
+### A finished turn closes before the next prompt is read
+
+The request loop reads a finished turn's report ahead of client input
+(`crates/app-core/src/server/client_lifecycle.rs:829-833`, the biased
+`processing_done_rx.recv()` arm). The turn task sends that report before it
+sends its terminal event, so a client that answers `Done` with the next prompt
+finds the turn already closed instead of meeting `Already processing a
+message` (`crates/app-core/src/server/client_lifecycle.rs:3827-3835`). A rejected
+turn reports in the same order, before its error event
+(`crates/app-core/src/server/client_lifecycle.rs:3761-3763`). The next turn's
+task still holds the agent until this turn's idle state is out, so its `running`
+cannot precede that idle.
+
+A `message` with `no_reply` written on that terminal event is a context message:
+it starts no turn, so it is not refused for the tail that is still releasing the
+session. Turn state decides first: this connection's own turn, or a turn any
+surface registered (`turn_cancel_registry::has_active_turn`), answers the busy
+error at once, so a running turn never parks the sequential request loop. With
+no turn registered the message takes the agent once, waiting at most
+`AGENT_LOCK_BACKGROUND_WAIT` (500 ms) for the hold to end: a completion tail
+frees in microseconds, and a hold that outlives the bound is answered busy
+instead of parking the loop
+(`crates/app-core/src/server/client_lifecycle.rs:3502-3549`). The append runs
+under that single guard, so the message is stored exactly once and acknowledged
+with `ContextMessageAdded`.
+
+A cancel is the one reply the request loop writes straight to the client rather
+than through the turn's forwarder, so it waits for the session's forwarders to
+drain first: `fanout_flush::flush` with a 500 ms bound, then `Interrupted` and
+`Done` (`crates/app-core/src/server/client_lifecycle.rs:4032-4034`). Without that
+wait the cancelled turn's last tool frame would land after its `Done`, inside
+the next prompt. A forwarder registers its flush channel at spawn, answers a
+flush only when its event queue was empty when the request arrived, and drops
+the channel on exit; a session with no live forwarder returns at once, and a
+flush that runs out its bound logs a warning and lets the reply go
+(`crates/app-core/src/server/fanout_flush.rs`, `crates/app-core/src/server/state.rs:996`).
+
 ## Soft interrupts: seamless message injection
 
 ### Overview
@@ -280,8 +317,10 @@ session's runtime host, including SSH and managed remote runtimes.
 - `skills`: loaded global and project overlay skills, descriptions, paths, active
   skills, shared approval recommendations. Refreshes the global registry.
 - `context`: the assembled static and dynamic system prompt, effective and current tools,
-  active conversation messages, context window metadata. It injects no memory guidance,
-  prewarms no provider, and runs no inference.
+  active conversation messages, context window metadata, and a `tokens` object with an
+  estimate per part (system, tools, messages) plus the window, so a client can draw a
+  breakdown instead of printing the payload. It injects no memory guidance, prewarms no
+  provider, and runs no inference.
 - `info`: the real provider and session identity plus token and cache counters.
   Cache expiry and content inspection are unavailable and say so.
 - `memory`: toggle, explicit on/off/status, or schedule an `extract`. An extraction
@@ -353,7 +392,7 @@ feature stays unusable until both sides run the new code.
 `context_notes` gives the model a small notes file. `new_context` lets it decide
 that those notes are enough and start the next turn from a clean active context.
 The tool is registered only while `[tools] context_notes` is on
-(`crates/app-core/src/tool/mod.rs:1095`), because the rollover keeps exactly the
+(`crates/app-core/src/tool/mod.rs:1107`), because the rollover keeps exactly the
 notes the dynamic system prompt carries.
 
 The call itself only records a pending request keyed by session

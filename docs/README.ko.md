@@ -4,7 +4,7 @@
 
 이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
-문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 `packages/docs`에서 따로 쓴 문서 묶음이다. 이 폴더에서 생성하지 않으므로, 사이트도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
+문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 이 문서들을 Reference 탭에 보여 준다. `scripts/ci/sync_docs_site.py`가 이 폴더에서 `packages/docs-site/reference/`를 생성하고, `packages/docs-site`의 나머지 가이드는 손으로 쓰므로, 가이드도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
 
 ## 하나의 에이전트, 두 가지 모드
 
@@ -25,6 +25,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | 폴더 | 문서 | 내용 |
 | --- | --- | --- |
 | `docs/` | [`README.ko.md`](README.ko.md) | 이 색인과 갱신 규칙 |
+| `diagram/` | [`README.ko.md`](diagram/README.ko.md) | 손으로 그린 SVG 그림 여덟 장과 각 그림이 그리는 코드 경로: 시스템 개요, 실행 모드, 턴 수명 주기, 프로바이더 방식, ACP 협상, 세션 저장, 도구 로딩, 브랜치·릴리스 흐름 |
 | `architecture/` | [`SERVER.ko.md`](architecture/SERVER.ko.md) | 서버·세션·소켓 구조 |
 | | [`CRATES.ko.md`](architecture/CRATES.ko.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
 | `protocol/` | [`ACP.ko.md`](protocol/ACP.ko.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
@@ -35,7 +36,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
 | | [`IRC.ko.md`](runtime/IRC.ko.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
-| | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 명령, 설정 화면, 선택 자산 설치, 한계 |
+| | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 여러 줄 편집기, 트랜스크립트와 스크롤백, 턴 상태, 프롬프트, 슬래시 팝업, 모델·세션 선택 목록, 명령, 설정 화면, 선택 자산 설치, 한계 |
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
@@ -54,9 +55,10 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 
 | 이런 변경이 생기면 | 이렇게 한다 |
 | --- | --- |
-| 현재 동작이 바뀔 때 | 그 동작을 설명하는 문서를 고친다. |
+| 현재 동작이 바뀔 때 | 그 동작을 설명하는 문서와 그 동작을 그리는 `diagram/`의 그림을 같은 변경에서 고친다. |
 | 문서를 새로 만들 때 | 맞는 폴더의 기존 문서에 절을 더하는 것을 먼저 검토한다. 새 파일은 대문자 이름으로 만들고 이 표에 올린다. |
 | 문서를 옮기거나 지울 때 | 이 표와 코드·스크립트·테스트 속 경로를 같은 변경에서 고친다. |
 | 같은 내용이 두 문서에 있을 때 | 하나를 정본으로 두고 나머지는 그것을 가리킨다. |
 | 측정 기록·인수 기록·계획을 남기고 싶을 때 | 문서를 만들지 않고 PR 본문이나 이슈에 적는다. 성능 수치는 `performance/RESULTS.md`에만 적는다. |
 | 문서를 고칠 때 | 짝을 함께 맞춘다. 모든 `X.md` 옆에 한국어 `X.ko.md`를 두고, `python3 scripts/ci/check_docs_pairs.py`가 두 파일의 존재와 제목·표 행·코드 펜스·링크 수 일치, 상대 링크 해석을 확인한다. |
+| `docs/` 아래 파일을 고칠 때 | `python3 scripts/ci/sync_docs_site.py`를 실행한다. `packages/docs-site/reference/`와 `packages/docs-site/ko/reference/`에서 바뀐 페이지를 커밋하고 `packages/docs-site/images/reference/`에서 다시 생성된 이미지도 함께 커밋한다. CI는 세 폴더를 모두 검사한다. |

@@ -11,12 +11,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use ratatui::style::Color;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 
 use super::settings::{Outcome, SettingChange, SettingsOverlay};
 use crate::app::App;
 use crate::settings::{self, SettingValue, Settings, Sources};
-use crate::theme::ThemeLoader;
+use crate::theme::{Symbols, Theme, ThemeLoader};
 
 struct Fixture {
     dir: tempfile::TempDir,
@@ -519,4 +522,106 @@ fn overlays_pick_list_arrows_move_and_confirm() {
         })
     );
     assert!(!overlay.is_editing());
+}
+
+/// The settings overlay drawn on its own over a screen painted with
+/// `background`, and the panel rectangle it chose.
+fn settings_screen(area: Rect, background: Option<&str>) -> (Buffer, Rect) {
+    let backend = TestBackend::new(area.width, area.height);
+    let mut terminal = match Terminal::new(backend) {
+        Ok(terminal) => terminal,
+        Err(error) => panic!("test backend failed: {error}"),
+    };
+    let theme = Theme::default();
+    let symbols = Symbols::default();
+    let mut overlay = SettingsOverlay::new(PathBuf::from("/nonexistent/themes"));
+    overlay.refresh(&Settings::defaults());
+    if let Err(error) = terminal.draw(|frame| {
+        let area = frame.area();
+        if let Some(text) = background {
+            frame.render_widget(Paragraph::new(Line::from(text.to_string())), area);
+        }
+        super::settings::draw(frame, area, &overlay, &theme, symbols);
+    }) {
+        panic!("draw failed: {error}");
+    }
+    (terminal.backend().buffer().clone(), super::settings::panel(area))
+}
+
+#[test]
+fn the_settings_panel_clears_every_cell_of_the_pane_it_covers() {
+    let area = Rect::new(0, 0, 60, 16);
+    let (buffer, panel) = settings_screen(area, Some(&"X".repeat(usize::from(area.width))));
+    assert!(panel.width > 0 && panel.height > 0, "the panel was not drawn");
+    for y in area.y..area.bottom() {
+        for x in area.x..area.right() {
+            if (panel.x..panel.right()).contains(&x) && (panel.y..panel.bottom()).contains(&y) {
+                continue;
+            }
+            let symbol = buffer.cell((x, y)).map(|cell| cell.symbol()).unwrap_or("");
+            assert_ne!(
+                symbol, "X",
+                "the cell at ({x}, {y}) beside the panel still shows the conversation"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_settings_panel_stays_inside_the_pane_at_every_width() {
+    for (width, height) in [(100, 30), (80, 24), (40, 24), (20, 8), (13, 6), (12, 5)] {
+        let area = Rect::new(0, 0, width, height);
+        let (buffer, panel) = settings_screen(area, None);
+        assert!(
+            panel.right() <= area.right() && panel.bottom() <= area.bottom(),
+            "the panel at {width}x{height} leaves the pane: {panel:?}"
+        );
+        let middle = panel.y + panel.height / 2;
+        let symbol = buffer
+            .cell((panel.right() - 1, middle))
+            .map(|cell| cell.symbol())
+            .unwrap_or("");
+        assert_eq!(
+            symbol, "│",
+            "the right border of the panel at {width}x{height} was not drawn"
+        );
+    }
+}
+
+#[test]
+fn a_pane_too_small_for_the_settings_panel_says_so() {
+    let area = Rect::new(0, 0, 10, 4);
+    let (buffer, _panel) = settings_screen(area, Some(&"X".repeat(10)));
+    let text = buffer_text(&buffer);
+    assert!(text.contains("settings"), "the screen hid itself: {text:?}");
+    assert!(!text.contains('X'), "the conversation shows through: {text:?}");
+}
+
+#[test]
+fn tab_walks_the_header_forwards_and_shift_tab_back() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    assert_eq!(
+        overlay(&app).tab_name(),
+        Some("Appearance"),
+        "the tabs do not start at the first one"
+    );
+
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(
+        overlay(&app).tab_name(),
+        Some("Status line"),
+        "tab did not move to the next tab in the header"
+    );
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(overlay(&app).tab_name(), Some("Editor"));
+    press(&mut app, KeyCode::Tab);
+    assert_eq!(overlay(&app).tab_name(), Some("Transcript"));
+
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(overlay(&app).tab_name(), Some("Editor"), "shift+tab did not walk back");
+    press(&mut app, KeyCode::Left);
+    assert_eq!(overlay(&app).tab_name(), Some("Status line"));
 }

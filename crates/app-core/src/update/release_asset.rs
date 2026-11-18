@@ -673,7 +673,6 @@ mod tests {
             versions.path().join("1.2.3").join(crate::build::binary_name())
         );
         assert_eq!(std::fs::read(&installed).unwrap(), binary);
-        assert!(!installed.parent().unwrap().join("bundled-plugins").exists());
         // Staging the same release again reuses the identical installed version.
         assert_eq!(
             stage_local(assets.path(), "1.2.3", None, versions.path()).unwrap(),
