@@ -9,8 +9,11 @@ Exports:
 
 - ``host_info``: os/arch/cpu/python snapshot embedded in every report.
 - ``stats``: median/p95/min/max/sample-count for a list of measurements.
-- ``process_tree_rss_bytes`` / ``process_tree_pss_bytes``: summed RSS (and PSS on
-  Linux) of a process and all descendants. Windows reports the working set.
+- ``process_tree_rss_bytes``: summed RSS of a process and all descendants.
+  Windows reports the working set.
+- ``process_forest_observation``: RSS, PSS and live process count of one or more
+  process trees read in a single traversal, with a pid shared by two roots
+  counted once and a root that has exited counted as neither bytes nor process.
 - ``process_cpu_snapshot`` / ``cpu_usage_between``: CPU time and context switches
   one process spent between two points, read from ``/proc`` (Linux only).
 - ``ipc_connect`` / ``wait_for_socket`` / ``wait_for_port``: the daemon's local
@@ -188,23 +191,25 @@ def linear_slope(xs: list[float], ys: list[float]) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def _linux_children(pid: int) -> list[int]:
-    kids: list[int] = []
+def _linux_children_map() -> dict[int, list[int]]:
+    """Every parent-to-children edge from one scan of ``/proc``."""
+    children: dict[int, list[int]] = {}
     try:
-        for entry in os.listdir("/proc"):
-            if not entry.isdigit():
-                continue
-            try:
-                with open(f"/proc/{entry}/stat", "r", encoding="utf-8", errors="replace") as fh:
-                    fields = fh.read().rsplit(")", 1)[-1].split()
-                # After the comm field: state, ppid, ...
-                if len(fields) > 1 and int(fields[1]) == pid:
-                    kids.append(int(entry))
-            except (OSError, ValueError, IndexError):
-                continue
+        entries = os.listdir("/proc")
     except OSError:
-        return []
-    return kids
+        return children
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "r", encoding="utf-8", errors="replace") as fh:
+                fields = fh.read().rsplit(")", 1)[-1].split()
+            # After the comm field: state, ppid, ...
+            if len(fields) > 1:
+                children.setdefault(int(fields[1]), []).append(int(entry))
+        except (OSError, ValueError, IndexError):
+            continue
+    return children
 
 
 def _macos_children(pid: int) -> list[int]:
@@ -217,27 +222,101 @@ def _macos_children(pid: int) -> list[int]:
     return [int(line) for line in out.split() if line.strip().isdigit()]
 
 
-def children_of(pid: int) -> list[int]:
+def _forest_lookup():
+    """One pid-to-children lookup for a whole walk.
+
+    Windows and Linux read the parent map in a single snapshot, so a tree with
+    many nodes (a hundred sessions) costs one pass instead of one scan per node.
+    macOS answers per pid with ``pgrep -P`` and has no snapshot to reuse.
+    """
+    if IS_WINDOWS:
+        children = _windows_children_map()
+        return children.get
     if os.path.isdir("/proc"):
-        return _linux_children(pid)
-    return _macos_children(pid)
+        children = _linux_children_map()
+        return children.get
+    return _macos_children
 
 
 def process_tree_pids(pid: int) -> list[int]:
-    if IS_WINDOWS:
-        children = _windows_children_map()
-        lookup = lambda cur: children.get(cur, [])  # noqa: E731
-    else:
-        lookup = children_of
+    return process_forest_pids([pid])
+
+
+def process_forest_pids(roots: list[int]) -> list[int]:
+    """Every pid reachable from ``roots``, once each, even when the trees overlap.
+
+    A shared server and the session roots below it describe the same processes,
+    so the walk keeps one visited set across all roots: a pid that two trees
+    reach appears once, which is what keeps both the byte sum and the process
+    count from counting it twice.
+    """
+    pending = [pid for pid in roots if pid]
+    if not pending:
+        return []
+    lookup = _forest_lookup()
     seen: set[int] = set()
-    stack = [pid]
-    while stack:
-        cur = stack.pop()
-        if cur in seen:
-            continue
-        seen.add(cur)
-        stack.extend(lookup(cur))
+    while pending:
+        pid = pending.pop()
+        if pid not in seen:
+            seen.add(pid)
+            pending.extend(lookup(pid) or ())
     return sorted(seen)
+
+
+def _resident_reader():
+    if IS_WINDOWS:
+        return _windows_rss
+    if os.path.isdir("/proc"):
+        return _linux_status_rss
+    return _macos_rss
+
+
+def process_forest_observation(roots: list[int]) -> dict:
+    """RSS, PSS and live process count of one or more trees, in a single traversal.
+
+    The bytes and the count are read from the same walk on purpose: taking the
+    count in a second pass would count processes that exited in between, and a
+    second RSS pass would move the timing of whatever is being measured. PSS is
+    summed over the pid list of that one walk, after the RSS reads, so the RSS
+    window stays as short as it was and no tree is traversed twice.
+
+    ``process_count`` counts only the processes whose resident size was read and
+    is non-zero, so it is exactly the set the byte totals are made of. The tree
+    walk names each root unconditionally, so a root that has already exited — or
+    a zombie that still answers with 0 bytes — is not a live process just for
+    having been named. When nothing in the forest answers, ``process_count`` is
+    ``None`` rather than 0, because "nothing could be read" is not "no process
+    is running".
+    """
+    read = _resident_reader()
+    sized: list[tuple[int, int]] = []
+    rss = 0
+    for pid in process_forest_pids(roots):
+        value = read(pid)
+        if not value:
+            continue
+        rss += value
+        sized.append((pid, value))
+    if not sized:
+        return {"rss_bytes": None, "pss_bytes": None, "process_count": None}
+    pss = None
+    if os.path.isdir("/proc"):
+        pss = 0
+        for pid, value in sized:
+            proportional = _linux_smaps(pid, "Pss")
+            pss += value if proportional is None else proportional
+    return {"rss_bytes": rss, "pss_bytes": pss, "process_count": len(sized)}
+
+
+def process_tree_rss_bytes(pid: int) -> int:
+    """Summed resident set size of ``pid`` and every descendant (working set on Windows).
+
+    Returns 0 when nothing in the tree could be read, which is the value the
+    peak sampler compares; ``process_forest_observation`` keeps the difference
+    between an unreadable tree and a small one as ``None``.
+    """
+    read = _resident_reader()
+    return sum(read(child) or 0 for child in process_tree_pids(pid))
 
 
 def _linux_smaps(pid: int, field: str) -> int | None:
@@ -386,38 +465,6 @@ def _windows_rss(pid: int) -> int | None:
     finally:
         _kernel32.CloseHandle(handle)
 
-
-
-def process_tree_rss_bytes(pid: int) -> int:
-    """Summed resident set size of ``pid`` and every descendant (working set on Windows)."""
-    if IS_WINDOWS:
-        read = _windows_rss
-    elif os.path.isdir("/proc"):
-        read = _linux_status_rss
-    else:
-        read = _macos_rss
-    total = 0
-    for child in process_tree_pids(pid):
-        rss = read(child)
-        if rss:
-            total += rss
-    return total
-
-
-def process_tree_pss_bytes(pid: int) -> int | None:
-    """Summed PSS on Linux; None where PSS is unavailable (macOS, Windows)."""
-    if not os.path.isdir("/proc"):
-        return None
-    total = 0
-    for child in process_tree_pids(pid):
-        pss = _linux_smaps(child, "Pss")
-        if pss is None:
-            rss = _linux_status_rss(child)
-            if rss is None:
-                continue
-            pss = rss
-        total += pss
-    return total
 
 
 def process_tree_status_bytes(pid: int, field: str) -> int | None:
