@@ -167,10 +167,7 @@ fn measurement() -> Option<String> {
     }
 
     let timed_fixture_frames = screens.len();
-    if let Err(message) = check_transitions(&mut terminal, &mut app, &mut screens) {
-        eprintln!("scroll_bench: transition draw failed: {message}");
-        return None;
-    }
+    check_transitions(&mut terminal, &mut app, &mut screens)?;
     let transition_frames = screens.len() - timed_fixture_frames;
     inputs.sort_by(|left, right| left.total_cmp(right));
     frames.sort_by(|left, right| left.total_cmp(right));
@@ -211,15 +208,13 @@ fn screen_hash(terminal: &Terminal<TestBackend>) -> u64 {
 }
 
 /// Exercise changes that can invalidate a renderer's wrapped output.
-fn check_transitions(
-    terminal: &mut Terminal<TestBackend>,
-    app: &mut App,
-    screens: &mut Vec<u64>,
-) -> Result<(), String> {
-    let mut capture = |terminal: &mut Terminal<TestBackend>, app: &mut App| -> Result<(), String> {
-        draw(terminal, app)?;
+fn check_transitions(terminal: &mut Terminal<TestBackend>, app: &mut App, screens: &mut Vec<u64>) -> Option<()> {
+    let mut capture = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+        draw(terminal, app)
+            .inspect_err(|error| eprintln!("scroll_bench: transition draw failed: {error}"))
+            .ok()?;
         screens.push(screen_hash(terminal));
-        Ok(())
+        Some(())
     };
     terminal.backend_mut().resize(43, HEIGHT);
     capture(terminal, app)?;
