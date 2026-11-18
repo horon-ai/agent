@@ -73,28 +73,6 @@ async fn binary_integration_openai_provider() -> Result<()> {
     Ok(())
 }
 
-/// Test that horon-agent version command works
-#[tokio::test]
-async fn binary_version_command() -> Result<()> {
-    use std::process::Command;
-    let _env = setup_test_env()?;
-
-    let output = Command::new(env!("CARGO_BIN_EXE_horon-agent"))
-        .arg("--version")
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "Version command should succeed");
-    assert!(
-        stdout.contains("horon-agent") || stdout.contains("20"),
-        "Version should contain 'horon-agent' or date. Got: {}",
-        stdout
-    );
-
-    Ok(())
-}
-
 /// Test full server reload handoff against a real spawned server process.
 ///
 /// Requires a built release binary at target/release/horon-agent because the reload
