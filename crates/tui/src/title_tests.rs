@@ -117,3 +117,63 @@ fn a_redirected_stdout_gets_no_bytes() {
         title.written()
     );
 }
+
+/// The save/restore pair goes only to a terminal that keeps a title stack.
+///
+/// `CSI 22 ; 2 t` and `CSI 23 ; 2 t` are an extension. A terminal without it
+/// ignores both, so writing the pair there changed nothing while the
+/// documentation promised the shell's title came back — it did not, on conhost
+/// and on any terminal that answered nothing (#433).
+#[test]
+fn title_stack_written_only_when_supported() {
+    let xterm = title::TitleEnvironment {
+        term: Some("xterm-256color".to_string()),
+        ..title::TitleEnvironment::default()
+    };
+    assert!(
+        xterm.keeps_title_stack(false),
+        "an xterm-like terminal keeps the stack, and today's bytes must not change there"
+    );
+    assert!(xterm.keeps_title_stack(true), "a redirected xterm is still an xterm");
+
+    let dumb = title::TitleEnvironment {
+        term: Some("dumb".to_string()),
+        ..title::TitleEnvironment::default()
+    };
+    assert!(!dumb.keeps_title_stack(false), "`dumb` says it has no title handling");
+
+    let conhost = title::TitleEnvironment::default();
+    assert!(!conhost.keeps_title_stack(true), "a bare Windows console keeps no stack");
+    // The same environment on a Unix host is an unknown but xterm-like
+    // terminal, so the platform is what decides, not a guess.
+    assert!(conhost.keeps_title_stack(false));
+    assert!(
+        title::TitleEnvironment {
+            wt_session: Some("1f3c".to_string()),
+            ..title::TitleEnvironment::default()
+        }
+        .keeps_title_stack(true),
+        "Windows Terminal keeps the stack"
+    );
+
+    // The title itself is still written where the pair is not.
+    let mut supported = Title::new(Vec::<u8>::new(), true);
+    supported.start("work").expect("a buffer accepts every write");
+    assert_eq!(supported.written().as_slice(), format!("{}{}", PUSH, title::set("work")).as_bytes());
+
+    let mut unsupported = Title::with_stack(Vec::<u8>::new(), true, false);
+    unsupported.start("work").expect("a buffer accepts every write");
+    assert_eq!(
+        unsupported.written().as_slice(),
+        title::set("work").as_bytes(),
+        "the save/restore pair must not be written where the terminal ignores it"
+    );
+
+    // Popping reports success without writing when there is no stack to pop.
+    let mut nothing = Vec::<u8>::new();
+    assert!(title::write_pop(&mut nothing, false), "nothing to restore is not a failure");
+    assert!(nothing.is_empty(), "a pop was written to a terminal without a title stack");
+    let mut sequence = Vec::<u8>::new();
+    assert!(title::write_pop(&mut sequence, true));
+    assert_eq!(sequence.as_slice(), POP.as_bytes());
+}
