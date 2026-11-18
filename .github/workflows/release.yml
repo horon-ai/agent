@@ -13,7 +13,8 @@ env:
   # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
   CARGO_BUILD_RUSTC_WRAPPER: ""
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
+  # Keep per-compilation writes on the runner; share Cargo archives between runs.
+  SCCACHE_CACHE_SIZE: "512M"
   CARGO_INCREMENTAL: "0"
   # Optimize published binaries fully without changing local/selfdev profiles.
   CARGO_PROFILE_RELEASE_OPT_LEVEL: "3"
