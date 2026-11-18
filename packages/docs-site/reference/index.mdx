@@ -65,4 +65,4 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | The same content appears in two documents | Make one the source of truth and have the other point at it. |
 | You want to record a measurement, acceptance note, or plan | Do not create a document; write it in the PR body or an issue. Performance numbers go only in `performance/RESULTS.md`. |
 | You edit any document | Keep the pair in step: every `X.md` has a Korean `X.ko.md` beside it, and `python3 scripts/ci/check_docs_pairs.py` verifies that both exist, that headings, table rows, code fences, and links match, and that relative links resolve. |
-| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the regenerated `packages/docs-site/reference/` and `packages/docs-site/images/reference/`; CI fails while they are stale. |
+| You change a file under `docs/` | Run `python3 scripts/ci/sync_docs_site.py` and commit the changed pages under `packages/docs-site/reference/` and `packages/docs-site/ko/reference/`, together with any regenerated images under `packages/docs-site/images/reference/`. CI checks all three directories. |

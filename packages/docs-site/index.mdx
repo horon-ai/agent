@@ -1,16 +1,23 @@
 ---
 title: "horon agent"
-description: "One Rust binary coding agent that calls the endpoint the profile's type picks, Chat Completions, Responses, Anthropic Messages or Gemini generateContent, with a terminal client, SDKs, ACP and RPC."
+description: "Run horon from the terminal, an SDK or an editor. Both headless and TUI mode use the same agent engine and session history."
 ---
 
-One Rust binary. Four model wires.
+Use `horon` to open the interactive terminal client or `horon run` to send one
+prompt from a script. Both modes use the same engine, tools and saved sessions.
+The agent connects to the model endpoint you set in your provider profile.
 
-horon agent is a coding agent with a terminal client of its own. It runs a turn,
-calls tools and exits — or stays up as a daemon that the client, SDKs, editors and
-host programs attach to over a Unix socket.
+Use the shell installer on macOS, Linux or FreeBSD. FreeBSD ships the agent
+binary only. For Windows, use the [PowerShell installer](/install).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/horon-ai/agent/main/scripts/install/install.sh | bash
+```
+
+Once you have [configured a provider](/getting-started#first-turn), check the
+active profile and run a turn:
+
+```sh
 horon provider current --json
 horon run "summarize this repo"
 ```

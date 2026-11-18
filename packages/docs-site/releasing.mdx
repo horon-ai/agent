@@ -1,10 +1,12 @@
 ---
-title: Package layout
-description: How the repository publishes the CLI, the TypeScript SDK and the Python SDK, and where each package lives.
+title: Packages and releases
+description: How the repository publishes the CLI, the TypeScript SDK and the Python SDK, how versions are chosen, and how a tag becomes a published release.
 ---
 
-The repository ships three independently versioned distribution sets from one
-tag. Their sources live under `packages/`.
+The repository publishes three distribution sets from one release. The npm CLI
+and the TypeScript SDK ship at the release tag's version; the Python SDK carries
+its own version in `packages/sdk/python/pyproject.toml`. Sources live under
+`packages/`.
 
 ## Layout
 
@@ -17,9 +19,10 @@ packages/
     horon/          @horon-ai/horon launcher + six @horon-ai/horon-<os>-<arch> packages
 ```
 
-The TypeScript SDK and the CLI share the release tag version; the publish
-workflow stamps the tag into its checkout, and CI checks that the committed version
-and the six runtime pins equal the root `Cargo.toml` version.
+The TypeScript SDK ships at the release tag version: the publish workflow stamps
+the tag into its checkout, and CI checks that the committed manifest and its six
+runtime pins equal the root `Cargo.toml` version. The npm CLI keeps `0.0.0` in
+git and receives the tag version in the published copy only.
 
 ## npm CLI
 
@@ -61,14 +64,48 @@ Trusted Publisher registration.
 
 ## Python SDK
 
-`horon-agent-sdk` publishes a pure wheel, an sdist, and one platform wheel per
-supported platform. Platform wheels carry the runtime; the pure wheel and sdist do
-not, so `launch()` falls back to `horon-agent` on `PATH`.
+`horon-agent-sdk` publishes a pure wheel, an sdist, and six platform wheels: Linux
+and macOS and Windows, each for x86_64 and arm64. Platform wheels carry the
+runtime; the pure wheel and sdist do not, so `launch()` falls back to
+`horon-agent` on `PATH`. Its version comes from
+`packages/sdk/python/pyproject.toml`, and a publish run names the release tag
+whose runtime binaries are bundled into the platform wheels.
+
+## Versions
+
+`[package].version` in the root `Cargo.toml` names the release line (MAJOR.MINOR)
+and the lowest patch on that line; tags number the later patches, so no commit
+bumps the version and a release can never start another release. When CI for a
+push to `main` succeeds, `release-tag.yml` asks `scripts/release/next_version.py`
+for the next tag, creates it on that exact commit and calls `release.yml`. A tag
+pushed by hand triggers `release.yml` directly and goes through the same checks.
+Setting the repository variable `RELEASE_AUTO` to `false` stops automatic
+tagging, and a manual run of `release-tag.yml` only reports the tag it would
+create.
+
+Every release starts as a draft. Its notes are rendered from the commit subjects
+since the previous tag, grouped by conventional-commit prefix and ended with the
+compare link. `Finalize release` publishes the draft only when every platform
+asset exists; a partial set stays a draft.
+
+The published release carries the agent and `horon-tui` archives for Linux, macOS
+and Windows, the agent archive for FreeBSD, `SHA256SUMS`, and a
+`linux/amd64` + `linux/arm64` container image at `ghcr.io/horon-ai/agent` tagged
+`<version>`, `<MAJOR.MINOR>` and `latest`. Published releases are listed at
+<https://github.com/horon-ai/agent/releases>.
 
 ## Release flow
 
 1. Work lands on `dev`; `main` is what ships.
-2. A release merges `dev` into `main` with a merge commit; the tag workflow tags
-   that commit and publishes the images and packages.
-3. Package publishing is gated behind `NPM_PUBLISH` and runs only from the tag
-   workflow, never from a pull request.
+2. A release merges `dev` into `main` with a merge commit. When CI for that push
+   succeeds, the tag is created on that exact commit and `release.yml` starts (see
+   [Versions](#versions)).
+3. `release.yml` builds on GitHub-hosted runners: Linux x86_64 inside the
+   manylinux2014 container for a glibc 2.17 baseline, Linux aarch64 on
+   `ubuntu-24.04-arm`, macOS on `macos-latest` and `macos-15-intel`, Windows x64
+   on `windows-latest` and Windows ARM64 on `windows-11-arm`, and FreeBSD x86_64
+   inside a FreeBSD 15.1 VM. A failed platform leaves the release in draft.
+4. The container image is published from the finished, verified Linux assets.
+5. Package publishing is gated behind `NPM_PUBLISH` and runs only from the tag
+   workflow, never from a pull request. The Python SDK is dispatched separately
+   with its own version.
