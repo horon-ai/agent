@@ -1,6 +1,7 @@
 use super::{
     OpenAIUsageData, PROVIDER_USAGE_CACHE_TTL, ProviderUsage, RATE_LIMIT_BACKOFF, UsageData,
 };
+use horon_agent_time::Timestamp;
 use std::time::Instant;
 
 pub(super) fn reset_timestamp_passed(timestamp: Option<&str>) -> bool {
@@ -113,22 +114,23 @@ pub(super) fn humanize_key(key: &str) -> String {
         .join(" ")
 }
 
-fn parse_reset_timestamp(timestamp: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    if let Ok(reset) = chrono::DateTime::parse_from_rfc3339(timestamp) {
-        Some(reset.with_timezone(&chrono::Utc))
-    } else if let Ok(reset) =
-        chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H:%M:%S%.fZ")
-    {
-        Some(reset.and_utc())
-    } else {
-        None
+/// Read a reset stamp the way the previous two-step parser did: the strict
+/// RFC 3339 grammar first, then the naive `…T…Z` shape (`%Y-%m-%dT%H:%M:%S%.fZ`)
+/// that `horon-agent-time` reproduces for exactly this fallback.
+fn parse_reset_timestamp(timestamp: &str) -> Option<Timestamp> {
+    if let Ok(reset) = Timestamp::parse_rfc3339(timestamp) {
+        return Some(reset);
+    }
+    match Timestamp::parse_naive_utc(timestamp) {
+        Ok(reset) => Some(reset),
+        Err(_) => None,
     }
 }
 
 pub(super) fn usage_reset_passed<'a>(
     timestamps: impl IntoIterator<Item = Option<&'a str>>,
 ) -> bool {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     timestamps
         .into_iter()
         .flatten()
@@ -138,16 +140,16 @@ pub(super) fn usage_reset_passed<'a>(
 
 pub fn format_reset_time(timestamp: &str) -> String {
     if let Some(reset) = parse_reset_timestamp(timestamp) {
-        let duration = reset.signed_duration_since(chrono::Utc::now());
-        if duration.num_seconds() <= 0 {
+        let duration = reset - Timestamp::now();
+        if duration.whole_seconds() <= 0 {
             return "now".to_string();
         }
-        if duration.num_seconds() < 60 {
+        if duration.whole_seconds() < 60 {
             return "1m".to_string();
         }
-        let days = duration.num_days();
-        let hours = duration.num_hours() % 24;
-        let minutes = duration.num_minutes() % 60;
+        let days = duration.whole_days();
+        let hours = duration.whole_hours() % 24;
+        let minutes = duration.whole_minutes() % 60;
         if days > 0 {
             if hours > 0 {
                 format!("{}d {}h", days, hours)

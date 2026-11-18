@@ -76,7 +76,7 @@ fn test_request_permission_returns_queued() {
             rationale: "Found failing tests".to_string(),
             urgency: Urgency::Normal,
             wait: false,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             context: None,
             run_id: None,
             expires_at: None,
@@ -107,7 +107,7 @@ fn test_record_decision_removes_from_queue() {
             rationale: "Ready for review".to_string(),
             urgency: Urgency::Low,
             wait: false,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             context: None,
             run_id: None,
             expires_at: None,
@@ -132,14 +132,14 @@ fn test_log_action_and_summary() {
             description: "Merged 2 duplicate memories".to_string(),
             tier: ActionTier::AutoAllowed,
             details: None,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
         });
         sys.log_action(ActionLog {
             action_type: "edit".to_string(),
             description: "Fixed typo in README".to_string(),
             tier: ActionTier::RequiresPermission,
             details: None,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
         });
 
         let summary = sys.generate_summary();
@@ -169,7 +169,7 @@ fn test_new_request_id_format() {
 
 #[test]
 fn new_permission_fields_round_trip() {
-    let expires_at = Utc::now() + chrono::Duration::seconds(1800);
+    let expires_at = Timestamp::now() + horon_agent_time::Duration::seconds(1800);
     let request = PermissionRequest {
         id: "req_round_trip".to_string(),
         action: "push".to_string(),
@@ -177,7 +177,7 @@ fn new_permission_fields_round_trip() {
         rationale: "Ready for review".to_string(),
         urgency: Urgency::Normal,
         wait: true,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         context: None,
         run_id: Some("run_42".to_string()),
         expires_at: Some(expires_at),
@@ -194,8 +194,8 @@ fn new_permission_fields_round_trip() {
 
 #[test]
 fn past_expires_at_is_detectable_as_expired() {
-    let now = Utc::now();
-    let base = |expires_at: Option<DateTime<Utc>>| PermissionRequest {
+    let now = Timestamp::now();
+    let base = |expires_at: Option<Timestamp>| PermissionRequest {
         id: "req_expiry".to_string(),
         action: "push".to_string(),
         description: "Push to origin".to_string(),
@@ -210,10 +210,10 @@ fn past_expires_at_is_detectable_as_expired() {
     };
 
     assert!(
-        base(Some(now - chrono::Duration::seconds(1))).is_expired_at(now),
+        base(Some(now - horon_agent_time::Duration::seconds(1))).is_expired_at(now),
         "a request past its deadline must read as expired"
     );
-    assert!(!base(Some(now + chrono::Duration::seconds(60))).is_expired_at(now));
+    assert!(!base(Some(now + horon_agent_time::Duration::seconds(60))).is_expired_at(now));
     assert!(
         !base(None).is_expired_at(now),
         "a request without a deadline never expires on time alone"
@@ -221,7 +221,7 @@ fn past_expires_at_is_detectable_as_expired() {
 
     // The same request must still read as expired after a file round trip,
     // which is how the runner sees it after a restart.
-    let expired = base(Some(now - chrono::Duration::seconds(1)));
+    let expired = base(Some(now - horon_agent_time::Duration::seconds(1)));
     let reloaded: PermissionRequest =
         serde_json::from_str(&serde_json::to_string(&expired).expect("serialize")).expect("parse");
     assert!(reloaded.is_expired_at(now));
@@ -250,7 +250,7 @@ fn test_record_permission_via_file() {
             rationale: "Ready for review".to_string(),
             urgency: Urgency::Low,
             wait: false,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             context: None,
             run_id: None,
             expires_at: None,
@@ -279,7 +279,7 @@ fn pending_request(id: &str, default_on_timeout: ApprovalDefault) -> PermissionR
         rationale: "Ready for review".to_string(),
         urgency: Urgency::Normal,
         wait: true,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         context: None,
         run_id: Some("run_test".to_string()),
         expires_at: None,
@@ -655,7 +655,7 @@ fn approval_and_timeout_at_the_same_moment_leave_one_decision() {
 fn request_permission_fills_the_expiry_window() {
     with_temp_home(|| {
         let sys = SafetySystem::new();
-        let before = Utc::now();
+        let before = Timestamp::now();
         sys.request_permission_with_timeout(
             pending_request("req_expiry_fill", ApprovalDefault::Deny),
             Duration::from_secs(60),
@@ -668,17 +668,17 @@ fn request_permission_fills_the_expiry_window() {
             .find(|request| request.id == "req_expiry_fill")
             .expect("short request must be queued");
         let short_expiry = short.expires_at.expect("expires_at must be filled");
-        assert!(short_expiry >= before + chrono::Duration::seconds(59));
-        assert!(short_expiry <= Utc::now() + chrono::Duration::seconds(61));
+        assert!(short_expiry >= before + horon_agent_time::Duration::seconds(59));
+        assert!(short_expiry <= Timestamp::now() + horon_agent_time::Duration::seconds(61));
 
         let default = pending
             .iter()
             .find(|request| request.id == "req_expiry_default")
             .expect("default request must be queued");
         let default_expiry = default.expires_at.expect("default expiry must be filled");
-        let remaining = default_expiry - Utc::now();
+        let remaining = default_expiry - Timestamp::now();
         assert!(
-            remaining >= chrono::Duration::seconds(1790),
+            remaining >= horon_agent_time::Duration::seconds(1790),
             "the default wait window must be 30 minutes, got {remaining:?}"
         );
     });
@@ -689,9 +689,9 @@ fn expire_dead_session_requests_honors_the_wait_deadline() {
     with_temp_home(|| {
         let sys = SafetySystem::new();
         let mut expired = pending_request("req_time_expired", ApprovalDefault::Deny);
-        expired.expires_at = Some(Utc::now() - chrono::Duration::seconds(5));
+        expired.expires_at = Some(Timestamp::now() - horon_agent_time::Duration::seconds(5));
         let mut live = pending_request("req_time_live", ApprovalDefault::Deny);
-        live.expires_at = Some(Utc::now() + chrono::Duration::seconds(600));
+        live.expires_at = Some(Timestamp::now() + horon_agent_time::Duration::seconds(600));
         sys.request_permission(expired);
         sys.request_permission(live);
 

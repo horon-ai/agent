@@ -17,8 +17,8 @@ fn test_ambient_state_lifecycle() {
         compactions: 0,
         proactive_work: None,
         next_schedule: None,
-        started_at: chrono::Utc::now(),
-        ended_at: chrono::Utc::now(),
+        started_at: horon_agent_time::Timestamp::now(),
+        ended_at: horon_agent_time::Timestamp::now(),
         status: CycleStatus::Complete,
         conversation: None,
     };
@@ -44,10 +44,10 @@ fn test_ambient_scheduled_queue() {
     assert!(queue.is_empty());
 
     // Push items with different priorities
-    let now = chrono::Utc::now();
+    let now = horon_agent_time::Timestamp::now();
     queue.push(ScheduledItem {
         id: "low_1".to_string(),
-        scheduled_for: now - chrono::Duration::minutes(5),
+        scheduled_for: now - horon_agent_time::Duration::minutes(5),
         context: "low priority task".to_string(),
         priority: Priority::Low,
         target: horon_agent::ambient::ScheduleTarget::Ambient,
@@ -62,7 +62,7 @@ fn test_ambient_scheduled_queue() {
 
     queue.push(ScheduledItem {
         id: "high_1".to_string(),
-        scheduled_for: now - chrono::Duration::minutes(5),
+        scheduled_for: now - horon_agent_time::Duration::minutes(5),
         context: "high priority task".to_string(),
         priority: Priority::High,
         target: horon_agent::ambient::ScheduleTarget::Ambient,
@@ -77,7 +77,7 @@ fn test_ambient_scheduled_queue() {
 
     queue.push(ScheduledItem {
         id: "future_1".to_string(),
-        scheduled_for: now + chrono::Duration::hours(1),
+        scheduled_for: now + horon_agent_time::Duration::hours(1),
         context: "future task".to_string(),
         priority: Priority::Normal,
         target: horon_agent::ambient::ScheduleTarget::Ambient,

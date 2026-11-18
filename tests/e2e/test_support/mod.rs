@@ -221,7 +221,7 @@ pub(crate) async fn wait_for_tcp_port(port: u16) -> Result<()> {
 
 fn pair_test_device(token: &str) -> Result<()> {
     let mut registry = horon_agent::gateway::DeviceRegistry::load();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = horon_agent_time::Timestamp::now().to_rfc3339();
     let mut hasher = sha2::Sha256::new();
     use sha2::Digest;
     hasher.update(token.as_bytes());

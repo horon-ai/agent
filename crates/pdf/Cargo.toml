@@ -9,4 +9,4 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
-pdf-extract = "0.12"
+pdf-extract = { git = "https://github.com/jrmuizel/pdf-extract", rev = "58244c85b3eb27da1298914d9659b1dcd89c72b0" }

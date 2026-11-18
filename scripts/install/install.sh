@@ -5,6 +5,9 @@ REPO="horon-ai/agent"
 IS_WINDOWS=false
 IS_TERMUX=false
 tmpdir=""
+# Holds the pid of the one optional transfer that runs beside the required
+# download. It is the transfer process itself, so it can be stopped directly.
+background_fetch_pid=""
 
 info() { printf '\033[1;34m%s\033[0m\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }
@@ -33,6 +36,15 @@ install_exit() {
   status=$?
   trap - EXIT
   set +e
+  # A transfer still running would keep writing into the temporary directory
+  # removed below, so it is stopped and reaped first. Every other exit path
+  # waits on the same pid; this is the one where a failure can arrive while the
+  # transfer is still in flight.
+  if [ -n "$background_fetch_pid" ]; then
+    kill "$background_fetch_pid" 2>/dev/null
+    wait "$background_fetch_pid" 2>/dev/null
+    background_fetch_pid=""
+  fi
   [ -z "$tmpdir" ] || rm -rf "$tmpdir"
   exit "$status"
 }
@@ -170,14 +182,23 @@ fetch_release_asset() {
   curl -fsSL --retry 2 --connect-timeout 10 "$GITHUB_RELEASE_BASE/$1" -o "$2" 2>/dev/null
 }
 
+# Prints the manifest digest for one asset, and succeeds only when `SHA256SUMS`
+# names it with a well-formed SHA-256 value. That exit status is what separates
+# "the release publishes this file" from "it does not", so an optional asset is
+# never requested when its bytes could not be verified anyway.
+manifest_digest() {
+  digest=$(awk -v asset="$1" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' \
+    "$assets_dir/SHA256SUMS") || return 1
+  printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$' || return 1
+  printf '%s' "$digest"
+}
+
 # Prints why an asset fails verification and returns 1, so an optional asset can
 # be skipped instead of aborting the install.
 checksum_problem() {
   asset_name="$1"
   file="$2"
-  expected=$(awk -v asset="$asset_name" '$2 == asset || $2 == "*" asset { print tolower($1); exit }' \
-    "$assets_dir/SHA256SUMS")
-  if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+  if ! expected=$(manifest_digest "$asset_name"); then
     printf 'Could not find a trusted SHA-256 checksum for %s in %s' "$asset_name" "$VERSION"
     return 1
   fi
@@ -410,6 +431,34 @@ patch_termux_bootstrap() {
 fetch_release_asset "SHA256SUMS" "$assets_dir/SHA256SUMS" \
   || err "Release $VERSION does not publish SHA256SUMS"
 
+# >>> horon-tui
+# The interactive client ships as its own archive beside the agent. It is
+# optional: a release that predates it, or a platform that does not publish it,
+# installs the headless agent alone. Its transfer starts here — after
+# `SHA256SUMS`, which every asset is verified against anyway, and before the
+# required archive — so the client arrives while the agent archive is still in
+# flight instead of adding its own round trip after it. Two conditions decide
+# that: the platform publishes the client, and the manifest names both archives
+# with valid digests. An archive the manifest does not name could never be
+# verified, so it is not requested at all. The transfer is settled and checked
+# below, before anything is handed to the release executable.
+tui_archive=""
+tui_fetch_state="unpublished"
+if [ "$OS" != "FreeBSD" ]; then
+  tui_archive="horon-tui${ARTIFACT#horon-agent}.tar.gz"
+  if manifest_digest "$tui_archive" >/dev/null \
+    && { manifest_digest "$ARTIFACT.tar.gz" >/dev/null || manifest_digest "$ARTIFACT$EXE" >/dev/null; }; then
+    # The transfer is the plain curl command rather than the fetch helper, so
+    # `background_fetch_pid` is the process that has to be stopped if the
+    # install aborts, not a subshell that would leave curl writing behind it.
+    curl -fsSL --retry 2 --connect-timeout 10 \
+      "$GITHUB_RELEASE_BASE/$tui_archive" -o "$assets_dir/$tui_archive" 2>/dev/null &
+    background_fetch_pid=$!
+    tui_fetch_state="pending"
+  fi
+fi
+# <<< horon-tui
+
 download_mode=""
 downloaded_asset=""
 downloaded_from_cache=false
@@ -444,17 +493,28 @@ if [ -n "$download_mode" ] && [ "$downloaded_from_cache" = false ]; then
 fi
 
 # >>> horon-tui
-# The interactive client ships as its own archive beside the agent. It is
-# optional: a release that predates it, or a platform that does not publish it,
-# installs the headless agent alone. The release executable stages whatever
-# verified archives it finds in this directory, so the TUI is only downloaded
-# and checked here, never run.
-if [ -n "$download_mode" ] && [ "$OS" != "FreeBSD" ]; then
-  tui_artifact="horon-tui${ARTIFACT#horon-agent}"
-  tui_archive="$tui_artifact.tar.gz"
-  if use_cached_asset "$tui_archive"; then
-    info "Using cached, SHA-256 verified: $tui_archive"
-  elif fetch_release_asset "$tui_archive" "$assets_dir/$tui_archive"; then
+# Settle the client before the handoff, so the release executable only ever sees
+# a complete, verified archive. A transfer still running is waited on here, and
+# a failed one is a normal reported outcome — the release does not publish the
+# archive after all — never an error for the agent itself.
+if [ -n "$background_fetch_pid" ]; then
+  tui_fetch_status=0
+  wait "$background_fetch_pid" || tui_fetch_status=$?
+  background_fetch_pid=""
+  if [ "$tui_fetch_status" -eq 0 ]; then
+    tui_fetch_state="downloaded"
+  else
+    tui_fetch_state="unavailable"
+  fi
+fi
+
+if [ -n "$tui_archive" ]; then
+  if [ -z "$download_mode" ]; then
+    # A source build hands over the locally built binary only, so a client
+    # transferred beside a prebuilt agent that turned out to be unavailable is
+    # discarded exactly as a serial download never fetched it.
+    rm -f "$assets_dir/$tui_archive"
+  elif [ "$tui_fetch_state" = "downloaded" ]; then
     if problem=$(checksum_problem "$tui_archive" "$assets_dir/$tui_archive"); then
       info "Verified SHA-256: $tui_archive"
       verified_assets+=("$tui_archive")

@@ -53,10 +53,27 @@ case "$url" in
     [ "${FAIL_ASSET:-}" != "$name" ] || exit 22
     [ -f "$ASSET_SOURCE_DIR/$name" ] || exit 22
     [ -n "$output" ] || exit 2
+    # The interactive client's transfer must already be under way when the
+    # required archive is requested: the installer starts it first, so the two
+    # overlap instead of running one after the other. Waiting here makes that
+    # ordering a deterministic check rather than a timing race.
+    if [ "${REQUIRE_PARALLEL_TUI:-0}" = "1" ] && [ "${name#horon-agent-}" != "$name" ]; then
+      for _attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        grep -q 'horon-tui' "$REQUIRE_PARALLEL_TUI_LOG" 2>/dev/null && break
+        sleep 0.05
+      done
+      grep -q 'horon-tui' "$REQUIRE_PARALLEL_TUI_LOG" 2>/dev/null || exit 97
+    fi
     if [ "${CORRUPT_ASSET:-}" = "$name" ]; then
       printf 'corrupted bytes' > "$output"
     else
       cp "$ASSET_SOURCE_DIR/$name" "$output"
+    fi
+    # A transfer that finishes late is what proves a background transfer was
+    # stopped: the marker only appears when the process ran to completion.
+    if [ "${SLOW_ASSET:-}" = "$name" ]; then
+      sleep "${SLOW_ASSET_SECONDS:-0.4}"
+      [ -z "${SLOW_ASSET_DONE_LOG:-}" ] || printf '%s\n' "$name" >> "$SLOW_ASSET_DONE_LOG"
     fi
     ;;
   *) exit 22 ;;
@@ -182,6 +199,8 @@ PATH="$tmp/bin:$PATH" \
   CLI_CACHE_PROBE="$tmp/home/.cache/horon-agent/release" \
   DESKTOP_SETUP_LOG="$desktop_setup_log" \
   DOWNLOAD_URL_LOG="$url_log" \
+  REQUIRE_PARALLEL_TUI=1 \
+  REQUIRE_PARALLEL_TUI_LOG="$url_log" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
   bash "$repo_dir/scripts/install/install.sh" >"$tmp/full.out" 2>"$tmp/full.err"
 
@@ -579,6 +598,7 @@ test ! -e "$tmp/cli-args-odd.log"
 # executable.
 legacy_release="$tmp/assets-no-tui"
 build_assets "$legacy_release" horon-agent-linux-x86_64
+legacy_url_log="$tmp/no-tui-urls.log"
 mkdir -p "$tmp/home-no-tui" "$tmp/install-no-tui"
 PATH="$tmp/bin:$PATH" \
   HOME="$tmp/home-no-tui" \
@@ -586,11 +606,18 @@ PATH="$tmp/bin:$PATH" \
   HORON_AGENT_INSTALL_DIR="$tmp/install-no-tui" \
   ASSET_SOURCE_DIR="$legacy_release" \
   CLI_ARG_LOG="$tmp/cli-args-no-tui.log" \
+  DOWNLOAD_URL_LOG="$legacy_url_log" \
   HORON_AGENT_SKIP_SERVER_RELOAD=1 \
   bash "$repo_dir/scripts/install/install.sh" >/dev/null 2>"$tmp/no-tui.err"
 test "$(cat "$tmp/home-no-tui/.horon/builds/current-version")" = "1.2.3"
 grep -Fq 'does not publish horon-tui-linux-x86_64.tar.gz' "$tmp/no-tui.err"
 test "$(grep -c '^warning: ' "$tmp/no-tui.err")" = 1
+# An archive the manifest does not list can never be verified, so it is not even
+# requested: the warning above costs no round trip.
+if grep -q 'horon-tui' "$legacy_url_log"; then
+  echo "installer requested a client archive the manifest does not list" >&2
+  exit 1
+fi
 if grep -q 'asset:horon-tui' "$tmp/cli-args-no-tui.log"; then
   echo "installer handed an absent interactive client to the executable" >&2
   exit 1
@@ -617,6 +644,59 @@ if grep -q 'asset:horon-tui' "$tmp/cli-args-tui-corrupt.log"; then
   echo "installer handed a corrupted interactive client to the executable" >&2
   exit 1
 fi
+
+# A client the manifest lists but the release does not actually serve fails its
+# transfer, which is the same one-line skip: reported, never raised as an install
+# error, and the agent installs alone.
+mkdir -p "$tmp/home-tui-absent" "$tmp/install-tui-absent"
+PATH="$tmp/bin:$PATH" \
+  HOME="$tmp/home-tui-absent" \
+  HORON_HOME="$tmp/home-tui-absent/.horon" \
+  HORON_AGENT_INSTALL_DIR="$tmp/install-tui-absent" \
+  ASSET_SOURCE_DIR="$assets" \
+  FAIL_ASSET=horon-tui-linux-x86_64.tar.gz \
+  CLI_ARG_LOG="$tmp/cli-args-tui-absent.log" \
+  HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+  bash "$repo_dir/scripts/install/install.sh" >/dev/null 2>"$tmp/tui-absent.err"
+test "$(cat "$tmp/home-tui-absent/.horon/builds/current-version")" = "1.2.3"
+grep -Fq 'does not publish horon-tui-linux-x86_64.tar.gz' "$tmp/tui-absent.err"
+test "$(grep -c '^warning: ' "$tmp/tui-absent.err")" = 1
+if grep -q 'asset:horon-tui' "$tmp/cli-args-tui-absent.log"; then
+  echo "installer handed an unavailable interactive client to the executable" >&2
+  exit 1
+fi
+
+# A required archive that fails verification aborts at once, and the client
+# transfer running beside it is killed and reaped before the temporary directory
+# goes away. A transfer left running would finish after the installer exited and
+# write into a path that no longer exists.
+tui_transfer_done="$tmp/tui-transfer-done.log"
+if PATH="$tmp/bin:$PATH" \
+  HOME="$tmp/home-tui-killed" \
+  HORON_HOME="$tmp/home-tui-killed/.horon" \
+  HORON_AGENT_INSTALL_DIR="$tmp/install-tui-killed" \
+  ASSET_SOURCE_DIR="$assets" \
+  CORRUPT_ASSET=horon-agent-linux-x86_64.tar.gz \
+  SLOW_ASSET=horon-tui-linux-x86_64.tar.gz \
+  SLOW_ASSET_SECONDS=0.4 \
+  SLOW_ASSET_DONE_LOG="$tui_transfer_done" \
+  CLI_ARG_LOG="$tmp/cli-args-tui-killed.log" \
+  HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+  bash "$repo_dir/scripts/install/install.sh" >/dev/null 2>"$tmp/tui-killed.err"; then
+  echo "installer reported success after the required archive failed" >&2
+  exit 1
+fi
+grep -q 'SHA-256 verification failed for horon-agent-linux-x86_64.tar.gz' "$tmp/tui-killed.err"
+test ! -e "$tmp/cli-args-tui-killed.log"
+for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+  [ ! -e "$tui_transfer_done" ] || break
+  sleep 0.1
+done
+if [ -e "$tui_transfer_done" ]; then
+  echo "installer left the client transfer running after the agent archive failed" >&2
+  exit 1
+fi
+
 
 # The installer from before this change ignores the extra archive entirely: it
 # installs and uninstalls a new-format release without touching the client.

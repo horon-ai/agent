@@ -6,7 +6,7 @@ use super::storage_paths::session_path;
 use crate::storage;
 use anyhow::{Result, bail};
 #[cfg(test)]
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -140,7 +140,7 @@ impl Session {
             return;
         }
 
-        let timestamp = Utc::now().timestamp_millis();
+        let timestamp = Timestamp::now().timestamp_millis();
         let snapshot_backup = Self::pre_wipe_backup_path(snapshot_path, timestamp);
         let journal_backup = Self::pre_wipe_backup_path(journal_path, timestamp);
         let mut backup_errors = Vec::new();

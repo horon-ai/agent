@@ -522,7 +522,7 @@ async fn mcp_sse_and_missing_type_rejected_v2() {
 
 #[test]
 fn list_rows_v2_shape() {
-    let at = |seconds: i64| chrono::DateTime::from_timestamp(1_800_000_000 + seconds, 0).unwrap();
+    let at = |seconds: i64| horon_agent_time::Timestamp::from_timestamp(1_800_000_000 + seconds, 0).unwrap();
     let row = |index: i64, title: Option<&str>| ListRow {
         session_id: format!("session_{index:03}"),
         cwd: Some("/work/a".to_string()),
@@ -546,7 +546,10 @@ fn list_rows_v2_shape() {
     for session in sessions {
         assert_matches("SessionInfo", session);
         let updated_at = session["updatedAt"].as_str().unwrap();
-        assert!(chrono::DateTime::parse_from_rfc3339(updated_at).is_ok(), "{session}");
+        assert!(
+            horon_agent_time::Timestamp::parse_rfc3339(updated_at).is_ok(),
+            "{session}"
+        );
     }
     let cursor = page["nextCursor"].as_str().expect("a second page");
     let next = session_list_page(rows, None, Some(cursor), AcpVersion::V2).unwrap();

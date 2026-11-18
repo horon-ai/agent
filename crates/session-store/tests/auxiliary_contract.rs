@@ -1,4 +1,5 @@
 use horon_agent_session_store::*;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 
 #[test]
@@ -30,7 +31,7 @@ fn auxiliary_wire_and_borrowed_consumers_preserve_canonical_originals() {
         root_id.clone(),
         None,
         origin.clone(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         json!({"metadata":SessionMetadata::default(),"branch_root":false}),
     )
@@ -66,7 +67,7 @@ fn auxiliary_wire_and_borrowed_consumers_preserve_canonical_originals() {
             EventId::parse("22222222-2222-4222-8222-222222222222").unwrap(),
             Some(root_id.clone()),
             origin.clone(),
-            chrono::DateTime::UNIX_EPOCH,
+            Timestamp::UNIX_EPOCH,
             EventKind::new(KnownEventKind::AuxiliaryRecorded),
             serde_json::to_value(typed.clone()).unwrap(),
         )

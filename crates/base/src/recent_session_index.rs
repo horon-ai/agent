@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use horon_agent_session_store as store;
+use horon_agent_time::Timestamp;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecentSessionMetadata {
@@ -140,7 +141,7 @@ fn legacy_only_entries(
             let last_active_at_ms = read
                 .auxiliary
                 .get("last_active_at")
-                .and_then(|value| serde_json::from_value::<chrono::DateTime<chrono::Utc>>(value.clone()).ok())
+                .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
                 .map(|at| at.timestamp_millis());
             Some(RecentSessionMetadata {
                 todo_title: live_todo_title(home, id.as_str(), None),

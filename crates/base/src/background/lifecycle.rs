@@ -381,7 +381,7 @@ impl BackgroundTaskManager {
         let task_id = Self::generate_task_id();
         let output_path = self.output_dir.join(format!("{}.output", task_id));
         let status_path = self.output_dir.join(format!("{}.status.json", task_id));
-        let started_at_rfc3339 = chrono::Utc::now().to_rfc3339();
+        let started_at_rfc3339 = Timestamp::now().to_rfc3339();
         let tool_call_id_owned = tool_call_id.map(str::to_string);
         let command_owned = command.map(str::to_string);
         let cwd_owned = cwd.map(|path| path.to_string_lossy().into_owned());
@@ -463,7 +463,7 @@ impl BackgroundTaskManager {
                 exit_code,
                 error: error.clone(),
                 started_at: started_at_rfc3339_for_task,
-                completed_at: Some(chrono::Utc::now().to_rfc3339()),
+                completed_at: Some(Timestamp::now().to_rfc3339()),
                 duration_secs: Some(duration_secs),
                 pid: None,
                 owner_pid: Some(std::process::id()),
@@ -627,7 +627,7 @@ impl BackgroundTaskManager {
             status: BackgroundTaskStatus::Running,
             exit_code: None,
             error: None,
-            started_at: chrono::Utc::now().to_rfc3339(),
+            started_at: Timestamp::now().to_rfc3339(),
             completed_at: None,
             duration_secs: None,
             pid: None,
@@ -692,7 +692,7 @@ impl BackgroundTaskManager {
                 exit_code,
                 error: error.clone(),
                 started_at: started_at_rfc3339,
-                completed_at: Some(chrono::Utc::now().to_rfc3339()),
+                completed_at: Some(Timestamp::now().to_rfc3339()),
                 duration_secs: Some(duration_secs),
                 pid: None,
                 owner_pid: Some(std::process::id()),
@@ -810,8 +810,8 @@ impl BackgroundTaskManager {
         let output_path = self.output_path_for(&status.task_id);
         let output = read_task_output(&output_path, &status.task_id).await;
         let exit_code = reaped_exit.or_else(|| Self::parse_exit_code_from_output(&output));
-        let completed_at = Utc::now();
-        let duration_secs = Self::status_duration_secs(&status.started_at, completed_at);
+        let completed_at = Timestamp::now();
+        let duration_secs = elapsed_secs(&status.started_at, completed_at);
         let final_status = if matches!(exit_code, Some(0)) {
             BackgroundTaskStatus::Completed
         } else {
@@ -916,8 +916,8 @@ impl BackgroundTaskManager {
             return status;
         }
 
-        let completed_at = Utc::now();
-        let duration_secs = Self::status_duration_secs(&status.started_at, completed_at);
+        let completed_at = Timestamp::now();
+        let duration_secs = elapsed_secs(&status.started_at, completed_at);
         let error = "Task orphaned: the owning server process exited (reloaded or crashed) before the task finished"
             .to_string();
         status.status = BackgroundTaskStatus::Failed;

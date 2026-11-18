@@ -19,6 +19,7 @@ pub(crate) fn import(
 #[cfg(feature = "legacy-session-index-import")]
 pub(crate) fn import(bundle: &Bundle, stage: &Path, state: &mut Replay) -> Result<Option<Vec<SessionId>>, StoreError> {
     use crate::legacy::corrupt;
+    use horon_agent_time::Timestamp;
     use rusqlite::types::ValueRef;
     use serde_json::{Map, Value, json};
     if !bundle.has_index() {
@@ -116,8 +117,7 @@ pub(crate) fn import(bundle: &Bundle, stage: &Path, state: &mut Replay) -> Resul
         for key in ["updated_at_ms", "last_active_at_ms"] {
             if let Some(value) = row.get(key).filter(|v| !v.is_null()) {
                 let ms = value.as_i64().ok_or_else(|| corrupt("invalid index time"))?;
-                let time =
-                    chrono::DateTime::from_timestamp_millis(ms).ok_or_else(|| corrupt("index time out of range"))?;
+                let time = Timestamp::from_timestamp_millis(ms).ok_or_else(|| corrupt("index time out of range"))?;
                 if key == "updated_at_ms" {
                     state.metadata.updated_at = time;
                 }

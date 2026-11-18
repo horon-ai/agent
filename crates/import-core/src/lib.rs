@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::cmp::Reverse;
@@ -66,8 +66,8 @@ pub struct ClaudeCodeSessionInfo {
     pub first_prompt: String,
     pub summary: Option<String>,
     pub message_count: u32,
-    pub created: Option<DateTime<Utc>>,
-    pub modified: Option<DateTime<Utc>>,
+    pub created: Option<Timestamp>,
+    pub modified: Option<Timestamp>,
     pub project_path: Option<String>,
     pub full_path: String,
 }
@@ -201,10 +201,8 @@ fn tool_result_content_to_text(value: &serde_json::Value) -> String {
     }
 }
 
-pub fn parse_rfc3339_string(value: Option<&str>) -> Option<DateTime<Utc>> {
-    value
-        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+pub fn parse_rfc3339_string(value: Option<&str>) -> Option<Timestamp> {
+    value.and_then(|ts| Timestamp::parse_rfc3339(ts).ok())
 }
 
 pub fn clean_optional_text(value: Option<String>) -> Option<String> {
@@ -419,11 +417,10 @@ pub fn collect_recent_files_recursive(root: &Path, extension: &str, limit: usize
     files.into_iter().map(|(_, path)| path).collect()
 }
 
-pub fn parse_rfc3339_json(value: Option<&serde_json::Value>) -> Option<DateTime<Utc>> {
+pub fn parse_rfc3339_json(value: Option<&serde_json::Value>) -> Option<Timestamp> {
     value
         .and_then(|v| v.as_str())
-        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
-        .map(|dt| dt.with_timezone(&Utc))
+        .and_then(|ts| Timestamp::parse_rfc3339(ts).ok())
 }
 
 pub fn extract_external_text_from_json(value: &serde_json::Value, include_tools: bool) -> String {
@@ -524,18 +521,18 @@ pub fn extract_opencode_part_text(parts_base: &Path, message_id: &str, include_t
     out.join("\n")
 }
 
-pub fn file_modified_datetime(path: &Path) -> Option<DateTime<Utc>> {
+pub fn file_modified_datetime(path: &Path) -> Option<Timestamp> {
     std::fs::metadata(path)
         .and_then(|meta| meta.modified())
         .ok()
-        .map(DateTime::<Utc>::from)
+        .map(Timestamp::from)
 }
 
 #[derive(Debug, Clone)]
 pub struct ExternalMessageRecord {
     pub role: String,
     pub text: String,
-    pub timestamp: Option<DateTime<Utc>>,
+    pub timestamp: Option<Timestamp>,
     pub id: Option<String>,
 }
 
@@ -548,8 +545,8 @@ pub struct ExternalSessionRecord {
     pub working_dir: Option<String>,
     pub provider_key: Option<String>,
     pub model: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub path: PathBuf,
     pub messages: Vec<ExternalMessageRecord>,
 }
@@ -611,7 +608,7 @@ pub fn load_codex_external_session(
     }
     let created_at = parse_rfc3339_json(meta.get("timestamp"))
         .or_else(|| parse_rfc3339_json(header.get("timestamp")))
-        .unwrap_or_else(Utc::now);
+        .unwrap_or_else(Timestamp::now);
     let mut updated_at = file_modified_datetime(path).unwrap_or(created_at);
     let working_dir = meta.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
     let mut messages = Vec::new();
@@ -686,7 +683,7 @@ pub fn load_pi_external_session(path: &Path, include_tools: bool) -> ImportCoreR
     if session_id.is_empty() {
         return Ok(None);
     }
-    let created_at = parse_rfc3339_json(header.get("timestamp")).unwrap_or_else(Utc::now);
+    let created_at = parse_rfc3339_json(header.get("timestamp")).unwrap_or_else(Timestamp::now);
     let mut updated_at = file_modified_datetime(path).unwrap_or(created_at);
     let working_dir = header.get("cwd").and_then(|v| v.as_str()).map(str::to_string);
     let mut provider_key = Some("pi".to_string());
@@ -768,13 +765,13 @@ pub fn load_opencode_external_session(
         .get("time")
         .and_then(|time| time.get("created"))
         .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
-        .unwrap_or_else(Utc::now);
+        .and_then(Timestamp::from_timestamp_millis)
+        .unwrap_or_else(Timestamp::now);
     let updated_at = value
         .get("time")
         .and_then(|time| time.get("updated"))
         .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
+        .and_then(Timestamp::from_timestamp_millis)
         .or_else(|| file_modified_datetime(path))
         .unwrap_or(created_at);
     let working_dir = value.get("directory").and_then(|v| v.as_str()).map(str::to_string);
@@ -992,7 +989,7 @@ pub fn load_cursor_external_session(
         return Ok(None);
     }
     let session_id = cursor_session_id_from_path(path);
-    let created_at = file_modified_datetime(path).unwrap_or_else(Utc::now);
+    let created_at = file_modified_datetime(path).unwrap_or_else(Timestamp::now);
     let updated_at = created_at;
     let working_dir = cursor_cwd_from_transcript_path(path);
     let title = messages

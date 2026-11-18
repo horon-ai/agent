@@ -119,7 +119,7 @@ pub(crate) fn write_temporary_metadata(
         pid: std::process::id(),
         ppid: parent_pid(),
         owner_pid: policy.owner_pid,
-        started_at: chrono::Utc::now().to_rfc3339(),
+        started_at: horon_agent_time::Timestamp::now().to_rfc3339(),
         socket_path: socket_path.display().to_string(),
         debug_socket_path: debug_socket_path.display().to_string(),
         idle_timeout_secs: policy.idle_timeout_secs,

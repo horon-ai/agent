@@ -306,7 +306,7 @@ async fn overnight(agent: &mut Agent, args: &[String]) -> Result<(Value, String)
                 OvernightRunStatus::Completed | OvernightRunStatus::Failed
             ) {
                 manifest.status = OvernightRunStatus::CancelRequested;
-                manifest.cancel_requested_at = Some(chrono::Utc::now());
+                manifest.cancel_requested_at = Some(horon_agent_time::Timestamp::now());
                 overnight::save_manifest(&manifest)?;
                 overnight::record_event(
                     &manifest,

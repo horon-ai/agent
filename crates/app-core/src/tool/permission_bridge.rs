@@ -382,9 +382,9 @@ impl PermissionBridge {
             &ctx.session_id,
             request_id,
             resolved_name,
-            chrono::Utc::now()
-                + chrono::Duration::from_std(crate::safety::DEFAULT_APPROVAL_TIMEOUT)
-                    .unwrap_or_else(|_| chrono::Duration::seconds(1800)),
+            horon_agent_time::Timestamp::now()
+                + horon_agent_time::Duration::try_from(crate::safety::DEFAULT_APPROVAL_TIMEOUT)
+                    .unwrap_or_else(|_| horon_agent_time::Duration::seconds(1800)),
         );
         crate::safety::dispatch_permission_notification(resolved_name, &description, request_id);
         let asked = self.tx.send(ServerEvent::ToolPermissionRequested {

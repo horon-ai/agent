@@ -7,7 +7,7 @@
 mod event_buffer;
 pub mod watchdog;
 
-use chrono::{Datelike, Local, Timelike};
+use horon_agent_time::{Calendar, Timestamp};
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -210,44 +210,71 @@ fn push_context_prefix_for(line: &mut String, ctx: &LogContext) {
 }
 
 /// Append `value` in decimal, zero-padded to `width` digits.
+///
+/// A value with more digits than `width` keeps all of them.
 fn push_padded(line: &mut String, value: u32, width: u32) {
-    let mut divisor = 10_u32.pow(width - 1);
-    let mut rest = value % (divisor * 10);
-    while divisor > 0 {
-        line.push(char::from_digit(rest / divisor, 10).unwrap_or('0'));
-        rest %= divisor;
-        divisor /= 10;
+    let mut digits = [0_u8; 10];
+    let mut start = digits.len();
+    let mut rest = value;
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (rest % 10) as u8;
+        rest /= 10;
+        if rest == 0 {
+            break;
+        }
+    }
+    while digits.len() - start < width as usize {
+        start -= 1;
+        digits[start] = b'0';
+    }
+    for digit in &digits[start..] {
+        line.push(char::from(*digit));
     }
 }
 
-const TIMESTAMP_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.3f";
+/// Append `year` the way the log format has always printed it: four digits
+/// zero-padded inside `0..=9999`, and a mandatory sign plus four digits
+/// otherwise.
+fn push_padded_year(line: &mut String, year: i32) {
+    if (0..10_000).contains(&year) {
+        push_padded(line, year as u32, 4);
+        return;
+    }
+    line.push(if year < 0 { '-' } else { '+' });
+    push_padded(line, year.unsigned_abs(), 4);
+}
 
-/// Append `now` as [`TIMESTAMP_FORMAT`] would print it.
+/// Append `calendar` in the local log form `YYYY-MM-DD HH:MM:SS.mmm`.
 ///
-/// Written by hand because `DateTime::format` renders the offset name into a
-/// `String` and the formatter builds another one for its output, on every line.
-fn push_timestamp(line: &mut String, now: &chrono::NaiveDateTime) {
-    let year = match u32::try_from(now.year()) {
-        Ok(year) if year <= 9999 => year,
-        _ => {
-            line.push_str(&now.format(TIMESTAMP_FORMAT).to_string());
-            return;
-        }
-    };
-    push_padded(line, year, 4);
+/// Written by hand because the `time` formatter renders into a `String` it has
+/// to build on every line, while the logger keeps this `String` across writes.
+///
+/// [`Calendar`] is the one decomposition of the instant: it already carries a
+/// leap second as `:60` on its own date, so the seconds field is printed as
+/// stored instead of adding the leaping nanosecond back here.
+fn push_timestamp(line: &mut String, calendar: &Calendar) {
+    push_padded_year(line, calendar.year);
     line.push('-');
-    push_padded(line, now.month(), 2);
+    push_padded(line, u32::from(calendar.month), 2);
     line.push('-');
-    push_padded(line, now.day(), 2);
+    push_padded(line, u32::from(calendar.day), 2);
     line.push(' ');
-    push_padded(line, now.hour(), 2);
+    push_padded(line, u32::from(calendar.hour), 2);
     line.push(':');
-    push_padded(line, now.minute(), 2);
+    push_padded(line, u32::from(calendar.minute), 2);
     line.push(':');
-    // A leap second is carried in the nanoseconds.
-    push_padded(line, now.second() + now.nanosecond() / 1_000_000_000, 2);
+    push_padded(line, u32::from(calendar.second), 2);
     line.push('.');
-    push_padded(line, now.nanosecond() / 1_000_000 % 1000, 3);
+    push_padded(line, calendar.nanosecond / 1_000_000, 3);
+}
+
+/// The date stamp (`YYYY-MM-DD`) of the log file for this moment.
+///
+/// `Calendar::date` is the same ISO 8601 text the previous formatter produced,
+/// including the sign on a year outside `0..=9999`.
+fn log_date_stamp(now: Timestamp) -> Option<String> {
+    Some(now.calendar_local().0.date())
 }
 
 pub struct Logger {
@@ -266,7 +293,7 @@ impl Logger {
         horon_agent_storage::ensure_dir(&log_dir).ok()?;
 
         // Use date-based log file
-        let date = Local::now().format("%Y-%m-%d");
+        let date = log_date_stamp(Timestamp::now())?;
         let path = log_dir.join(format!("horon-agent-{}.log", date));
 
         let file = OpenOptions::new().create(true).append(true).open(&path).ok()?;
@@ -281,7 +308,7 @@ impl Logger {
         let mut line = std::mem::take(&mut self.line);
         line.clear();
         line.push('[');
-        push_timestamp(&mut line, &Local::now().naive_local());
+        push_timestamp(&mut line, &Timestamp::now().calendar_local().0);
         line.push_str("] [");
         line.push_str(level);
         line.push_str("] ");
@@ -658,7 +685,7 @@ pub fn current_session() -> Option<String> {
 /// Get path to today's log file
 pub fn log_path() -> Option<PathBuf> {
     let log_dir = log_dir()?;
-    let date = Local::now().format("%Y-%m-%d");
+    let date = log_date_stamp(Timestamp::now())?;
     Some(log_dir.join(format!("horon-agent-{}.log", date)))
 }
 
@@ -669,17 +696,17 @@ pub fn log_path() -> Option<PathBuf> {
 /// that must NOT be touched here, so we never blanket-delete by mtime.
 pub fn cleanup_old_logs() {
     if let Some(log_dir) = log_dir() {
-        cleanup_old_logs_in(&log_dir, Local::now());
+        cleanup_old_logs_in(&log_dir, Timestamp::now());
     }
 }
 
 /// Core of [`cleanup_old_logs`], parameterized on the directory and "now" so it
 /// can be unit-tested without touching the real log directory or process env.
-fn cleanup_old_logs_in(log_dir: &std::path::Path, now: chrono::DateTime<Local>) {
+fn cleanup_old_logs_in(log_dir: &std::path::Path, now: Timestamp) {
     let Ok(entries) = fs::read_dir(log_dir) else {
         return;
     };
-    let cutoff = now - chrono::Duration::days(7);
+    let cutoff = now - horon_agent_time::Duration::days(7);
     for entry in entries.flatten() {
         // Only consider our own date-stamped log files.
         let name = entry.file_name();
@@ -694,7 +721,7 @@ fn cleanup_old_logs_in(log_dir: &std::path::Path, now: chrono::DateTime<Local>) 
             && metadata.is_file()
             && let Ok(modified) = metadata.modified()
         {
-            let modified: chrono::DateTime<Local> = modified.into();
+            let modified = Timestamp::from(modified);
             if modified < cutoff
                 && let Err(err) = fs::remove_file(entry.path())
             {
@@ -911,7 +938,7 @@ mod tests {
         let subdir = dir.join("memory");
         fs::create_dir_all(&subdir).expect("create subdir");
 
-        cleanup_old_logs_in(&dir, Local::now());
+        cleanup_old_logs_in(&dir, Timestamp::now());
 
         assert!(!old_log.exists(), "old horon-agent log should be deleted");
         assert!(!old_desktop.exists(), "old desktop log should be deleted");
@@ -924,24 +951,50 @@ mod tests {
     }
 
     #[test]
-    fn timestamp_text_matches_the_chrono_format() {
+    fn timestamp_text_keeps_the_log_format() {
         let cases = [
-            (2026, 11, 16, 9, 5, 7, 4_000_000_u32),
-            (1999, 12, 31, 23, 59, 59, 999_999_999),
-            (987, 1, 2, 0, 0, 0, 0),
-            // A leap second: the 60th second is carried in the nanoseconds.
-            (2016, 12, 31, 23, 59, 59, 1_500_000_000),
-            (12345, 6, 7, 8, 9, 10, 11_000_000),
-            (-44, 3, 15, 12, 0, 0, 0),
+            ((2026, 11, 16, 9, 5, 7, 4_000_000_u32), "2026-11-16 09:05:07.004"),
+            ((1999, 12, 31, 23, 59, 59, 999_999_999), "1999-12-31 23:59:59.999"),
+            ((987, 1, 2, 0, 0, 0, 0), "0987-01-02 00:00:00.000"),
+            // A leap second is its own 60th second, on the same date.
+            ((2016, 12, 31, 23, 59, 60, 500_000_000), "2016-12-31 23:59:60.500"),
+            // An extended year keeps its mandatory sign and four digits.
+            ((12345, 6, 7, 8, 9, 10, 11_000_000), "+12345-06-07 08:09:10.011"),
+            ((-44, 3, 15, 12, 0, 0, 0), "-0044-03-15 12:00:00.000"),
         ];
-        for (year, month, day, hour, minute, second, nano) in cases {
-            let at = chrono::NaiveDate::from_ymd_opt(year, month, day)
-                .and_then(|date| date.and_hms_nano_opt(hour, minute, second, nano))
-                .expect("a valid date and time");
+        for ((year, month, day, hour, minute, second, nanosecond), expected) in cases {
             let mut line = String::new();
-            push_timestamp(&mut line, &at);
-            assert_eq!(line, at.format(TIMESTAMP_FORMAT).to_string());
+            push_timestamp(
+                &mut line,
+                &Calendar {
+                    year,
+                    month,
+                    day,
+                    hour,
+                    minute,
+                    second,
+                    nanosecond,
+                },
+            );
+            assert_eq!(line, expected);
         }
+    }
+
+    #[test]
+    fn timestamp_text_agrees_with_the_calendar_fields() {
+        let at = Timestamp::from_timestamp(1_763_280_000, 4_000_000).expect("a valid instant");
+        let calendar = at.calendar_local().0;
+        let expected = format!(
+            "{} {:02}:{:02}:{:02}.{:03}",
+            calendar.date(),
+            calendar.hour,
+            calendar.minute,
+            calendar.second,
+            calendar.nanosecond / 1_000_000,
+        );
+        let mut line = String::new();
+        push_timestamp(&mut line, &calendar);
+        assert_eq!(line, expected);
     }
 
     #[test]

@@ -9,6 +9,7 @@ use horon_agent_app_core::message::{ContentBlock, Role};
 use horon_agent_app_core::session::Session;
 use horon_agent_harness_api::ServerFrame;
 use horon_agent_harness_api_server::translate::{BridgeState, Outbound};
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -60,8 +61,8 @@ impl Drop for Home {
     }
 }
 
-fn seed(session_id: &str, working_dir: &Path, title: &str, prompt: &str) -> chrono::DateTime<chrono::Utc> {
-    let created = chrono::Utc::now();
+fn seed(session_id: &str, working_dir: &Path, title: &str, prompt: &str) -> Timestamp {
+    let created = Timestamp::now();
     let mut session = Session::create_with_id(session_id.to_string(), None, Some(title.to_string()));
     session.mark_closed();
     session.created_at = created;

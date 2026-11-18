@@ -11,7 +11,7 @@
 
 use super::*;
 use crate::agent::HandoffOutcome;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 
 /// Run the handoff-ready pass once.
@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 pub(super) fn ready_pass(
     manifest: &OvernightManifest,
     notice_sent: bool,
-    now: chrono::DateTime<Utc>,
+    now: Timestamp,
     compact: impl FnOnce() -> HandoffOutcome,
 ) -> Result<Option<String>> {
     if notice_sent || now < manifest.handoff_ready_at || now >= manifest.target_wake_at {

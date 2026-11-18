@@ -16,8 +16,8 @@
 
 use super::{Session, event_actor::Writer, event_origin, event_store};
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use horon_agent_session_store as store;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -70,7 +70,7 @@ impl Session {
     /// `None` means no such turn was ever created. The timestamp is the moment of
     /// creation, so a caller can tell a turn that already ran (the session moved
     /// on afterwards) from one that was created and never executed.
-    pub fn resume_key_recorded_at(session_id: &str, resume_key: &str) -> Result<Option<DateTime<Utc>>> {
+    pub fn resume_key_recorded_at(session_id: &str, resume_key: &str) -> Result<Option<Timestamp>> {
         let paths = event_store::paths()?;
         let id = store::SessionId::parse(session_id)?;
         if !paths.events_log(&id)?.exists() {
@@ -131,7 +131,7 @@ fn append_marker(
         store::EventId::new_v4(),
         Some(head),
         event_origin::origin(paths)?,
-        Utc::now(),
+        Timestamp::now(),
         store::EventKind::new(store::KnownEventKind::MetadataChanged),
         json!({"metadata": metadata, "resume_key": resume_key}),
     )
@@ -144,12 +144,12 @@ fn append_marker(
 ///
 /// A key repeated by a later marker keeps its earliest moment, so a retried
 /// append cannot make a created turn look newer than the run it started.
-fn resume_markers(paths: &store::SessionPaths, id: &store::SessionId) -> Result<Vec<(String, DateTime<Utc>)>> {
+fn resume_markers(paths: &store::SessionPaths, id: &store::SessionId) -> Result<Vec<(String, Timestamp)>> {
     let report = store::full_scan(paths, id)?;
     if let Some(error) = report.damage {
         return Err(error.into());
     }
-    let mut markers: Vec<(String, DateTime<Utc>)> = Vec::new();
+    let mut markers: Vec<(String, Timestamp)> = Vec::new();
     for event in &report.events {
         if event.kind.as_str() != store::KnownEventKind::MetadataChanged.as_str() {
             continue;

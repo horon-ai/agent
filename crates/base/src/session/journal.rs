@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -13,7 +13,7 @@ pub(super) struct SessionJournalMeta {
     pub(super) custom_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) system_prompt: Option<String>,
-    pub(super) updated_at: DateTime<Utc>,
+    pub(super) updated_at: Timestamp,
     pub(super) compaction: Option<StoredCompactionState>,
     pub(super) provider_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -39,7 +39,7 @@ pub(super) struct SessionJournalMeta {
     pub(super) short_name: Option<String>,
     pub(super) status: SessionStatus,
     pub(super) last_pid: Option<u32>,
-    pub(super) last_active_at: Option<DateTime<Utc>>,
+    pub(super) last_active_at: Option<Timestamp>,
     pub(super) is_debug: bool,
     pub(super) saved: bool,
     pub(super) save_label: Option<String>,

@@ -332,7 +332,7 @@ pub fn logout(url: &str) -> Result<bool> {
 }
 
 fn now_secs() -> i64 {
-    chrono::Utc::now().timestamp()
+    horon_agent_time::Timestamp::now().timestamp()
 }
 
 fn is_fresh(entry: &StoredOAuth) -> bool {

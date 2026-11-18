@@ -21,7 +21,7 @@ use crate::safety::{PermissionRequest, SafetySystem, Urgency};
 use crate::session::{Session, SessionStatus};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -144,7 +144,7 @@ fn record(session_id: &str, request_id: &str) -> BlockedApproval {
     BlockedApproval {
         session_id: session_id.to_string(),
         request_id: request_id.to_string(),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         ..BlockedApproval::default()
     }
 }
@@ -273,8 +273,8 @@ async fn a_live_waiter_lease_keeps_the_runner_out() {
 
     let mut held = record(&session.id, request_id);
     held.waiter_pid = Some(std::process::id());
-    held.waiter_started_at = Some(Utc::now());
-    held.waiter_lease_expires_at = Some(Utc::now() + chrono::Duration::seconds(30));
+    held.waiter_started_at = Some(Timestamp::now());
+    held.waiter_lease_expires_at = Some(Timestamp::now() + TimeDelta::seconds(30));
     store().add(held).expect("add record");
 
     let runner = runner();
@@ -306,8 +306,8 @@ async fn an_expired_lease_hands_the_run_to_the_runner() {
 
     let mut abandoned = record(&session.id, request_id);
     abandoned.waiter_pid = Some(999_999);
-    abandoned.waiter_started_at = Some(Utc::now() - chrono::Duration::minutes(5));
-    abandoned.waiter_lease_expires_at = Some(Utc::now() - chrono::Duration::seconds(1));
+    abandoned.waiter_started_at = Some(Timestamp::now() - TimeDelta::minutes(5));
+    abandoned.waiter_lease_expires_at = Some(Timestamp::now() - TimeDelta::seconds(1));
     store().add(abandoned).expect("add record");
 
     let runner = runner();
@@ -467,7 +467,7 @@ async fn an_inline_denial_is_never_resumed() {
     let request_id = "req_inline_denied";
 
     let mut record = record(&session.id, request_id);
-    record.inline_at = Some(Utc::now());
+    record.inline_at = Some(Timestamp::now());
     record.inline_approved = Some(false);
     record.outcome = Some("inline".to_string());
     store().add(record).expect("add record");
@@ -496,7 +496,7 @@ async fn an_inline_approval_on_a_stopped_session_resumes_once() {
     let request_id = "req_inline_approved";
 
     let mut record = record(&session.id, request_id);
-    record.inline_at = Some(Utc::now());
+    record.inline_at = Some(Timestamp::now());
     record.inline_approved = Some(true);
     record.outcome = Some("inline".to_string());
     store().add(record).expect("add record");
@@ -526,7 +526,7 @@ async fn an_inline_approval_on_a_live_session_waits() {
     let request_id = "req_inline_live";
 
     let mut record = record(&session.id, request_id);
-    record.inline_at = Some(Utc::now());
+    record.inline_at = Some(Timestamp::now());
     record.inline_approved = Some(true);
     record.outcome = Some("inline".to_string());
     store().add(record).expect("add record");
@@ -611,8 +611,8 @@ async fn a_human_verdict_the_waiting_turn_already_used_is_not_resumed() {
     record
         .tool_verdicts
         .insert("call_retry_me".to_string(), "human_retry".to_string());
-    record.decided_at = Some(Utc::now());
-    record.inline_at = Some(Utc::now());
+    record.decided_at = Some(Timestamp::now());
+    record.inline_at = Some(Timestamp::now());
     record.inline_approved = Some(true);
     store().add(record).expect("add record");
 
@@ -648,8 +648,8 @@ async fn a_human_verdict_the_waiting_turn_never_saw_still_resumes() {
     record
         .tool_verdicts
         .insert("call_retry_me".to_string(), "human_retry".to_string());
-    record.decided_at = Some(Utc::now());
-    record.inline_at = Some(Utc::now());
+    record.decided_at = Some(Timestamp::now());
+    record.inline_at = Some(Timestamp::now());
     record.inline_approved = Some(false);
     store().add(record).expect("add record");
 
@@ -930,7 +930,12 @@ async fn a_created_turn_that_never_ran_is_executed_without_a_new_turn() {
     );
     let exec = ResumeExecClaimStore::open_default()
         .expect("exec claim store")
-        .try_acquire(request_id, Utc::now(), resume_exec_lease(), RESUME_EXEC_ATTEMPT_CAP)
+        .try_acquire(
+            request_id,
+            Timestamp::now(),
+            resume_exec_lease(),
+            RESUME_EXEC_ATTEMPT_CAP,
+        )
         .expect("read exec claim");
     match exec {
         ExecClaimOutcome::Done(claim) => {
@@ -1037,10 +1042,10 @@ async fn an_orphaned_request_gets_a_record_and_resumes() {
         rationale: "cleanup".to_string(),
         urgency: Urgency::Normal,
         wait: true,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         context: Some(serde_json::json!({"session_id": session.id})),
         run_id: None,
-        expires_at: Some(Utc::now() + chrono::Duration::minutes(30)),
+        expires_at: Some(Timestamp::now() + TimeDelta::minutes(30)),
         default_on_timeout: crate::safety::ApprovalDefault::Deny,
     });
     assert!(store().get(request_id).unwrap().is_none());
@@ -1083,10 +1088,10 @@ fn an_orphan_whose_session_is_gone_is_expired() {
         rationale: "cleanup".to_string(),
         urgency: Urgency::Normal,
         wait: true,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         context: Some(serde_json::json!({"session_id": "sess_that_never_existed"})),
         run_id: None,
-        expires_at: Some(Utc::now() + chrono::Duration::minutes(30)),
+        expires_at: Some(Timestamp::now() + TimeDelta::minutes(30)),
         default_on_timeout: crate::safety::ApprovalDefault::Deny,
     });
 

@@ -126,7 +126,7 @@ fn set_pad(session: &mut Session, pad: usize) {
     let id = session.id.clone();
     session.env_snapshots.clear();
     session.record_env_snapshot(EnvSnapshot {
-        captured_at: chrono::Utc::now(),
+        captured_at: horon_agent_time::Timestamp::now(),
         reason: "p".repeat(pad),
         session_id: id,
         working_dir: None,

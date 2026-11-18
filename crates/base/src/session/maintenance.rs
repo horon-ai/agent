@@ -14,8 +14,9 @@
 //! recovery copy.
 
 use crate::storage;
-use chrono::{DateTime, Duration, Local};
+use horon_agent_time::{Duration, Timestamp};
 use std::path::Path;
+use time::OffsetDateTime;
 
 /// Backups older than this are considered safe to remove. Chosen conservatively
 /// so any realistic "crashed mid-write, reopened later" scenario still has its
@@ -43,7 +44,7 @@ pub fn prune_old_session_backups() {
         if !claim_prune_slot(&base) {
             return;
         }
-        prune_old_session_backups_in(&sessions_dir, Local::now());
+        prune_old_session_backups_in(&sessions_dir, Timestamp::now().local());
     }
 }
 
@@ -68,7 +69,7 @@ fn claim_prune_slot(base: &Path) -> bool {
 
 /// Core of [`prune_old_session_backups`], parameterized on the directory and
 /// "now" for unit testing.
-fn prune_old_session_backups_in(sessions_dir: &Path, now: DateTime<Local>) {
+fn prune_old_session_backups_in(sessions_dir: &Path, now: OffsetDateTime) {
     let Ok(entries) = std::fs::read_dir(sessions_dir) else {
         return;
     };
@@ -82,7 +83,7 @@ fn prune_old_session_backups_in(sessions_dir: &Path, now: DateTime<Local>) {
             && metadata.is_file()
             && let Ok(modified) = metadata.modified()
         {
-            let modified: DateTime<Local> = modified.into();
+            let modified = OffsetDateTime::from(modified);
             if modified < cutoff {
                 let _ = std::fs::remove_file(&path);
             }
@@ -168,7 +169,7 @@ mod tests {
         // Other artifacts must be left alone.
         let journal = write("session_old.journal.jsonl", 60);
 
-        prune_old_session_backups_in(&dir, Local::now());
+        prune_old_session_backups_in(&dir, Timestamp::now().local());
 
         assert!(!old_bak.exists(), "old .bak should be pruned");
         assert!(recent_bak.exists(), "recent .bak must survive");

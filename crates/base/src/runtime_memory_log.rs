@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -559,11 +559,11 @@ pub fn server_logs_dir() -> Result<PathBuf> {
 }
 
 pub fn current_server_log_path() -> Result<PathBuf> {
-    server_log_path_for(Utc::now())
+    server_log_path_for(Timestamp::now())
 }
 
 pub fn current_client_log_path() -> Result<PathBuf> {
-    client_log_path_for(Utc::now())
+    client_log_path_for(Timestamp::now())
 }
 
 pub fn append_server_sample(sample: &ServerRuntimeMemorySample) -> Result<PathBuf> {
@@ -724,15 +724,15 @@ fn bytes_to_mb_string(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / (1024.0 * 1024.0))
 }
 
-fn server_log_path_for(now: chrono::DateTime<Utc>) -> Result<PathBuf> {
+fn server_log_path_for(now: Timestamp) -> Result<PathBuf> {
     let dir = server_logs_dir()?;
-    let date = now.format("%Y-%m-%d");
+    let date = crate::util::utc_date(now);
     Ok(dir.join(format!("{SERVER_LOG_FILE_PREFIX}{date}{SERVER_LOG_FILE_SUFFIX}")))
 }
 
-fn client_log_path_for(now: chrono::DateTime<Utc>) -> Result<PathBuf> {
+fn client_log_path_for(now: Timestamp) -> Result<PathBuf> {
     let dir = server_logs_dir()?;
-    let date = now.format("%Y-%m-%d");
+    let date = crate::util::utc_date(now);
     Ok(dir.join(format!("{CLIENT_LOG_FILE_PREFIX}{date}{CLIENT_LOG_FILE_SUFFIX}")))
 }
 

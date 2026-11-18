@@ -149,7 +149,6 @@
 | `RUSTSEC-2026-0099` | `rustls-webpki` | `rustls` 의존성 스택 | rustls 사용처의 TLS 인증서 검증 | 와일드카드 인증서에 이름 제약을 받아들인다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
 | `RUSTSEC-2026-0104` | `rustls-webpki` | `rustls` 의존성 스택 | TLS 인증서 폐기 목록 파싱 | CRL 파싱에서 도달 가능한 패닉이 있다. TLS 라이브러리를 거친 전이 문제다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
 | `RUSTSEC-2026-0049` | `rustls-webpki` | `rustls` 의존성 스택(`aws-smithy` rustls 0.21) | TLS 인증서 폐기 목록 처리 | 잘못된 매칭 로직 때문에 Distribution Point가 지정한 CRL을 권위 있는 것으로 보지 않는다. 더 오래된 rustls 스택을 거친 전이 문제이며, 수정에는 rustls-webpki >=0.103.10이 필요하고 이는 `aws-sdk` 스택의 메이저 업그레이드를 요구한다. | 호환 릴리스가 나오면 rustls/webpki 스택을 올린다. |
-| `RUSTSEC-2026-0543` | `chrono` | 약 스무 개 크레이트의 직접 의존성(`app-core`, `base`, `session-store`, 타입 크레이트, `harness-api-server`, `crates/tui` 등) | 세션·로그·메모리·하네스 API의 시각 값 | 취약점이 아니라 업스트림 유지보수 중단 통지다. 모든 버전이 영향을 받고 패치 버전이 없다고 권고가 밝힌다. `DateTime<Utc>`가 저장 세션과 하네스 API에 직렬화되므로 교체는 버전 올림이 아니라 계약을 건드리는 작업이다. | `jiff`나 `time`으로 옮긴다. 타입 크레이트부터 옮기고 저장 세션 계약 시험을 관문으로 삼은 뒤 무시 항목을 지운다. #377에서 추적한다. |
 | `RUSTSEC-2026-0187` | `lopdf` | `horon-agent-pdf -> pdf-extract 0.8.2 -> lopdf 0.34` | PDF 텍스트 추출(`/pdf`, 이미지/PDF 읽기) | 깊게 중첩된 PDF 객체를 파싱할 때 스택이 넘친다. 사용자가 여는(악의적일 수 있는) PDF에서 텍스트를 추출할 때만 도달하며 인증/프로바이더/네트워크 경로는 아니다. `pdf-extract 0.8.2`가 `lopdf 0.34`를 고정하므로 업스트림 `pdf-extract` 릴리스 없이는 수정된 `>=0.42`로 올릴 수 없다. | `pdf-extract`가 `lopdf >=0.42`에 의존하는 릴리스를 내면 올리고 그때 무시를 뺀다. |
 
 ### 우선순위
@@ -171,13 +170,13 @@
 | `bincode` | 없다 | `RUSTSEC-2025-0141` |
 | `lru` | 있다. `ratatui-core`를 거친다 | `RUSTSEC-2026-0002` |
 | `quick-xml` | 없다 | `RUSTSEC-2026-0194`, `RUSTSEC-2026-0195` |
-| `paste` | 있다 | `RUSTSEC-2024-0436` |
+| `paste` | 없다 | `RUSTSEC-2024-0436` |
 | `rand` | 있다 | `RUSTSEC-2026-0097` |
 | `azure_core` | 없다 | `RUSTSEC-2026-0097` |
 | `tungstenite` | 있다 | `RUSTSEC-2026-0097` |
 | `tract-nnef` | 있다 | `RUSTSEC-2026-0097`, 아래 `RUSTSEC-2026-0217` 항목 |
 | `lopdf` | 있다 | `RUSTSEC-2026-0187` |
-| `chrono` | 있다. 약 스무 개 크레이트의 직접 의존성이다 | `RUSTSEC-2026-0543` |
+| `chrono` | 없다 | `RUSTSEC-2026-0543` |
 | `rustls-webpki` | 있다 | `RUSTSEC-2026-0049`, `0098`, `0099`, `0104` |
 | `crossterm` | 있다. `horon-tui`로만 들어온다 | 터미널 이미지 크레이트(`horon-agent-terminal-image`) 삭제와 함께 빠졌다가 `crates/tui`와 함께 돌아왔다 |
 
@@ -203,15 +202,13 @@
   `anyhow`(RUSTSEC-2026-0190), `event-listener`(RUSTSEC-2026-0221), `tokio`(RUSTSEC-2026-0386)의
   불건전성 권고와 `chacha20` yanked 경고는 `Cargo.lock`을 올려 해결했다
   (`anyhow` 1.0.104, `event-listener` 5.4.2, `tokio` 1.53.3, `chacha20` 0.10.2).
-  남은 유지보수 중단 권고 다섯 건(`paste` RUSTSEC-2024-0436, `pin-utils` RUSTSEC-2026-0441,
-  `rustybuzz` RUSTSEC-2026-0206, `ttf-parser` RUSTSEC-2026-0192, `unsafe-libyaml`
-  RUSTSEC-2024-0449)은 업스트림 대체 없이 이 저장소에서 뺄 수 없는 전이 의존성이라
-  `scripts/ci/check_security.sh`에서 무시했다. 이 스크립트는 `cargo audit --deny warnings`로
-  돌기 때문에 새 경고(유지보수 중단, 불건전성, yanked)는 CI를 실패시킨다.
-- `scripts/ci/check_security.sh`는 위에서 명시적으로 분류한 취약점 권고
-  (`rustls-webpki`, `lopdf`, `quick-xml`)를 무시해 CI가 계속 조치 가능하게 유지한다
-  (`scripts/ci/check_security.sh`의 `audit_ignores`). 새
-  취약점은 기본적으로 여전히 CI를 실패시킨다.
+  당시에는 유지보수가 중단된 `paste`, `pin-utils`, `rustybuzz`, `ttf-parser`,
+  `unsafe-libyaml` 다섯 개를 검사에서 제외했다.
+- 현재 잠금 파일에는 다섯 패키지가 모두 없다. `futures` 0.3.34와 `hyper` 1.12에서
+  `pin-utils` 의존성이 사라졌다. 스킬 파일의 YAML 머리말은 `yaml_serde`로 읽고,
+  `resvg`/`usvg` 0.48과 `lopdf` 0.45에서는 이전 글꼴 파서를 사용하지 않는다.
+  호환되는 배포판이 나올 때까지 PDF, 토크나이저, 할당기는 각 프로젝트의 커밋으로
+  고정한다. 보안 검사에서는 모든 권고에 `cargo audit --deny warnings`를 적용한다.
 - 2026-11-13: 같은 날 공개된 권고 세 건이 의존성을 바꾸지 않은 push에서도 preflight를 실패시켰다.
   `RUSTSEC-2026-0524`, `RUSTSEC-2026-0523`(`quinn-proto` 0.11.18)과 `RUSTSEC-2026-0538`
   (`quinn-udp` 0.5.14)이고 모두 `reqwest`의 QUIC 스택을 통해 들어온다. 무시하지 않고
@@ -219,9 +216,7 @@
   항목은 추가하지 않았다. `main`도 같은 버전을 들고 있었으므로 이 실패는 `dev`에 한정된 것이 아니다.
 - 2026-11-17: `RUSTSEC-2026-0543`(`chrono` 0.4.42, 유지보수 중단, 모든 버전 영향, 패치 버전 없음,
   같은 날 발행)이 의존성을 바꾸지 않은 PR에서도 preflight를 실패시켰다. 같은 `dev` 커밋이 09:38에는
-  통과하고 14:14에는 실패했는데, 그사이 권고 데이터베이스에 항목이 들어왔기 때문이다. 위 표에서
-  업스트림 유지보수 중단으로 분류하고 `scripts/ci/check_security.sh`에서 무시한다. 교체 작업은
-  #377에서 추적한다. `main`도 같은 버전을 들고 있어 `main` push도 같은 방식으로 실패했다.
+  통과하고 14:14에는 실패했다. 그사이 권고 데이터베이스에 항목이 추가됐다. #377에서 시간 라이브러리를 교체하고 임시 검사 예외를 삭제했다.
 - 의존성 버전을 바꾸기 전에 다음을 실행한다.
   - `cargo check`
   - `cargo test -j 1`

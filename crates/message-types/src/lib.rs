@@ -1,6 +1,8 @@
 pub mod degradation;
 pub mod provider_native;
 
+use horon_agent_time::{Duration, Precision, Timestamp};
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ToolCall {
     #[serde(default)]
@@ -116,7 +118,7 @@ pub struct Message {
     pub role: Role,
     pub content: Vec<ContentBlock>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    pub timestamp: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_duration_ms: Option<u64>,
 }
@@ -314,7 +316,7 @@ impl Message {
                 text: text.to_string(),
                 cache_control: None,
             }],
-            timestamp: Some(chrono::Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms: None,
         }
     }
@@ -331,7 +333,7 @@ impl Message {
         Self {
             role: Role::User,
             content,
-            timestamp: Some(chrono::Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms: None,
         }
     }
@@ -343,7 +345,7 @@ impl Message {
                 text: text.to_string(),
                 cache_control: None,
             }],
-            timestamp: Some(chrono::Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms: None,
         }
     }
@@ -366,14 +368,14 @@ impl Message {
                 is_error: if is_error { Some(true) } else { None },
                 verdict: None,
             }],
-            timestamp: Some(chrono::Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms,
         }
     }
 
     /// Format a timestamp deterministically in UTC for injection into model-visible content.
-    pub fn format_timestamp(ts: &chrono::DateTime<chrono::Utc>) -> String {
-        ts.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    pub fn format_timestamp(ts: &Timestamp) -> String {
+        ts.to_rfc3339_opts(Precision::Millis, true)
     }
 
     pub fn format_duration(duration_ms: u64) -> String {
@@ -408,12 +410,14 @@ impl Message {
         self.is_internal_system_reminder()
     }
 
-    fn tool_result_tag(&self, ts: &chrono::DateTime<chrono::Utc>) -> String {
+    fn tool_result_tag(&self, ts: &Timestamp) -> String {
         match self.tool_duration_ms {
             Some(duration_ms) => {
                 let duration_ms_i64 = i64::try_from(duration_ms).unwrap_or(i64::MAX);
                 let start_ts = ts
-                    .checked_sub_signed(chrono::Duration::milliseconds(duration_ms_i64))
+                    .utc()
+                    .checked_sub(Duration::milliseconds(duration_ms_i64))
+                    .map(Timestamp::from)
                     .unwrap_or(*ts);
                 format!(
                     "[tool timing: start={} finish={} duration={}]",
@@ -1054,7 +1058,7 @@ mod tests {
                 text: "<system-reminder>\n# Memory\n</system-reminder>".to_string(),
                 cache_control: None,
             }],
-            timestamp: Some(chrono::Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms: None,
         };
         let persisted = Message {
@@ -1068,7 +1072,7 @@ mod tests {
                     text: "history-only scratch".to_string(),
                 },
             ],
-            timestamp: Some(chrono::Utc::now() + chrono::Duration::seconds(7)),
+            timestamp: Some(Timestamp::now() + Duration::seconds(7)),
             tool_duration_ms: Some(42),
         };
 

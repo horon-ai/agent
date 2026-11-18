@@ -1,7 +1,7 @@
 use super::{Agent, HORON_AGENT_REPO_SOURCE_STATE, WORKING_GIT_STATE_CACHE};
 use crate::logging;
 use crate::session::{EnvSnapshot, GitState};
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,7 +99,7 @@ impl Agent {
         };
 
         EnvSnapshot {
-            captured_at: Utc::now(),
+            captured_at: Timestamp::now(),
             reason: reason.to_string(),
             session_id: self.session.id.clone(),
             working_dir,

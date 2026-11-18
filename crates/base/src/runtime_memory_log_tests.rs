@@ -34,8 +34,8 @@ fn append_server_sample_writes_jsonl_under_memory_logs_dir() {
     let sample = ServerRuntimeMemorySample {
         schema_version: 2,
         kind: "process".to_string(),
-        timestamp: Utc::now().to_rfc3339(),
-        timestamp_ms: Utc::now().timestamp_millis(),
+        timestamp: Timestamp::now().to_rfc3339(),
+        timestamp_ms: Timestamp::now().timestamp_millis(),
         source: "test".to_string(),
         trigger: RuntimeMemoryLogTrigger {
             category: "test".to_string(),
@@ -90,8 +90,8 @@ fn append_client_sample_writes_jsonl_under_memory_logs_dir() {
     let sample = ClientRuntimeMemorySample {
         schema_version: 2,
         kind: "process".to_string(),
-        timestamp: Utc::now().to_rfc3339(),
-        timestamp_ms: Utc::now().timestamp_millis(),
+        timestamp: Timestamp::now().to_rfc3339(),
+        timestamp_ms: Timestamp::now().timestamp_millis(),
         source: "test".to_string(),
         trigger: RuntimeMemoryLogTrigger {
             category: "test".to_string(),
@@ -151,8 +151,8 @@ fn controller_defers_attribution_until_min_spacing() {
         &mut ServerRuntimeMemorySample {
             schema_version: 2,
             kind: "attribution".to_string(),
-            timestamp: Utc::now().to_rfc3339(),
-            timestamp_ms: Utc::now().timestamp_millis(),
+            timestamp: Timestamp::now().to_rfc3339(),
+            timestamp_ms: Timestamp::now().timestamp_millis(),
             source: "test".to_string(),
             trigger: RuntimeMemoryLogTrigger {
                 category: "startup".to_string(),

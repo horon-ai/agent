@@ -1,6 +1,7 @@
 use super::{Session, event_actor::Writer, event_store};
 use anyhow::{Context, Result, bail};
 use horon_agent_session_store as store;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 
 impl Session {
@@ -70,7 +71,7 @@ impl Session {
                 None => bail!("SourceConflict: session originals changed since this facade was loaded"),
             }
         }
-        self.updated_at = chrono::Utc::now();
+        self.updated_at = Timestamp::now();
         let compaction_changed =
             self.event_state.auxiliary.get("compaction") != Some(&serde_json::to_value(&self.compaction)?);
         let identity_changed = self

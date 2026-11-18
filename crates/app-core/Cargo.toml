@@ -43,10 +43,10 @@ ignore = "0.4"
 similar = "2"            # diffing for edits
 
 # Utilities
-dirs = "5"               # home directory
+dirs = "6"               # home directory
 anyhow = "1"
 libc = "0.2"             # Unix system calls (flock)
-chrono = { version = "0.4", features = ["serde"] }
+horon-agent-time = { path = "../time-types" }
 regex = "1"
 # Interceptor rules need lookaround (e.g. `cat` followed by no redirection).
 fancy-regex = "0.20"
