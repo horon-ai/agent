@@ -1127,7 +1127,7 @@ jobs:
 
       - name: Run tool surface cohort
         shell: bash
-        # `tool::tests` (78 checked, 4 `#[ignore]` QA) covers the registry:
+        # `tool::tests` (76 checked, 4 `#[ignore]` QA) covers the registry:
         # profile filtering, the deterministic definition order that keeps the
         # prompt prefix cacheable, and the parameter-description token cap that
         # governs how many tokens every request pays for the schema.
@@ -1136,6 +1136,9 @@ jobs:
         # modules compiled in every run and no cohort selected them (#300), so
         # two failures sat on `dev` unexecuted until they were fixed.
         # `--min-passed` is the measured count; raise it with the module.
+        # It moved 78 -> 76 when prune-tests (#419) removed
+        # `print_tool_definition_token_report` and
+        # `subagent_tool_is_not_registered`, two tests that guarded no behavior.
         # `tool::lifecycle::tests` (5) pins the `TOOL_LIFECYCLE` field list a
         # dispatch builds once and relabels for its done or error line: names,
         # order, values, and the input size counted without building the text.
@@ -1152,7 +1155,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 900 --min-passed 78 \
+            --timeout 900 --min-passed 76 \
             -- tool::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
