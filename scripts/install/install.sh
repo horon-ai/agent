@@ -341,13 +341,130 @@ if [ "$IS_WINDOWS" = false ] && [ "${HORON_AGENT_NO_DOWNLOAD_CACHE:-}" != "1" ];
   prepare_asset_cache "$cache_root"
 fi
 
+# The final four bytes of a gzip file are the ISIZE field of the last member's
+# trailer, stored little-endian: that member's uncompressed length modulo 2^32,
+# not a total over every member. A stream with several members therefore reports
+# less than it holds. The figure is used only to decide whether an image is
+# worth writing (see inflate_bootstrap_archive); it never decides that an
+# install fits. Anything that cannot be read as a positive number is reported as
+# unknown, and the caller keeps the compressed path. `gzip -l` is not used here:
+# its table differs between implementations, while reading the trailer costs
+# four bytes and no pass over the stream.
+gzip_uncompressed_size() {
+  local trailer size=0 index=0 byte
+  trailer=$(tail -c 4 -- "$1" 2>/dev/null | od -An -tu1 2>/dev/null) || return 1
+  for byte in $trailer; do
+    case "$index" in
+      0) size=$byte ;;
+      1) size=$((size + byte * 256)) ;;
+      2) size=$((size + byte * 65536)) ;;
+      3) size=$((size + byte * 16777216)) ;;
+    esac
+    index=$((index + 1))
+  done
+  [ "$index" -eq 4 ] || return 1
+  [ "$size" -gt 0 ] || return 1
+  printf '%s\n' "$size"
+}
+
+# Free KiB on the filesystem that holds "$1", read from the POSIX `df -P` table.
+# The whole table is consumed so no producer is killed early by a closed pipe,
+# and anything but one numeric figure is reported as unknown.
+free_kibibytes() {
+  local available
+  available=$(LC_ALL=C df -Pk "$1" 2>/dev/null \
+    | awk 'NR > 1 && $4 ~ /^[0-9]+$/ && !found { print $4; found = 1 }') || return 1
+  [ -n "$available" ] || return 1
+  printf '%s\n' "$available"
+}
+
+# Prints the path of one uncompressed image of the verified archive, or fails so
+# the caller reads the archive as it lies on disk. Listing and extraction then
+# share that image: the compressed stream is expanded once instead of twice.
+#
+# The image costs its size in the temporary directory, so it is only written
+# when that filesystem holds roughly twice the reported uncompressed length,
+# which leaves room for the members read back out of it. This is a choice about
+# speed alone: the reported length can understate the stream (see
+# gzip_uncompressed_size), so an extraction out of the image that runs out of
+# room is recovered from the download instead of failing the install. A
+# temporary filesystem too small for both keeps the previous path and never sees
+# the copy. Only Linux takes this path; it is the platform that was measured,
+# and no GNU tar behaviour is assumed anywhere else.
+inflate_bootstrap_archive() {
+  local size free
+  [ "$OS" = Linux ] || return 1
+  command -v gzip >/dev/null 2>&1 || return 1
+  command -v od >/dev/null 2>&1 || return 1
+  command -v df >/dev/null 2>&1 || return 1
+  size=$(gzip_uncompressed_size "$1") || return 1
+  free=$(free_kibibytes "$tmpdir") || return 1
+  # KiB against bytes; 1023 rounds the length up to whole KiB.
+  [ "$free" -ge $(( (size + 1023) / 1024 * 2 )) ] || return 1
+  rm -f -- "$tmpdir/bootstrap.tar"
+  if ! gzip -dc -- "$1" > "$tmpdir/bootstrap.tar" 2>/dev/null; then
+    rm -f -- "$tmpdir/bootstrap.tar"
+    return 1
+  fi
+  printf '%s\n' "$tmpdir/bootstrap.tar"
+}
+
+# Writes the already validated members out of one input into the private
+# bootstrap directory. "$2" is the tar flag word that matches the input: -xzf
+# for the downloaded archive, -xf for its image. Nothing here decides whether a
+# name is acceptable, and a failure returns 1 instead of exiting so the caller
+# can retry from the download once.
+bootstrap_member_failure=""
+extract_bootstrap_members() {
+  local archive="$1" flags="$2" member
+  shift 2
+  bootstrap_member_failure=""
+  if [ "$#" -gt 1 ] && [[ $(tar --version 2>/dev/null) == *'GNU tar'* ]]; then
+    # GNU tar streams each selected regular file on stdin, so the whole set is
+    # read in one pass whatever the input is. Member names are data, never
+    # command text.
+    HORON_BOOTSTRAP_DIR="$bootstrap_dir" tar "$flags" "$archive" --no-wildcards \
+      --no-ignore-command-error --to-command='
+        name=${TAR_REALNAME#./}
+        case "$name" in ""|.|..|*/*) exit 1 ;; esac
+        set -C
+        cat > "$HORON_BOOTSTRAP_DIR/$name"
+      ' -- "$@" || return 1
+    for member in "$@"; do
+      if [ ! -f "$bootstrap_dir/${member#./}" ]; then
+        bootstrap_member_failure="$member"
+        return 1
+      fi
+    done
+    return 0
+  fi
+  for member in "$@"; do
+    tar -xOf "$archive" "$member" > "$bootstrap_dir/${member#./}" || {
+      bootstrap_member_failure="$member"
+      return 1
+    }
+  done
+}
+
 # Validate the complete listing before writing any bootstrap file. Only file
 # contents go into the private directory; tar never extracts an archive tree.
 extract_bootstrap_executable() {
-  local archive="$1" members member name
+  local archive="$1" image="" members member name
   shift
-  members=$(tar -tzf "$archive" 2>/dev/null) \
-    || err "Downloaded agent archive is not a readable tar.gz file"
+  # The listing must come out of one readable input, and a name it does not
+  # allow fails the install here, whichever input answered. A damaged image is
+  # dropped so the download answers instead.
+  if image=$(inflate_bootstrap_archive "$archive"); then
+    members=$(tar -tf "$image" 2>/dev/null) || members=""
+    if [ -z "$members" ]; then
+      rm -f -- "$image"
+      image=""
+    fi
+  fi
+  if [ -z "$image" ]; then
+    members=$(tar -tzf "$archive" 2>/dev/null) \
+      || err "Downloaded agent archive is not a readable tar.gz file"
+  fi
   [ -n "$members" ] || err "Downloaded agent archive is empty"
   # Collect literal member arguments, including a leading ./ on older archives.
   while IFS= read -r member; do
@@ -373,25 +490,23 @@ extract_bootstrap_executable() {
 $members
 EOF
   [ "$#" -gt 0 ] || err "Downloaded agent archive did not contain ${ARTIFACT}${EXE}"
-  if [ "$#" -gt 1 ] && [[ $(tar --version 2>/dev/null) == *'GNU tar'* ]]; then
-    # GNU tar streams each selected regular file on stdin, expanding the gzip
-    # stream once for the whole set. Member names are data, never command text.
-    HORON_BOOTSTRAP_DIR="$bootstrap_dir" tar -xzf "$archive" --no-wildcards \
-      --no-ignore-command-error --to-command='
-        name=${TAR_REALNAME#./}
-        case "$name" in ""|.|..|*/*) exit 1 ;; esac
-        set -C
-        cat > "$HORON_BOOTSTRAP_DIR/$name"
-      ' -- "$@" || err "Failed to extract the selected bootstrap files"
+  if [ -n "$image" ]; then
+    if extract_bootstrap_members "$image" -xf "$@"; then
+      rm -f -- "$image"
+      return 0
+    fi
+    # The image could not be written out of — the space its reported length
+    # promised went elsewhere, or that length understated the stream. Only the
+    # image and the partial copies it was allowed to write are removed; the
+    # download and everything else stay as they are, and the same validated
+    # members are written once more from it.
+    rm -f -- "$image"
     for member in "$@"; do
-      [ -f "$bootstrap_dir/${member#./}" ] || err "Failed to extract $member from the downloaded agent archive"
-    done
-  else
-    for member in "$@"; do
-      tar -xOf "$archive" "$member" > "$bootstrap_dir/${member#./}" \
-        || err "Failed to extract $member from the downloaded agent archive"
+      rm -f -- "$bootstrap_dir/${member#./}"
     done
   fi
+  extract_bootstrap_members "$archive" -xzf "$@" \
+    || err "Failed to extract ${bootstrap_member_failure:-${ARTIFACT}${EXE}} from the downloaded agent archive"
 }
 
 prepare_bootstrap_executable() {
