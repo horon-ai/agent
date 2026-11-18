@@ -83,7 +83,7 @@ fn the_title_stack_is_the_xterm_one() {
 
 #[test]
 fn an_unchanged_label_is_not_written_again() {
-    let mut title = Title::new(Vec::<u8>::new(), true);
+    let mut title = Title::with_stack(Vec::<u8>::new(), true, true);
     title.start("work").expect("a buffer accepts every write");
     let first = format!("{}{}", PUSH, title::set("work"));
     assert_eq!(
@@ -106,7 +106,7 @@ fn an_unchanged_label_is_not_written_again() {
 
 #[test]
 fn a_redirected_stdout_gets_no_bytes() {
-    let mut title = Title::new(Vec::<u8>::new(), false);
+    let mut title = Title::with_stack(Vec::<u8>::new(), false, true);
     title.start("work").expect("a redirect takes nothing and fails nothing");
     title
         .show("elsewhere")
@@ -143,7 +143,10 @@ fn title_stack_written_only_when_supported() {
     assert!(!dumb.keeps_title_stack(false), "`dumb` says it has no title handling");
 
     let conhost = title::TitleEnvironment::default();
-    assert!(!conhost.keeps_title_stack(true), "a bare Windows console keeps no stack");
+    assert!(
+        !conhost.keeps_title_stack(true),
+        "a bare Windows console keeps no stack"
+    );
     // The same environment on a Unix host is an unknown but xterm-like
     // terminal, so the platform is what decides, not a guess.
     assert!(conhost.keeps_title_stack(false));
@@ -157,9 +160,12 @@ fn title_stack_written_only_when_supported() {
     );
 
     // The title itself is still written where the pair is not.
-    let mut supported = Title::new(Vec::<u8>::new(), true);
+    let mut supported = Title::with_stack(Vec::<u8>::new(), true, true);
     supported.start("work").expect("a buffer accepts every write");
-    assert_eq!(supported.written().as_slice(), format!("{}{}", PUSH, title::set("work")).as_bytes());
+    assert_eq!(
+        supported.written().as_slice(),
+        format!("{}{}", PUSH, title::set("work")).as_bytes()
+    );
 
     let mut unsupported = Title::with_stack(Vec::<u8>::new(), true, false);
     unsupported.start("work").expect("a buffer accepts every write");
@@ -171,8 +177,14 @@ fn title_stack_written_only_when_supported() {
 
     // Popping reports success without writing when there is no stack to pop.
     let mut nothing = Vec::<u8>::new();
-    assert!(title::write_pop(&mut nothing, false), "nothing to restore is not a failure");
-    assert!(nothing.is_empty(), "a pop was written to a terminal without a title stack");
+    assert!(
+        title::write_pop(&mut nothing, false),
+        "nothing to restore is not a failure"
+    );
+    assert!(
+        nothing.is_empty(),
+        "a pop was written to a terminal without a title stack"
+    );
     let mut sequence = Vec::<u8>::new();
     assert!(title::write_pop(&mut sequence, true));
     assert_eq!(sequence.as_slice(), POP.as_bytes());

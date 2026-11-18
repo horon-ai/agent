@@ -32,11 +32,15 @@ pub(crate) struct TitleEnvironment {
 impl TitleEnvironment {
     /// The environment of this process.
     pub(crate) fn current() -> Self {
+        // `var_os` rather than `var`: a terminal name that is not valid UTF-8
+        // still means "this variable is set", and lossy text is enough to
+        // compare against the handful of markers below.
+        let read = |name: &str| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned());
         Self {
-            term: std::env::var("TERM").ok(),
-            term_program: std::env::var("TERM_PROGRAM").ok(),
-            wt_session: std::env::var("WT_SESSION").ok(),
-            conemu_ansi: std::env::var("ConEmuANSI").ok(),
+            term: read("TERM"),
+            term_program: read("TERM_PROGRAM"),
+            wt_session: read("WT_SESSION"),
+            conemu_ansi: read("ConEmuANSI"),
         }
     }
 
@@ -173,10 +177,6 @@ impl Title<Stdout> {
 
 impl<W: Write> Title<W> {
     /// A title written to `output`, or nowhere when `terminal` is false.
-    pub(crate) fn new(output: W, terminal: bool) -> Self {
-        Self::with_stack(output, terminal, true)
-    }
-
     /// A title that also knows whether the terminal keeps a title stack.
     pub(crate) fn with_stack(output: W, terminal: bool, stack: bool) -> Self {
         Self {
