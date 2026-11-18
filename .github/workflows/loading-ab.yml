@@ -112,6 +112,7 @@ jobs:
               cd "$side"
               cargo build --release --locked -p horon-agent
               cargo build --release --locked -p horon-agent-base --example loading_probe
+              cargo build --release --locked -p horon-agent-base --example resume_stage_probe
             )
           done
 

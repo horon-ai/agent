@@ -391,6 +391,44 @@ python3 scripts/perf/bench_loading.py --compare baseline-warm.json candidate-war
 
 기준선은 같은 명령을 기준 커밋의 워크트리에서 빌드한 `loading_probe`로 돌린 결과다. 판정은 카운터가 먼저다. `skill_catalog`의 `skill_bytes_read`, `skill_request_overlay`의 `skill_file_reads`, `mcp_config_load`의 `mcp_config_reads`가 기준선보다 늘면 실패다. 시간은 같은 쌍을 번갈아 다시 재도 기준선의 p95 범위를 넘을 때만 후퇴로 본다.
 
+단계는 실제로 재는 것을 기준으로 읽는다. `attach_history`는 `Session::load`에 이어 모든 메시지를 `history_messages()`로 완전히 물질화하는 단계이고, `detail`이 두 부분을 `load_ms`와 `history_ms`로 나눠 `resident`, `history`, `released_prefix` 개수와 함께 보고한다. `resume_ready`는 별도 단계로 `Session::load_startup_stub`, 즉 로드에 트랜스크립트 제거를 더한 것이다. 둘 다 첫 페이지 수치가 아니다. 호스트의 첫 페이지는 `history_page`/`get_history_page`이고 헤드에 묶인 페이지 인덱스가 페이지 범위로 제한하며, `crates/harness-api-server/src/history_page_perf_tests.rs`가 그것을 잰다. cold 리포트는 warm 리포트가 치르지 않는 일회성 캐시 재구축(전체 스캔과 파생 파일 게시)을 함께 치르므로 비교는 warm 리포트로만 한다.
+
+측정 결과의 `attach_history_samples`에는 `a`와 `b`에서 성공한 각 회차의 상세 값이 들어간다. 이전 버전의 프로브를 쓰거나 세션이 비어 있으면 빈 목록을 기록한다.
+
+### 콜드 재개가 시간을 쓰는 곳
+
+`attach_history`는 함수 두 개를 통째로 잰 값이라, 그 밀리초가 바이트 이동에 쓰였는지, 레코드 디코딩에 쓰였는지, 투영 구성에 쓰였는지, 트랜스크립트를 다시 JSON으로 쓰는 데 쓰였는지 말해 주지 않는다. `crates/base/examples/resume_stage_probe.rs`가 그 답을 낸다. 로드 경로가 호출하는 것과 같은 저장소 함수를 같은 순서로 부르고 각각의 시간을 잰다. 제품 경로에는 타이머를 하나도 더하지 않는다. 로드와 이력 경로는 그대로이고, 측정은 전부 프로브가 들고 있다.
+
+프로브가 실행하는 단계는 다음 순서와 같다.
+
+| 단계 | 재는 것 | `Session::load`에서의 자리 |
+| --- | --- | --- |
+| `selection` | 선택 파일 두 개(`local-head-explicit.json`, `local-head.json`) | `selected()` |
+| `checkpoint_recent` | 파생 캐시 읽기. 콜드 홈은 스캔 한 번, 재생 한 번, 체크포인트 발행으로 다시 만든다 | `SessionCache::recent()`, 그 결과를 로드는 버린다 |
+| `log_read` | `events.jsonl`을 통째로 한 번 읽기. 디스크가 아니라 복사 비용이다. 픽스처를 방금 복사했고 `checkpoint_recent`가 이미 로그를 읽었다 | 로드에는 없다. `full_scan`을 디코딩으로 읽으려고 잰다 |
+| `full_scan` | 스트리밍 스캔. 레코드마다 JSON 디코드, 정규형 재인코딩으로 줄 검증, 부모 사슬 검증 | `graph()` |
+| `blob_read` | `payload_ref`가 가리키는 blob 전부 읽기. 그래프 구성과 분리해 잰다 | `graph()` |
+| `graph_replay` | 그래프 구성과 재생. 조상 추적, 페이로드 디코드, 메시지마다 복제 한 번 | `graph()`와 `replay()` |
+| `metadata_json` | 투영 메타데이터의 `serde_json::to_value` | `to_value(metadata)` |
+| `messages_json` | 트랜스크립트 전체로 JSON 트리 만들기 | `json!`의 메시지 배열 |
+| `messages_decode` | 그 트리를 저장된 메시지로 다시 디코드 | `from_value::<Session>` |
+| `source_hash` | 로그 전체를 다시 읽어 해시 | `source_hash()` |
+| `history_rescan` | 스캔, blob 읽기, 재생을 다시 한 번 | `history_messages()` |
+| `page_index` | 헤드에 묶인 인덱스를 열고 첫 페이지 반환 | `history_page()`, 로드는 부르지 않는다 |
+
+프로브는 JSON 리포트 하나를 출력하고, 모든 단계가 돌면 `0`, 픽스처나 단계 값이 어긋나면 `1`, 사전 확인 실패(잘못된 인자, `HORON_HOME` 불일치, 카운터 꺼짐)면 `2`로 끝난다. 손대지 않은 픽스처를 읽는다. `checkpoint_recent`, `history_rescan`, `page_index`는 제품과 같은 파생 캐시를 발행하고, `events.jsonl`은 절대 쓰지 않으며 리포트가 전후 SHA-256을 함께 남긴다. blob과 복구는 건드리지 않는다. 손상된 로그나 잘린 꼬리는 정리 대상이 아니라 실패다.
+
+```bash
+cargo build --release --locked -p horon-agent-base --example resume_stage_probe
+HORON_HOME=<픽스처 홈> HORON_AGENT_PERF_COUNTERS=1 \
+  target/release/examples/resume_stage_probe \
+  --session perf-events-10000 --expect-events 10000 --expect-messages 9999
+```
+
+`bench_loading.py`는 `--binary` 옆에서 이 프로브를 찾고, `cold` 모드의 세션 픽스처마다 콜드 통과 세 번을 그 픽스처의 `stage_probe` 블록으로 기록한다. 단계마다 `p50_ms`, `min_ms`, `max_ms`, `mad_ms`와 `counters`의 카운터 델타가 들어가고, 측정 회차가 콜드일 때만 `ratio_to_attach_history_pct`가 붙는다. 이 블록은 귀속 자료이고 예산이 아니다. 단계는 별도 프로세스에서 차례로 돌므로 합이 `attach_history`가 되지 않고, 합을 지연으로 인용하면 안 된다. 측정된 지연은 같은 리포트의 `anchor.attach_history_p50_ms` 하나뿐이다. 단계 하나가 실패하거나 회차가 돌지 않으면 블록 전체가 `status: failed`가 되고, 그 안의 수치는 진단용이며 증거가 아니다. `--stage-probe-samples 0`은 블록을 건너뛰고, 바이너리가 없으면 `status: skipped`를 기록하지 0으로 채우지 않는다. 단계별 절대 시간은 바이트 카운터와 같은 이유로 한 리포트 안에서만 비교하고, 읽기 단계는 모두 페이지 캐시에서 나오므로 디스크 지연 주장이 아니다.
+
+수치를 함께 읽는 법은 이렇다. `log_read`는 복사 비용이고, `full_scan`은 이미 페이지에 올라온 바이트를 디코딩한 값이며, `graph_replay`는 투영, JSON 단계 셋은 로드의 직렬화와 역직렬화 절반이다. `checkpoint_recent`와 `history_rescan`은 로드가 이미 한 일을 되풀이하는 통과이므로, 재개가 읽는 바이트에 비해 느리면 여기부터 본다.
+
 판정용 측정은 개발 기기가 아니라 `.github/workflows/loading-ab.yml`에서 한다. 이 워크플로는 `ubuntu-24.04` 잡 하나 안에서 기준 커밋과 후보 커밋을 각각 체크아웃해 릴리스로 빌드하고, 위 두 조건(본문 8 KiB와 `~/.claude.json` 300 KB, 둘 다 0)을 후보 쪽 `bench_loading.py`로 번갈아 잰 뒤 `--compare`한다. 이어 "Check counters" 단계가 세 카운터 조건을 확인한다. 본문이 있는 스킬 목록은 기준선보다 적게 읽고, 작업 폴더 스킬은 반복 요청에서 다시 읽지 않고, `~/.claude.json`이 있는 조건의 MCP 설정은 기준선보다 적게 읽어야 한다. 하나라도 어기면 잡이 실패한다. `bench_tools.py`도 두 바이너리로 돌리고, 결과는 `loading-ab-<run_id>` 아티팩트로 30일 남는다.
 
 ```bash
