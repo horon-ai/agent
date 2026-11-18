@@ -299,18 +299,18 @@ fi
 
 # A damaged cache entry is refused: the asset is downloaded again, the verified
 # bytes replace the entry, and the damaged file never reaches the executable.
-printf 'corrupted cache bytes' > "$cache_dir/horon-agent-linux-x86_64.tar.gz"
-corrupt_cache_url_log="$tmp/corrupt-cache-urls.log"
-run_install_home "$tmp/home" \
-  CLI_ARG_LOG="$tmp/cli-args-corrupt-cache.log" \
-  DOWNLOAD_URL_LOG="$corrupt_cache_url_log" >"$tmp/corrupt-cache.out" 2>"$tmp/corrupt-cache.err"
-if grep -q 'Using cached, SHA-256 verified: horon-agent-linux-x86_64.tar.gz' "$tmp/corrupt-cache.out"; then
-  echo "installer reused a damaged cache entry" >&2
-  exit 1
-fi
-grep -q '/v1.2.3/horon-agent-linux-x86_64.tar.gz$' "$corrupt_cache_url_log"
-test "$(sha256 "$cache_dir/horon-agent-linux-x86_64.tar.gz")" \
-  = "$(awk '$2 == "horon-agent-linux-x86_64.tar.gz" { print $1 }' "$assets/SHA256SUMS")"
+for damaged_asset in horon-agent-linux-x86_64.tar.gz horon-tui-linux-x86_64.tar.gz; do
+  printf 'corrupted cache bytes' > "$cache_dir/$damaged_asset"
+  recovery_urls="$tmp/recover-$damaged_asset.urls"
+  recovery_args="$tmp/recover-$damaged_asset.args"
+  run_install_home "$tmp/home" \
+    CLI_ARG_LOG="$recovery_args" DOWNLOAD_URL_LOG="$recovery_urls" \
+    >"$tmp/recover-$damaged_asset.out" 2>"$tmp/recover-$damaged_asset.err"
+  grep -Fxq "https://github.com/horon-ai/agent/releases/download/v1.2.3/$damaged_asset" "$recovery_urls"
+  grep -Fxq "asset:$damaged_asset" "$recovery_args"
+  test "$(sha256 "$cache_dir/$damaged_asset")" \
+    = "$(awk -v asset="$damaged_asset" '$2 == asset { print $1 }' "$assets/SHA256SUMS")"
+done
 
 # A cache entry that does not match this release's manifest is refused the same
 # way even when the bytes are a complete, readable file.

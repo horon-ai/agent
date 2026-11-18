@@ -448,13 +448,15 @@ if [ "$OS" != "FreeBSD" ]; then
   tui_archive="horon-tui${ARTIFACT#horon-agent}.tar.gz"
   if manifest_digest "$tui_archive" >/dev/null \
     && { manifest_digest "$ARTIFACT.tar.gz" >/dev/null || manifest_digest "$ARTIFACT$EXE" >/dev/null; }; then
-    # The transfer is the plain curl command rather than the fetch helper, so
-    # `background_fetch_pid` is the process that has to be stopped if the
-    # install aborts, not a subshell that would leave curl writing behind it.
-    curl -fsSL --retry 2 --connect-timeout 10 \
-      "$GITHUB_RELEASE_BASE/$tui_archive" -o "$assets_dir/$tui_archive" 2>/dev/null &
-    background_fetch_pid=$!
-    tui_fetch_state="pending"
+    if use_cached_asset "$tui_archive"; then
+      tui_fetch_state="cached"
+    else
+      # Track curl itself so cleanup can stop it before removing its output.
+      curl -fsSL --retry 2 --connect-timeout 10 \
+        "$GITHUB_RELEASE_BASE/$tui_archive" -o "$assets_dir/$tui_archive" 2>/dev/null &
+      background_fetch_pid=$!
+      tui_fetch_state="pending"
+    fi
   fi
 fi
 # <<< horon-tui
@@ -514,6 +516,8 @@ if [ -n "$tui_archive" ]; then
     # transferred beside a prebuilt agent that turned out to be unavailable is
     # discarded exactly as a serial download never fetched it.
     rm -f "$assets_dir/$tui_archive"
+  elif [ "$tui_fetch_state" = "cached" ]; then
+    info "Using cached, SHA-256 verified: $tui_archive"
   elif [ "$tui_fetch_state" = "downloaded" ]; then
     if problem=$(checksum_problem "$tui_archive" "$assets_dir/$tui_archive"); then
       info "Verified SHA-256: $tui_archive"
