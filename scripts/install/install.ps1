@@ -162,6 +162,17 @@ function Assert-HoronAgentFileChecksum([string]$FilePath, [string]$ExpectedSha25
     return $actual
 }
 
+function Invoke-HoronAgentDownload {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [Parameter(Mandatory = $true)][string]$OutFile
+    )
+
+    # Keep the preference inside the function when the installer is piped into iex.
+    $ProgressPreference = 'SilentlyContinue'
+    $null = Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile
+}
+
 function Get-HoronAgentLocalAppDataDir {
     if ($env:LOCALAPPDATA) {
         return $env:LOCALAPPDATA
@@ -845,7 +856,7 @@ if ($ReleaseAssetsDir) {
     }
     Copy-Item -LiteralPath $source -Destination $checksumPath
 } else {
-    Invoke-WebRequest -UseBasicParsing -Uri "$DownloadBase/$checksumName" -OutFile $checksumPath
+    Invoke-HoronAgentDownload -Uri "$DownloadBase/$checksumName" -OutFile $checksumPath
 }
 $Checksums = [System.IO.File]::ReadAllText($checksumPath)
 $DownloadMode = ""
@@ -866,7 +877,7 @@ if ($ResolvedArtifactExePath) {
     )) {
         try {
             Write-Info "Downloading $($candidate.Name) from $DownloadBase..."
-            Invoke-WebRequest -UseBasicParsing -Uri "$DownloadBase/$($candidate.Name)" -OutFile $DownloadPath
+            Invoke-HoronAgentDownload -Uri "$DownloadBase/$($candidate.Name)" -OutFile $DownloadPath
             $DownloadMode = $candidate.Mode
             break
         } catch {}
@@ -902,7 +913,7 @@ if ($DownloadMode) {
         }
     } else {
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri "$DownloadBase/$tuiArchive" -OutFile $tuiPath
+            Invoke-HoronAgentDownload -Uri "$DownloadBase/$tuiArchive" -OutFile $tuiPath
             $tuiDownloaded = $true
         } catch {
             $tuiDownloadError = $_.Exception.Message

@@ -31,6 +31,8 @@ horon install-release --assets <디렉터리> --agent-version <버전>
 
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 릴리스 자산과 `SHA256SUMS`를 임시 디렉터리에 받은 뒤 이 명령을 호출한다. `scripts/install/install_from_source.sh`는 같은 명령에 `--source-binary`를 붙여 로컬 빌드를 설치한다. 그래서 셸과 PowerShell이 서로 다른 설치 레이아웃을 만들지 않고, 실패하면 스크립트도 이전 설치를 건드리지 않는다.
 
+PowerShell 설치기는 릴리스 파일을 받는 동안만 진행 표시를 끈다. 스크립트를 `iex`로 실행해도 호출자의 `$ProgressPreference` 설정은 유지된다.
+
 Windows 설치 경로와 서명 절차는 [`WINDOWS.ko.md`](WINDOWS.ko.md)에 있다.
 
 ## 릴리스 다운로드 캐시
