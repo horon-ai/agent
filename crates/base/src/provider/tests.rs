@@ -654,6 +654,17 @@ impl RecordingServer {
         head.to_ascii_lowercase()
     }
 
+    /// The JSON body of the last request, parsed.
+    fn last_request_body(&self) -> serde_json::Value {
+        let seen = self.seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let request = seen.last().cloned().unwrap_or_default();
+        let body = match request.find("\r\n\r\n") {
+            Some(end) => &request[end + 4..],
+            None => "",
+        };
+        serde_json::from_str(body).unwrap_or_else(|error| panic!("the request body must be JSON: {error}: {body}"))
+    }
+
     fn request_count(&self) -> usize {
         self.seen.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).len()
     }
@@ -917,4 +928,98 @@ fn missing_provider_guidance_names_every_wire() {
     ] {
         assert!(message.contains(supported), "{message} must name {supported}");
     }
+}
+
+/// A per-model `reasoning_effort` in the profile is the effort the session
+/// runs, not a value the operator has to repeat with `/effort`.
+///
+/// The runtime reports the level as soon as the profile is built, so the status
+/// line draws `provider/model · high` before the first keystroke, and the first
+/// request carries it. An explicit `set_reasoning_effort` stays in force, and a
+/// switch to another model adopts the level that model declares.
+#[test]
+fn configured_model_effort_applies() {
+    with_clean_provider_test_env(|| {
+        let server = RecordingServer::start();
+        let base_url = server.base_url.clone();
+        write_provider_config(&format!(
+            r#"
+[providers.effort]
+type = "openai-compatible"
+base_url = "{base_url}"
+auth = "none"
+default_model = "effort-high"
+
+[[providers.effort.models]]
+id = "effort-high"
+reasoning_effort = "high"
+
+[[providers.effort.models]]
+id = "effort-low"
+reasoning_effort = "low"
+
+[[providers.effort.models]]
+id = "effort-none"
+"#,
+        ));
+
+        let provider =
+            MultiProvider::from_named_provider_profile("effort").expect("the effort profile must build a runtime");
+        let runtime = provider
+            .execution_provider()
+            .expect("the effort profile must install its runtime");
+        assert_eq!(
+            runtime.reasoning_effort().as_deref(),
+            Some("high"),
+            "a session on the profile's default model reports the configured level with no client call"
+        );
+
+        let tokio_runtime = enter_test_runtime();
+        let send = |prompt: &str| {
+            let sent = tokio_runtime
+                .block_on(async { runtime.complete(&[Message::user(prompt)], &[], "be brief", None).await });
+            assert!(sent.is_ok(), "the loopback profile answers '{prompt}'");
+            server.last_request_body()
+        };
+
+        let body = send("first");
+        assert_eq!(body["model"], "effort-high");
+        assert_eq!(
+            body["reasoning_effort"], "high",
+            "the configured level reaches the first request without a client call: {body}"
+        );
+
+        runtime.set_reasoning_effort("xhigh").expect("xhigh is a valid level");
+        let body = send("explicit");
+        assert_eq!(
+            body["reasoning_effort"], "xhigh",
+            "an explicit effort overrides the configured level: {body}"
+        );
+
+        runtime
+            .set_model("effort-low")
+            .expect("the profile declares its other model");
+        assert_eq!(
+            runtime.reasoning_effort().as_deref(),
+            Some("low"),
+            "a model switch adopts the level the new model declares"
+        );
+        let body = send("switched");
+        assert_eq!(body["model"], "effort-low");
+        assert_eq!(
+            body["reasoning_effort"], "low",
+            "the switched model sends its own level: {body}"
+        );
+
+        runtime
+            .set_model("effort-none")
+            .expect("the profile declares the third model");
+        assert_eq!(
+            runtime.reasoning_effort().as_deref(),
+            Some("low"),
+            "a model that declares no level leaves the effort in force"
+        );
+
+        assert_eq!(server.request_count(), 3);
+    });
 }
