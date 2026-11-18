@@ -413,6 +413,25 @@ fn convert_content_blocks(content: &ClaudeCodeContent) -> Vec<ContentBlock> {
     }
 }
 
+fn claude_message(entry: &ClaudeCodeEntry) -> Option<StoredMessage> {
+    let message = entry.message.as_ref()?;
+    let role = match message.role.as_str() {
+        "user" => Role::User,
+        "assistant" => Role::Assistant,
+        _ => return None,
+    };
+    let content = convert_content_blocks(&message.content);
+    if content.is_empty() {
+        return None;
+    }
+    Some(StoredMessage {
+        id: entry.uuid.clone().unwrap_or_else(|| crate::id::new_id("msg")),
+        role,
+        content,
+        ..StoredMessage::default()
+    })
+}
+
 fn imported_message_text(blocks: &[ContentBlock], truncate_blocks: bool) -> (String, bool) {
     let mut parts = Vec::new();
     let mut changed = blocks.len() != 1;
@@ -770,25 +789,6 @@ fn import_claude_entries(ordered_entries: &[&ClaudeCodeEntry], session_id: &str,
     }
 
     finalize_imported_session(session, created_at, None)
-}
-
-fn claude_message(entry: &ClaudeCodeEntry) -> Option<StoredMessage> {
-    let message = entry.message.as_ref()?;
-    let role = match message.role.as_str() {
-        "user" => Role::User,
-        "assistant" => Role::Assistant,
-        _ => return None,
-    };
-    let content = convert_content_blocks(&message.content);
-    if content.is_empty() {
-        return None;
-    }
-    Some(StoredMessage {
-        id: entry.uuid.clone().unwrap_or_else(|| crate::id::new_id("msg")),
-        role,
-        content,
-        ..StoredMessage::default()
-    })
 }
 
 fn append_text_message(session: &mut Session, role: Role, text: String, timestamp: Option<DateTime<Utc>>) {
