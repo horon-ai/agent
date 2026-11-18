@@ -11,7 +11,7 @@ This document covers the on-disk format and transfer contract of the session eve
 
 This is the reference document for what horon-agent stores per session, how it hashes and verifies those bytes, how two instances replicate, and how legacy sessions are migrated. The authoritative types live in `crates/session-store/src/schema.rs`; this document explains those types and names the module that owns each rule.
 
-There is exactly one store root: `$HORON_HOME/sessions` (normally `~/.horon/sessions`). Every path below is relative to that root. Every file is owner-only (directories `0700`, files `0600`), every accessor re-validates the session id, and accessors under the root reject symbolic links, non-directory components and components owned by another user. So even a well-formed id cannot point outside the store (`schema.rs::SessionPaths`). Windows has neither permission bits nor `O_NOFOLLOW`, so owner-only is carried by the inherited ACL on the home directory and files are checked after opening. Details are in the architecture notes of [`release/WINDOWS.md`](/reference/release/windows).
+There is exactly one store root: `$HORON_HOME/sessions` (normally `~/.horon/sessions`). Every path below is relative to that root. Every file is owner-only (directories `0700`, files `0600`), every accessor re-validates the session id, and accessors under the root reject symbolic links, non-directory components and components owned by another user. So even a well-formed id cannot point outside the store (`crates/session-store/src/paths.rs` `SessionPaths`, re-exported by `lib.rs`). Windows has neither permission bits nor `O_NOFOLLOW`, so owner-only is carried by the inherited ACL on the home directory and files are checked after opening. Details are in the architecture notes of [`release/WINDOWS.md`](/reference/release/windows).
 
 ### Layout
 
@@ -168,7 +168,7 @@ The model that produces a structured summary can be changed with `summary_model`
 
 Each session's single `BlockingWriter` holds an `flock` on `.writer.lock` for the session's lifetime. A second writer, including one in another process, is answered `busy`. Catalog writes take `.catalog.lock`, and the catalog lock is never held while taking a session lock. A dirty session is rebuilt by whoever reads it, so a stale listing cannot outlive a failed cache refresh for long.
 
-Each catalog operation explicitly unlocks the file before closing its handle. A child process that inherits a copy of that handle cannot keep a finished operation's lock alive.
+Each catalog operation explicitly unlocks the file before closing its handle. A child process that inherits a copy of that handle cannot keep a finished operation's lock alive. The session writer releases the same way: its drop unlocks `.writer.lock` before the handle closes, because `fork` copies the open file description and a child that inherited it would otherwise keep the session owned until it execs or exits.
 
 Commit I/O does not create a dedicated thread per session. A process-wide writer pool creates `clamp(available_parallelism, 2, 4)` workers (`session-writer-0` and so on) once, and a session is pinned to one worker by the hash of its `registry_key` (the canonicalized session directory path). The key is canonicalized first so two spellings of the same session directory never land on different workers and open two `BlockingWriter`s. The hasher yields the same value for the life of the process, so a session stays on the same worker for its whole lifetime.
 

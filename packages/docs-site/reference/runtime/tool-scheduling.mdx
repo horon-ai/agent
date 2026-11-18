@@ -110,14 +110,14 @@ Two failure rules hold inside a group.
 
 A tool that ran passes its output through the tool layer's overflow guard
 (`crates/app-core/src/tool/mod.rs:2260` `self.guard_context_overflow`, the checks
-inside `guard_context_overflow`, `tool/mod.rs:2330` `guard_context_overflow`). That
+inside `guard_context_overflow`, `tool/mod.rs:2298` `guard_context_overflow`). That
 guard compares the output with `token_budget()` times `CONTEXT_GUARD_THRESHOLD` (0.90,
-`tool/mod.rs:1754` `CONTEXT_GUARD_THRESHOLD`, the comparison is `tool/mod.rs:2352`
+`tool/mod.rs:1716` `CONTEXT_GUARD_THRESHOLD`, the comparison is `tool/mod.rs:2319`
 `needs_truncation`).
 
 The guard reads the compaction manager it holds. `Registry::clone` swaps that manager
 for a new one, while `clone_sharing_compaction` shares the parent's manager
-(`tool/mod.rs:780` `CompactionManager::new`, `tool/mod.rs:801`
+(`tool/mod.rs:792` `CompactionManager::new`, `tool/mod.rs:813`
 `clone_sharing_compaction`). So the guard sees the real session budget and token count
 rather than the floor a fresh manager would report. Both loops pass the sharing clone
 into the round that executes tools (`turn_loops.rs:1818` `run_group`,
@@ -149,8 +149,8 @@ it did (`round_budget.rs:182` `single_output_max_tokens`).
 
 Caps, truncation notices, window-exhaustion refusals, and oversized refusals come from
 the tool layer rather than copies. `Registry::context_guard_threshold_tokens`
-(`tool/mod.rs:1759` `context_guard_threshold_tokens`) turns the budget into the 0.90
-ceiling, and `Registry::truncated_output_notice` (`tool/mod.rs:1792`
+(`tool/mod.rs:1721` `context_guard_threshold_tokens`) turns the budget into the 0.90
+ceiling, and `Registry::truncated_output_notice` (`tool/mod.rs:1754`
 `truncated_output_notice`) writes the sentence appended after a truncated head. The
 round enforces both caps itself instead of leaving the per-output cap to the tool
 layer. `admit` returns output only when the projected total fits and this output is
@@ -166,7 +166,7 @@ the round rewrites `Registry::exhausted_context_refusal` (`tool/mod.rs:1775`
 but this output does not fit whole, `ceiling_bound` (`round_budget.rs:221`
 `ceiling_bound`) chooses which sentence states the real reason. When the single-output
 cap is the stricter of the two (`single_max_tokens < remaining_tokens`), the round
-prints the tool layer's `Registry::oversized_output_refusal` (`tool/mod.rs:1942`
+prints the tool layer's `Registry::oversized_output_refusal` (`tool/mod.rs:1904`
 `oversized_output_refusal`), so the caller cannot tell which layer refused. Otherwise
 the round writes its own `withheld_output_refusal` (`round_budget.rs:298`
 `withheld_output_refusal`): the same "CONTEXT LIMIT REACHED" prefix and `/compact`

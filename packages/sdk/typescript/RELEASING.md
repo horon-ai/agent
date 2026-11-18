@@ -78,8 +78,10 @@ the packed tarball as a consumer sees it.
 
 Until three things are true the workflow is a dry run, on every path:
 
-- The repository variable `NPM_PUBLISH` is `true`. Without it, even
-  `workflow_dispatch` with `dry_run: false` stays a dry run.
+- The repository variable `SDK_NPM_PUBLISH` is `true`. It is this product's own
+  switch, separate from the CLI's `NPM_PUBLISH`, so publishing `@horon-ai/horon`
+  never publishes the SDK's names. Without it, even `workflow_dispatch` with
+  `dry_run: false` stays a dry run.
 - The npm packages exist. npm has no way to claim a new name without publishing
   it, so the owner publishes the seven names once as `0.0.0` placeholders.
 - Each of the seven packages names this workflow as a Trusted Publisher
@@ -109,11 +111,11 @@ them.
    scope, so each package page exists and can carry a Trusted Publisher.
 2. For each of the seven packages, add `horon-ai/agent` /
    `publish-typescript-sdk.yml` as a Trusted Publisher.
-3. Set the `NPM_PUBLISH` repository variable to `true`.
+3. Set the `SDK_NPM_PUBLISH` repository variable to `true`.
 4. Tag the release the usual way (Release Tag does this from a green `main`) and
    let the workflow run. It publishes the seven packages at the tag version.
 
-Remove `NPM_PUBLISH` (or set it to anything but `true`) to stop publishing
+Remove `SDK_NPM_PUBLISH` (or set it to anything but `true`) to stop publishing
 without editing the workflow.
 
 ## Verifying a published release
