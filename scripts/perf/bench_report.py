@@ -11,7 +11,8 @@ Two steps, both stdlib-only apart from Node for the chart server:
 reads each OS's `compare.json`, draws every chart through the ztd-charts MCP
 server (`npx ztd-charts-mcp`, spoken to over stdio, no other chart tool is used)
 and writes `report.html`, `charts/*.svg`, `specs/*.json` and `summary.json`.
-Printing `report.html` to PDF is left to any Chromium (`--headless --print-to-pdf`).
+Printing `report.html` to PDF is left to any HTML-to-PDF printer; the docs example
+uses `weasyprint`.
 
 Numbers come only from the run's own files. A value the run did not record is
 shown as "미측정" with the recorded reason; nothing is filled in from elsewhere.
