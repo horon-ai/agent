@@ -64,6 +64,10 @@ horon-agent-irc-core = { path = "../irc-core" }
 # OAuth
 base64 = "0.22"
 sha2 = "0.10"
+# The updater's file digests run on `ring`: it dispatches to the platform's SHA-256 instructions
+# (ARMv8 SHA-2 extensions, x86 SHA-NI) at run time, where `sha2` without `asm` is scalar on
+# AArch64. `ring` is already compiled for every target through reqwest's rustls backend.
+ring = "0.17"
 rand = "0.9.3"
 url = "2"
 horon-agent-agent-runtime = { path = "../agent-runtime" }
