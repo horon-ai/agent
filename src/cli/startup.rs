@@ -17,7 +17,9 @@ fn sync_output_style_from_config() {
 /// errors during parsing, before any worker threads or TLS state are needed.
 pub fn run_standalone() -> Result<()> {
     let args = Args::parse();
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    // A provider install that loses to one already installed process-wide is the
+    // intended no-op, so drop the returned handle instead of keeping it.
+    drop(rustls::crypto::aws_lc_rs::default_provider().install_default());
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
     runtime.block_on(run_with_args(args))
 }
