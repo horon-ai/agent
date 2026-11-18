@@ -6,6 +6,9 @@ name: Publish npm packages
 #
 #   * `workflow_run` after "Release Tag" finishes on `main`: the normal path,
 #     taken once a tag exists for the commit that Release Tag just released.
+#   * `release` (type `published`): the heal path. A run that arrived while the
+#     release was still a draft skipped; this one publishes that tag when the
+#     release becomes public.
 #   * `workflow_dispatch`: an operator names a public release tag or a
 #     `package_only` Release workflow run. It defaults to a dry run, and npm
 #     trusted publishing only trusts the top-level workflow file name, which is
@@ -59,6 +62,12 @@ on:
       - 'packages/npm/**'
       - 'scripts/npm/**'
       - '.github/workflows/publish-npm.yml'
+  release:
+    # The `workflow_run` path can arrive while the GitHub release is still a
+    # draft, and it skips then. Publishing fires again when the release goes
+    # public, so a missed window heals without a manual dispatch; the publish
+    # step skips a version that already landed.
+    types: [published]
 
 permissions:
   contents: read
@@ -109,6 +118,7 @@ jobs:
           TRIGGER_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           TRIGGER_BRANCH: ${{ github.event.workflow_run.head_branch }}
           TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          RELEASE_TAG_NAME: ${{ github.event.release.tag_name }}
           NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
         run: |
           set -euo pipefail
@@ -156,6 +166,20 @@ jobs:
             else
               run_id="$RUN_ID_INPUT"
             fi
+          elif [ "$EVENT" = "release" ]; then
+            # A published release is itself the evidence that a version is out;
+            # no tag lookup or draft check is needed, and the gate below still
+            # decides whether it may publish.
+            if [ "$GITHUB_REPOSITORY" != "horon-ai/agent" ]; then
+              echo "::notice::Not a release of horon-ai/agent; nothing to publish."
+              emit skip true
+              exit 0
+            fi
+            tag="$RELEASE_TAG_NAME"
+            source="release_tag"
+            version="$(python3 scripts/npm/release_npm_version.py tag-version "$tag")"
+            ref="refs/tags/$tag"
+            mode="publish"
           else
             # Automatic path. Only a run of this repository, on `main`, started
             # by another workflow and successful can mean "something released".
