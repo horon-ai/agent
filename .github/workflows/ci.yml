@@ -1588,6 +1588,25 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- stale_socket_probe --nocapture
 
+      - name: Run bridge lifecycle cohort
+        shell: bash
+        # The bridge used to accept forever, so the first one a terminal started
+        # outlived its client and kept the socket path through an upgrade
+        # (#429). Its lib tests run only through this filter, and
+        # `--min-passed` is the count the filter matches, so a renamed module
+        # fails here instead of passing over an empty subset. The lock test is
+        # in no other cohort and is the acceptance's "a second spawn still
+        # exits on the lock" half.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 3 \
+            -- bridge_lifecycle_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- single_instance_tests:: --nocapture
+
       - name: Run session id prefix cohort
         shell: bash
         # Both suites only run through filters, so a prefix resolver that
