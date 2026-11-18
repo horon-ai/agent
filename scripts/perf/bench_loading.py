@@ -149,6 +149,42 @@ DERIVED_SESSION_FILES = (
     "facade-cache.json",
 )
 DERIVED_HOME_FILES = (".catalog.dirty", ".catalog.index.jsonl", ".catalog.lock", ".origin-id")
+# The decomposition `resume_stage_probe` reports, in its fixed order. `attach_history`
+# answers "how long does a resume take"; these answer "what did that time buy".
+# `checkpoint_recent` is the derived-cache pass a cold load rebuilds and discards,
+# `full_scan` and `graph_replay` are the pass the load keeps, `log_read` is the read
+# floor under both, the three JSON stages are the load's serialise/deserialise half,
+# `source_hash` is the second read of the same bytes, and `history_rescan` plus
+# `page_index` are what `history_messages()` and a first page cost.
+STAGE_PROBE_STAGES = (
+    "selection",
+    "checkpoint_recent",
+    "log_read",
+    "full_scan",
+    "blob_read",
+    "graph_replay",
+    "metadata_json",
+    "messages_json",
+    "messages_decode",
+    "source_hash",
+    "history_rescan",
+    "page_index",
+)
+# Every decomposition stage must report these counters. A stage that omits one
+# is "not measured" for that counter, never zero.
+STAGE_PROBE_COUNTERS = (
+    "store_read_bytes",
+    "blob_bytes_read",
+    "hash_bytes_read",
+    "full_source_hashes",
+    "full_source_hash_bytes",
+    "io_read_bytes",
+)
+STAGE_PROBE_PROTOCOL = (
+    "COLD DECOMPOSITION on a fresh copy of the template per sample, in the order "
+    "Session::load makes those calls. The stages run one after another in a separate "
+    "process, so their sum is not a latency and only the anchor is one."
+)
 MEASUREMENT_PROTOCOL = {
     "cold": (
         "COLD: every measured run gets its own freshly copied HOME; no derived cache from "
@@ -485,6 +521,8 @@ def run_probe(binary: Path, fixture: dict, home: Path, timeout: float, mode: str
             run["reasons"].append("%s failed: %s" % (name, stage.get("failure")))
             continue
         run["stage_ms"][name] = float(stage.get("ms") or 0.0)
+        if name == "attach_history" and "history_ms" in (stage.get("detail") or {}):
+            run["attach_history_detail"] = stage["detail"]
         moved = stage.get("delta") or {}
         run["stage_delta"][name] = moved
         missing = [counter for counter in REQUIRED_COUNTERS if counter not in moved]
@@ -516,6 +554,171 @@ def run_probe(binary: Path, fixture: dict, home: Path, timeout: float, mode: str
             for counter in TOTAL_COUNTERS
         }
     return run
+
+
+def default_stage_probe(binary: Path) -> Path | None:
+    """The decomposition probe ships beside the loading probe in the same examples dir."""
+    candidate = binary.with_name("resume_stage_probe" + binary.suffix)
+    return candidate if candidate.is_file() else None
+
+
+def run_stage_probe(binary: Path, fixture: dict, home: Path, timeout: float) -> dict:
+    """One decomposition pass, on a HOME the caller guarantees is cold."""
+    command = [
+        str(binary),
+        "--session",
+        fixture["session"],
+        "--expect-events",
+        str(fixture["events"]),
+        "--expect-messages",
+        str(fixture["messages"]),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=probe_environment(str(home)),
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "reasons": ["stage probe exceeded %.1fs" % timeout], "command": command}
+    stdout = completed.stdout.decode("utf-8", "replace")
+    stderr = completed.stderr.decode("utf-8", "replace")
+    if completed.returncode != 0:
+        return {
+            "status": "failed",
+            "reasons": [
+                "stage probe exited %s: %s"
+                % (exit_code_label(completed.returncode), (stderr or stdout).strip()[-800:])
+            ],
+            "command": command,
+        }
+    try:
+        report = parse_report(stdout)
+    except MeasurementError as error:
+        return {"status": "failed", "reasons": [str(error)], "command": command}
+    if (report.get("counters") or {}).get("enabled") is not True:
+        return {
+            "status": "failed",
+            "reasons": ["stage probe counters were disabled; zeros are not measurements"],
+            "command": command,
+            "report": report,
+        }
+    names = [stage.get("name") for stage in report.get("stages") or []]
+    if names != list(STAGE_PROBE_STAGES):
+        return {
+            "status": "failed",
+            "reasons": ["stage probe reported stages %r, expected %r" % (names, list(STAGE_PROBE_STAGES))],
+            "command": command,
+            "report": report,
+        }
+    if report.get("outcome") != "ok":
+        return {
+            "status": "failed",
+            "reasons": ["stage probe outcome %r: %s" % (report.get("outcome"), report.get("failures"))],
+            "command": command,
+            "report": report,
+        }
+    missing = [
+        "%s/%s" % (stage.get("name"), counter)
+        for stage in report.get("stages") or []
+        for counter in STAGE_PROBE_COUNTERS
+        if counter not in (stage.get("delta") or {})
+    ]
+    if missing:
+        return {
+            "status": "failed",
+            "reasons": ["stage probe is missing counters %s" % ", ".join(missing)],
+            "command": command,
+            "report": report,
+        }
+    return {"status": "ok", "report": report, "command": command}
+
+
+def stage_probe(
+    binary: Path | None,
+    fixture: dict,
+    template: Path,
+    base: Path,
+    samples: int,
+    timeout: float,
+    keep: bool,
+    anchor: dict,
+) -> dict:
+    """Aggregate `samples` cold decomposition passes over one fixture.
+
+    The decomposition is descriptive, so it never fails a fixture on its own: a
+    sample that did not measure is reported in `failures`, and an absent probe is
+    `skipped` rather than a zero. `anchor` carries the measured `attach_history`
+    numbers so a reader can see each stage's share of the resume it explains.
+    """
+    if binary is None:
+        return {"status": "skipped", "reason": "resume_stage_probe binary not found beside --binary", "samples": 0}
+    if int(fixture.get("events") or 0) == 0:
+        return {"status": "not_applicable", "reason": "this fixture has no session log", "samples": 0}
+    if samples <= 0:
+        return {"status": "skipped", "reason": "--stage-probe-samples is 0", "samples": 0}
+
+    per_stage = {name: [] for name in STAGE_PROBE_STAGES}
+    details = None
+    counters = None
+    failures = []
+    measured = 0
+    for index in range(samples):
+        home = base / ("stage-%02d" % index)
+        create_home(template, fixture, home)
+        try:
+            run = run_stage_probe(binary, fixture, home, timeout)
+        finally:
+            if not keep:
+                shutil.rmtree(home, ignore_errors=True)
+        if run["status"] != "ok":
+            failures.extend(run["reasons"])
+            continue
+        measured += 1
+        stages = run["report"]["stages"]
+        for stage in stages:
+            per_stage[stage["name"]].append(float(stage.get("ms") or 0.0))
+        details = {stage["name"]: stage.get("detail") for stage in stages}
+        # The counter delta is what proves which pass read the log: a stage that
+        # reports one log's worth of store_read_bytes read it, whatever its time.
+        counters = {stage["name"]: stage.get("delta") for stage in stages}
+        log_sha = (run["report"].get("fixture") or {}).get("log_sha256")
+        if fixture.get("sha256") and log_sha and log_sha != fixture["sha256"]:
+            failures.append("stage probe read a different log (%s != %s)" % (log_sha, fixture["sha256"]))
+
+    stages = {}
+    for name in STAGE_PROBE_STAGES:
+        summary = summarize(per_stage[name])
+        ratio = None
+        # A cold stage divided by a warm attach_history would compare two cache
+        # states, so the ratio is reported only when the measured runs were cold.
+        if anchor.get("mode") == "cold" and anchor.get("attach_history_p50_ms") and summary["p50_ms"] is not None:
+            ratio = 100.0 * summary["p50_ms"] / anchor["attach_history_p50_ms"]
+        summary["ratio_to_attach_history_pct"] = ratio
+        stages[name] = summary
+    deduped = sorted(set(failures))
+    # A stage that failed, or a sample that never ran, makes the whole block
+    # failed: the p50s stay for diagnosis, but nothing in it is evidence.
+    complete = measured == samples and not deduped
+    return {
+        "status": "measured" if complete else "failed",
+        "complete": complete,
+        "protocol": STAGE_PROBE_PROTOCOL,
+        "additive": False,
+        "additive_note": (
+            "the stages are attribution, not a budget: they ran one after another in a "
+            "separate process, so they must not be summed or quoted as a latency"
+        ),
+        "samples": measured,
+        "requested_samples": samples,
+        "anchor": anchor,
+        "stages": stages,
+        "detail": details,
+        "counters": counters,
+        "failures": deduped,
+    }
 
 
 def interleaved_blocks(runs_per_side: int, seed: int) -> list[list[str]]:
@@ -649,6 +852,8 @@ def measure_fixture(
     mode: str,
     work_root: Path,
     keep: bool,
+    stage_binary: Path | None = None,
+    stage_samples: int = 0,
 ) -> dict:
     template = Path(facts["template"])
     base = work_root / mode / fixture_key(
@@ -698,6 +903,41 @@ def measure_fixture(
                     )
             for counter in TOTAL_COUNTERS:
                 totals[side][counter].append(run["total_delta"][counter])
+
+    # The decomposition runs before the warm HOME is removed and always on its own
+    # fresh template copies, so it can be read against the cold protocol whichever
+    # mode measured the stages above.
+    def detail_median(field: str) -> float | None:
+        values = [
+            float(run["attach_history_detail"][field])
+            for run in runs["a"]
+            if run["status"] == "ok"
+            and isinstance(run.get("attach_history_detail"), dict)
+            and run["attach_history_detail"].get(field) is not None
+        ]
+        return statistics.median(values) if values else None
+
+    anchor = {
+        "mode": mode,
+        "attach_history_p50_ms": summarize(samples["a"]["attach_history"])["p50_ms"],
+        "load_ms_p50": detail_median("load_ms"),
+        "history_ms_p50": detail_median("history_ms"),
+    }
+    decomposition = stage_probe(
+        stage_binary,
+        facts,
+        template,
+        base / "stage-probe",
+        stage_samples,
+        timeout,
+        keep,
+        anchor,
+    )
+    # The two halves the attach_history stage itself reports; this ratio is of the
+    # anchor, not of the stages below it.
+    halves = (anchor["load_ms_p50"] or 0.0) + (anchor["history_ms_p50"] or 0.0)
+    if halves > 0:
+        anchor["history_ratio_of_anchor_pct"] = 100.0 * (anchor["history_ms_p50"] or 0.0) / halves
 
     if mode == "warm" and not keep:
         shutil.rmtree(base, ignore_errors=True)
@@ -761,6 +1001,12 @@ def measure_fixture(
         "status": "measurement_failure" if deduped else "measured",
         "reasons": deduped,
         "stages": stages,
+        "attach_history_samples": {
+            side: [run["attach_history_detail"] for run in runs[side]
+                   if run["status"] == "ok" and "attach_history_detail" in run]
+            for side in ("a", "b")
+        },
+        "stage_probe": decomposition,
         "totals": {
             side: {counter: summarize([float(value) for value in values]) for counter, values in totals[side].items()}
             for side in ("a", "b")
@@ -810,6 +1056,20 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--iterations", type=int, default=30, help="measured runs per side")
     parser.add_argument("--warmup", type=int, default=3, help="warmup runs per side (warm mode only)")
+    parser.add_argument(
+        "--stage-probe",
+        default=None,
+        help=(
+            "path to the resume_stage_probe example binary; default is beside --binary, "
+            "and an absent one records the decomposition as skipped"
+        ),
+    )
+    parser.add_argument(
+        "--stage-probe-samples",
+        type=int,
+        default=3,
+        help="cold decomposition passes per session fixture; 0 skips the decomposition",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--timeout", type=float, default=300.0, help="per-probe deadline in seconds")
     parser.add_argument("--work-root", default=None, help="fixture root (default: a temp dir)")
@@ -910,6 +1170,47 @@ def compare_reports(paths: list[str]) -> int:
     return 0
 
 
+def print_stage_probe(block: dict | None) -> None:
+    """Print the cold decomposition. The stages are attribution, never a latency."""
+    if not block:
+        return
+    status = block.get("status")
+    if status != "measured":
+        print("  decomposition %s%s" % (status, ": " + block["reason"] if block.get("reason") else ""))
+        for failure in block.get("failures") or []:
+            print("  FAIL decomposition %s" % failure)
+        if status == "failed":
+            print("  decomposition FAILED: the numbers below are diagnostics, not evidence")
+    anchor = block.get("anchor") or {}
+    if (block.get("samples") or 0) == 0:
+        return
+    print(
+        "  decomposition %d/%d cold pass(es); anchor attach_history p50 %.3f ms (load %.3f + history %.3f)"
+        % (
+            block.get("samples") or 0,
+            block.get("requested_samples") or 0,
+            anchor.get("attach_history_p50_ms") or 0.0,
+            anchor.get("load_ms_p50") or 0.0,
+            anchor.get("history_ms_p50") or 0.0,
+        )
+    )
+    for name in STAGE_PROBE_STAGES:
+        stage = block["stages"][name]
+        ratio = stage.get("ratio_to_attach_history_pct")
+        print(
+            "    %-18s p50 %9.3f ms  min %9.3f  max %9.3f%s"
+            % (
+                name,
+                stage["p50_ms"] or 0.0,
+                stage["min_ms"] or 0.0,
+                stage["max_ms"] or 0.0,
+                "" if ratio is None else "  ratio %.1f%% of anchor" % ratio,
+            )
+        )
+    for failure in block.get("failures") or []:
+        print("  FAIL decomposition %s" % failure)
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.compare:
@@ -932,6 +1233,17 @@ def main(argv: list[str]) -> int:
         print("probe binary not found: %s" % binary)
         print("Build it: cargo build --locked -p horon-agent-base --example loading_probe")
         return 2
+    if args.stage_probe:
+        stage_binary = Path(args.stage_probe).resolve()
+        if not stage_binary.is_file():
+            print("stage probe binary not found: %s" % stage_binary)
+            print("Build it: cargo build --locked -p horon-agent-base --example resume_stage_probe")
+            return 2
+    else:
+        stage_binary = default_stage_probe(binary)
+    if args.stage_probe_samples < 0:
+        print("--stage-probe-samples must be zero or positive")
+        return 2
     digest = sha256_file(binary)
     script = Path(args.fixture_script).resolve()
 
@@ -939,6 +1251,13 @@ def main(argv: list[str]) -> int:
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     print("binary   %s (%s)" % (binary, digest[:12]))
+    if stage_binary is not None:
+        print(
+            "stages   %s (%s, %d cold pass(es) per session fixture)"
+            % (stage_binary, sha256_file(stage_binary)[:12], args.stage_probe_samples)
+        )
+    else:
+        print("stages   skipped: resume_stage_probe not found beside %s" % binary)
     print("mode     %s" % args.mode)
     print("protocol %s" % MEASUREMENT_PROTOCOL[args.mode])
     print("fixtures %s" % root)
@@ -972,6 +1291,8 @@ def main(argv: list[str]) -> int:
                     args.mode,
                     root,
                     args.keep_fixtures,
+                    stage_binary=stage_binary,
+                    stage_samples=args.stage_probe_samples,
                 )
                 results.append(measured)
                 if measured["status"] != "measured" or not measured["stability"]["stable"]:
@@ -1014,6 +1335,7 @@ def main(argv: list[str]) -> int:
                         totals["skill_dir_reads"]["p50_ms"] or 0.0,
                     )
                 )
+                print_stage_probe(measured.get("stage_probe"))
                 print(
                     "  total skill_file_reads p50 %.0f  skill_bytes_read p50 %.0f  mcp_config_reads p50 %.0f  mcp_config_bytes p50 %.0f"
                     % (
@@ -1082,6 +1404,16 @@ def main(argv: list[str]) -> int:
         "stability_stages": list(STABILITY_STAGES),
         "stability_criterion": STABILITY_CRITERION[args.mode],
         "required_counters": list(REQUIRED_COUNTERS),
+        "decomposition": {
+            "binary": None if stage_binary is None else {"path": str(stage_binary), "sha256": sha256_file(stage_binary)},
+            "samples_per_fixture": args.stage_probe_samples,
+            "stages": list(STAGE_PROBE_STAGES),
+            "protocol": STAGE_PROBE_PROTOCOL,
+            "note": (
+                "descriptive only: the decomposition never decides a verdict, and a fixture "
+                "without a session records status not_applicable"
+            ),
+        },
         "counts": {
             "fixtures": len(results),
             "measurement_failures": sum(1 for result in results if result["status"] != "measured"),

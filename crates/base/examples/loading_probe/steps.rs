@@ -321,14 +321,34 @@ pub fn run(options: &Options) -> Result<Value> {
         if !fixture_present {
             return Ok(json!({"status": "absent", "history": 0}));
         }
+        // This stage is deliberately two things, and the report keeps them apart.
+        // `load_ms` is `Session::load`: the resume path a host pays to attach a
+        // session. `history_ms` is the full-history materialization the host only
+        // pays when it asks for every message; a first page is `history_page`, which
+        // is bounded by the head-bound page index (`HistoryPages`) and is not this
+        // stage. Reading one number as the other is how a full materialization gets
+        // reported as a resume or first-page cost.
+        let load_started = Instant::now();
         let session = Session::load(&options.session).context("session load")?;
+        let load_ms = load_started.elapsed().as_secs_f64() * 1000.0;
+        let resident = session.active_context().len();
+        let released_prefix = session.active_history_offset();
+        let history_started = Instant::now();
         let history = session.history_messages()?.len();
+        let history_ms = history_started.elapsed().as_secs_f64() * 1000.0;
         ensure!(
             history == options.expected_messages(),
             "history has {history} messages, expected {}",
             options.expected_messages()
         );
-        let detail = json!({"status": "loaded", "history": history});
+        let detail = json!({
+            "status": "loaded",
+            "history": history,
+            "resident": resident,
+            "released_prefix": released_prefix,
+            "load_ms": load_ms,
+            "history_ms": history_ms,
+        });
         loaded = Some(session);
         Ok(detail)
     });
