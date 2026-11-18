@@ -184,7 +184,7 @@ aux = "my-small-model"
 이 빌드의 규칙은 모델 경로가 하나라는 것이다. 턴은 `[provider] default_provider` 또는 `--provider-profile`이 가리키는 프로파일에서 그 프로파일 `type`의 엔드포인트로 요청을 보낸다. `generate_image` 도구는 문서로 밝힌 유일한 예외이고, 그것도 구조가 아니라 경로다.
 
 - **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
-- `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이 경로를 받는다. Anthropic이나 Gemini 방식의 프로파일은 이미지 생성이 설정되지 않았다고 보고한다. 두 방식 모두 Images 엔드포인트를 두지 않기 때문이다.
+- `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이 경로를 받는다. Anthropic이나 Gemini 방식의 프로파일은 두 방식 모두 Images 엔드포인트를 두지 않으므로 이 경로를 처리할 수 없다. `roles.image`가 모델을 가리키면 도구는 등록되지만, 호출할 때마다 답할 수 없는 URL로 요청을 보내는 대신 프로파일과 그 종류를 이름으로 밝힌 오류로 끝난다(`crates/base/src/provider/external.rs`의 `image_endpoint`).
 - 프로바이더 런타임은 여전히 하나이고 두 번째 라우터도 플러그인 호스트도 없다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에 놓인 요청 빌더이지 런타임이 아니다.
 - 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
 - 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
