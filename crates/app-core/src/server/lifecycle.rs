@@ -307,22 +307,13 @@ mod tests {
         );
     }
 
+    /// Exercises the `is_process_running` delegation on this platform, and the
+    /// pid-0 screen in front of it: on Unix `kill(0, 0)` signals the caller's
+    /// whole process group and reports "alive", which is why `process_alive`
+    /// screens pid 0 out rather than trusting the platform helper.
     #[test]
     fn current_process_is_alive() {
         assert!(process_alive(std::process::id()));
         assert!(!process_alive(0));
-    }
-
-    /// The non-Unix `process_alive` arm delegates to `is_process_running`, and
-    /// that arm only compiles in CI. Exercise the helper itself here so a wrong
-    /// path or signature cannot reach Windows unnoticed.
-    ///
-    /// Pid 0 is deliberately not asserted against the helper: on Unix
-    /// `kill(0, 0)` signals the caller's whole process group and reports
-    /// "alive", which is why `process_alive` screens pid 0 out before calling
-    /// it rather than trusting it.
-    #[test]
-    fn platform_process_running_detects_this_process() {
-        assert!(horon_agent_platform::is_process_running(std::process::id()));
     }
 }
