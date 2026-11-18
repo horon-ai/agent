@@ -627,6 +627,8 @@ def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript:
         os.path.join(root, "missing"),
         base_url,
         "missing horon-tui",
+        # The one reason installing answers, so the sentence names the install.
+        expect_install_hint=True,
     )
     log("case 3 passed")
 
