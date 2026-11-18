@@ -1537,14 +1537,16 @@ jobs:
       - name: Run turn end race cohort
         shell: bash
         # A prompt a client sends on a turn's terminal event must find that turn
-        # closed, and a cancel's reply must follow the cancelled turn's queued
-        # events. These drive the daemon's request loop and the turn forwarder
-        # in process; the rest of `acp_v2_events` is still outside every cohort.
-        # `--min-passed` is the number of tests the filter matches.
+        # closed, a context message written on it must be stored after that
+        # turn's completion tail, and a cancel's reply must follow the cancelled
+        # turn's queued events. These drive the daemon's request loop and the
+        # turn forwarder in process; the rest of `acp_v2_events` is still
+        # outside every cohort. `--min-passed` is the number of tests the filter
+        # matches.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 3 \
+            --timeout 600 --min-passed 6 \
             -- server::client_lifecycle::tests::acp_v2_events::turn_end_race --nocapture
 
       - name: Run tool_done verdict cohort

@@ -399,6 +399,52 @@ fn child_exit_before_and_after_ack_loses_no_original() {
     );
 }
 
+/// #355: a context message written on a turn's terminal event is stored, not
+/// refused as busy.
+///
+/// The finished turn's task keeps the session until its idle state reached the
+/// client, so a message written the instant `TurnDone` arrives lands in that
+/// tail: no turn is registered any more, and the session is not yet released.
+/// Every iteration runs a real turn and then the immediate context message
+/// through the daemon and the bridge.
+#[test]
+fn context_message_written_on_a_turn_end_is_stored_once() {
+    let fx = Lifecycle::start("turn-end-context");
+    let a = fx.a.client();
+    let session = create_session(&a, &fx.root);
+    let turns = 5usize;
+    let requests_before = fx.provider.request_count();
+
+    let mut markers = Vec::new();
+    for round in 0..turns {
+        assert_eq!(run_turn(&a, &session, "turn before the context message"), PLAIN_TEXT);
+        let marker = format!("context written on turn end {round}");
+        let sent = a.send_context_message(&session, &marker);
+        assert!(
+            sent.is_ok(),
+            "a context message right after TurnDone is refused: {sent:?}"
+        );
+        markers.push(marker);
+    }
+
+    assert_eq!(
+        fx.provider.request_count() - requests_before,
+        turns,
+        "a context message starts no model turn"
+    );
+    let history = a.get_history(&session).expect("history");
+    for marker in &markers {
+        assert_eq!(
+            history
+                .iter()
+                .filter(|row| row.content.contains(marker.as_str()))
+                .count(),
+            1,
+            "the context message is stored exactly once: {marker}"
+        );
+    }
+}
+
 #[test]
 fn partial_blob_is_refused_until_the_transfer_completes() {
     let fx = Lifecycle::start("blob");
