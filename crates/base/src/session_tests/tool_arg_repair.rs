@@ -17,6 +17,25 @@ fn tool_result(call_id: &str) -> ContentBlock {
     }
 }
 
+fn tool_call(call_id: &str) -> ContentBlock {
+    ContentBlock::ToolUse {
+        id: call_id.to_string(),
+        name: "bash".to_string(),
+        input: serde_json::json!({"command": "echo output"}),
+        thought_signature: None,
+    }
+}
+
+/// Store one complete call: the assistant's call and the user's result.
+///
+/// The store validates tool identity order, so a result with no preceding call
+/// is refused before it is written. A fixture that appended only the result
+/// would fail on the chain and never reach the repair path it exercises.
+fn store_call(session: &mut Session, call_id: &str) {
+    session.add_message(Role::Assistant, vec![tool_call(call_id)]);
+    session.add_message(Role::User, vec![tool_result(call_id)]);
+}
+
 /// Record every I/O point this session passes through, in order.
 fn watch_io(session: &mut Session) -> Result<Arc<Mutex<Vec<String>>>> {
     let points = Arc::new(Mutex::new(Vec::new()));
@@ -57,10 +76,16 @@ fn a_repaired_call_is_saved_with_the_same_io_as_an_unrepaired_one() -> Result<()
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-repair-flush-")?;
     let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
 
+    // The first save initializes the shared store and catalog. Give each run
+    // its own empty home so those writes are present in both traces.
     let mut plain = Session::create_with_id("repair_flush_plain".into(), None, None);
     let plain_points = watch_io(&mut plain)?;
-    plain.add_message(Role::User, vec![tool_result("call-plain")]);
+    store_call(&mut plain, "call-plain");
     plain.save()?;
+    drop(plain);
+    drop(_home);
+    let (_repaired_dir, repaired_path) = canonical_tempdir("horon-agent-repair-flush-")?;
+    let _repaired_home = tests::EnvVarGuard::set("HORON_HOME", &repaired_path);
 
     let mut repaired = Session::create_with_id("repair_flush_repaired".into(), None, None);
     let repaired_points = watch_io(&mut repaired)?;
@@ -72,7 +97,7 @@ fn a_repaired_call_is_saved_with_the_same_io_as_an_unrepaired_one() -> Result<()
             changes: vec!["coerced `flag` to a boolean".to_string()],
         },
     );
-    repaired.add_message(Role::User, vec![tool_result("call-repaired")]);
+    store_call(&mut repaired, "call-repaired");
     repaired.save()?;
 
     // Then the write path is identical point for point.
@@ -98,7 +123,7 @@ fn an_unrepaired_call_stores_neither_field() -> Result<()> {
     let (_home_dir, home_path) = canonical_tempdir("horon-agent-repair-absent-")?;
     let _home = tests::EnvVarGuard::set("HORON_HOME", &home_path);
     let mut session = Session::create_with_id("repair_absent".into(), None, None);
-    session.add_message(Role::User, vec![tool_result("call-plain")]);
+    store_call(&mut session, "call-plain");
     session.save()?;
     // Then the stored message reads back with no repair record at all.
     let message = stored_call(&Session::load(&session.id)?);
@@ -119,7 +144,7 @@ fn a_record_left_for_another_call_does_not_attach_to_this_one() -> Result<()> {
         "call-abandoned",
         record(r#"{"flag": "true"}"#, "coerced `flag` to a boolean"),
     );
-    session.add_message(Role::User, vec![tool_result("call-plain")]);
+    store_call(&mut session, "call-plain");
     session.save()?;
     // Then the unrelated message stays untouched.
     let message = stored_call(&Session::load(&session.id)?);
@@ -151,9 +176,9 @@ fn two_sessions_reusing_one_call_id_keep_their_own_records() -> Result<()> {
     );
 
     // When each session stores its own call.
-    first.add_message(Role::User, vec![tool_result("call_0")]);
+    store_call(&mut first, "call_0");
     first.save()?;
-    second.add_message(Role::User, vec![tool_result("call_0")]);
+    store_call(&mut second, "call_0");
     second.save()?;
 
     // Then each message carries its own session's rewrite and nothing else.

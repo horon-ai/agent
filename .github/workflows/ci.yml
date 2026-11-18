@@ -782,6 +782,69 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-token-estimate --min-passed 16 --timeout 600
 
+      - name: Prepare a reflink filesystem for clone isolation (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        # `git_clone_isolation` copies a repository with `cp -a --reflink=always`
+        # and refuses when the filesystem cannot reflink. The hosted runner's
+        # root filesystem is ext4, so the success path needs a real reflink
+        # filesystem: btrfs on a loopback file, named by
+        # `HORON_AGENT_CLONE_TEST_ROOT`. A failure here fails the step instead
+        # of letting the clone tests pass on an unsupported filesystem.
+        run: |
+          set -euo pipefail
+          if ! command -v mkfs.btrfs >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq btrfs-progs
+          fi
+          fixture=$(mktemp -d "$RUNNER_TEMP/horon-clone.XXXXXXXX")
+          image="$fixture/disk.img"
+          mount_point="$fixture/mount"
+          truncate -s 256M "$image"
+          mkfs.btrfs -q "$image"
+          mkdir "$mount_point"
+          sudo mount -o loop "$image" "$mount_point"
+          sudo chown "$(id -u):$(id -g)" "$mount_point"
+          echo "HORON_AGENT_CLONE_TEST_ROOT=$mount_point" >> "$GITHUB_ENV"
+          # The refusal test needs a filesystem without reflink; the hosted
+          # runner's ext4 `$RUNNER_TEMP` is one.
+          echo "HORON_AGENT_CLONE_TEST_NO_REFLINK_ROOT=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Run horon-agent-base lib tests (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        # `horon-agent-base` owns config, memory, session, skill and storage
+        # tests that only filtered cohorts ever ran, so a module outside those
+        # filters could rot green: #321 collected eighteen failures, from stale
+        # tool-profile expectations to non-UUID journal ids and an explicit
+        # export save guard nothing exercised. No filter: the whole crate is the
+        # surface.
+        #
+        # The first Linux run executed 1605 cases (#321, job 134409170973).
+        # The five staged-import regressions and the filesystem refusal test
+        # bring that floor to 1611. The three ignored benchmarks are separate.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-base --min-passed 1611 --timeout 1200
+
+      - name: Run horon-agent-base lib tests (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # The previous macOS suite passed 1592 cases. Include the five
+        # staged-import regressions in the minimum for the complete suite.
+        run: |
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-base --min-passed 1597 --timeout 1200
+
+      - name: Remove the reflink filesystem (Linux)
+        if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
+        shell: bash
+        run: |
+          sudo umount "$HORON_AGENT_CLONE_TEST_ROOT"
+          fixture=$(dirname "$HORON_AGENT_CLONE_TEST_ROOT")
+          rm "$fixture/disk.img"
+          rmdir "$HORON_AGENT_CLONE_TEST_ROOT" "$fixture"
+
       - name: Run CLI handoff cohort
         shell: bash
         # The bare command's handoff decision is the only thing that sends a
