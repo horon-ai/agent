@@ -11,12 +11,30 @@ pub enum AppendOutcome {
     AlreadyDurable,
 }
 
+/// The session's exclusive guard, released explicitly before its handle closes.
+///
+/// `flock` ownership belongs to the open file description, and `fork` copies it
+/// to the child. Closing only this process's handle therefore leaves the session
+/// owned until that child execs or exits, which is a window a task-spawning save
+/// can be inside. Releasing the description itself on drop releases it for every
+/// copy at once, so a finished writer never outlives its own drop. The catalog
+/// lock carries the same guard for the same reason.
+struct WriterLock(File);
+
+impl Drop for WriterLock {
+    fn drop(&mut self) {
+        if let Err(error) = self.0.unlock() {
+            eprintln!("could not release the session writer lock: {error}");
+        }
+    }
+}
+
 /// Blocking storage boundary. All IDs and timestamps are supplied before I/O.
 /// The lock file is never unlinked or replaced, including on failed opens.
 pub struct BlockingWriter {
     pub(crate) paths: SessionPaths,
     pub(crate) id: SessionId,
-    lock: File,
+    lock: WriterLock,
     pub(crate) disk: Disk,
     pub(crate) state: crate::cache_state::WriterState,
     pending: Option<(EventId, Vec<u8>)>,
@@ -94,6 +112,9 @@ impl BlockingWriter {
             Err(error) => return Err(io_error(error)),
         };
         lock_exclusive(&lock)?;
+        // Wrapped as soon as it is ours, so an error below still releases the
+        // session instead of leaving it to close alone.
+        let lock = WriterLock(lock);
         // The writer lock is not an original: it carries no data that has to
         // survive a crash and the operating system releases it when the process
         // dies, so it is closed over without a flush. The point stays as the
@@ -138,7 +159,7 @@ impl BlockingWriter {
     }
 
     pub(crate) fn check_lock(&self) -> Result<(), StoreError> {
-        check_file(&self.paths.session_dir(&self.id)?.join(".writer.lock"), &self.lock)?;
+        check_file(&self.paths.session_dir(&self.id)?.join(".writer.lock"), &self.lock.0)?;
         Ok(())
     }
 
