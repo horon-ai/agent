@@ -369,6 +369,133 @@ fi
 grep -q 'unexpected member: surprise.txt' "$tmp/odd.err"
 test ! -e "$tmp/cli-args-odd.log"
 
+# On Linux one uncompressed image of the verified archive serves both the
+# listing check and the extraction, so the release bytes are expanded once per
+# install. The gzip wrapper records that expansion — the installer ends its
+# options before the archive path, and tar's own decompression calls gzip
+# without that marker. The tar wrapper fails an extraction out of the image the
+# way a full filesystem does, leaving one allowed member half written. Both
+# forward to the real tools, so the bytes installed are the release bytes.
+real_gzip=$(command -v gzip)
+real_tar=$(command -v tar)
+mkdir -p "$tmp/bin-inflate" "$tmp/bin-retry"
+cat > "$tmp/bin-inflate/gzip" <<EOF
+#!/usr/bin/env bash
+marker=""
+for argument in "\$@"; do
+  if [ "\$marker" = "--" ] && [ -n "\${GZIP_ARCHIVE_LOG:-}" ]; then
+    printf '%s\n' "\$argument" >> "\$GZIP_ARCHIVE_LOG"
+  fi
+  marker="\$argument"
+done
+exec "$real_gzip" "\$@"
+EOF
+cat > "$tmp/bin-retry/tar" <<EOF
+#!/usr/bin/env bash
+mode=""
+archive=""
+previous=""
+for argument in "\$@"; do
+  case "\$previous" in
+    -xf|-xOf) mode="\$previous"; archive="\$argument" ;;
+  esac
+  previous="\$argument"
+done
+if [ -n "\${RETRY_FAIL_IMAGE:-}" ] && [ "\${archive##*/}" = "bootstrap.tar" ]; then
+  [ -z "\${RETRY_TAR_LOG:-}" ] || printf '%s\n' "\$mode" >> "\$RETRY_TAR_LOG"
+  case "\$mode" in
+    -xf) printf 'partial' > "\${HORON_BOOTSTRAP_DIR:?}/\${RETRY_PARTIAL_NAME:?}"; exit 2 ;;
+    -xOf) printf 'partial'; exit 2 ;;
+  esac
+fi
+if [ -n "\${RETRY_TAR_LOG:-}" ]; then
+  case "\$mode" in -xf|-xOf|-xzf) printf '%s\n' "\$mode" >> "\$RETRY_TAR_LOG" ;; esac
+fi
+exec "$real_tar" "\$@"
+EOF
+chmod +x "$tmp/bin-inflate/gzip" "$tmp/bin-retry/tar"
+
+# One install per scenario: the case's own home, tool path and asset directory,
+# with its output and log kept under the home's name.
+run_inflate_case() {
+  case_home="$1"
+  case_path="$2"
+  case_gzip_log="$3"
+  case_assets="$4"
+  shift 4
+  env PATH="$case_path" \
+    HOME="$case_home" \
+    HORON_HOME="$case_home/.horon" \
+    HORON_AGENT_INSTALL_DIR="$tmp/install-${case_home##*/}" \
+    ASSET_SOURCE_DIR="$case_assets" \
+    GZIP_ARCHIVE_LOG="$case_gzip_log" \
+    CLI_ARG_LOG="$tmp/cli-args-${case_home##*/}.log" \
+    HORON_AGENT_SKIP_SERVER_RELOAD=1 \
+    "$@" \
+    bash "$repo_dir/scripts/install/install.sh" \
+    >"$tmp/${case_home##*/}.out" 2>"$tmp/${case_home##*/}.err"
+}
+inflate_path="$tmp/bin-inflate:$tmp/bin:$PATH"
+
+# A normal install expands the archive once and still hands the downloaded
+# archive itself to the executable that re-verifies it.
+mkdir -p "$tmp/home-inflate"
+run_inflate_case "$tmp/home-inflate" "$inflate_path" "$tmp/gzip-archive.log" "$assets"
+test "$(cat "$tmp/home-inflate/.horon/builds/current-version")" = "1.2.3"
+[ "$(grep -c . "$tmp/gzip-archive.log" 2>/dev/null)" = 1 ] \
+  || { echo "installer did not expand the archive exactly once" >&2; exit 1; }
+grep -q '/horon-agent-linux-x86_64\.tar\.gz$' "$tmp/gzip-archive.log"
+grep -qx -- "asset:horon-agent-linux-x86_64.tar.gz" "$tmp/cli-args-home-inflate.log"
+
+# The whole listing is still checked before a bootstrap file is written, and an
+# unexpected member is refused out of that same image.
+mkdir -p "$tmp/home-inflate-odd"
+if run_inflate_case "$tmp/home-inflate-odd" "$inflate_path" \
+  "$tmp/gzip-archive-odd.log" "$odd_assets"; then
+  echo "installer unpacked an unexpected member from the expanded image" >&2
+  exit 1
+fi
+grep -q 'unexpected member: surprise.txt' "$tmp/home-inflate-odd.err"
+[ "$(grep -c . "$tmp/gzip-archive-odd.log" 2>/dev/null)" = 1 ] \
+  || { echo "the listing check did not read the expanded image" >&2; exit 1; }
+test ! -e "$tmp/cli-args-home-inflate-odd.log"
+
+# A temporary filesystem too small to hold that image beside what is extracted
+# from it keeps the previous path: the install still succeeds, and the extra
+# copy is never written there.
+mkdir -p "$tmp/bin-tight"
+cat > "$tmp/bin-tight/df" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'
+printf '%s\n' 'tmpfs 65536 65535 1 100% /tmp'
+EOF
+chmod +x "$tmp/bin-tight/df"
+mkdir -p "$tmp/home-tight"
+run_inflate_case "$tmp/home-tight" "$tmp/bin-tight:$inflate_path" \
+  "$tmp/gzip-archive-tight.log" "$assets"
+test "$(cat "$tmp/home-tight/.horon/builds/current-version")" = "1.2.3"
+[ ! -s "$tmp/gzip-archive-tight.log" ] \
+  || { echo "installer expanded the archive although the temporary filesystem was full" >&2; exit 1; }
+grep -qx -- "asset:horon-agent-linux-x86_64.tar.gz" "$tmp/cli-args-home-tight.log"
+
+# An extraction out of the image that fails is recovered from the download: the
+# image and its partial member are discarded, and the same validated members are
+# written once more from the archive the executable re-verifies.
+mkdir -p "$tmp/home-retry"
+run_inflate_case "$tmp/home-retry" "$tmp/bin-retry:$inflate_path" \
+  "$tmp/gzip-archive-retry.log" "$assets" \
+  RETRY_FAIL_IMAGE=1 \
+  RETRY_PARTIAL_NAME=horon-agent-linux-x86_64 \
+  RETRY_TAR_LOG="$tmp/tar-retry.log"
+test "$(cat "$tmp/home-retry/.horon/builds/current-version")" = "1.2.3"
+[ "$(grep -c . "$tmp/gzip-archive-retry.log" 2>/dev/null)" = 1 ] \
+  || { echo "the retried install did not start from the expanded image" >&2; exit 1; }
+[ "$(grep -cE -- '^-x(Of|f)$' "$tmp/tar-retry.log")" = 1 ] \
+  || { echo "the failing image extraction was not attempted exactly once" >&2; exit 1; }
+[ "$(grep -c -- '^-xzf$' "$tmp/tar-retry.log")" = 1 ] \
+  || { echo "the install did not fall back to the downloaded archive exactly once" >&2; exit 1; }
+grep -qx -- "asset:horon-agent-linux-x86_64.tar.gz" "$tmp/cli-args-home-retry.log"
+
 # A release that predates the interactive client installs the headless agent
 # after exactly one warning, and never hands the missing archive to the
 # executable.
