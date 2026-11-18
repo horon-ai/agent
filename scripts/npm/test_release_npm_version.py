@@ -9,6 +9,8 @@ npm refuses a dry run of a version that is already published.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -100,6 +102,54 @@ class DispatchPlanTests(unittest.TestCase):
         for version in ("1.2", "v1.2.3", "latest", ""):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 helper.dispatch_plan("", "4815162", version, True)
+
+
+class ResolveModeTests(unittest.TestCase):
+    """The switch the workflow gates on, proved without a runner.
+
+    A release that resolved `publish` and comes back `dry-run` fails the run:
+    that silent downgrade once shipped releases with no npm packages at all.
+    """
+
+    def test_a_switch_on_release_publishes(self) -> None:
+        self.assertEqual(helper.resolve_mode("workflow_run", "publish", "true"), "publish")
+        self.assertEqual(helper.resolve_mode("workflow_dispatch", "publish", " true "), "publish")
+
+    def test_an_unset_or_wrong_switch_never_publishes(self) -> None:
+        # Unset, an empty repository variable, a typo and the string "false" all
+        # have to block a publish; the workflow turns this into a failed run.
+        for value in ("", "false", "TRUE", "1", "yes"):
+            with self.subTest(switch=value):
+                self.assertEqual(helper.resolve_mode("workflow_run", "publish", value), "dry-run")
+
+    def test_a_pull_request_never_publishes(self) -> None:
+        self.assertEqual(helper.resolve_mode("pull_request", "publish", "true"), "dry-run")
+
+    def test_an_explicit_dry_run_stays_a_dry_run(self) -> None:
+        self.assertEqual(helper.resolve_mode("workflow_dispatch", "dry-run", "true"), "dry-run")
+
+
+class GateTests(unittest.TestCase):
+    """The step the workflow runs, including its exit code.
+
+    The rule alone is not enough: the failure has to reach the run, and the
+    message has to name the command that unblocks it.
+    """
+
+    def test_a_switch_on_release_is_allowed(self) -> None:
+        self.assertEqual(helper.main(["gate", "workflow_run", "publish", "true"]), 0)
+
+    def test_a_blocked_release_fails_with_the_recovery_command(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            status = helper.main(["gate", "workflow_run", "publish", "", "release_tag", "0.1.16"])
+        self.assertEqual(status, 1)
+        self.assertIn("gh variable set NPM_PUBLISH --body true", stderr.getvalue())
+        self.assertIn("release_tag 0.1.16", stderr.getvalue())
+
+    def test_a_dry_run_request_is_not_a_failure(self) -> None:
+        self.assertEqual(helper.main(["gate", "workflow_dispatch", "dry-run", "", "", ""]), 0)
+        self.assertEqual(helper.main(["gate", "pull_request", "dry-run", "", "", ""]), 0)
 
 
 class MissingAssetsTests(unittest.TestCase):

@@ -17,7 +17,9 @@ name: Publish npm packages
 #
 # The real publish stays off until the owner sets the repository variable
 # `NPM_PUBLISH` to `true` and registers this workflow as each package's trusted
-# publisher. Without that variable every path is a dry run.
+# publisher. Without that variable a run that resolved `publish` fails instead
+# of shipping a release with no npm packages, and only a run that asked for a
+# dry run stays a dry run.
 
 env:
   # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
@@ -192,14 +194,11 @@ jobs:
           fi
 
           # The variable is the owner's master switch and the pull-request path
-          # can never publish, so a dispatch with dry_run=false stays a dry run
-          # until both are true.
-          if [ "$mode" = "publish" ]; then
-            if [ "$NPM_PUBLISH" != "true" ] || [ "$EVENT" = "pull_request" ]; then
-              echo "::notice::NPM_PUBLISH is not 'true'; running the publish path as a dry run."
-              mode="dry-run"
-            fi
-          fi
+          # can never publish. The rule and its failure live in the helper, so
+          # the unit tests prove them: a run that resolved `publish` and is
+          # blocked fails this step instead of shipping a release with no npm
+          # packages, and only an explicitly requested dry run stays green.
+          mode="$(python3 scripts/npm/release_npm_version.py gate "$EVENT" "$mode" "$NPM_PUBLISH" "$source" "$version")"
 
           emit skip false
           emit source "$source"
