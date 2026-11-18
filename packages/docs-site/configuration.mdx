@@ -73,7 +73,17 @@ sessions and the SDK are unchanged.
 
 A role maps a workload to a model other than the session's own. Roles are
 configuration only; a file without a role table resolves models exactly as
-before.
+before. The table lives inside one provider profile, so a role never selects a
+second endpoint or credential:
+
+```toml
+[providers.my-gw.roles]
+default = "my-model"
+plan = "my-planner"
+aux = "my-cheap-model"
+judge = "my-judge"
+image = "my-image-model"
+```
 
 | Role | Workload |
 | --- | --- |
