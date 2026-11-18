@@ -8,6 +8,7 @@
 //! and an injected parent, which is the same seam the write deadline uses.
 use super::*;
 use horon_agent_platform::ipc::Listener;
+use std::time::Duration;
 
 /// A socket path unique to this process and iteration, short enough for the
 /// 104-byte Unix socket limit macOS enforces.
