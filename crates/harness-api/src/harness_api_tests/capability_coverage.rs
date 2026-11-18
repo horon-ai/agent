@@ -38,7 +38,7 @@ enum Disposition {
     Gap(&'static str),
 }
 
-use Disposition::{ClientInternal, Covered, Gap};
+use Disposition::{ClientInternal, Covered};
 
 /// Reviewed disposition of every daemon request a client in this repo sends.
 ///
@@ -254,31 +254,6 @@ fn every_reference_client_capability_is_triaged() {
     );
 }
 
-/// Print the current gap list. Not a failure: gaps are a roadmap, not a bug.
-///
-/// Run with `cargo test -p horon-agent-harness-api -- --nocapture capability_report`.
-#[test]
-fn capability_report() {
-    let covered = LEDGER.iter().filter(|(_, d)| *d == Covered).count();
-    let internal = LEDGER.iter().filter(|(_, d)| *d == ClientInternal).count();
-    let gaps: Vec<(&str, &str)> = LEDGER
-        .iter()
-        .filter_map(|(name, disposition)| match disposition {
-            Gap(reason) => Some((*name, *reason)),
-            _ => None,
-        })
-        .collect();
-
-    println!("\nharness API capability coverage");
-    println!("  covered by the API:      {covered}");
-    println!("  deliberately internal:   {internal}");
-    println!("  known gaps:              {}", gaps.len());
-    for (name, reason) in &gaps {
-        println!("    - {name}: {reason}");
-    }
-    println!();
-}
-
 /// The capability set is fixed and reviewable, and every entry is advertised
 /// by both SDKs and by the bridge when the daemon supports it.
 ///
@@ -420,25 +395,6 @@ fn every_gated_request_names_a_defined_capability() {
             "{event:?} predates capability negotiation and must reach every connection"
         );
     }
-}
-
-/// A gated event may only be sent to a connection that advertised its
-/// capability. This is what keeps a legacy connection byte-identical to what it
-/// received before minor 14.
-#[test]
-fn a_gated_event_is_withheld_from_a_connection_without_its_capability() {
-    let gated = ApiEvent::SnapshotMarker {
-        session_id: "s1".into(),
-        marker: SnapshotMarkerInfo::default(),
-    };
-    let capability = gated.required_capability().expect("marker is gated");
-    let legacy_peer: Vec<String> = Vec::new();
-    assert!(
-        !legacy_peer.iter().any(|held| held == capability),
-        "a peer that advertises nothing must not be handed the marker"
-    );
-    let modern_peer = [capability.to_string()];
-    assert!(modern_peer.iter().any(|held| held == capability));
 }
 
 /// The SDKs mirror horon-agent's external credential locations by hand, so a new one

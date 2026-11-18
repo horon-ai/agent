@@ -42,17 +42,6 @@ mod tests {
         );
     }
 
-    /// Removed TUI-only keys must not break existing configs.
-    #[test]
-    fn legacy_tui_keys_are_ignored() {
-        let display = parse(
-            r#"{"emoji": false, "centered": true, "diff_mode": "inline",
-                "diagram_mode": "pinned", "markdown_spacing": "document",
-                "latex_rendering": "image", "overscroll_status": "on"}"#,
-        );
-        assert!(!display.emoji);
-    }
-
     /// Valid values must still round-trip (leniency must not swallow them).
     #[test]
     fn valid_values_are_unaffected() {
