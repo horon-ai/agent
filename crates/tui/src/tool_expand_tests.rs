@@ -104,6 +104,15 @@ fn big_output() -> String {
     text
 }
 
+/// An output long enough that wrapping all of it would be a frame's whole cost.
+fn long_output(rows: usize) -> String {
+    let mut text = String::new();
+    for row in 0..rows {
+        text.push_str(&format!("output row {row:04}\n"));
+    }
+    text
+}
+
 #[test]
 fn the_newest_call_opens_and_the_second_press_puts_the_preview_back() {
     let mut state = state_with(&[("c1", "a\nb\n"), ("c2", "c\nd\n")]);
@@ -696,4 +705,42 @@ fn the_key_label_costs_the_line_no_rows_at_any_width() {
             );
         }
     }
+}
+
+#[test]
+fn an_expanded_call_is_drawn_from_the_rows_the_pane_shows() {
+    let mut app = app();
+    let output = long_output(1200);
+    app.apply_event(&tool_start("c1"));
+    app.apply_event(&tool_done("c1", &output));
+    assert_eq!(app.on_key(ctrl_o()), None, "the key asked for an action");
+    // A frame at the end shows the last forty rows of a block of twelve hundred,
+    // and building the other eleven hundred and sixty is the cost this pins.
+    crate::wrap::reset_built();
+    let screen = draw_at(&mut app, 120, 40);
+    let built = crate::wrap::built_rows();
+    assert!(built < 100, "a frame built {built} rows for forty: {screen}");
+    assert!(screen.contains("output row 1199"), "the end is not on screen: {screen}");
+    assert!(
+        !screen.contains("output row 0000"),
+        "a row off screen was built: {screen}"
+    );
+}
+
+#[test]
+fn a_held_view_builds_only_the_rows_it_shows() {
+    let mut app = app();
+    let output = long_output(1200);
+    app.apply_event(&tool_start("c1"));
+    app.apply_event(&tool_done("c1", &output));
+    assert_eq!(app.on_key(ctrl_o()), None, "the key asked for an action");
+    // The first held frame takes the height it measures and the next draws
+    // against it, so the rows below the view are counted and dropped by both.
+    assert_eq!(app.on_key(page_up()), None, "the view keeps its own key");
+    let _ = draw_at(&mut app, 120, 40);
+    crate::wrap::reset_built();
+    let screen = draw_at(&mut app, 120, 40);
+    let built = crate::wrap::built_rows();
+    assert!(built < 200, "a held frame built {built} rows for forty: {screen}");
+    assert!(screen.contains("rows below"), "the held view said nothing: {screen}");
 }
