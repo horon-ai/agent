@@ -140,7 +140,9 @@ jobs:
     # The called workflow's jobs cannot exceed these grants; they are the union
     # of what release.yml's own jobs request.
     permissions:
-      actions: read
+      # The union of what release.yml's own jobs request, including the
+      # `actions: write` its final job needs to request an npm publish run.
+      actions: write
       contents: write
       issues: write
       id-token: write
