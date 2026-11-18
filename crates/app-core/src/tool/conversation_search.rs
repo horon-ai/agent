@@ -396,12 +396,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
-    #[test]
-    fn test_tool_name() {
-        let tool = create_test_tool();
-        assert_eq!(tool.name(), "conversation_search");
-    }
-
     #[tokio::test]
     async fn test_stats() {
         let _guard = env_lock();

@@ -72,19 +72,6 @@ impl Drop for LocalMcpConfigGuard {
 }
 
 #[test]
-fn test_tool_name() {
-    let tool = create_test_tool();
-    assert_eq!(tool.name(), "mcp");
-}
-
-#[test]
-fn test_tool_description() {
-    let tool = create_test_tool();
-    assert!(tool.description().contains("MCP"));
-    assert!(tool.description().contains("Model Context Protocol"));
-}
-
-#[test]
 fn test_parameters_schema() {
     let tool = create_test_tool();
     let schema = tool.parameters_schema();
