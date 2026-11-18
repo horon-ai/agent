@@ -287,7 +287,10 @@ impl Activity {
     fn idle_for(&self) -> Duration {
         // A poisoned lock cannot make the bridge immortal: the worst reading
         // is "idle since the start", which shortens its life, never extends it.
-        self.idle_since.lock().map(|since| since.elapsed()).unwrap_or(Duration::MAX)
+        self.idle_since
+            .lock()
+            .map(|since| since.elapsed())
+            .unwrap_or(Duration::MAX)
     }
 }
 
@@ -464,12 +467,7 @@ async fn run_bridge_with_lifecycle(
     // client that is still connected keeps it serving.
     let activity = Arc::new(Activity::new());
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel::<Option<ExitReason>>(None);
-    let watchdog = tokio::spawn(watch_lifecycle(
-        activity.clone(),
-        idle_exit,
-        parent,
-        shutdown_tx,
-    ));
+    let watchdog = tokio::spawn(watch_lifecycle(activity.clone(), idle_exit, parent, shutdown_tx));
     loop {
         tokio::select! {
             // The watchdog decides; this side only notices. `changed` is cancel

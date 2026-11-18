@@ -59,7 +59,9 @@ async fn bridge_exits_when_idle() {
         let finished = tokio::time::timeout(idle_exit * 10, bridge)
             .await
             .expect("the bridge ended within the idle window");
-        finished.expect("the bridge task did not panic").expect("the bridge returned Ok");
+        finished
+            .expect("the bridge task did not panic")
+            .expect("the bridge returned Ok");
 
         if horon_agent_platform::ipc::socket_nodes_can_be_stale() {
             assert!(!api_socket.exists(), "the bridge left its socket node behind");
@@ -89,13 +91,18 @@ async fn bridge_keeps_serving_a_connected_client() {
 
         let client = connect_when_listening(&api_socket).await;
         tokio::time::sleep(idle_exit * 4).await;
-        assert!(!bridge.is_finished(), "a bridge with a client must keep serving past the idle window");
+        assert!(
+            !bridge.is_finished(),
+            "a bridge with a client must keep serving past the idle window"
+        );
 
         drop(client);
         let finished = tokio::time::timeout(idle_exit * 10, bridge)
             .await
             .expect("the bridge ended after its last client left");
-        finished.expect("the bridge task did not panic").expect("the bridge returned Ok");
+        finished
+            .expect("the bridge task did not panic")
+            .expect("the bridge returned Ok");
     })
     .await
     .expect("the lifecycle test timed out");
@@ -146,7 +153,10 @@ async fn bridge_exits_when_its_parent_is_gone() {
     tokio::time::timeout(Duration::from_secs(30), async {
         // A process that has already exited and been reaped: its pid answers
         // "gone" to the platform's liveness check.
-        let mut child = std::process::Command::new("sleep").arg("0").spawn().expect("spawn a short-lived child");
+        let mut child = std::process::Command::new("sleep")
+            .arg("0")
+            .spawn()
+            .expect("spawn a short-lived child");
         let dead_parent = child.id();
         child.wait().expect("reap the short-lived child");
 
@@ -164,7 +174,9 @@ async fn bridge_exits_when_its_parent_is_gone() {
         let finished = tokio::time::timeout(Duration::from_secs(10), bridge)
             .await
             .expect("a bridge whose parent is gone ended without waiting for the idle window");
-        finished.expect("the bridge task did not panic").expect("the bridge returned Ok");
+        finished
+            .expect("the bridge task did not panic")
+            .expect("the bridge returned Ok");
     })
     .await
     .expect("the lifecycle test timed out");
