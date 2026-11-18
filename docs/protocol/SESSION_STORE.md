@@ -150,6 +150,7 @@ The model that produces a structured summary can be changed with `summary_model`
 ### Derived caches
 
 - `checkpoint.json` holds the selected head, the source stamp (log epoch/inode, committed offset, anchor hash), the current metadata, the last compaction and the retained tail. A normal append does not rewrite the prefix.
+  On a cold rebuild the store verifies an indexed source for every active message, then counts compact JSON bytes from the newest message back to find the suffix that fits. A blob-backed message ends the inline suffix.
 - `sparse-index.jsonl` holds every 128th event plus message offsets, so old events can be fetched by byte range without a full replay.
 - `summary.json` and `.catalog.index.jsonl` are listing rows. Listing never parses a transcript.
 - `facade-cache.json` holds the session facade record and its hash. A session above the size cap keeps no cache and is rebuilt from the originals.
