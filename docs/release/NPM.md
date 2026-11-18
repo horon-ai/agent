@@ -4,7 +4,7 @@ Language: **English** | [한국어](NPM.ko.md)
 
 `@horon-ai/horon` is the npm distribution of the CLI: a small launcher plus one package per platform that carries the `horon-agent` and `horon-tui` binaries. The launcher starts the binary of the machine it runs on, and npm pins the installed version like it does for any other dependency. Choosing a release tag and the installers that fetch the release archives are described in [`INSTALL.md`](INSTALL.md).
 
-**Nothing is published yet.** The registry holds only the `0.0.0` placeholder packages that reserve the seven names, and those carry no binaries, so an install today produces a launcher that cannot find a runtime. The packaging and the publish workflow are built and tested in dry-run; publishing starts when the repository variable `NPM_PUBLISH` is set to `true` (see "The publish workflow"). Until then, install from the release installer, the container image, or a source checkout.
+**The seven names are live.** `v0.1.16` is the first release published to npm: the wrapper and the six platform packages carry that release's `horon-agent` and `horon-tui` binaries, and every later release publishes the same seven at its tag version, from the "Release Tag" run on `main` (see "The publish workflow"). The `0.0.0` placeholders that reserved the names are superseded.
 
 ## Package layout
 
@@ -63,7 +63,7 @@ The npm version of a release is the release tag without its `v`. `scripts/npm/re
 
 The workflow requires npm 11.5.1 or newer, because provenance signing and trusted publishing need it. The planning job holds `contents: read` and `actions: read`, the second for reading a finished run's jobs; only the publish job gets `id-token: write`, which is the short-lived credential npm exchanges for a one-time publish grant. A concurrency group with `cancel-in-progress: false` queues a second run instead of cancelling it, so the later run re-reads the registry and skips what already landed.
 
-A run is a dry run unless every condition holds: the event is not a pull request, the planning job resolved `mode=publish`, and the repository variable `NPM_PUBLISH` is exactly `true`. The automatic path additionally requires a successful "Release Tag" run on `main` of `horon-ai/agent`, a tag that points at that run's head commit, and a tag whose GitHub release is published rather than a draft.
+The planning job decides one mode, and the two modes are not symmetrical. A run that resolved `mode=publish` publishes when the repository variable `NPM_PUBLISH` is exactly `true`; when it is anything else, `scripts/npm/release_npm_version.py gate` exits 1 and the run fails with an `::error::` naming the recovery command, because a release that ships without npm packages is a broken release. A run that resolved `mode=dry-run` packages everything and publishes nothing: that is a pull request, or a dispatch with `dry_run=true`. The automatic path additionally requires a successful "Release Tag" run on `main` of `horon-ai/agent`, a tag that points at that run's head commit, and a tag whose GitHub release is published rather than a draft.
 
 The two non-fixture sources fetch their archives differently, and the difference decides what the packages hold. A `release_tag` run downloads `horon-agent-*.tar.gz`, `horon-tui-*.tar.gz` and `SHA256SUMS` from that public release. A `run_id` run downloads a `package_only` Release run's artifacts, because such a run skips the job that writes `SHA256SUMS`, and generates the checksum file from the tarballs it received. `scripts/npm/release_npm_version.py missing-assets` then refuses any archive the release does not carry, so both binaries of every platform exist before the packages are built.
 
@@ -90,7 +90,7 @@ These steps happen once, need npm organization ownership and repository settings
 
 2. Register a Trusted Publisher for each of the seven packages: npm → package → Settings → Trusted Publisher → GitHub Actions, with repository `horon-ai/agent`, workflow `publish-npm.yml`, and an empty environment. Also allow `npm publish` from that publisher, because package settings created after 2026-09-03 default to staged publish only; the staged approval flow is the alternative when the publish permission is left off.
 3. Register the publisher just before the first release. The setting expires unless an OIDC publish succeeds within two days of being created.
-4. Set the repository variable `NPM_PUBLISH` to `true`. Until then every path, including a dispatch with `dry_run=false`, stays a dry run.
+4. Set the repository variable `NPM_PUBLISH` to `true`. Until then the automatic path and a dispatch with `dry_run=false` fail in the planning job, with the recovery command in the error, and only a dispatch with `dry_run=true` passes.
 5. After the first successful publish, switch Publishing access to "Require two-factor authentication and disallow tokens". No npm token is stored anywhere in the workflow; the publish job authenticates with GitHub OIDC only.
 
 ## Checking provenance
