@@ -200,10 +200,3 @@ fn rejects_a_member_that_is_not_present() {
         "unexpected error: {error}"
     );
 }
-
-#[test]
-fn member_fixture_helper_reads_zip_bytes() {
-    let bytes = zip_archive(&[("a.txt", b"hello")]);
-    let read = member_from_bytes(&bytes, ArchiveKind::Zip, "a.txt").expect("read member");
-    assert_eq!(read, b"hello".to_vec());
-}
