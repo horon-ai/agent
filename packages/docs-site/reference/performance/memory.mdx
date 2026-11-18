@@ -95,6 +95,10 @@ off and measures again every such frame, and any item the last measurement never
 the end; a frame at the end counts nothing and leaves the tally alone. The tally grows with the number of items, not with the size of their
 text, and the code sets no cap on it. When a cache of rendered rows comes back, restore a cap and its reasoning in this section.
 
+The cost of that held path is measured: `crates/tui/examples/scroll_bench.rs` expands one long tool output and times every held
+frame a real `shift+up` draws, so a change to how the newest item or the block under the view is wrapped lands in the `tui` suite's
+`scroll` table instead of going unnoticed behind a frame-at-the-end number.
+
 ### Ratchet expectations
 
 #### Session and transcript memory
