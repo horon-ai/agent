@@ -50,35 +50,18 @@ class WorkflowGuardTests(unittest.TestCase):
                       '--no-default-features --features pdf', arm64)
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
-        # The only allowed conditions are the path classification (a
-        # documentation-only pull request or dev push skips the job) and the negation of the
-        # repository-wide switch to the self-hosted macOS runner, which cannot
-        # run Windows jobs at all. The negation keeps fork pull requests on
-        # hosted runners.
         conditions = [line.strip() for line in arm64.splitlines() if line.strip().startswith('if:')]
-        self.assertEqual(conditions, [
-            "if: ${{ needs.changes.outputs.code == 'true' && "
-            "!(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' "
-            "|| github.event.pull_request.head.repo.full_name == github.repository)) }}",
-        ])
+        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.code == 'true' }}"])
 
-    def test_self_hosted_runners_never_serve_fork_pull_requests(self):
-        # Any selection of the self-hosted macOS runner must carry the
-        # first-party-only guard, so a fork pull request always falls back to a
-        # hosted runner instead of executing untrusted code on the repository's
-        # own machine.
-        guard = ('github.event.pull_request.head.repo.full_name '
-                 '== github.repository')
-        selections = 0
-        for path in sorted((ROOT / '.github/workflows').glob('*.yml')):
-            for number, line in enumerate(path.read_text().splitlines(), 1):
-                if 'self-hosted' not in line or line.lstrip().startswith('#'):
-                    continue
-                with self.subTest(workflow=path.name, line=number):
-                    self.assertIn(guard, line)
-                if 'runs-on:' in line:
-                    selections += 1
-        self.assertGreaterEqual(selections, 5)
+    def test_workflows_do_not_select_self_hosted_runners(self):
+        for path in (ROOT / '.github/workflows').iterdir():
+            if path.suffix not in {'.yml', '.yaml'}:
+                continue
+            with self.subTest(workflow=path.name):
+                for line in path.read_text().splitlines():
+                    config = line.partition('#')[0].lower()
+                    self.assertNotIn('self-hosted', config)
+                    self.assertNotIn('ci_self_hosted', config)
 
     def test_quality_gates_report_failures_without_weakening_them(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
