@@ -159,6 +159,8 @@ sha256_of() {
     digest="$(sha256sum <"$1")" || return 1
   elif have shasum; then
     digest="$(shasum -a 256 <"$1")" || return 1
+  elif have sha256; then
+    digest="$(sha256 -q <"$1")" || return 1
   else
     return 1
   fi
@@ -285,17 +287,14 @@ install_jcode() {
     return
   fi
   local asset
-  case "$ARCH" in
-    arm64 | aarch64) asset="jcode-macos-aarch64.tar.gz" ;;
-    x86_64) asset="jcode-macos-x86_64.tar.gz" ;;
+  case "$OS/$ARCH" in
+    Darwin/arm64 | Darwin/aarch64) asset="jcode-macos-aarch64.tar.gz" ;;
+    Darwin/x86_64) asset="jcode-macos-x86_64.tar.gz" ;;
+    Linux/aarch64 | Linux/arm64) asset="jcode-linux-aarch64.tar.gz" ;;
+    Linux/x86_64) asset="jcode-linux-x86_64.tar.gz" ;;
+    FreeBSD/amd64 | FreeBSD/x86_64) asset="jcode-freebsd-x86_64.tar.gz" ;;
     *) asset="" ;;
   esac
-  if [ "$OS" = "Linux" ]; then
-    case "$ARCH" in
-      x86_64) asset="jcode-linux-x86_64.tar.gz" ;;
-      aarch64 | arm64) asset="jcode-linux-aarch64.tar.gz" ;;
-    esac
-  fi
   if [ -z "$asset" ]; then
     note_fail jcode "unsupported platform $OS/$ARCH"
     return 1
