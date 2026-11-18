@@ -109,7 +109,7 @@ fn incremental(active: &[ProjectedMessage], inline: &[bool]) -> (usize, Vec<Proj
         metadata: CachedValue::Inline(SessionMetadata::default()),
         archive: None,
         compaction: None,
-        activity_at: chrono::DateTime::UNIX_EPOCH,
+        activity_at: horon_agent_time::Timestamp::UNIX_EPOCH,
         first_prompt_title: None,
         active_count: 0,
         inline_from: 0,
@@ -231,7 +231,7 @@ fn created(id: &SessionId) -> crate::SealedEvent {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )
@@ -245,7 +245,7 @@ fn appended(parent: &crate::SealedEvent, text: &str) -> crate::SealedEvent {
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        horon_agent_time::Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::MessageAppended),
         serde_json::json!({"message": stored(text)}),
     )
