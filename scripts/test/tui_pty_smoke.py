@@ -24,28 +24,44 @@ symlink instead: cases 1 and 2 run through that symlink, and the run first
 proves the launcher resolves into `builds/` and that the installed client sits
 beside the agent it resolves to.
 
-Linux and macOS only: the script needs `pty` plus the POSIX executable bit.
+Linux, macOS and Windows. Unix uses `pty` and `termios`; Windows drives the same
+cases through a ConPTY with `pywinpty`, which the Windows job installs.
 """
 
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
-import pty
 import re
 import select
 import shutil
 import signal
 import socket
-import struct
 import subprocess
 import sys
-import termios
 import tempfile
+import threading
 import time
 import traceback
+
+POSIX = os.name != "nt"
+if POSIX:
+    import fcntl
+    import pty
+    import struct
+    import termios
+
+# A Windows client is driven through a ConPTY, which needs a binding the image
+# does not ship. The step that runs it installs `pywinpty`; when that failed the
+# run says why instead of failing for an unrelated reason (#432).
+CONPTY_IMPORT_ERROR: str | None = None
+PtyProcess = None
+if not POSIX:
+    try:
+        from winpty import PtyProcess  # type: ignore[no-redef]
+    except ImportError as error:  # pragma: no cover - depends on the runner
+        CONPTY_IMPORT_ERROR = str(error)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MOCK_SERVER = os.path.join(REPO_ROOT, "scripts", "perf", "mock_llm_server.py")
@@ -231,7 +247,7 @@ def horon_env(root: str, home: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-class Terminal:
+class PosixTerminal:
     """A child on a real PTY, with a transcript for failure reports."""
 
     def __init__(self, argv: list[str], cwd: str, env: dict) -> None:
@@ -326,6 +342,84 @@ class Terminal:
         except OSError:
             pass
 
+
+
+class WindowsTerminal:
+    """A child on a Windows pseudo console, with a transcript for failure reports.
+
+    `pywinpty` hands back the ConPTY output as it arrives, so a reader thread
+    keeps the transcript and the case methods wait on it; the client draws into
+    that console exactly as it does into a pty on Unix.
+    """
+
+    def __init__(self, argv: list[str], cwd: str, env: dict) -> None:
+        if PtyProcess is None:
+            raise Failure(
+                "pywinpty is not installed, so no ConPTY is available: "
+                f"{CONPTY_IMPORT_ERROR or 'import failed'}"
+            )
+        self.transcript = ""
+        self._lock = threading.Lock()
+        command = subprocess.list2cmdline(argv)
+        self.process = PtyProcess.spawn(command, cwd=cwd, env=env, dimensions=(40, 120))
+        self._reader = threading.Thread(target=self._read_loop, name="conpty-reader", daemon=True)
+        self._reader.start()
+
+    def _read_loop(self) -> None:
+        while True:
+            try:
+                chunk = self.process.read(4096)
+            except (EOFError, ValueError):
+                return
+            except OSError:
+                return
+            if not chunk:
+                return
+            with self._lock:
+                self.transcript += chunk
+
+    def read_until(self, needle: str, timeout: float, what: str) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if contains(self.transcript, needle):
+                    return
+            time.sleep(0.05)
+        with self._lock:
+            text = self.transcript
+        raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{text}")
+
+    def send(self, keys: str) -> None:
+        self.process.write(keys)
+
+    def wait(self, timeout: float) -> int:
+        # The launcher starts the client and exits at once (a documented limit),
+        # so the console closing — the reader reaching EOF — is what says the
+        # client is gone; the code below is the launcher's, which is all Windows
+        # reports.
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not self._reader.is_alive():
+                return int(self.process.exitstatus or 0)
+            time.sleep(0.05)
+        self.close()
+        with self._lock:
+            text = self.transcript
+        raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{text}")
+
+    def close(self) -> None:
+        try:
+            if self.process.isalive():
+                self.process.terminate(force=True)
+        except Exception:  # noqa: BLE001 - the case result is what matters
+            pass
+
+
+def Terminal(argv: list[str], cwd: str, env: dict):
+    """The platform's pseudo console for `argv`."""
+    if POSIX:
+        return PosixTerminal(argv, cwd, env)
+    return WindowsTerminal(argv, cwd, env)
 
 # ---------------------------------------------------------------------------
 # Cases
@@ -583,52 +677,83 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
             first.close()
 
 
-def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript: str | None) -> int:
-    log("case 1: bare horon hands a terminal over to horon-tui")
-    launch = build_launch(os.path.join(root, "happy"), agent, tui)
-    text = happy_path(launch, os.path.join(root, "happy"), base_url)
-    if transcript:
-        with open(transcript, "w", encoding="utf-8") as handle:
-            handle.write(text)
-    log("case 1 passed")
+# Case 5 scans `/proc` or `ps` for the case's bridge processes, which only a
+# POSIX host can do.
+POSIX_ONLY_CASES = {5}
+ALL_CASES = tuple(range(1, 6))
+DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 
-    log("case 2: piped stdin keeps the headless message")
-    headless_case(
-        build_launch(os.path.join(root, "pipe"), agent, tui),
-        os.path.join(root, "pipe"),
-        base_url,
-        "stdin pipe",
-        use_pty=False,
-    )
-    log("case 2 passed")
 
-    log("case 3: a missing horon-tui keeps the headless message")
-    headless_case(
-        build_launch(os.path.join(root, "missing"), agent, None),
-        os.path.join(root, "missing"),
-        base_url,
-        "missing horon-tui",
-    )
-    log("case 3 passed")
+def selected_cases(requested: str | None) -> set[int]:
+    """The cases to run, defaulting to what this platform can drive."""
+    if requested:
+        try:
+            cases = {int(value) for value in requested.split(",") if value.strip()}
+        except ValueError:
+            raise Failure(f"--cases takes numbers separated by commas, not {requested!r}") from None
+        unknown = cases - set(ALL_CASES)
+        if unknown:
+            raise Failure(f"no such case: {sorted(unknown)}")
+        if not POSIX and cases & POSIX_ONLY_CASES:
+            raise Failure(f"case {sorted(cases & POSIX_ONLY_CASES)} needs a POSIX host")
+        return cases
+    return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
-    log("case 4: HORON_NO_TUI keeps the headless message")
-    headless_case(
-        build_launch(os.path.join(root, "disabled"), agent, tui),
-        os.path.join(root, "disabled"),
-        base_url,
-        "HORON_NO_TUI",
-        extra_env={"HORON_NO_TUI": "1"},
-    )
-    log("case 4 passed")
 
-    log("case 5: a relaunch over the socket file a killed bridge left behind")
-    stale_socket_case(
-        build_launch(os.path.join(root, "dead"), agent, tui),
-        os.path.join(root, "dead"),
-        base_url,
-        transcript,
-    )
-    log("case 5 passed")
+def run_build_layout(
+    agent: str, tui: str, root: str, base_url: str, transcript: str | None, cases: set[int]
+) -> int:
+    if 1 in cases:
+        log("case 1: bare horon hands a terminal over to horon-tui")
+        launch = build_launch(os.path.join(root, "happy"), agent, tui)
+        text = happy_path(launch, os.path.join(root, "happy"), base_url)
+        if transcript:
+            with open(transcript, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        log("case 1 passed")
+
+    if 2 in cases:
+        log("case 2: piped stdin keeps the headless message")
+        headless_case(
+            build_launch(os.path.join(root, "pipe"), agent, tui),
+            os.path.join(root, "pipe"),
+            base_url,
+            "stdin pipe",
+            use_pty=False,
+        )
+        log("case 2 passed")
+
+    if 3 in cases:
+        log("case 3: a missing horon-tui keeps the headless message")
+        headless_case(
+            build_launch(os.path.join(root, "missing"), agent, None),
+            os.path.join(root, "missing"),
+            base_url,
+            "missing horon-tui",
+        )
+        log("case 3 passed")
+
+    if 4 in cases:
+        log("case 4: HORON_NO_TUI keeps the headless message")
+        headless_case(
+            build_launch(os.path.join(root, "disabled"), agent, tui),
+            os.path.join(root, "disabled"),
+            base_url,
+            "HORON_NO_TUI",
+            extra_env={"HORON_NO_TUI": "1"},
+        )
+        log("case 4 passed")
+
+    if 5 in cases:
+        log("case 5: a relaunch over the socket file a killed bridge left behind")
+        stale_socket_case(
+            build_launch(os.path.join(root, "dead"), agent, tui),
+            os.path.join(root, "dead"),
+            base_url,
+            transcript,
+        )
+        log("case 5 passed")
+
     return 0
 
 
@@ -667,6 +792,12 @@ def main(argv: list[str] | None = None) -> int:
         help="the HORON_HOME an installer populated; required by --layout installed",
     )
     parser.add_argument(
+        "--cases",
+        default=None,
+        help="comma-separated case numbers to run; defaults to every case the platform can drive "
+        "(Windows: 1,2)",
+    )
+    parser.add_argument(
         "--transcript",
         default=None,
         help="write the happy-path transcript here for the CI log artifact",
@@ -688,6 +819,7 @@ def main(argv: list[str] | None = None) -> int:
             if not os.path.isfile(path):
                 raise Failure(f"{label} binary not found at {path}")
 
+    cases = selected_cases(args.cases)
     server, base_url = start_mock_server(retry_denied=True)
     # Unix socket paths are capped near 104 bytes (SUN_LEN), and macOS puts the
     # default temp dir under a long /var/folders/... path, so the run root lives
@@ -696,7 +828,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.layout == "installed":
             return run_installed_layout(args.layout_root, root, base_url, args.transcript)
-        return run_build_layout(args.agent, args.tui, root, base_url, args.transcript)
+        return run_build_layout(args.agent, args.tui, root, base_url, args.transcript, cases)
     except Failure as failure:
         print(f"[tui-pty] FAILED: {failure}", file=sys.stderr, flush=True)
         return 1

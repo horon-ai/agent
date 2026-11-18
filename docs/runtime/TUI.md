@@ -414,7 +414,6 @@ The archive is optional at every step, and a copy that cannot be verified never 
 
 ## Known limits
 
-- Windows has no PTY smoke test. The `tui` benchmark records the render and size metrics there and marks the PTY metrics with `pty unavailable on Windows` instead of failing the run.
 - FreeBSD ships `horon-agent` only, so the client is not installed there and bare `horon` reports the missing sibling.
 - On Linux and macOS the handoff is one process replacing another, so a client that exits takes the terminal command with it and the exit code is the client's. On Windows the launcher starts the client and exits with code 0 at once, so its exit code says nothing about the client.
 - Killing the client with `SIGTERM` or `SIGHUP` does not restore the terminal modes. Bracketed paste is turned off on every exit the client itself runs, but a signal is not an exit it runs, so the shell can be left with the mode on; with `transcript.mouse_scroll` on, which is the default, the mouse mode is left on the same way. The client installs no signal handler.
