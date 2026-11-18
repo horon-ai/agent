@@ -1,14 +1,15 @@
 name: Publish npm packages
 
 # Turns one release's archives into the seven npm packages of `@horon-ai/horon`
-# and publishes them with npm trusted publishing. Three paths reach this file,
-# and only one of them can publish:
+# and publishes them with npm trusted publishing. Four paths reach this file,
+# and two of them can publish:
 #
 #   * `workflow_run` after "Release Tag" finishes on `main`: the normal path,
 #     taken once a tag exists for the commit that Release Tag just released.
-#   * `release` (type `published`): the heal path. A run that arrived while the
-#     release was still a draft skipped; this one publishes that tag when the
-#     release becomes public.
+#   * `release` (type `published`): when a person publishes a draft by hand.
+#     A release published with `GITHUB_TOKEN` starts no workflow, so the recovery
+#     path is the dispatch `release.yml` makes for a release that became public
+#     outside a successful "Release Tag" run.
 #   * `workflow_dispatch`: an operator names a public release tag or a
 #     `package_only` Release workflow run. It defaults to a dry run, and npm
 #     trusted publishing only trusts the top-level workflow file name, which is

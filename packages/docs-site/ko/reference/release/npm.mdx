@@ -56,18 +56,18 @@ npx @horon-ai/horon --help
 
 ## 게시 워크플로
 
-`.github/workflows/publish-npm.yml`이 레지스트리로 가는 유일한 경로다. 세 진입점이 이 파일에 닿고, 그중 하나만 게시할 수 있다.
+`.github/workflows/publish-npm.yml`이 레지스트리로 가는 유일한 경로다. 네 진입점이 이 파일에 닿고, 그중 둘이 게시할 수 있다.
 
 | 진입점 | 실행 시점 | 하는 일 |
 | --- | --- | --- |
 | `workflow_run` | `main`의 "Release Tag" 실행이 끝났을 때 | 릴리스한 커밋을 가리키는 태그를 찾고, 공개 릴리스인지 확인한 뒤 태그 버전으로 게시한다 |
 | `workflow_dispatch` | 운영자가 릴리스 태그를, 또는 `package_only` Release 실행과 버전을 지정했을 때 | 기본은 드라이런이고, 스위치가 켜져 있으면 `dry_run=false`가 게시한다 |
 | `pull_request` | `packages/npm/`, `scripts/npm/`, 워크플로 파일이 바뀌었을 때 | 가짜 자산을 묶고 같은 드라이런 흐름을 돌린다 |
-| `release`(타입 `published`) | GitHub 릴리스가 공개됐을 때 | 회복 경로다. 릴리스가 아직 초안일 때 도착한 실행은 건너뛰므로, 공개되는 순간 이 실행이 그 태그를 게시한다. 이미 올라간 버전은 건너뛴다 |
+| `release`(타입 `published`) | 사람이 초안 릴리스를 직접 공개했을 때 | 그 태그를 게시한다. `GITHUB_TOKEN`으로 공개한 릴리스는 워크플로를 시작하지 않으므로, "Release Tag"의 성공 실행 밖에서 공개된 릴리스는 `release.yml`이 이 워크플로를 직접 디스패치한다. 이미 올라간 버전은 건너뛴다 |
 
 워크플로는 npm 11.5.1 이상을 요구한다. provenance 서명과 trusted publishing에 이 버전이 필요하다. 계획 잡은 `contents: read`와 `actions: read`를 들고, 뒤의 권한으로 끝난 실행의 잡을 읽는다. `id-token: write`는 게시 잡만 받는다. 이 권한이 주는 단명 자격 증명을 npm이 한 번짜리 게시 허가로 바꾼다. `cancel-in-progress: false`인 동시성 그룹은 두 번째 실행을 취소하지 않고 줄 세우므로, 뒤 실행이 레지스트리를 다시 읽고 이미 올라간 것은 건너뛴다.
 
-계획 잡이 모드 하나를 정하고, 두 모드는 대칭이 아니다. `mode=publish`로 정해진 실행은 저장소 변수 `NPM_PUBLISH`가 정확히 `true`일 때 게시하고, 그 밖의 값이면 `scripts/npm/release_npm_version.py gate`가 종료 코드 1과 복구 명령을 담은 `::error::`를 남겨 실행을 실패시킨다. npm 패키지 없이 나가는 릴리스는 깨진 릴리스이기 때문이다. `mode=dry-run`으로 정해진 실행, 즉 pull request이거나 `dry_run=true`인 디스패치는 패키징까지만 하고 게시하지 않는다. 자동 경로는 여기에 더해 `horon-ai/agent`의 `main`에서 성공한 "Release Tag" 실행, 그 실행의 헤드 커밋을 가리키는 태그, 초안이 아닌 공개 릴리스를 요구한다. 릴리스가 공개되기 전에 도착한 `workflow_run`은 건너뛰고, 공개되는 순간 `release: published` 실행이 그 태그를 게시하므로 놓친 창은 수동 디스패치 없이 회복된다.
+계획 잡이 모드 하나를 정하고, 두 모드는 대칭이 아니다. `mode=publish`로 정해진 실행은 저장소 변수 `NPM_PUBLISH`가 정확히 `true`일 때 게시하고, 그 밖의 값이면 `scripts/npm/release_npm_version.py gate`가 종료 코드 1과 복구 명령을 담은 `::error::`를 남겨 실행을 실패시킨다. npm 패키지 없이 나가는 릴리스는 깨진 릴리스이기 때문이다. `mode=dry-run`으로 정해진 실행, 즉 pull request이거나 `dry_run=true`인 디스패치는 패키징까지만 하고 게시하지 않는다. 자동 경로는 여기에 더해 `horon-ai/agent`의 `main`에서 성공한 "Release Tag" 실행, 그 실행의 헤드 커밋을 가리키는 태그, 초안이 아닌 공개 릴리스를 요구한다. 릴리스가 공개되기 전에 도착한 `workflow_run`은 건너뛴다. "Release Tag"의 성공 실행 밖에서 공개된 릴리스는 `release.yml`이 그 태그로 이 워크플로를 디스패치해 게시하고, 초안을 손으로 공개하면 이 워크플로가 직접 시작된다. 두 경로 모두 이미 올라간 버전은 건너뛴다.
 
 가짜 자산이 아닌 두 자산 출처는 압축 파일을 서로 다르게 받고, 그 차이가 패키지 내용을 정한다. `release_tag` 실행은 그 공개 릴리스에서 `horon-agent-*.tar.gz`, `horon-tui-*.tar.gz`, `SHA256SUMS`를 내려받는다. `run_id` 실행은 `package_only` Release 실행의 아티팩트를 내려받는데, 그런 실행은 체크섬 파일을 쓰는 잡을 건너뛰므로 받은 tarball로 `SHA256SUMS`를 만든다. 이어서 `scripts/npm/release_npm_version.py missing-assets`가 릴리스에 없는 압축 파일을 거부하므로, 패키지를 만들기 전에 모든 플랫폼의 두 실행 파일이 존재한다.
 
