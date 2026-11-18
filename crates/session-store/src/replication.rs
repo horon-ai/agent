@@ -87,28 +87,10 @@ pub(crate) fn wire_len<T>(value: &T) -> Result<usize, StoreError>
 where
     T: ?Sized + Serialize,
 {
-    let mut counter = WireCounter::default();
-    serde_json::to_writer(&mut counter, value).map_err(crate::cache_io::json_error)?;
-    WIRE_BYTES.set(WIRE_BYTES.get() + counter.bytes);
+    let bytes = crate::cache_io::json_len(value)?;
+    WIRE_BYTES.set(WIRE_BYTES.get() + bytes);
     WIRE_SERIALIZATIONS.set(WIRE_SERIALIZATIONS.get() + 1);
-    Ok(counter.bytes)
-}
-
-/// Counts written bytes and drops them.
-#[derive(Default)]
-struct WireCounter {
-    bytes: usize,
-}
-
-impl std::io::Write for WireCounter {
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.bytes += buffer.len();
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
+    Ok(bytes)
 }
 
 thread_local! {
