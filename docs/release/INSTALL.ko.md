@@ -50,7 +50,7 @@ npm 설치본은 에이전트 자체 업데이터가 아니라 npm으로 갱신�
 
 릴리스는 TUI 모드가 도는 클라이언트인 TUI 바이너리 `horon-tui`도 에이전트 옆의 별도 압축 파일로 배포한다. 이름은 `horon-tui-<접미사>.tar.gz`이고 접미사는 에이전트 자산과 같은 플랫폼 접미사다(`horon-tui-linux-x86_64.tar.gz`, `horon-tui-macos-aarch64.tar.gz`, `horon-tui-windows-x86_64.tar.gz` 등). `release_asset.rs`가 에이전트 자산 이름에서 이 이름을 만들며, 접미사가 둘을 잇는다. 두 바이너리는 같은 `release.yml` 실행이 같은 태그 커밋에서 빌드하고 같은 버전 디렉터리에 함께 놓이므로, 클라이언트만의 릴리스나 채널은 따로 없다. 버전 문자열은 다르다. `horon-agent --version`은 릴리스 태그에서 버전을 만들고(`crates/build-meta`), `horon-tui --version`은 `crates/tui` 패키지 버전을 출력한다(`crates/tui/src/lib.rs`).
 
-`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이고 각 압축이 담은 `LICENSE`도 같은 곳에 설치되므로, 한 버전 디렉터리가 두 실행 파일과 그 실행 파일을 규율하는 라이선스를 들고 활성화가 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
+`scripts/install/install.sh`와 `scripts/install/install.ps1`은 이 압축 파일을 에이전트 자산과 같은 임시 디렉터리로 받아 `SHA256SUMS`와 대조한 뒤 그 디렉터리를 `install-release`에 넘긴다. `install.sh`는 `SHA256SUMS`를 받은 직후 이 전송을 띄워 에이전트 다운로드와 겹치게 하고, 매니페스트에 이름이 올라간 압축 파일만 요청한다. 두 전송이 모두 끝나고 클라이언트 검증까지 마친 뒤에 `install-release`를 부른다. 검증을 마친 클라이언트는 `builds/versions/<version>/`의 `horon-agent` 옆에 놓이고 각 압축이 담은 `LICENSE`도 같은 곳에 설치되므로, 한 버전 디렉터리가 두 실행 파일과 그 실행 파일을 규율하는 라이선스를 들고 활성화가 함께 바꾼다. 클라이언트 설치 방법은 [`../runtime/TUI.ko.md`](../runtime/TUI.ko.md)에 있다.
 
 클라이언트는 모든 단계에서 선택 사항이고, 검증하지 못한 사본은 에이전트 설치를 막지 않는다.
 
