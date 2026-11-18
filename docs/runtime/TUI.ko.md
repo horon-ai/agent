@@ -14,7 +14,7 @@
 - `HORON_NO_TUI`가 설정되어 있지 않아야 한다. 값이 무엇이든 설정하면 터미널에서도 헤드리스 모드를 쓴다.
 - 실행 중인 실행 파일 옆에 `horon-tui` 파일이 있어야 한다. 실행 파일이 심볼릭 링크인 런처는 실제 위치에서 다시 찾는다. macOS에서 필요한 처리다.
 
-조건이 하나라도 맞지 않으면 명령은 그 조건(`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, `no horon-tui beside this binary`)과 클라이언트를 설치하는 명령을 담은 문장을 출력하고 0이 아닌 코드로 끝난다. 판정 전에 띄운 서버는 계속 돈다. `horon-tui`를 직접 실행하면 이 판정을 건너뛴다.
+조건이 하나라도 맞지 않으면 명령은 그 조건(`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, `no horon-tui beside this binary`), 그 조건에 맞는 해결 방법 하나, 헤드리스 대안을 담은 문장을 출력하고 0이 아닌 코드로 끝난다. 설치라는 해결 방법은 클라이언트가 없을 때만 쓴다. 파이프나 `HORON_NO_TUI`는 클라이언트가 이미 설치된 상태에서 생기므로, 그 문장은 설치 명령 대신 터미널이나 그 환경 변수를 가리킨다. 판정 전에 띄운 서버는 계속 돈다. `horon-tui`를 직접 실행하면 이 판정을 건너뛴다.
 
 재개한 세션도 그대로 넘긴다. `horon --resume <id>`는 클라이언트에 `--session <id>`를 전달하므로, 클라이언트는 새 세션을 만들지 않고 그 세션에 붙는다. 소켓은 명령줄로 넘기지 않는다. 이미 `HORON_AGENT_SOCKET`으로 내보내져 있고, 클라이언트가 하네스 API 소켓을 스스로 찾는다.
 
