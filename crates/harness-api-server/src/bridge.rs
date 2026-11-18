@@ -120,8 +120,8 @@ async fn watch_lifecycle(
         };
         if let Some(reason) = reason {
             // The receiver being gone means the accept loop already ended, so
-            // there is nobody left to tell.
-            drop(shutdown.send(Some(reason)));
+            // there is nobody left to tell and nothing to report.
+            let _sent = shutdown.send(Some(reason));
             return;
         }
     }
