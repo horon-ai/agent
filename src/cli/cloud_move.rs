@@ -244,7 +244,7 @@ pub(crate) fn run_move(
         epoch,
         source_host: local_host_label(),
         target_host: host.clone(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: horon_agent_time::Timestamp::now().to_rfc3339(),
         repo: repo.clone(),
         env: ENV_ALLOWLIST
             .iter()
@@ -341,7 +341,7 @@ pub(crate) fn run_move(
         repo_root: repo.as_ref().map(|r| r.root.clone()),
         last_sync_snapshot: repo.as_ref().map(|r| r.snapshot.clone()),
         last_sync_head: repo.as_ref().map(|r| r.head.clone()),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
     })?;
     let epoch_arg = epoch.to_string();
     if let Err(error) = target.run_remote(
@@ -463,7 +463,7 @@ pub(crate) fn run_return(session_ref: Option<&str>, target: &Target, refs_only: 
         &format!(
             "Session returned from cloud host `{host}` to local machine `{}` at {}. Same repo path.{merge_note} Processes you started on the cloud host (dev servers, background tasks, terminals) did not come back. Restart anything you still need.",
             local_host_label(),
-            chrono::Utc::now().to_rfc3339(),
+            horon_agent_time::Timestamp::now().to_rfc3339(),
         ),
     );
     install_session(&sess, stage)?;
@@ -474,7 +474,7 @@ pub(crate) fn run_return(session_ref: Option<&str>, target: &Target, refs_only: 
         repo_root: lease.repo_root.clone(),
         last_sync_snapshot: manifest.repo.as_ref().map(|r| r.snapshot.clone()),
         last_sync_head: manifest.repo.as_ref().map(|r| r.head.clone()),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
     })?;
     step("done", "session is local again");
     Ok(ReturnReport {
@@ -574,7 +574,7 @@ pub(crate) fn run_activate(session_id: &str, epoch: u64) -> Result<()> {
         repo_root: manifest.repo.as_ref().map(|r| r.root.clone()),
         last_sync_snapshot: manifest.repo.as_ref().map(|r| r.snapshot.clone()),
         last_sync_head: manifest.repo.as_ref().map(|r| r.head.clone()),
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
     })?;
     let _ = std::fs::remove_dir_all(&dir);
     eprintln!("activated {session_id} at epoch {epoch}");
@@ -600,7 +600,7 @@ pub(crate) fn run_export(session_id: &str, epoch: u64) -> Result<()> {
     storage::write_session_lease(&storage::SessionLease {
         away_host: Some("returned".to_string()),
         epoch,
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
         ..lease.clone()
     })?;
     let result = (|| -> Result<Vec<u8>> {
@@ -622,7 +622,7 @@ pub(crate) fn run_export(session_id: &str, epoch: u64) -> Result<()> {
             epoch,
             source_host: local_host_label(),
             target_host: "local".to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: horon_agent_time::Timestamp::now().to_rfc3339(),
             repo,
             env: Vec::new(),
             toolchain_hints: Vec::new(),

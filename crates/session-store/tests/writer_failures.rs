@@ -1,4 +1,5 @@
 use horon_agent_session_store::*;
+use horon_agent_time::Timestamp;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
@@ -36,7 +37,7 @@ fn event(parent: Option<EventId>, size: usize) -> SealedEvent {
         EventId::new_v4(),
         parent,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(kind),
         payload,
     )
@@ -93,7 +94,7 @@ fn retry_is_idempotent_and_conflicting_identity_is_rejected() {
     let mut writer = BlockingWriter::open(paths.clone(), id.clone()).unwrap();
     assert_eq!(writer.append(&first).unwrap(), AppendOutcome::AlreadyDurable);
     let mut other = first.envelope().clone();
-    other.timestamp = chrono::DateTime::from_timestamp(1, 0).unwrap();
+    other.timestamp = Timestamp::from_timestamp(1, 0).unwrap();
     other.content_hash = other.content_hash_of().unwrap();
     assert_eq!(
         writer.append(&SealedEvent::Inline(other)).unwrap_err().code,
@@ -520,7 +521,7 @@ fn uncertain_id_rejects_different_hash_without_losing_retry() {
     let mut writer = BlockingWriter::with_hook(paths.clone(), id.clone(), fail_once(IoPoint::LogDataSync)).unwrap();
     assert!(writer.append(&first).is_err());
     let mut changed = first.envelope().clone();
-    changed.timestamp = chrono::DateTime::from_timestamp(2, 0).unwrap();
+    changed.timestamp = Timestamp::from_timestamp(2, 0).unwrap();
     changed.content_hash = changed.content_hash_of().unwrap();
     assert_eq!(
         writer.append(&SealedEvent::Inline(changed)).unwrap_err().code,

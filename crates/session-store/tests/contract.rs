@@ -2,16 +2,16 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 
 mod support;
 
-fn ts(secs: i64) -> DateTime<Utc> {
-    DateTime::from_timestamp(secs, 0).expect("timestamp")
+fn ts(secs: i64) -> Timestamp {
+    Timestamp::from_timestamp(secs, 0).expect("timestamp")
 }
 
 fn session() -> SessionId {

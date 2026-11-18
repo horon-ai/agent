@@ -1,14 +1,14 @@
 use crate::message::ContentBlock;
 use crate::session::{Session, SessionStatus};
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use std::collections::{BTreeMap, HashSet};
 
 pub use horon_agent_task_types::{CatchupBrief, PersistedCatchupState};
 
 const CATCHUP_STATE_FILE: &str = "catchup_seen.json";
 
-pub fn needs_catchup(session_id: &str, updated_at: DateTime<Utc>, status: &SessionStatus) -> bool {
+pub fn needs_catchup(session_id: &str, updated_at: Timestamp, status: &SessionStatus) -> bool {
     if !is_attention_status(status) {
         return false;
     }
@@ -34,7 +34,7 @@ impl CatchupSeenSnapshot {
 
     /// Same semantics as [`needs_catchup`] but uses this preloaded snapshot
     /// instead of re-reading the state file for every call.
-    pub fn needs_catchup(&self, session_id: &str, updated_at: DateTime<Utc>, status: &SessionStatus) -> bool {
+    pub fn needs_catchup(&self, session_id: &str, updated_at: Timestamp, status: &SessionStatus) -> bool {
         if !is_attention_status(status) {
             return false;
         }
@@ -47,7 +47,7 @@ pub(crate) fn needs_catchup_with_seen(updated_at_ms: i64, seen_at_ms: Option<i64
     is_attention_status(status) && seen_at_ms.unwrap_or_default() < updated_at_ms
 }
 
-pub fn mark_seen(session_id: &str, updated_at: DateTime<Utc>) -> Result<()> {
+pub fn mark_seen(session_id: &str, updated_at: Timestamp) -> Result<()> {
     let mut state = load_seen_state();
     state
         .seen_at_ms_by_session
@@ -504,16 +504,16 @@ fn status_label(status: &SessionStatus) -> &'static str {
     }
 }
 
-fn format_time_ago(updated_at: DateTime<Utc>) -> String {
-    let delta = Utc::now().signed_duration_since(updated_at);
-    if delta.num_seconds() < 60 {
-        format!("{}s ago", delta.num_seconds().max(0))
-    } else if delta.num_minutes() < 60 {
-        format!("{}m ago", delta.num_minutes())
-    } else if delta.num_hours() < 24 {
-        format!("{}h ago", delta.num_hours())
+fn format_time_ago(updated_at: Timestamp) -> String {
+    let delta = Timestamp::now() - updated_at;
+    if delta.whole_seconds() < 60 {
+        format!("{}s ago", delta.whole_seconds().max(0))
+    } else if delta.whole_minutes() < 60 {
+        format!("{}m ago", delta.whole_minutes())
+    } else if delta.whole_hours() < 24 {
+        format!("{}h ago", delta.whole_hours())
     } else {
-        format!("{}d ago", delta.num_days())
+        format!("{}d ago", delta.whole_days())
     }
 }
 

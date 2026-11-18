@@ -18,7 +18,7 @@ use crate::provider::Provider;
 use crate::safety::Decision;
 use crate::session::{Session, SessionStatus};
 use crate::tool;
-use chrono::{DateTime, Utc};
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -30,12 +30,12 @@ pub(super) const RESUME_EXEC_ATTEMPT_CAP: u32 = 2;
 ///
 /// Overridable so a crash test can reclaim a dead owner's lease without waiting
 /// out the production window.
-pub(super) fn resume_exec_lease() -> chrono::Duration {
+pub(super) fn resume_exec_lease() -> TimeDelta {
     std::env::var("HORON_AGENT_RESUME_EXEC_LEASE_SECS")
         .ok()
         .and_then(|value| value.parse::<i64>().ok())
-        .map(chrono::Duration::seconds)
-        .unwrap_or_else(|| chrono::Duration::minutes(30))
+        .map(TimeDelta::seconds)
+        .unwrap_or_else(|| TimeDelta::minutes(30))
 }
 /// Line a resumed turn uses to report that it could not tell whether an
 /// interrupted tool call took effect.
@@ -150,7 +150,7 @@ impl AmbientRunnerHandle {
             return;
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let pending: HashSet<String> = self
             .safety()
             .pending_requests()
@@ -177,7 +177,7 @@ impl AmbientRunnerHandle {
         provider: &Arc<dyn Provider>,
         store: &BlockedApprovalStore,
         record: &BlockedApproval,
-        now: DateTime<Utc>,
+        now: Timestamp,
         pending: &HashSet<String>,
     ) -> anyhow::Result<()> {
         // `decision_for` also reads a decision another process wrote to disk.
@@ -356,7 +356,7 @@ impl AmbientRunnerHandle {
             claim.attempts += 1;
             claim.state = ResumeClaimState::Resuming;
             claim.claimed_by_pid = Some(std::process::id());
-            claim.claimed_at = Utc::now();
+            claim.claimed_at = Timestamp::now();
             claims.save(&claim)?;
             #[cfg(test)]
             resume_failpoint("resuming");
@@ -386,7 +386,12 @@ impl AmbientRunnerHandle {
             return self.finish_blocked_resume(store, &claims, &exec_claims, claim, record);
         }
 
-        match exec_claims.try_acquire(&request_id, Utc::now(), resume_exec_lease(), RESUME_EXEC_ATTEMPT_CAP)? {
+        match exec_claims.try_acquire(
+            &request_id,
+            Timestamp::now(),
+            resume_exec_lease(),
+            RESUME_EXEC_ATTEMPT_CAP,
+        )? {
             ExecClaimOutcome::Acquired(_) => {}
             ExecClaimOutcome::Busy(_) | ExecClaimOutcome::Done(_) => return Ok(()),
             ExecClaimOutcome::Exhausted(_) => {
@@ -455,7 +460,7 @@ impl AmbientRunnerHandle {
         record: &BlockedApproval,
     ) -> anyhow::Result<()> {
         store.update_with(&record.request_id, |stored| {
-            stored.resumed_at.get_or_insert_with(Utc::now);
+            stored.resumed_at.get_or_insert_with(Timestamp::now);
             stored.outcome = Some("resumed".to_string());
             stored.waiter_pid = None;
             stored.waiter_lease_expires_at = None;
@@ -579,7 +584,7 @@ pub(crate) fn classify_blocked_approval(
     decision: Option<&Decision>,
     request_pending: bool,
     session_status: Option<&SessionStatus>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> ResumeVerdict {
     // A record that already reached a terminal outcome is finished, whatever
     // else changed since. A `needs-human` stop is not in this list: it is the
@@ -834,7 +839,7 @@ mod tests {
     use crate::safety::SafetySystem;
     use crate::session::{Session, SessionStatus};
     use async_trait::async_trait;
-    use chrono::Utc;
+    use horon_agent_time::Timestamp;
     use serde_json::json;
     use std::sync::{Arc, Mutex as StdMutex};
 
@@ -939,7 +944,7 @@ mod tests {
         BlockedApproval {
             session_id: session_id.to_string(),
             request_id: request_id.to_string(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             ..BlockedApproval::default()
         }
     }
@@ -1103,7 +1108,7 @@ mod tests {
             stopped.tool_verdicts
         );
 
-        let verdict = classify_blocked_approval(&stopped, None, false, Some(&SessionStatus::Closed), Utc::now());
+        let verdict = classify_blocked_approval(&stopped, None, false, Some(&SessionStatus::Closed), Timestamp::now());
         assert_eq!(verdict, ResumeVerdict::Idle, "a spent verdict must not reopen the stop");
 
         // The clear must not swallow a verdict recorded afterwards: a new one
@@ -1118,7 +1123,7 @@ mod tests {
             .expect("record a new verdict");
         let after = store().get(request_id).expect("read record").expect("record present");
         assert_eq!(
-            classify_blocked_approval(&after, None, false, Some(&SessionStatus::Closed), Utc::now()),
+            classify_blocked_approval(&after, None, false, Some(&SessionStatus::Closed), Timestamp::now()),
             ResumeVerdict::Resume {
                 origin: ResumeOrigin::HumanVerdict
             },

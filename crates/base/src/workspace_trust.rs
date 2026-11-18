@@ -233,7 +233,7 @@ fn record_snapshot(snapshot: &WorkspaceSnapshot, digest: &str, decision: TrustDe
         TrustEntry {
             digest: digest.to_owned(),
             decision,
-            recorded_at: Some(chrono::Utc::now().to_rfc3339()),
+            recorded_at: Some(horon_agent_time::Timestamp::now().to_rfc3339()),
             surfaces: snapshot
                 .files
                 .iter()

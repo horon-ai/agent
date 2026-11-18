@@ -1,6 +1,6 @@
 use super::*;
 use anyhow::{Result, anyhow};
-use chrono::Utc;
+use horon_agent_time::Timestamp;
 
 #[test]
 fn sanitize_tool_id_alphanumeric_passthrough() {
@@ -347,14 +347,14 @@ fn redact_secrets_redacts_bearer_jwt_aws_and_private_keys() {
 
 #[test]
 fn format_timestamp_is_stable_utc_rfc3339() -> Result<()> {
-    let ts = chrono::DateTime::parse_from_rfc3339("2025-03-15T02:24:13.250Z")?.with_timezone(&Utc);
+    let ts = Timestamp::parse_rfc3339("2025-03-15T02:24:13.250Z")?;
     assert_eq!(Message::format_timestamp(&ts), "2025-03-15T02:24:13.250Z");
     Ok(())
 }
 
 #[test]
 fn with_timestamps_prepends_utc_prefix_to_user_text() -> Result<()> {
-    let ts = chrono::DateTime::parse_from_rfc3339("2025-03-15T02:24:03Z")?.with_timezone(&Utc);
+    let ts = Timestamp::parse_rfc3339("2025-03-15T02:24:03Z")?;
     let stamped = Message::with_timestamps(&[Message {
         role: Role::User,
         content: vec![ContentBlock::Text {
@@ -373,7 +373,7 @@ fn with_timestamps_prepends_utc_prefix_to_user_text() -> Result<()> {
 
 #[test]
 fn with_timestamps_adds_tool_timing_header_with_duration() -> Result<()> {
-    let ts = chrono::DateTime::parse_from_rfc3339("2025-03-15T02:24:13Z")?.with_timezone(&Utc);
+    let ts = Timestamp::parse_rfc3339("2025-03-15T02:24:13Z")?;
     let stamped = Message::with_timestamps(&[Message {
         role: Role::User,
         content: vec![ContentBlock::ToolResult {
@@ -397,7 +397,7 @@ fn with_timestamps_adds_tool_timing_header_with_duration() -> Result<()> {
 
 #[test]
 fn with_timestamps_skips_internal_system_reminders() -> Result<()> {
-    let ts = chrono::DateTime::parse_from_rfc3339("2025-03-15T02:24:13Z")?.with_timezone(&Utc);
+    let ts = Timestamp::parse_rfc3339("2025-03-15T02:24:13Z")?;
     let original = Message {
         role: Role::User,
         content: vec![ContentBlock::Text {
@@ -433,7 +433,7 @@ fn ends_with_fresh_user_turn_rejects_trailing_tool_result() {
                 input: serde_json::json!({}),
                 thought_signature: None,
             }],
-            timestamp: Some(Utc::now()),
+            timestamp: Some(Timestamp::now()),
             tool_duration_ms: None,
         },
         Message::tool_result("call_1", "ok", false),
@@ -608,7 +608,7 @@ fn format_background_task_progress_markdown_uses_compact_multiline_layout() {
             total: Some(50),
             unit: Some("tests".to_string()),
             eta_seconds: None,
-            updated_at: Utc::now().to_rfc3339(),
+            updated_at: Timestamp::now().to_rfc3339(),
             source: crate::bus::BackgroundTaskProgressSource::Reported,
         },
     });
@@ -657,7 +657,7 @@ fn background_task_progress_notifications_include_display_name_when_available() 
             total: Some(50),
             unit: Some("tests".to_string()),
             eta_seconds: None,
-            updated_at: Utc::now().to_rfc3339(),
+            updated_at: Timestamp::now().to_rfc3339(),
             source: crate::bus::BackgroundTaskProgressSource::Reported,
         },
     });

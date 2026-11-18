@@ -21,12 +21,27 @@ use crate::safety::SafetySystem;
 use crate::session::Session;
 use crate::tool;
 use crate::tool::ambient as ambient_tools;
-use chrono::Utc;
 use horon_agent_agent_runtime::SoftInterruptQueue;
+use horon_agent_time::{Duration as TimeDelta, Timestamp};
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 
 const MAX_IDLE_POLL_SECS: u64 = 30;
+
+/// The ID stamp (`YYYYMMDD_HHMMSS`, in UTC) an ambient transcript is named
+/// after, the same text the previous clock formatter produced.
+fn ambient_session_stamp() -> String {
+    let now = Timestamp::now().utc();
+    format!(
+        "{:04}{:02}{:02}_{:02}{:02}{:02}",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
+}
 
 /// Re-read enabled on each loop iteration, without overriding an explicit stop.
 /// Config edits take effect on the next wake, not on the config cache's cadence.
@@ -156,7 +171,7 @@ impl AmbientRunnerHandle {
             overdue_reminder_count,
         ) = match AmbientManager::new() {
             Ok(mgr) => {
-                let now = Utc::now();
+                let now = Timestamp::now();
                 let items = mgr.queue().items();
                 let queue_count = items.len();
                 let next_item = items.iter().min_by_key(|item| item.scheduled_for);
@@ -184,8 +199,8 @@ impl AmbientRunnerHandle {
             AmbientStatus::Idle => "idle".to_string(),
             AmbientStatus::Running { detail } => format!("running: {}", detail),
             AmbientStatus::Scheduled { next_wake } => {
-                let until = *next_wake - Utc::now();
-                let mins = until.num_minutes().max(0) as u32;
+                let until = *next_wake - Timestamp::now();
+                let mins = until.whole_minutes().max(0) as u32;
                 format!("scheduled (in {})", crate::ambient::format_minutes_human(mins))
             }
             AmbientStatus::Paused { reason } => format!("paused: {}", reason),
@@ -234,7 +249,7 @@ impl AmbientRunnerHandle {
                                 ("spawn", None, Some(parent_session_id.clone()))
                             }
                         };
-                        let overdue_seconds = (Utc::now() - item.scheduled_for).num_seconds().max(0);
+                        let overdue_seconds = (Timestamp::now() - item.scheduled_for).whole_seconds().max(0);
                         serde_json::json!({
                             "id": item.id,
                             "scheduled_for": item.scheduled_for.to_rfc3339(),
@@ -248,7 +263,7 @@ impl AmbientRunnerHandle {
                             "working_dir": item.working_dir,
                             "relevant_files": item.relevant_files,
                             "git_branch": item.git_branch,
-                            "overdue": item.scheduled_for <= Utc::now(),
+                            "overdue": item.scheduled_for <= Timestamp::now(),
                             "overdue_seconds": overdue_seconds,
                         })
                     })
@@ -559,12 +574,12 @@ impl AmbientRunnerHandle {
                 let sleep_secs = if ambient_allowed {
                     let interval = scheduler.calculate_interval(None).as_secs().max(MAX_IDLE_POLL_SECS);
                     let next_direct_secs = next_direct_due
-                        .map(|next| (next - Utc::now()).num_seconds().max(0) as u64)
+                        .map(|next| (next - Timestamp::now()).whole_seconds().max(0) as u64)
                         .unwrap_or(interval);
                     interval.min(next_direct_secs.max(1))
                 } else {
                     next_direct_due
-                        .map(|next| (next - Utc::now()).num_seconds().max(0) as u64)
+                        .map(|next| (next - Timestamp::now()).whole_seconds().max(0) as u64)
                         .map(|secs| secs.clamp(1, MAX_IDLE_POLL_SECS))
                         .unwrap_or(MAX_IDLE_POLL_SECS)
                 };
@@ -626,7 +641,7 @@ impl AmbientRunnerHandle {
 
                     // Save transcript
                     let transcript = crate::safety::AmbientTranscript {
-                        session_id: format!("ambient_{}", Utc::now().format("%Y%m%d_%H%M%S")),
+                        session_id: format!("ambient_{}", ambient_session_stamp()),
                         started_at: result.started_at,
                         ended_at: Some(result.ended_at),
                         status: match result.status {
@@ -673,7 +688,7 @@ impl AmbientRunnerHandle {
                 let mut s = self.inner.state.write().await;
                 if matches!(s.status, AmbientStatus::Running { .. } | AmbientStatus::Idle) {
                     s.status = AmbientStatus::Scheduled {
-                        next_wake: Utc::now() + chrono::Duration::seconds(sleep_secs as i64),
+                        next_wake: Timestamp::now() + TimeDelta::seconds(sleep_secs as i64),
                     };
                     let _ = s.save();
                 }
@@ -738,7 +753,7 @@ impl AmbientRunnerHandle {
 
     /// Run a single ambient cycle. Returns the cycle result.
     async fn run_cycle(&self, provider: &Arc<dyn Provider>) -> anyhow::Result<AmbientCycleResult> {
-        let started_at = Utc::now();
+        let started_at = Timestamp::now();
 
         self.set_running_detail("gathering context").await;
         let (system_prompt, initial_message) = self.build_cycle_context(provider).await?;
@@ -775,7 +790,7 @@ impl AmbientRunnerHandle {
             agent.mark_closed();
             return Ok(AmbientCycleResult {
                 started_at,
-                ended_at: Utc::now(),
+                ended_at: Timestamp::now(),
                 conversation: Some(conversation),
                 ..result
             });
@@ -802,7 +817,7 @@ impl AmbientRunnerHandle {
             agent.mark_closed();
             return Ok(AmbientCycleResult {
                 started_at,
-                ended_at: Utc::now(),
+                ended_at: Timestamp::now(),
                 conversation: Some(conversation),
                 ..result
             });
@@ -818,7 +833,7 @@ impl AmbientRunnerHandle {
             proactive_work: None,
             next_schedule: None,
             started_at,
-            ended_at: Utc::now(),
+            ended_at: Timestamp::now(),
             status: CycleStatus::Incomplete,
             conversation: Some(agent.export_conversation_markdown()?),
         };

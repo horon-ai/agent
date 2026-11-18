@@ -6,6 +6,7 @@
 use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use serde_json::json;
 use std::path::Path;
 
@@ -19,7 +20,7 @@ fn created(id: &SessionId) -> SealedEvent {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )
@@ -52,7 +53,7 @@ fn appended(parent: &SealedEvent, index: usize, text: &str) -> SealedEvent {
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(1),
+        Timestamp::UNIX_EPOCH + horon_agent_time::Duration::seconds(1),
         EventKind::new(KnownEventKind::MessageAppended),
         json!({"message": message(&format!("m{index}"), text)}),
     )
@@ -265,7 +266,7 @@ fn an_append_between_two_pages_keeps_the_cursor_consistent() {
         EventId::new_v4(),
         Some(seeded.head.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(1),
+        Timestamp::UNIX_EPOCH + horon_agent_time::Duration::seconds(1),
         EventKind::new(KnownEventKind::MessageAppended),
         json!({"message": message("m40", &format!("{TEXT} 40"))}),
     )
@@ -314,7 +315,7 @@ fn appended_to(parent: &EventId, id: &SessionId, index: usize, text: &str) -> Se
         EventId::new_v4(),
         Some(parent.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(1),
+        Timestamp::UNIX_EPOCH + horon_agent_time::Duration::seconds(1),
         EventKind::new(KnownEventKind::MessageAppended),
         json!({"message": message(&format!("m{index}"), text)}),
     )

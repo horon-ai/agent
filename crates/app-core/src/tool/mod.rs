@@ -1561,7 +1561,7 @@ impl Registry {
                     &ctx.session_id,
                     &request_id,
                     resolved_name,
-                    chrono::Utc::now() + chrono::Duration::seconds(1800),
+                    horon_agent_time::Timestamp::now() + horon_agent_time::Duration::seconds(1800),
                 );
                 crate::safety::dispatch_permission_notification(resolved_name, &description, &request_id);
                 Some(format!(
@@ -1611,7 +1611,7 @@ impl Registry {
         let reason = prompt.reason;
         let is_dual_confirm = prompt.is_dual_confirm;
         let input = prompt.input;
-        let now = chrono::Utc::now();
+        let now = horon_agent_time::Timestamp::now();
         // A scoped answer ("allow this file", "allow this folder") is written by
         // whoever records the decision, and that writer has only the queued
         // request to read: it cannot ask the registry for effects. So the
@@ -1682,7 +1682,7 @@ impl Registry {
         let record = BlockedApproval {
             session_id: session_id.to_string(),
             request_id: request_id.to_string(),
-            created_at: chrono::Utc::now(),
+            created_at: horon_agent_time::Timestamp::now(),
             // `wait: false` - the gate does not block the turn, so there is no
             // waiter pid to lease.
             //

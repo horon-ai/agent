@@ -1,5 +1,6 @@
 use horon_agent_session_store::replication::*;
 use horon_agent_session_store::*;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::DirBuilderExt;
@@ -67,7 +68,7 @@ fn seal(n: u128, parent: Option<u128>, kind: &str, payload: Value) -> SealedEven
         eid(n),
         parent.map(eid),
         OriginId::parse(uuid::Uuid::from_u128(999).to_string()).unwrap(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::parse(kind),
         payload,
     )

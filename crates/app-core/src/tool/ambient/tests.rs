@@ -17,8 +17,8 @@ fn test_cycle_result_store_and_take() {
         compactions: 0,
         proactive_work: None,
         next_schedule: None,
-        started_at: Utc::now(),
-        ended_at: Utc::now(),
+        started_at: Timestamp::now(),
+        ended_at: Timestamp::now(),
         status: CycleStatus::Complete,
         conversation: None,
     };

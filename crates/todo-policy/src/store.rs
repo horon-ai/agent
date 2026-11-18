@@ -5,6 +5,7 @@
 //! or malformed file yields the empty value, matching the runtime's loaders.
 
 use crate::followup::{TodoEffects, TodoSnapshot};
+use horon_agent_time::{Duration, Timestamp};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::path::{Path, PathBuf};
 
@@ -48,15 +49,14 @@ pub fn todo_file_path(home: &Path, session_id: &str, file: TodoFile) -> PathBuf 
 /// Persisted long-session review clock.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TodoReviewState {
-    pub cycle_started_at: chrono::DateTime<chrono::Utc>,
+    pub cycle_started_at: Timestamp,
     #[serde(default)]
     pub review_delivered: bool,
 }
 
 impl TodoReviewState {
-    pub fn is_due(&self, now: chrono::DateTime<chrono::Utc>) -> bool {
-        !self.review_delivered
-            && now - self.cycle_started_at >= chrono::Duration::seconds(LONG_SESSION_REVIEW_AFTER_SECS)
+    pub fn is_due(&self, now: Timestamp) -> bool {
+        !self.review_delivered && now - self.cycle_started_at >= Duration::seconds(LONG_SESSION_REVIEW_AFTER_SECS)
     }
 }
 
@@ -79,7 +79,7 @@ pub fn load_snapshot(home: &Path, session_id: &str) -> TodoSnapshot {
         plan: read_or_default(&path(TodoFile::Plan)),
         goals: read_or_default(&path(TodoFile::Goals)),
         gate_observations: read_or_default(&path(TodoFile::GateObservations)),
-        long_session_review_due: review.is_some_and(|state| state.is_due(chrono::Utc::now())),
+        long_session_review_due: review.is_some_and(|state| state.is_due(Timestamp::now())),
     }
 }
 
@@ -148,7 +148,7 @@ mod tests {
             serde_json::to_value([&observation]).unwrap(),
         );
         let old = TodoReviewState {
-            cycle_started_at: chrono::Utc::now() - chrono::Duration::hours(2),
+            cycle_started_at: Timestamp::now() - Duration::hours(2),
             review_delivered: false,
         };
         write(TodoFile::ReviewState, serde_json::to_value(&old).unwrap());

@@ -7,7 +7,7 @@
 
 use crate::model::SessionSummary;
 use anyhow::Result;
-use chrono::{DateTime, Datelike, Local, Timelike};
+use horon_agent_time::{Date, Month, Timestamp};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -242,11 +242,8 @@ fn summarize(raw: RawSession) -> SessionSummary {
 
     let mut active_dates = std::collections::BTreeSet::new();
     let record_time = |ts: &str, s: &mut SessionSummary, dates: &mut std::collections::BTreeSet<String>| {
-        if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
-            let local = dt.with_timezone(&Local);
-            s.hour_hist[local.hour() as usize] += 1;
-            s.weekday_hist[local.weekday().num_days_from_monday() as usize] += 1;
-            dates.insert(local.format("%Y-%m-%d").to_string());
+        if let Ok(at) = Timestamp::parse_rfc3339(ts) {
+            record_local(at, s, dates);
         }
     };
 
@@ -300,16 +297,35 @@ fn summarize(raw: RawSession) -> SessionSummary {
     // messages lacked timestamps (common for imported transcripts).
     if active_dates.is_empty()
         && let Some(ts) = raw.updated_at.as_deref().or(raw.created_at.as_deref())
-        && let Ok(dt) = DateTime::parse_from_rfc3339(ts)
+        && let Ok(at) = Timestamp::parse_rfc3339(ts)
     {
-        let local = dt.with_timezone(&Local);
-        s.hour_hist[local.hour() as usize] += 1;
-        s.weekday_hist[local.weekday().num_days_from_monday() as usize] += 1;
-        active_dates.insert(local.format("%Y-%m-%d").to_string());
+        record_local(at, &mut s, &mut active_dates);
     }
 
     s.active_dates = active_dates.into_iter().collect();
     s
+}
+
+/// Count one stored instant in the hour, weekday and day buckets it falls in
+/// for the local calendar.
+///
+/// The offset comes from that instant, not from the clock now: a session
+/// recorded before a daylight-saving change keeps the hour it was actually
+/// written in, and a historical rule change moves the bucket with it.
+///
+/// The fields come from [`Timestamp::calendar_local`] rather than `local()`:
+/// a stored leap second keeps the date, hour and weekday of the `:59` second it
+/// is carried on, so a record written at `23:59:60` never lands in the next
+/// minute or the next day.
+fn record_local(at: Timestamp, s: &mut SessionSummary, dates: &mut std::collections::BTreeSet<String>) {
+    let (local, _offset) = at.calendar_local();
+    s.hour_hist[usize::from(local.hour)] += 1;
+    dates.insert(local.date());
+    if let Ok(month) = Month::try_from(local.month)
+        && let Ok(date) = Date::from_calendar_date(local.year, month, local.day)
+    {
+        s.weekday_hist[usize::from(date.weekday().number_days_from_monday())] += 1;
+    }
 }
 
 /// Expand a single tool invocation into the histogram. `batch` is special-cased
@@ -350,4 +366,44 @@ fn project_name(working_dir: &str) -> String {
         .filter(|n| !n.is_empty())
         .unwrap_or(trimmed)
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn buckets(at: Timestamp) -> (SessionSummary, BTreeSet<String>) {
+        let mut summary = SessionSummary::default();
+        let mut dates = BTreeSet::new();
+        record_local(at, &mut summary, &mut dates);
+        (summary, dates)
+    }
+
+    #[test]
+    fn a_stored_leap_second_buckets_with_the_second_it_is_carried_on() {
+        let plain: Timestamp = Timestamp::parse_rfc3339("2016-12-31T23:59:59Z").expect("a stored second");
+        let leap: Timestamp = Timestamp::parse_rfc3339("2016-12-31T23:59:60Z").expect("a stored leap second");
+
+        let (plain_summary, plain_days) = buckets(plain);
+        let (leap_summary, leap_days) = buckets(leap);
+
+        // The leap second belongs to the `:59` second's day, hour and weekday,
+        // so it never moves a bucket into the next minute or the next year.
+        assert_eq!(leap_days, plain_days);
+        assert_eq!(leap_summary.hour_hist, plain_summary.hour_hist);
+        assert_eq!(leap_summary.weekday_hist, plain_summary.weekday_hist);
+        assert_eq!(leap_summary.hour_hist.iter().sum::<u32>(), 1);
+        assert_eq!(leap_summary.weekday_hist.iter().sum::<u32>(), 1);
+        assert_eq!(leap_days.len(), 1);
+    }
+
+    #[test]
+    fn the_leap_second_day_is_the_one_the_calendar_names() {
+        let leap: Timestamp = "2016-12-31T23:59:60Z".parse().expect("a stored leap second");
+        let (_, days) = buckets(leap);
+        let (calendar, _offset) = leap.calendar_local();
+        assert_eq!(days.into_iter().next().as_deref(), Some(calendar.date().as_str()));
+        assert!(calendar.is_leap_second());
+    }
 }

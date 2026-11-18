@@ -6,7 +6,6 @@
 use crate::message::{ContentBlock, Role};
 use crate::session::{Session, SessionStatus, StoredMessage};
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use horon_agent_import_core::{
     ClaudeCodeContent, ClaudeCodeContentBlock, ClaudeCodeEntry, ClaudeCodeSessionInfo, SessionIndexEntry,
     SessionsIndex, claude_code_session_info_from_index, claude_text_from_content, claude_title_candidate,
@@ -21,6 +20,7 @@ pub use horon_agent_import_core::{
     imported_codex_session_id, imported_cursor_session_id, imported_opencode_session_id, imported_pi_session_id,
     is_cursor_subagent_transcript,
 };
+use horon_agent_time::Timestamp;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -302,7 +302,7 @@ pub fn list_claude_code_sessions_lazy(scan_limit: usize) -> Result<Vec<ClaudeCod
                 .metadata()
                 .and_then(|meta| meta.modified())
                 .ok()
-                .map(DateTime::<Utc>::from);
+                .map(Timestamp::from);
             let project_path = project_dir
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -750,9 +750,8 @@ fn import_session_from_file_with_target(
         .and_then(|e| e.message.as_ref()?.model.clone());
     let created_at = first_entry
         .and_then(|e| e.timestamp.as_ref())
-        .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+        .and_then(|t| Timestamp::parse_rfc3339(t).ok())
+        .unwrap_or_else(Timestamp::now);
 
     // Get title from first real user message (skipping Claude Code's synthetic
     // slash-command / command-output / caveat wrapper messages) or the index.
@@ -824,7 +823,7 @@ fn import_session_from_file_with_target(
     finalize_imported_session(session, created_at, None)
 }
 
-fn append_text_message(session: &mut Session, role: Role, text: String, timestamp: Option<DateTime<Utc>>) {
+fn append_text_message(session: &mut Session, role: Role, text: String, timestamp: Option<Timestamp>) {
     let text = text.trim();
     if text.is_empty() {
         return;
@@ -849,8 +848,8 @@ fn append_text_message(session: &mut Session, role: Role, text: String, timestam
 
 fn finalize_imported_session(
     mut session: Session,
-    created_at: DateTime<Utc>,
-    updated_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    updated_at: Option<Timestamp>,
 ) -> Result<Session> {
     // Never overwrite a horon-agent-side continuation with a shorter external
     // transcript. This protection applies to every importer, not only Claude.
@@ -931,7 +930,7 @@ pub fn import_codex_session_from_path(path: &Path, session_id_hint: Option<&str>
 
     let created_at = parse_rfc3339_json(meta.get("timestamp"))
         .or_else(|| parse_rfc3339_json(header.get("timestamp")))
-        .unwrap_or_else(Utc::now);
+        .unwrap_or_else(Timestamp::now);
     let mut updated_at = Some(created_at);
     let mut title: Option<String> = None;
     let mut working_dir = meta.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
@@ -1038,7 +1037,7 @@ pub fn import_pi_session(session_path: &str) -> Result<Session> {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    let created_at = parse_rfc3339_json(header.get("timestamp")).unwrap_or_else(Utc::now);
+    let created_at = parse_rfc3339_json(header.get("timestamp")).unwrap_or_else(Timestamp::now);
     let mut updated_at = Some(created_at);
     let mut title: Option<String> = None;
     let mut model: Option<String> = None;
@@ -1139,13 +1138,13 @@ pub fn import_opencode_session_from_path(session_path: &Path, session_id_hint: O
         .get("time")
         .and_then(|time| time.get("created"))
         .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
-        .unwrap_or_else(Utc::now);
+        .and_then(Timestamp::from_timestamp_millis)
+        .unwrap_or_else(Timestamp::now);
     let mut updated_at = value
         .get("time")
         .and_then(|time| time.get("updated"))
         .and_then(|v| v.as_i64())
-        .and_then(DateTime::<Utc>::from_timestamp_millis)
+        .and_then(Timestamp::from_timestamp_millis)
         .or(Some(created_at));
     let mut session = Session::create_with_id(imported_opencode_session_id(session_id), None, None);
     session.provider_session_id = Some(session_id.to_string());
@@ -1156,7 +1155,7 @@ pub fn import_opencode_session_from_path(session_path: &Path, session_id_hint: O
     let messages_root =
         crate::storage::user_home_path(format!(".local/share/opencode/storage/message/{}", session_id))?;
     let parts_base = crate::storage::user_home_path(".local/share/opencode/storage/part")?;
-    let mut messages: Vec<(Option<DateTime<Utc>>, Role, String)> = Vec::new();
+    let mut messages: Vec<(Option<Timestamp>, Role, String)> = Vec::new();
     let mut model: Option<String> = None;
     let mut provider_key = session.provider_key.clone();
 
@@ -1205,7 +1204,7 @@ pub fn import_opencode_session_from_path(session_path: &Path, session_id_hint: O
                 .get("time")
                 .and_then(|time| time.get("created"))
                 .and_then(|v| v.as_i64())
-                .and_then(DateTime::<Utc>::from_timestamp_millis);
+                .and_then(Timestamp::from_timestamp_millis);
             if timestamp.is_some() {
                 updated_at = timestamp;
             }
@@ -1251,7 +1250,7 @@ pub fn import_cursor_session_from_path(session_path: &Path, session_id_hint: Opt
     let session_id = session_id_hint
         .map(|id| id.to_string())
         .unwrap_or_else(|| cursor_session_id_from_path(session_path));
-    let created_at = horon_agent_import_core::file_modified_datetime(session_path).unwrap_or_else(Utc::now);
+    let created_at = horon_agent_import_core::file_modified_datetime(session_path).unwrap_or_else(Timestamp::now);
 
     let mut session = Session::create_with_id(imported_cursor_session_id(&session_id), None, None);
     session.provider_session_id = Some(session_id.clone());

@@ -95,31 +95,10 @@ if find scripts -type f -perm -0002 -print -quit | grep -q .; then
 fi
 
 echo "[3/3] Dependency advisories (cargo-audit)"
-audit_ignores=(
-  # Documented in docs/safety/SECURITY.md. These are transitive
-  # advisories with tracked remediation paths; keep them visible in the triage
-  # doc while preventing unrelated CI/release work from being blocked.
-  --ignore RUSTSEC-2026-0099 # rustls-webpki via rustls stack, awaiting upstream upgrade
-  --ignore RUSTSEC-2026-0104 # rustls-webpki via rustls stack, awaiting upstream upgrade
-  --ignore RUSTSEC-2026-0098 # rustls-webpki via rustls stack, awaiting upstream upgrade
-  --ignore RUSTSEC-2026-0049 # rustls-webpki via rustls stack, awaiting upstream upgrade
-  --ignore RUSTSEC-2026-0187 # lopdf via pdf-extract 0.8.2 (pins lopdf 0.34); PDF text extraction only, awaiting pdf-extract upgrade to lopdf >=0.42
-  --ignore RUSTSEC-2026-0194 # quick-xml via wayland-scanner (proc-macro); parses trusted Wayland protocol XML at build time only, never untrusted input at runtime
-  --ignore RUSTSEC-2026-0195 # quick-xml via wayland-scanner (proc-macro); same build-time-only exposure as RUSTSEC-2026-0194
-  # Unmaintained notices (not vulnerabilities) for crates this workspace cannot
-  # drop on its own; each needs an upstream replacement. Tracked in
-  # docs/safety/SECURITY.md.
-  --ignore RUSTSEC-2024-0436 # paste: transitive via the embedding/tokenizer stack
-  --ignore RUSTSEC-2026-0441 # pin-utils: transitive via futures-util
-  --ignore RUSTSEC-2026-0206 # rustybuzz: transitive via usvg/resvg (SVG text rendering)
-  --ignore RUSTSEC-2026-0192 # ttf-parser: transitive via fontdb/usvg and lopdf
-  --ignore RUSTSEC-2024-0449 # unsafe-libyaml: transitive via serde_yaml (horon-agent-base)
-  --ignore RUSTSEC-2026-0543 # chrono: unmaintained upstream (no patched version); dates are serialized into stored sessions, so the jiff/time migration is its own task (#377)
-)
 if command -v cargo-audit >/dev/null 2>&1 || cargo audit --version >/dev/null 2>&1; then
   # --deny warnings: unmaintained, unsound and yanked notices fail the job
   # instead of printing a warning that no one reads.
-  cargo audit --deny warnings "${audit_ignores[@]}"
+  cargo audit --deny warnings
 else
   if [[ "$strict" -eq 1 ]]; then
     die "cargo-audit is not installed (install with: cargo install cargo-audit --locked)"

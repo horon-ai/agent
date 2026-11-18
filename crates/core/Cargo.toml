@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
+horon-agent-time = { path = "../time-types" }
 rand = "0.9.3"
 unicode-segmentation = "1"
 unicode-properties = { version = "0.1", features = ["emoji"] }

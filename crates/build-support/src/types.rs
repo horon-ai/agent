@@ -1,6 +1,6 @@
 //! Build, publish, and migration records shared by the update pipeline.
 
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -65,7 +65,7 @@ pub struct BuildInfo {
     /// Git commit hash (full)
     pub full_hash: String,
     /// Build timestamp
-    pub built_at: DateTime<Utc>,
+    pub built_at: Timestamp,
     /// Git commit message (first line)
     pub commit_message: Option<String>,
     /// Whether build is from dirty working tree
@@ -86,5 +86,5 @@ pub struct MigrationContext {
     pub to_version: String,
     pub change_summary: Option<String>,
     pub diff: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
 }

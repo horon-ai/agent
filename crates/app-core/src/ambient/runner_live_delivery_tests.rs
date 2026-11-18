@@ -54,14 +54,14 @@ fn scheduled_live_delivery_reaches_subscribed_client() {
             let runner = AmbientRunnerHandle::new(Arc::new(crate::safety::SafetySystem::new()));
             let item = ScheduledItem {
                 id: "scheduled-live-regression".to_string(),
-                scheduled_for: chrono::Utc::now(),
+                scheduled_for: horon_agent_time::Timestamp::now(),
                 context: "Report scheduled live output".to_string(),
                 priority: Priority::Normal,
                 target: ScheduleTarget::Session {
                     session_id: session.id.clone(),
                 },
                 created_by_session: session.id.clone(),
-                created_at: chrono::Utc::now(),
+                created_at: horon_agent_time::Timestamp::now(),
                 working_dir: Some(temp.path().display().to_string()),
                 task_description: None,
                 relevant_files: vec![],

@@ -1,6 +1,7 @@
 //! The configured durability level reaches the original log append.
 
 use crate::*;
+use horon_agent_time::Timestamp;
 
 fn private_root() -> std::path::PathBuf {
     let root = std::env::temp_dir()
@@ -20,7 +21,7 @@ fn created(id: &SessionId) -> SealedEvent {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         serde_json::json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )

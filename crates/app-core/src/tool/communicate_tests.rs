@@ -196,7 +196,7 @@ async fn run_plan_driver_guard_allows_restart_after_stale_driver() {
         "status": "running",
         "exit_code": null,
         "error": null,
-        "started_at": chrono::Utc::now().to_rfc3339(),
+        "started_at": horon_agent_time::Timestamp::now().to_rfc3339(),
         "completed_at": null,
         "duration_secs": null,
         "detached": false,
@@ -442,7 +442,7 @@ fn run_plan_progress_counts_only_completed_toward_percent_and_shows_live_active(
         total: Some(total as u64),
         unit: Some("nodes".to_string()),
         eta_seconds: None,
-        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_at: horon_agent_time::Timestamp::now().to_rfc3339(),
         source: crate::bus::BackgroundTaskProgressSource::Reported,
     }
     .normalize();

@@ -596,7 +596,7 @@ fn approvals_resolve_names_one_tool_call_per_verdict() {
 /// timeout default an unattended run carries: the state QA reproduced.
 fn queued_waiting_request(system: &crate::safety::SafetySystem) -> String {
     let request_id = crate::safety::new_request_id();
-    let now = chrono::Utc::now();
+    let now = horon_agent_time::Timestamp::now();
     let queued = system.request_permission_with_timeout(
         crate::safety::PermissionRequest {
             id: request_id.clone(),
@@ -608,7 +608,7 @@ fn queued_waiting_request(system: &crate::safety::SafetySystem) -> String {
             created_at: now,
             context: None,
             run_id: None,
-            expires_at: Some(now + chrono::Duration::seconds(30)),
+            expires_at: Some(now + horon_agent_time::Duration::seconds(30)),
             default_on_timeout: crate::safety::ApprovalDefault::Deny,
         },
         std::time::Duration::from_secs(30),

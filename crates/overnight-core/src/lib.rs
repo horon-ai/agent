@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -50,16 +50,16 @@ pub struct OvernightManifest {
     pub parent_session_id: String,
     pub coordinator_session_id: String,
     pub coordinator_session_name: String,
-    pub started_at: DateTime<Utc>,
-    pub target_wake_at: DateTime<Utc>,
-    pub handoff_ready_at: DateTime<Utc>,
-    pub post_wake_grace_until: DateTime<Utc>,
+    pub started_at: Timestamp,
+    pub target_wake_at: Timestamp,
+    pub handoff_ready_at: Timestamp,
+    pub post_wake_grace_until: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub morning_report_posted_at: Option<DateTime<Utc>>,
+    pub morning_report_posted_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cancel_requested_at: Option<DateTime<Utc>>,
+    pub cancel_requested_at: Option<Timestamp>,
     pub status: OvernightRunStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mission: Option<String>,
@@ -78,12 +78,12 @@ pub struct OvernightManifest {
     pub task_cards_dir: PathBuf,
     pub issue_drafts_dir: PathBuf,
     pub validation_dir: PathBuf,
-    pub last_activity_at: DateTime<Utc>,
+    pub last_activity_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OvernightEvent {
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub run_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
@@ -97,7 +97,7 @@ pub struct OvernightEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResourceSnapshot {
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_total_mb: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -148,7 +148,7 @@ pub struct UsageLimitSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageProjection {
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: Timestamp,
     pub risk: String,
     pub confidence: String,
     pub projected_delta_min_percent: Option<f32>,
@@ -161,7 +161,7 @@ pub struct UsageProjection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitSnapshot {
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: Timestamp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -174,7 +174,7 @@ pub struct GitSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OvernightPreflight {
-    pub captured_at: DateTime<Utc>,
+    pub captured_at: Timestamp,
     pub usage: UsageProjection,
     pub resources: ResourceSnapshot,
     pub git: GitSnapshot,
@@ -676,6 +676,12 @@ pre {{ white-space: pre-wrap; word-break: break-word; background: #0b0d12; color
     )
 }
 
+/// The `HH:MM:SS` UTC clock shown in the human log and the review timeline.
+fn event_clock(timestamp: Timestamp) -> String {
+    let at = timestamp.utc();
+    format!("{:02}:{:02}:{:02}", at.hour(), at.minute(), at.second())
+}
+
 pub fn render_timeline_html(events: &[OvernightEvent], limit: usize) -> String {
     let mut timeline = String::new();
     for event in events.iter().rev().take(limit).collect::<Vec<_>>().into_iter().rev() {
@@ -683,7 +689,7 @@ pub fn render_timeline_html(events: &[OvernightEvent], limit: usize) -> String {
         timeline.push_str(&format!(
             "<li class=\"{}\"><time>{}</time><strong>{}</strong><span>{}</span></li>\n",
             class,
-            html_escape(&event.timestamp.format("%H:%M:%S").to_string()),
+            html_escape(&event_clock(event.timestamp)),
             html_escape(&event.kind),
             html_escape(&event.summary)
         ));
@@ -764,14 +770,10 @@ pub fn build_progress_card_from_parts(
     events: &[OvernightEvent],
     preflight: Option<&OvernightPreflight>,
     task_cards: &[OvernightTaskCard],
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> OvernightProgressCard {
-    let target_minutes = manifest
-        .target_wake_at
-        .signed_duration_since(manifest.started_at)
-        .num_minutes()
-        .max(1) as u32;
-    let elapsed_minutes = now.signed_duration_since(manifest.started_at).num_minutes().max(0) as u32;
+    let target_minutes = (manifest.target_wake_at - manifest.started_at).whole_minutes().max(1) as u32;
+    let elapsed_minutes = (now - manifest.started_at).whole_minutes().max(0) as u32;
     let progress_percent = ((elapsed_minutes as f32 / target_minutes as f32) * 100.0).min(100.0);
     let latest_event = events
         .iter()
@@ -836,9 +838,9 @@ pub fn build_progress_card_from_parts(
 pub fn format_status_markdown_from_summary(
     manifest: &OvernightManifest,
     task_summary: &OvernightTaskCardSummary,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> String {
-    let remaining = manifest.target_wake_at.signed_duration_since(now).num_minutes();
+    let remaining = (manifest.target_wake_at - now).whole_minutes();
     let remaining_line = if remaining >= 0 {
         format!("Target wake time in {}.", format_minutes(remaining as u32))
     } else {
@@ -874,7 +876,7 @@ pub fn format_log_markdown_from_events(
     for event in &events[start..] {
         out.push_str(&format!(
             "- `{}` **{}**: {}\n",
-            event.timestamp.format("%H:%M:%S"),
+            event_clock(event.timestamp),
             event.kind,
             event.summary
         ));

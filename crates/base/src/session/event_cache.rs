@@ -294,6 +294,7 @@ mod tests {
     use super::*;
     use crate::message::{ContentBlock, Role};
     use crate::session::tests::{EnvVarGuard, cases::canonical_tempdir, lock_env};
+    use horon_agent_time::Timestamp;
     use std::time::Instant;
 
     fn text(value: &str) -> Vec<ContentBlock> {
@@ -304,11 +305,11 @@ mod tests {
     }
 
     /// The fits below compare the record's exact canonical length, so the fixture must not carry
-    /// a live clock reading: chrono trims trailing zeros in the fraction, which changes how many
-    /// bytes this snapshot adds and moves the target the fit is converging on.
+    /// a live clock reading: the RFC3339 writer trims trailing zeros in the fraction, which changes
+    /// how many bytes this snapshot adds and moves the target the fit is converging on.
     fn snapshot(session_id: &str, pad: usize) -> crate::session::EnvSnapshot {
         crate::session::EnvSnapshot {
-            captured_at: chrono::DateTime::from_timestamp(1_700_000_000, 123_456_789).expect("fixed instant"),
+            captured_at: Timestamp::from_timestamp(1_700_000_000, 123_456_789).expect("fixed instant"),
             reason: "p".repeat(pad),
             session_id: session_id.to_string(),
             working_dir: None,

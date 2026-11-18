@@ -15,11 +15,11 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use chrono::TimeZone;
 use horon_agent_sdk::api::{ApiEvent, AskSelection, PermissionDecision};
 use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::context::ContextReport;
 
@@ -771,11 +771,22 @@ fn activity(session: &SessionInfo) -> Option<i64> {
 }
 
 /// A stored millisecond timestamp as the local date and time.
+///
+/// Milliseconds need no leap-second fix: a stored leap keeps them on `:59`.
 fn moment(ms: i64) -> Option<String> {
-    chrono::Local
-        .timestamp_millis_opt(ms)
-        .single()
-        .map(|time| time.format("%m-%d %H:%M").to_string())
+    let Ok(at) = OffsetDateTime::from_unix_timestamp_nanos(i128::from(ms) * 1_000_000) else {
+        // Out of the calendar the clock can name: no time, as the old lookup did.
+        return None;
+    };
+    // The offset is read for that instant, so a past daylight-saving period
+    // keeps its own wall clock; a host with no zone leaves the record in UTC.
+    let offset = match UtcOffset::local_offset_at(at) {
+        Ok(offset) => offset,
+        Err(_) => UtcOffset::UTC,
+    };
+    let local = at.to_offset(offset);
+    let (month, day, hour, minute) = (u8::from(local.month()), local.day(), local.hour(), local.minute());
+    Some(format!("{month:02}-{day:02} {hour:02}:{minute:02}"))
 }
 
 /// Whether a session belongs to the directory the client is working in.

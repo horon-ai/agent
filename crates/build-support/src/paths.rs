@@ -3,8 +3,8 @@ use super::{
     shared_server_binary_path, stable_binary_path,
 };
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use horon_agent_storage as storage;
+use horon_agent_time::Timestamp;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -146,16 +146,33 @@ fn existing_binary(path: Result<PathBuf>, label: &'static str) -> Option<(PathBu
     path.ok().filter(|path| path.exists()).map(|path| (path, label))
 }
 
-pub fn current_binary_built_at() -> Option<DateTime<Utc>> {
+pub fn current_binary_built_at() -> Option<Timestamp> {
     let modified: SystemTime = std::env::current_exe()
         .ok()
         .and_then(|path| std::fs::metadata(path).ok())
         .and_then(|meta| meta.modified().ok())?;
-    Some(DateTime::<Utc>::from(modified))
+    Some(Timestamp::from(modified))
 }
 
+/// `YYYY-MM-DD HH:MM:SS +0000`, the same text the previous formatter produced
+/// for a UTC build time. Built from calendar components so no formatting step
+/// can fail and no fallback text is needed.
 pub fn current_binary_build_time_string() -> Option<String> {
-    current_binary_built_at().map(|dt| dt.format("%Y-%m-%d %H:%M:%S %z").to_string())
+    let at = current_binary_built_at()?.utc();
+    let offset = at.offset().whole_seconds();
+    let sign = if offset < 0 { '-' } else { '+' };
+    let magnitude = offset.unsigned_abs();
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {sign}{:02}{:02}",
+        at.year(),
+        u8::from(at.month()),
+        at.day(),
+        at.hour(),
+        at.minute(),
+        at.second(),
+        magnitude / 3_600,
+        magnitude % 3_600 / 60,
+    ))
 }
 
 fn home_dir() -> Result<PathBuf> {

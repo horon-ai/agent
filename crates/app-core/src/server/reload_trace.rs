@@ -85,10 +85,13 @@ pub(super) fn record(reload_id: &str, phase: &str, mut fields: Map<String, Value
     }
 
     fields.insert("schema_version".to_string(), Value::from(1));
-    fields.insert("timestamp".to_string(), Value::from(chrono::Utc::now().to_rfc3339()));
+    fields.insert(
+        "timestamp".to_string(),
+        Value::from(horon_agent_time::Timestamp::now().to_rfc3339()),
+    );
     fields.insert(
         "timestamp_ms".to_string(),
-        Value::from(chrono::Utc::now().timestamp_millis()),
+        Value::from(horon_agent_time::Timestamp::now().timestamp_millis()),
     );
     fields.insert("pid".to_string(), Value::from(std::process::id()));
     fields.insert("reload_id".to_string(), Value::from(reload_id.to_string()));

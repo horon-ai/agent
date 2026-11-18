@@ -15,7 +15,7 @@ pub(super) fn reset_timestamp_from_json_value(value: &serde_json::Value) -> Opti
             return None;
         }
         let secs = if epoch > 1.0e12 { epoch / 1000.0 } else { epoch };
-        let dt = chrono::DateTime::from_timestamp(secs as i64, 0)?;
+        let dt = horon_agent_time::Timestamp::from_timestamp(secs as i64, 0)?;
         return Some(dt.to_rfc3339());
     }
     value.as_str().map(|text| text.to_string())

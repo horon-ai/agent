@@ -1,8 +1,8 @@
 //! Typed legacy parsing and raw metadata preservation.
 use crate::legacy::corrupt;
 use crate::*;
-use chrono::{DateTime, Utc};
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 #[derive(Deserialize)]
@@ -49,7 +49,7 @@ pub(crate) fn entry(value: Entry) -> Result<Entry, StoreError> {
         .meta
         .get("updated_at")
         .ok_or_else(|| corrupt("journal time absent"))?;
-    serde_json::from_value::<DateTime<Utc>>(updated.clone()).map_err(|e| corrupt(e.to_string()))?;
+    serde_json::from_value::<Timestamp>(updated.clone()).map_err(|e| corrupt(e.to_string()))?;
     for item in &value.append_messages {
         message(item)?;
     }
@@ -58,7 +58,7 @@ pub(crate) fn entry(value: Entry) -> Result<Entry, StoreError> {
 
 pub(crate) fn metadata(meta: &Map<String, Value>) -> Result<SessionMetadata, StoreError> {
     let mut input = meta.clone();
-    input.entry("created_at").or_insert(json!(DateTime::<Utc>::UNIX_EPOCH));
+    input.entry("created_at").or_insert(json!(Timestamp::UNIX_EPOCH));
     let created = input["created_at"].clone();
     input.entry("updated_at").or_insert(created);
     let mut result: SessionMetadata =

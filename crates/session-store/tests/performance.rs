@@ -2,6 +2,7 @@ use horon_agent_message_types::{ContentBlock, Role};
 use horon_agent_session_store::checkpoint::SessionCache;
 use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
+use horon_agent_time::Timestamp;
 use serde_json::{Value, json};
 use std::fs;
 use std::io::Write;
@@ -36,7 +37,7 @@ fn created(id: &SessionId) -> SealedEvent {
         EventId::new_v4(),
         None,
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::SessionCreated),
         json!({"metadata": SessionMetadata::default(), "branch_root": false}),
     )
@@ -50,7 +51,7 @@ fn appended(parent: &SealedEvent, text: &str) -> SealedEvent {
         EventId::new_v4(),
         Some(parent.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(1),
+        Timestamp::UNIX_EPOCH + horon_agent_time::Duration::seconds(1),
         EventKind::new(KnownEventKind::MessageAppended),
         json!({"message": StoredMessage { original_input: None, arg_repairs: None,
         degradations: None,
@@ -200,7 +201,7 @@ fn build_large(directory: &Path) -> Large {
         EventId::new_v4(),
         Some(previous.envelope().event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH,
+        Timestamp::UNIX_EPOCH,
         EventKind::new(KnownEventKind::AuxiliaryRecorded),
         json!({"aux_kind": "legacy", "schema_version": 1, "value": "b".repeat(LARGE_BLOB_BYTES)}),
     )
@@ -262,7 +263,7 @@ fn compaction_event(graph: &EventGraph, fixture: &Large, source: &SealedEvent, k
         EventId::new_v4(),
         Some(source.event_id.clone()),
         OriginId::new_v4(),
-        chrono::DateTime::UNIX_EPOCH + chrono::Duration::seconds(2),
+        Timestamp::UNIX_EPOCH + horon_agent_time::Duration::seconds(2),
         EventKind::new(KnownEventKind::Compacted),
         json!(payload),
     )
