@@ -58,12 +58,20 @@ impl App {
         self.ask_effort(level)
     }
 
-    /// Open the ladder as a list, with the level in force marked.
+    /// Open the ladder as a list, with the level in force marked and under the
+    /// cursor.
     ///
     /// The rows are the client's own, so the list is complete the moment it
-    /// opens: no request leaves and nothing says it is still loading.
+    /// opens: no request leaves and nothing says it is still loading. The
+    /// cursor starts on the marked row because `enter` confirms the row it is
+    /// on: opening anywhere else would move the session to a level the reader
+    /// never chose. A session that reports no level, or a level the ladder does
+    /// not hold, opens on the first row.
     fn open_efforts(&mut self) -> Option<Action> {
         let current = self.reasoning_effort.as_deref();
+        let start = current
+            .and_then(|level| LADDER.iter().position(|entry| *entry == level))
+            .unwrap_or(0);
         let rows = LADDER
             .iter()
             .map(|level| {
@@ -73,11 +81,12 @@ impl App {
                     .with_preview(vec![describe(level).to_string()])
             })
             .collect();
-        self.picker = Some(Picker::new(
+        self.picker = Some(Picker::at(
             Kind::Efforts,
             "Select reasoning effort",
             rows,
             "the ladder is empty",
+            start,
         ));
         None
     }
