@@ -53,19 +53,6 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
 
-# Runner selection. With the repository variable `CI_SELF_HOSTED` set to `true`,
-# the jobs that can run on macOS go to the self-hosted runner labelled
-# `horon-agent`, and the Linux-only and Windows-only jobs are skipped (shown as
-# skipped, never as passed). Unset the variable to return to GitHub-hosted
-# runners; nothing else changes.
-#
-# This repository is public, so a pull request from a fork is untrusted: its
-# workflow file and every script it runs come from the fork, not from `main`.
-# The self-hosted runner is a persistent machine, never a disposable VM, so fork
-# code must not run on it. Every self-hosted branch therefore requires either a
-# non-PR event or a PR whose head repository is this repository, and falls back
-# to `ubuntu-24.04` otherwise. The GitHub-hosted-only jobs use the negated
-# condition so a fork PR still gets them.
 jobs:
   # Decides which gates a change needs. A pull request is compared with its
   # base; a first-attempt push to `dev` with the head of the last successful
@@ -111,7 +98,7 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
@@ -125,8 +112,7 @@ jobs:
       - name: Free disk space
         # A hosted ubuntu runner has about 14 GB free on `/`, and a cold
         # all-targets/all-features build does not fit. The pre-installed
-        # toolchains are unused here. Skipped on the self-hosted machine, whose
-        # toolchains belong to its owner.
+        # toolchains are unused here.
         if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
@@ -142,8 +128,6 @@ jobs:
           # A later step failing (an advisory, a flaky test) must not throw away
           # the artifacts the earlier steps spent minutes compiling.
           cache-on-failure: true
-          # Keyed by runner OS: with CI_SELF_HOSTED this job runs on macOS, and a
-          # macOS cache restored on Linux (same branch) carries unusable artifacts.
           key: quality-${{ runner.os }}
           cache-all-crates: "true"
 
@@ -171,12 +155,6 @@ jobs:
       # cache incremental units, and the profiles this job builds
       # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
       # true, so with incremental on nothing is ever cached.
-      #
-      # Hosted runners only: the self-hosted runner is a persistent machine
-      # whose toolchains and caches belong to its owner, and a pull request
-      # from a fork must not install or start a cache there. This step is one
-      # of the quality gates, so it must keep reporting failures: no
-      # continue-on-error below.
       - name: Setup sccache
         if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -453,7 +431,7 @@ jobs:
     name: Release Automation
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -474,7 +452,7 @@ jobs:
     name: Build & Test (${{ matrix.os }})
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || matrix.runner }}
+    runs-on: ${{ matrix.runner }}
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
     # known-good commit were cancelled at the cap, each getting further through
@@ -497,15 +475,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Build & Test (ubuntu-latest) and Build & Test (macos-latest). The
-        # matrix is one `include` list rather than `os` plus `include`, because
-        # `include` re-adds any combination `exclude` removes; with
-        # CI_SELF_HOSTED only the macOS entry exists. A fork PR falls back to
-        # both GitHub-hosted entries for the same reason as `runs-on` above.
-        # `os` stays the label in the job name, which scripts/release/check_ci.py
-        # requires verbatim; `runner` is the pinned image the job runs on, so
-        # the ubuntu-latest migration notice does not attach to the run.
-        include: ${{ fromJSON(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '[{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]' || '[{"os":"ubuntu-latest","runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","runner":"macos-latest","target":"aarch64-apple-darwin"}]') }}
+        # Release verification requires the os labels in the job names.
+        include:
+          - os: ubuntu-latest
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            runner: macos-latest
+            target: aarch64-apple-darwin
 
     steps:
       # The Linux cleanup runs after checkout because it is the shared script in
@@ -519,14 +496,11 @@ jobs:
         # Hosted ubuntu starts with about 14 GB on `/`. One job holds the release
         # build, both test harnesses, and the e2e binaries in a single target
         # dir, so the pre-installed toolchains this job never uses are removed.
-        # A self-hosted runner is macOS, so this never touches it.
         if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
 
       - name: Free disk space (macOS)
-        # The macOS hosted image has the least free space of the three. Skip on
-        # the self-hosted machine: its caches and toolchains are its owner's.
         if: ${{ !cancelled() && runner.os == 'macOS' && runner.environment == 'github-hosted' }}
         shell: bash
         run: |
@@ -567,10 +541,6 @@ jobs:
       # units and both profiles this job builds ([profile.dev] and
       # [profile.release]) set incremental = true in Cargo.toml, so leaving
       # incremental on would mean zero cache hits.
-      #
-      # Hosted runners only. The self-hosted runner is a persistent machine
-      # whose caches belong to its owner, and a fork pull request must not
-      # install or start a cache on it.
       - name: Setup sccache
         if: runner.environment == 'github-hosted'
         uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -722,8 +692,7 @@ jobs:
         # XDG_RUNTIME_DIR, so a release binary that linked OpenSSL dynamically
         # (and could not load on a bare Debian server at all) passed every test
         # here. This runs the real binary in a Debian container with OpenSSL and
-        # the CA store removed. Linux only: with CI_SELF_HOSTED the matrix keeps
-        # just the macOS entry, and this guard is about the Linux artifact.
+        # the CA store removed.
         if: runner.os == 'Linux'
         shell: bash
         run: scripts/ci/check_linux_bare_runtime.sh target/${{ matrix.target }}/release/horon-agent
@@ -1718,7 +1687,7 @@ jobs:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 75
     steps:
       - name: Report free disk space
@@ -1997,7 +1966,7 @@ jobs:
     name: Format
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2021,7 +1990,7 @@ jobs:
     name: TypeScript SDK
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2138,7 +2107,7 @@ jobs:
     name: Setup Friction Eval (Linux installer)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2156,7 +2125,7 @@ jobs:
     name: PowerShell Syntax
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -2175,7 +2144,7 @@ jobs:
     name: Windows ARM64 Release Configuration
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     env:
       # `dtolnay/rust-toolchain` installs components into the `stable` toolchain
@@ -2233,7 +2202,7 @@ jobs:
     name: Windows Cross-Target Check (Linux)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' && !(vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) }}
+    if: ${{ needs.changes.outputs.code == 'true' }}
     timeout-minutes: 30
     env:
       # The two Windows targets are installed into `stable`; the same pin makes

@@ -74,11 +74,7 @@ jobs:
     name: Structural performance gate
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
-    # CI_SELF_HOSTED (repository variable) moves the gate to the self-hosted
-    # macOS runner, as in ci.yml. A pull request from a fork runs the workflow
-    # file it carries, so it must never reach that persistent machine; fork PRs
-    # fall back to the GitHub-hosted runner.
-    runs-on: ${{ vars.CI_SELF_HOSTED == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","macOS","ARM64","horon-agent"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
       # Some dependencies ship a `rust-toolchain.toml` inside their published
@@ -94,8 +90,7 @@ jobs:
         # The gate cold-compiles several `cargo test` binaries on a hosted ubuntu
         # runner with about 14 GB free. The shared script renames the unused
         # pre-installed toolchains and returns before the deletion, which
-        # continues in the background while the toolchain installs; skip on the
-        # self-hosted macOS machine, whose toolchains are its owner's.
+        # continues in the background while the toolchain installs.
         if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' }}
         shell: bash
         run: bash scripts/ci/free_disk_space.sh
