@@ -223,8 +223,9 @@ class ReleaseCITests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("name: Quality Guardrails", workflow)
         self.assertIn("name: Build & Test (${{ matrix.os }})", workflow)
-        self.assertIn('"os":"ubuntu-latest"', workflow)
-        self.assertIn('"os":"macos-latest"', workflow)
+        self.assertIn("runs-on: ${{ matrix.runner }}", workflow)
+        for label, runner in (("ubuntu-latest", "ubuntu-24.04"), ("macos-latest", "macos-latest")):
+            self.assertRegex(workflow, rf"(?m)^ +- os: {label}\n +runner: {runner}$")
         self.assertIn("name: Build & Test (windows-latest)", workflow)
         self.assertIn("name: Windows ARM64 Release Configuration", workflow)
 
