@@ -215,7 +215,7 @@ jobs:
         # empty, so anything untracked in this checkout labels the measured
         # candidate "dirty" in its own --version output. Two such paths appear
         # before the candidate build: `$RESULTS`, which the baseline step below
-        # creates, and the second checkout when a baseline ref was given.
+        # creates, and the second checkout when the job builds a baseline.
         # `.git/info/exclude` is local to this checkout, so no tracked file
         # changes.
         shell: bash
@@ -225,7 +225,7 @@ jobs:
             /*) ;; # an absolute results directory lives outside the checkout
             *) printf '/%s/\n' "$RESULTS" >> .git/info/exclude ;;
           esac
-          if [[ -n "${{ inputs.baseline_ref }}" ]]; then
+          if [[ -e "$BASELINE_DIR/.git" ]]; then
             printf '/%s/\n' "$BASELINE_DIR" >> .git/info/exclude
           fi
           git status --porcelain
