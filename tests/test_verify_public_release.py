@@ -149,14 +149,12 @@ class PublicReleaseTests(unittest.TestCase):
         self.assertIn('"$install_home/.local/bin/horon-agent" --version', smoke_step)
 
     def test_every_packaging_path_adds_the_license_and_the_workflow_checks_it(self):
-        # Four places build an archive, plus the reusable local scripts. Each
-        # has to add LICENSE, or the gate would only catch it after upload.
+        # The FreeBSD guest checks its own packaged LICENSE before upload.
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         for fragment in (
             "cp ../LICENSE LICENSE && tar czf",                       # build matrix
             'Copy-Item -LiteralPath LICENSE -Destination dist/LICENSE',  # Windows
             'tar -czf "dist/$($asset.Name).tar.gz" -C dist "$($asset.Name).exe" "LICENSE"',
-            "cp LICENSE dist/LICENSE",                                # FreeBSD
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, workflow)
