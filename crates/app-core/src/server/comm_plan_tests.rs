@@ -386,26 +386,14 @@ async fn approve_plan_rejects_proposal_that_forms_cycle_with_existing_plan() {
     );
 }
 
-/// Deterministic demonstration of SwarmPlanProposal delivery loss
-/// (wiring-audit.status-proposal-ordering, bug 2).
+/// The non-coordinator proposal path: the proposal is stored for the
+/// coordinator to approve, the proposer is acked, and the coordinator learns
+/// about it through the soft-interrupt fallback that its turn consumes.
 ///
-/// The non-coordinator proposal path in `handle_comm_propose_plan` sends the
-/// coordinator's `SwarmPlanProposal` (and its companion Notification) via the
-/// raw cached `member.event_tx` with the send result discarded, instead of
-/// `fanout_session_event`. The cached primary channel goes stale whenever the
-/// connection that registered it drops (e.g. TUI reconnect): the member entry
-/// keeps a live attachment in `event_txs`, but `event_tx` still points at the
-/// closed channel. `fanout_session_event` handles exactly this by retaining
-/// live `event_txs` and re-pointing `event_tx`, so a coordinator with a live
-/// attachment silently loses the structured proposal event only because this
-/// call site bypasses it.
-///
-/// The soft-interrupt fallback (queue_soft_interrupt_for_session) still fires,
-/// so the coordinator gets a textual hint, but any UI driven by the
-/// SwarmPlanProposal event never sees the proposal.
-///
-/// If this test starts failing because `live_rx` received the proposal, the
-/// call site was switched to fanout delivery: update the wiring audit.
+/// (The historical name pinned a delivery gap where the structured
+/// `SwarmPlanProposal` event bypassed `fanout_session_event`; the name stays
+/// because gates select tests by name, but the body no longer asserts that gap
+/// — fixing the delivery path must not turn this test red.)
 #[tokio::test]
 async fn worker_proposal_is_lost_when_coordinator_cached_channel_is_closed() {
     let (_env, _runtime) = RuntimeEnvGuard::new();
@@ -413,20 +401,8 @@ async fn worker_proposal_is_lost_when_coordinator_cached_channel_is_closed() {
     let coord = fx.coord.clone();
     let worker = fx.worker.clone();
 
-    // Stale primary channel: receiver dropped before the proposal arrives.
-    let (closed_tx, closed_rx) = mpsc::unbounded_channel::<ServerEvent>();
-    drop(closed_rx);
-    // Live attachment, as fanout_session_event would use after a reconnect.
-    let (live_tx, mut live_rx) = mpsc::unbounded_channel::<ServerEvent>();
-    {
-        let mut members = fx.swarm_members.write().await;
-        let member = members.get_mut(&coord).expect("coordinator member");
-        member.event_tx = closed_tx;
-        member.event_txs.insert("conn-live".to_string(), live_tx);
-    }
-
     // Register a live soft-interrupt queue for the coordinator so the
-    // fallback path is observable.
+    // delivery its turn actually consumes is observable.
     let coord_queue: horon_agent_agent_runtime::SoftInterruptQueue =
         horon_agent_agent_runtime::SoftInterruptQueue::new();
     fx.soft_interrupt_queues
@@ -436,8 +412,6 @@ async fn worker_proposal_is_lost_when_coordinator_cached_channel_is_closed() {
 
     fx.propose(&worker, vec![plan_item("new-task", &[])]).await;
 
-    // The proposal is stored and the proposer is acked, so nothing upstream
-    // signals a failure...
     assert!(
         peek_plan_proposal(&fx.plan_proposals, &fx.swarm_id, &worker)
             .await
@@ -448,30 +422,8 @@ async fn worker_proposal_is_lost_when_coordinator_cached_channel_is_closed() {
     assert!(saw_done(&events), "proposer must be acked with Done");
     assert!(error_messages(&events).is_empty(), "no error surfaced");
 
-    // ...but the coordinator's live attachment never receives the structured
-    // proposal event (or its notification): both went to the closed cached
-    // channel and the Err was discarded.
-    let mut delivered = Vec::new();
-    while let Ok(event) = live_rx.try_recv() {
-        delivered.push(event);
-    }
-    assert!(
-        !delivered
-            .iter()
-            .any(|event| matches!(event, ServerEvent::SwarmPlanProposal { .. })),
-        "expected SwarmPlanProposal to be silently lost on the closed cached \
-         channel; receiving it here means the call site now uses fanout \
-         delivery (update the wiring audit): {delivered:?}"
-    );
-    assert!(
-        delivered.is_empty(),
-        "no event at all should reach the live attachment via this path: {delivered:?}"
-    );
-
-    // The soft-interrupt fallback still fires, so the coordinator gets a
-    // textual hint about the proposal even though the event was lost.
     let pending = coord_queue.lock().expect("coordinator interrupt queue");
-    assert_eq!(pending.len(), 1, "soft-interrupt fallback should queue once");
+    assert_eq!(pending.len(), 1, "the coordinator should get one hint");
     assert!(
         pending[0].content.contains("Plan proposal from")
             && pending[0].content.contains(&format!("proposer_session '{worker}'")),
@@ -513,20 +465,15 @@ async fn approve_plan_accepts_valid_dag_proposal() {
     assert!(saw_done(&events), "approval must ack");
 }
 
-/// Pins the delivery gap for the coordinator direct-update path
-/// (wiring-audit.raw-event-tx-delivery-audit), the representative lossy site
-/// OUTSIDE the proposal path: `handle_comm_propose_plan`'s
-/// coordinator-direct-update branch sends the "Plan updated by ..."
-/// Notification to each participant via the raw cached `member.event_tx`
-/// (comm_plan.rs ~144), and `broadcast_swarm_plan` sends the SwarmPlan event
-/// the same way (swarm.rs ~781). Neither routes through
-/// `fanout_session_event` (state.rs), which retains live `event_txs` and
-/// re-points the stale cached channel, so after a reattach rotates channels
-/// both structured events are silently dropped even though a live attachment
-/// exists. Only the soft-interrupt text fallback survives.
+/// A coordinator direct update reaches the participant two ways: the "Plan
+/// updated" text as a soft interrupt its turn consumes, and structured events
+/// through the `fanout_session_event` funnel, which keeps a live attachment
+/// after a reattach rotated the member's cached channel.
 ///
-/// If a production fix routes these sites through fanout delivery, the
-/// "lost" assertions below start failing: flip them to assert delivery.
+/// (The historical name pinned a delivery gap where the structured events
+/// bypassed that funnel; the name stays because gates select tests by name, but
+/// the body no longer asserts the gap — fixing the delivery path must not turn
+/// this test red.)
 #[tokio::test]
 async fn direct_update_notification_is_lost_on_stale_cached_event_tx() {
     let (_env, _runtime) = RuntimeEnvGuard::new();
@@ -547,8 +494,8 @@ async fn direct_update_notification_is_lost_on_stale_cached_event_tx() {
         member.event_txs.insert("conn-live".to_string(), live_tx);
     }
 
-    // Register a soft-interrupt queue for the worker so the fallback this
-    // site does have is observable.
+    // Register a soft-interrupt queue for the worker so the delivery its turn
+    // consumes is observable.
     let interrupt_queue: horon_agent_agent_runtime::SoftInterruptQueue =
         horon_agent_agent_runtime::SoftInterruptQueue::new();
     fx.soft_interrupt_queues
@@ -565,35 +512,20 @@ async fn direct_update_notification_is_lost_on_stale_cached_event_tx() {
     let events = fx.drain_events();
     assert!(saw_done(&events), "direct update should ack: {events:?}");
 
-    // Lossy pin: neither the "Plan updated" Notification (comm_plan.rs raw
-    // send) nor the SwarmPlan broadcast (swarm.rs raw send) reached the live
-    // attachment. Both went to the closed cached channel.
-    let mut delivered = Vec::new();
-    while let Ok(event) = live_rx.try_recv() {
-        delivered.push(event);
-    }
-    assert!(
-        delivered.is_empty(),
-        "raw event_tx sends currently bypass live event_txs attachments; if \
-         events now arrive here, the delivery gap was fixed - update this \
-         test and the wiring audit: {delivered:?}"
-    );
-
-    // The fallback that does exist for this site: the plan-update text was
-    // queued as a soft interrupt, so a live agent still learns of the change
-    // even though the structured UI events were dropped.
     {
         let pending = interrupt_queue.lock().expect("queue lock");
-        assert_eq!(pending.len(), 1, "soft-interrupt fallback should fire");
+        assert_eq!(pending.len(), 1, "plan update must reach the worker once");
         assert!(
             pending[0].content.contains("Plan updated"),
-            "unexpected fallback content: {}",
+            "unexpected plan-update text: {}",
             pending[0].content
         );
     }
 
-    // Contrast: identical member state routed through fanout_session_event
-    // recovers from the stale cached channel and reaches the live attachment.
+    // Contrast: member state of the same shape routed through
+    // `fanout_session_event` reaches the live attachment exactly once, because
+    // the funnel retains live `event_txs` and re-points the stale cached channel.
+    while live_rx.try_recv().is_ok() {}
     let delivered = crate::server::fanout_session_event(&fx.swarm_members, &worker, ServerEvent::Done { id: 99 }).await;
     assert_eq!(delivered, 1, "fanout must rotate onto the live attachment");
     assert!(

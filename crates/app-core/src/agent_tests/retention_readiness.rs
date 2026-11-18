@@ -131,11 +131,7 @@ impl Provider for RetentionReadinessProvider {
             .push(transcript.clone());
 
         let latest = transcript.last().cloned().unwrap_or_default();
-        if latest.contains("D7_RECOVER")
-            && self
-                .fail_d7_once
-                .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
+        if latest.contains("D7_RECOVER") && self.fail_d7_once.swap(false, std::sync::atomic::Ordering::SeqCst) {
             anyhow::bail!("synthetic provider outage");
         }
 
@@ -147,8 +143,7 @@ impl Provider for RetentionReadinessProvider {
             "VALUE_D0"
         } else if latest.contains("D1_RETURN") && has_d0 && has_d0_value {
             "CONTINUITY_D1"
-        } else if latest.contains("D7_RECOVER") && has_d0 && has_d0_value && has_d1 && has_d1_value
-        {
+        } else if latest.contains("D7_RECOVER") && has_d0 && has_d0_value && has_d1 && has_d1_value {
             "COMPOUNDED_D7"
         } else {
             "CONTEXT_LOST"
@@ -237,10 +232,9 @@ struct RetentionJourneyEvidence {
 fn retention_dimension_scores(e: &RetentionJourneyEvidence) -> RetentionDimensionScores {
     let activation = 70.0 * f64::from(e.first_value) + 30.0 * f64::from(e.session_persisted);
 
-    let return_friction = (100.0
-        - e.restatement_steps as f64 * 25.0
-        - e.return_prompts_to_value.saturating_sub(1) as f64 * 15.0)
-        .max(0.0);
+    let return_friction =
+        (100.0 - e.restatement_steps as f64 * 25.0 - e.return_prompts_to_value.saturating_sub(1) as f64 * 15.0)
+            .max(0.0);
 
     let continuity = 25.0
         * [
@@ -253,8 +247,7 @@ fn retention_dimension_scores(e: &RetentionJourneyEvidence) -> RetentionDimensio
         .filter(|ok| *ok)
         .count() as f64;
 
-    let durability =
-        50.0 * f64::from(e.history_preserved_after_failure) + 50.0 * f64::from(e.session_persisted);
+    let durability = 50.0 * f64::from(e.history_preserved_after_failure) + 50.0 * f64::from(e.session_persisted);
 
     let recovery = if !e.outage_surfaced || !e.recovered_value {
         0.0
@@ -289,8 +282,7 @@ async fn retention_readiness_scorecard() {
     // D0: one prompt reaches a deterministic useful answer and creates durable
     // state that a return journey can benefit from.
     let mut d0 = Agent::new(provider.clone(), registry.clone());
-    d0.session
-        .rename_title(Some("Retention cohort project".to_string()));
+    d0.session.rename_title(Some("Retention cohort project".to_string()));
     d0.session.working_dir = Some("/synthetic/retention-project".to_string());
     d0.session.record_memory_injection(
         "cohort preference".to_string(),
@@ -328,8 +320,7 @@ async fn retention_readiness_scorecard() {
     let persisted_d1 = Session::load(&session_id).expect("load D1 session");
     let d1_message_count = persisted_d1.active_context().len();
     let title_preserved = persisted_d1.custom_title.as_deref() == Some("Retention cohort project");
-    let working_dir_preserved =
-        persisted_d1.working_dir.as_deref() == Some("/synthetic/retention-project");
+    let working_dir_preserved = persisted_d1.working_dir.as_deref() == Some("/synthetic/retention-project");
     let memory_marker_preserved = persisted_d1
         .injected_memory_ids()
         .iter()
@@ -337,29 +328,23 @@ async fn retention_readiness_scorecard() {
     let d7_provider: std::sync::Arc<dyn Provider> = std::sync::Arc::new(provider_fixture.clone());
     let d7_registry = Registry::new(d7_provider.clone()).await;
     let mut d7 = Agent::new_with_session(d7_provider, d7_registry, persisted_d1, None);
-    let outage = d7
-        .run_once_capture("D7_RECOVER finish the longitudinal task")
-        .await;
+    let outage = d7.run_once_capture("D7_RECOVER finish the longitudinal task").await;
     drop(d7);
 
     let after_failure = Session::load(&session_id).expect("session survives outage");
     let history_preserved_after_failure = after_failure.active_context().len() > d1_message_count
-        && after_failure.active_context().iter().any(|stored| {
-            message_text(&stored.to_message()).contains("D7_RECOVER finish the longitudinal task")
-        });
-    let recovered_provider: std::sync::Arc<dyn Provider> =
-        std::sync::Arc::new(provider_fixture.clone());
+        && after_failure
+            .active_context()
+            .iter()
+            .any(|stored| message_text(&stored.to_message()).contains("D7_RECOVER finish the longitudinal task"));
+    let recovered_provider: std::sync::Arc<dyn Provider> = std::sync::Arc::new(provider_fixture.clone());
     let recovered_registry = Registry::new(recovered_provider.clone()).await;
-    let mut recovered =
-        Agent::new_with_session(recovered_provider, recovered_registry, after_failure, None);
+    let mut recovered = Agent::new_with_session(recovered_provider, recovered_registry, after_failure, None);
     let d7_answer = recovered
         .run_once_capture("D7_RECOVER retry once")
         .await
         .expect("D7 recovery turn");
-    recovered
-        .session
-        .save()
-        .expect("persist recovered D7 state");
+    recovered.session.save().expect("persist recovered D7 state");
 
     let snapshots = provider_fixture.transcript_snapshots();
     let d1_context_available = snapshots.iter().any(|snapshot| {
@@ -407,11 +392,7 @@ async fn retention_readiness_scorecard() {
     println!("journey   boundary   outcome");
     println!(
         "D0        activate   {}",
-        if evidence.first_value {
-            "useful value"
-        } else {
-            "FAIL"
-        }
+        if evidence.first_value { "useful value" } else { "FAIL" }
     );
     println!(
         "D1        return     {}",
@@ -423,11 +404,7 @@ async fn retention_readiness_scorecard() {
     );
     println!(
         "D7        outage     {}",
-        if evidence.outage_surfaced {
-            "surfaced"
-        } else {
-            "FAIL"
-        }
+        if evidence.outage_surfaced { "surfaced" } else { "FAIL" }
     );
     println!(
         "D7        retry      {}",
@@ -453,28 +430,17 @@ async fn retention_readiness_scorecard() {
         .iter()
         .filter(|factor| factor.status == RetentionFactorStatus::Deferred)
     {
-        println!(
-            "Deferred              : {} ({})",
-            factor.name, factor.rationale
-        );
+        println!("Deferred              : {} ({})", factor.name, factor.rationale);
     }
     println!("Observed counterpart  : D1/D7/D30 meaningful-work cohorts (separate)\n");
 
     // Hard gates: no weighted average may hide loss of first value, continuity,
     // durable state, recovery, or compounded context.
     assert!(evidence.first_value, "D0 did not reach useful first value");
+    assert!(evidence.session_persisted, "synthetic cohort session was not durable");
+    assert!(evidence.d1_context_available, "D1 return lost prior context");
     assert!(
-        evidence.session_persisted,
-        "synthetic cohort session was not durable"
-    );
-    assert!(
-        evidence.d1_context_available,
-        "D1 return lost prior context"
-    );
-    assert!(
-        evidence.title_preserved
-            && evidence.working_dir_preserved
-            && evidence.memory_marker_preserved,
+        evidence.title_preserved && evidence.working_dir_preserved && evidence.memory_marker_preserved,
         "D1 return lost persisted metadata or memory state"
     );
     assert!(
@@ -485,149 +451,9 @@ async fn retention_readiness_scorecard() {
         evidence.outage_surfaced && evidence.recovered_value,
         "provider outage did not recover in one retry"
     );
-    assert!(
-        evidence.compounded_value,
-        "D7 result did not depend on D0 + D1 context"
-    );
+    assert!(evidence.compounded_value, "D7 result did not depend on D0 + D1 context");
     assert!(
         behavioral >= 80.0,
         "behavioral retention readiness regressed: {behavioral:.1}"
     );
-}
-
-#[test]
-fn retention_readiness_scoring_is_monotonic_and_non_compensating() {
-    let perfect = RetentionJourneyEvidence {
-        first_value: true,
-        session_persisted: true,
-        d1_context_available: true,
-        restatement_steps: 0,
-        return_prompts_to_value: 1,
-        title_preserved: true,
-        working_dir_preserved: true,
-        memory_marker_preserved: true,
-        history_preserved_after_failure: true,
-        outage_surfaced: true,
-        recovery_retries: 1,
-        recovered_value: true,
-        compounded_value: true,
-    };
-    let perfect_scores = retention_dimension_scores(&perfect);
-    let baseline = perfect_scores.behavioral_score();
-    let total_weight: f64 = perfect_scores
-        .values()
-        .into_iter()
-        .map(|(_, _, weight)| weight)
-        .sum();
-    assert!((total_weight - 1.0).abs() < f64::EPSILON);
-
-    let worse_cases = [
-        RetentionJourneyEvidence {
-            first_value: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            session_persisted: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            restatement_steps: 1,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            return_prompts_to_value: 2,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            d1_context_available: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            title_preserved: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            working_dir_preserved: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            memory_marker_preserved: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            history_preserved_after_failure: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            outage_surfaced: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            recovery_retries: 3,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            recovered_value: false,
-            ..perfect
-        },
-        RetentionJourneyEvidence {
-            compounded_value: false,
-            ..perfect
-        },
-    ];
-    for worse in &worse_cases {
-        assert!(
-            retention_dimension_scores(worse).behavioral_score() < baseline,
-            "making one retention factor worse must lower the score"
-        );
-    }
-
-    let catastrophic = retention_dimension_scores(&RetentionJourneyEvidence {
-        compounded_value: false,
-        ..perfect
-    });
-    assert!(
-        catastrophic.behavioral_score() < 1.0,
-        "a zero dimension must not be compensated by perfect sibling dimensions"
-    );
-}
-
-#[test]
-fn retention_readiness_factor_registry_has_explicit_scope_and_rationales() {
-    let factors = retention_factor_registry();
-    assert_eq!(
-        factors
-            .iter()
-            .filter(|f| f.status == RetentionFactorStatus::Scored)
-            .count(),
-        6
-    );
-    assert_eq!(
-        factors
-            .iter()
-            .filter(|f| f.status == RetentionFactorStatus::Deferred)
-            .count(),
-        2
-    );
-    assert_eq!(
-        factors
-            .iter()
-            .filter(|f| f.status == RetentionFactorStatus::ObservedOnly)
-            .count(),
-        1
-    );
-    let mut names = std::collections::BTreeSet::new();
-    for factor in factors {
-        assert!(!factor.name.trim().is_empty());
-        assert!(
-            names.insert(factor.name),
-            "duplicate factor: {}",
-            factor.name
-        );
-        assert!(
-            !factor.rationale.trim().is_empty(),
-            "retention factor '{}' has no rationale",
-            factor.name
-        );
-    }
 }

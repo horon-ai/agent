@@ -519,24 +519,38 @@ mod tests {
 
     #[test]
     fn test_wsl_penalty() {
-        let tier_no_wsl = compute_tier(Some(0.5), Some(4), Some(3000), Some(8000), false, false, "wezterm");
-        let tier_wsl = compute_tier(Some(0.5), Some(4), Some(3000), Some(8000), false, true, "wezterm");
-        assert!(tier_wsl as i32 >= tier_no_wsl as i32);
+        // One point of pressure (1.5 GiB free) leaves a native host in Full, so
+        // the WSL penalty is the only thing that can move the tier to Reduced.
+        let tier_no_wsl = compute_tier(Some(0.5), Some(4), Some(1500), Some(8000), false, false, "wezterm");
+        let tier_wsl = compute_tier(Some(0.5), Some(4), Some(1500), Some(8000), false, true, "wezterm");
+        assert_eq!(tier_no_wsl, PerformanceTier::Full);
+        assert_eq!(
+            tier_wsl,
+            PerformanceTier::Reduced,
+            "a WSL host must be rated one tier lower than the same native host"
+        );
     }
 
     #[test]
     fn test_windows_terminal_penalty() {
-        let tier_kitty = compute_tier(Some(0.7), Some(4), Some(2500), Some(8000), false, false, "kitty");
+        // Same one point of memory pressure, so the terminal is the only cause
+        // that can move the tier.
+        let tier_kitty = compute_tier(Some(0.7), Some(4), Some(1500), Some(8000), false, false, "kitty");
         let tier_wt = compute_tier(
             Some(0.7),
             Some(4),
-            Some(2500),
+            Some(1500),
             Some(8000),
             false,
             false,
             "windows-terminal",
         );
-        assert!(tier_wt as i32 >= tier_kitty as i32);
+        assert_eq!(tier_kitty, PerformanceTier::Full);
+        assert_eq!(
+            tier_wt,
+            PerformanceTier::Reduced,
+            "windows-terminal must be rated one tier lower than kitty on the same host"
+        );
     }
 
     #[test]

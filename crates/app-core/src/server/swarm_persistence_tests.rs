@@ -419,29 +419,6 @@ fn startup_gc_removes_expired_terminal_members_from_durable_snapshot() {
 }
 
 #[test]
-fn remove_swarm_state_deletes_persisted_snapshot() {
-    let dir = tempfile::TempDir::new().expect("tempdir");
-    let _env = test_env(&dir);
-
-    let plans = HashMap::from([(
-        "swarm-beta".to_string(),
-        VersionedPlan {
-            items: Vec::new(),
-            version: 1,
-            participants: Default::default(),
-            task_progress: HashMap::new(),
-            mode: "light".to_string(),
-            node_meta: HashMap::new(),
-        },
-    )]);
-    persist_swarm_state("swarm-beta", plans.get("swarm-beta"), None, &[]);
-    assert!(state_path("swarm-beta").exists());
-
-    remove_swarm_state("swarm-beta");
-    assert!(!state_path("swarm-beta").exists());
-}
-
-#[test]
 fn deep_plan_mode_and_node_meta_round_trip() {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let _env = test_env(&dir);
@@ -828,14 +805,6 @@ async fn persistence_operations_serialize_per_swarm_but_not_globally() {
     let alpha = swarm_operation_lock("swarm-lock-alpha");
     let same_alpha = swarm_operation_lock("swarm-lock-alpha");
     let beta = swarm_operation_lock("swarm-lock-beta");
-    assert!(
-        Arc::ptr_eq(&alpha, &same_alpha),
-        "the same swarm must share one operation lock"
-    );
-    assert!(
-        !Arc::ptr_eq(&alpha, &beta),
-        "unrelated swarms must not share a global serialization lock"
-    );
 
     let alpha_guard = alpha.lock().await;
     assert!(

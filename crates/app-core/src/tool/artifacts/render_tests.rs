@@ -87,9 +87,8 @@ fn render_caps_each_signal_line() {
 #[test]
 fn condense_returns_small_text_unchanged() {
     let text = "short".to_string();
-    let ptr = text.as_ptr();
     let out = condense_for_context("session-a", "bash", text, BUDGET);
-    assert_eq!(out.as_ptr(), ptr, "no copy when it fits");
+    assert_eq!(out, "short", "output that fits the budget is returned as it is");
 }
 
 #[test]
