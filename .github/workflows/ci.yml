@@ -221,7 +221,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_record_charts.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -2545,6 +2545,14 @@ jobs:
       - name: Documentation benchmark block contract
         if: ${{ !cancelled() }}
         run: python3 -m unittest -v scripts/perf/test_bench_docs.py
+
+      # The record charts above the generated block are committed files, so
+      # nothing else would notice a table edit that left its chart behind.
+      - name: Documentation record charts
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m unittest -v scripts/perf/test_record_charts.py
+          python3 scripts/perf/record_charts.py --check
 
   # `docs/` and README.md are compiled into the binary (crates/app-core/build.rs)
   # and the `horon_agent_docs` tests read them, so a documentation-only change

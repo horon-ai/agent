@@ -10,6 +10,21 @@ This document records the measurements the `agent-runtime-performance-2` plan le
 
 All raw artifacts live under `.omo/evidence/agent-runtime-performance-2/`, a path ignored by `.gitignore:19`. The plan asked for the key numbers to be copied into the PR bodies, but in practice most PR bodies were one line. So anyone who clones this repository today cannot see a single measurement from this work. This page moves that record somewhere tracked; every number is copied verbatim from the evidence files above.
 
+## At a glance
+
+The charts are the reading; every exact number sits in the table of the section it belongs to, folded under a summary line so the tables never stand between the charts.
+
+![Session store: one request, before and after the plan](/images/reference/performance/charts/record-01-session-store.svg)
+
+![fsync calls per one-shot prompt on the GitHub Linux runner](/images/reference/performance/charts/record-05-fsync-trend.svg)
+
+- One history page from a 100k-event session reads 18,554 B instead of 62,169,922 B and takes 5.9 ms instead of 26.2 s; a 200 MiB source hash peaks at 65,600 B instead of 268,435,520 B. Time and read bytes are the same as before.
+- fsync calls per one-shot prompt on the GitHub Linux runner fell from 40 cold and 35 warm to 15 and 14 across the plans below. jcode stays at 5, because it does not commit conversation records; that gap is structural, not a tuning target.
+- On macOS, one-shot went from 872.4 ms to 290.4 ms and start→first request from 236.4 ms to 78.7 ms, measured by alternating both builds on one machine. jcode's one-shot on the same runs was 294.8 ms.
+- Linux one-shot went from 207.9 ms to 168.0 ms, still behind jcode's 146.3 ms. The gap on Windows is larger and is not claimed as closed.
+- Memory per added session after the `jcode-parity-optimization` plan is 149.6 KB on Linux against jcode's 57.4 KB, down from 254.7 KB.
+- No wall-clock improvement was established for the loading plan, and its A/A control says why: two runs of the same binary differ by more than any effect the plan could claim.
+
 ## Charts: latest automatic measurement
 
 
@@ -42,6 +57,9 @@ The interactive client is a second binary; these charts are drawn from the `tui`
 
 Dimension labels follow this rule. `MEMORY` is allocation and memory, `TIME` is wall-clock time, `WORK` is iteration counts and byte volumes, and `RESOURCES` is file descriptor, thread and task counts. Dimensions are listed separately so that an improvement in one is not read as an improvement in another.
 
+<details>
+<summary>Exact numbers</summary>
+
 | Change | Dimension | Before | After |
 | --- | --- | --- | --- |
 | Streaming source hash, peak allocation (200 MiB log) | `MEMORY` | 268,435,520 B | 65,600 B (4,092×) |
@@ -57,6 +75,8 @@ Dimension labels follow this rule. `MEMORY` is allocation and memory, `TIME` is 
 | Cache facade, wall clock | `TIME` (no improvement) | about 19 ms per MiB | about 19 ms per MiB |
 | Attach/detach soak, resources after 200 cycles | `RESOURCES` | fd 14, threads 25, tasks 2,141 | fd 14, threads 22, tasks 2,141 |
 
+</details>
+
 A few points are easy to misread from the table alone, so they are set out here.
 
 - The source hash digest is the same as before on all five fixtures (61 KB, 618 KB, 6.2 MB, 62 MB, 200 MiB). The only thing that changed is peak allocation; the bytes read and the time taken are unchanged.
@@ -69,11 +89,18 @@ A few points are easy to misread from the table alone, so they are set out here.
 
 With an index in place, fetching a 20-item page grew bytes read by only 0.5% when the log grew 100×. Replayed messages are 0 at all three sizes.
 
+![One history page costs the same as the log grows 100×](/images/reference/performance/charts/record-02-page-cost.svg)
+
+<details>
+<summary>Exact numbers</summary>
+
 | Events | Log size | Bytes the page read | Wall clock |
 | --- | --- | --- | --- |
 | 1,000 | 514,853 B | 15,375 B | 4.28 ms |
 | 10,000 | 5,168,853 B | 15,415 B | 4.68 ms |
 | 100,000 | 51,888,853 B | 15,455 B | 4.80 ms |
+
+</details>
 
 The log sizes in this table come from sessions the growth test builds itself, so they differ from the 100k-event fixture in the previous table (62,155,848 B). It is not the same measurement.
 
@@ -310,11 +337,18 @@ The control run, with the same candidate binary on both sides, ended as `control
 
 `cargo run --locked --release -p horon-agent-irc-core --example irc_throughput` was run 3 times. The message count is the default 100,000 and `broadcast64` rounds down to a multiple of 64, giving 99,968.
 
+![IRC bus throughput inside one process](/images/reference/performance/charts/record-03-irc-throughput.svg)
+
+<details>
+<summary>Exact numbers</summary>
+
 | Scenario | Run 1 | Run 2 | Run 3 | Median | Range |
 | --- | --- | --- | --- | --- | --- |
 | `direct_waiter` (msg/s) | 105,291 | 107,434 | 111,523 | 107,434 | 105,291 ~ 111,523 |
 | `direct_deliver` (msg/s) | 2,410,858 | 2,229,008 | 2,392,230 | 2,392,230 | 2,229,008 ~ 2,410,858 |
 | `broadcast64` (msg/s) | 3,237,934 | 3,141,178 | 3,141,375 | 3,141,375 | 3,141,178 ~ 3,237,934 |
+
+</details>
 
 `direct_waiter` uses 64 receiver task pairs (`WAITER_PAIRS = 64`) waiting in `wait` at the same time. From the second round on, each receiver task sends one message to its peer that creates a reply obligation and then enters `wait`, and the driver confirms all 64 waiters are registered before sending one message per live pair. Round trips within a pair are ordered, but the 64 pairs run concurrently. `direct_deliver` is a fake delivery path that returns the injection immediately, and `broadcast64` is the path that sends one body to 64 recipients.
 
@@ -372,6 +406,11 @@ Every line within one measurement talks to the same mock model server, so no API
 
 one-shot is the median of a single `run` question (startup, one `ls` tool round trip, final response). start→first request runs from connecting to the api-bridge socket to the first `list_sessions` response. fsync is the number of fsync and fdatasync calls a single one-shot makes. Memory is the idle RSS of the daemon process tree.
 
+![Start path on macOS and Linux: before and after](/images/reference/performance/charts/record-04-platform-time.svg)
+
+<details>
+<summary>Exact numbers</summary>
+
 | Metric | Environment | B0 `738712a` | Candidate `215bfdb` | Change | jcode | Candidate / jcode |
 | --- | --- | --- | --- | --- | --- | --- |
 | one-shot median | macOS | 872.4 ms | 290.4 ms | -66.7% | 294.8 ms | 0.99× |
@@ -389,6 +428,8 @@ one-shot is the median of a single `run` question (startup, one `ls` tool round 
 | First-session idle RSS | GitHub runner | cannot measure | 39.9 MiB | cannot measure | 43.0 MiB | 0.93× |
 | Increment per session | GitHub runner | cannot measure | 319 KiB | cannot measure | 38 KiB | 8.3× |
 
+</details>
+
 The candidate column in this table was measured with the `215bfdb` binary. Of the changes that later landed on the branch, only one touched the start path, the deferred HTTP client (`b6dcfc0`); the time and memory re-measurements are in the "Memory" section below. The 11 fixes from the F2 quality review also left these numbers unchanged, and re-measuring with the same runner gives Linux fsync cold 40 · warm 35 again ("fsync" in `F2-review.md`).
 
 The decision to hold fsync at 40 or below uses the values from the `bench_compare.py --syscalls` runner (cold 40 · warm 35). todo 6's own driver used a different HOME and prompt shape and measured cold 45 · warm 40 on the same candidate binary, and in that run only warm meets the 40 bound ("result against the plan" in `6-linux-fsync.txt`).
@@ -400,6 +441,9 @@ Absolute values on hosted runners differ per machine and mean nothing, so the Gi
 `scripts/perf/ab_perf.py` runs the two binaries alternately in blocks and reports the noise band `max(3*1.4826*MAD, 1% of the median)` alongside. Only differences outside the band are called an improvement or a regression.
 
 One row is one path. one-shot, start→first request and the session paths go through a small probe that does the setup for them (scratch HOME, mock model address, daemon start), so the absolute values here are larger than in the environment table above by the probe's own startup. Both sides use the same probe, so the direction of the comparison is unchanged.
+
+<details>
+<summary>Exact numbers</summary>
 
 | Path | Environment | B0 | Candidate | Difference | Noise band | Verdict |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -415,6 +459,8 @@ One row is one path. one-shot, start→first request and the session paths go th
 | One session path | Linux | 14882 ms | 14836 ms | -0.3% | ±148.82 ms | inside the band |
 | Two session paths | Linux | 14936 ms | 14858 ms | -0.5% | ±149.36 ms | inside the band |
 
+</details>
+
 Tool latency and startup steps were checked separately on the same machine. Alternating the 14 cases in `bench_tools.py` three times each gives median differences between -15.7% and +5.4%, and the cases that grew are `ls` (+5.4%), `agentgrep` (+1.1%) and `read (repo Cargo.toml)` (+0.9%). For `ls`, B0's three runs are 2.21 / 2.46 / 3.57 ms and the candidate's are 2.58 / 2.59 / 2.64 ms, which falls inside B0's own run-to-run spread. `bench_startup.py` gives a server-ready median of 10.8–10.9 ms (B0) and 11.0 ms (candidate), and a total bridge time of 18.1–18.6 ms and 17.9–18.6 ms, which overlap. The 20–40% spread across tool cases unrelated to the change in the GitHub candidate run is a runner instance difference and does not reproduce on the same machine.
 
 macOS dropped sharply because the two costs this plan targeted existed only on macOS. The path that took `F_FULLFSYNC` on every save, derived caches included, now syncs the source only, and the path that read a keychain certificate per reqwest client became one construction per process. As a control, `--version` load and `perf_counters_surface` are inside the band in both environments. Neither path touches storage or TLS, so they are exactly where a regression in shared code would have shown up first.
@@ -422,6 +468,9 @@ macOS dropped sharply because the two costs this plan targeted existed only on m
 ### Memory: the first Linux daemon RSS numbers, and what re-measuring showed
 
 The time paths got slower nowhere. Memory was first recorded as an increase in Linux daemon RSS (`rss`), and only later was it established that the measurement method itself cannot compare two builds. The first numbers come first, then the re-measurement and the fix below them.
+
+<details>
+<summary>Exact numbers</summary>
 
 | Measurement | Environment | B0 | Candidate | Difference |
 | --- | --- | --- | --- | --- |
@@ -431,6 +480,8 @@ The time paths got slower nowhere. Memory was first recorded as an increase in L
 | Daemon idle, 1 session | Linux | 31.74 MiB | 32.75 MiB | +1.01 MiB (+3.2%) |
 | one-shot peak RSS (8 runs) | Linux | 32.46 MiB | 32.87 MiB | +0.41 MiB (+1.3%, ranges overlap) |
 | Same-binary control (A/A) | Linux | 27.83 MiB | 27.87 MiB | +0.03 MiB (+0.1%) |
+
+</details>
 
 The Linux difference is in the executable's resident pages, not the heap. Summing `/proc/<pid>/smaps` by mapping type for the 1-session state gives the following.
 
@@ -527,6 +578,11 @@ The calls that went away are log-line fdatasyncs. That a 3-message batch save's 
 
 This plan skips the price-list read and the second config parse on default runs (`76a510fd`), replaces the per-session store thread with a shared writer pool of at most 4 (`c75dd149`), commits the dirty marker with a single directory fsync (`af13232d`), and drops the derived cache of sessions idle for more than 30 minutes (`1266059d`). Performance is measured only on GitHub Actions. The `benchmark.yml` `baseline_ref` input measured the `main` baseline (`b62a79c9`) and the candidate **inside one job, on the same runner, against the same mock model server, alternating**, so before/after below is a same-machine A/B. The runs are 42388003895 from 2026-11-08 (linux and macos, sessions 1·10·100, 3 turns, one-shot 3 samples) and 42389421614 (macos, one-shot 20 samples).
 
+![Per-session cost after the jcode-parity plan](/images/reference/performance/charts/record-06-per-session-memory.svg)
+
+<details>
+<summary>Exact numbers</summary>
+
 | Metric | Environment | Before `b62a79c9` | After | jcode v0.99.1 |
 | --- | --- | --- | --- | --- |
 | Memory slope per added session | GitHub Linux runner | 254.7 KB | 149.6 KB | 57.4 KB |
@@ -539,6 +595,8 @@ This plan skips the price-list read and the second config parse on default runs 
 | one-shot fsync and fdatasync calls (warm, last sample) | GitHub Linux runner | 27 | 22 | 5 |
 | one-shot time median (3 samples) | GitHub Linux runner | 367.0 ms | 363.9 ms | 288.7 ms |
 | one-shot time median (20 samples) | GitHub macOS runner | 219.3 ms | 215.8 ms | 312.9 ms |
+
+</details>
 
 Fds per session are 1.00 before and after in both environments.
 
@@ -575,6 +633,11 @@ The `skill_bytes_read` values for the 0-body condition (23,490 / 117,890) are th
 
 ### Time (p50, p95 in parentheses, ms)
 
+![Skill and MCP loading: baseline and candidate in one job](/images/reference/performance/charts/record-07-skill-mcp.svg)
+
+<details>
+<summary>Exact numbers</summary>
+
 | Step | Condition | Baseline | Candidate |
 | --- | --- | --- | --- |
 | `skill_request_overlay` | 200 skills, 8 KiB body | 28.30 (29.09) | 4.79 (4.96) |
@@ -583,6 +646,8 @@ The `skill_bytes_read` values for the 0-body condition (23,490 / 117,890) are th
 | `skill_catalog` | 1000 skills, 8 KiB body | 21.88 (22.64) | 15.00 (15.32) |
 | `skill_catalog` | 1000 skills, 0 body | 15.71 (15.98) | 14.82 (15.28) |
 | `mcp_config_load` | 300 KB MCP | 3.46 (3.71) | 0.22 (0.26) |
+
+</details>
 
 The candidate medians for all 14 cases in `bench_tools.py` equal or beat the baseline (5 samples each, same job).
 
@@ -599,7 +664,10 @@ The candidate medians for all 14 cases in `bench_tools.py` equal or beat the bas
 
 ## Fewer fsyncs and the structural difference from jcode (#47)
 
-Three changes landed. A session that has never made an explicit choice no longer writes `false` to `local-head-explicit.json` (A), and the session writer no longer re-flushes the parent of the already existing `sessions/` root on every open (B). The durable runtime journal, in the other direction, now commits a newly created folder's entry to its parent (C). Before C, `runtime.jsonl` could vanish along with its folder after a power loss even though it had already returned `Ok`. The contract is in [`../protocol/SESSION_STORE.md`](/reference/protocol/session-store). The measurement is `benchmark.yml` run 42531992327 on 2026-11-09, with baseline `dev` (`c3e3ceeb`) and candidate (`d9d2c836`) alternating within one job on the same runner. one-shot has 5 samples.
+Three changes landed. A session that has never made an explicit choice no longer writes `false` to `local-head-explicit.json` (A), and the session writer no longer re-flushes the parent of the already existing `sessions/` root on every open (B). The durable runtime journal, in the other direction, now commits a newly created folder's entry to its parent (C). Before C, `runtime.jsonl` could vanish along with its folder after a power loss even though it had already returned `Ok`. The contract is in [`../protocol/SESSION_STORE.md`](/reference/protocol/session-store). The measurement is `benchmark.yml` run 42531992327 on 2026-11-09, with baseline `dev` (`c3e3ceeb`) and candidate (`d9d2c836`) alternating within one job on the same runner. one-shot has 5 samples. The fsync counts across plans are the second chart under "At a glance".
+
+<details>
+<summary>Exact numbers</summary>
 
 | Metric | Environment | Before `c3e3ceeb` | After `d9d2c836` | jcode v0.99.1 |
 | --- | --- | --- | --- | --- |
@@ -612,6 +680,8 @@ Three changes landed. A session that has never made an explicit choice no longer
 | MCP call time median (min–max) | GitHub Windows runner | 287.5 ms (276.9–302.2) | 299.3 ms (277.5–350.7) | 317.8 ms |
 | Memory per added session, after a turn | GitHub Linux runner | 516.7 KB | 404.2 KB | 218.0 KB |
 | Memory per added session, after a turn | GitHub Windows runner | 378.5 KB | 353.8 KB | 324.9 KB |
+
+</details>
 
 Every before/after difference in the time cells is inside its min–max range, so it is read as a tie. This change never adds a flush to the time path; it only removes them (C's flush happens only when the journal folder is first created and is not paid per append).
 
@@ -675,6 +745,11 @@ This plan measured the request bytes and prompt surface a turn pays for, cut the
 
 ### Prompt surface and session context
 
+![What one turn sends before the model is called](/images/reference/performance/charts/record-08-prompt-surface.svg)
+
+<details>
+<summary>Exact numbers</summary>
+
 | Surface | Before | After |
 | --- | --- | --- |
 | Eager core tool catalog (8 schemas) | 9,714 B | 9,151 B |
@@ -685,9 +760,16 @@ This plan measured the request bytes and prompt surface a turn pays for, cut the
 | Session-context `git` processes, outside a repository / in a work tree | 1 / 3 | 0 / 1 |
 | GPU probe processes without a PCI display controller | 1 | 0 |
 
+</details>
+
 PR #332 set the tool catalog ceiling to 9,151 B. Shortening the shared `intent` description in `1dfdd06a` brought the eight schemas to 8,975 B, the current ceiling. The static prompt measured 1,322 B and nine unchanged requests made zero prompt-source reads. On the same Linux runner, the first request's `tools` field fell from 9,255 B at `83da1c39` to 9,079 B. This puts the catalog 25 B below the 9,000 B target and the first request 739 B below the original 9,818 B. [Structural measurements](https://github.com/horon-ai/agent/actions/runs/44190404248/job/134418534689) · [First requests sent to the mock server](https://github.com/horon-ai/agent/actions/runs/44190400494/artifacts/14378517143)
 
 ### Time and memory (median ms, min–max in parentheses)
+
+![One-shot, core, skill and MCP time by OS, before and after](/images/reference/performance/charts/record-09-prompt-time.svg)
+
+<details>
+<summary>Exact numbers</summary>
 
 | OS | Scenario | `horon-base` (dev) | Candidate |
 | --- | --- | --- | --- |
@@ -703,6 +785,8 @@ PR #332 set the tool catalog ceiling to 9,151 B. Shortening the shared `intent` 
 | Windows | core one-shot | 200.21 (171.71–436.16) | 179.55 (149.18–427.49) |
 | Windows | skill call | 176.06 (158.48–180.42) | 145.75 (139.41–231.53) |
 | Windows | MCP tool call | 302.51 (201.68–494.52) | 268.93 (172.28–412.46) |
+
+</details>
 
 - One-shot peak RSS: Linux 46.6 → 39.4 MB, macOS 31.6 → 24.0 MB, Windows 33.9 → 33.6 MB. One-shot fsync calls stay at 10 on Linux for both sides.
 - The Linux run 43670649131 agrees: one-shot 48.69 → 34.59 ms, skill call 43.12 → 30.72 ms, MCP tool call 78.07 → 49.12 ms, peak RSS 40.0 → 38.3 MB, fsync 10 and 10.

@@ -40,6 +40,14 @@ class EscapeTests(unittest.TestCase):
     def test_table_cell_pipe_inside_code_is_escaped(self) -> None:
         self.assertEqual(convert('| `a "x"|"y"` | b |'), '| `a "x"\\|"y"` | b |')
 
+    def test_details_and_summary_tags_are_left_for_mdx(self) -> None:
+        for line in ("<details>", "</details>", "<summary>Exact numbers</summary>",
+                     "<summary>정확한 수치</summary>"):
+            with self.subTest(line=line):
+                self.assertEqual(convert(line), line)
+        # A tag that is not one of these still has to be escaped.
+        self.assertEqual(convert("<detail>"), r"\<detail>")
+
 
 class LinkTests(unittest.TestCase):
     def test_link_to_another_doc_becomes_a_site_route(self) -> None:
