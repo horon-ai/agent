@@ -8,47 +8,29 @@ param(
     [string[]]$CargoArgs,
 
     [ValidateRange(1, 86400)]
-    [int]$TimeoutSeconds = 300
+    [int]$TimeoutSeconds = 300,
+
+    # A cargo run whose stdout is a report to be read back (`--message-format=json`)
+    # asks for the file here: `Start-Process` writes it directly, and a
+    # PowerShell pipeline cannot capture a child process's console output.
+    [ValidateNotNullOrEmpty()]
+    [string]$StandardOutput
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Stop-ProcessTree {
-    param(
-        [Parameter(Mandatory=$true)]
-        [System.Diagnostics.Process]$Process
-    )
-
-    if ($Process.HasExited) {
-        return
-    }
-
-    $taskkill = Get-Command taskkill.exe -ErrorAction SilentlyContinue
-    if ($taskkill) {
-        & $taskkill.Source /PID $Process.Id /T /F | ForEach-Object { Write-Host $_ }
-        return
-    }
-
-    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+# The runner is generic so a step can apply the same timeout and failure
+# reporting to a compiled test executable it starts itself (#413).
+$runner = Join-Path $PSScriptRoot 'run_with_timeout.ps1'
+$runnerArgs = @{
+    Name           = $Name
+    FilePath       = 'cargo'
+    Arguments      = $CargoArgs
+    TimeoutSeconds = $TimeoutSeconds
+}
+if ($StandardOutput) {
+    $runnerArgs.StandardOutput = $StandardOutput
 }
 
-$timeoutMilliseconds = $TimeoutSeconds * 1000
-
-Write-Host "::group::$Name"
-try {
-    Write-Host "cargo $($CargoArgs -join ' ')"
-    $process = Start-Process -FilePath 'cargo' -ArgumentList $CargoArgs -NoNewWindow -PassThru
-
-    if (-not $process.WaitForExit($timeoutMilliseconds)) {
-        Stop-ProcessTree -Process $process
-        throw "$Name timed out after $TimeoutSeconds seconds"
-    }
-
-    $exitCode = $process.ExitCode
-    if ($exitCode -ne 0) {
-        throw "$Name failed with exit code $exitCode"
-    }
-} finally {
-    Write-Host '::endgroup::'
-}
+& $runner @runnerArgs

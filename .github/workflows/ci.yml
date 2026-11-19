@@ -1954,13 +1954,49 @@ jobs:
             -TimeoutSeconds 600 `
             -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-tui', '--lib')
 
+      - name: Prepare targeted Windows validation tests
+        shell: pwsh
+        # One cargo invocation builds all four group executables. Asking cargo
+        # per group re-unified features over that group's package alone, so
+        # every group recompiled the workspace crates and the step spent
+        # minutes building for seconds of tests (#413; the Unix jobs took the
+        # same path in #19). The second cargo call only reports where those
+        # executables landed: the build above is up to date, so it compiles
+        # nothing, and the human diagnostics stay in the first call where a
+        # failure is read.
+        run: |
+          & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'compile targeted Windows validation tests' `
+            -TimeoutSeconds 1800 `
+            -CargoArgs @(
+              'test', '--locked', '--target', 'x86_64-pc-windows-msvc',
+              '-p', 'horon-agent-platform-windows', '-p', 'horon-agent-base',
+              '-p', 'horon-agent-app-core', '-p', 'horon-agent-irc-core',
+              '--lib', '--no-run'
+            )
+          $artifacts = Join-Path $env:RUNNER_TEMP 'targeted-validation-artifacts.jsonl'
+          "TARGETED_VALIDATION_ARTIFACTS=$artifacts" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'locate targeted Windows validation executables' `
+            -TimeoutSeconds 300 `
+            -StandardOutput $artifacts `
+            -CargoArgs @(
+              'test', '--locked', '--target', 'x86_64-pc-windows-msvc',
+              '-p', 'horon-agent-platform-windows', '-p', 'horon-agent-base',
+              '-p', 'horon-agent-app-core', '-p', 'horon-agent-irc-core',
+              '--lib', '--no-run', '--message-format=json-render-diagnostics'
+            )
+
       - name: Run targeted Windows validation tests
         shell: pwsh
         run: |
           # Each test lives in a specific crate, so every group names its
           # package. A filter that matches nothing makes libtest report
-          # "0 passed" and exit 0, so each name is checked against the crate's
-          # test list before the run and a missing name fails the step.
+          # "0 passed" and exit 0, so each name is checked against the
+          # executable's own test list before the run and a missing name fails
+          # the step. The executables are the ones the prepare step built;
+          # starting them directly is what skips cargo's per-package feature
+          # re-unification (#413).
           $groups = [ordered]@{
             'horon-agent-platform-windows' = @(
               'is_process_running_reports_exited_children_as_stopped',
@@ -1991,9 +2027,55 @@ jobs:
             )
           }
 
+          # Read the prepare step's artifact report. Each selected package
+          # contributes exactly one test-profile lib executable; two would mean
+          # the report is ambiguous and the run could start the wrong binary.
+          $executables = @{}
+          Get-Content -LiteralPath $env:TARGETED_VALIDATION_ARTIFACTS | ForEach-Object {
+            if ([string]::IsNullOrWhiteSpace($_)) { return }
+            $message = $_ | ConvertFrom-Json
+            if ($message.reason -ne 'compiler-artifact') { return }
+            if (-not ($message.target.kind -contains 'lib')) { return }
+            if (-not $message.profile.test) { return }
+            if (-not $message.executable) { return }
+
+            $packageId = [string]$message.package_id
+            if ($packageId.Contains('#')) {
+              $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
+              $at = $fragment.IndexOf('@')
+              if ($at -ge 0) {
+                $package = $fragment.Substring(0, $at)
+                $version = $fragment.Substring($at + 1)
+              } else {
+                $package = $fragment
+                $version = '0.0.0'
+              }
+            } else {
+              $fields = $packageId.Split(' ')
+              $package = $fields[0]
+              $version = if ($fields.Count -ge 2) { $fields[1] } else { '0.0.0' }
+            }
+
+            if ($executables.ContainsKey($package)) {
+              throw "cargo reported two lib test executables for $package"
+            }
+            $executables[$package] = [pscustomobject]@{
+              Executable = [string]$message.executable
+              Directory  = Split-Path -Parent ([string]$message.manifest_path)
+              Version    = $version
+            }
+          }
+
+          $cargoPath = (Get-Command cargo -ErrorAction Stop).Source
+
           foreach ($package in $groups.Keys) {
             $names = $groups[$package]
-            $listed = & cargo test --locked --target x86_64-pc-windows-msvc -p $package --lib -- --list 2>&1 | ForEach-Object { "$_" }
+            if (-not $executables.ContainsKey($package)) {
+              throw "the prepared artifacts hold no lib test executable for $package"
+            }
+            $entry = $executables[$package]
+
+            $listed = & $entry.Executable --list 2>&1 | ForEach-Object { "$_" }
             if ($LASTEXITCODE -ne 0) {
               $listed | ForEach-Object { Write-Host $_ }
               throw "listing tests of $package failed with exit code $LASTEXITCODE"
@@ -2004,10 +2086,19 @@ jobs:
               }
             }
 
-            & ./scripts/ci/cargo_with_timeout.ps1 `
+            # Cargo runs a lib test executable with the package root as the
+            # working directory and these variables set; starting the
+            # executable directly has to reproduce both.
+            $env:CARGO_MANIFEST_DIR = $entry.Directory
+            $env:CARGO_PKG_NAME = $package
+            $env:CARGO_PKG_VERSION = $entry.Version
+            $env:CARGO = $cargoPath
+            & ./scripts/ci/run_with_timeout.ps1 `
               -Name "Windows targeted tests: $package" `
               -TimeoutSeconds 600 `
-              -CargoArgs (@('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', $package, '--lib', '--') + $names + @('--nocapture'))
+              -FilePath $entry.Executable `
+              -WorkingDirectory $entry.Directory `
+              -Arguments (@($names) + @('--nocapture'))
           }
 
       - name: Run Windows power tests
