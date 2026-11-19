@@ -418,7 +418,11 @@ class WindowsTerminal:
             time.sleep(0.05)
         with self._lock:
             text = self.transcript
-        raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{text}")
+        # An empty transcript has two very different causes: a client that is
+        # still starting (it has drawn nothing yet) and one that died before its
+        # first write. The console cannot tell them apart, the process can.
+        state = "still running" if self.process.isalive() else f"exited {self.process.exitstatus!r}"
+        raise Failure(f"{what}: never saw {needle!r} (client {state})\n--- transcript ---\n{text}")
 
     def send(self, keys: str) -> None:
         try:
