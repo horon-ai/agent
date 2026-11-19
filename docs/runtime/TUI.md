@@ -415,6 +415,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 ## Known limits
 
 - FreeBSD ships `horon-agent` only, so the client is not installed there and bare `horon` reports the missing sibling.
+- Windows has no PTY smoke test. Driving the client there needs a ConPTY that outlives the launcher, which hands the console up when it exits, and a client that reaches the harness; until both work the Windows client is covered by its library tests and the launcher tests only.
 - On Linux and macOS the handoff is one process replacing another, so a client that exits takes the terminal command with it and the exit code is the client's. On Windows the launcher starts the client and exits with code 0 at once, so its exit code says nothing about the client.
 - `SIGTERM`, `SIGHUP` and `SIGQUIT` restore the terminal through the same path as `/quit` — mouse capture and bracketed paste off, the shell's title back — and then re-raise, so a wrapper still sees the client die by the signal (143 for `SIGTERM`). `SIGKILL` cannot be caught: a client killed that way leaves both modes on. Windows installs no handler, because its console is torn down with the process.
 - A theme JSON file edited on disk is re-read by the theme loader on its one-second check, but the screen is not redrawn for it: an idle client keeps the picture it has until the next key, event or settings reload.
