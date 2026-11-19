@@ -19,6 +19,7 @@
 
 pub mod allocator;
 pub mod background_progress;
+mod bridge;
 mod degradation_receipts;
 mod message_content;
 mod message_modes;
@@ -28,6 +29,8 @@ mod tool_args_repaired;
 pub mod translate;
 mod writer;
 
+#[cfg(test)]
+mod bridge_lifecycle_tests;
 #[cfg(test)]
 mod capability_contract_tests;
 #[cfg(test)]
@@ -41,6 +44,10 @@ mod stdio_tests;
 #[cfg(test)]
 mod writer_tests;
 
+pub use bridge::run_bridge;
+#[cfg(test)]
+pub(crate) use bridge::{run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock};
+
 use anyhow::{Context, Result};
 use horon_agent_harness_api::{API_VERSION_MAJOR, ApiEvent, ErrorCode, ServerFrame};
 use serde_json::Value;
@@ -49,7 +56,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 // Unix sockets on Unix, named pipes on Windows, one API. Without this the
 // bridge simply did not compile for Windows, so the SDK could not run there at
 // all.
-use horon_agent_transport::{Listener, Stream};
+use horon_agent_transport::Stream;
 
 // Socket paths live in `horon-agent-harness-api` so clients and the bridge can never
 // resolve different directories (they once did, and the desktop app could not
@@ -234,117 +241,6 @@ where
     Ok(frame.len())
 }
 
-/// Take the exclusive bridge lock beside the API socket, or report that a live
-/// bridge already holds it.
-///
-/// The lock is released when the holder exits, however it exits, so a crashed
-/// bridge never wedges the next one out.
-pub(crate) fn single_instance_lock(
-    api_socket: &std::path::Path,
-) -> Result<Option<horon_agent_platform::ipc::InstanceLock>> {
-    let path = api_socket.with_extension("lock");
-    horon_agent_platform::ipc::lock_instance_file(&path).with_context(|| format!("open bridge lock {}", path.display()))
-}
-
-pub async fn run_bridge(api_socket: PathBuf, legacy_socket: PathBuf) -> Result<()> {
-    run_bridge_with_deadline(api_socket, legacy_socket, writer::WRITE_STALL_DEADLINE).await
-}
-
-/// [`run_bridge`] with the write deadline injected, so a test can watch a
-/// stalled peer close its connection without waiting the production interval.
-async fn run_bridge_with_deadline(
-    api_socket: PathBuf,
-    legacy_socket: PathBuf,
-    write_deadline: std::time::Duration,
-) -> Result<()> {
-    // Only one bridge may own the socket.
-    //
-    // This is the fix for clients seeing "disconnected: harness API stream
-    // closed" at random: every desktop client spawned a bridge on demand, and
-    // each new bridge unlinked the live socket and bound its own. The older
-    // bridges kept running with their connected clients, but the *pathname*
-    // now pointed at the newest one, and each reconnect churned the same way.
-    // Whoever lost the race had its clients dropped. Refusing to start when a
-    // live bridge holds the lock makes on-demand spawning idempotent, which is
-    // what every caller already assumes.
-    let _lock = match single_instance_lock(&api_socket) {
-        Ok(Some(lock)) => Some(lock),
-        Ok(None) => {
-            eprintln!(
-                "harness API bridge: another bridge already owns {}; exiting",
-                api_socket.display()
-            );
-            return Ok(());
-        }
-        // The lock is advisory. A platform that cannot open it right now - a
-        // filter driver holding the file, a directory the caller may not write -
-        // must not stop the only bridge serving this desktop, so the launch
-        // continues and reports why the single-owner check was skipped.
-        Err(error) => {
-            eprintln!(
-                "harness API bridge: single-instance lock for {} is unavailable ({error:#}); continuing",
-                api_socket.display()
-            );
-            None
-        }
-    };
-    // A stale socket file blocks bind. Only a platform whose listening
-    // endpoints are filesystem nodes has one to remove: on Windows the pipe
-    // namespace is not the filesystem, and probing the pipe would consume one
-    // published instance of a server that is already gone. Unlinking is safe
-    // because a live bridge would have made this process exit above, whatever
-    // the advisory lock answered.
-    if horon_agent_platform::ipc::socket_nodes_can_be_stale() {
-        horon_agent_platform::ipc::remove_socket(&api_socket);
-    }
-    if let Some(parent) = api_socket.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    // Accepting takes `&mut self` on both platforms: a Windows named-pipe
-    // listener republishes a pipe instance for every accept, and the adapter
-    // gives the Unix socket the same shape so callers never branch.
-    let mut listener =
-        Listener::bind(&api_socket).with_context(|| format!("bind API socket {}", api_socket.display()))?;
-    // Restrict the socket to its owner, matching the daemon socket it fronts.
-    //
-    // Without this the bridge widens access to everything behind it: the
-    // daemon socket is 0600, but a default-umask bind here produced 0755, so
-    // any local user could drive sessions, read transcripts, and spend the
-    // owner's provider tokens. A bridge must never be more permissive than
-    // the thing it bridges to.
-    //
-    // A Windows named pipe carries an ACL rather than a file mode, so the
-    // adapter's restriction is empty there and the pipe keeps its own access.
-    horon_agent_platform::ipc::restrict_socket_to_owner(&api_socket)
-        .with_context(|| format!("restrict API socket {}", api_socket.display()))?;
-    eprintln!(
-        "harness API bridge: listening on {} -> {}",
-        api_socket.display(),
-        legacy_socket.display()
-    );
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let legacy = legacy_socket.clone();
-        tokio::spawn(async move {
-            if let Err(error) = handle_api_client(stream, legacy, write_deadline).await {
-                eprintln!("harness API bridge: client ended: {error:#}");
-            }
-            // A closed client drops its translation state and buffers.
-            allocator::trim();
-        });
-    }
-}
-
-async fn handle_api_client(stream: Stream, legacy_socket: PathBuf, write_deadline: std::time::Duration) -> Result<()> {
-    let (read_half, write_half) = stream.into_split();
-    run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, write_deadline).await
-}
-
-/// Serve the process's stdin/stdout as one API connection.
-///
-/// Read stdin on a plain thread, not Tokio's blocking pool: Tokio stdin cannot
-/// be cancelled and otherwise prevents process exit when the daemon disconnects
-/// while SSH still holds stdin open. This entrypoint is for a CLI process only.
 #[cfg(unix)]
 pub async fn run_bridge_stdio(legacy_socket: PathBuf) -> Result<()> {
     let (input, mut writer) = std::os::unix::net::UnixStream::pair()?;
@@ -369,7 +265,7 @@ where
 
 /// [`run_bridge_stream`] with the write deadline injected, so a test can watch a
 /// stalled peer close the connection without waiting the production interval.
-async fn run_bridge_stream_with_deadline<R, W>(
+pub(crate) async fn run_bridge_stream_with_deadline<R, W>(
     read_half: R,
     mut write_half: W,
     legacy_socket: PathBuf,
