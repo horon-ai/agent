@@ -1912,8 +1912,7 @@ jobs:
         #
         # `pywinpty` is the ConPTY binding. The image ships Python but not the
         # package, and a package that cannot be installed must say so instead of
-        # failing the job for an unrelated reason: the docs keep the known limit
-        # until it runs.
+        # failing the job for an unrelated reason.
         run: |
           if ! python -m pip install --quiet --disable-pip-version-check pywinpty; then
             echo "::warning::pywinpty could not be installed; the Windows ConPTY smoke test did not run"
@@ -2026,6 +2025,7 @@ jobs:
               'pipe_name_falls_back_when_stem_is_empty',
               'busy_pipe_is_reported_as_a_live_socket_path',
               'sync_connect_waits_while_every_instance_is_taken',
+              'a_blocked_read_does_not_hold_back_a_write',
               'stream_pair_round_trips_bytes',
               'split_stream_supports_concurrent_read_and_write',
               'directory_sync_is_not_effective_on_windows',

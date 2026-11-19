@@ -287,8 +287,102 @@ impl<'a> AsyncWrite for SplitWriteRef<'a> {
 }
 
 /// Synchronous named pipe stream for blocking IPC (used by communicate tool).
+///
+/// The handle is opened for overlapped I/O even though every method here
+/// blocks: Windows serialises *synchronous* transfers on one file object, so a
+/// thread parked in `ReadFile` would hold the next `WriteFile` behind it. The
+/// SDK client is exactly that shape — a reader thread waits for a frame while
+/// the main thread writes the hello — and on a plain synchronous handle the two
+/// waited on each other forever (#432). Each transfer now carries its own
+/// `OVERLAPPED` and event, so reads and writes are independent.
 pub struct SyncStream {
     handle: std::fs::File,
+}
+
+/// Issue one blocking transfer on an overlapped pipe handle.
+///
+/// A `std::fs::File` over a `FILE_FLAG_OVERLAPPED` handle must not go through
+/// `Read`/`Write`: those call the synchronous entry points, which fail on such a
+/// handle. This wrapper starts the asynchronous transfer, waits on a private
+/// manual-reset event for completion, and reports the byte count.
+///
+/// `buf` must point at `len` readable bytes, or `len` writable bytes when
+/// `write` is set, for as long as the call runs; `Read` and `Write` pass their
+/// slice unchanged, so the copy of a write buffer that a `&mut [u8]` signature
+/// would force never happens.
+fn pipe_transfer(file: &std::fs::File, buf: *mut u8, len: usize, write: bool) -> io::Result<usize> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::Foundation::{
+        ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_NOT_CONNECTED, HANDLE, WAIT_OBJECT_0,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+    use windows_sys::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
+    use windows_sys::Win32::System::Threading::{CreateEventW, INFINITE, WaitForSingleObject};
+
+    // One pipe message cannot exceed a `u32` byte count.
+    let len = u32::try_from(len).unwrap_or(u32::MAX);
+    let handle: HANDLE = file.as_raw_handle();
+
+    // SAFETY: no security attributes and no name ask for a private unnamed
+    // event; the return value is checked for NULL before it is owned.
+    let raw_event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    if raw_event.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `raw_event` is a live event handle from `CreateEventW` and this is
+    // its only owner, so dropping `event` closes it exactly once. The binding is
+    // underscore-prefixed because it is held for its `Drop` only.
+    let _event = unsafe { OwnedHandle::from_raw_handle(raw_event as _) };
+
+    // SAFETY: `OVERLAPPED` is a plain C struct whose all-zero value means
+    // "offset 0, no event, no completion routine"; it outlives the transfer.
+    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    overlapped.hEvent = raw_event;
+
+    // SAFETY: `handle` belongs to a live `File`, `buf` is valid for `len` bytes
+    // as the caller documents (`len` is capped at what it passed),
+    // `lpNumberOfBytes*` is null as overlapped I/O requires, and `overlapped`
+    // outlives the call and is used by nothing else.
+    let initiated = unsafe {
+        if write {
+            WriteFile(handle, buf, len, std::ptr::null_mut(), &mut overlapped)
+        } else {
+            ReadFile(handle, buf, len, std::ptr::null_mut(), &mut overlapped)
+        }
+    };
+
+    if initiated == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+            return Err(error);
+        }
+        // SAFETY: the event stays owned by `event` for the whole call, and it is
+        // the completion signal of the transfer just started.
+        let signalled = unsafe { WaitForSingleObject(raw_event, INFINITE) };
+        if signalled != WAIT_OBJECT_0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+
+    let mut transferred = 0u32;
+    // SAFETY: same handle and `OVERLAPPED` as the transfer above; `bwait = 1`
+    // is the documented way to collect the result of a completed transfer.
+    let completed = unsafe { GetOverlappedResult(handle, &overlapped, &mut transferred, 1) };
+    if completed == 0 {
+        let error = io::Error::last_os_error();
+        // A closed peer reads as end-of-file on a Unix socket; keep that shape
+        // so the SDK's frame reader sees a disconnect, not a platform error.
+        if !write
+            && matches!(
+                error.raw_os_error(),
+                Some(code) if code == ERROR_BROKEN_PIPE as i32 || code == ERROR_PIPE_NOT_CONNECTED as i32
+            )
+        {
+            return Ok(0);
+        }
+        return Err(error);
+    }
+    Ok(transferred as usize)
 }
 
 /// How long a client waits for a named pipe instance to be published.
@@ -314,10 +408,19 @@ const PIPE_BUSY_ASYNC_RETRY: std::time::Duration = std::time::Duration::from_sec
 /// instances are busy (os error 231)" while a healthy bridge was listening.
 fn open_pipe_blocking(pipe_name: &str) -> io::Result<std::fs::File> {
     use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED;
     let deadline = std::time::Instant::now() + PIPE_BUSY_RETRY;
     let mut delay = std::time::Duration::from_millis(1);
     loop {
-        match OpenOptions::new().read(true).write(true).open(pipe_name) {
+        // `FILE_FLAG_OVERLAPPED` is what keeps a blocked read from holding the
+        // next write behind it (#432); `pipe_transfer` does every transfer.
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_OVERLAPPED)
+            .open(pipe_name)
+        {
             Ok(file) => return Ok(file),
             Err(error) if error.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32) => {
                 if std::time::Instant::now() >= deadline {
@@ -354,13 +457,13 @@ impl SyncStream {
 
 impl io::Read for SyncStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.handle.read(buf)
+        pipe_transfer(&self.handle, buf.as_mut_ptr(), buf.len(), false)
     }
 }
 
 impl io::Write for SyncStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.handle.write(buf)
+        pipe_transfer(&self.handle, buf.as_ptr().cast_mut(), buf.len(), true)
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -752,5 +855,59 @@ mod tests {
         drop(second);
         drop(held);
         let (_stream, _addr) = accepting.await.expect("accept task");
+    }
+
+    /// A reader parked on the pipe must not hold a write back.
+    ///
+    /// The SDK client hands a clone of its pipe to a reader thread that blocks
+    /// until a frame arrives, then writes the hello from the thread holding the
+    /// client. Windows serialises *synchronous* transfers on one file object, so
+    /// on a plain handle the pending `ReadFile` kept the `WriteFile` behind it
+    /// and the client never finished connecting (#432). The pipe is opened for
+    /// overlapped I/O, so a read and a write in flight at once must both finish.
+    #[tokio::test]
+    async fn a_blocked_read_does_not_hold_back_a_write() {
+        use std::io::{Read as _, Write as _};
+
+        let path = std::env::temp_dir().join(format!(
+            "horon-agent-sync-read-write-{}-{}.sock",
+            std::process::id(),
+            BUSY_PIPE_TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut listener = Listener::bind(&path).expect("bind named pipe");
+
+        let client_path = path.clone();
+        let client = std::thread::spawn(move || {
+            let mut writer = SyncStream::connect(&client_path).expect("connect the pipe");
+            let mut reader = writer.try_clone().expect("clone the pipe handle");
+            let reading = std::thread::spawn(move || {
+                let mut buf = [0u8; 1];
+                let read = reader.read(&mut buf);
+                (read, buf)
+            });
+            // Let the reader reach its blocking read, so the write below is
+            // issued while a read is already pending.
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let written = writer.write_all(b"hello").and_then(|()| writer.flush());
+            let ack = reading.join().expect("join the blocked reader");
+            (written, ack)
+        });
+
+        let (mut server, _addr) = listener.accept().await.expect("accept the client");
+        let mut hello = [0u8; 5];
+        tokio::time::timeout(std::time::Duration::from_secs(10), server.read_exact(&mut hello))
+            .await
+            .expect("a write issued behind a blocked read must still arrive")
+            .expect("read the hello frame");
+        assert_eq!(&hello, b"hello");
+
+        // Release the blocked reader so the client thread can finish.
+        server.write_all(b"!").await.expect("reply to the client");
+        server.flush().await.expect("flush the reply");
+
+        let (written, (read, buf)) = client.join().expect("join the client thread");
+        written.expect("the write must complete while a read is pending");
+        assert_eq!(read.expect("read the reply"), 1);
+        assert_eq!(buf[0], b'!');
     }
 }
