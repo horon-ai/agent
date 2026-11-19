@@ -57,7 +57,11 @@ STARTUP_TIMEOUT = 90.0
 STEP_TIMEOUT = 45.0
 
 HEADLESS_MESSAGE = "the interactive client is unavailable in this headless build"
-INSTALL_HINT = "horon-tui"
+# The install instruction itself. A headless sentence names it only when the
+# client is genuinely missing (#430).
+INSTALL_COMMAND = "horon-agent install-release"
+# The fallback every headless sentence keeps.
+HEADLESS_FALLBACK = "horon-agent serve"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
@@ -72,6 +76,14 @@ APPROVAL_RESOLVED = "approval approved"
 SESSION_READY = "mock/mock-model"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
+# The sequences the client writes when it gives the terminal back (#431). A
+# signal is not an exit the client runs, so this is what proves the handler
+# restored the modes rather than the process dying with them still on:
+# mouse capture off (1000 tracking, 1002 button tracking, 1006 SGR encoding),
+# bracketed paste off, and the shell's title popped back from the stack.
+MOUSE_OFF = ("\x1b[?1000l", "\x1b[?1002l", "\x1b[?1006l")
+PASTE_OFF = "\x1b[?2004l"
+TITLE_POP = "\x1b[23;2t"
 
 
 class Failure(RuntimeError):
@@ -374,8 +386,16 @@ def headless_case(
     label: str,
     extra_env: dict | None = None,
     use_pty: bool = True,
+    expect_install_hint: bool = False,
 ) -> str:
-    """A launch that must stop at the headless message with the install hint."""
+    """A launch that must stop at the headless message with exit 1.
+
+    Only the missing-client condition is answered by installing the client
+    (#430): a pipe and `HORON_NO_TUI` happen with the client already in place,
+    so naming an install there told the operator a correct install was broken.
+    `expect_install_hint` is therefore off by default and the condition's own
+    remedy is asserted instead.
+    """
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
@@ -405,8 +425,15 @@ def headless_case(
 
     if not contains(transcript, HEADLESS_MESSAGE):
         raise Failure(f"{label}: headless message missing\n--- transcript ---\n{transcript}")
-    if not contains(transcript, INSTALL_HINT):
-        raise Failure(f"{label}: install hint missing\n--- transcript ---\n{transcript}")
+    if expect_install_hint:
+        if not contains(transcript, INSTALL_COMMAND):
+            raise Failure(f"{label}: install hint missing\n--- transcript ---\n{transcript}")
+    elif contains(transcript, INSTALL_COMMAND):
+        raise Failure(
+            f"{label}: the sentence names an install for a client that is present\n--- transcript ---\n{transcript}"
+        )
+    if not contains(transcript, HEADLESS_FALLBACK):
+        raise Failure(f"{label}: headless fallback missing\n--- transcript ---\n{transcript}")
     if code != 1:
         raise Failure(f"{label}: expected exit 1, got {code}\n--- transcript ---\n{transcript}")
     return transcript
@@ -583,6 +610,46 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
             first.close()
 
 
+def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
+    """A client killed by a signal still gives the terminal back (#431).
+
+    Every way out the client runs itself restores the modes; a signal was not
+    one of them, so `SIGTERM` left bracketed paste and mouse reporting on for
+    the shell that came back. The handler now runs the same restore sequence
+    and then re-raises, so the exit status still reports the signal.
+    """
+    home = write_config(launch.home, base_url)
+    env = horon_env(root, home)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal([launch.argv0], cwd=root, env=env)
+    try:
+        # The client is fully started, so every mode the handler restores is on
+        # and the title has been pushed.
+        terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready")
+
+        # `start_new_session=True` in `Terminal` makes the client a process
+        # group leader, so this reaches the client and nothing else.
+        os.killpg(os.getpgid(terminal.process.pid), signum)
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != -signum:
+            raise Failure(
+                f"a client killed by {signal.Signals(signum).name} exited {code}, "
+                f"expected death by that signal ({-signum} in subprocess terms)"
+                f"\n--- transcript ---\n{terminal.transcript}"
+            )
+        missing = [sequence for sequence in (*MOUSE_OFF, PASTE_OFF, TITLE_POP) if sequence not in terminal.transcript]
+        if missing:
+            shown = [sequence.encode("unicode_escape").decode() for sequence in missing]
+            raise Failure(
+                "the signal path left the terminal unprepared: "
+                f"{', '.join(shown)} never written\n--- transcript ---\n{terminal.transcript}"
+            )
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript: str | None) -> int:
     log("case 1: bare horon hands a terminal over to horon-tui")
     launch = build_launch(os.path.join(root, "happy"), agent, tui)
@@ -608,6 +675,8 @@ def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript:
         os.path.join(root, "missing"),
         base_url,
         "missing horon-tui",
+        # The one reason installing answers, so the sentence names the install.
+        expect_install_hint=True,
     )
     log("case 3 passed")
 
@@ -629,6 +698,12 @@ def run_build_layout(agent: str, tui: str, root: str, base_url: str, transcript:
         transcript,
     )
     log("case 5 passed")
+
+    for index, signum in enumerate((signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT), start=6):
+        log(f"case {index}: {signal.Signals(signum).name} restores the terminal before the client dies")
+        case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
+        signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
+        log(f"case {index} passed")
     return 0
 
 

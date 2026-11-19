@@ -43,3 +43,9 @@ time = { version = "0.3.55", default-features = false, features = ["local-offset
 
 [dev-dependencies]
 tempfile = "3"
+
+# Restoring the terminal from a signal handler (#431) needs the C library's
+# `signal`, `pipe` and `write`: the client reaches no platform crate, so the
+# POSIX calls come from libc directly. Windows installs nothing here.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

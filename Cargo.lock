@@ -2470,6 +2470,7 @@ dependencies = [
  "crossterm",
  "horon-agent-sdk",
  "horon-agent-tool-types",
+ "libc",
  "ratatui",
  "serde_json",
  "tempfile",

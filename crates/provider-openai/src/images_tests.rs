@@ -464,8 +464,13 @@ async fn an_edit_refuses_an_input_above_the_byte_limit() {
     .await
     .expect_err("an input above the byte limit is refused");
     let message = format!("{error:#}");
-    assert!(message.contains("huge.png"), "{message}");
-    assert!(message.contains("above the"), "{message}");
+    assert_eq!(
+        message,
+        format!(
+            "the input image huge.png is {} bytes, above the {MAX_INPUT_IMAGE_BYTES}-byte limit",
+            MAX_INPUT_IMAGE_BYTES + 1
+        )
+    );
     assert!(
         server.requests().is_empty(),
         "the refusal happens before a request is sent"
