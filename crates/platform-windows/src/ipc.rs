@@ -840,21 +840,25 @@ mod tests {
         let mut listener = Listener::bind(&path).expect("bind named pipe");
         let held = SyncStream::connect(&path).expect("take the only published instance");
 
-        // Hold the accept back, so the second connect meets a busy pipe first.
-        let accepting = tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            listener.accept().await.expect("accept the held client")
-        });
-
         let second_path = path.clone();
-        let second = tokio::task::spawn_blocking(move || SyncStream::connect(&second_path))
+        let waiting = tokio::task::spawn_blocking(move || SyncStream::connect(&second_path));
+
+        // Hold the accept back, so the second connect meets a busy pipe first.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // The listener stays in scope here on purpose: `accept` publishes the
+        // next instance, and that instance is what the waiting connect needs.
+        // Letting a task own the listener dropped it (and the instance) the
+        // instant the accept returned, so the wait never had an instance to
+        // find and expired on `ERROR_PIPE_BUSY`.
+        let (_stream, _addr) = listener.accept().await.expect("accept the held client");
+
+        let second = waiting
             .await
             .expect("join the blocking connect")
             .expect("a busy pipe must be waited out, not reported as absent");
 
         drop(second);
         drop(held);
-        let (_stream, _addr) = accepting.await.expect("accept task");
     }
 
     /// A reader parked on the pipe must not hold a write back.
