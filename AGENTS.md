@@ -325,8 +325,10 @@ Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
   refusals a user sees, durability, concurrency and security tests, gate
   contract tests, and source-scanning rule tests are behavior. Removing tests
   lowers each `--min-passed` and `min_passed` floor that selected them by
-  that number, never below 1 (a removed test named in a `skipped` list leaves
-  that list instead), and the pull request names the change (#419).
+  the number of them that step counted as passed (an `#[ignore]` test, or one
+  whose `cfg` excludes the step's runner, never counted), never below 1 (a
+  removed test named in a `skipped` list leaves that list instead), and the
+  pull request names the change (#419).
 - **A test counts only when CI runs it.** An integration target (`tests/*.rs`,
   `crates/*/tests/*.rs`) is listed in `scripts/ci/integration_targets.json`
   with its `min_passed` count, or in `scripts/ci/test_target_allowlist.json`

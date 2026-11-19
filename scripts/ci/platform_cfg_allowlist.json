@@ -332,6 +332,10 @@
       "count": 3,
       "reason": "glibc malloc tuning (mallopt) exists only on linux-gnu; the cfg selects the tuned allocator and its tests, and every other target keeps std's allocator."
     },
+    "crates/harness-api-server/src/bridge_lifecycle_tests.rs": {
+      "count": 1,
+      "reason": "the parent-death half of the bridge lifecycle test: `parent_pid` is deliberately None on Windows (the platform exposes no parent there), so only the idle window can end a bridge on that platform and there is no parent-gone behaviour to assert."
+    },
     "crates/harness-api-server/src/lib.rs": {
       "count": 1,
       "reason": "the `server --stdio` bridge entry point exists only on Unix: it connects to the daemon's Unix socket and has no Windows transport."
