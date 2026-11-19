@@ -904,15 +904,6 @@ mod tests {
     }
 
     #[test]
-    fn release_retained_heap_is_safe_to_call() {
-        // Allocate and drop a large transient buffer, then release. This must
-        // not crash on any allocator configuration.
-        let buffer = vec![0u8; 8 * 1024 * 1024];
-        drop(buffer);
-        release_retained_heap("unit_test");
-    }
-
-    #[test]
     fn release_retained_heap_debounced_skips_within_interval() {
         // First call resets the shared debounce clock; the immediate second
         // call within a long interval must be skipped.

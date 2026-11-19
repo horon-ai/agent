@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Release-time checks for the npm publish workflow.
 
-`publish-npm.yml` needs three things npm does not answer itself: the version a
-release tag names, validation of a manual dispatch before anything is built,
-and a statement that the seven generated packages agree on one version. Each
-rule is a pure function here so it can be proved without a runner, a registry
-or a network.
+`publish-npm.yml` needs four things npm does not answer itself: the version a
+release tag names, validation of a manual dispatch before anything is built, a
+statement that the seven generated packages agree on one version, and the mode
+a run may take once the owner's switch is read. Each rule is a pure function
+here so it can be proved without a runner, a registry or a network.
 
 Commands:
 
@@ -15,6 +15,8 @@ Commands:
   missing-assets DIR          name every required release asset DIR lacks
   check-packages DIR VERSION  assert the seven prepared packages agree
   publish-order               print the package directories in publishing order
+  gate EVENT REQUESTED SWITCH [SOURCE [VERSION]]
+                              print the mode, or fail when a publish is blocked
 
 Exit status is 0 when the answer is good, 1 when a check fails (every failure
 is named) and 2 for a usage error.
@@ -112,6 +114,24 @@ def dispatch_plan(
         "version": resolved,
         "mode": "dry-run" if dry_run else "publish",
     }
+
+
+def resolve_mode(event: str, requested: str, npm_publish: str) -> str:
+    """Return the mode a run may take: `publish` or `dry-run`.
+
+    The repository variable is the owner's master switch: a run that resolved
+    `publish` keeps it only when the variable is exactly `true`, and a pull
+    request never publishes. The workflow fails a `publish` request that
+    resolves to `dry-run`, because a release that ships without npm packages is
+    a broken release; only an explicitly requested dry run stays green.
+    """
+    if requested != "publish":
+        return "dry-run"
+    if event == "pull_request":
+        return "dry-run"
+    if (npm_publish or "").strip() != "true":
+        return "dry-run"
+    return "publish"
 
 
 def publish_order() -> list[str]:
@@ -237,6 +257,15 @@ def main(argv: list[str] | None = None) -> int:
         "publish-order", help="print the package directories in publishing order"
     )
 
+    gate = commands.add_parser(
+        "gate", help="print the mode, or fail when a publish the run resolved is blocked"
+    )
+    gate.add_argument("event")
+    gate.add_argument("requested")
+    gate.add_argument("npm_publish")
+    gate.add_argument("source", nargs="?", default="")
+    gate.add_argument("version", nargs="?", default="")
+
     args = parser.parse_args(argv)
 
     if args.command == "tag-version":
@@ -265,6 +294,26 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "publish-order":
         for directory in publish_order():
             print(directory)
+        return 0
+
+    if args.command == "gate":
+        allowed = resolve_mode(args.event, args.requested, args.npm_publish)
+        # A pull request never publishes by design, so it is not a blocked
+        # release; only a run that could have published and did not is.
+        if args.requested == "publish" and allowed != "publish" and args.event != "pull_request":
+            what = " ".join(part for part in (args.source, args.version) if part) or "this run"
+            message = (
+                f"{what} resolved to publish, but the repository variable NPM_PUBLISH is not 'true', so"
+                " nothing was published to npm. Run 'gh variable set NPM_PUBLISH --body true'"
+            )
+            if args.source == "release_tag" and args.version:
+                message += (
+                    f", then 'gh workflow run publish-npm.yml -f release_tag=v{args.version} -f dry_run=false'"
+                )
+            message += "."
+            print(f"::error::{message}" if _in_actions() else message, file=sys.stderr)
+            return 1
+        print(allowed)
         return 0
 
     if args.command == "missing-assets":

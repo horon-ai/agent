@@ -24,6 +24,37 @@ pub struct Summary {
     pub(crate) source: Option<Stamp>,
 }
 
+/// One entry under the store root that a listing refused.
+///
+/// The reason is the store's own refusal, so it names the path and, where the
+/// platform reports one, the mode. A listing keeps going without the entry and
+/// hands this to its caller, which logs [`SkippedEntry::warning`] so an operator
+/// can find the directory to repair. The store never repairs it: a permissive
+/// directory may have been tampered with, so the decision is the operator's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkippedEntry {
+    /// The entry under the store root that was not listed.
+    pub path: std::path::PathBuf,
+    /// Why the store refused it, naming the path it refused.
+    pub reason: String,
+}
+
+impl SkippedEntry {
+    /// The one-line warning a caller logs when it would rather not lose the skip.
+    pub fn warning(&self) -> String {
+        format!("session listing skipped: {}", self.reason)
+    }
+}
+
+/// The rows a listing found, plus the entries it refused.
+#[derive(Clone, Debug, Default)]
+pub struct SessionListing {
+    /// The sessions a caller can show, newest first.
+    pub rows: Vec<Summary>,
+    /// One entry per refused directory, in store-root order.
+    pub skipped: Vec<SkippedEntry>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CatalogEntry {
     pub session_id: SessionId,

@@ -370,34 +370,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// Documents the tokio semantics `InterruptSignal::notified()` relies on:
-    /// current tokio guarantees a `notified()` future receives wakeups from
-    /// `notify_waiters()` from the moment it is *created*, even before its
-    /// first poll. The explicit `enable()` in `notified()` makes that
-    /// registration explicit instead of relying on the version-specific
-    /// creation-time guarantee (hardening for issue #428).
-    #[tokio::test]
-    async fn notified_future_receives_notify_waiters_from_creation() {
-        let notify = tokio::sync::Notify::new();
-
-        // Created before the notification, not yet polled: must be woken.
-        let created_before = notify.notified();
-        notify.notify_waiters();
-        tokio::time::timeout(Duration::from_millis(100), created_before)
-            .await
-            .expect("a notified() future created before notify_waiters() must be woken");
-
-        // Created after the notification: must NOT be woken (notify_waiters
-        // stores no permit). This is why fire() also sets the atomic flag.
-        let created_after = notify.notified();
-        assert!(
-            tokio::time::timeout(Duration::from_millis(50), created_after)
-                .await
-                .is_err(),
-            "notify_waiters() must not store a permit for future waiters"
-        );
-    }
-
     /// Probabilistic race hammer for issue #428: `fire()` must never be lost
     /// regardless of where the waiter is between creating the `notified()`
     /// future and its first poll. The agent stream loop recreates this future

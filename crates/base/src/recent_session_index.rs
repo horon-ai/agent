@@ -47,8 +47,16 @@ pub fn recent(limit: usize) -> Result<Vec<RecentSessionMetadata>> {
         return Ok(Vec::new());
     }
     let probe = store::ReadProbe::default();
-    let rows = match store::catalog::list(&paths, probe.clone()) {
-        Ok(rows) => rows,
+    let rows = match store::catalog::list_with_skipped(&paths, probe.clone()) {
+        Ok(listing) => {
+            // One directory the private-path check refuses must not hide the
+            // rest of the listing, and the operator needs its path and mode to
+            // repair it.
+            for skipped in &listing.skipped {
+                crate::logging::warn(&skipped.warning());
+            }
+            listing.rows
+        }
         Err(error) => {
             // One unreadable original must not erase every other session from
             // the listing. Keep the sessions that can still be summarized and

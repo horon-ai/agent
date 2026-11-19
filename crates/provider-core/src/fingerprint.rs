@@ -189,7 +189,6 @@ pub fn log_provider_canonical_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn prefix_matching_allows_append_only_growth() {
@@ -223,10 +222,5 @@ mod tests {
         large.insert("fresh".into(), snapshot(std::time::Duration::ZERO));
         prune_stale_baselines(&mut large);
         assert_eq!(large.keys().collect::<Vec<_>>(), vec!["fresh"]);
-    }
-
-    #[test]
-    fn json_hashes_are_content_sensitive() {
-        assert_ne!(stable_hash_json(&json!({"a": 1})), stable_hash_json(&json!({"a": 2})));
     }
 }

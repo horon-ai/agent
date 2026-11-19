@@ -156,9 +156,19 @@ def test_login_inheritance_creates_file_links_never_credential_directory_links(
     )
 
 
-def test_the_users_horon_agent_home_is_resolved_independently_of_an_instance() -> None:
-    assert len(user_horon_agent_home()) > 0
-    assert os.path.isabs(user_horon_agent_home())
+def test_the_users_horon_agent_home_is_resolved_independently_of_an_instance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    # Windows resolves `Path.home()` from USERPROFILE, not HOME.
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("HORON_HOME", raising=False)
+    assert user_horon_agent_home() == str(home / ".horon")
+
+    monkeypatch.setenv("HORON_HOME", str(tmp_path / "explicit"))
+    assert user_horon_agent_home() == str(tmp_path / "explicit")
 
 
 async def test_a_missing_horon_agent_binary_is_catchable_and_leaks_nothing() -> None:

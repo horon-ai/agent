@@ -548,32 +548,6 @@ mod tests {
         }
     }
 
-    /// Exploratory check for an alternate model with a DIFFERENT input
-    /// order/dtype (e5-small-v2: attention_mask declared first). Reports the
-    /// related vs unrelated gap but does NOT hard-fail: some models need
-    /// model-specific pooling/normalization (e.g. CLS pooling) that the shared
-    /// mean-pool path does not yet provide. Skipped if not present locally.
-    #[test]
-    fn alt_model_related_beats_unrelated_if_present() {
-        let dir = std::env::var_os("HOME")
-            .map(|h| std::path::PathBuf::from(h).join("horon-agent-memory-bench/models/e5-small-v2"))
-            .filter(|d| is_model_available(d));
-        let Some(d) = dir else {
-            eprintln!("skip: e5-small-v2 model not present locally");
-            return;
-        };
-        let e = Embedder::load_from_dir(&d).expect("load model");
-        let q = e.embed("how do I set the cargo build profile").unwrap();
-        let related = e.embed("The build uses the selfdev cargo profile").unwrap();
-        let unrelated = e.embed("Bees pollinate flowers in spring").unwrap();
-        let sim_rel = cosine_similarity(&q, &related);
-        let sim_unrel = cosine_similarity(&q, &unrelated);
-        eprintln!(
-            "e5-small-v2: related={sim_rel:.4} unrelated={sim_unrel:.4} gap={:.4} (informational; mean-pool may need CLS for this family)",
-            sim_rel - sim_unrel
-        );
-    }
-
     /// Cross-encoder reranker must score a relevant (query, passage) pair higher
     /// than an irrelevant one. Skipped if the model isn't present locally.
     #[test]

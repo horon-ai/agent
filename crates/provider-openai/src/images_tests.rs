@@ -379,15 +379,28 @@ fn a_size_and_count_outside_the_accepted_set_are_refused_before_a_request() {
     assert!(validate_count(MAX_IMAGES_PER_CALL).is_ok());
 }
 
-#[test]
-fn an_empty_prompt_is_refused() {
+#[tokio::test]
+async fn an_empty_prompt_is_refused() {
+    let server = Mock::answering(200, ok_reply(&[png_bytes()], None));
     let request = GenerateRequest {
         prompt: "   ".to_string(),
         ..generate_request()
     };
-    // The check lives in `generate`, which needs a client; assert the same rule
-    // through the helper it uses so the test stays offline.
-    assert!(request.prompt.trim().is_empty());
+    let error = generate(
+        &client(),
+        &server.url,
+        &ChatAuth::Bearer,
+        Some(TEST_KEY),
+        None,
+        &request,
+    )
+    .await
+    .expect_err("a blank prompt is refused");
+    assert!(format!("{error:#}").contains("the image prompt is empty"), "{error:#}");
+    assert!(
+        server.requests().is_empty(),
+        "the refusal happens before a request is sent"
+    );
 }
 
 #[test]
@@ -426,14 +439,37 @@ fn the_mime_type_is_sniffed_from_the_bytes() {
     assert_eq!(extension_for("application/octet-stream"), "png");
 }
 
-#[test]
-fn an_edit_refuses_an_input_above_the_byte_limit() {
-    let oversized = ImageInput {
-        file_name: "huge.png".to_string(),
-        mime_type: "image/png".to_string(),
-        bytes: vec![0u8; MAX_INPUT_IMAGE_BYTES + 1],
+#[tokio::test]
+async fn an_edit_refuses_an_input_above_the_byte_limit() {
+    let server = Mock::answering(200, ok_reply(&[png_bytes()], None));
+    let request = EditRequest {
+        model: "img-model".to_string(),
+        prompt: "make it night".to_string(),
+        size: "1024x1024".to_string(),
+        count: 1,
+        inputs: vec![ImageInput {
+            file_name: "huge.png".to_string(),
+            mime_type: "image/png".to_string(),
+            bytes: vec![0u8; MAX_INPUT_IMAGE_BYTES + 1],
+        }],
     };
-    assert!(oversized.bytes.len() > MAX_INPUT_IMAGE_BYTES);
+    let error = edit(
+        &client(),
+        &server.url,
+        &ChatAuth::Bearer,
+        Some(TEST_KEY),
+        None,
+        &request,
+    )
+    .await
+    .expect_err("an input above the byte limit is refused");
+    let message = format!("{error:#}");
+    assert!(message.contains("huge.png"), "{message}");
+    assert!(message.contains("above the"), "{message}");
+    assert!(
+        server.requests().is_empty(),
+        "the refusal happens before a request is sent"
+    );
 }
 
 #[test]

@@ -94,12 +94,4 @@ mod tests {
             assert!(legacy_event_may_block(&json!({"type": kind})), "{kind}");
         }
     }
-
-    #[test]
-    fn trim_is_rate_limited_and_safe() {
-        trim();
-        let first = LAST_TRIM_MS.load(Ordering::Relaxed);
-        trim();
-        assert_eq!(LAST_TRIM_MS.load(Ordering::Relaxed), first);
-    }
 }

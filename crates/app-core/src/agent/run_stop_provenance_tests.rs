@@ -72,15 +72,6 @@ fn completed_round(text: &str) -> Vec<StreamEvent> {
     ]
 }
 
-fn truncated_round() -> Vec<StreamEvent> {
-    vec![
-        StreamEvent::TextDelta("partial".into()),
-        StreamEvent::MessageEnd {
-            stop_reason: Some("max_tokens".into()),
-        },
-    ]
-}
-
 #[test]
 fn run_stop_provenance_truncation_spends_the_continuation_budget() {
     let mut state = TurnState::new();
@@ -88,11 +79,6 @@ fn run_stop_provenance_truncation_spends_the_continuation_budget() {
         .finish(outcome_for_stop_reason(Some("max_tokens")))
         .expect("Length is recorded");
     assert_eq!(state.outcome(), Some(TurnOutcome::Length));
-    assert_eq!(
-        truncated_round().len(),
-        2,
-        "the truncation round carries partial text and its stop reason"
-    );
 }
 
 fn probe_agent(provider: Arc<dyn Provider>) -> Agent {

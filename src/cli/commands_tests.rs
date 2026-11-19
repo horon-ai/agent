@@ -774,44 +774,6 @@ fn list_cli_providers_includes_conifer() {
     assert_eq!(conifer.auth_kind.as_deref(), Some("api key"));
 }
 
-#[test]
-fn version_command_plain_output_includes_core_fields() {
-    let report = super::report_info::VersionReport {
-        version: "v1.2.3 (abc1234)".to_string(),
-        semver: "1.2.3".to_string(),
-        base_semver: "1.2.0".to_string(),
-        update_semver: "1.2.0".to_string(),
-        git_hash: "abc1234".to_string(),
-        git_tag: "v1.2.3".to_string(),
-        build_time: "2026-03-18 18:00:00 +0000".to_string(),
-        git_date: "2026-03-18 17:59:00 +0000".to_string(),
-        release_build: false,
-        build_profile: "release".to_string(),
-        build_features: vec!["pdf".to_string()],
-    };
-    let text = format!(
-        "version\t{}\nsemver\t{}\nbase_semver\t{}\nupdate_semver\t{}\ngit_hash\t{}\ngit_tag\t{}\nbuild_time\t{}\ngit_date\t{}\nrelease_build\t{}\nbuild_profile\t{}\nbuild_features\t{}\n",
-        report.version,
-        report.semver,
-        report.base_semver,
-        report.update_semver,
-        report.git_hash,
-        report.git_tag,
-        report.build_time,
-        report.git_date,
-        report.release_build,
-        report.build_profile,
-        report.build_features.join(",")
-    );
-
-    assert!(text.contains("version\tv1.2.3 (abc1234)"));
-    assert!(text.contains("semver\t1.2.3"));
-    assert!(text.contains("git_hash\tabc1234"));
-    assert!(text.contains("release_build\tfalse"));
-    assert!(text.contains("build_profile\trelease"));
-    assert!(text.contains("build_features\tpdf"));
-}
-
 #[tokio::test]
 async fn restore_agent_session_if_requested_restores_resumed_session() {
     let _guard = crate::storage::lock_test_env();

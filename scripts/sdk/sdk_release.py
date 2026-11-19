@@ -11,7 +11,7 @@ a network:
   * a release version can be stamped into the manifest in the runner checkout,
   * all seven prepared packages carry exactly the release version,
   * the six runtime packages are published before the SDK,
-  * the `NPM_PUBLISH` master switch, not a dispatch input, decides publishing.
+  * the `SDK_NPM_PUBLISH` master switch, not a dispatch input, decides publishing.
 
 The tag parsing, fixture version and platform table are imported from
 `scripts/npm/release_npm_version.py` rather than copied: both workflows publish

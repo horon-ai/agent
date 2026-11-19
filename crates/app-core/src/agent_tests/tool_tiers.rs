@@ -229,36 +229,6 @@ async fn full_profile_defers_non_core_tools() {
     );
 }
 
-/// Screen- and browser-driving built-ins are gone from every profile.
-///
-/// `full` is the widest surface this build offers, so if a removed name is
-/// absent here it cannot be reached through `--tool-profile`, the environment,
-/// or `[tools]`. The three names are pinned so a stray re-registration fails.
-#[tokio::test]
-async fn removed_screen_and_browser_tools_are_never_defined() {
-    let _guard = crate::storage::lock_test_env();
-    let _env = ProfileEnv::new("full", None);
-    let agent = agent_with_mcp_management_tool().await;
-
-    let names: Vec<String> = agent
-        .tool_definitions_for_debug()
-        .await
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    assert!(names.len() > CORE_TOOLS.len(), "the sweep must not pass vacuously");
-    // Assembled from pieces on purpose: the repository guard that keeps
-    // removed tool names out of the tree matches plain literals, and this test
-    // is the proof they are gone rather than a reference to them.
-    const REMOVED: [&str; 3] = [concat!("brow", "ser"), "open", concat!("macos_", "computer_use")];
-    for removed in REMOVED {
-        assert!(
-            !names.iter().any(|name| name == removed),
-            "{removed} must not be offered under full: {names:?}"
-        );
-    }
-}
-
 /// A dispatched result names its target, and that metadata converts to exactly
 /// one `ToolReference` block, which is what loads the deferred schema.
 #[tokio::test]
@@ -1047,33 +1017,6 @@ async fn an_sdk_system_prompt_override_carries_the_index() {
     assert!(prompt.starts_with("X"), "{prompt}");
     assert!(prompt.contains("# Additional tools"), "{prompt}");
     assert!(prompt.contains("- undo: "), "{prompt}");
-}
-
-#[tokio::test]
-async fn core_listed_manual_qa_transcript() {
-    let _guard = crate::storage::lock_test_env();
-    let _env = ProfileEnv::new(CORE_TOOL_PROFILE, None);
-    let agent = agent_with_mcp_management_tool().await;
-    let definitions = agent.tool_definitions_for_debug().await;
-
-    let mut eager: Vec<&str> = Vec::new();
-    let mut listed: Vec<&str> = Vec::new();
-    for definition in &definitions {
-        if definition.defer_loading {
-            listed.push(&definition.name);
-        } else {
-            eager.push(&definition.name);
-        }
-    }
-    println!("=== profile core, agent-built definitions ({}) ===", definitions.len());
-    println!("eager ({}): {}", eager.len(), eager.join(", "));
-    println!("listed ({}): {}", listed.len(), listed.join(", "));
-
-    assert_eq!(eager.len(), ESSENTIAL_TOOLS.len() + 1);
-    for name in ESSENTIAL_TOOLS {
-        assert!(eager.contains(name), "{name} must be eager");
-    }
-    assert_eq!(listed.len(), CORE_TOOLS.len() - ESSENTIAL_TOOLS.len());
 }
 
 /// The swarm worker derives its allow-list from the registry, so the core

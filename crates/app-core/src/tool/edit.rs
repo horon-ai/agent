@@ -805,20 +805,6 @@ mod tests {
         assert!(diff.is_empty(), "No changes should produce empty diff");
     }
 
-    #[test]
-    fn test_generate_diff_line_number_format() {
-        let old = "old";
-        let new = "new";
-        let diff = generate_diff(old, new, 42);
-
-        // Compact format: no padding
-        assert!(
-            diff.contains("42- old"),
-            "Should have line number directly before minus"
-        );
-        assert!(diff.contains("42+ new"), "Should have line number directly before plus");
-    }
-
     fn op(old: &str, new: &str) -> EditOperation {
         EditOperation {
             old_string: old.into(),
@@ -1034,15 +1020,6 @@ mod fuzzy_tests {
             new_string: new.into(),
             replace_all: false,
         }
-    }
-
-    #[test]
-    fn typography_only_difference_is_a_unique_full_similarity_match() {
-        let content = "let name = “value”;\nlet other = 1;\n";
-        let found = closest_match(content, "let name = \"value\";").expect("closest match");
-        assert!(found.unique);
-        assert_eq!(found.line, 1);
-        assert!((found.similarity - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]

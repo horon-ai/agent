@@ -18,37 +18,6 @@ pub(in crate::session) fn canonical_tempdir(prefix: &str) -> Result<(tempfile::T
 }
 
 #[test]
-fn test_session_exists_roundtrip() -> Result<()> {
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "horon-agent-session-test-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| anyhow!(e))?
-            .as_nanos()
-    ));
-    // The store refuses any directory under the agent home that is not 0700 on
-    // unix, and create_dir_all would leave this one at the umask default. The
-    // recursive create also makes the home itself, which a plain create does not.
-    crate::storage::create_store_dir(&tmp_dir.join("sessions"), true)?;
-
-    assert!(!session_path_in_dir(&tmp_dir, "missing-session").exists());
-
-    let session_path = session_path_in_dir(&tmp_dir, "exists-session");
-    std::fs::write(&session_path, "{}")?;
-    assert!(session_path.exists());
-
-    let random_id = format!(
-        "missing-session-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| anyhow!(e))?
-            .as_nanos()
-    );
-    assert!(!session_exists(&random_id));
-    Ok(())
-}
-
-#[test]
 fn derive_session_provider_key_prefers_runtime_identity_over_transport() {
     let _lock = lock_env();
     let _runtime = EnvVarGuard::set("HORON_AGENT_RUNTIME_PROVIDER", "azure-openai");

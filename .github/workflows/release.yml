@@ -974,7 +974,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
-      actions: read
+      # `write` lets this workflow start `publish-npm.yml` itself when a
+      # re-run makes a release public: that release has no other trigger,
+      # because publishing with `GITHUB_TOKEN` starts no workflow.
+      actions: write
       contents: write
       issues: write
     steps:
@@ -1230,6 +1233,16 @@ jobs:
             gh release edit "${RELEASE_TAG}" --draft=false --latest
           else
             echo "Release ${RELEASE_TAG} is already public; leaving it public."
+          fi
+          # The npm publish run starts from "Release Tag"'s completion, which
+          # only exists for the normal path (`workflow_run`). A re-run or a
+          # hand-pushed tag has no such run, and GitHub starts no workflow for a
+          # release published with `GITHUB_TOKEN`, so this run asks for the
+          # publish itself. `publish-npm.yml` skips versions already published.
+          if [ "$EVENT_NAME" != "workflow_run" ]; then
+            gh workflow run publish-npm.yml --repo "$GITHUB_REPOSITORY" --ref main \
+              -f release_tag="${RELEASE_TAG}" -f dry_run=false
+            echo "Requested the npm publish run for ${RELEASE_TAG}"
           fi
 
       - name: Verify public assets and exact source provenance

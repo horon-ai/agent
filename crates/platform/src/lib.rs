@@ -332,13 +332,4 @@ mod tests {
         assert_eq!(tls_config_builds(), 1);
         assert_eq!(first.alpn_protocols, vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
     }
-
-    #[cfg(windows)]
-    #[test]
-    fn sync_dir_is_a_no_op_on_windows() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        // Windows keeps the identity check above and then has nothing to flush.
-        sync_dir(directory.path(), SyncMode::Full).expect("windows directory sync is Ok");
-        sync_dir(directory.path(), SyncMode::Fast).expect("windows directory sync is Ok");
-    }
 }

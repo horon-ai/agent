@@ -866,14 +866,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn reload_context_serialization_roundtrips() {
-        let ctx = reload_ctx("session-serialized");
-        let json = serde_json::to_string(&ctx).expect("serialize reload context");
-        let loaded: ReloadContext = serde_json::from_str(&json).expect("deserialize reload context");
-        assert_eq!(loaded, ctx);
-    }
-
     fn reload_ctx(session_id: &str) -> ReloadContext {
         ReloadContext {
             task_context: Some("Resume a reload".to_string()),

@@ -2,7 +2,7 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
   "name": "Horon",
-  "description": "One Rust binary coding agent that calls the endpoint the profile's type picks, Chat Completions, Responses, Anthropic Messages or Gemini generateContent, with a terminal client, SDKs, ACP and RPC.",
+  "description": "Guides to using horon from the terminal, SDKs and editors, with a reference for the agent, terminal client and model providers.",
   "colors": {
     "primary": "#3b617b",
     "light": "#7199b6",
@@ -230,6 +230,10 @@
   },
   "navbar": {
     "links": [
+      {
+        "label": "Releases",
+        "href": "https://github.com/horon-ai/agent/releases"
+      },
       {
         "label": "GitHub",
         "href": "https://github.com/horon-ai/agent"

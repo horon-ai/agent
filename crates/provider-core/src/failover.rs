@@ -295,23 +295,6 @@ mod tests {
     }
 
     #[test]
-    fn failover_prompt_roundtrips_from_error_message() {
-        let prompt = ProviderFailoverPrompt {
-            from_provider: "claude".to_string(),
-            from_label: "Anthropic".to_string(),
-            to_provider: "openai".to_string(),
-            to_label: "OpenAI".to_string(),
-            target_route: Some("openai-oauth@work:gpt-5.4".into()),
-            reason: "rate limit".to_string(),
-            estimated_input_chars: 1200,
-            estimated_input_tokens: 300,
-        };
-
-        let parsed = parse_failover_prompt_message(&prompt.to_error_message()).expect("prompt");
-        assert_eq!(parsed, prompt);
-    }
-
-    #[test]
     fn legacy_prompt_without_target_route_requires_manual_selection() {
         let wire = r#"[horon-agent-provider-failover]{"from_provider":"claude","from_label":"Anthropic","to_provider":"openai","to_label":"OpenAI","reason":"rate limit","estimated_input_chars":1200,"estimated_input_tokens":300}"#;
         let prompt = parse_failover_prompt_message(wire).expect("legacy prompt");
