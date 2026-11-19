@@ -10,6 +10,77 @@
 
 use std::io::{IsTerminal, Stdout, Write};
 
+/// The environment the client already sees, as far as the title stack cares.
+///
+/// The save/restore pair (`CSI 22 ; 2 t` / `CSI 23 ; 2 t`) is an extension: a
+/// terminal that does not keep a title stack ignores both sequences, so writing
+/// them there changed nothing and the promise that the shell's title comes back
+/// was silently false. Nothing in the protocol lets a plain-output client ask,
+/// so the decision is made once, from what the terminal says about itself.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct TitleEnvironment {
+    /// `TERM`: a `dumb` terminal has no title handling at all.
+    pub(crate) term: Option<String>,
+    /// `TERM_PROGRAM`: set by an emulator that names itself.
+    pub(crate) term_program: Option<String>,
+    /// `WT_SESSION`: Windows Terminal, which keeps the stack.
+    pub(crate) wt_session: Option<String>,
+    /// `ConEmuANSI`: ConEmu, which keeps the stack.
+    pub(crate) conemu_ansi: Option<String>,
+}
+
+impl TitleEnvironment {
+    /// The environment of this process.
+    pub(crate) fn current() -> Self {
+        // `var_os` rather than `var`: a terminal name that is not valid UTF-8
+        // still means "this variable is set", and lossy text is enough to
+        // compare against the handful of markers below.
+        let read = |name: &str| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned());
+        Self {
+            term: read("TERM"),
+            term_program: read("TERM_PROGRAM"),
+            wt_session: read("WT_SESSION"),
+            conemu_ansi: read("ConEmuANSI"),
+        }
+    }
+
+    /// Whether this environment keeps a title stack.
+    ///
+    /// `windows` is a parameter so the decision is a pure function of the
+    /// environment and the platform, and a test on either platform can ask
+    /// about either one.
+    pub(crate) fn keeps_title_stack(&self, windows: bool) -> bool {
+        // A program that names itself is a real emulator: `TERM` is a fallback
+        // for environments that did not say what they are.
+        if self.term_program.is_some() {
+            return true;
+        }
+        // `dumb` is the terminal saying it has no title handling.
+        if self.term.as_deref() == Some("dumb") {
+            return false;
+        }
+        // Any other `TERM` is an emulator that told us what it is, including
+        // one running on Windows (mintty, a shell under Windows Terminal).
+        if self.term.is_some() {
+            return true;
+        }
+        // What is left with no `TERM` on Windows is the plain console, the one
+        // terminal whose default ignores the stack pair; its modern
+        // replacements set a marker of their own.
+        if windows && self.wt_session.is_none() && self.conemu_ansi.is_none() {
+            return false;
+        }
+        // Unknown but not `dumb`: assume xterm-like, which is what the client
+        // has always assumed.
+        true
+    }
+}
+
+/// Whether this process's terminal keeps a title stack.
+pub(crate) fn title_stack_supported() -> bool {
+    TitleEnvironment::current().keeps_title_stack(std::env::consts::OS == "windows")
+}
+
 /// Longest label the title keeps, in characters.
 const LABEL_CHARS: usize = 80;
 
@@ -80,6 +151,9 @@ pub(crate) struct Title<W: Write> {
     terminal: bool,
     /// The label the window already reads, so the same one is not written twice.
     current: Option<String>,
+    /// Whether the terminal keeps a title stack, so the save/restore pair is
+    /// worth writing there.
+    stack: bool,
     /// The terminal refused a sequence. The title is cosmetic and a refusal is
     /// unlikely to be temporary, so the error is reported once and then left
     /// alone instead of warning again on every change.
@@ -97,17 +171,19 @@ impl Title<Stdout> {
     pub(crate) fn stdout() -> Self {
         let output = std::io::stdout();
         let terminal = output.is_terminal();
-        Self::new(output, terminal)
+        Self::with_stack(output, terminal, title_stack_supported())
     }
 }
 
 impl<W: Write> Title<W> {
     /// A title written to `output`, or nowhere when `terminal` is false.
-    pub(crate) fn new(output: W, terminal: bool) -> Self {
+    /// A title that also knows whether the terminal keeps a title stack.
+    pub(crate) fn with_stack(output: W, terminal: bool, stack: bool) -> Self {
         Self {
             output,
             terminal,
             current: None,
+            stack,
             broken: false,
         }
     }
@@ -117,7 +193,11 @@ impl<W: Write> Title<W> {
     /// The push happens once, after the alternate screen is up: the stack entry
     /// is what [`pop`] brings back when the client leaves.
     pub(crate) fn start(&mut self, label: &str) -> std::io::Result<()> {
-        self.emit(PUSH)?;
+        // A terminal that keeps no stack ignores the push, and the matching pop
+        // would then restore nothing: only terminals that keep one get the pair.
+        if self.stack {
+            self.emit(PUSH)?;
+        }
         self.show(label)
     }
 
@@ -164,6 +244,17 @@ pub(crate) fn pop() -> bool {
     let mut output = std::io::stdout();
     if !output.is_terminal() {
         return false;
+    }
+    write_pop(&mut output, title_stack_supported())
+}
+
+/// Write the restore sequence when the terminal keeps a title stack.
+///
+/// Reports success when there was nothing to write: a terminal without the
+/// extension has no stack to restore, which is not a failure.
+pub(crate) fn write_pop<W: Write>(output: &mut W, stack: bool) -> bool {
+    if !stack {
+        return true;
     }
     let written = output.write_all(POP.as_bytes()).is_ok();
     written && output.flush().is_ok()
