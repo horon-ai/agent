@@ -27,6 +27,7 @@ pub mod scroll;
 pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
+mod terminal;
 pub mod theme;
 mod title;
 mod tool_expand;
@@ -378,6 +379,11 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     if let Err(error) = title.start(&window_label(&app)) {
         app.warn(format!("title: {error}"));
     }
+    // Installed once the modes it restores are on: a signal before this point
+    // had nothing to undo. A refusal is reported and the client keeps running.
+    if let Err(error) = terminal::guard_signals() {
+        app.warn(format!("signals: {error}"));
+    }
     let (code, failure) = event_loop(
         &mut terminal,
         &mut app,
@@ -387,14 +393,8 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
         &mut themes,
         keys,
     );
-    paste::disable();
-    // The stack entry goes back with the screen: the title the shell set is the
-    // one the next prompt should be in.
-    title::pop();
-    // Released on the normal exit as well as the error one: a captured terminal
-    // does not hand a drag back to its own text selection.
-    scroll::disable_mouse();
-    ratatui::restore();
+    // The same sequence the signal path runs: see `terminal::restore`.
+    terminal::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
     }

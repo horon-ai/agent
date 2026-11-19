@@ -92,6 +92,14 @@ APPROVAL_RESOLVED = "approval approved"
 SESSION_READY = "mock/mock-model"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
+# The sequences the client writes when it gives the terminal back (#431). A
+# signal is not an exit the client runs, so this is what proves the handler
+# restored the modes rather than the process dying with them still on:
+# mouse capture off (1000 tracking, 1002 button tracking, 1006 SGR encoding),
+# bracketed paste off, and the shell's title popped back from the stack.
+MOUSE_OFF = ("\x1b[?1000l", "\x1b[?1002l", "\x1b[?1006l")
+PASTE_OFF = "\x1b[?2004l"
+TITLE_POP = "\x1b[23;2t"
 
 
 class Failure(RuntimeError):
@@ -698,11 +706,49 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
             first.close()
 
 
-# Case 5 scans `/proc` or `ps` for the case's bridge processes, which only a
-# POSIX host can do.
-POSIX_ONLY_CASES = {5}
-ALL_CASES = tuple(range(1, 6))
+# Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
+# client a POSIX signal: only a POSIX host can drive either.
+POSIX_ONLY_CASES = {5, 6, 7, 8}
+ALL_CASES = tuple(range(1, 9))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
+def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
+    """A client killed by a signal still gives the terminal back (#431).
+
+    Every way out the client runs itself restores the modes; a signal was not
+    one of them, so `SIGTERM` left bracketed paste and mouse reporting on for
+    the shell that came back. The handler now runs the same restore sequence
+    and then re-raises, so the exit status still reports the signal.
+    """
+    home = write_config(launch.home, base_url)
+    env = horon_env(root, home)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal([launch.argv0], cwd=root, env=env)
+    try:
+        # The client is fully started, so every mode the handler restores is on
+        # and the title has been pushed.
+        terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready")
+
+        # `start_new_session=True` in `Terminal` makes the client a process
+        # group leader, so this reaches the client and nothing else.
+        os.killpg(os.getpgid(terminal.process.pid), signum)
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != -signum:
+            raise Failure(
+                f"a client killed by {signal.Signals(signum).name} exited {code}, "
+                f"expected death by that signal ({-signum} in subprocess terms)"
+                f"\n--- transcript ---\n{terminal.transcript}"
+            )
+        missing = [sequence for sequence in (*MOUSE_OFF, PASTE_OFF, TITLE_POP) if sequence not in terminal.transcript]
+        if missing:
+            shown = [sequence.encode("unicode_escape").decode() for sequence in missing]
+            raise Failure(
+                "the signal path left the terminal unprepared: "
+                f"{', '.join(shown)} never written\n--- transcript ---\n{terminal.transcript}"
+            )
+        return terminal.transcript
+    finally:
+        terminal.close()
 
 
 def selected_cases(requested: str | None) -> set[int]:
@@ -777,6 +823,13 @@ def run_build_layout(
         )
         log("case 5 passed")
 
+    for index, signum in enumerate((signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT), start=6):
+        if index not in cases:
+            continue
+        log(f"case {index}: {signal.Signals(signum).name} restores the terminal before the client dies")
+        case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
+        signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
+        log(f"case {index} passed")
     return 0
 
 
