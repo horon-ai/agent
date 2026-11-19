@@ -132,6 +132,15 @@ horon-agent-build-meta = { path = "crates/build-meta" }
 horon-agent-app-core = { path = "crates/app-core", default-features = false }
 horon-agent-platform = { path = "crates/platform" }
 
+# The harness API bridge ships inside the released binary as `horon-agent
+# api-bridge`. SDK users must not need a Rust toolchain to reach the API:
+# requiring `cargo run -p horon-agent-harness-api-server` made the TypeScript SDK
+# unusable for anyone who installed horon-agent from a release artifact. It is a
+# dependency of every platform because the bridge is: the endpoint is a Unix
+# socket on Unix and a named pipe on Windows, and a client that finds nothing
+# listening starts this subcommand itself.
+horon-agent-harness-api-server = { path = "crates/harness-api-server" }
+
 # Archive extraction (for auto-update)
 tempfile = "3"
 # Only for the opt-in legacy SQLite session-index import feature and its CLI QA.
@@ -159,14 +168,6 @@ pdf = ["horon-agent-app-core/pdf"]
 # --legacy-index. Off by default; the default binary refuses with
 # MigrationRequired and never opens the database.
 legacy-session-index-import = ["horon-agent-app-core/legacy-session-index-import", "dep:rusqlite"]
-
-# The harness API bridge ships inside the released binary as `horon-agent api-bridge`.
-# SDK users must not need a Rust toolchain to reach the API: requiring
-# `cargo run -p horon-agent-harness-api-server` made the TypeScript SDK unusable for
-# anyone who installed horon-agent from a release artifact. Unix-only because the
-# bridge listens on a Unix socket.
-[target.'cfg(unix)'.dependencies]
-horon-agent-harness-api-server = { path = "crates/harness-api-server" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
