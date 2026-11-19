@@ -8,70 +8,68 @@
 <text x="46.0" y="136.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Linux</text>
 <line x1="173.2" y1="158.0" x2="173.2" y2="308.0" stroke="#eaeef2"/>
 <text x="173.2" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="329.4" y1="158.0" x2="329.4" y2="308.0" stroke="#eaeef2"/>
-<text x="329.4" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
-<line x1="485.6" y1="158.0" x2="485.6" y2="308.0" stroke="#eaeef2"/>
-<text x="485.6" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">20</text>
-<line x1="641.8" y1="158.0" x2="641.8" y2="308.0" stroke="#eaeef2"/>
-<text x="641.8" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">30</text>
+<line x1="381.5" y1="158.0" x2="381.5" y2="308.0" stroke="#eaeef2"/>
+<text x="381.5" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">10</text>
+<line x1="589.8" y1="158.0" x2="589.8" y2="308.0" stroke="#eaeef2"/>
+<text x="589.8" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">20</text>
 <line x1="798.0" y1="158.0" x2="798.0" y2="308.0" stroke="#eaeef2"/>
-<text x="798.0" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">40</text>
+<text x="798.0" y="324.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">30</text>
 <text x="163.2" y="177.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">agent first frame</text>
-<rect x="173.2" y="164.0" width="552.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="733.5" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">35.4</text>
+<rect x="173.2" y="164.0" width="576.1" height="18" rx="3" fill="#d3d9e1"/>
+<text x="757.3" y="177.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">27.7</text>
 <text x="163.2" y="207.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui first frame</text>
-<rect x="173.2" y="194.0" width="622.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="804.0" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">39.9</text>
+<rect x="173.2" y="194.0" width="571.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="752.7" y="207.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">27.4</text>
 <text x="163.2" y="237.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">input echo p95</text>
-<rect x="173.2" y="224.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="183.2" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.12</text>
+<rect x="173.2" y="224.0" width="3.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="184.7" y="237.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.17</text>
 <text x="163.2" y="267.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p50</text>
-<rect x="173.2" y="254.0" width="11.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="192.7" y="267.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.73</text>
+<rect x="173.2" y="254.0" width="16.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="197.2" y="267.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.77</text>
 <text x="163.2" y="297.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p95</text>
-<rect x="173.2" y="284.0" width="11.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="193.1" y="297.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.76</text>
+<rect x="173.2" y="284.0" width="16.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="197.8" y="297.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.79</text>
 <rect x="32" y="338.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="356.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
 <line x1="173.2" y1="378.0" x2="173.2" y2="528.0" stroke="#eaeef2"/>
 <text x="173.2" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="298.2" y1="378.0" x2="298.2" y2="528.0" stroke="#eaeef2"/>
-<text x="298.2" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">25</text>
-<line x1="423.1" y1="378.0" x2="423.1" y2="528.0" stroke="#eaeef2"/>
-<text x="423.1" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">50</text>
-<line x1="548.1" y1="378.0" x2="548.1" y2="528.0" stroke="#eaeef2"/>
-<text x="548.1" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">75</text>
-<line x1="673.0" y1="378.0" x2="673.0" y2="528.0" stroke="#eaeef2"/>
-<text x="673.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">100</text>
+<line x1="329.4" y1="378.0" x2="329.4" y2="528.0" stroke="#eaeef2"/>
+<text x="329.4" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">20</text>
+<line x1="485.6" y1="378.0" x2="485.6" y2="528.0" stroke="#eaeef2"/>
+<text x="485.6" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">40</text>
+<line x1="641.8" y1="378.0" x2="641.8" y2="528.0" stroke="#eaeef2"/>
+<text x="641.8" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">60</text>
 <line x1="798.0" y1="378.0" x2="798.0" y2="528.0" stroke="#eaeef2"/>
-<text x="798.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">125</text>
+<text x="798.0" y="544.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">80</text>
 <text x="163.2" y="397.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">agent first frame</text>
-<rect x="173.2" y="384.0" width="531.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="712.5" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">106</text>
+<rect x="173.2" y="384.0" width="475.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="656.2" y="397.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">60.8</text>
 <text x="163.2" y="427.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">tui first frame</text>
-<rect x="173.2" y="414.0" width="405.8" height="18" rx="3" fill="#d3d9e1"/>
-<text x="587.1" y="427.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">81.2</text>
+<rect x="173.2" y="414.0" width="421.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="602.8" y="427.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">54.0</text>
 <text x="163.2" y="457.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">input echo p95</text>
 <rect x="173.2" y="444.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="183.2" y="457.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.28</text>
+<text x="183.2" y="457.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.20</text>
 <text x="163.2" y="487.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p50</text>
-<rect x="173.2" y="474.0" width="4.2" height="18" rx="3" fill="#d3d9e1"/>
-<text x="185.4" y="487.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.84</text>
+<rect x="173.2" y="474.0" width="6.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="187.6" y="487.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.81</text>
 <text x="163.2" y="517.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p95</text>
-<rect x="173.2" y="504.0" width="4.7" height="18" rx="3" fill="#d3d9e1"/>
-<text x="186.0" y="517.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.94</text>
+<rect x="173.2" y="504.0" width="7.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="189.0" y="517.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.99</text>
 <rect x="32" y="558.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="576.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <line x1="173.2" y1="598.0" x2="173.2" y2="748.0" stroke="#eaeef2"/>
 <text x="173.2" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
-<line x1="329.4" y1="598.0" x2="329.4" y2="748.0" stroke="#eaeef2"/>
-<text x="329.4" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0.50</text>
-<line x1="485.6" y1="598.0" x2="485.6" y2="748.0" stroke="#eaeef2"/>
-<text x="485.6" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1</text>
-<line x1="641.8" y1="598.0" x2="641.8" y2="748.0" stroke="#eaeef2"/>
-<text x="641.8" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1.50</text>
+<line x1="298.2" y1="598.0" x2="298.2" y2="748.0" stroke="#eaeef2"/>
+<text x="298.2" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0.50</text>
+<line x1="423.1" y1="598.0" x2="423.1" y2="748.0" stroke="#eaeef2"/>
+<text x="423.1" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1</text>
+<line x1="548.1" y1="598.0" x2="548.1" y2="748.0" stroke="#eaeef2"/>
+<text x="548.1" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">1.50</text>
+<line x1="673.0" y1="598.0" x2="673.0" y2="748.0" stroke="#eaeef2"/>
+<text x="673.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
 <line x1="798.0" y1="598.0" x2="798.0" y2="748.0" stroke="#eaeef2"/>
-<text x="798.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2</text>
+<text x="798.0" y="764.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">2.50</text>
 <text x="163.2" y="617.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">agent first frame</text>
 <rect x="173.2" y="604.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="221.2" y="617.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
@@ -82,11 +80,11 @@
 <rect x="173.2" y="664.0" width="96" height="18" rx="3" fill="none" stroke="#d3d9e1" stroke-dasharray="4 3"/>
 <text x="221.2" y="677.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">not measured</text>
 <text x="163.2" y="707.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p50</text>
-<rect x="173.2" y="694.0" width="579.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="760.7" y="707.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.86</text>
+<rect x="173.2" y="694.0" width="378.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="559.9" y="707.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.52</text>
 <text x="163.2" y="737.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">render p95</text>
-<rect x="173.2" y="724.0" width="617.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="798.7" y="737.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">1.98</text>
-<text x="32.0" y="784.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 05e29d3 · measured 2026-11-19 05:40 UTC · run 44464753240</text>
+<rect x="173.2" y="724.0" width="563.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="745.1" y="737.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">2.26</text>
+<text x="32.0" y="784.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 2f63e44 · measured 2026-11-19 14:01 UTC · run 44537447832</text>
 <text x="32.0" y="802.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>
