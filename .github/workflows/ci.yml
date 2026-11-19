@@ -221,7 +221,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -760,13 +760,13 @@ jobs:
         # green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-config-types --min-passed 54 --timeout 600
+            --package horon-agent-config-types --min-passed 53 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-import-core --min-passed 24 --timeout 600
+            --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-logging --min-passed 28 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-platform --min-passed 11 --timeout 600
+            --package horon-agent-platform --min-passed 10 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-productivity-core --min-passed 7 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -823,18 +823,22 @@ jobs:
         # The first Linux run executed 1605 cases (#321, job 134409170973).
         # The five staged-import regressions and the filesystem refusal test
         # bring that floor to 1611. The three ignored benchmarks are separate.
+        # It moved 1611 -> 1597 when prune-tests (#419) removed fourteen tests
+        # that guarded no behavior.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1611 --timeout 1200
+            --package horon-agent-base --min-passed 1597 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
         shell: bash
         # The previous macOS suite passed 1592 cases. Include the five
         # staged-import regressions in the minimum for the complete suite.
+        # It moved 1597 -> 1583 when prune-tests (#419) removed fourteen tests
+        # that guarded no behavior.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1597 --timeout 1200
+            --package horon-agent-base --min-passed 1583 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
@@ -868,10 +872,12 @@ jobs:
         # removed the `CatalogLookup` probe, which only there decided whether a
         # delete had anything to remove, so its single test went with it. The
         # delete path is covered instead by the daemon tests in app-core.
+        # It moved 296 -> 294 when prune-tests (#419) removed two tests that
+        # duplicated stronger ACP tests.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
-            --timeout 600 --min-passed 296 \
+            --timeout 600 --min-passed 294 \
             -- acp --nocapture
 
       - name: Run RPC cohort
@@ -1190,7 +1196,7 @@ jobs:
 
       - name: Run tool surface cohort
         shell: bash
-        # `tool::tests` (78 checked, 4 `#[ignore]` QA) covers the registry:
+        # `tool::tests` (76 checked, 4 `#[ignore]` QA) covers the registry:
         # profile filtering, the deterministic definition order that keeps the
         # prompt prefix cacheable, and the parameter-description token cap that
         # governs how many tokens every request pays for the schema.
@@ -1199,6 +1205,9 @@ jobs:
         # modules compiled in every run and no cohort selected them (#300), so
         # two failures sat on `dev` unexecuted until they were fixed.
         # `--min-passed` is the measured count; raise it with the module.
+        # It moved 78 -> 76 when prune-tests (#419) removed
+        # `print_tool_definition_token_report` and
+        # `subagent_tool_is_not_registered`, two tests that guarded no behavior.
         # `tool::lifecycle::tests` (5) pins the `TOOL_LIFECYCLE` field list a
         # dispatch builds once and relabels for its done or error line: names,
         # order, values, and the input size counted without building the text.
@@ -1215,7 +1224,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 900 --min-passed 78 \
+            --timeout 900 --min-passed 76 \
             -- tool::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \

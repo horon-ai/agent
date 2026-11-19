@@ -15,6 +15,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
 
 use super::picker::{Kind, Outcome, Picker, Row, draw, panel};
+use crate::app::{Action, App};
 use crate::theme::{SymbolPreset, Symbols, Theme};
 use unicode_width::UnicodeWidthStr;
 
@@ -417,4 +418,67 @@ fn a_pane_too_small_for_the_list_says_so_instead_of_hiding() {
     let text = buffer_text(&buffer);
     assert!(text.contains("list hidd"), "the list hid itself: {text:?}");
     assert!(!text.contains('X'), "the conversation shows through: {text:?}");
+}
+
+/// An app whose session reports `effort` as the level in force.
+fn app_on(effort: Option<&str>) -> App {
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    let mut app = App::new("socket · session_a".to_string(), receiver);
+    app.reasoning_effort = effort.map(str::to_string);
+    app
+}
+
+/// The label of the row the open list has under the cursor.
+fn cursor(app: &App) -> String {
+    app.picker
+        .as_ref()
+        .expect("/effort opened no list")
+        .selected_label()
+        .expect("the list has no row under the cursor")
+        .to_string()
+}
+
+#[test]
+fn effort_picker_opens_on_current() {
+    // The cursor, the preview and `enter` have to be on the level in force:
+    // opening the ladder and confirming must not quietly downgrade the session.
+    let mut app = app_on(Some("xhigh"));
+    assert_eq!(app.run_effort(""), None);
+    let picker = app.picker.as_ref().expect("/effort opened no list");
+    assert_eq!(picker.selection(), 5, "the cursor is not on `xhigh`");
+    assert_eq!(picker.selected_label(), Some("xhigh"));
+    let row = picker.selected_row().expect("the ladder has no row under the cursor");
+    assert!(row.current, "the row under the cursor is not the level in force");
+    assert!(!row.preview.is_empty(), "the row under the cursor has no preview");
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        Some(Action::Effort("xhigh".to_string())),
+        "`enter` did not re-send the level in force"
+    );
+
+    // A session that reports no level, and one that reports a level outside
+    // the ladder, both open on the first row.
+    for absent in [None, Some("ultra")] {
+        let mut app = app_on(absent);
+        assert_eq!(app.run_effort(""), None);
+        assert_eq!(
+            cursor(&app),
+            "none",
+            "the ladder did not open on its first row for {absent:?}"
+        );
+    }
+
+    // Typing still reads from the top of what the filter leaves, and the mark
+    // stays on the row in force when the filter keeps it.
+    let mut app = app_on(Some("xhigh"));
+    assert_eq!(app.run_effort(""), None);
+    for character in "xh".chars() {
+        assert_eq!(app.on_key(key(KeyCode::Char(character))), None);
+    }
+    let picker = app.picker.as_ref().expect("typing closed the list");
+    assert_eq!(picker.selected_label(), Some("xhigh"));
+    assert!(
+        picker.selected_row().is_some_and(|row| row.current),
+        "the level in force lost its mark under the filter"
+    );
 }

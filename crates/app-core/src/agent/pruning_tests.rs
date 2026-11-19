@@ -2,7 +2,7 @@
 //! stored transcript keeps every original result.
 
 use super::*;
-use crate::compaction::pruning::{PRUNED_SUPERSEDED_TEXT, PRUNED_USELESS_TEXT, PruneKind};
+use crate::compaction::pruning::{PRUNED_SUPERSEDED_TEXT, PruneKind};
 use crate::provider::{EventStream, Provider};
 use crate::tool::Registry;
 use std::ffi::OsString;
@@ -239,9 +239,4 @@ async fn the_ledger_round_trips_through_the_session_store() {
 
     let reloaded = crate::session::Session::load(&session_id).expect("reload the session");
     assert_eq!(reloaded.pruned_tool_results.get("r1"), Some(&PruneKind::Superseded));
-}
-
-#[test]
-fn the_useless_marker_is_the_documented_string() {
-    assert_eq!(PRUNED_USELESS_TEXT, "[Uneventful result elided]");
 }

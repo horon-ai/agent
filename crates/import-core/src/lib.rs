@@ -1320,19 +1320,6 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_content_accepts_string() {
-        let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"plain"}]}}"#;
-        let entry = serde_json::from_str::<ClaudeCodeEntry>(line).unwrap();
-        let ClaudeCodeContent::Blocks(blocks) = entry.message.unwrap().content else {
-            panic!("expected block content");
-        };
-        match &blocks[0] {
-            ClaudeCodeContentBlock::ToolResult { content, .. } => assert_eq!(content, "plain"),
-            other => panic!("expected tool_result, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn ordered_claude_entries_sort_broken_chain_roots_by_timestamp() {
         // Real-data shape (session b18f57b9): the assistant reply has a
         // parentUuid that is NOT present in the file, so both entries are

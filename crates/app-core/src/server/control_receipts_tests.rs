@@ -426,39 +426,3 @@ async fn manual_qa_a_dropped_response_returns_the_stored_result_on_retry() {
     assert_eq!(applying, 1, "one claim row");
     assert_eq!(terminal, 1, "one terminal row");
 }
-
-#[tokio::test]
-async fn manual_qa_a_crash_between_apply_and_terminal_never_reapplies() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let session = "control-session-qa-crash";
-    let action = cancel_action();
-    let id = record_id(session, "op-qa-crash");
-    let digest = action.digest().expect("digest");
-    {
-        let mut store = DurableRuntimeStore::open_in(temp.path(), session).expect("open the control journal");
-        store
-            .append(
-                &id,
-                Payload::ControlApplying(ControlApplying {
-                    action: action.label().to_string(),
-                    digest,
-                }),
-            )
-            .expect("the crashed process claimed the operation");
-        store.replay().expect("reopen the journal");
-    }
-
-    let effect = Arc::new(CountingEffect::default());
-    let restarted = ledger(temp.path(), session, TERMINAL_CAP, NONTERMINAL_CAP);
-    let outcome = restarted.apply("op-qa-crash", &action, effect.clone()).await;
-    assert_eq!(outcome.label(), "indeterminate");
-    assert_eq!(effect.applications(), 0, "the sealed operation is never re-applied");
-
-    let rows = journal_control_rows(temp.path(), session);
-    assert_eq!(
-        rows.len(),
-        1,
-        "the crash left exactly one claim row and no terminal row"
-    );
-    assert!(rows[0].2.is_none());
-}

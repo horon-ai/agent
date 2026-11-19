@@ -295,13 +295,6 @@ fn test_ambient_lock_release() {
 }
 
 #[test]
-fn test_schedule_id_format() {
-    let id = format!("sched_{:08x}", rand::random::<u32>());
-    assert!(id.starts_with("sched_"));
-    assert_eq!(id.len(), 6 + 8); // "sched_" + 8 hex chars
-}
-
-#[test]
 fn test_format_duration_rough() {
     assert_eq!(format_duration_rough(Duration::seconds(30)), "30s");
     assert_eq!(format_duration_rough(Duration::minutes(5)), "5m");

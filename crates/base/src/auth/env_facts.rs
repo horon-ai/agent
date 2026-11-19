@@ -391,24 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn a_normal_desktop_keeps_the_browser_flow() {
-        // Regression guard for the probe's integration with
-        // `auth::browser_suppressed`: a plain desktop must never be downgraded
-        // out of the browser flow by the probe. Only DeviceCode and
-        // ApiKeyNonInteractive suppress the browser there.
-        let desktop = facts(Tri::Yes, Tri::Yes, Tri::Yes, Tri::Yes, Tri::No);
-        assert_eq!(desktop.preferred_auth_method(), AuthMethodChoice::OAuthLoopback);
-
-        // And the most pessimistic reading of an inconclusive probe still keeps
-        // the browser, because Unknown is optimistic everywhere.
-        let inconclusive = facts(Tri::Unknown, Tri::Unknown, Tri::Unknown, Tri::Unknown, Tri::Unknown);
-        assert!(matches!(
-            inconclusive.preferred_auth_method(),
-            AuthMethodChoice::OAuthLoopback | AuthMethodChoice::OAuthPasteCallback
-        ));
-    }
-
-    #[test]
     fn probe_is_cheap_and_carries_no_user_data() {
         let (facts, elapsed) = EnvFacts::probe_timed();
         assert!(

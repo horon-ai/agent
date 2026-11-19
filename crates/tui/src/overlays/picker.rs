@@ -155,6 +155,18 @@ impl Picker {
         picker
     }
 
+    /// A list of the given rows, opened with `selected` under the cursor.
+    ///
+    /// A list whose row in force is not its first row — the effort ladder is
+    /// the one today — opens on that row, so `enter` confirms what the reader
+    /// sees marked instead of moving to the top. A position past the end of
+    /// the list opens on the last row it has.
+    pub fn at(kind: Kind, title: impl Into<String>, rows: Vec<Row>, empty: impl Into<String>, selected: usize) -> Self {
+        let mut picker = Self::new(kind, title, rows, empty);
+        picker.selected = selected.min(picker.visible.len().saturating_sub(1));
+        picker
+    }
+
     /// A list with no rows yet, asking for the ones on their way.
     pub fn loading(kind: Kind, title: impl Into<String>, empty: impl Into<String>) -> Self {
         let mut picker = Self::new(kind, title, Vec::new(), empty);

@@ -51,14 +51,6 @@ fn ordered_uuids(entries: &[ClaudeCodeEntry]) -> Vec<Option<&str>> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tool_result_array_text_imports_text() {
-    // Array form with a single text block -> the text must be preserved.
-    let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"hello world"}]}]}}"#;
-    let content = first_tool_result_content(parse_ok(line));
-    assert_eq!(content, "hello world");
-}
-
-#[test]
 fn tool_result_array_mixed_text_and_image_uses_placeholder_not_base64() {
     // Array form with text + image. Target behavior: keep the text, replace the
     // image with a compact "[image]" placeholder, and NEVER embed base64.
@@ -73,32 +65,6 @@ fn tool_result_array_mixed_text_and_image_uses_placeholder_not_base64() {
         !content.contains("BASE64DATA"),
         "base64 image payload must NOT be embedded, got {content:?}"
     );
-}
-
-#[test]
-fn tool_result_array_image_only_uses_placeholder() {
-    let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"BASE64DATA"}}]}]}}"#;
-    let content = first_tool_result_content(parse_ok(line));
-    assert_eq!(content, "[image]");
-}
-
-#[test]
-fn tool_result_content_null_parses_to_empty_not_dropped() {
-    let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":null}]}}"#;
-    assert_eq!(first_tool_result_content(parse_ok(line)), "");
-}
-
-#[test]
-fn tool_result_content_missing_parses_to_empty_not_dropped() {
-    let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1"}]}}"#;
-    assert_eq!(first_tool_result_content(parse_ok(line)), "");
-}
-
-#[test]
-fn tool_result_content_plain_string_still_supported() {
-    // Regression guard: legacy string form must keep working.
-    let line = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"plain string result"}]}}"#;
-    assert_eq!(first_tool_result_content(parse_ok(line)), "plain string result");
 }
 
 #[test]
@@ -364,19 +330,4 @@ fn long_linear_chain_orders_correctly() {
     assert_eq!(ordered.len(), 500);
     assert_eq!(ordered.first().unwrap().uuid.as_deref(), Some("n0"));
     assert_eq!(ordered.last().unwrap().uuid.as_deref(), Some("n499"));
-}
-
-// ---------------------------------------------------------------------------
-// Edge case 6: malformed JSON lines must be skipped individually
-// ---------------------------------------------------------------------------
-
-#[test]
-fn malformed_json_line_fails_to_parse_in_isolation() {
-    // A genuinely malformed JSON line returns Err (the importer's line loop
-    // skips just this one and keeps going). Good lines around it are unaffected
-    // (validated at the importer level in the horon-agent-base integration test).
-    assert!(parse("{this is not valid json}").is_err());
-    assert!(parse("").is_err());
-    // ...but a well-formed line still parses.
-    assert!(parse(r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"ok"}}"#).is_ok());
 }

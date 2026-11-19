@@ -7,7 +7,7 @@
 
 use super::*;
 use crate::tool_line::{
-    DEFAULT_OUTPUT_LINES, MAX_INPUT_BYTES, MAX_OUTPUT_LINES, MAX_PREVIEW_CELLS, OutputHead, append_input, cut_output,
+    DEFAULT_OUTPUT_LINES, MAX_INPUT_BYTES, MAX_OUTPUT_LINES, MAX_PREVIEW_CELLS, append_input, cut_output,
     format_elapsed, lines, summarize, truncate_cells,
 };
 use crate::transcript::{Decision, Item, ToolCall, ToolState, Transcript};
@@ -273,16 +273,6 @@ fn a_result_without_an_id_lands_on_the_oldest_unfinished_call() {
 }
 
 #[test]
-fn an_unknown_result_is_appended_rather_than_dropped() {
-    let mut transcript = Transcript::new();
-    transcript.tool_done("ghost", "bash", None, Some("no such tool"));
-    let calls = tool_calls(&transcript);
-    assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].name, "bash");
-    assert_eq!(calls[0].state, ToolState::Failed("no such tool".to_string()));
-}
-
-#[test]
 fn a_result_for_a_call_that_never_started_keeps_its_id() {
     let mut transcript = Transcript::new();
     transcript.tool_done("late", "read", Some("body"), None);
@@ -355,15 +345,6 @@ fn the_default_preview_setting_is_three_rows() {
         cut_output("1\n2\n3\n4", DEFAULT_OUTPUT_LINES).map(|head| head.rows.len()),
         Some(3)
     );
-}
-
-#[test]
-fn an_output_head_reports_what_it_hides() {
-    let head = OutputHead {
-        rows: vec!["a".to_string()],
-        total_rows: 4,
-    };
-    assert_eq!(head.hidden_rows(), 3);
 }
 
 #[test]

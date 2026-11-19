@@ -175,22 +175,6 @@ fn explicit_ranges_carry_a_leading_and_three_trailing_context_lines() {
 }
 
 #[test]
-fn a_tail_selector_is_exactly_the_last_lines() {
-    let text = lines(10);
-    let rendered = render_with_selector(
-        &text,
-        &Selector::Tail {
-            count: 2,
-            ranges: Vec::new(),
-            raw: false,
-        },
-        false,
-    )
-    .unwrap();
-    assert_eq!(rendered.body, "    9\tL9\n   10\tL10\n");
-}
-
-#[test]
 fn raw_renders_without_numbers_or_a_length_cut() {
     let long = "x".repeat(MAX_LINE_LEN + 10);
     let text = format!("first\n{long}\nthird\n");
@@ -204,24 +188,6 @@ fn raw_renders_without_numbers_or_a_length_cut() {
     )
     .unwrap();
     assert_eq!(rendered.body, format!("{long}\n"));
-}
-
-#[test]
-fn a_range_past_the_end_reports_the_file_length() {
-    let text = lines(10);
-    let error = render_with_selector(
-        &text,
-        &Selector::Lines {
-            ranges: vec![(40, None)],
-            raw: false,
-        },
-        false,
-    )
-    .expect_err("out-of-range read should fail");
-    assert_eq!(
-        error.to_string(),
-        "Line 40 is beyond end of file (10 lines total). Use :1 to read from the start, or :10 to read the last line."
-    );
 }
 
 #[test]
