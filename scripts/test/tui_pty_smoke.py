@@ -360,8 +360,10 @@ class WindowsTerminal:
             )
         self.transcript = ""
         self._lock = threading.Lock()
-        command = subprocess.list2cmdline(argv)
-        self.process = PtyProcess.spawn(command, cwd=cwd, env=env, dimensions=(40, 120))
+        # A list, not a command line: `spawn` splits a string with
+        # `shlex.split(posix=False)`, which keeps the quotes and then fails to
+        # find the executable.
+        self.process = PtyProcess.spawn(argv, cwd=cwd, env=env, dimensions=(40, 120))
         self._reader = threading.Thread(target=self._read_loop, name="conpty-reader", daemon=True)
         self._reader.start()
 
@@ -824,7 +826,9 @@ def main(argv: list[str] | None = None) -> int:
     # Unix socket paths are capped near 104 bytes (SUN_LEN), and macOS puts the
     # default temp dir under a long /var/folders/... path, so the run root lives
     # directly under /tmp to keep `<root>/<case>/run/horon-agent-api.sock` short.
-    root = tempfile.mkdtemp(prefix="htui-", dir="/tmp")
+    # Windows has no /tmp and no path-length cap here: its named pipes live in
+    # the pipe namespace, not the filesystem.
+    root = tempfile.mkdtemp(prefix="htui-", dir="/tmp" if POSIX else None)
     try:
         if args.layout == "installed":
             return run_installed_layout(args.layout_root, root, base_url, args.transcript)
