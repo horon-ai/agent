@@ -71,7 +71,11 @@ mod tool_done_verdict_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 22;
+///
+/// 1.23 adds `server_lifecycle`, so a client can tell a daemon that is
+/// restarting from one that stopped. The event needs no negotiation: a client
+/// that does not know the kind skips it, exactly as before.
+pub const API_VERSION_MINOR: u32 = 23;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.

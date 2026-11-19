@@ -136,6 +136,13 @@ pub enum Item {
     Tool(ToolCall),
     /// Session-level information, not model output.
     Notice(String),
+    /// A lifecycle announcement from the harness behind the session: the
+    /// fixed header line, then the sentence.
+    ///
+    /// Kept apart from [`Item::Notice`] because it is not a remark about the
+    /// conversation but news about the server itself, and it is drawn as its
+    /// own two-line entry rather than as one bulleted row.
+    Announcement(String),
     /// Something the user needs to see and act on.
     Warning(String),
     /// A thought the model published before its answer, drawn apart from it.
@@ -320,6 +327,16 @@ impl Transcript {
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.finish_stream();
         self.items.push(Item::Notice(text.into()));
+    }
+
+    /// Record a lifecycle announcement about the server itself.
+    ///
+    /// It ends the open message first for the same reason a notice does: the
+    /// announcement is not part of the text that was streaming, and a delta
+    /// arriving after it must not be drawn as its continuation.
+    pub fn push_announcement(&mut self, text: impl Into<String>) {
+        self.finish_stream();
+        self.items.push(Item::Announcement(text.into()));
     }
 
     /// Record the `/context` breakdown.

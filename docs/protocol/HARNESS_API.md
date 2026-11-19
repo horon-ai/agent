@@ -637,6 +637,35 @@ timeout.
 
 The full storage format, limits and legacy migration rules are in `docs/protocol/SESSION_STORE.md`.
 
+## Daemon lifecycle (protocol 1.23)
+
+The daemon behind a connection can end that connection for two different
+reasons, and a client that treats both the same either tears itself down on
+every upgrade or waits for a daemon that is never coming back. `server_lifecycle`
+says which one it is:
+
+| Field | Type | When absent | Meaning |
+| --- | --- | --- | --- |
+| `phase` | `"restarting"` or `"stopped"` | never absent | `restarting`: the daemon announced a reload and is replacing its own socket. `stopped`: the daemon ended the connection without announcing one |
+| `new_socket` | string | the reload named no socket | The daemon's own legacy socket path, forwarded for clients that follow it. An API client keeps dialling the same API socket |
+
+The event carries no `session_id`: it is about the connection, not about one
+conversation on it. `restarting` arrives while the connection is still open,
+because the daemon announces the reload before it goes; `stopped` arrives as
+part of the close. The `error` frame that has always reported a closed daemon
+connection still follows either notice, so a client that does not know
+`server_lifecycle` sees exactly what it saw before.
+
+Reconnecting is the client's decision, and the bridge is ready for it: it keeps
+its own listener across a daemon restart, so the same API socket answers again
+once a bridge is up, and the session that was attached is still stored. A client
+that reconnects before the reloaded daemon answers sees the hello refused with
+`the harness API bridge cannot reach the horon-agent daemon at ...`; retrying
+with a bounded ladder is the expected behaviour, and after that ladder a client
+should report the daemon as gone rather than wait without end. Attaching the same
+session id again replays nothing, so a client that keeps its transcript keeps it
+without duplicating it.
+
 ## Ask requests a client declares in the handshake
 
 The `ask` tool shows a person a question and waits for the answer. The daemon draws no screen and cannot assume a client is attached, so the question goes only to a connection that said it can show one. The advertisement is one boolean field on `Hello`:

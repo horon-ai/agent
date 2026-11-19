@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 22;
+export const API_VERSION_MINOR = 23;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -942,6 +942,9 @@ export type ApiEvent =
     }
   | { ev: "approval_ack"; request_id: string }
   | { ev: "failover_ack"; chain_id: string; from: string; to: string; attempt: number }
+  /** The daemon is leaving or has left. `restarting` means it replaces its own
+   *  socket and answers again; `stopped` means it ended without announcing one. */
+  | { ev: "server_lifecycle"; phase: "restarting" | "stopped"; new_socket?: string }
   /** Attachment recovery intent. Can precede attached. Never auto-sent by the bridge. */
   | { ev: "session_recovery"; session_id: string; continuation_message: string; reconnect_notice?: string }
   | { ev: "session_status"; session_id: string; status: string; pending_soft_interrupts?: number }
@@ -1142,6 +1145,7 @@ export const KNOWN_EVENT_KINDS = [
   "run_needs_human_resume",
   "approval_ack",
   "failover_ack",
+  "server_lifecycle",
   "ask_requested",
   "session_status",
   "session_recovery",

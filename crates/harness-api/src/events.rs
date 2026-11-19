@@ -406,6 +406,23 @@ pub enum ApiEvent {
         attempt: u32,
     },
 
+    /// The daemon behind this connection is leaving, or has left.
+    ///
+    /// Additive in v1: a client that does not know the kind still sees the
+    /// connection end, exactly as before. A client that does can tell the two
+    /// apart — a daemon replacing itself answers again on the same API socket,
+    /// while one that stopped does not — and reconnect instead of reporting
+    /// the end of the session.
+    ServerLifecycle {
+        phase: ServerPhase,
+        /// Socket the reloading daemon named for its replacement, when it named
+        /// one. This is the daemon's own legacy socket, forwarded for clients
+        /// that follow it; a client of the harness API keeps dialling the same
+        /// API socket and ignores it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new_socket: Option<String>,
+    },
+
     /// Recovery intent from attachment history, emitted at most once per attach.
     /// May precede `Attached`. Subscribe to events before attaching. The client
     /// decides whether to send the continuation; the bridge never sends it.
@@ -829,6 +846,22 @@ impl ApiEvent {
             verdict: None,
         }
     }
+}
+
+/// What the daemon behind a connection is doing when it ends or leaves it.
+///
+/// Carried by [`ApiEvent::ServerLifecycle`]. The two cases need different
+/// client behaviour: a restarting daemon comes back, so the client waits and
+/// reconnects, while a stopped one does not, so the client stays with the
+/// conversation it read and says the session is over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerPhase {
+    /// The daemon announced a reload: it is replacing its own socket and is
+    /// expected to answer again. The connection to it ends as part of that.
+    Restarting,
+    /// The daemon ended the connection without announcing a reload.
+    Stopped,
 }
 
 /// One transcript hit from `SearchSessions`.

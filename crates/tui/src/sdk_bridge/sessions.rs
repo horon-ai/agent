@@ -240,6 +240,9 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | FailoverAck { .. }
         | CredentialUpdated { .. }
         | SessionSearchResults { .. }
+        // The daemon leaving or coming back is news about the connection, not
+        // about one conversation on it.
+        | ServerLifecycle { .. }
         | Unknown => None,
     }
 }

@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
 
-use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
+use horon_agent_sdk::api::{ApiEvent, AskSelection, ServerPhase, TurnStopReason};
 
 use crate::commands::Registry;
 use crate::history::History;
@@ -44,6 +44,9 @@ mod effort_cmd_tests;
 
 #[cfg(test)]
 mod history_search_tests;
+
+#[cfg(test)]
+mod notice_tests;
 
 #[cfg(test)]
 mod session_switch_tests;
@@ -170,6 +173,14 @@ pub struct App {
     /// Whether the bridge or the daemon went away. The client stays up so the
     /// conversation can be read; the status line says why nothing is sent.
     pub disconnected: bool,
+    /// What the harness last said about its own end, if anything.
+    ///
+    /// A restart it announced and never came back from is a daemon that
+    /// stopped, and a connection nobody announced an end for is something
+    /// else again; the sentence drawn when the connection goes keeps those
+    /// apart. Cleared as soon as the client is connected to a live harness
+    /// again.
+    server_phase: Option<ServerPhase>,
     /// Whether a failed send is holding the queue back.
     ///
     /// A message the harness refused goes back to the input line or the queue;
@@ -304,6 +315,7 @@ impl App {
             queue: Vec::new(),
             in_flight: None,
             disconnected: false,
+            server_phase: None,
             resend_held: false,
             viewport_height: None,
             scroll: Scroll::new(),
@@ -360,6 +372,10 @@ impl App {
             queue: Vec::new(),
             in_flight: None,
             disconnected: true,
+            // A connection that never opened is not a daemon ending: the
+            // banner carries the reason, and no announcement belongs behind
+            // it.
+            server_phase: None,
             resend_held: false,
             viewport_height: None,
             scroll: Scroll::new(),
@@ -410,12 +426,57 @@ impl App {
     /// exiting on a dropped socket means the last error is wiped by the
     /// terminal restore before anyone can read it. `Ctrl-C` then leaves, and
     /// the exit code still says the session failed.
+    ///
+    /// The announcement the harness left behind decides the sentence. A daemon
+    /// that said it was stopping has already been announced, a restart that
+    /// never came back is a daemon that stopped, and a connection nobody
+    /// announced an end for was the socket itself.
     pub fn disconnect(&mut self, message: &str) {
         if self.disconnected {
             return;
         }
+        let sentence = match self.server_phase {
+            Some(ServerPhase::Restarting) => Some(crate::notice::STOPPED),
+            Some(ServerPhase::Stopped) => None,
+            None => Some(crate::notice::DISCONNECTED),
+        };
+        if let Some(sentence) = sentence {
+            self.transcript.push_announcement(sentence);
+        }
         self.banner = Some(message.to_string());
         self.lose_connection();
+    }
+
+    /// Fold one lifecycle notice from the harness into the transcript.
+    ///
+    /// The phase is kept as well as drawn: what the client says when the
+    /// connection ends afterwards depends on which of the two it was.
+    fn server_lifecycle(&mut self, phase: ServerPhase) {
+        self.server_phase = Some(phase);
+        let sentence = match phase {
+            ServerPhase::Restarting => crate::notice::RESTARTING,
+            ServerPhase::Stopped => crate::notice::STOPPED,
+        };
+        self.transcript.push_announcement(sentence);
+    }
+
+    /// The bridge reconnected after a restart, following the same session.
+    ///
+    /// The conversation stays on screen: it is the same stored session, and the
+    /// daemon replays nothing on attach, so redrawing it would either duplicate
+    /// or lose what was read while the daemon was gone.
+    pub fn server_restarted(&mut self) {
+        self.server_phase = None;
+        self.transcript.push_announcement(crate::notice::RESTARTED);
+        // The turn that was running belonged to the process that went away:
+        // its tool lines will never finish, its questions are gone with it, and
+        // nothing is on its way back.
+        self.pending_turn = false;
+        self.resend_held = false;
+        self.session_status = Some("idle".to_string());
+        self.transcript.end_running_tools();
+        self.withdraw_asks("the harness restarted");
+        self.restore_steer();
     }
 
     /// Stop pretending the session is usable, without claiming a new banner.
@@ -703,7 +764,15 @@ impl App {
                     cache_creation: optional_count(cache_creation_input),
                 });
             }
+            ApiEvent::ServerLifecycle { phase, .. } => self.server_lifecycle(*phase),
             ApiEvent::Error { message, .. } => {
+                // A harness that announced its own end follows that
+                // announcement with the close notice the bridge adds; the
+                // sentence is already drawn as an announcement, and an English
+                // warning beside it would only repeat it in another language.
+                if self.server_phase.is_some() {
+                    return;
+                }
                 // The turn is not over: the daemon follows a failed turn's
                 // error with `TurnStopped` and `TurnDone`, which close the turn
                 // state. Clearing the flag here made the next Ctrl-C quit the

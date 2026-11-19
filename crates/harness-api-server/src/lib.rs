@@ -34,9 +34,13 @@ mod bridge_lifecycle_tests;
 #[cfg(test)]
 mod capability_contract_tests;
 #[cfg(test)]
+mod close_notice_tests;
+#[cfg(test)]
 mod large_reply_tests;
 #[cfg(test)]
 mod pending_drain_tests;
+#[cfg(test)]
+mod reload_notice_tests;
 #[cfg(test)]
 mod session_presence_tests;
 #[cfg(test)]
@@ -652,6 +656,22 @@ where
                     _ = queue.wait_for_data_room(), if !can_read_legacy => {}
                     n = read_frame_bytes(&mut legacy_reader, &mut legacy_frame), if can_read_legacy => {
                         if n? == 0 {
+                            // A daemon that announced a reload is swapping its
+                            // own socket: the client was told why this stream
+                            // ends, and reconnecting is the right answer. One
+                            // that ended the stream without a word stopped, and
+                            // saying so is what tells a client not to wait for
+                            // it. The error frame below is unchanged and still
+                            // follows either notice.
+                            if !state.daemon_restarting {
+                                send_terminal_frame!(
+                                    'translate,
+                                    ServerFrame::event(ApiEvent::ServerLifecycle {
+                                        phase: horon_agent_harness_api::ServerPhase::Stopped,
+                                        new_socket: None,
+                                    })
+                                );
+                            }
                             let frame = ServerFrame::event(ApiEvent::Error {
                                 code: ErrorCode::Internal,
                                 message: "daemon connection closed".into(),

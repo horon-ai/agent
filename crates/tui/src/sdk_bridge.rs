@@ -23,10 +23,17 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::context::ContextReport;
 
+mod pump;
+mod reconnect;
 mod runtime;
 mod sessions;
 mod skills;
 mod steer;
+
+use pump::{Step, pump};
+
+#[cfg(test)]
+use pump::CONNECTION_CLOSED;
 
 #[cfg(test)]
 mod runtime_tests;
@@ -168,6 +175,13 @@ pub enum Incoming {
     Attached(Box<AttachedSession>),
     /// A request the harness answered with an error; the client stops waiting.
     RequestFailed(String),
+    /// The daemon restarted, and the bridge connected to it again and re-attached
+    /// the session it was following.
+    ///
+    /// Sent instead of [`Incoming::Closed`] when the harness announced the
+    /// restart and came back, so the client says the server restarted rather
+    /// than that the session ended.
+    ServerRestarted,
     /// The connection ended; the string says why.
     Closed(String),
 }
@@ -379,16 +393,63 @@ fn run_worker(
     if !report_skills(&events, skills::read(&client, &session_id, false)) {
         return;
     }
+    // Whether the harness announced a restart on this connection. The close
+    // that follows such an announcement is the restart itself, so the worker
+    // waits for the daemon to answer again instead of ending the session.
+    let mut restarting = false;
     loop {
         // The connection flag is read by the pump so a dead transport is
         // reported even while the client sits idle with nothing to send.
-        match pump(
+        let step = pump(
             &events,
             |timeout| stream.next_result_timeout(timeout),
             || client.is_closed(),
             &session_id,
-        ) {
-            Step::UiGone | Step::Closed => return,
+            &mut restarting,
+        );
+        match step {
+            Step::UiGone => return,
+            Step::Ended(reason) if !restarting => {
+                drop(events.send(Incoming::Closed(reason)));
+                return;
+            }
+            Step::Ended(_) => {
+                // The daemon said it was restarting: wait for it, and say so
+                // when it answers. A ladder that runs out means the daemon did
+                // not come back, which is the end of the session and is
+                // reported with the reason the last attempt saw.
+                let (fresh, next) = match reconnect::session(&dial, &session_id) {
+                    Ok(connection) => connection,
+                    Err(unreachable) => {
+                        drop(events.send(Incoming::Closed(unreachable.to_string())));
+                        return;
+                    }
+                };
+                client = fresh;
+                stream = next;
+                restarting = false;
+                if events.send(Incoming::ServerRestarted).is_err() {
+                    return;
+                }
+                // The status line describes the process that was serving the
+                // session, and that process is a new one: read what it reports
+                // before the conversation continues.
+                match runtime::read(&client, &session_id) {
+                    Ok(Some(incoming)) => {
+                        if events.send(incoming).is_err() {
+                            return;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let notice = Incoming::Notice(format!("could not read the runtime info: {error}"));
+                        if events.send(notice).is_err() {
+                            return;
+                        }
+                    }
+                }
+                continue;
+            }
             flowing => match take_command(&commands, flowing == Step::Flowing) {
                 CommandPoll::Command(command) => {
                     // The text is captured before the command is moved, so a
@@ -475,91 +536,6 @@ fn run_worker(
             },
         }
     }
-}
-
-/// What one pump pass decided for the worker loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Step {
-    /// Nothing was ready; the caller may block waiting for a command.
-    Idle,
-    /// At least one event was forwarded, so more may be ready right now.
-    Flowing,
-    /// The stream failed; [`Incoming::Closed`] has already been sent.
-    Closed,
-    /// The UI dropped its receiver, so nobody is left to tell.
-    UiGone,
-}
-
-/// What the client is told when the transport is gone but the stream never
-/// reported an error.
-const CONNECTION_CLOSED: &str = "the harness connection closed";
-
-/// Forward the events that are already ready, up to [`EVENT_BATCH`].
-///
-/// One event per pass was the old cost: every pass then waited
-/// [`COMMAND_POLL`] on the command queue, so a stream faster than about fifty
-/// events a second fell further behind for as long as it lasted, and the SDK's
-/// bounded subscription eventually closed with `event_buffer_overflow`. Here
-/// the first read may block, which is what keeps an idle client off the CPU,
-/// and every read after a hit is a non-blocking poll, so a burst drains at the
-/// speed the queue can be written.
-///
-/// The batch bound is what keeps the pass finite: without it a stream that
-/// never pauses would starve the command queue, including the `Cancel` that a
-/// user presses during exactly that burst. A stream error is still terminal and
-/// still reported as [`Incoming::Closed`].
-///
-/// A closed connection is not a stream error: the SDK answers `Ok(None)` on a
-/// closed stream for ever, so `closed` is asked after every empty read. Without
-/// it an idle client would keep saying it is ready and poll a dead channel as
-/// fast as the loop goes round.
-///
-/// The stream is subscribed unfiltered because the daemon rewrites a typed
-/// session prefix to the full id: a subscription filtered by what the user typed
-/// would drop every event of the session it attached to. The filter therefore
-/// lives here, against `session_id`, the id the answer named — borrowed, so an
-/// event that is forwarded costs no copy and the check itself allocates
-/// nothing.
-///
-/// `next` is the stream read, generic so the batch can be exercised without a
-/// daemon: `Ok(Some(event))` is a frame, `Ok(None)` is a timeout.
-fn pump<F, E>(events: &Sender<Incoming>, mut next: F, closed: impl Fn() -> bool, session_id: &str) -> Step
-where
-    F: FnMut(Duration) -> Result<Option<ApiEvent>, E>,
-    E: std::fmt::Display,
-{
-    let mut timeout = EVENT_POLL;
-    let mut forwarded = false;
-    for _ in 0..EVENT_BATCH {
-        match next(timeout) {
-            Ok(Some(event)) => {
-                // The read succeeded, so the next one may poll rather than
-                // block, whether or not this event is kept.
-                timeout = Duration::ZERO;
-                if !sessions::belongs(&event, session_id) {
-                    continue;
-                }
-                if events.send(Incoming::Event(Box::new(event))).is_err() {
-                    return Step::UiGone;
-                }
-                forwarded = true;
-            }
-            Ok(None) => {
-                if closed() {
-                    drop(events.send(Incoming::Closed(CONNECTION_CLOSED.to_string())));
-                    return Step::Closed;
-                }
-                break;
-            }
-            Err(error) => {
-                // A dropped receiver means the UI already exited, which is the
-                // one case where nobody needs to be told why the stream ended.
-                drop(events.send(Incoming::Closed(format!("the event stream ended: {error}"))));
-                return Step::Closed;
-            }
-        }
-    }
-    if forwarded { Step::Flowing } else { Step::Idle }
 }
 
 /// Send the skill list the client did not ask for, reporting whether the UI is
@@ -850,6 +826,7 @@ pub fn default_socket() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use horon_agent_sdk::api::ServerPhase;
 
     #[test]
     fn connecting_to_a_missing_socket_reports_a_sentence() {
@@ -898,12 +875,20 @@ mod tests {
             .collect()
     }
 
+    /// One pass, with no restart announced and the test session.
+    fn pass<F>(events: &Sender<Incoming>, next: F, closed: impl Fn() -> bool) -> Step
+    where
+        F: FnMut(Duration) -> Result<Option<ApiEvent>, Error>,
+    {
+        pump(events, next, closed, "s1", &mut false)
+    }
+
     #[test]
     fn one_pass_forwards_a_burst_in_order_up_to_the_batch_bound() {
         let (events, received) = mpsc::channel();
         let mut queue = burst(EVENT_BATCH * 2);
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
+        let step = pass(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
 
         assert_eq!(step, Step::Flowing);
         let text = forwarded_text(&received);
@@ -913,7 +898,7 @@ mod tests {
 
         // The rest arrives on the next pass, in the same order.
         assert_eq!(
-            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1"),
+            pass(&events, |_| Ok::<_, Error>(queue.pop_front()), || false),
             Step::Flowing
         );
         let text = forwarded_text(&received);
@@ -932,7 +917,7 @@ mod tests {
         let mut queue = burst(EVENT_BATCH * 3);
 
         assert_eq!(
-            pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1"),
+            pass(&events, |_| Ok::<_, Error>(queue.pop_front()), || false),
             Step::Flowing
         );
         assert_eq!(forwarded_text(&received).len(), EVENT_BATCH);
@@ -949,14 +934,13 @@ mod tests {
         // it forever; this one timeout is what keeps an idle client off the CPU.
         let (events, received) = mpsc::channel();
         let mut timeouts = Vec::new();
-        let step = pump(
+        let step = pass(
             &events,
             |timeout| {
                 timeouts.push(timeout);
                 Ok::<_, Error>(None)
             },
             || false,
-            "s1",
         );
 
         assert_eq!(step, Step::Idle);
@@ -972,14 +956,13 @@ mod tests {
         let mut queue = burst(3);
         let mut timeouts = Vec::new();
 
-        let step = pump(
+        let step = pass(
             &events,
             |timeout| {
                 timeouts.push(timeout);
                 Ok::<_, Error>(queue.pop_front())
             },
             || false,
-            "s1",
         );
 
         assert_eq!(step, Step::Flowing);
@@ -994,20 +977,20 @@ mod tests {
     fn a_stream_error_still_ends_the_bridge() {
         let (events, received) = mpsc::channel();
 
-        let step = pump(
+        let step = pass(
             &events,
             |_| Err::<Option<ApiEvent>, _>(Error::new(ErrorKind::EventBufferOverflow, "behind")),
             || false,
-            "s1",
         );
 
-        assert_eq!(step, Step::Closed);
-        let messages: Vec<Incoming> = received.try_iter().collect();
-        assert_eq!(messages.len(), 1);
-        match &messages[0] {
-            Incoming::Closed(reason) => assert!(reason.contains("behind"), "reason was {reason}"),
-            other => panic!("expected a closed bridge, got {other:?}"),
+        match step {
+            Step::Ended(reason) => assert!(reason.contains("behind"), "reason was {reason}"),
+            other => panic!("expected the end of the connection, got {other:?}"),
         }
+        assert!(
+            received.try_iter().next().is_none(),
+            "the pass must leave the closing notice to the worker, which knows whether the end is a restart"
+        );
     }
 
     #[test]
@@ -1016,7 +999,7 @@ mod tests {
         drop(received);
         let mut queue = burst(2);
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
+        let step = pass(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
 
         assert_eq!(step, Step::UiGone, "no receiver is not a failure to report");
     }
@@ -1027,34 +1010,57 @@ mod tests {
         // the closed check this pass would return Idle and the worker would go
         // round again: a dead connection must cost exactly one read and one
         // notice, not a spin.
-        let (events, received) = mpsc::channel();
+        let (events, _received) = mpsc::channel();
         let mut reads = 0;
 
-        let step = pump(
+        let step = pass(
             &events,
             |_| {
                 reads += 1;
                 Ok::<_, Error>(None)
             },
             || true,
-            "s1",
         );
 
-        assert_eq!(step, Step::Closed);
+        assert_eq!(step, Step::Ended(CONNECTION_CLOSED.to_string()));
         assert_eq!(reads, 1, "the dead stream was read again");
-        let messages: Vec<Incoming> = received.try_iter().collect();
-        assert_eq!(messages.len(), 1, "the closed notice was sent more than once");
-        match &messages[0] {
-            Incoming::Closed(reason) => assert_eq!(reason, CONNECTION_CLOSED),
-            other => panic!("expected a closed connection, got {other:?}"),
-        }
+    }
+
+    #[test]
+    fn a_restarting_announcement_is_what_marks_the_connection_as_restarting() {
+        // The worker decides between reconnecting and closing on this flag, so
+        // it has to be set by the event itself: the close that follows carries
+        // no other evidence that the daemon meant to come back.
+        let (events, received) = mpsc::channel();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(ApiEvent::ServerLifecycle {
+            phase: ServerPhase::Restarting,
+            new_socket: None,
+        });
+
+        let mut restarting = false;
+        let step = pump(
+            &events,
+            |_| Ok::<_, Error>(queue.pop_front()),
+            || false,
+            "s1",
+            &mut restarting,
+        );
+
+        assert_eq!(step, Step::Flowing);
+        assert!(restarting, "the announcement did not mark the connection as restarting");
+        let forwarded: Vec<Incoming> = received.try_iter().collect();
+        assert!(
+            matches!(forwarded.as_slice(), [Incoming::Event(event)] if matches!(**event, ApiEvent::ServerLifecycle { phase: ServerPhase::Restarting, .. })),
+            "the client was not told the daemon is restarting: {forwarded:?}"
+        );
     }
 
     #[test]
     fn a_live_connection_that_timed_out_is_not_mistaken_for_a_closed_one() {
         let (events, received) = mpsc::channel();
 
-        let step = pump(&events, |_| Ok::<_, Error>(None), || false, "s1");
+        let step = pass(&events, |_| Ok::<_, Error>(None), || false);
 
         assert_eq!(step, Step::Idle);
         assert!(received.try_iter().next().is_none(), "a timeout is not a disconnection");
@@ -1076,7 +1082,7 @@ mod tests {
         queue.push_back(ApiEvent::Pong);
         queue.push_back(delta(0));
 
-        let step = pump(&events, |_| Ok::<_, Error>(queue.pop_front()), || false, "s1");
+        let step = pass(&events, |_| Ok::<_, Error>(queue.pop_front()), || false);
 
         assert_eq!(step, Step::Flowing);
         let forwarded: Vec<Incoming> = received.try_iter().collect();

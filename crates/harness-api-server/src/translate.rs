@@ -137,6 +137,9 @@ pub struct BridgeState {
     pending_soft_interrupts_at_done: Option<u32>,
     /// Whether an unannounced transport loss should crash the attached session.
     pub crash_on_disconnect: bool,
+    /// The daemon announced a reload on this connection, so the close that
+    /// follows is the socket swap it performs rather than a daemon that went away.
+    pub daemon_restarting: bool,
     /// Client-side inline response renderer, negotiated in Hello.
     pub supports_user_response: bool,
     /// Client can render `ask_requested` and answer it, negotiated in Hello.
@@ -2751,6 +2754,14 @@ impl BridgeState {
                     from: event["from"].as_str().unwrap_or_default().to_string(),
                     to: event["to"].as_str().unwrap_or_default().to_string(),
                     attempt: event["attempt"].as_u64().map(|n| n as u32).unwrap_or(0),
+                })]
+            }
+            "reloading" => {
+                self.daemon_restarting = true;
+                let new_socket = event["new_socket"].as_str().map(str::to_string);
+                vec![ServerFrame::event(ApiEvent::ServerLifecycle {
+                    phase: horon_agent_harness_api::ServerPhase::Restarting,
+                    new_socket,
                 })]
             }
             // Everything else on the legacy stream is not part of the stable

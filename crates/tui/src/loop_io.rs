@@ -58,6 +58,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                 app.attach_session(*session, started);
             }
             Incoming::RequestFailed(message) => app.request_failed(&message),
+            Incoming::ServerRestarted => app.server_restarted(),
             Incoming::Closed(message) => app.disconnect(&message),
         }
     }

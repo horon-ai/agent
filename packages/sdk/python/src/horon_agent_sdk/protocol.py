@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 22
+API_VERSION_MINOR = 23
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -731,6 +731,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "run_needs_human_resume",
     "approval_ack",
     "failover_ack",
+    "server_lifecycle",
     "ask_requested",
     "session_status",
     "session_recovery",

@@ -96,6 +96,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
             ))
         }
         Item::Notice(text) => notice(text, look),
+        Item::Announcement(text) => announcement(text, look),
         Item::Warning(text) => prefixed(Span::raw("! "), text, Style::default().fg(look.theme.core.error)),
         // Reasoning is drawn dimmed and indented, and the theme gains no token:
         // a new required token would reject every theme file already written,
@@ -231,6 +232,26 @@ fn notice(text: &str, look: &Look<'_>) -> Vec<Indented> {
             Indented::new(built, hang_column(line, offset, width))
         })
         .collect()
+}
+
+/// The lines of a lifecycle announcement: the fixed header, then the sentence.
+///
+/// Deliberately not a bulleted notice. A notice is a remark in the flow of the
+/// conversation; this is news about the server the conversation lives on, and
+/// it is drawn as a heading block so it cannot be mistaken for model output or
+/// for a failure. Nothing hangs: both lines start at the first column, so a
+/// wrapped sentence reads as one paragraph under its heading.
+fn announcement(text: &str, look: &Look<'_>) -> Vec<Indented> {
+    let header = Style::default()
+        .fg(look.theme.transcript.notice)
+        .add_modifier(Modifier::BOLD);
+    let body = Style::default().fg(look.theme.transcript.notice);
+    let mut lines = vec![Indented::plain(Line::from(Span::styled(crate::notice::HEADER, header)))];
+    lines.extend(
+        text.lines()
+            .map(|line| Indented::plain(Line::from(Span::styled(line.to_string(), body)))),
+    );
+    lines
 }
 
 /// The column a wrapped notice row keeps.

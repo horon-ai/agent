@@ -20,6 +20,7 @@ mod item_lines;
 pub mod keys;
 mod loop_io;
 mod markdown;
+mod notice;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
