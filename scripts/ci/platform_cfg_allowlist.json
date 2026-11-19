@@ -381,24 +381,20 @@
       "reason": "the release asset name and SHA-256 pin for each supported target triple (linux/macos/windows/freebsd x x86_64/aarch64); the mapping is the product of the updater."
     },
     "src/cli/args.rs": {
-      "count": 2,
-      "reason": "the `api-bridge` subcommand and the hidden `server stdio` subcommand exist only on Unix: both speak to a Unix domain socket and neither has a Windows transport, so the Windows parse surface stays byte-identical to the released binary."
+      "count": 1,
+      "reason": "the hidden `server stdio` subcommand exists only on Unix: it pairs the native protocol with an in-process Unix socket, and the bridge itself moved to a named pipe on Windows instead."
     },
     "src/cli/args/tests.rs": {
-      "count": 3,
-      "reason": "tests of the two Unix-only subcommands above; the clap variants do not exist on Windows."
+      "count": 2,
+      "reason": "tests of the Unix-only `server stdio` subcommand above and of `api-bridge --stdio`, whose stdio transport has no Windows counterpart."
     },
     "src/cli/dispatch.rs": {
       "count": 3,
-      "reason": "match arms for the Unix-only `api-bridge` and `server stdio` subcommands; no OS primitive is left in the file."
+      "reason": "the Unix-only `server stdio` arm, the Unix-only `api-bridge --stdio` transport, and the Windows arm that refuses it by name; no OS primitive is left in the file."
     },
     "src/cli/mod.rs": {
       "count": 1,
       "reason": "`ssh_transport` bridges the native protocol over tokio::net::UnixStream, so the module exists only on Unix."
-    },
-    "src/cli/proctitle.rs": {
-      "count": 1,
-      "reason": "one match arm labelling the Unix-only `api-bridge` command."
     },
     "src/main.rs": {
       "count": 1,

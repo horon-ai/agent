@@ -1902,6 +1902,26 @@ jobs:
             throw 'Windows horon-tui build failed'
           }
 
+      - name: ConPTY smoke (TUI client on Windows)
+        shell: bash
+        # The client's Windows behaviour used to be covered only by its library
+        # tests: nothing drew a screen, read a keystroke or left through a real
+        # console, so a broken render or exit path merged green (#432). The same
+        # smoke cases the Unix jobs run (happy path, piped stdin) now drive
+        # `horon-agent.exe` -> `horon-tui.exe` through a ConPTY.
+        #
+        # `pywinpty` is the ConPTY binding. The image ships Python but not the
+        # package, and a package that cannot be installed must say so instead of
+        # failing the job for an unrelated reason.
+        run: |
+          if ! python -m pip install --quiet --disable-pip-version-check pywinpty; then
+            echo "::warning::pywinpty could not be installed; the Windows ConPTY smoke test did not run"
+            exit 0
+          fi
+          python scripts/test/tui_pty_smoke.py --cases 1,2 \
+            --agent target/x86_64-pc-windows-msvc/release/horon-agent.exe \
+            --tui target/x86_64-pc-windows-msvc/debug/horon-tui.exe
+
       - name: npm install smoke
         # The Windows archive is the one shape the other two jobs never produce:
         # a `.exe` entry with no shell wrapper, which `npm install -g` shims as
@@ -2004,6 +2024,8 @@ jobs:
               'pipe_name_is_stable_and_normalizes_case_and_separators',
               'pipe_name_falls_back_when_stem_is_empty',
               'busy_pipe_is_reported_as_a_live_socket_path',
+              'sync_connect_waits_while_every_instance_is_taken',
+              'a_blocked_read_does_not_hold_back_a_write',
               'stream_pair_round_trips_bytes',
               'split_stream_supports_concurrent_read_and_write',
               'directory_sync_is_not_effective_on_windows',

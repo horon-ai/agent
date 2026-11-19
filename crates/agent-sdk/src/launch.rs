@@ -527,29 +527,34 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
     if socket_accepts(&api) {
         return Ok(());
     }
-    let legacy = horon_agent_harness_api::legacy_socket_path();
+    let daemon = horon_agent_harness_api::legacy_socket_path();
     let horon_agent = options.binary.clone().unwrap_or_else(|| sibling_exe("horon-agent"));
-    if !socket_accepts(&legacy) {
+    if !socket_accepts(&daemon) {
         progress("starting horon-agent runtime...");
-        spawn_detached(&horon_agent, &["serve"]).map_err(|error| {
+        // `--socket` is the global daemon-socket selector, so it has to precede
+        // the subcommand. Naming it keeps the daemon on the path this function
+        // waits on even when the child resolves its own default differently.
+        spawn_detached(
+            &horon_agent,
+            &[
+                OsString::from("--socket"),
+                daemon.as_os_str().to_owned(),
+                OsString::from("serve"),
+            ],
+        )
+        .map_err(|error| {
             Error::new(
                 ErrorKind::LaunchFailed,
                 format!("could not start the horon-agent runtime: {error}"),
             )
         })?;
-        wait_for_socket(&legacy, "horon-agent runtime", options.start_timeout)?;
+        wait_for_socket(&daemon, "horon-agent runtime", options.start_timeout)?;
     }
     progress("starting harness API bridge...");
     let standalone_bridge = sibling_exe("horon-agent-harness-api-bridge");
-    let (bridge, bridge_args): (&Path, &[&str]) = if standalone_bridge.is_file() {
-        (&standalone_bridge, &[])
-    } else {
-        // Current HoronAgent distributions host the bridge as a CLI subcommand so a
-        // desktop bundle only needs to ship one companion executable. Keep the
-        // standalone lookup above for compatibility with older installations.
-        (&horon_agent, &["api-bridge"])
-    };
-    spawn_detached(bridge, bridge_args).map_err(|error| {
+    let standalone = standalone_bridge.is_file().then_some(standalone_bridge.as_path());
+    let (bridge, bridge_args) = bridge_launch(&api, &horon_agent, standalone);
+    spawn_detached(&bridge, &bridge_args).map_err(|error| {
         Error::new(
             ErrorKind::LaunchFailed,
             format!("could not start the harness API bridge: {error}"),
@@ -558,7 +563,33 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
     wait_for_socket(&api, "harness API bridge", options.start_timeout)
 }
 
-fn spawn_detached(program: &Path, args: &[&str]) -> std::io::Result<()> {
+/// Arguments that start the harness API bridge on exactly `api`.
+///
+/// The socket is named rather than left to the child's own resolution. Both
+/// sides agree today only because they share an environment; a caller-supplied
+/// [`LaunchOptions::api_socket`] never reached the child, so the caller waited
+/// on a path nothing would bind and reported a timeout while a healthy bridge
+/// listened elsewhere. The waiter and the binder must be the same path on every
+/// platform, where the endpoint is a Unix socket or a Windows named pipe.
+fn bridge_launch(api: &Path, horon_agent: &Path, standalone: Option<&Path>) -> (PathBuf, Vec<OsString>) {
+    match standalone {
+        // The standalone binary takes the API socket positionally.
+        Some(bridge) => (bridge.to_path_buf(), vec![api.as_os_str().to_owned()]),
+        // Current HoronAgent distributions host the bridge as a CLI subcommand
+        // so a desktop bundle only needs to ship one companion executable. The
+        // standalone lookup stays for compatibility with older installations.
+        None => (
+            horon_agent.to_path_buf(),
+            vec![
+                OsString::from("api-bridge"),
+                OsString::from("--api-socket"),
+                api.as_os_str().to_owned(),
+            ],
+        ),
+    }
+}
+
+fn spawn_detached(program: &Path, args: &[OsString]) -> std::io::Result<()> {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -805,6 +836,33 @@ mod tests {
                 sandbox.path().join("instance/run/horon-agent-api.sock").display()
             )
         );
+    }
+
+    /// A caller that supplies `api_socket` waits on its own path, so the bridge
+    /// has to be told that path. When it was not, both sides resolved the socket
+    /// independently and the client timed out while a healthy bridge listened
+    /// somewhere else.
+    #[test]
+    fn the_bridge_is_told_which_socket_to_bind() {
+        let api = Path::new("/run/horon-agent/api.sock");
+        let agent = Path::new("/usr/bin/horon-agent");
+
+        let (program, args) = bridge_launch(api, agent, None);
+        assert_eq!(program, agent);
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("api-bridge"),
+                OsString::from("--api-socket"),
+                api.as_os_str().to_owned()
+            ]
+        );
+
+        // The standalone binary takes the API socket positionally.
+        let standalone = Path::new("/usr/bin/horon-agent-harness-api-bridge");
+        let (program, args) = bridge_launch(api, agent, Some(standalone));
+        assert_eq!(program, standalone);
+        assert_eq!(args, vec![api.as_os_str().to_owned()]);
     }
 
     #[test]

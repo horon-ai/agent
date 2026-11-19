@@ -322,10 +322,30 @@ where
         write_json_line(&mut write_half, &frame).await?;
         return Ok(());
     }
-    // Do not claim a usable connection before the native daemon is reachable.
-    let legacy = Stream::connect(&legacy_socket)
-        .await
-        .with_context(|| format!("connect legacy socket {}", legacy_socket.display()))?;
+    // Do not claim a usable connection before the native daemon is reachable,
+    // and say so instead of dropping the connection. A client whose `hello` is
+    // never answered waits on a read with no deadline, so a silent close is
+    // indistinguishable from a hung client: the Windows ConPTY smoke drew
+    // nothing for ninety seconds while the real state was a bridge with no
+    // daemon behind it.
+    let legacy = match Stream::connect(&legacy_socket).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let frame = ServerFrame::reply(
+                reply_to,
+                ApiEvent::Error {
+                    code: ErrorCode::Internal,
+                    message: format!(
+                        "the harness API bridge cannot reach the horon-agent daemon at {}: {error}",
+                        legacy_socket.display()
+                    ),
+                    details: None,
+                },
+            );
+            write_json_line(&mut write_half, &frame).await?;
+            return Ok(());
+        }
+    };
     let daemon_caps = daemon_capabilities(&legacy_socket).await;
     let user_connections_supported = daemon_caps.iter().any(|cap| cap == "session_connections");
     let runtime_commands_supported = daemon_caps.iter().any(|cap| cap == "runtime_commands");
@@ -817,23 +837,44 @@ mod public_acceptance_tests {
         let _ = std::fs::remove_file(path);
     }
 
+    /// A missing daemon is reported to the client, never left as silence.
+    ///
+    /// The connection used to be dropped without a frame, so a client waited on
+    /// a hello reply that could not come: the Windows ConPTY smoke sat on a
+    /// blank console for ninety seconds instead of naming the missing daemon.
     #[tokio::test]
     async fn stdio_does_not_confirm_handshake_when_native_daemon_is_missing() {
         let (mut client, bridge) = tokio::io::duplex(4096);
         let (read, write) = tokio::io::split(bridge);
-        let task = tokio::spawn(run_bridge_stream(
-            read,
-            write,
-            PathBuf::from("/nonexistent-horon-agent-stdio-test/daemon.sock"),
-        ));
+        let daemon = PathBuf::from("/nonexistent-horon-agent-stdio-test/daemon.sock");
+        let task = tokio::spawn(run_bridge_stream(read, write, daemon.clone()));
         write_json_line(
             &mut client,
             &json!({"v":1,"id":1,"req":"hello","min_version":1,"max_version":1}),
         )
         .await
         .unwrap();
-        let error = task.await.unwrap().unwrap_err();
-        assert!(error.to_string().contains("connect legacy socket"));
+
+        let mut line = String::new();
+        let mut reader = BufReader::new(&mut client);
+        reader.read_line(&mut line).await.unwrap();
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            frame["ev"], "error",
+            "a missing daemon must never answer hello_ok: {line}"
+        );
+        assert_eq!(frame["reply_to"], 1);
+        let message = frame["message"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("cannot reach the horon-agent daemon"),
+            "the error must name the condition: {message}"
+        );
+        assert!(
+            message.contains(&daemon.display().to_string()),
+            "the error must name the socket: {message}"
+        );
+        // The bridge ends the connection after reporting, so the task is clean.
+        task.await.unwrap().unwrap();
     }
 
     struct HoronAgentHomeGuard(Option<OsString>);

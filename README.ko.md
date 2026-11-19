@@ -102,7 +102,7 @@ horon run "summarize this repo"
 | `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. |
 | `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
-| `horon api-bridge` | SDK 클라이언트용 하네스 API 소켓(`HORON_AGENT_API_SOCKET`, Unix 전용). |
+| `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. |
 | `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
 | `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
 

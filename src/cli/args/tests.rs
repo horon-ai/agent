@@ -431,7 +431,11 @@ fn provider_add_type_maps_onto_the_config_type() {
 /// them. When the subcommand flag was also `--socket`, clap bound the global
 /// and the bridge listened on, and dialled, the same path: it came up looking
 /// healthy and every SDK client got ECONNREFUSED. Keep the names distinct.
-#[cfg(unix)]
+///
+/// Not platform-gated: an SDK client starts this subcommand on demand, so a
+/// platform that cannot parse it leaves every client waiting on a socket nothing
+/// binds. That is exactly how the Windows client timed out, so parsing is
+/// asserted everywhere.
 #[test]
 fn api_bridge_socket_flags_do_not_collide() {
     let args = Args::try_parse_from([

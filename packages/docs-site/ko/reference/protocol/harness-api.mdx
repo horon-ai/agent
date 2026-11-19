@@ -1,12 +1,19 @@
 ---
 title: "하네스 API"
-description: "데스크톱·SDK 클라이언트가 Unix 소켓으로 쓰는 하네스 API의 자격 증명 설정과 요청·이벤트 표면을 다룬다."
+description: "데스크톱·SDK 클라이언트가 로컬 소켓으로 쓰는 하네스 API의 자격 증명 설정과 요청·이벤트 표면을 다룬다. 로컬 소켓은 Unix 소켓이거나 Windows의 네임드 파이프이며, 두 방식은 같은 프레임을 나른다."
 ---
 
 {/* Generated from docs/protocol/HARNESS_API.ko.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
 
-데스크톱·SDK 클라이언트가 Unix 소켓으로 쓰는 하네스 API의 자격 증명 설정과 요청·이벤트
-표면을 다룬다.
+데스크톱·SDK 클라이언트가 로컬 소켓으로 쓰는 하네스 API의 자격 증명 설정과 요청·이벤트
+표면을 다룬다. 로컬 소켓은 Unix 소켓이거나 Windows의 네임드 파이프이며, 두 방식은 같은
+프레임을 나른다. 소켓 경로에서 응답이 없으면 클라이언트가 `horon-agent api-bridge`를 직접
+띄우고 그 경로에서 기다린다. 그래서 브리지는 SDK가 지원하는 모든 플랫폼에서 에이전트
+바이너리의 하위 명령이다.
+
+클라이언트는 읽기와 쓰기를 동시에 할 수 있다. SDK 클라이언트는 다음 프레임을 읽는
+스레드를 하나 붙잡아 두고 다른 스레드로 요청을 쓰며, Windows의 파이프는 겹친 입출력
+(overlapped I/O)으로 열려 대기 중인 읽기가 쓰기를 막지 않는다.
 
 ## 자격 증명 설정
 
