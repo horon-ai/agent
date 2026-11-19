@@ -73,7 +73,11 @@ STARTUP_TIMEOUT = 90.0
 STEP_TIMEOUT = 45.0
 
 HEADLESS_MESSAGE = "the interactive client is unavailable in this headless build"
-INSTALL_HINT = "horon-tui"
+# The install instruction itself. A headless sentence names it only when the
+# client is genuinely missing (#430).
+INSTALL_COMMAND = "horon-agent install-release"
+# The fallback every headless sentence keeps.
+HEADLESS_FALLBACK = "horon-agent serve"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
@@ -470,8 +474,16 @@ def headless_case(
     label: str,
     extra_env: dict | None = None,
     use_pty: bool = True,
+    expect_install_hint: bool = False,
 ) -> str:
-    """A launch that must stop at the headless message with the install hint."""
+    """A launch that must stop at the headless message with exit 1.
+
+    Only the missing-client condition is answered by installing the client
+    (#430): a pipe and `HORON_NO_TUI` happen with the client already in place,
+    so naming an install there told the operator a correct install was broken.
+    `expect_install_hint` is therefore off by default and the condition's own
+    remedy is asserted instead.
+    """
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
@@ -501,8 +513,15 @@ def headless_case(
 
     if not contains(transcript, HEADLESS_MESSAGE):
         raise Failure(f"{label}: headless message missing\n--- transcript ---\n{transcript}")
-    if not contains(transcript, INSTALL_HINT):
-        raise Failure(f"{label}: install hint missing\n--- transcript ---\n{transcript}")
+    if expect_install_hint:
+        if not contains(transcript, INSTALL_COMMAND):
+            raise Failure(f"{label}: install hint missing\n--- transcript ---\n{transcript}")
+    elif contains(transcript, INSTALL_COMMAND):
+        raise Failure(
+            f"{label}: the sentence names an install for a client that is present\n--- transcript ---\n{transcript}"
+        )
+    if not contains(transcript, HEADLESS_FALLBACK):
+        raise Failure(f"{label}: headless fallback missing\n--- transcript ---\n{transcript}")
     if code != 1:
         raise Failure(f"{label}: expected exit 1, got {code}\n--- transcript ---\n{transcript}")
     return transcript
@@ -732,6 +751,8 @@ def run_build_layout(
             os.path.join(root, "missing"),
             base_url,
             "missing horon-tui",
+            # The one reason installing answers, so the sentence names the install.
+            expect_install_hint=True,
         )
         log("case 3 passed")
 
