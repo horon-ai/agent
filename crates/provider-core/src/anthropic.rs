@@ -409,23 +409,6 @@ pub fn anthropic_map_tool_name_from_oauth(name: &str) -> String {
     .to_string()
 }
 
-pub fn anthropic_stainless_arch() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => other,
-    }
-}
-
-pub fn anthropic_stainless_os() -> &'static str {
-    match std::env::consts::OS {
-        "linux" => "Linux",
-        "macos" => "MacOS",
-        "windows" => "Windows",
-        other => other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
