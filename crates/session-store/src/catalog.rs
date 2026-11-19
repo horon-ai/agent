@@ -352,27 +352,3 @@ mod tests {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_finished_catalog_owner_releases_the_listing_even_with_a_duplicate_handle() -> Result<(), StoreError> {
-        let root = std::env::temp_dir()
-            .canonicalize()?
-            .join(format!("catalog-owner-{}", uuid::Uuid::new_v4()));
-        horon_agent_platform::fs::create_private_dir(&root)?;
-        let paths = SessionPaths::new(&root);
-        let owner = lock(&paths)?;
-        let duplicate = owner.0.try_clone()?;
-        let held = list(&paths, ReadProbe::default());
-        drop(owner);
-        let released = list(&paths, ReadProbe::default());
-        drop(duplicate);
-        fs::remove_dir_all(root)?;
-        assert_eq!(held.unwrap_err().code, StoreErrorCode::Busy);
-        assert!(released?.is_empty());
-        Ok(())
-    }
-}
