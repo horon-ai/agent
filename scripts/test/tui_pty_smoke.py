@@ -457,10 +457,35 @@ def Terminal(argv: list[str], cwd: str, env: dict):
 # ---------------------------------------------------------------------------
 
 
+def prime_server(launch: Launch, cwd: str, env: dict) -> None:
+    """Start the daemon and leave it running.
+
+    The launcher is what starts the server, but on Windows its own console is
+    gone before the client finishes, so the client is started directly and the
+    server is primed here instead: the launcher started with a pipe stops at
+    the headless message and the server it started keeps running.
+    """
+    subprocess.run(
+        [launch.argv0],
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=STARTUP_TIMEOUT,
+        check=False,
+    )
+    # The daemon binds its endpoint right after the launch returns; a pause
+    # saves a client that would otherwise dial before it is up.
+    time.sleep(2.0)
+
+
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if not POSIX:
+        prime_server(launch, case_root, env)
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
