@@ -122,12 +122,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     // (or the bare no-subcommand run) that selects no profile exposes only the
     // core tool set. `--tool-profile`, `HORON_AGENT_TOOL_PROFILE`, and `[tools]
     // profile` in config.toml all still override it, so the set can be widened.
-    let launches_agent = match &args.command {
-        None | Some(Command::Serve { .. }) | Some(Command::Run { .. }) => true,
-        #[cfg(unix)]
-        Some(Command::ApiBridge { .. }) => true,
-        _ => false,
-    };
+    let launches_agent = matches!(
+        &args.command,
+        None | Some(Command::Serve { .. }) | Some(Command::Run { .. }) | Some(Command::ApiBridge { .. })
+    );
     if launches_agent {
         apply_default_tool_profile(args.tool_profile.as_deref());
     }
@@ -176,19 +174,32 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             )
             .await?;
         }
-        #[cfg(unix)]
         Some(Command::ApiBridge { api_socket, stdio }) => {
             if stdio {
-                crate::env::set_var("HORON_AGENT_NON_INTERACTIVE", "1");
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    spawn_server(&args.provider, args.model.as_deref(), args.provider_profile.as_deref()),
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("api --stdio: timed out starting the horon-agent server"))??;
-                horon_agent_harness_api_server::run_bridge_stdio(horon_agent_harness_api_server::legacy_socket_path())
+                // The stdio transport pairs the bridge with an in-process
+                // socket, which only the Unix adapter provides. Windows clients
+                // reach the same API through the named pipe instead, so the
+                // flag is refused there rather than silently starting a
+                // listener nobody asked for.
+                #[cfg(unix)]
+                {
+                    crate::env::set_var("HORON_AGENT_NON_INTERACTIVE", "1");
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        spawn_server(&args.provider, args.model.as_deref(), args.provider_profile.as_deref()),
+                    )
+                    .await
+                    .map_err(|_| anyhow::anyhow!("api --stdio: timed out starting the horon-agent server"))??;
+                    horon_agent_harness_api_server::run_bridge_stdio(
+                        horon_agent_harness_api_server::legacy_socket_path(),
+                    )
                     .await?;
-                return Ok(());
+                    return Ok(());
+                }
+                #[cfg(not(unix))]
+                anyhow::bail!(
+                    "api-bridge --stdio is Unix only; connect to the API socket instead (a named pipe on Windows)"
+                );
             }
             // The daemon must be up for the bridge to translate onto, and a
             // user running this to try the SDK has usually never started one.

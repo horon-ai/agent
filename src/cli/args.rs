@@ -355,16 +355,19 @@ pub(crate) enum Command {
         json: bool,
     },
 
-    /// Serve the stable harness API on a Unix socket, for SDK clients.
+    /// Serve the stable harness API on a local socket, for SDK clients.
     ///
     /// This is the endpoint the TypeScript SDK (`@horon-ai/agent-sdk`) connects to. It
     /// ships in the released binary on purpose: the API is only "generally
     /// available" if reaching it does not require a Rust toolchain and a
-    /// source checkout.
-    #[cfg(unix)]
+    /// source checkout. Every platform exposes it because the SDK starts this
+    /// bridge on demand: a client that connects to the API socket on Windows
+    /// spawns this subcommand exactly as it does on Unix, where the socket is a
+    /// named pipe instead of a Unix socket.
     #[command(name = "api-bridge", alias = "api")]
     ApiBridge {
-        /// Path of the API socket to listen on (default: $XDG_RUNTIME_DIR/horon-agent-api.sock)
+        /// Path of the API socket to listen on (default: `$XDG_RUNTIME_DIR/horon-agent-api.sock`,
+        /// or a named pipe derived from the runtime directory on Windows)
         ///
         /// Named `--api-socket` rather than `--socket` because the global
         /// `--socket` already selects the *internal daemon* socket, and clap
@@ -375,6 +378,7 @@ pub(crate) enum Command {
 
         /// Serve one API connection on stdin/stdout (for SSH SDK clients).
         /// Starts the shared daemon if needed; does not create an API socket.
+        /// Unix only.
         #[arg(long, conflicts_with = "api_socket")]
         stdio: bool,
     },

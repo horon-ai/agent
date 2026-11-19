@@ -134,7 +134,8 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 - Two binaries. The agent binary, `horon-agent`, has these working
   subcommands: `serve` (agent daemon), `run` (send one message and exit),
   `repl` (plain line prompt, no full-screen UI), `api-bridge` (alias `api`;
-  harness API on a Unix socket, Unix only), `acp` (ACP adapter on stdio), and
+  harness API on a local socket, a Unix socket or a Windows named pipe), `acp`
+  (ACP adapter on stdio), and
   `rpc` (stdio JSONL RPC adapter; `--mode rpc` selects the same adapter), plus
   maintenance commands such as `update` and `install-release`. The TUI binary,
   `horon-tui`, is a separate package and binary on `horon-agent-sdk`; it is

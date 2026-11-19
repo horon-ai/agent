@@ -24,7 +24,7 @@ Measured results and their limits are in [`RESULTS.md`](/reference/performance/r
 | --- | --- | --- | --- |
 | `linux` | `ubuntu-24.04` | RSS, PSS | Also counts `fsync` calls (`strace`) |
 | `macos` | `macos-latest` | RSS | |
-| `windows` | `windows-latest` | Working Set | The daemon connection is a named pipe, and harness bridge startup is not measured (`api-bridge` is Unix-only) |
+| `windows` | `windows-latest` | Working Set | The daemon connection is a named pipe; harness bridge startup is not measured yet |
 
 Each OS calls `.github/workflows/benchmark-os.yml` once, and inside it the work splits like this. Calling it per OS means one OS's measurement starts as soon as that OS's build finishes, without waiting for the slowest OS build.
 

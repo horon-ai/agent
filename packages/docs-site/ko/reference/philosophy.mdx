@@ -10,7 +10,7 @@ description: "이 문서는 horon agent가 무엇을 위한 것인지, 코드가
 
 ## horon이 무엇인가
 
-두 모드를 동등하게 지원하는 하나의 에이전트입니다. 헤드리스 모드에서는 프로그램이 세션을 움직입니다. 일회성 명령(`run`), SDK용 Unix 소켓 harness API(`api-bridge`)를 둔 데몬(`serve`), 에디터용 stdio ACP(`acp`), 호스트 프로그램용 stdio JSONL RPC(`rpc`)가 여기에 속합니다. TUI 모드에서는 사람이 터미널에서 `horon-tui`로 세션을 움직입니다. 두 모드는 같은 데몬, 세션 저장소, 설정 위에서 같은 에이전트 루프(모델 호출, 도구, 세션, MCP)를 돌립니다. 모드는 반대편에 누가 있는지만 말하며, 어느 쪽도 다른 쪽의 축소판이 아닙니다. 두 모드는 한 릴리스 태그에서 나오는 두 바이너리로 배포됩니다. 모든 설치에 필요한 에이전트 바이너리 `horon-agent`와, `horon-agent-sdk`로 데몬을 구동하는 별도 선택 압축 파일인 TUI 바이너리 `horon-tui`입니다. 서버 코드도 Rust, TypeScript, Python SDK(`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`)로 같은 엔진을 쓸 수 있습니다.
+두 모드를 동등하게 지원하는 하나의 에이전트입니다. 헤드리스 모드에서는 프로그램이 세션을 움직입니다. 일회성 명령(`run`), SDK용 로컬 소켓 harness API(`api-bridge`)를 둔 데몬(`serve`), 에디터용 stdio ACP(`acp`), 호스트 프로그램용 stdio JSONL RPC(`rpc`)가 여기에 속합니다. TUI 모드에서는 사람이 터미널에서 `horon-tui`로 세션을 움직입니다. 두 모드는 같은 데몬, 세션 저장소, 설정 위에서 같은 에이전트 루프(모델 호출, 도구, 세션, MCP)를 돌립니다. 모드는 반대편에 누가 있는지만 말하며, 어느 쪽도 다른 쪽의 축소판이 아닙니다. 두 모드는 한 릴리스 태그에서 나오는 두 바이너리로 배포됩니다. 모든 설치에 필요한 에이전트 바이너리 `horon-agent`와, `horon-agent-sdk`로 데몬을 구동하는 별도 선택 압축 파일인 TUI 바이너리 `horon-tui`입니다. 서버 코드도 Rust, TypeScript, Python SDK(`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`)로 같은 엔진을 쓸 수 있습니다.
 
 ## 코드가 이미 따르는 원칙
 

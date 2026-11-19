@@ -39,7 +39,7 @@ A connection that never opened ends the client. The banner carries the sentence 
 
 A connection lost while the client runs is handled differently: the screen stays up so the failure and the conversation can be read. The status line says `disconnected`, a submit is refused with one warning line and the text stays in the input line, nothing remaining in the queue is sent, and prompts for the turn that was running are withdrawn. Ctrl-C leaves, and the process still exits with code 1 because the session failed.
 
-The client names the terminal window `horon · <label>`, so a stack of terminals says which one belongs to which session. The label is the session's own title, and the last component of the working directory for a session the daemon never titled; control characters are dropped and the label stops at eighty characters. The title the shell set is pushed onto the terminal's title stack first and comes back on every way out — the normal exit, the error path and the panic hook — because the shell still owns the window afterwards. Nothing is written when standard output is not a terminal.
+The client names the terminal window `horon · <label>`, so a stack of terminals says which one belongs to which session. The label is the session's own title, and the last component of the working directory for a session the daemon never titled; control characters are dropped and the label stops at eighty characters. The title the shell set is pushed onto the terminal's title stack first and comes back on every way out — the normal exit, the error path and the panic hook — because the shell still owns the window afterwards. The stack pair (`CSI 22 ; 2 t` to push, `CSI 23 ; 2 t` to pop) is an extension, so it is written only where the terminal keeps a stack: an xterm-like terminal (`TERM` other than `dumb`), Windows Terminal (`WT_SESSION`) and ConEmu (`ConEmuANSI`) restore the title, while a Windows console without either marker and any terminal that calls itself `dumb` get the title without the pair and keep `horon · <label>` after the client exits. Nothing is written when standard output is not a terminal.
 
 ## User files
 
@@ -414,7 +414,6 @@ The archive is optional at every step, and a copy that cannot be verified never 
 
 ## Known limits
 
-- Windows has no PTY smoke test. The `tui` benchmark records the render and size metrics there and marks the PTY metrics with `pty unavailable on Windows` instead of failing the run.
 - FreeBSD ships `horon-agent` only, so the client is not installed there and bare `horon` reports the missing sibling.
 - On Linux and macOS the handoff is one process replacing another, so a client that exits takes the terminal command with it and the exit code is the client's. On Windows the launcher starts the client and exits with code 0 at once, so its exit code says nothing about the client.
 - `SIGTERM`, `SIGHUP` and `SIGQUIT` restore the terminal through the same path as `/quit` — mouse capture and bracketed paste off, the shell's title back — and then re-raise, so a wrapper still sees the client die by the signal (143 for `SIGTERM`). `SIGKILL` cannot be caught: a client killed that way leaves both modes on. Windows installs no handler, because its console is torn down with the process.
