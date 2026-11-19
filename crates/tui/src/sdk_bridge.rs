@@ -260,28 +260,6 @@ pub struct Runtime {
 /// connection fails need different fixes: a daemon that is not running, a
 /// client and daemon built against different protocol versions, and a session
 /// id the daemon does not have.
-/// Temporary connect trace: one line per step to `HORON_AGENT_CONNECT_TRACE`.
-///
-/// A client that never draws says nothing about where it stopped. The smoke
-/// case dumps `HORON_HOME/logs` on failure, so each step leaves a timestamped
-/// line there. Removed once the Windows ConPTY step is green (#432).
-pub(crate) fn trace_step(step: &str) {
-    let Ok(path) = std::env::var("HORON_AGENT_CONNECT_TRACE") else {
-        return;
-    };
-    if let Some(dir) = std::path::Path::new(&path).parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or(0);
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        use std::io::Write;
-        let _ = writeln!(file, "{millis} tui {step}");
-    }
-}
-
 pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Option<&str>) -> Result<Runtime, String> {
     let socket = options
         .socket_path
@@ -291,12 +269,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
     // of its own, because one connection gets one session from its first
     // create.
     let dial = sessions::Dial::of(&options);
-    trace_step(&format!("connect: dialling {}", socket.display()));
-    let client = HoronAgentClient::connect(options).map_err(|error| {
-        trace_step(&format!("connect: failed {}", error.message));
-        explain_connect(&error, &socket)
-    })?;
-    trace_step("connect: connected");
+    let client = HoronAgentClient::connect(options).map_err(|error| explain_connect(&error, &socket))?;
     // Subscribed before the request, because the identity event (provider,
     // model, reasoning effort) is published while the request is in flight: the
     // daemon answers a create's catalog probe, and a stream opened after the
@@ -307,7 +280,6 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
     // every event of the session it just attached to. The worker applies the
     // filter that matters, against the id the answer names.
     let stream = client.events(None);
-    trace_step("connect: session requested");
     let session = match attach {
         Some(session_id) => client
             .attach_session(session_id)
