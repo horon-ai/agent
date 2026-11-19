@@ -283,11 +283,45 @@ pub struct SyncStream {
     handle: std::fs::File,
 }
 
+/// How long a client waits for a named pipe instance to be published.
+///
+/// A busy pipe is never an answer on its own: the server accepts one instance
+/// and publishes the next, so the window is milliseconds. The bound only keeps
+/// a server that has stopped accepting from hanging its clients forever.
+const PIPE_BUSY_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Open a named pipe for a client, waiting while every published instance is
+/// taken.
+///
+/// `CreateFile` answers `ERROR_PIPE_BUSY` when the server has no free instance
+/// right now, which is the normal state between an accept and the publication
+/// of the next instance, and also the state a liveness probe leaves behind for
+/// an instant: it opens the only instance and drops it. Treating that as a
+/// failure made the SDK client report "no harness answered ... All pipe
+/// instances are busy (os error 231)" while a healthy bridge was listening.
+fn open_pipe_blocking(pipe_name: &str) -> io::Result<std::fs::File> {
+    use std::fs::OpenOptions;
+    let deadline = std::time::Instant::now() + PIPE_BUSY_RETRY;
+    let mut delay = std::time::Duration::from_millis(1);
+    loop {
+        match OpenOptions::new().read(true).write(true).open(pipe_name) {
+            Ok(file) => return Ok(file),
+            Err(error) if error.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(std::time::Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 impl SyncStream {
     pub fn connect(path: &Path) -> io::Result<Self> {
-        use std::fs::OpenOptions;
         let pipe_name = path_to_pipe_name(path);
-        let file = OpenOptions::new().read(true).write(true).open(&pipe_name)?;
+        let file = open_pipe_blocking(&pipe_name)?;
         Ok(Self { handle: file })
     }
 
@@ -669,5 +703,41 @@ mod tests {
             is_socket_path(&path),
             "a busy named pipe must still be recognized as a live server endpoint"
         );
+    }
+
+    /// The synchronous client the SDK uses must wait out a taken instance.
+    ///
+    /// A pipe publishes one instance at a time: the server accepts the current
+    /// one and creates the next. A liveness probe occupies the only instance for
+    /// an instant, and the accept that republishes it lands just after, so the
+    /// client connect that follows a probe routinely meets `ERROR_PIPE_BUSY`.
+    /// Reporting that as "no harness answered" made a healthy bridge look dead:
+    /// `horon-tui` printed `All pipe instances are busy (os error 231)` on the
+    /// Windows ConPTY smoke (#432).
+    #[tokio::test]
+    async fn sync_connect_waits_while_every_instance_is_taken() {
+        let path = std::env::temp_dir().join(format!(
+            "horon-agent-sync-connect-busy-{}-{}.sock",
+            std::process::id(),
+            BUSY_PIPE_TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut listener = Listener::bind(&path).expect("bind named pipe");
+        let held = SyncStream::connect(&path).expect("take the only published instance");
+
+        // Hold the accept back, so the second connect meets a busy pipe first.
+        let accepting = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            listener.accept().await.expect("accept the held client")
+        });
+
+        let second_path = path.clone();
+        let second = tokio::task::spawn_blocking(move || SyncStream::connect(&second_path))
+            .await
+            .expect("join the blocking connect")
+            .expect("a busy pipe must be waited out, not reported as absent");
+
+        drop(second);
+        drop(held);
+        let (_stream, _addr) = accepting.await.expect("accept task");
     }
 }
