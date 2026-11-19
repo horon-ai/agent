@@ -79,6 +79,10 @@ STEP_TIMEOUT = 45.0
 # can report why it failed and the run shows only an opaque timeout.
 PIPE_STARTUP_TIMEOUT = 180.0
 
+# Cases 6-8: the client restores the terminal before it dies by this signal.
+# Names rather than values: two of the three do not exist on Windows.
+SIGNAL_CASES = ("SIGTERM", "SIGHUP", "SIGQUIT")
+
 HEADLESS_MESSAGE = "the interactive client is unavailable in this headless build"
 # The install instruction itself. A headless sentence names it only when the
 # client is genuinely missing (#430).
@@ -965,9 +969,13 @@ def run_build_layout(
         )
         log("case 5 passed")
 
-    for index, signum in enumerate((signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT), start=6):
+    # By name, because `signal.SIGHUP` and `signal.SIGQUIT` do not exist on
+    # Windows: reading them up front failed the whole run there before any case
+    # was selected (the signal cases are POSIX-only).
+    for index, name in enumerate(SIGNAL_CASES, start=6):
         if index not in cases:
             continue
+        signum = getattr(signal, name)
         log(f"case {index}: {signal.Signals(signum).name} restores the terminal before the client dies")
         case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
         signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
