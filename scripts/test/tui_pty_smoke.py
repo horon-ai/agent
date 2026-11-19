@@ -185,9 +185,25 @@ approval_mode = "write"
 class Launch:
     """Where the client is started from and which HORON_HOME it reads."""
 
-    def __init__(self, argv0: str, home: str) -> None:
+    def __init__(self, argv0: str, home: str, tui: str | None = None) -> None:
         self.argv0 = argv0
         self.home = home
+        # The client's own path, for the platform whose launcher gives the
+        # console up before the client finishes (see `happy_path`).
+        self.tui = tui
+
+    def client_argv(self, cwd: str) -> list[str]:
+        """What to start for a terminal session on this platform.
+
+        POSIX replaces the launcher with the client, so the launcher is what a
+        person runs. The Windows launcher starts the client and exits at once —
+        a documented limit — and the pseudo console is torn down with it, so
+        the client is started directly there; the handoff itself is covered by
+        the POSIX case and by the Windows launcher tests.
+        """
+        if POSIX or self.tui is None:
+            return [self.argv0]
+        return [self.tui, "--cwd", cwd]
 
 
 def build_launch(case_root: str, agent: str, tui: str | None) -> Launch:
@@ -204,7 +220,8 @@ def build_launch(case_root: str, agent: str, tui: str | None) -> Launch:
         shutil.copy2(tui, os.path.join(bin_dir, f"horon-tui{suffix}"))
     agent_path = os.path.join(bin_dir, f"horon-agent{suffix}")
     os.chmod(agent_path, 0o755)
-    return Launch(agent_path, os.path.join(case_root, "home"))
+    tui_path = os.path.join(bin_dir, f"horon-tui{suffix}") if tui is not None else None
+    return Launch(agent_path, os.path.join(case_root, "home"), tui_path)
 
 
 def installed_launch(layout_root: str) -> Launch:
@@ -444,7 +461,7 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
-    terminal = Terminal([launch.argv0], cwd=case_root, env=env)
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
 
