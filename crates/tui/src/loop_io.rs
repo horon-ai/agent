@@ -38,6 +38,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             Incoming::SendFailed { text, message, lost } => app.send_failed(&text, &message, lost),
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Context(report) => app.transcript.push_context(*report),
+            Incoming::Report(report) => app.transcript.push_report(*report),
             Incoming::Models { models, current } => app.show_models(models, current),
             Incoming::RuntimeInfo {
                 provider,

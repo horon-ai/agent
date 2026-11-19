@@ -145,6 +145,11 @@ pub enum Item {
     /// Boxed because the report is the widest thing an item can carry and the
     /// variant is rare, so the enum keeps the footprint of its common cases.
     Context(Box<crate::context::ContextReport>),
+    /// Another runtime command's answer, drawn as labelled rows.
+    ///
+    /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
+    /// large, and most items carry a message instead.
+    Report(Box<crate::report::Report>),
 }
 
 /// The streaming message being assembled.
@@ -329,6 +334,15 @@ impl Transcript {
     pub fn push_context(&mut self, report: crate::context::ContextReport) {
         self.finish_stream();
         self.items.push(Item::Context(Box::new(report)));
+    }
+
+    /// Record another runtime command's answer.
+    ///
+    /// One item for the same reasons as [`Transcript::push_context`]: the rows
+    /// are one block, measured together and scrolled past as one unit.
+    pub fn push_report(&mut self, report: crate::report::Report) {
+        self.finish_stream();
+        self.items.push(Item::Report(Box::new(report)));
     }
 
     /// Record a warning line.

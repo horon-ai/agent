@@ -134,6 +134,11 @@ pub enum Incoming {
     Info(String),
     /// The `/context` breakdown, drawn as a panel rather than its JSON text.
     Context(Box<ContextReport>),
+    /// Another runtime command's structured answer, drawn as labelled rows.
+    ///
+    /// Only a command whose message repeats its payload as JSON gets here; one
+    /// that reported in prose arrives as [`Incoming::Info`].
+    Report(Box<crate::report::Report>),
     /// The models the harness offers, and the one serving the session.
     Models {
         models: Vec<String>,
@@ -646,9 +651,15 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
         Command::Runtime { command, arguments } => {
             let output = client.runtime_command(session_id, command, arguments)?;
-            Ok(Some(match report(command, &output.data) {
+            Ok(Some(match context_report(command, &output.data) {
                 Some(report) => Incoming::Context(Box::new(report)),
-                None => Incoming::Info(output.message),
+                // A command that repeats its payload as JSON is drawn from that
+                // payload, so the terminal shows labels and values instead of a
+                // serialization of the answer it already has.
+                None => match crate::report::Report::from_answer(command, &output.data, &output.message) {
+                    Some(report) => Incoming::Report(Box::new(report)),
+                    None => Incoming::Info(output.message),
+                },
             }))
         }
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
@@ -697,7 +708,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
 /// `/context` is the only command that sends a breakdown today. A payload
 /// without the numbers (a daemon older than the field) yields `None`, and the
 /// caller shows the message the command sent instead of an empty panel.
-fn report(command: RuntimeCommand, data: &serde_json::Value) -> Option<ContextReport> {
+fn context_report(command: RuntimeCommand, data: &serde_json::Value) -> Option<ContextReport> {
     match command {
         RuntimeCommand::Context => ContextReport::from_data(data),
         _ => None,
