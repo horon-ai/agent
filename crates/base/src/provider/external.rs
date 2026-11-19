@@ -27,14 +27,21 @@ pub struct DirectOpenAiCompatibleSpec {
     /// Configured legacy `prompt_cache_retention` override. The model-support
     /// policy is applied per request, so a model switch re-evaluates it.
     pub prompt_cache_retention: Option<String>,
+    /// Reasoning effort each model declares in `[[providers.<name>.models]]
+    /// reasoning_effort`. The runtime applies the active model's level as soon
+    /// as it is selected, so a configured effort reaches the first request
+    /// instead of waiting for an explicit `/effort`.
+    pub model_reasoning_efforts: std::collections::BTreeMap<String, String>,
 }
 
 /// Build the direct provider runtime for a resolved profile.
 pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<Arc<dyn Provider>> {
     let configured_retention = spec.prompt_cache_retention;
+    let model_reasoning_efforts = spec.model_reasoning_efforts;
     let mut provider =
         OpenAiCompatibleProvider::new(spec.base_url, spec.auth, spec.api_key, spec.default_model, spec.models)?
             .with_wire(spec.wire)
+            .with_model_reasoning_efforts(model_reasoning_efforts)
             .with_display_name(spec.display_name)
             .with_profile_id(spec.profile_id)
             .with_prompt_cache_key_policy(spec.prompt_cache_key)
@@ -114,6 +121,8 @@ pub fn build_openai_compatible_profile_runtime(
         extra_body: None,
         prompt_cache_key: None,
         prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
+        // A built-in catalog profile names no per-model effort.
+        model_reasoning_efforts: std::collections::BTreeMap::new(),
     })
 }
 
@@ -237,6 +246,15 @@ pub fn build_named_openai_compatible_runtime(
         extra_body: profile.extra_body.clone(),
         prompt_cache_key: profile.prompt_cache_key,
         prompt_cache_retention: super::openai::prompt_cache_retention_from_env(),
+        model_reasoning_efforts: profile
+            .models
+            .iter()
+            .filter_map(|model| {
+                let id = model.id.trim();
+                let effort = model.reasoning_effort.as_deref().map(str::trim)?;
+                (!id.is_empty() && !effort.is_empty()).then(|| (id.to_string(), effort.to_string()))
+            })
+            .collect(),
     })
 }
 

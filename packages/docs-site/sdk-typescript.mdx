@@ -43,7 +43,9 @@ once:
 horon api-bridge
 ```
 
-That starts the server if needed and exposes `$XDG_RUNTIME_DIR/horon-agent-api.sock`.
+That starts the server if needed and exposes `horon-agent-api.sock` in the runtime
+directory: `HORON_AGENT_RUNTIME_DIR` when set, else `XDG_RUNTIME_DIR`, else the
+platform's per-user runtime directory.
 The socket is owner-only. Use `--api-socket <path>` to listen elsewhere and set
 `HORON_AGENT_API_SOCKET` to the same path in the client.
 

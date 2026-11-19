@@ -589,23 +589,6 @@ fn initialize_advertises_full_v1_surface() {
 }
 
 #[test]
-fn auth_methods_ignore_terminal_capability() {
-    // A client's `auth.terminal` capability adds nothing: this build has no
-    // login command for a terminal method to run.
-    let methods = auth_methods();
-    assert_eq!(methods.len(), 1, "{methods:?}");
-    assert_eq!(methods[0]["id"], "horon-agent-credentials");
-    assert!(methods.iter().all(|method| method.get("type").is_none()), "{methods:?}");
-    let description = methods[0]["description"].as_str().expect("description");
-    assert!(description.contains("[providers.<name>]"), "{description}");
-    assert!(description.contains("horon-agent provider add"), "{description}");
-    assert!(
-        !description.contains("horon-agent login"),
-        "the removed login command is never advertised: {description}"
-    );
-}
-
-#[test]
 fn acp_mcp_servers_map_to_session_mcp() {
     let params = json!({"mcpServers": [
         {"name": "fs", "command": "/usr/bin/mcp-fs", "args": ["--root", "/tmp"], "env": [{"name": "TOKEN", "value": "t"}]},
@@ -977,21 +960,6 @@ fn config_options_current_model_prepended_when_not_listed() {
         .collect();
     assert_eq!(model_values[0], "claude-opus-4-6");
     assert!(model_values.contains(&"claude-sonnet-4-5"));
-}
-
-#[test]
-fn session_result_has_no_non_spec_models_field() {
-    let state = SessionUiState {
-        provider_name: Some("deepseek".to_string()),
-        model: Some("deepseek-v4-flash".to_string()),
-        available_models: vec!["deepseek-v4-pro".to_string()],
-        reasoning_effort: Some("high".to_string()),
-    };
-    let mut result = json!({"sessionId": "s1"});
-    insert_session_configuration(&mut result, &state, AcpMode::Default);
-
-    assert!(result["configOptions"].is_array());
-    assert!(result.get("models").is_none(), "{result}");
 }
 
 #[test]

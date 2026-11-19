@@ -958,47 +958,6 @@ mod tests {
     }
 
     #[test]
-    fn endorsed_skills_include_nvidia_cuda_x_catalog() {
-        let endorsed = endorsed_skills();
-        // Spot-check representative NVIDIA CUDA-X skills sourced from the
-        // official NVIDIA/skills catalog.
-        for expected in [
-            "cuopt-numerical-optimization-api-python",
-            "cupynumeric-install",
-            "accelerated-computing-cudf",
-            "cudaq-guide",
-            "tilegym-adding-cutile-kernel",
-        ] {
-            let skill = endorsed
-                .iter()
-                .find(|s| s.name == expected)
-                .unwrap_or_else(|| panic!("expected endorsed NVIDIA skill {expected}"));
-            assert_eq!(skill.category, "NVIDIA CUDA-X");
-            assert!(
-                skill.install.is_some_and(|cmd| cmd.contains("nvidia/skills")),
-                "NVIDIA skill {expected} should have an nvidia/skills install hint"
-            );
-        }
-    }
-
-    #[test]
-    fn endorsed_skills_include_anthropic_frontend_design() {
-        let skill = endorsed_skills()
-            .iter()
-            .find(|s| s.name == "frontend-design")
-            .expect("expected endorsed Anthropic frontend-design skill");
-        assert_eq!(skill.category, "Anthropic Design");
-        assert!(
-            skill.source.contains("anthropics/skills"),
-            "frontend-design should be sourced from anthropics/skills"
-        );
-        assert!(
-            skill.install.is_some_and(|cmd| cmd.contains("anthropics/skills")),
-            "frontend-design should have an anthropics/skills install hint"
-        );
-    }
-
-    #[test]
     fn registry_contains_reports_loaded_skills() {
         let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");

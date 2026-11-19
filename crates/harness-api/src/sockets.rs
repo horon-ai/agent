@@ -61,19 +61,37 @@ mod tests {
     /// which is exactly the bug this module exists to prevent.
     #[test]
     fn the_api_socket_sits_beside_the_daemon_socket() {
-        // Guard against env-dependent divergence by comparing parents rather
-        // than absolute paths, since either may be overridden in a session.
-        let api = runtime_dir().join("horon-agent-api.sock");
-        let legacy = runtime_dir().join("horon-agent.sock");
-        assert_eq!(api.parent(), legacy.parent());
+        // An explicit override may point anywhere on purpose, so the shared
+        // directory is only promised for the default resolution.
+        if std::env::var_os("HORON_AGENT_API_SOCKET").is_some() || std::env::var_os("HORON_AGENT_SOCKET").is_some() {
+            return;
+        }
+        let api = api_socket_path();
+        let legacy = legacy_socket_path();
+        assert_eq!(
+            api.parent(),
+            legacy.parent(),
+            "the API socket must land in the daemon socket's directory: api={api:?} daemon={legacy:?}"
+        );
     }
 
+    /// `agent-sdk` launches the daemon with these two spellings and edits them
+    /// into the environment, so a rename here would leave every client that
+    /// follows the launch resolving a socket nothing listens on.
     #[test]
     fn socket_names_are_stable() {
-        assert_eq!(
-            runtime_dir().join("horon-agent-api.sock").file_name().unwrap(),
-            "horon-agent-api.sock"
-        );
+        if std::env::var_os("HORON_AGENT_API_SOCKET").is_none() {
+            assert_eq!(
+                api_socket_path().file_name().and_then(|name| name.to_str()),
+                Some("horon-agent-api.sock")
+            );
+        }
+        if std::env::var_os("HORON_AGENT_SOCKET").is_none() {
+            assert_eq!(
+                legacy_socket_path().file_name().and_then(|name| name.to_str()),
+                Some("horon-agent.sock")
+            );
+        }
     }
 
     /// The discriminator becomes a path component, so it may only hold

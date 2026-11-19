@@ -15,17 +15,31 @@ sessions/
   <id>/
     events.jsonl             append-only canonical event log (the original)
     blobs/<sha256>.json      externalized payloads, named by their own hash
-    local-head.json          explicit head selection (original)
+    local-head.json          selected head, written only for an explicit selection (original)
+    local-head-explicit.json whether the head selection is explicit; absent means it is not (original)
+    local-explicit-source.json  path and SHA-256 of the snapshot an explicit session came from (original)
     local-runtime.json       resume binding: working_dir, migration_epoch, provider_session_id, status
-    checkpoint.json          derived cache: head, metadata, compaction, tail
+    checkpoint.json          derived cache: head, source stamp, metadata, compaction, tail
     sparse-index.jsonl       derived cache: every 128th event plus message offsets
     summary.json             derived cache: one catalog row for this session
+    facade-cache.json        derived cache: session facade payload and its hash
+    .writer.lock             session-lifetime writer lock (never unlinked)
+    .blob-staging/<sha256>/  resumable inbound blob chunks
+    .record-transfer/        resumable inbound whole-record staging
   <id>.json                  legacy snapshot (preserved, never rewritten)
+  <id>.journal.jsonl         legacy journal tail (preserved, never rewritten)
   .catalog.index.jsonl       derived cache: one row per session, for listing
+  .catalog.lock              catalog write lock
+  .catalog.dirty/<id>        rebuild hint, one empty file per session being rebuilt
   .origin-id                 this HOME's writer identity
+  edit-stats/                per-session edit counters (not a session)
 ```
 
-The originals of session content are `events.jsonl` and `blobs/`. Archive,
+The originals of session content are `events.jsonl` and `blobs/`. Four local
+state files the log cannot reproduce are originals as well: `local-head.json`,
+`local-head-explicit.json`, `local-explicit-source.json` and `local-runtime.json`.
+A session read from an explicit snapshot stays bound to the bytes it was read
+from, and a source file that changed is refused as `SourceConflict`. Archive,
 compaction and rewind append records and never delete an original. Derived caches
 can be rebuilt, so a crash never costs content: only the caches are discarded on
 load when their stamp does not match.

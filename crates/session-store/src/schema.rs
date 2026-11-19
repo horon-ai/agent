@@ -17,7 +17,6 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::Path;
 
 use horon_agent_session_types::{EnvSnapshot, StoredMemoryInjection, StoredMessage};
 use horon_agent_time::{Precision, Timestamp};
@@ -1318,48 +1317,4 @@ fn hex_encode(bytes: &[u8]) -> String {
         out.push(DIGITS[(byte & 0x0f) as usize] as char);
     }
     out
-}
-
-pub(crate) fn ensure_safe_component(root: &Path, candidate: &Path) -> Result<(), StoreError> {
-    let unsafe_path = |message: &str| StoreError::invalid_request(StoreErrorCode::UnsafePath, message.to_string());
-    // The root may itself be reached through a symlink (macOS /tmp, a linked HOME).
-    // Resolving the root once is what makes the boundary the root itself, while
-    // every component below it is still checked for symlinks.
-    let canonical_root = root
-        .canonicalize()
-        .map_err(|err| unsafe_path(&format!("store root is not usable: {err}")))?;
-    if !canonical_root.is_dir() {
-        return Err(unsafe_path("store root is not a directory"));
-    }
-    let relative = candidate
-        .strip_prefix(root)
-        .or_else(|_| candidate.strip_prefix(&canonical_root))
-        .map_err(|_| unsafe_path("path is outside the store root"))?
-        .to_path_buf();
-    if relative.as_os_str().is_empty() {
-        return Err(unsafe_path("session path is the store root itself"));
-    }
-    let mut current = canonical_root;
-    let component_count = relative.components().count();
-    for (index, component) in relative.components().enumerate() {
-        current.push(component);
-        let Ok(metadata) = std::fs::symlink_metadata(&current) else {
-            break;
-        };
-        if metadata.file_type().is_symlink() {
-            return Err(unsafe_path("path component is a symlink"));
-        }
-        let is_last = index + 1 == component_count;
-        if is_last && !metadata.is_dir() {
-            return Err(unsafe_path("path exists and is not a directory"));
-        }
-        if !is_last && !metadata.is_dir() {
-            return Err(unsafe_path("path component is not a directory"));
-        }
-        // Match Disk::directory even when a clean cache avoids the writer.
-        if !horon_agent_platform::fs::is_private_dir(&metadata) {
-            return Err(unsafe_path("path component is not owner-private"));
-        }
-    }
-    Ok(())
 }

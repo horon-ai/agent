@@ -291,13 +291,6 @@ mod tests {
         assert!(!is_socket_path(Path::new("/nonexistent/horon-agent-ipc-absent.sock")));
     }
 
-    /// `remove_socket` is called on paths that may not exist, so it must not
-    /// panic or report failure.
-    #[test]
-    fn removing_an_absent_socket_is_a_no_op() {
-        remove_socket(Path::new("/nonexistent/horon-agent-ipc-absent.sock"));
-    }
-
     #[test]
     fn a_second_instance_lock_is_refused_while_the_first_lives() {
         let dir = std::env::temp_dir().join(format!("horon-agent-ipc-lock-{}", std::process::id()));

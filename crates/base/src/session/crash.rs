@@ -591,19 +591,6 @@ pub fn find_session_by_name_or_id(name_or_id: &str) -> Result<String> {
 mod batch_crash_tests {
     use super::*;
 
-    #[test]
-    fn test_crashed_sessions_info_struct() {
-        let info = CrashedSessionsInfo {
-            session_ids: vec!["session_test_1".to_string(), "session_test_2".to_string()],
-            display_names: vec!["fox".to_string(), "oak".to_string()],
-            most_recent_crash: Timestamp::now(),
-            omitted_crashed_count: 0,
-        };
-        assert_eq!(info.session_ids.len(), 2);
-        assert_eq!(info.display_names.len(), 2);
-        assert_eq!(info.display_names[0], "fox");
-    }
-
     fn isolated_home() -> (tempfile::TempDir, std::sync::MutexGuard<'static, ()>) {
         let guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");

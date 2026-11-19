@@ -43,7 +43,7 @@ Review Queue (queue.json)
 Transcript Logger -> Session Reporter
 ```
 
-There is no review screen in this build. Nothing lists the queue, the `horon-agent permissions` subcommand is declared but exits with an error (`src/cli/dispatch.rs`), and there is no CLI subcommand such as `horon safety review`. The TUI review panel went away when the TUI crate was first removed. The TUI binary `horon-tui` that came back asks inline about the one pending request of the session it is attached to (`crates/tui/src/prompts.rs`), and the daemon records that answer with `record_permission_via_file` (`crates/app-core/src/server/client_ask.rs`). Otherwise a notification tells the user that a request is waiting, and the decision is recorded by calling `SafetySystem::record_decision` (`crates/base/src/safety.rs:597`), which is also what `horon-agent approvals resolve` calls for an unattended run that stopped waiting on a person.
+There is no review screen in this build. Nothing lists the queue, the `horon-agent permissions` subcommand is declared but exits with an error (`src/cli/dispatch.rs`), and there is no CLI subcommand such as `horon safety review`. The TUI review panel went away when the TUI crate was first removed. The TUI binary `horon-tui` that came back asks inline about the requests the session it is attached to is waiting on, one at a time: a second approval waits behind the one on screen, which adds a line counting the rest (`crates/tui/src/app/prompts.rs`, `crates/tui/src/prompts.rs`), and the daemon records that answer with `record_permission_via_file` (`crates/app-core/src/server/client_ask.rs`). Otherwise a notification tells the user that a request is waiting, and the decision is recorded by calling `SafetySystem::record_decision` (`crates/base/src/safety.rs:597`), which is also what `horon-agent approvals resolve` calls for an unattended run that stopped waiting on a person.
 
 ---
 
@@ -310,7 +310,7 @@ When an external tool records a decision, it uses `record_permission_via_file` (
 
 `SafetySystem::record_decision` records a decision inside the process and wakes a waiting caller (`crates/base/src/safety.rs:597`).
 
-This build has no review panel, in `horon-tui` or anywhere else, and no `horon safety review` CLI. Two narrower surfaces exist: `horon-tui` answers the one request its attached session is waiting on, through path 1, and `horon-agent approvals resolve --request-id <id> --tool-call-id <id> --verdict retry|skip` records a per-call verdict for a stopped unattended run, through path 2 (`src/cli/dispatch.rs`).
+This build has no review panel, in `horon-tui` or anywhere else, and no `horon safety review` CLI. Two narrower surfaces exist: `horon-tui` answers the requests its attached session is waiting on, one at a time, through path 1, and `horon-agent approvals resolve --request-id <id> --tool-call-id <id> --verdict retry|skip` records a per-call verdict for a stopped unattended run, through path 2 (`src/cli/dispatch.rs`).
 
 #### Decision history
 
