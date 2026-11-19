@@ -421,7 +421,16 @@ class WindowsTerminal:
         raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{text}")
 
     def send(self, keys: str) -> None:
-        self.process.write(keys)
+        try:
+            self.process.write(keys)
+        except EOFError as closed:
+            # The client left before it could be typed at: say what it printed
+            # and how it ended, which is the whole diagnosis on a runner whose
+            # console dies with it.
+            raise Failure(
+                f"the client was gone before it could be typed at ({closed}; "
+                f"exitstatus={self.process.exitstatus})\n--- transcript ---\n{self.transcript}"
+            ) from closed
 
     def wait(self, timeout: float) -> int:
         # The launcher starts the client and exits at once (a documented limit),
