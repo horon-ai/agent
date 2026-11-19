@@ -50,6 +50,7 @@ use horon_agent_provider_core::{
     transport::send_with_initial_response_timeout,
 };
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 /// Stable, machine-facing provider name.
@@ -106,6 +107,10 @@ pub struct OpenAiCompatibleProvider {
     model: Mutex<String>,
     models: Vec<String>,
     reasoning_effort: Mutex<Option<String>>,
+    /// Reasoning effort each model declares in its profile entry. Selecting a
+    /// model that appears here sets `reasoning_effort` to the declared level,
+    /// before the first request, unless a later explicit call overrides it.
+    model_reasoning_efforts: BTreeMap<String, String>,
     /// Which request and response shape this profile speaks.
     wire: WireProtocol,
 }
@@ -153,6 +158,7 @@ impl OpenAiCompatibleProvider {
             model: Mutex::new(default_model),
             models,
             reasoning_effort: Mutex::new(None),
+            model_reasoning_efforts: BTreeMap::new(),
             wire: WireProtocol::default(),
         })
     }
@@ -219,6 +225,44 @@ impl OpenAiCompatibleProvider {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = (!effort.trim().is_empty()).then_some(effort);
         self
+    }
+
+    /// Reasoning effort each model declares in its profile entry.
+    ///
+    /// The map is applied by model, so the level of the model active now (the
+    /// constructor's default model) takes effect immediately, and every later
+    /// [`Provider::set_model`] applies the level of the model it selects. A
+    /// model with no entry leaves the current effort alone, and an explicit
+    /// [`Provider::set_reasoning_effort`] still overrides the level until the
+    /// model changes.
+    pub fn with_model_reasoning_efforts(mut self, efforts: BTreeMap<String, String>) -> Self {
+        self.model_reasoning_efforts = efforts
+            .into_iter()
+            .filter_map(|(model, effort)| {
+                let model = model.trim().to_string();
+                let effort = effort.trim().to_string();
+                (!model.is_empty() && !effort.is_empty()).then_some((model, effort))
+            })
+            .collect();
+        let current = self.model();
+        self.apply_configured_effort(&current);
+        self
+    }
+
+    /// Adopt the reasoning effort the profile declares for `model`, if any.
+    ///
+    /// Called after the routed model changes, so the level the user configured
+    /// for the new model is what the session reports and sends. A model with no
+    /// entry keeps whatever effort is in force, which is what lets an explicit
+    /// `/effort` survive a switch to a model that names none.
+    fn apply_configured_effort(&self, model: &str) {
+        let Some(effort) = self.model_reasoning_efforts.get(model).cloned() else {
+            return;
+        };
+        *self
+            .reasoning_effort
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(effort);
     }
 
     /// The URL one streaming completion is POSTed to.
@@ -680,6 +724,9 @@ impl Provider for OpenAiCompatibleProvider {
             anyhow::bail!("the openai-compatible model cannot be empty");
         }
         *self.model.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = model.to_string();
+        // A resumed session re-applies the effort it recorded after this, so
+        // the configured level only seeds a session with no recorded effort.
+        self.apply_configured_effort(model);
         Ok(())
     }
 
@@ -780,6 +827,7 @@ impl OpenAiCompatibleProvider {
             model: Mutex::new(self.model()),
             models: self.models.clone(),
             reasoning_effort: Mutex::new(self.reasoning_effort()),
+            model_reasoning_efforts: self.model_reasoning_efforts.clone(),
             wire: self.wire,
         }
     }

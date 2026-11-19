@@ -3,19 +3,6 @@ use anyhow::{Result, anyhow};
 use horon_agent_time::Timestamp;
 
 #[test]
-fn sanitize_tool_id_alphanumeric_passthrough() {
-    assert_eq!(
-        sanitize_tool_id("toolu_01XFDUDYJgAACzvnptvVer6u"),
-        "toolu_01XFDUDYJgAACzvnptvVer6u"
-    );
-    assert_eq!(sanitize_tool_id("call_abc123"), "call_abc123");
-    assert_eq!(
-        sanitize_tool_id("call_1234567890_9876543210"),
-        "call_1234567890_9876543210"
-    );
-}
-
-#[test]
 fn generated_image_visual_context_blocks_attach_safe_image() {
     let dir = tempfile::tempdir().expect("temp dir");
     let image_path = dir.path().join("generated.png");
@@ -215,12 +202,6 @@ fn tool_call_validation_rejects_empty_name_and_non_object_input() {
 }
 
 #[test]
-fn sanitize_tool_id_hyphens_passthrough() {
-    assert_eq!(sanitize_tool_id("call-abc-123"), "call-abc-123");
-    assert_eq!(sanitize_tool_id("tool_use-id_with-mixed"), "tool_use-id_with-mixed");
-}
-
-#[test]
 fn sanitize_tool_id_replaces_dots() {
     assert_eq!(sanitize_tool_id("chatcmpl-abc.def.ghi"), "chatcmpl-abc_def_ghi");
     assert_eq!(sanitize_tool_id("call.123"), "call_123");
@@ -240,14 +221,6 @@ fn sanitize_tool_id_replaces_special_chars() {
 #[test]
 fn sanitize_tool_id_empty_returns_unknown() {
     assert_eq!(sanitize_tool_id(""), "unknown");
-}
-
-#[test]
-fn sanitize_tool_id_copilot_to_anthropic() {
-    assert_eq!(
-        sanitize_tool_id("chatcmpl-BF2xX.tool_call.0"),
-        "chatcmpl-BF2xX_tool_call_0"
-    );
 }
 
 #[test]

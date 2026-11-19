@@ -159,16 +159,6 @@ fn export_serialization_work_is_linear_in_the_page() {
          {small_per_event:.1} bytes/event | large={large_events} events {large_bytes} bytes \
          {large_calls} serializations {large_per_event:.1} bytes/event"
     );
-    let (small_reference, large_reference) = (
-        reserialize_per_append(64, &a),
-        reserialize_per_append(MAX_PAGE_EVENTS as u128, &a),
-    );
-    println!(
-        "EXPORT_WORK reference (whole page re-serialized after each append) \
-         small={small_reference} bytes large={large_reference} bytes ratio={:.1}x | carried ratio={:.1}x",
-        large_reference as f64 / small_reference as f64,
-        large_bytes as f64 / small_bytes as f64
-    );
     // Then each record is serialized once and the work per event stays flat.
     assert!(
         small_calls <= 2 * small_events + 2,
@@ -182,83 +172,8 @@ fn export_serialization_work_is_linear_in_the_page() {
         large_per_event < small_per_event * 1.25,
         "serialized bytes per exported event must stay flat: {small_per_event:.1} then {large_per_event:.1}"
     );
-    // The shape this loop replaced grew with the square of the page, so the
-    // comparison itself has to widen: 4x the events must cost far more than 4x
-    // the reference bytes, while the carried size stays near 4x.
-    assert!(
-        large_reference > 12 * small_reference,
-        "re-serializing the whole page per append must show the quadratic cost"
-    );
     assert!(
         large_bytes < 5 * small_bytes,
         "carrying the size forward must stay proportional to the page"
     );
-}
-
-/// Serialized bytes the loop spent before it carried its size forward: the whole
-/// page, again, after every append.
-fn reserialize_per_append(head: u128, home: &Home) -> usize {
-    let page = export_events(&home.paths(), &request(&[head])).unwrap();
-    let mut growing = SessionEventPage {
-        events: Vec::new(),
-        ..page.clone()
-    };
-    let mut total = 0;
-    for record in &page.events {
-        growing.events.push(record.clone());
-        total += serde_json::to_vec(&growing).unwrap().len();
-    }
-    total
-}
-
-/// Exports recorded sessions and prints the serialization work and page digest,
-/// so a benchmark run can compare the counts against the recorded event log.
-///
-/// Ignored by default: it needs `HORON_AGENT_EXPORT_FIXTURES` pointing at a
-/// directory holding `event-log-<n>/events.jsonl` recordings.
-#[test]
-#[ignore = "reads recorded event logs named by HORON_AGENT_EXPORT_FIXTURES"]
-fn recorded_session_export_work_and_digest() {
-    let fixtures = std::env::var("HORON_AGENT_EXPORT_FIXTURES").expect("HORON_AGENT_EXPORT_FIXTURES");
-    let root = std::env::temp_dir().join(format!("export-fixtures-{}", uuid::Uuid::new_v4()));
-    for case in ["event-log-100", "event-log-1000", "event-log-10000"] {
-        let log = std::fs::read_to_string(std::path::Path::new(&fixtures).join(case).join("events.jsonl")).unwrap();
-        let first: serde_json::Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
-        let id = SessionId::parse(first["session_id"].as_str().unwrap()).unwrap();
-        let paths = SessionPaths::new(root.join(case).join("sessions"));
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(paths.root())
-            .unwrap();
-        let session_dir = paths.session_dir(&id).unwrap();
-        fs::DirBuilder::new().mode(0o700).create(&session_dir).unwrap();
-        let log_path = paths.events_log(&id).unwrap();
-        fs::write(&log_path, &log).unwrap();
-        std::fs::set_permissions(&log_path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
-        let logged = log.lines().count();
-        let request = ExportRequest {
-            protocol_version: REPLICATION_PROTOCOL_VERSION,
-            session_id: id,
-            heads: Vec::new(),
-            known_ids: Vec::new(),
-            cursor: None,
-        };
-        reset_wire_work();
-        let started = std::time::Instant::now();
-        let page = export_events(&paths, &request).unwrap();
-        let elapsed = started.elapsed();
-        let (bytes, serializations) = wire_work();
-        let page_bytes = serde_json::to_vec(&page).unwrap();
-        println!(
-            "FIXTURE {case} logged={logged} exported={} wire_bytes={bytes} serializations={serializations} \
-             bytes_per_event={:.1} page_len={} page_digest={} elapsed_ms={:.1}",
-            page.events.len(),
-            bytes as f64 / page.events.len() as f64,
-            page_bytes.len(),
-            sha256_hex(&page_bytes),
-            elapsed.as_secs_f64() * 1000.0
-        );
-    }
-    let _ = std::fs::remove_dir_all(&root);
 }

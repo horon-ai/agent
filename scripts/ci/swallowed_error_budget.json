@@ -1,9 +1,9 @@
 {
-  "total": 1883,
+  "total": 1880,
   "totals_by_pattern": {
-    "dot_ok": 711,
+    "dot_ok": 709,
     "let_underscore": 705,
-    "unwrap_or_default": 467
+    "unwrap_or_default": 466
   },
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": {
@@ -362,7 +362,7 @@
       "unwrap_or_default": 0
     },
     "crates/app-core/src/server/reload_recovery.rs": {
-      "dot_ok": 3,
+      "dot_ok": 2,
       "let_underscore": 1,
       "unwrap_or_default": 0
     },
@@ -674,11 +674,6 @@
     "crates/app-core/src/update_rate_limit.rs": {
       "dot_ok": 3,
       "let_underscore": 2,
-      "unwrap_or_default": 0
-    },
-    "crates/app-core/src/usage_openai.rs": {
-      "dot_ok": 1,
-      "let_underscore": 0,
       "unwrap_or_default": 0
     },
     "crates/ast/src/lib.rs": {
@@ -1294,7 +1289,7 @@
     "crates/import-core/src/lib.rs": {
       "dot_ok": 10,
       "let_underscore": 0,
-      "unwrap_or_default": 16
+      "unwrap_or_default": 15
     },
     "crates/logging/src/lib.rs": {
       "dot_ok": 5,

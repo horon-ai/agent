@@ -30,7 +30,7 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
-| `build` | OS마다 1개 | `horon-agent`와 `loading_probe` release 바이너리를 한 번 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `baseline_ref`가 있고 `compare`나 `tools`를 고르면 그 커밋도 따로 빌드해 같은 tar의 `baseline/`에 넣는다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
+| `build` | OS마다 1개 | 고른 단위가 쓰는 바이너리를 모두 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `horon-agent`, `loading` 단위의 `loading_probe`·`resume_stage_probe` 예제, `tui` 단위의 `horon-tui`와 `render_bench`·`scroll_bench` 예제가 들어간다. `baseline_ref`가 있고 `compare`나 `tools`를 고르면 그 커밋의 `horon-agent`를 `baseline/`에 넣고, `tui`를 고르면 후보의 `scroll_bench` 소스를 기준 리비전 렌더러로 빌드해 `baseline/examples/`에 넣는다. 그래서 두 리비전이 같은 측정 코드로 돈다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
 | `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, `tui`다. 기준 빌드가 있으면 `compare`는 `horon-base` 줄로 같은 작업 안에서 번갈아 재고, `tools`는 두 번째 데몬으로 띄워 두 데몬의 CPU 구간을 사례마다 번갈아 잰다. |
 | `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
 | `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
@@ -82,7 +82,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 | --- | --- | --- |
 | `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리(기록된 결과와 같은 도구 허용 목록으로 한 번, horon은 기본 core 도구 표면으로 `oneshot_core`를 한 번 더), 모델 요청마다의 바이트 수(`request_bytes`), 동시 세션 수에 따른 메모리, 설치 크기, 스킬 호출 시간, MCP 도구 호출 시간과 도구 왕복. Linux는 `fsync` 호출 수와 그 호출이 flush한 파일(`fsync_paths`)도 잰다. |
 | `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, `HORON_AGENT_STARTUP_PROFILE=1`로 한 번 더 돌린 실행의 `serve` 기동 단계 표, 하네스 브리지 단계별 준비 시간 |
-| `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM |
+| `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM, 그리고 콜드 픽스처에서 `resume_stage_probe`가 재는 단계별 귀속 |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연, Linux에서는 호출당 데몬 CPU 시간과 문맥 전환 수도 잰다 |
 | `reload` | `bench_reload_storm.py` | 세션 N개(1, 10, 40)를 동시에 다시 열어 `history`가 올 때까지의 지연 |
 | `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 별도 `scroll_bench` 예제로 큰 세션을 스크롤할 때의 held 프레임, 설치 크기 |
@@ -95,7 +95,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 
 이 묶음은 별도 선택이다. `suites=all`은 절대 고르지 않으므로 `main` 자동 측정과 기존 실행은 예전에 재던 것만 그대로 잰다.
 
-측정 대상은 **배포된 릴리스**이지 측정 중인 코드가 아니다. 릴리스는 `RELEASE_TAG`(`v0.1.14`)로 고정한다. `install-release`는 어느 작업 트리에서 불러도 같은 릴리스 바이트를 검증·압축 해제·활성화하므로 Rust 변경은 이 수치를 움직이지 못한다. 작업 트리가 기여하는 것은 설치 경로 자체(`scripts/install/install.sh`, `scripts/install/install.ps1`)이고, `baseline_ref` 쌍이 그 경로의 변경을 가려낸다.
+측정 대상은 **배포된 릴리스**이지 측정 중인 코드가 아니다. 릴리스는 `RELEASE_TAG`(`v0.1.14`)로 고정한다. 그 값은 `benchmark-install.yml`의 상수이고 가장 최신 태그가 아니므로, 워크플로가 값을 옮기기 전까지 배포된 설치 수치를 그대로 비교할 수 있다. `install-release`는 어느 작업 트리에서 불러도 같은 릴리스 바이트를 검증·압축 해제·활성화하므로 Rust 변경은 이 수치를 움직이지 못한다. 작업 트리가 기여하는 것은 설치 경로 자체(`scripts/install/install.sh`, `scripts/install/install.ps1`)이고, `baseline_ref` 쌍이 그 경로의 변경을 가려낸다.
 
 `os`는 운영체제 네 종류를 받고 아키텍처마다 작업 하나를 실행한다. `linux`는 `linux-x86_64`와 `linux-aarch64`, `macos`는 `macos-aarch64`와 `macos-15-intel`의 `macos-x86_64`, `windows`는 `windows-x86_64`와 `windows-11-arm`의 `windows-aarch64`, `freebsd`는 FreeBSD 15.1 가상 머신의 `freebsd-x86_64`를 선택한다. `all`은 네 종류를 모두 선택한다. 각 플랫폼은 원본 JSON과 로그를 `install-<platform>-<run_id>`에 올린다. **Install results** 작업은 실행 요약에 전체 표를 게시하고 같은 표를 `install-summary-<run_id>`에 저장한다. 보관 기간은 30일이다.
 
@@ -103,8 +103,8 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 
 | 모드 | 시작 상태 |
 | --- | --- |
-| 콜드 | 새 임시 설치 폴더, 빈 릴리스 다운로드 폴더, 빈 npm 캐시. 압축 파일과 npm 타르볼이 모두 네트워크로 온다 |
-| 웜 | 첫 설치 때 사용한 설치 폴더와 패키지 캐시를 그대로 두고 같은 설치기를 다시 실행한다. 임시 배포물을 지우는 설치기는 다시 내려받는다 |
+| 콜드 | 새 임시 설치 폴더, 비어 있는 `XDG_CACHE_HOME`을 가진 새 홈, 빈 릴리스 다운로드 폴더, 빈 npm 캐시. 압축 파일과 npm 타르볼이 모두 네트워크로 온다 |
+| 웜 | 같은 홈과 설치 폴더에서 같은 설치기를 다시 실행한다. npm 캐시와 그 `XDG_CACHE_HOME` 아래 `install.sh`가 남긴 검증된 다운로드 캐시를 첫 설치가 채워 둔다. 임시 배포물을 지우는 설치기는 다시 내려받는다 |
 
 모드마다 다섯 표본이 최소 기준이다(`oneshot_runs`, 기본 5). 칸마다 중앙값, 중앙값 절대 편차(MAD, 중앙값과의 차이의 중앙값), 최솟값, 최댓값, 표본 수를 적는다. 표준 편차 대신 MAD를 쓰는 이유는 공유 러너의 다운로드와 npm 꼬리 지연이 대칭이 아니기 때문이다. 두 값의 최솟값–최댓값 범위가 겹치는 칸은 우위가 아니라 무승부다. 플랫폼끼리, 실행끼리 절대값을 비교하지 않는다. 러너와 네트워크 경로, 레지스트리 미러가 달라진다.
 
@@ -130,11 +130,13 @@ macOS를 포함한 모든 플랫폼에서 위 명령으로 측정을 시작한�
 1. **코드 변경 확인.** 직전 측정 커밋(`RESULTS.md`의 `<!-- bench-auto:start commit=... -->`) 이후 `src`, `crates`, `Cargo.toml`, `Cargo.lock`, `.cargo`, `rust-toolchain.toml`, `scripts/perf` 중 하나가 바뀌었는지 본다. 기록이 없거나 이력에 없는 커밋이면 부모 커밋과 비교한다. 바뀐 것이 없으면 끝낸다.
 2. **구조 게이트 대기.** 같은 커밋의 `structural-perf.yml` push 실행이 성공할 때까지 최대 80분 기다린다.
 3. **벤치마크.** `benchmark.yml`을 `os=all`, `suites=all`로 부른다. 세 OS가 따로 돈다.
-4. **문서 갱신.** OS별 아티팩트를 모두 받아 `scripts/perf/bench_docs.py render`로 `RESULTS.md`와 `RESULTS.ko.md`의 `bench-auto` 구간만 다시 쓰고, `main`과 `dev`에 `docs(perf): record benchmark for <sha>` 커밋으로 push한다.
+4. **문서 갱신.** OS별 아티팩트를 모두 받아 `scripts/perf/bench_docs.py render`로 `RESULTS.md`와 `RESULTS.ko.md`의 `bench-auto` 구간만 다시 쓰고, `docs/performance/charts`의 차트를 다시 그리며, 브랜치에 `scripts/ci/sync_docs_site.py`가 있으면 같은 문서에서 사이트 미러를 다시 만든다. 그다음 `docs(perf): record benchmark for <sha> [skip ci]` 커밋 하나를 `main`과 `dev`에 push한다. 렌더러와 차트 스크립트는 측정한 커밋에서 가져오므로 브랜치의 오래된 사본이 다르게 그리지 않는다.
 
 문서 구간에는 OS 요약표(러너, 바이너리, 상태)와 OS별 절이 Linux, macOS, Windows 순서로 들어간다. 실패한 OS는 "일부 실패"로 표시하고 그때까지 잰 값을 남긴다. 결과가 없는 OS도 절을 지우지 않고 "결과 없음"으로 적는다. 구간 밖의 글은 바이트 단위로 그대로 둔다.
 
-문서 커밋은 `GITHUB_TOKEN`으로 push하므로 그 push가 워크플로를 다시 띄우지 않는다. 문서만 바뀐 커밋은 1단계에서 걸러진다. `workflow_run`은 기본 브랜치의 워크플로 파일만 실행하므로 이 파일이 `main`에 있어야 동작한다.
+미러는 `RESULTS.md`와 `RESULTS.ko.md`를 함께 쓰므로 영어와 한국어 Reference 페이지를 같이 다시 만든다. `packages/docs-site/reference/performance/`, `packages/docs-site/ko/reference/performance/`, `packages/docs-site/images/reference/`가 대상이다. 한쪽 언어만 스테이징하면 사이트가 낡은 채로 남고 다음 Documentation Site 검사가 실패한다.
+
+문서 커밋은 `GITHUB_TOKEN`이 아니라 Horon AI Bot 앱 토큰으로 push한다. `main`과 `dev` 규칙 집합이 `CI Required`와 `Structural performance required` 검사를 요구하고, 검사를 돌리지 않는 커밋을 올릴 수 있는 것은 우회 목록에 있는 신원뿐이다. 커밋 메시지에 `[skip ci]`가 들어가므로 그 push는 CI도, `release-tag.yml`도, 이 워크플로의 두 번째 실행도 띄우지 않는다. 문서만 바뀐 커밋은 어차피 1단계에서 걸러진다. `workflow_run`은 기본 브랜치의 워크플로 파일만 실행하므로 이 파일이 `main`에 있어야 동작한다.
 
 자동 구간의 수치는 회귀 판정 기준이 아니라 추세 기록이다. 손으로 고치지 않는다. 다음 측정이 덮어쓴다.
 
@@ -247,6 +249,21 @@ jcode 내려받기는 일시적인 오류(5xx)에 대비한다. 릴리스 다운
 | `omo` | 에이전트 디렉터리 `<agent>/skills`의 픽스처를 `read`로 읽음(`file-read`) | `<agent>/mcp.json`의 `mcpServers`, 함수 `mcp_bench_bench_echo`. `--tools`는 허용 목록이고 MCP 도구 이름이 빌드마다 달라질 수 있어 이 시나리오만 `--tools`를 주지 않고 기본 도구 집합(연결된 서버 도구 포함)을 쓴다 |
 
 시나리오마다 도구 루트 아래 `<시나리오>/run<N>`에 별도 홈과 작업 폴더를 만든다. 같은 홈을 다시 쓰면 앞 실행이 남긴 MCP 스키마 캐시나 스킬 힌트가 준비 비용을 건너뛰게 된다. 스킬과 MCP 픽스처도 해당 시나리오의 홈에만 두므로 다른 시나리오의 숫자에 섞이지 않는다. 실행이 끝나면 그 루트는 통째로 지운다.
+
+### 비교 리포트(PDF)
+
+`scripts/perf/bench_report.py`는 `benchmark.yml` 실행 한 번의 결과로 horon과 다른 에이전트를 비교하는 인쇄용 리포트를 만듭니다. OS별 `compare.json`을 읽고, 차트는 모두 `ztd-charts-mcp` 서버로 그립니다(`npx`로 stdio에 연결하므로 Node가 필요합니다). 결과로 `report.html`, `charts/*.svg`, `specs/*.json`, `summary.json`이 나옵니다. 실행이 기록하지 않은 칸은 기록된 사유와 함께 "미측정"으로 표시하고, 다른 곳의 값으로 채우지 않습니다.
+
+```bash
+gh workflow run benchmark.yml --ref main -f os=all -f suites=compare,startup,tools -f oneshot_runs=10
+python3 scripts/perf/bench_report.py fetch --run <run-id> --out /tmp/bench-run
+python3 scripts/perf/bench_report.py build --in /tmp/bench-run --out /tmp/bench-report \
+  --commit <sha> --release <tag> --run-url <run-url>
+weasyprint /tmp/bench-report/report.html /tmp/bench-report/report.pdf   # pip install weasyprint
+```
+
+- 마지막 단계는 HTML을 PDF로 바꾸는 도구면 무엇이든 됩니다. 리포트는 0.3 MB 안팎이라 파일 하나로 보내기에 충분히 작습니다.
+- 리포트 본문은 한국어이고, 숫자는 `compare` 묶음 값입니다. 모의 모델을 쓰므로 API 비용이 들지 않고 실제 모델 지연은 포함되지 않습니다.
 
 ### 측정의 한계
 

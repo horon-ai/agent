@@ -286,40 +286,6 @@ fn refuse_escaping_member(member: &str) -> Result<()> {
     Ok(())
 }
 
-/// Reads a member body from bytes already in memory. Test-only helper kept
-/// beside the production readers so a fixture needs no temporary file.
-#[cfg(test)]
-fn member_from_bytes(bytes: &[u8], kind: ArchiveKind, member: &str) -> Result<Vec<u8>> {
-    use std::io::Cursor;
-    match kind {
-        ArchiveKind::Zip => {
-            let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec()))?;
-            let entry = archive
-                .by_name(member)
-                .map_err(|_| anyhow!("no member named {member}"))?;
-            let mut body = Vec::new();
-            entry.take(MAX_MEMBER_BYTES + 1).read_to_end(&mut body)?;
-            Ok(body)
-        }
-        ArchiveKind::Tar | ArchiveKind::TarGz => {
-            let reader: Box<dyn Read> = match kind {
-                ArchiveKind::TarGz => Box::new(flate2::read::GzDecoder::new(Cursor::new(bytes.to_vec()))),
-                _ => Box::new(Cursor::new(bytes.to_vec())),
-            };
-            let mut archive = tar::Archive::new(reader);
-            for entry in archive.entries()? {
-                let entry = entry?;
-                if entry.path()?.to_string_lossy().trim_start_matches("./") == member {
-                    let mut body = Vec::new();
-                    entry.take(MAX_MEMBER_BYTES + 1).read_to_end(&mut body)?;
-                    return Ok(body);
-                }
-            }
-            Err(anyhow!("no member named {member}"))
-        }
-    }
-}
-
 #[cfg(test)]
 #[path = "read_archive_tests.rs"]
 mod tests;

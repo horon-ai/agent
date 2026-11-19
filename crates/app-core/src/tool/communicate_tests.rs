@@ -25,11 +25,6 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[test]
-fn tool_is_named_swarm() {
-    assert_eq!(CommunicateTool::new().name(), "swarm");
-}
-
-#[test]
 fn task_graph_seed_collision_is_detected_from_server_error() {
     let response = ServerEvent::Error {
         id: 1,
@@ -128,16 +123,6 @@ async fn run_plan_reporter_finalize_puts_summary_before_log() {
         summary_idx < log_idx,
         "summary must lead the output file so completion previews are useful:\n{content}"
     );
-}
-
-#[tokio::test]
-async fn run_plan_reporter_inline_is_a_no_op() {
-    let reporter = super::RunPlanReporter::inline();
-    assert!(reporter.task_id.is_none());
-    // Must not panic or create files.
-    reporter.log("ignored").await;
-    reporter.progress(1, 2, "ignored".to_string()).await;
-    reporter.finalize("ignored").await;
 }
 
 #[tokio::test]

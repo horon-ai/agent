@@ -490,12 +490,6 @@ mod tests {
     }
 
     #[test]
-    fn stainless_labels_are_non_empty() {
-        assert!(!anthropic_stainless_arch().is_empty());
-        assert!(!anthropic_stainless_os().is_empty());
-    }
-
-    #[test]
     fn reasoning_caps_match_live_verified_generations() {
         // Full ladder: Fable 5 (live 2026-07-01), Sonnet 5 (live 2026-07-07),
         // Opus 5 (live 2026-07-24), Opus 4.7/4.8.

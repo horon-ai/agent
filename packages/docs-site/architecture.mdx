@@ -12,7 +12,7 @@ server re-execs.
 ```
 ┌──────────────────────────────────────────────┐
 │  horon serve                                 │
-│  ├── Unix socket    $XDG_RUNTIME_DIR/...     │
+│  ├── Unix socket    runtime dir/...          │
 │  ├── Debug socket   ...-debug.sock           │
 │  ├── Registry       ~/.horon/servers.json    │
 │  ├── Provider       four wires / one runtime │
@@ -71,8 +71,10 @@ One engine, two binaries. The split is enforced in CI by
 | --- | --- |
 | `base` | Config, prompt assembly, provider selection, safety classification |
 | `provider-core` | Credential modes, model selection and prefixes |
+| `agent-runtime` | Turn state, the run ledger and turn recovery, with no agent or disk access |
 | `app-core` | The daemon, sessions, tool runtime, update path |
 | `session-store` | Event log, blobs, catalogs, derived caches |
+| `update-core` | Release lookup, download verification and update error summaries |
 | `harness-api` | The versioned request and event surface |
 | `harness-api-server` | The bridge and translation between the daemon and that surface |
 | `agent-sdk` | The Rust client, launch and lifecycle |

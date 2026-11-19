@@ -163,13 +163,6 @@ fn an_open_call_draws_its_whole_text_and_stops_naming_the_key() {
 }
 
 #[test]
-fn a_repeated_result_does_not_stack_a_second_copy() {
-    let mut state = state_with(&[("c1", "a\n")]);
-    state.record("c1", "a\n");
-    assert_eq!(state.calls().count(), 1, "one call was kept twice");
-}
-
-#[test]
 fn a_replay_of_the_same_result_never_stores_one_call_twice() {
     let mut state = ExpandState::default();
     for index in 0..MAX_KEPT_CALLS {

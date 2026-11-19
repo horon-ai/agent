@@ -40,7 +40,7 @@ Review Queue (queue.json)
 Transcript Logger -> Session Reporter
 ```
 
-검토 화면은 이 빌드에 없다. 큐를 나열하는 화면이 없고, `horon-agent permissions` 하위 명령은 선언만 있고 오류로 끝나며(`src/cli/dispatch.rs`), `horon safety review` 같은 CLI 하위 명령도 없다. TUI 검토 패널은 TUI 크레이트가 처음 빠질 때 함께 사라졌다. 다시 들어온 TUI 바이너리 `horon-tui`는 자신이 붙은 세션에서 대기 중인 요청 하나를 입력창 위에서 묻고(`crates/tui/src/prompts.rs`), 데몬은 그 답을 `record_permission_via_file`로 기록한다(`crates/app-core/src/server/client_ask.rs`). 그 밖에는 알림이 요청이 기다린다는 사실을 알리고, 결정은 `SafetySystem::record_decision`을 불러 기록한다(`crates/base/src/safety.rs:597`). 사람을 기다리며 멈춘 무인 실행에 `horon-agent approvals resolve`가 부르는 것도 이 함수다.
+검토 화면은 이 빌드에 없다. 큐를 나열하는 화면이 없고, `horon-agent permissions` 하위 명령은 선언만 있고 오류로 끝나며(`src/cli/dispatch.rs`), `horon safety review` 같은 CLI 하위 명령도 없다. TUI 검토 패널은 TUI 크레이트가 처음 빠질 때 함께 사라졌다. 다시 들어온 TUI 바이너리 `horon-tui`는 자신이 붙은 세션이 기다리는 요청들을 입력창 위에서 하나씩 묻는다. 두 번째 승인은 화면에 있는 승인 뒤에서 기다리고, 남은 수를 한 줄로 덧붙인다(`crates/tui/src/app/prompts.rs`, `crates/tui/src/prompts.rs`). 데몬은 그 답을 `record_permission_via_file`로 기록한다(`crates/app-core/src/server/client_ask.rs`). 그 밖에는 알림이 요청이 기다린다는 사실을 알리고, 결정은 `SafetySystem::record_decision`을 불러 기록한다(`crates/base/src/safety.rs:597`). 사람을 기다리며 멈춘 무인 실행에 `horon-agent approvals resolve`가 부르는 것도 이 함수다.
 
 ---
 
@@ -307,7 +307,7 @@ Next cycle: ~35 minutes
 
 `SafetySystem::record_decision`은 프로세스 안에서 결정을 기록하고 대기 중인 호출자를 깨운다(`crates/base/src/safety.rs:597`).
 
-이 빌드에는 `horon-tui`를 포함해 어디에도 검토 패널이 없고, `horon safety review` 계열 CLI도 없다. 더 좁은 표면 둘은 있다. `horon-tui`는 붙어 있는 세션이 기다리는 요청 하나에 1번 경로로 답하고, `horon-agent approvals resolve --request-id <id> --tool-call-id <id> --verdict retry|skip`은 멈춘 무인 실행의 호출별 판정을 2번 경로로 기록한다(`src/cli/dispatch.rs`).
+이 빌드에는 `horon-tui`를 포함해 어디에도 검토 패널이 없고, `horon safety review` 계열 CLI도 없다. 더 좁은 표면 둘은 있다. `horon-tui`는 붙어 있는 세션이 기다리는 요청들에 하나씩 1번 경로로 답하고, `horon-agent approvals resolve --request-id <id> --tool-call-id <id> --verdict retry|skip`은 멈춘 무인 실행의 호출별 판정을 2번 경로로 기록한다(`src/cli/dispatch.rs`).
 
 #### 결정 이력
 

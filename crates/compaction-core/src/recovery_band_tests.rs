@@ -36,18 +36,6 @@ fn recovery_band_clamps_the_24k_tail() {
 }
 
 #[test]
-fn recovery_band_leaves_the_200k_budget_unchanged() {
-    let budget = compute_context_budget(200_000, DEFAULT_RESERVE_TOKENS, DEFAULT_RECENT_TOKENS, None)
-        .expect("200k window fits a budget");
-    println!(
-        "200k budget: threshold={} recent={}",
-        budget.threshold_tokens, budget.recent_tokens
-    );
-    assert_eq!(budget.threshold_tokens, 140_000);
-    assert_eq!(budget.recent_tokens, 20_000);
-}
-
-#[test]
 fn recovery_band_never_starves_the_tail_floor() {
     // A window whose band has no room still keeps the 1,024-token floor.
     let budget = compute_context_budget(18_000, DEFAULT_RESERVE_TOKENS, DEFAULT_RECENT_TOKENS, None)

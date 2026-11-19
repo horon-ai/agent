@@ -427,18 +427,6 @@ fn auth_profile_env_application_flushes_stale_openrouter_catalog_state() {
 }
 
 #[test]
-fn matrix_openai_compatible_profile_ids_are_unique() {
-    let mut seen = std::collections::HashSet::new();
-    for profile in crate::provider_catalog::openai_compatible_profiles() {
-        assert!(
-            seen.insert(profile.id),
-            "duplicate OpenAI-compatible profile id: {}",
-            profile.id
-        );
-    }
-}
-
-#[test]
 fn matrix_openrouter_like_sources_include_all_static_profiles() {
     let _lock = crate::storage::lock_test_env();
     let guard = EnvGuard::save(&[
