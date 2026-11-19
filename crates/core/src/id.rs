@@ -233,18 +233,6 @@ pub fn new_memorable_server_id() -> (String, String) {
     (full_id, short_name)
 }
 
-/// Try to extract the memorable name from a server ID
-/// e.g., "server_blazing_1234567890_deadbeefcafebabe" -> Some("blazing")
-#[cfg(test)]
-pub fn extract_server_name(server_id: &str) -> Option<&str> {
-    if let Some(rest) = server_id.strip_prefix("server_")
-        && let Some(pos) = rest.find('_')
-    {
-        return Some(&rest[..pos]);
-    }
-    None
-}
-
 /// Generate a memorable session name
 /// Returns (full_id, short_name) where:
 /// - full_id is the storage identifier like "session_fox_1234567890_deadbeefcafebabe"
@@ -553,18 +541,6 @@ mod tests {
         // Short name should have a specific icon (not default)
         let icon = server_icon(&short_name);
         assert_ne!(icon, "🔮", "Modifier '{}' should have a specific icon", short_name);
-    }
-
-    #[test]
-    fn test_extract_server_name() {
-        assert_eq!(extract_server_name("server_blazing_1234567890"), Some("blazing"));
-        assert_eq!(
-            extract_server_name("server_blazing_1234567890_deadbeefcafebabe"),
-            Some("blazing")
-        );
-        assert_eq!(extract_server_name("server_rising_1234567890"), Some("rising"));
-        assert_eq!(extract_server_name("invalid"), None);
-        assert_eq!(extract_server_name("server_"), None);
     }
 
     #[test]

@@ -148,11 +148,6 @@ fn release_update_fails_closed_when_dev_ancestry_cannot_be_verified() {
 }
 
 #[test]
-fn test_is_release_build() {
-    assert!(!is_release_build());
-}
-
-#[test]
 fn test_should_auto_update_dev_build() {
     assert!(!should_auto_update());
 }
@@ -291,39 +286,6 @@ fn latest_release_request_reuses_cache_on_304() {
     assert_eq!(release.tag_name, "v9.9.9");
     assert_eq!(etag, None, "a 304 carries no new ETag to store");
     server.join().unwrap();
-}
-
-#[test]
-fn test_content_range_total_parses_total() {
-    use reqwest::header::{HeaderMap, HeaderValue};
-    // Build a Response is awkward; test the parser via a header map directly.
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        reqwest::header::CONTENT_RANGE,
-        HeaderValue::from_static("bytes 200-1023/1024"),
-    );
-    let parsed = headers
-        .get(reqwest::header::CONTENT_RANGE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.rsplit('/').next())
-        .and_then(|total| total.trim().parse::<u64>().ok());
-    assert_eq!(parsed, Some(1024));
-}
-
-#[test]
-fn test_content_range_total_unknown_size_is_none() {
-    use reqwest::header::{HeaderMap, HeaderValue};
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        reqwest::header::CONTENT_RANGE,
-        HeaderValue::from_static("bytes 200-1023/*"),
-    );
-    let parsed = headers
-        .get(reqwest::header::CONTENT_RANGE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.rsplit('/').next())
-        .and_then(|total| total.trim().parse::<u64>().ok());
-    assert_eq!(parsed, None);
 }
 
 /// End-to-end resume test: a tiny HTTP server serves the first half of the

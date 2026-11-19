@@ -245,16 +245,35 @@ mod tests {
 
     #[test]
     fn push_splits_a_burst_into_event_sized_pieces() {
-        let mut stream = OutputStream {
-            session_id: "no-such-session".to_string(),
-            call_id: "call".to_string(),
-            pending: Vec::new(),
-            last_flush: Instant::now(),
-        };
-        // No v2 owner, so nothing is delivered; the buffer accounting is what
-        // this test can observe without a registry installation.
-        stream.push(&vec![b'x'; OUTPUT_DELTA_MAX_BYTES + 5]);
-        assert!(stream.pending.is_empty(), "a full event's worth is flushed immediately");
+        let _guard = crate::storage::lock_test_env();
+        let session = "stream-burst";
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let token = crate::tool::acp_session::install_with_version(session, "conn-stream", tx, Some(2));
+        let mut stream = OutputStream::for_call(session, "call", true).expect("a v2 session gets a stream");
+
+        let burst = vec![b'x'; OUTPUT_DELTA_MAX_BYTES + 5];
+        stream.push(&burst);
+
+        let mut payloads = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                ServerEvent::ToolOutputDelta { id, data } => {
+                    assert_eq!(id, "call");
+                    payloads.push(data);
+                }
+                other => panic!("an output stream forwards only deltas, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            payloads,
+            vec![
+                crate::acp_render::base64_encode(&burst[..OUTPUT_DELTA_MAX_BYTES]),
+                crate::acp_render::base64_encode(&burst[OUTPUT_DELTA_MAX_BYTES..]),
+            ],
+            "a burst becomes event-sized pieces, in order and with nothing lost"
+        );
+
+        crate::tool::acp_session::clear(session, token);
     }
 
     #[test]

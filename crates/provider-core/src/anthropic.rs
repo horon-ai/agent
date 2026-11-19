@@ -409,23 +409,6 @@ pub fn anthropic_map_tool_name_from_oauth(name: &str) -> String {
     .to_string()
 }
 
-pub fn anthropic_stainless_arch() -> &'static str {
-    match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        other => other,
-    }
-}
-
-pub fn anthropic_stainless_os() -> &'static str {
-    match std::env::consts::OS {
-        "linux" => "Linux",
-        "macos" => "MacOS",
-        "windows" => "Windows",
-        other => other,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,12 +470,6 @@ mod tests {
             assert_eq!(anthropic_map_tool_name_from_oauth(oauth), local);
         }
         assert_eq!(anthropic_map_tool_name_for_oauth("custom"), "custom");
-    }
-
-    #[test]
-    fn stainless_labels_are_non_empty() {
-        assert!(!anthropic_stainless_arch().is_empty());
-        assert!(!anthropic_stainless_os().is_empty());
     }
 
     #[test]

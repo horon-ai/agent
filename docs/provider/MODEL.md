@@ -112,6 +112,8 @@ input = ["text", "image"]
 
 A single `default_model` line is enough to make calls. The `models` array tells the agent context size and input modalities, which helps model selection and compaction estimates.
 
+A model's `reasoning_effort` is applied when that model becomes active. The session reports the level before the first request and the request carries it, so the status line draws `provider/model · high` without anyone running `/effort`, and the field is filled on whichever wire the profile speaks (the second column of [Wire protocols](#wire-protocols)). An explicit `/effort`, `shift+tab`, or a client `set_reasoning_effort` overrides the configured level and stays in force; a switch to another model then adopts the level that model declares, and a model that declares none keeps the effort already in force. A session restored from storage keeps the effort it recorded even when the configuration names a different level.
+
 ## Model roles
 
 A model role is a named workload-to-model mapping shared by every feature that needs a model other than the session's own. Roles are configuration only: a file without a role table resolves models exactly as this build does today.

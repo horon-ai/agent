@@ -17,8 +17,8 @@ this file, this file wins.
 |---|---|---|---|
 |`horon-agent`, the agent binary|root package (`src/`, `crates/*`)|headless mode, the daemon both modes attach to, and the plain `repl` line prompt|`horon-agent-<suffix>.tar.gz` on every release; every installation needs it|
 |`horon-tui`, the TUI binary|`crates/tui`, a client of `horon-agent-sdk`|TUI mode|`horon-tui-<suffix>.tar.gz` beside the agent in the same release; optional, never on FreeBSD|
-|`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; dry run until `NPM_PUBLISH` is `true`; not published yet|
-|SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml` (same `NPM_PUBLISH` gate); Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
+|`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true` (and again on `release: published`, which heals a run that arrived while the release was a draft), and fails the run with the recovery command instead of dry-running silently when the switch is off|
+|SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml`, gated by its own `SDK_NPM_PUBLISH`; Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
 |Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
@@ -309,6 +309,26 @@ Requirement 2 check: `cargo test -p horon-agent --lib acp` (ACP unit tests in
 
 ## Tests
 
+- **A test guards behavior.** Keep a test only when it depends on intended
+  behavior: it changes only when that behavior changes, and fails only when it
+  regresses. Do not write, and delete when found, a test that depends on the
+  past (it asserts that removed code stays gone), on nothing (no code change
+  can make it fail: it tests the standard library, the type system, or a mock
+  of the unit under test), or on the implementation (its expected value
+  repeats the code's own logic, or it asserts private state, internal call
+  order, or which helper ran), or that duplicates another test reaching the
+  same code path and branch. When such a test also covers behavior callers
+  rely on, rewrite it against that behavior with literal expected values and
+  keep its name and module, because workflows and gates select tests by name.
+  Delete production code that exists only for tests (`#[cfg(test)]` helpers,
+  `*_for_tests` functions) when its tests go. Wire and storage contracts,
+  refusals a user sees, durability, concurrency and security tests, gate
+  contract tests, and source-scanning rule tests are behavior. Removing tests
+  lowers each `--min-passed` and `min_passed` floor that selected them by
+  the number of them that step counted as passed (an `#[ignore]` test, or one
+  whose `cfg` excludes the step's runner, never counted), never below 1 (a
+  removed test named in a `skipped` list leaves that list instead), and the
+  pull request names the change (#419).
 - **A test counts only when CI runs it.** An integration target (`tests/*.rs`,
   `crates/*/tests/*.rs`) is listed in `scripts/ci/integration_targets.json`
   with its `min_passed` count, or in `scripts/ci/test_target_allowlist.json`

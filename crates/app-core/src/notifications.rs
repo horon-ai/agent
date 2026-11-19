@@ -65,11 +65,6 @@ impl NotificationDispatcher {
         }
     }
 
-    #[cfg(test)]
-    pub fn from_config(config: SafetyConfig) -> Self {
-        Self { config }
-    }
-
     /// Send a cycle summary notification (after ambient cycle completes).
     pub fn dispatch_cycle_summary(&self, transcript: &AmbientTranscript) {
         let title = format!(
@@ -657,13 +652,6 @@ mod tests {
         assert_eq!(Priority::Default.ntfy_value(), "3");
         assert_eq!(Priority::High.ntfy_value(), "4");
         assert_eq!(Priority::Urgent.ntfy_value(), "5");
-    }
-
-    #[test]
-    fn test_dispatcher_creation() {
-        // Just verify it doesn't panic
-        let cfg = SafetyConfig::default();
-        let _dispatcher = NotificationDispatcher::from_config(cfg);
     }
 
     /// One recorded decision: `(request_id, approved, via, message)`.

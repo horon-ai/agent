@@ -325,9 +325,9 @@ fn every_effort_and_model_path_waits_for_the_running_turn() {
     );
 
     assert_eq!(submit(&mut app, "/effort"), None);
-    for _ in 0..3 {
-        assert_eq!(app.on_key(key(KeyCode::Down)), None);
-    }
+    // The ladder opens on the level in force, `low`, so one step down is
+    // `medium`.
+    assert_eq!(app.on_key(key(KeyCode::Down)), None);
     assert_eq!(app.on_key(key(KeyCode::Enter)), None);
     assert!(app.picker.is_none(), "the list stayed open after a choice");
     assert_eq!(

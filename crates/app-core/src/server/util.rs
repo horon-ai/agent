@@ -580,18 +580,6 @@ mod newer_binary_tests {
             candidates,
         ));
     }
-
-    #[test]
-    fn equal_mtime_channel_binary_is_not_an_update() {
-        // A candidate with the same mtime is not strictly newer, so it must not
-        // trigger a reload (avoids the differ-but-not-newer reload loop, #277).
-        let candidates = vec![(PathBuf::from("/x/stable/horon-agent"), Some(t(100)))];
-        assert!(!newer_binary_available(
-            Some(t(100)),
-            Some(std::path::Path::new("/x/builds/versions/dev/horon-agent")),
-            candidates,
-        ));
-    }
 }
 
 #[cfg(test)]

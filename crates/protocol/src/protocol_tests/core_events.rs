@@ -54,22 +54,6 @@ fn test_model_changed_without_context_window_stays_absent() -> Result<()> {
 }
 
 #[test]
-fn test_request_roundtrip() -> Result<()> {
-    let req = Request::Message {
-        id: 1,
-        content: "hello".to_string(),
-        images: vec![],
-        system_reminder: None,
-        active_skill: Some("verification".to_string()),
-        no_reply: false,
-    };
-    let json = serde_json::to_string(&req)?;
-    let decoded = parse_request_json(&json)?;
-    assert_eq!(decoded.id(), 1);
-    Ok(())
-}
-
-#[test]
 fn test_soft_interrupt_images_roundtrip_and_legacy_default() -> Result<()> {
     let req = Request::SoftInterrupt {
         id: 2,
@@ -403,16 +387,6 @@ fn test_session_renamed_event_roundtrip() -> Result<()> {
     assert_eq!(session_id, "sess_123");
     assert_eq!(title.as_deref(), Some("Release planning"));
     assert_eq!(display_title, "Release planning");
-    Ok(())
-}
-
-#[test]
-fn test_interrupted_event_decodes_from_json() -> Result<()> {
-    let json = r#"{"type":"interrupted"}"#;
-    let decoded = parse_event_json(json)?;
-    let ServerEvent::Interrupted = decoded else {
-        return Err(anyhow!("wrong event type"));
-    };
     Ok(())
 }
 

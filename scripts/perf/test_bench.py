@@ -77,11 +77,6 @@ def identifier_names(tree: ast.AST) -> list[str]:
 
 
 class PerfSourcesParse(unittest.TestCase):
-    def test_files_parse(self) -> None:
-        for path in PYTHON_FILES:
-            with self.subTest(path=path.name):
-                ast.parse(path.read_text(), filename=str(path))
-
     def test_no_identifier_contains_a_hyphen(self) -> None:
         for path in PYTHON_FILES:
             with self.subTest(path=path.name):

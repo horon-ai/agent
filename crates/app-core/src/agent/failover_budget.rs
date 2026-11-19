@@ -458,35 +458,20 @@ mod tests {
 
     /// Serialize this module's tests and sandbox `HORON_HOME`.
     ///
-    /// `HORON_AGENT_QA_HOME` points the sandbox at a directory that is kept on
-    /// disk, so a manual QA run can inspect the persisted record; otherwise a
-    /// throwaway temp directory is used.
-    ///
     /// Fields drop in declaration order, so `_lock` is declared last: the env
     /// var is restored before the process-wide lock is released.
     struct TestHome {
         previous: Option<OsString>,
-        _temp: Option<tempfile::TempDir>,
+        _temp: tempfile::TempDir,
         _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl TestHome {
         fn new() -> Self {
             let lock = crate::storage::lock_test_env();
-            let (home, temp) = match std::env::var_os("HORON_AGENT_QA_HOME") {
-                Some(dir) => {
-                    let dir = PathBuf::from(dir);
-                    std::fs::create_dir_all(&dir).expect("qa home");
-                    (dir, None)
-                }
-                None => {
-                    let dir = tempfile::tempdir().expect("temp home");
-                    let path = dir.path().to_path_buf();
-                    (path, Some(dir))
-                }
-            };
+            let temp = tempfile::tempdir().expect("temp home");
             let previous = std::env::var_os("HORON_HOME");
-            crate::env::set_var("HORON_HOME", &home);
+            crate::env::set_var("HORON_HOME", temp.path());
             crate::config::Config::invalidate_cache();
             Self {
                 previous,
@@ -514,7 +499,7 @@ mod tests {
         crate::config::ProviderConfig::default().autonomous_failover_max_attempts
     }
 
-    /// Start a test from a cleared record so a kept QA home stays re-runnable.
+    /// Start a test from a cleared record so a rerun starts clean.
     fn fresh(session: &str) {
         let path = budget_path(session).expect("budget path");
         for candidate in [path.clone(), path.with_extension("bak")] {
@@ -1062,121 +1047,6 @@ mod tests {
         }
         // The corrupt file is left exactly as it was.
         assert_eq!(std::fs::read_to_string(&path).expect("still there"), "{not json");
-    }
-
-    /// Manual QA, happy path. Run it with a directory that stays on disk so the
-    /// persisted record can be inspected:
-    /// `HORON_AGENT_QA_HOME=/tmp/fb-qa cargo test -p horon-agent-app-core --lib manual_qa_happy -- --nocapture`
-    #[test]
-    fn manual_qa_happy() {
-        let _home = TestHome::new();
-        let session = "qa-happy";
-        fresh(session);
-        println!("load on a first run: {:?}", load(session).expect("first run"));
-
-        let chain = "qa-chain-1";
-        for attempt in 1..=4 {
-            println!(
-                "consume #{attempt}: {}",
-                matches!(
-                    try_consume(session, chain, default_max_attempts()),
-                    ConsumeOutcome::Allowed { .. }
-                )
-            );
-        }
-        let stored = load(session).expect("readable").expect("stored");
-        println!("stored record: {}", serde_json::to_string(&stored).expect("json"));
-        println!(
-            "record on disk: {}",
-            std::fs::read_to_string(budget_path(session).expect("path")).expect("read")
-        );
-
-        let began = begin_chain(session, "qa-chain-2").expect("begin chain");
-        println!(
-            "after a new chain: chain_id={} attempts={}",
-            began.chain_id, began.attempts
-        );
-        println!(
-            "consume on the new chain: {}",
-            matches!(
-                try_consume(session, "qa-chain-2", default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
-    }
-
-    /// Manual QA, failure paths.
-    /// `HORON_AGENT_QA_HOME=/tmp/fb-qa cargo test -p horon-agent-app-core --lib manual_qa_failure -- --nocapture`
-    #[test]
-    fn manual_qa_failure() {
-        let _home = TestHome::new();
-
-        let corrupt_session = "qa-corrupt";
-        fresh(corrupt_session);
-        let corrupt_path = budget_path(corrupt_session).expect("path");
-        std::fs::create_dir_all(corrupt_path.parent().expect("parent")).expect("dir");
-        std::fs::write(&corrupt_path, "{\"chain_id\":\"qa\"").expect("write corrupt");
-        println!("corrupt load: {:?}", load(corrupt_session));
-        println!("corrupt begin_chain: {:?}", begin_chain(corrupt_session, "qa-new"));
-        println!(
-            "corrupt consume: {}",
-            matches!(
-                try_consume(corrupt_session, "qa", default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
-        println!(
-            "corrupt file after the attempt: {}",
-            std::fs::read_to_string(&corrupt_path).expect("untouched")
-        );
-
-        let unreadable_session = "qa-unreadable";
-        fresh(unreadable_session);
-        let unreadable_path = budget_path(unreadable_session).expect("path");
-        std::fs::create_dir_all(&unreadable_path).expect("dir at record path");
-        println!("unreadable load: {:?}", load(unreadable_session));
-        println!(
-            "unreadable consume: {}",
-            matches!(
-                try_consume(unreadable_session, "qa", default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
-    }
-
-    /// Manual QA, restart recovery.
-    /// `HORON_AGENT_QA_HOME=/tmp/fb-qa cargo test -p horon-agent-app-core --lib manual_qa_restart -- --nocapture`
-    #[test]
-    fn manual_qa_restart() {
-        let _home = TestHome::new();
-        let session = "qa-restart";
-        fresh(session);
-        let chain = "qa-chain-r";
-        for attempt in 1..=3 {
-            println!(
-                "before the restart, consume #{attempt}: {}",
-                matches!(
-                    try_consume(session, chain, default_max_attempts()),
-                    ConsumeOutcome::Allowed { .. }
-                )
-            );
-        }
-
-        // Nothing but the file survives a restart.
-        let restored = FailoverBudgetState::restored(load(session).expect("readable").expect("stored"));
-        println!(
-            "restored: chain_id={:?} attempts={} unknown={}",
-            restored.chain_id(),
-            restored.attempts(),
-            restored.is_unknown()
-        );
-        println!(
-            "fourth attempt after the restart: {}",
-            matches!(
-                try_consume(session, chain, default_max_attempts()),
-                ConsumeOutcome::Allowed { .. }
-            )
-        );
     }
 
     /// A dangling symlink at the backup path is lost state, not a first run:
