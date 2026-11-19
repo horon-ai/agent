@@ -466,35 +466,35 @@ def Terminal(argv: list[str], cwd: str, env: dict):
 # ---------------------------------------------------------------------------
 
 
-def prime_server(launch: Launch, cwd: str, env: dict) -> None:
-    """Start the daemon and leave it running.
+def prime_server(launch: Launch, cwd: str, env: dict) -> subprocess.Popen:
+    """Start the daemon the client needs and keep a handle on it.
 
-    The launcher is what starts the server, but on Windows its own console is
-    gone before the client finishes, so the client is started directly and the
-    server is primed here instead: the launcher started with a pipe stops at
-    the headless message and the server it started keeps running.
+    The launcher is what starts the server on a terminal, but on Windows its
+    console is gone before the client finishes, so the client is started
+    directly and the server is started here with the documented `serve`
+    subcommand. The launcher's own piped run is not usable for this: it starts
+    the server and then waits on its own first-run work, and the case already
+    covers that path as the headless message check.
     """
-    subprocess.run(
-        [launch.argv0],
+    server = subprocess.Popen(
+        [launch.argv0, "serve"],
         cwd=cwd,
         env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=STARTUP_TIMEOUT,
-        check=False,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    # The daemon binds its endpoint right after the launch returns; a pause
+    # The daemon binds its endpoint after it has read its settings; a pause
     # saves a client that would otherwise dial before it is up.
-    time.sleep(2.0)
+    time.sleep(5.0)
+    return server
 
 
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
-    if not POSIX:
-        prime_server(launch, case_root, env)
+    server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
@@ -524,6 +524,8 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         return terminal.transcript
     finally:
         terminal.close()
+        if server is not None:
+            server.terminate()
 
 
 def headless_case(
