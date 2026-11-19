@@ -513,7 +513,7 @@ impl PlatformAdapter for Adapter {
         // the caller polls the child's own effect instead of waiting for a
         // readiness byte.
         Ok(ReadyChild {
-            child: cmd.spawn()?,
+            child: spawn_without_leaking_std_handles(cmd)?,
             ready: None,
         })
     }
@@ -535,6 +535,69 @@ impl PlatformAdapter for Adapter {
 }
 
 fn spawn_replacement_process(cmd: &mut Command) -> io::Result<Child> {
+    cmd.spawn()
+}
+
+/// Spawn a long-lived daemon without handing it this process's own stdout and
+/// stderr handles.
+///
+/// `CreateProcess` duplicates every *inheritable* handle of the caller into the
+/// child, and the standard handles of a process behind a pipe or a command
+/// substitution are inheritable by design. A daemon spawned that way therefore
+/// kept the caller's stdout open for its whole life, so `horon | tool` and
+/// `out=$(horon ...)` saw no end of output until the daemon idled out (five
+/// minutes): on the Windows ConPTY smoke a piped launcher that had finished in
+/// one second still held the harness reading for five (#432).
+///
+/// Callers of this function set the child's own stdio explicitly (a null stdout
+/// and a piped stderr), so clearing the inherit flag on this process's handles
+/// for the duration of the spawn changes nothing the child receives, and the
+/// flags are restored immediately. Stdin is left alone: the child inherits it,
+/// so it must stay inheritable.
+fn spawn_without_leaking_std_handles(cmd: &mut Command) -> io::Result<Child> {
+    use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT, SetHandleInformation};
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+
+    /// Clears the inherit flag on one standard handle and puts it back on drop.
+    struct InheritGuard {
+        handle: windows_sys::Win32::Foundation::HANDLE,
+        cleared: bool,
+    }
+
+    impl InheritGuard {
+        fn clear(std_id: u32) -> Self {
+            let handle = unsafe { GetStdHandle(std_id) };
+            let mut flags = 0u32;
+            // SAFETY: `handle` is this process's standard handle (or null when
+            // the process has none); both calls only read and set that handle's
+            // flags and are no-ops compiler-side. A failed query leaves the
+            // handle untouched.
+            let cleared = unsafe {
+                !handle.is_null()
+                    && windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE != handle
+                    && GetHandleInformation(handle, &mut flags) != 0
+                    && (flags & HANDLE_FLAG_INHERIT) != 0
+                    && SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) != 0
+            };
+            Self { handle, cleared }
+        }
+    }
+
+    impl Drop for InheritGuard {
+        fn drop(&mut self) {
+            if self.cleared {
+                // SAFETY: the handle stayed this process's standard handle for
+                // the duration of the spawn, and restoring the flag it had is
+                // the inverse of the change made in `clear`.
+                unsafe {
+                    SetHandleInformation(self.handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+                }
+            }
+        }
+    }
+
+    let _stdout = InheritGuard::clear(STD_OUTPUT_HANDLE);
+    let _stderr = InheritGuard::clear(STD_ERROR_HANDLE);
     cmd.spawn()
 }
 
