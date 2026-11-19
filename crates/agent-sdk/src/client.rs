@@ -781,9 +781,14 @@ impl HoronAgentClient {
     pub fn connect(options: ConnectOptions) -> Result<Self> {
         let path = options.socket_path.clone().unwrap_or_else(api_socket_path);
         if options.ensure_runtime {
+            crate::trace_step("connect: ensure_runtime");
             ensure_runtime(&LaunchOptions::default(), &|_| {})?;
+            crate::trace_step("connect: ensure_runtime done");
         }
-        Self::over(Box::new(UnixTransport::connect(&path)?), &options, path, true, None)
+        crate::trace_step(&format!("connect: opening {}", path.display()));
+        let transport = UnixTransport::connect(&path)?;
+        crate::trace_step("connect: transport open");
+        Self::over(Box::new(transport), &options, path, true, None)
     }
 
     /// Connect over a caller-supplied transport. The seam tests use.
@@ -807,8 +812,10 @@ impl HoronAgentClient {
             Some((options, process)) => (Some(options), Some(process)),
             None => (None, None),
         };
+        crate::trace_step("over: splitting transport");
         let shutdown = transport.shutdown_handle();
         let (reader, writer) = transport.split()?;
+        crate::trace_step("over: transport split");
         let inner = Arc::new(Inner {
             writer: Mutex::new(writer),
             pending: Mutex::new(HashMap::new()),
@@ -835,6 +842,7 @@ impl HoronAgentClient {
             server: String::new(),
             capabilities: Vec::new(),
         };
+        crate::trace_step("over: writing hello");
         let frame = client.request_with_timeout(
             ApiRequest::Hello {
                 min_version: API_VERSION_MAJOR,
@@ -845,6 +853,7 @@ impl HoronAgentClient {
             },
             hello_timeout,
         )?;
+        crate::trace_step("over: hello answered");
         match frame.event {
             ApiEvent::HelloOk {
                 server, capabilities, ..

@@ -265,6 +265,9 @@ def horon_env(root: str, home: str) -> dict:
             "HORON_AGENT_CLI_BOOTSTRAP_LOGIN": "0",
             "NO_COLOR": "1",
             "TERM": "xterm-256color",
+            # One line per connect step, so a client that never draws names the
+            # call it stopped in when the case dumps the logs (#432).
+            "HORON_AGENT_CONNECT_TRACE": os.path.join(home, "logs", "tui-connect.steps.log"),
         }
     )
     os.makedirs(env["HORON_AGENT_RUNTIME_DIR"], exist_ok=True)
@@ -508,8 +511,13 @@ def daemon_log_tail(home: str, limit: int = 60) -> str:
         return f"(no log directory at {directory})"
     if not names:
         return f"(no log files in {directory})"
-    with open(os.path.join(directory, names[-1]), encoding="utf-8", errors="replace") as handle:
-        return "".join(handle.readlines()[-limit:])
+    # Every file, not the newest one: the connect trace and the daemon log are
+    # different writers and both may explain a silent client.
+    sections = []
+    for name in names:
+        with open(os.path.join(directory, name), encoding="utf-8", errors="replace") as handle:
+            sections.append(f"===== {name} =====\n" + "".join(handle.readlines()[-limit:]))
+    return "\n".join(sections)
 
 
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:

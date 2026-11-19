@@ -132,6 +132,28 @@
 //! policy governs it like any tool. A custom tool named `websearch` replaces it
 //! and is always called through your application.
 
+/// Temporary connect trace: one line per step to `HORON_AGENT_CONNECT_TRACE`.
+///
+/// A client that never draws says nothing about where it stopped. The smoke
+/// case dumps `HORON_HOME/logs` on failure, so each step leaves a timestamped
+/// line there. Removed once the Windows ConPTY step is green (#432).
+pub(crate) fn trace_step(step: &str) {
+    let Ok(path) = std::env::var("HORON_AGENT_CONNECT_TRACE") else {
+        return;
+    };
+    if let Some(dir) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        use std::io::Write;
+        let _ = writeln!(file, "{millis} sdk {step}");
+    }
+}
+
 mod cancellable_work;
 mod client;
 pub mod collections;

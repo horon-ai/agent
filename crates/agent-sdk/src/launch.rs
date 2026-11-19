@@ -524,10 +524,17 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
         .api_socket
         .clone()
         .unwrap_or_else(horon_agent_harness_api::api_socket_path);
+    crate::trace_step(&format!("ensure: probing api {}", api.display()));
     if socket_accepts(&api) {
+        crate::trace_step("ensure: api already accepting");
         return Ok(());
     }
     let daemon = horon_agent_harness_api::legacy_socket_path();
+    crate::trace_step(&format!(
+        "ensure: daemon accepting={} at {}",
+        socket_accepts(&daemon),
+        daemon.display()
+    ));
     let horon_agent = options.binary.clone().unwrap_or_else(|| sibling_exe("horon-agent"));
     if !socket_accepts(&daemon) {
         progress("starting horon-agent runtime...");
@@ -554,13 +561,22 @@ pub fn ensure_runtime(options: &LaunchOptions, progress: &Progress<'_>) -> Resul
     let standalone_bridge = sibling_exe("horon-agent-harness-api-bridge");
     let standalone = standalone_bridge.is_file().then_some(standalone_bridge.as_path());
     let (bridge, bridge_args) = bridge_launch(&api, &horon_agent, standalone);
+    crate::trace_step(&format!("ensure: spawning {} {:?}", bridge.display(), bridge_args));
     spawn_detached(&bridge, &bridge_args).map_err(|error| {
         Error::new(
             ErrorKind::LaunchFailed,
             format!("could not start the harness API bridge: {error}"),
         )
     })?;
-    wait_for_socket(&api, "harness API bridge", options.start_timeout)
+    let waited = wait_for_socket(&api, "harness API bridge", options.start_timeout);
+    crate::trace_step(&format!(
+        "ensure: bridge wait {}",
+        match &waited {
+            Ok(()) => "ok".to_string(),
+            Err(error) => format!("failed: {}", error.message),
+        }
+    ));
+    waited
 }
 
 /// Arguments that start the harness API bridge on exactly `api`.
