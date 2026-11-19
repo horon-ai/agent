@@ -649,19 +649,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // client matches that against the messages it is holding, so one
         // refusal restores exactly the messages it was about.
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
-        Command::Runtime { command, arguments } => {
-            let output = client.runtime_command(session_id, command, arguments)?;
-            Ok(Some(match context_report(command, &output.data) {
-                Some(report) => Incoming::Context(Box::new(report)),
-                // A command that repeats its payload as JSON is drawn from that
-                // payload, so the terminal shows labels and values instead of a
-                // serialization of the answer it already has.
-                None => match crate::report::Report::from_answer(command, &output.data, &output.message) {
-                    Some(report) => Incoming::Report(Box::new(report)),
-                    None => Incoming::Info(output.message),
-                },
-            }))
-        }
+        Command::Runtime { command, arguments } => runtime::command(client, session_id, command, arguments),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }

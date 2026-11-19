@@ -382,7 +382,11 @@ fn json_in(message: &str) -> Option<Value> {
     let open = trimmed.find("```json")?;
     let rest = &trimmed[open + "```json".len()..];
     let close = rest.find("```")?;
-    let value: Value = serde_json::from_str(rest[..close].trim()).ok()?;
+    let value: Value = match serde_json::from_str(rest[..close].trim()) {
+        Ok(value) => value,
+        // A fence that does not hold JSON is prose, and the caller prints it.
+        Err(_) => return None,
+    };
     (value.is_object() || value.is_array()).then_some(value)
 }
 

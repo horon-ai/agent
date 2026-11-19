@@ -5,9 +5,33 @@
 //! session flows: each request here is one call in, one answer out, and the
 //! answer is a structure the client draws instead of a line it prints.
 
-use horon_agent_sdk::{Error, HoronAgentClient, RuntimeInfo};
+use horon_agent_sdk::{Error, HoronAgentClient, RuntimeCommand, RuntimeInfo};
 
 use super::Incoming;
+
+/// Run one harness command and shape its answer for the transcript.
+///
+/// `/context` keeps its measured panel. A command that repeats its payload as
+/// JSON is drawn from that payload, so the terminal shows labels and values
+/// instead of a serialization of the answer it already has; one that reported
+/// in prose keeps the message it wrote.
+pub(super) fn command(
+    client: &HoronAgentClient,
+    session_id: &str,
+    command: RuntimeCommand,
+    arguments: Vec<String>,
+) -> Result<Option<Incoming>, Error> {
+    let output = client.runtime_command(session_id, command, arguments)?;
+    if let Some(report) = super::context_report(command, &output.data) {
+        return Ok(Some(Incoming::Context(Box::new(report))));
+    }
+    Ok(Some(
+        match crate::report::Report::from_answer(command, &output.data, &output.message) {
+            Some(report) => Incoming::Report(Box::new(report)),
+            None => Incoming::Info(output.message),
+        },
+    ))
+}
 
 /// The effort a report names, trimmed, with a blank one read as unknown.
 ///
