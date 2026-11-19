@@ -89,11 +89,19 @@ pub enum Stream {
 impl Stream {
     pub async fn connect(path: impl AsRef<Path>) -> io::Result<Self> {
         let pipe_name = path_to_pipe_name(path.as_ref());
+        // A busy pipe means a server is there but has no free instance yet, so
+        // waiting is right; waiting forever is not. The bound turns a server
+        // that stopped accepting into the error a caller can report instead of
+        // a connection that never completes.
+        let deadline = tokio::time::Instant::now() + PIPE_BUSY_ASYNC_RETRY;
         loop {
             match ClientOptions::new().open(&pipe_name) {
                 Ok(client) => return Ok(Stream::Client(client)),
                 Err(e) if e.raw_os_error() == Some(windows_sys::Win32::Foundation::ERROR_PIPE_BUSY as i32) => {
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 }
                 Err(e) => return Err(e),
             }
@@ -289,6 +297,11 @@ pub struct SyncStream {
 /// and publishes the next, so the window is milliseconds. The bound only keeps
 /// a server that has stopped accepting from hanging its clients forever.
 const PIPE_BUSY_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The same bound for asynchronous callers, which tolerate a longer wait: a
+/// bridge that dials a daemon still starting is fine, a bridge that waits
+/// forever looks like a hung client.
+const PIPE_BUSY_ASYNC_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Open a named pipe for a client, waiting while every published instance is
 /// taken.

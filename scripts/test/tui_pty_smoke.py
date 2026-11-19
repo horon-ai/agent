@@ -490,7 +490,32 @@ def prime_server(launch: Launch, cwd: str, env: dict) -> subprocess.Popen:
     return server
 
 
+def daemon_log_tail(home: str, limit: int = 60) -> str:
+    """The end of the daemon's own log, for a failure that printed nothing.
+
+    A client that never draws has no transcript to read, so the log is the only
+    place the daemon says what it did: whether it bound, which provider it
+    loaded, and why a session was refused.
+    """
+    directory = os.path.join(home, "logs")
+    try:
+        names = sorted(name for name in os.listdir(directory) if name.endswith(".log"))
+    except OSError:
+        return f"(no log directory at {directory})"
+    if not names:
+        return f"(no log files in {directory})"
+    with open(os.path.join(directory, names[-1]), encoding="utf-8", errors="replace") as handle:
+        return "".join(handle.readlines()[-limit:])
+
+
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
+    try:
+        return _happy_path(launch, case_root, base_url)
+    except Failure as failure:
+        raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
+
+
+def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
