@@ -458,35 +458,20 @@ mod tests {
 
     /// Serialize this module's tests and sandbox `HORON_HOME`.
     ///
-    /// `HORON_AGENT_QA_HOME` points the sandbox at a directory that is kept on
-    /// disk, so a manual QA run can inspect the persisted record; otherwise a
-    /// throwaway temp directory is used.
-    ///
     /// Fields drop in declaration order, so `_lock` is declared last: the env
     /// var is restored before the process-wide lock is released.
     struct TestHome {
         previous: Option<OsString>,
-        _temp: Option<tempfile::TempDir>,
+        _temp: tempfile::TempDir,
         _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl TestHome {
         fn new() -> Self {
             let lock = crate::storage::lock_test_env();
-            let (home, temp) = match std::env::var_os("HORON_AGENT_QA_HOME") {
-                Some(dir) => {
-                    let dir = PathBuf::from(dir);
-                    std::fs::create_dir_all(&dir).expect("qa home");
-                    (dir, None)
-                }
-                None => {
-                    let dir = tempfile::tempdir().expect("temp home");
-                    let path = dir.path().to_path_buf();
-                    (path, Some(dir))
-                }
-            };
+            let temp = tempfile::tempdir().expect("temp home");
             let previous = std::env::var_os("HORON_HOME");
-            crate::env::set_var("HORON_HOME", &home);
+            crate::env::set_var("HORON_HOME", temp.path());
             crate::config::Config::invalidate_cache();
             Self {
                 previous,
@@ -514,7 +499,7 @@ mod tests {
         crate::config::ProviderConfig::default().autonomous_failover_max_attempts
     }
 
-    /// Start a test from a cleared record so a kept QA home stays re-runnable.
+    /// Start a test from a cleared record so a rerun starts clean.
     fn fresh(session: &str) {
         let path = budget_path(session).expect("budget path");
         for candidate in [path.clone(), path.with_extension("bak")] {
