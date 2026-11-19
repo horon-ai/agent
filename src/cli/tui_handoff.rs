@@ -17,6 +17,10 @@ pub(crate) const DISABLE_ENV: &str = "HORON_NO_TUI";
 const SIBLING_STEM: &str = "horon-tui";
 
 /// One line telling an operator how to get the interactive client.
+///
+/// Only [`HeadlessReason::MissingSibling`] is answered by installing: the other
+/// two reasons happen with the client already in place, and naming an install
+/// there told the operator to fix something that was not broken.
 pub(crate) const INSTALL_HINT: &str =
     "install `horon-tui` next to this binary (`horon-agent install-release`) for the interactive client";
 
@@ -47,6 +51,20 @@ impl HeadlessReason {
             Self::NotATerminal => "stdin and stdout are not both terminals",
             Self::DisabledByEnv => "HORON_NO_TUI is set",
             Self::MissingSibling => "no horon-tui beside this binary",
+        }
+    }
+
+    /// What restores the handoff for this reason, phrased for the operator.
+    ///
+    /// Only a missing client is answered by installing one. A pipe and the
+    /// environment switch happen with the client already installed, so their
+    /// remedy names the condition's own switch instead: an install instruction
+    /// there reads as "the install is broken" when it is not.
+    pub(crate) fn remedy(self) -> &'static str {
+        match self {
+            Self::NotATerminal => "run it on a terminal instead of a pipe or file",
+            Self::DisabledByEnv => "unset `HORON_NO_TUI` to use the interactive client",
+            Self::MissingSibling => INSTALL_HINT,
         }
     }
 }
@@ -114,12 +132,22 @@ pub(crate) fn run(handoff: Handoff, resume: Option<&str>) -> anyhow::Result<()> 
                 std::env::current_dir().map_err(|error| anyhow::anyhow!("working directory unreadable: {error}"))?;
             hand_off(&sibling, resume, Some(cwd.as_path()))
         }
-        Handoff::Headless(reason) => anyhow::bail!(
-            "the interactive client is unavailable in this headless build ({}); {}; use `horon-agent serve` or `horon-agent run`",
-            reason.detail(),
-            INSTALL_HINT
-        ),
+        Handoff::Headless(reason) => anyhow::bail!("{}", headless_message(reason)),
     }
+}
+
+/// The sentence a headless launch ends with.
+///
+/// The condition, the one remedy that answers it, and the headless fallback, in
+/// an order scripts can match on: the condition text is unchanged from when the
+/// install hint was appended to every reason, and only [`HeadlessReason::MissingSibling`]
+/// still names an install.
+fn headless_message(reason: HeadlessReason) -> String {
+    format!(
+        "the interactive client is unavailable in this headless build ({}); {}; use `horon-agent serve` or `horon-agent run`",
+        reason.detail(),
+        reason.remedy()
+    )
 }
 
 /// The arguments the client is started with.
@@ -228,12 +256,42 @@ mod tests {
     }
 
     #[test]
-    fn the_hint_names_the_interactive_client() {
-        assert!(INSTALL_HINT.contains(SIBLING_STEM));
-        assert_eq!(
-            HeadlessReason::NotATerminal.detail(),
-            "stdin and stdout are not both terminals"
+    fn the_headless_sentence_names_the_remedy_for_its_reason() {
+        // A pipe and the environment switch happen with the client already
+        // installed, so the install hint must not appear: it told the operator
+        // to fix an install that was not broken.
+        for reason in [HeadlessReason::NotATerminal, HeadlessReason::DisabledByEnv] {
+            let message = headless_message(reason);
+            assert!(message.contains(reason.detail()), "{message}");
+            assert!(!message.contains("horon-agent install-release"), "{message}");
+            assert!(!message.contains(INSTALL_HINT), "{message}");
+            assert!(
+                message.contains("`horon-agent serve` or `horon-agent run`"),
+                "{message}"
+            );
+        }
+        assert!(headless_message(HeadlessReason::NotATerminal).contains("run it on a terminal"));
+        assert!(headless_message(HeadlessReason::DisabledByEnv).contains("`HORON_NO_TUI`"));
+
+        // A missing client is the one reason installing answers.
+        let missing = headless_message(HeadlessReason::MissingSibling);
+        assert!(missing.contains(INSTALL_HINT), "{missing}");
+        assert!(
+            missing.contains("`horon-agent serve` or `horon-agent run`"),
+            "{missing}"
         );
+    }
+
+    #[test]
+    fn a_headless_handoff_fails_the_command() {
+        for reason in [
+            HeadlessReason::NotATerminal,
+            HeadlessReason::DisabledByEnv,
+            HeadlessReason::MissingSibling,
+        ] {
+            let error = run(Handoff::Headless(reason), None).expect_err("a headless handoff must not succeed");
+            assert_eq!(error.to_string(), headless_message(reason));
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": 2698,
     "crates/app-core/src/agent.rs": 1694,
-    "crates/app-core/src/agent/failover_budget.rs": 1217,
+    "crates/app-core/src/agent/failover_budget.rs": 1202,
     "crates/app-core/src/agent/turn_execution.rs": 1842,
     "crates/app-core/src/agent/turn_loops.rs": 2217,
     "crates/app-core/src/agent/turn_streaming_mpsc.rs": 2817,

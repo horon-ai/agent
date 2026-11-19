@@ -17,7 +17,7 @@ The handoff has three conditions, all checked before the process is replaced (`s
 - `HORON_NO_TUI` must be unset. Setting it to any value forces headless mode on a terminal.
 - `horon-tui` must be a file next to the running executable. A launcher that is a symbolic link is retried at its real location, which matters on macOS.
 
-When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`) plus the command that installs the client, and exits with a non-zero code. A server it started before the check keeps running. Starting `horon-tui` directly skips the decision entirely.
+When a condition fails, the command prints a sentence that names the condition (`stdin and stdout are not both terminals`, `HORON_NO_TUI is set`, or `no horon-tui beside this binary`), the one remedy that answers it, and the headless fallback, then exits with a non-zero code. Only a missing client is answered by installing: a pipe or `HORON_NO_TUI` happens with the client already in place, so the sentence names a terminal or the variable instead. A server it started before the check keeps running. Starting `horon-tui` directly skips the decision entirely.
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
