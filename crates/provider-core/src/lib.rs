@@ -28,7 +28,7 @@ pub use anthropic::{
     ANTHROPIC_OAUTH_BETA_HEADERS, ANTHROPIC_OAUTH_BETA_HEADERS_1M, AnthropicContextMode, AnthropicReasoningCaps,
     anthropic_context_mode, anthropic_effectively_1m, anthropic_is_1m_model, anthropic_map_tool_name_for_oauth,
     anthropic_map_tool_name_from_oauth, anthropic_oauth_beta_headers, anthropic_reasoning_caps,
-    anthropic_stainless_arch, anthropic_stainless_os, anthropic_strip_1m_suffix,
+    anthropic_strip_1m_suffix,
 };
 pub use auth_mode::{
     AuthMode, AuthRoute, DualAuthProvider, pinned_mode_for, runtime_env_auth_route, runtime_env_pinned_mode,
@@ -830,29 +830,6 @@ pub fn shared_http_client() -> reqwest::Client {
                 })
         })
         .clone()
-}
-
-/// Fresh HTTP client for transport-fault retries.
-///
-/// Retrying on the shared pooled client can reuse *other* idle connections
-/// established through the same broken network path (corrupting middlebox,
-/// flaky NAT/VPN) that produced a TLS fault like `BadRecordMac` - so the
-/// retry fails the same way. This client disables connection pooling, which
-/// guarantees the retry opens a brand-new TCP+TLS connection (the property
-/// that makes transport-fault retries actually succeed). Building a client
-/// costs ~10ms, which is fine on a retry path that already backs off >=1s.
-pub fn fresh_transport_client() -> reqwest::Client {
-    http_tls::with_platform_tls(reqwest::Client::builder())
-        .user_agent(HORON_AGENT_USER_AGENT)
-        .connect_timeout(Duration::from_secs(15))
-        .tcp_keepalive(Some(Duration::from_secs(30)))
-        .http2_keep_alive_interval(Some(Duration::from_secs(30)))
-        .http2_keep_alive_timeout(Duration::from_secs(15))
-        .http2_keep_alive_while_idle(true)
-        // No pooled reuse: every request gets a fresh connection.
-        .pool_max_idle_per_host(0)
-        .build()
-        .unwrap_or_else(|_| shared_http_client())
 }
 
 /// Outcome of a provider-native compaction call.

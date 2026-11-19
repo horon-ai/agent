@@ -49,9 +49,8 @@ pub use horon_agent_provider_core::{
     ModelCapabilities, ModelCatalogRefreshSummary, ModelRoute, ModelRouteApiMethod, NativeCompactionResult,
     NativeToolResult, NativeToolResultSender, PremiumMode, Provider, ProviderRequestContext, RouteBillingKind,
     RouteCheapnessEstimate, RouteCostConfidence, RouteCostSource, RouteSelection, dedupe_model_routes,
-    explicit_model_provider_prefix, fresh_transport_client, grok_build_model_spec, inferred_reasoning_efforts,
-    model_name_for_provider, normalize_copilot_model_name, provider_from_model_key, shared_http_client,
-    summarize_model_catalog_refresh,
+    explicit_model_provider_prefix, grok_build_model_spec, inferred_reasoning_efforts, model_name_for_provider,
+    normalize_copilot_model_name, provider_from_model_key, shared_http_client, summarize_model_catalog_refresh,
 };
 pub use horon_agent_provider_core::{
     FallbackPickOptions, error_looks_like_credential_failure, model_route_provider_labels_match,

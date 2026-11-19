@@ -1,6 +1,7 @@
 //! Exercises the actual stream entry point without touching user's state/socket.
 use super::*;
 use horon_agent_harness_api::{ApiRequest, ClientFrame};
+use horon_agent_transport::Listener;
 use tokio::io::{AsyncWriteExt, BufReader};
 
 #[tokio::test(flavor = "multi_thread")]

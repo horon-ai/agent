@@ -342,10 +342,6 @@ impl AccountUsageProbe {
         self.current_account().map(|account| account.exhausted).unwrap_or(false)
     }
 
-    pub fn has_multiple_accounts(&self) -> bool {
-        self.accounts.len() > 1
-    }
-
     pub fn best_available_alternative(&self) -> Option<&AccountUsageSnapshot> {
         if !self.current_exhausted() {
             return None;
@@ -356,15 +352,6 @@ impl AccountUsageProbe {
             .filter(|account| account.label != self.current_label)
             .filter(|account| !account.exhausted && account.error.is_none())
             .min_by(|a, b| a.preference_score().total_cmp(&b.preference_score()))
-    }
-
-    pub fn all_accounts_exhausted(&self) -> bool {
-        self.has_multiple_accounts()
-            && self
-                .accounts
-                .iter()
-                .filter(|account| account.error.is_none())
-                .all(|account| account.exhausted)
     }
 
     pub fn switch_guidance(&self) -> Option<String> {
