@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](HARNESS_API.ko.md)
 
-This document covers the credential setup and the request and event surfaces of the harness API that desktop and SDK clients use over a Unix socket.
+This document covers the credential setup and the request and event surfaces of the harness API that desktop and SDK clients use over a local socket: a Unix socket, or a named pipe on Windows. Both mechanisms carry the same frames. A client that finds nothing listening at the socket path starts `horon-agent api-bridge` itself and waits on that path, so the bridge is a subcommand of the agent binary on every platform the SDK supports.
 
 ## Credential setup
 
