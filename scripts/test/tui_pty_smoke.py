@@ -31,6 +31,7 @@ cases through a ConPTY with `pywinpty`, which the Windows job installs.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -71,6 +72,12 @@ MOCK_SERVER = os.path.join(REPO_ROOT, "scripts", "perf", "mock_llm_server.py")
 # larger budget; keystroke round trips are local.
 STARTUP_TIMEOUT = 90.0
 STEP_TIMEOUT = 45.0
+# Budget for a launch whose stdio is a pipe and which therefore has to start the
+# daemon itself. It has to exceed the product's own readiness budget
+# (`READY_POLL_TIMEOUT`, 120 s on Windows, where a spawned server is polled
+# rather than signalled), or this harness kills the launch before the product
+# can report why it failed and the run shows only an opaque timeout.
+PIPE_STARTUP_TIMEOUT = 180.0
 
 HEADLESS_MESSAGE = "the interactive client is unavailable in this headless build"
 # The install instruction itself. A headless sentence names it only when the
@@ -247,7 +254,14 @@ def installed_launch(layout_root: str) -> Launch:
 
 
 def horon_env(root: str, home: str) -> dict:
-    """The parent env with every horon variable dropped, plus isolated paths."""
+    """The parent env with every horon variable dropped, plus isolated paths.
+
+    Dropping them is not enough for `HORON_AGENT_CLI_BOOTSTRAP_LOGIN`: the agent
+    treats that variable as an opt-in by *presence*, so setting it to "0" turned
+    the legacy headless bootstrap probe on instead of off, and on Windows that
+    probe runs before the server is spawned and slows every cold launch. The
+    cases leave it unset.
+    """
     env = {
         key: value
         for key, value in os.environ.items()
@@ -262,7 +276,6 @@ def horon_env(root: str, home: str) -> dict:
             "HORON_AGENT_NO_AUTO_UPDATE": "1",
             "HORON_AGENT_RUN_MCP": "0",
             "HORON_AGENT_RUN_AUTO_POKE": "0",
-            "HORON_AGENT_CLI_BOOTSTRAP_LOGIN": "0",
             "NO_COLOR": "1",
             "TERM": "xterm-256color",
         }
@@ -512,6 +525,44 @@ def daemon_log_tail(home: str, limit: int = 60) -> str:
         return "".join(handle.readlines()[-limit:])
 
 
+def pipe_state(socket_path: str) -> str:
+    """Whether the daemon bound its named pipe, asked from outside the launch.
+
+    A launch that waits for the server and never sees it has two causes that
+    need different fixes: nothing bound the pipe, or the pipe is bound and the
+    launcher never looked at it. Repeating the derivation and the open from this
+    process separates them without another run.
+    """
+    if POSIX:
+        return "(unix socket, binding is a pathname)"
+    stem = "".join(ch for ch in os.path.splitext(os.path.basename(socket_path))[0]
+                   if ch.isalnum() or ch in "-_")[:32] or "horon-agent"
+    digest = hashlib.sha256(socket_path.replace("\\", "/").lower().encode()).hexdigest()
+    name = "\\\\.\\pipe\\%s-%s" % (stem, digest[:16])
+    try:
+        # Opening read+write is what the launcher's probe does; the instance is
+        # only taken for the instant this handle lives.
+        with open(name, "r+b", buffering=0):
+            return f"{name}: bound (this process opened it)"
+    except OSError as error:
+        return f"{name}: {error}"
+
+
+def case_diagnostics(case_root: str, home: str) -> str:
+    """Everything a launch that never finished leaves behind, for one message."""
+    run_dir = os.path.join(case_root, "run")
+    try:
+        listing = sorted(os.listdir(run_dir))
+    except OSError as error:
+        listing = [f"(unreadable: {error})"]
+    socket_path = os.path.join(run_dir, "horon-agent.sock")
+    return (
+        f"pipe: {pipe_state(socket_path)}"
+        f"\nruntime dir {run_dir}: {listing}"
+        f"\n--- daemon log ---\n{daemon_log_tail(home)}"
+    )
+
+
 def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     try:
         return _happy_path(launch, case_root, base_url)
@@ -587,17 +638,26 @@ def headless_case(
         finally:
             terminal.close()
     else:
-        completed = subprocess.run(
-            [launch.argv0],
-            cwd=case_root,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=STARTUP_TIMEOUT,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [launch.argv0],
+                cwd=case_root,
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=PIPE_STARTUP_TIMEOUT,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as expired:
+            # The launcher reports on stderr, which `run` has captured and not
+            # shown; a killed run would otherwise fail with the timeout alone.
+            raise Failure(
+                f"{label}: the launch did not finish within {PIPE_STARTUP_TIMEOUT:.0f}s"
+                f"\n--- output so far ---\n{expired.stdout or ''}"
+                f"\n--- state ---\n{case_diagnostics(case_root, home)}"
+            ) from None
         code = completed.returncode
         transcript = completed.stdout or ""
 
