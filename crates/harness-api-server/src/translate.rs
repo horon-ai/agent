@@ -3132,8 +3132,15 @@ impl BridgeState {
         if !has_events {
             return Ok(Vec::new());
         }
-        let rows = store::catalog::list(&paths, store::ReadProbe::default())?;
-        Ok(rows
+        // One directory the private-path check refuses must not fail the whole
+        // picker: the listing keeps going and the operator gets the path and mode
+        // to repair from the log.
+        let listing = store::catalog::list_with_skipped(&paths, store::ReadProbe::default())?;
+        for skipped in &listing.skipped {
+            horon_agent_base::logging::warn(&skipped.warning());
+        }
+        Ok(listing
+            .rows
             .into_iter()
             .map(|row| {
                 let id = row.session_id.as_str();

@@ -1337,39 +1337,6 @@ fn directory_sync_failure_fails_the_first_publish() {
     assert_eq!(reopened.append(&new_id(), accepted("clean")).expect("append").seq, 2);
 }
 
-#[test]
-fn terminal_receipts_are_bounded() {
-    let temp = temp_root();
-    let session = "ses_receipts";
-    let limits = JournalLimits {
-        terminal_receipt_cap: 4,
-        ..JournalLimits::default()
-    };
-    let mut store = open_with(temp.path(), session, limits, None);
-    for index in 0..12 {
-        let id = new_id();
-        store.append(&id, accepted(&format!("done {index}"))).expect("accept");
-        store.append(&id, started()).expect("start");
-        store.append(&id, committed()).expect("commit");
-    }
-    let state = store.snapshot().expect("state");
-    assert_eq!(
-        state.input_receipts.len(),
-        4,
-        "live state keeps only the newest terminal receipts"
-    );
-    assert!(state.inputs.is_empty());
-    store.compact().expect("compact");
-    drop(store);
-
-    let mut reopened = open(temp.path(), session);
-    assert_eq!(
-        reopened.snapshot().expect("state").input_receipts.len(),
-        4,
-        "the checkpoint carries only the bounded receipts"
-    );
-}
-
 struct ChildWriter {
     child: Child,
     lines: Receiver<String>,

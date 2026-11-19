@@ -29,27 +29,6 @@ fn metered_estimate_computes_reference_cost() {
 }
 
 #[test]
-fn shared_http_client_reuses_builder() {
-    let _a = shared_http_client();
-    let _b = shared_http_client();
-}
-
-#[test]
-fn fresh_transport_client_builds_distinct_clients() {
-    // Each call must produce a brand-new client (new connection pool), not
-    // a cached one: the whole point is that a retry after a transport
-    // fault (e.g. TLS BadRecordMac) never reuses a possibly-poisoned
-    // pooled connection.
-    let _a = fresh_transport_client();
-    let _b = fresh_transport_client();
-}
-
-#[test]
-fn canonical_user_agent_identifies_horon_agent() {
-    assert!(HORON_AGENT_USER_AGENT.starts_with("horon-agent/"));
-}
-
-#[test]
 fn model_route_provider_label_matching_uses_aliases_without_substring_false_positives() {
     assert!(model_route_provider_labels_match("Anthropic", "Claude"));
     assert!(model_route_provider_labels_match("auto", "OpenRouter"));

@@ -754,30 +754,4 @@ mod tests {
         // Unknown shapes fall back to a title-cased dashed rendering.
         assert_eq!(pretty_model_display_name("some-new-model"), "Some New Model");
     }
-
-    #[test]
-    #[ignore = "developer review: dumps raw -> pretty model name mapping for manual audit"]
-    fn dump_pretty_model_names_for_manual_audit() {
-        let mut names: Vec<String> = Vec::new();
-        for list in [
-            crate::ALL_CLAUDE_MODELS,
-            crate::ALL_OPENAI_MODELS,
-            crate::OPENAI_API_ONLY_PRO_MODELS,
-        ] {
-            names.extend(list.iter().map(|m| m.to_string()));
-        }
-        if let Ok(extra) = std::fs::read_to_string("/tmp/audit_names.txt") {
-            names.extend(extra.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()));
-        }
-        names.sort();
-        names.dedup();
-        for name in names {
-            let pretty = pretty_known_model_family(&name);
-            println!(
-                "{:<42} => {}",
-                name,
-                pretty.unwrap_or_else(|| format!("(verbatim) {name}"))
-            );
-        }
-    }
 }

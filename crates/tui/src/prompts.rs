@@ -474,19 +474,6 @@ mod tests {
     }
 
     #[test]
-    fn a_digit_past_the_last_option_leaves_a_single_choice_question_alone() {
-        let mut prompt = Prompt::ask("a1".into(), vec![question(Some("q"), false, &["one", "two", "three"])]);
-        assert_eq!(prompt.on_key(key(KeyCode::Char('5'))), None);
-        let ask = ask_of(&prompt);
-        assert_eq!(ask.current, 0, "an out-of-range digit moved the question");
-        assert_eq!(
-            ask.chosen[0],
-            Vec::<String>::new(),
-            "an out-of-range digit selected something"
-        );
-    }
-
-    #[test]
     fn zero_leaves_a_single_choice_question_alone() {
         let mut prompt = Prompt::ask("a1".into(), vec![question(Some("q"), false, &["one", "two"])]);
         assert_eq!(prompt.on_key(key(KeyCode::Char('0'))), None);

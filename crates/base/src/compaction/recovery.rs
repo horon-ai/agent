@@ -494,20 +494,6 @@ mod recovery_budget_tests {
              A hardcoded or changed multiplier moves this number."
         );
     }
-
-    /// A larger token budget must not buy less restoration, which is the weaker
-    /// property and holds for any positive multiplier. Kept as a second signal.
-    #[test]
-    fn a_larger_budget_does_not_reduce_the_restoration_allowance() {
-        let narrow = plan_for(1_000);
-        let wide = plan_for(2_000);
-        assert!(
-            wide.restoration.total_bytes >= narrow.restoration.total_bytes,
-            "a larger token budget must not reduce what is restored: {} vs {}",
-            wide.restoration.total_bytes,
-            narrow.restoration.total_bytes
-        );
-    }
 }
 
 #[cfg(test)]

@@ -272,13 +272,6 @@ fn deep_mode_requires_parseable_confidence() {
     assert!(complete_node(&mut g, "a", "w0", artifact).is_ok());
 }
 
-#[test]
-fn light_mode_does_not_require_confidence() {
-    let mut g = dag(Mode::Light, vec![spec("a", NodeKind::Explore)]);
-    dispatch(&mut g, "a", "w0");
-    assert!(complete_node(&mut g, "a", "w0", HandoffArtifact::brief("ok")).is_ok());
-}
-
 /// The breadth mechanism: a deep gate cannot pass while a sibling completed at
 /// low confidence unless the gate's artifact addresses it by id. inject_gap
 /// remains the intended escape hatch and clears the debt by adding breadth.

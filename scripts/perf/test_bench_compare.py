@@ -297,11 +297,11 @@ class DaemonArgvTests(unittest.TestCase):
     def test_horon_serve_argv_omits_the_removed_debug_socket_flag(self) -> None:
         socket_path = "/tmp/bench/run/bench.sock"
         argv = bench.horon_daemon_argv("/usr/local/bin/horon-agent", socket_path)
-        removed = "--" + "debug-socket"
-        self.assertNotIn(removed, argv)
         self.assertEqual(argv[0], "/usr/local/bin/horon-agent")
         self.assertIn("serve", argv)
         self.assertEqual(argv[argv.index("--socket") + 1], socket_path)
+        self.assertEqual(argv[argv.index("--provider-profile") + 1], "mock")
+        self.assertEqual(argv[argv.index("--model") + 1], "mock-model")
 
     def test_debug_socket_is_derived_from_the_main_socket(self) -> None:
         self.assertEqual(

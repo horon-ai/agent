@@ -4,6 +4,7 @@ use horon_agent_session_store::*;
 use horon_agent_session_types::StoredMessage;
 use horon_agent_time::Timestamp;
 use std::fs;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
 mod support;
 
@@ -277,4 +278,30 @@ fn caught_batch_panic_does_not_mute_a_reserved_event_retry() {
         1
     );
     assert!(!paths.root().join(".catalog.dirty/cache").exists());
+}
+
+#[test]
+fn legacy_permissive_directory_is_skipped() {
+    // Given one valid session and one directory an older build left at 0755.
+    let (paths, id, _) = seeded();
+    let legacy = paths.root().join("project-2dadc569-1bb8-4189-8ad6-76c9b9a63e0c");
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o755);
+    builder.create(&legacy).unwrap();
+    fs::set_permissions(&legacy, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(legacy.join("events.jsonl"), b"").unwrap();
+    // When the store lists its sessions.
+    let listing = catalog::list_with_skipped(&paths, ReadProbe::default()).unwrap();
+    // Then the readable session is listed and the refused directory is dropped.
+    assert_eq!(listing.rows.len(), 1);
+    assert_eq!(listing.rows[0].session_id, id);
+    assert_eq!(listing.skipped.len(), 1);
+    // And the warning names the refused directory and the mode an operator has to change.
+    let warning = listing.skipped[0].warning();
+    assert!(warning.contains(&legacy.display().to_string()), "{warning}");
+    assert!(warning.contains("0755"), "{warning}");
+    // And the flat listing keeps the same rows for callers without a log.
+    assert_eq!(catalog::list(&paths, ReadProbe::default()).unwrap().len(), 1);
+    // And nothing about the refused directory changed.
+    assert_eq!(fs::metadata(&legacy).unwrap().permissions().mode() & 0o777, 0o755);
 }

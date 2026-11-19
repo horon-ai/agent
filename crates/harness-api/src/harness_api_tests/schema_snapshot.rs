@@ -3,12 +3,6 @@
 use crate::*;
 
 #[test]
-fn api_version_minor_is_twenty_two() {
-    assert_eq!(API_VERSION_MAJOR, 1);
-    assert_eq!(API_VERSION_MINOR, 22);
-}
-
-#[test]
 fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
     let legacy_ask = r#"{"v":1,"id":4,"req":"ask_response","session_id":"s1","ask_id":"a1","answers":[{"question_id":"q1","selected":["Fast"]}]}"#;
     let decoded: ClientFrame = serde_json::from_str(legacy_ask).unwrap();

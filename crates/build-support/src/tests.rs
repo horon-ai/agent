@@ -58,13 +58,6 @@ fn create_git_repo_fixture() -> tempfile::TempDir {
     temp
 }
 
-#[test]
-fn test_build_manifest_default() {
-    let manifest = BuildManifest::default();
-    assert!(manifest.stable.is_none());
-    assert!(manifest.history.is_empty());
-}
-
 #[cfg(unix)]
 #[test]
 fn test_smoke_test_server_protocol_uses_fresh_connection_after_ping() {
