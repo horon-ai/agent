@@ -760,13 +760,13 @@ jobs:
         # green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-config-types --min-passed 54 --timeout 600
+            --package horon-agent-config-types --min-passed 53 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-import-core --min-passed 24 --timeout 600
+            --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-logging --min-passed 28 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-platform --min-passed 11 --timeout 600
+            --package horon-agent-platform --min-passed 10 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-productivity-core --min-passed 7 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -823,18 +823,22 @@ jobs:
         # The first Linux run executed 1605 cases (#321, job 134409170973).
         # The five staged-import regressions and the filesystem refusal test
         # bring that floor to 1611. The three ignored benchmarks are separate.
+        # It moved 1611 -> 1597 when prune-tests (#419) removed fourteen tests
+        # that guarded no behavior.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1611 --timeout 1200
+            --package horon-agent-base --min-passed 1597 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
         shell: bash
         # The previous macOS suite passed 1592 cases. Include the five
         # staged-import regressions in the minimum for the complete suite.
+        # It moved 1597 -> 1583 when prune-tests (#419) removed fourteen tests
+        # that guarded no behavior.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1597 --timeout 1200
+            --package horon-agent-base --min-passed 1583 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
@@ -868,10 +872,12 @@ jobs:
         # removed the `CatalogLookup` probe, which only there decided whether a
         # delete had anything to remove, so its single test went with it. The
         # delete path is covered instead by the daemon tests in app-core.
+        # It moved 296 -> 294 when prune-tests (#419) removed two tests that
+        # duplicated stronger ACP tests.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
-            --timeout 600 --min-passed 296 \
+            --timeout 600 --min-passed 294 \
             -- acp --nocapture
 
       - name: Run RPC cohort

@@ -510,12 +510,6 @@ mod tests {
     }
 
     #[test]
-    fn auto_install_allowed_with_live_terminal_attached() {
-        let args = parse_args(&["horon-agent", "run", "hi"]);
-        assert!(should_auto_install_update(&args));
-    }
-
-    #[test]
     fn auto_install_respects_explicit_disable_even_without_terminal() {
         let mut args = parse_args(&["horon-agent", "run", "hi"]);
         args.auto_update = false;

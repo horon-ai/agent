@@ -1,9 +1,9 @@
 {
-  "total": 1881,
+  "total": 1880,
   "totals_by_pattern": {
     "dot_ok": 709,
     "let_underscore": 705,
-    "unwrap_or_default": 467
+    "unwrap_or_default": 466
   },
   "tracked_files": {
     "crates/agent-sdk/src/client.rs": {
@@ -1289,7 +1289,7 @@
     "crates/import-core/src/lib.rs": {
       "dot_ok": 10,
       "let_underscore": 0,
-      "unwrap_or_default": 16
+      "unwrap_or_default": 15
     },
     "crates/logging/src/lib.rs": {
       "dot_ok": 5,

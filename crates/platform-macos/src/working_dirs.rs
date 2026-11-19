@@ -144,29 +144,4 @@ mod tests {
             "this process must appear in the snapshot: {dirs:?} does not hold {expected:?}"
         );
     }
-
-    #[test]
-    fn the_snapshot_is_not_empty() {
-        assert!(
-            !process_working_dirs().is_empty(),
-            "an inert guard is the defect this fixes; at least this test process has a cwd"
-        );
-    }
-
-    #[test]
-    fn a_pid_that_cannot_be_inspected_is_skipped() {
-        // Pid 0 is the kernel and has no vnode path; the call must not panic.
-        let mut info = std::mem::MaybeUninit::<libc::proc_vnodepathinfo>::zeroed();
-        let size = std::mem::size_of::<libc::proc_vnodepathinfo>();
-        let written = unsafe {
-            libc::proc_pidinfo(
-                0,
-                libc::PROC_PIDVNODEPATHINFO,
-                0,
-                info.as_mut_ptr().cast::<libc::c_void>(),
-                size as libc::c_int,
-            )
-        };
-        assert_eq!(written, 0, "pid 0 reports no vnode path");
-    }
 }

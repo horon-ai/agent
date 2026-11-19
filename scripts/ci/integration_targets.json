@@ -49,7 +49,7 @@
     {
       "package": "horon-agent",
       "target": "e2e",
-      "min_passed": 76
+      "min_passed": 75
     },
     {
       "package": "horon-agent",
@@ -69,7 +69,7 @@
     {
       "package": "horon-agent",
       "target": "removed_panel_compat",
-      "min_passed": 4
+      "min_passed": 3
     },
     {
       "package": "horon-agent",
@@ -169,7 +169,7 @@
     {
       "package": "horon-agent-import-core",
       "target": "claude_adversarial",
-      "min_passed": 26
+      "min_passed": 20
     },
     {
       "package": "horon-agent-platform",

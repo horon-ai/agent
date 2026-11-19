@@ -71,8 +71,6 @@ pub use render::{
     render_messages_and_images_with_compacted_history, summarize_tool_calls,
 };
 pub use storage_paths::session_journal_path_from_snapshot;
-#[cfg(test)]
-pub(crate) use storage_paths::session_path_in_dir;
 pub use storage_paths::{discard_session_original, session_exists, session_journal_path, session_path, store_paths};
 use storage_paths::{estimate_json_bytes, persist_vector_mode_label};
 pub use streaming_guard::StreamingGuard;
