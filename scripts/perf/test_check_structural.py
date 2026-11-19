@@ -128,11 +128,6 @@ class HealthyRunTest(unittest.TestCase):
         self.assertGreater(result["passed"], 0, "a pass must have checked something")
         self.assertEqual({check["section"].split("/")[0] for check in result["checks"]}, set(gate.REQUIRED_SECTIONS))
 
-    def test_every_required_section_is_exercised(self):
-        run = run_gate(HEALTHY_LINES)
-        covered = {check["section"].split("/")[0] for check in run.result["checks"]}
-        self.assertEqual(covered, set(gate.REQUIRED_SECTIONS))
-
 
 class ViolationTest(unittest.TestCase):
     """Each case is one deliberate defect, and the failure must name its counter."""
