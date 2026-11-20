@@ -101,6 +101,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::EDITOR_COMPLETE,
         "fill the popup's selected command, or complete the prefix",
     ),
+    (
+        ids::EDITOR_ACCEPT_SUGGESTION,
+        "fill the draft with the local suggestion shown after the caret",
+    ),
     (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),
     (
@@ -120,6 +124,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
+        "links" => "list the http(s) links in recent answers and open one",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "quit" => "leave",

@@ -199,3 +199,44 @@ fn whitespace_only_streaming_leaves_the_pane_empty() {
         "a blank streaming message was drawn:\n{screen}"
     );
 }
+
+#[test]
+fn a_cache_miss_marker_says_what_was_resent_under_the_answer() {
+    let mut app = app();
+    app.apply_event(&delta("ANSWER"));
+    app.apply_event(&ApiEvent::TextDone {
+        session_id: "s1".into(),
+        message_id: Some("m1".into()),
+    });
+    app.apply_event(&ApiEvent::TokenUsage {
+        session_id: "s1".into(),
+        input: 50_000,
+        output: 10,
+        cache_read_input: Some(4_000),
+        cache_creation_input: None,
+    });
+    app.apply_event(&ApiEvent::KvCacheMiss {
+        session_id: "s1".into(),
+        reason: "prefix_changed".into(),
+        harness_caused: true,
+        missed_tokens: 46_000,
+        expected_tokens: 50_000,
+        read_tokens: 4_000,
+        documented_cause: None,
+        message: "daemon wording that the client does not draw".into(),
+    });
+
+    let screen = draw_screen(&mut app);
+    assert_eq!(screen.matches("cache miss").count(), 1, "{screen}");
+    let answer = screen.find("ANSWER").expect("the answer is on screen");
+    let mark = screen.find("cache miss").expect("the mark is on screen");
+    assert!(mark > answer, "the mark must sit under its answer:\n{screen}");
+    assert!(
+        screen.contains("an earlier message changed, ~46K tokens resent"),
+        "the mark must name the cause and the resend:\n{screen}"
+    );
+    // The marker is the client's own wording: the daemon's reason id and its
+    // ready-made sentence are not part of it.
+    assert!(!screen.contains("prefix_changed"), "{screen}");
+    assert!(!screen.contains("daemon wording"), "{screen}");
+}
