@@ -15,28 +15,28 @@
 <text x="798.0" y="392.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">600</text>
 <text x="192.2" y="155.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="bold">horon</text>
 <rect x="202.2" y="142.0" width="2.0" height="18" rx="3" fill="#0b84de"/>
-<text x="212.2" y="155.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">0.42</text>
+<text x="212.2" y="155.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">0.52</text>
 <text x="192.2" y="185.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
 <rect x="202.2" y="172.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="212.2" y="185.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.26 (0.62×)</text>
+<text x="212.2" y="185.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.27 (0.52×)</text>
 <text x="192.2" y="215.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
-<rect x="202.2" y="202.0" width="178.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="388.8" y="215.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">180 (433.0×)</text>
+<rect x="202.2" y="202.0" width="180.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="390.2" y="215.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">181 (350.2×)</text>
 <text x="192.2" y="245.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Codex CLI</text>
-<rect x="202.2" y="232.0" width="162.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="372.6" y="245.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">164 (393.8×)</text>
+<rect x="202.2" y="232.0" width="163.0" height="18" rx="3" fill="#d3d9e1"/>
+<text x="373.2" y="245.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">164 (317.1×)</text>
 <text x="192.2" y="275.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">OpenCode</text>
-<rect x="202.2" y="262.0" width="4.9" height="18" rx="3" fill="#d3d9e1"/>
-<text x="215.1" y="275.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">4.92 (11.9×)</text>
+<rect x="202.2" y="262.0" width="5.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="215.8" y="275.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">5.60 (10.8×)</text>
 <text x="192.2" y="305.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">pi</text>
-<rect x="202.2" y="292.0" width="126.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="336.2" y="305.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">127 (305.5×)</text>
+<rect x="202.2" y="292.0" width="124.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="335.2" y="305.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">126 (243.1×)</text>
 <text x="192.2" y="335.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-pi (omp)</text>
-<rect x="202.2" y="322.0" width="352.2" height="18" rx="3" fill="#d3d9e1"/>
-<text x="562.5" y="335.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">355 (854.2×)</text>
+<rect x="202.2" y="322.0" width="363.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="573.9" y="335.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">366 (707.7×)</text>
 <text x="192.2" y="365.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
-<rect x="202.2" y="352.0" width="574.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="784.7" y="365.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">579 (1393.2×)</text>
+<rect x="202.2" y="352.0" width="586.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="796.7" y="365.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">591 (1141.2×)</text>
 <rect x="32" y="406.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="424.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">macOS</text>
 <line x1="202.2" y1="446.0" x2="202.2" y2="686.0" stroke="#eaeef2"/>
@@ -51,64 +51,64 @@
 <text x="798.0" y="702.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">400</text>
 <text x="192.2" y="465.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="bold">horon</text>
 <rect x="202.2" y="452.0" width="2.0" height="18" rx="3" fill="#0b84de"/>
-<text x="212.2" y="465.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">0.37</text>
+<text x="212.2" y="465.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">0.36</text>
 <text x="192.2" y="495.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
 <rect x="202.2" y="482.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="212.2" y="495.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.35 (0.95×)</text>
+<text x="212.2" y="495.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.35 (0.97×)</text>
 <text x="192.2" y="525.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
-<rect x="202.2" y="512.0" width="269.1" height="18" rx="3" fill="#d3d9e1"/>
-<text x="479.4" y="525.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">181 (489.2×)</text>
+<rect x="202.2" y="512.0" width="272.3" height="18" rx="3" fill="#d3d9e1"/>
+<text x="482.6" y="525.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">183 (507.2×)</text>
 <text x="192.2" y="555.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Codex CLI</text>
-<rect x="202.2" y="542.0" width="160.8" height="18" rx="3" fill="#d3d9e1"/>
-<text x="371.0" y="555.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">108 (292.3×)</text>
+<rect x="202.2" y="542.0" width="154.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="364.7" y="555.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">104 (287.7×)</text>
 <text x="192.2" y="585.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">OpenCode</text>
-<rect x="202.2" y="572.0" width="26.6" height="18" rx="3" fill="#d3d9e1"/>
-<text x="236.8" y="585.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">17.9 (48.3×)</text>
+<rect x="202.2" y="572.0" width="12.4" height="18" rx="3" fill="#d3d9e1"/>
+<text x="222.7" y="585.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.35 (23.2×)</text>
 <text x="192.2" y="615.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">pi</text>
 <rect x="202.2" y="602.0" width="220.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="430.6" y="615.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">148 (400.5×)</text>
+<text x="430.5" y="615.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">148 (410.2×)</text>
 <text x="192.2" y="645.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-pi (omp)</text>
-<rect x="202.2" y="632.0" width="491.6" height="18" rx="3" fill="#d3d9e1"/>
-<text x="701.9" y="645.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">330 (893.7×)</text>
+<rect x="202.2" y="632.0" width="487.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="698.1" y="645.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">328 (908.5×)</text>
 <text x="192.2" y="675.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
-<rect x="202.2" y="662.0" width="541.4" height="18" rx="3" fill="#d3d9e1"/>
-<text x="751.7" y="675.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">364 (984.2×)</text>
+<rect x="202.2" y="662.0" width="482.9" height="18" rx="3" fill="#d3d9e1"/>
+<text x="693.2" y="675.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">324 (899.4×)</text>
 <rect x="32" y="716.0" width="5" height="22" rx="1" fill="#0b84de"/>
 <text x="46.0" y="734.0" font-size="18" fill="#1f2328" text-anchor="start" font-weight="bold">Windows</text>
 <line x1="202.2" y1="756.0" x2="202.2" y2="996.0" stroke="#eaeef2"/>
 <text x="202.2" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">0</text>
 <line x1="351.2" y1="756.0" x2="351.2" y2="996.0" stroke="#eaeef2"/>
-<text x="351.2" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">200</text>
+<text x="351.2" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">100</text>
 <line x1="500.1" y1="756.0" x2="500.1" y2="996.0" stroke="#eaeef2"/>
-<text x="500.1" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">400</text>
+<text x="500.1" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">200</text>
 <line x1="649.1" y1="756.0" x2="649.1" y2="996.0" stroke="#eaeef2"/>
-<text x="649.1" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">600</text>
+<text x="649.1" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">300</text>
 <line x1="798.0" y1="756.0" x2="798.0" y2="996.0" stroke="#eaeef2"/>
-<text x="798.0" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">800</text>
+<text x="798.0" y="1012.0" font-size="11" fill="#59636e" text-anchor="middle" font-weight="normal">400</text>
 <text x="192.2" y="775.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="bold">horon</text>
 <rect x="202.2" y="762.0" width="2.0" height="18" rx="3" fill="#0b84de"/>
-<text x="212.2" y="775.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">0.47</text>
+<text x="212.2" y="775.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">0.36</text>
 <text x="192.2" y="805.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
 <rect x="202.2" y="792.0" width="2.0" height="18" rx="3" fill="#d3d9e1"/>
-<text x="212.2" y="805.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.36 (0.77×)</text>
+<text x="212.2" y="805.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">0.28 (0.79×)</text>
 <text x="192.2" y="835.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
-<rect x="202.2" y="822.0" width="141.8" height="18" rx="3" fill="#d3d9e1"/>
-<text x="352.0" y="835.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">190 (406.8×)</text>
+<rect x="202.2" y="822.0" width="285.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="495.8" y="835.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">192 (539.1×)</text>
 <text x="192.2" y="865.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Codex CLI</text>
-<rect x="202.2" y="852.0" width="86.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="296.8" y="865.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">116 (248.3×)</text>
+<rect x="202.2" y="852.0" width="172.7" height="18" rx="3" fill="#d3d9e1"/>
+<text x="382.9" y="865.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">116 (326.0×)</text>
 <text x="192.2" y="895.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">OpenCode</text>
-<rect x="202.2" y="882.0" width="6.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="216.6" y="895.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">8.50 (18.2×)</text>
+<rect x="202.2" y="882.0" width="60.8" height="18" rx="3" fill="#d3d9e1"/>
+<text x="271.0" y="895.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">40.8 (114.7×)</text>
 <text x="192.2" y="925.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">pi</text>
-<rect x="202.2" y="912.0" width="74.6" height="18" rx="3" fill="#d3d9e1"/>
-<text x="284.9" y="925.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">100 (214.1×)</text>
+<rect x="202.2" y="912.0" width="150.1" height="18" rx="3" fill="#d3d9e1"/>
+<text x="360.4" y="925.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">101 (283.4×)</text>
 <text x="192.2" y="955.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-pi (omp)</text>
-<rect x="202.2" y="942.0" width="470.8" height="18" rx="3" fill="#d3d9e1"/>
-<text x="681.0" y="955.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">632 (1350.8×)</text>
+<rect x="202.2" y="942.0" width="504.5" height="18" rx="3" fill="#d3d9e1"/>
+<text x="714.8" y="955.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">339 (952.4×)</text>
 <text x="192.2" y="985.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
-<rect x="202.2" y="972.0" width="302.5" height="18" rx="3" fill="#d3d9e1"/>
-<text x="512.7" y="985.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">406 (867.8×)</text>
-<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 674f49d · measured 2026-11-20 02:16 UTC · run 44658465265</text>
+<rect x="202.2" y="972.0" width="592.6" height="18" rx="3" fill="#d3d9e1"/>
+<text x="802.9" y="985.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">398 (1118.8×)</text>
+<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 50d24d7 · measured 2026-11-20 09:47 UTC · run 44711623550</text>
 <text x="32.0" y="1050.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>
