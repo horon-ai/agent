@@ -136,9 +136,9 @@ Keys:
   Esc            send the queued messages into the running turn, or
                  interrupt it when nothing is queued
   Ctrl-C         cancel a running turn, or leave when nothing is running
-  Ctrl-D         leave
+  Ctrl-D         delete at the cursor, or leave with an empty idle draft
   Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
-  Ctrl-W         delete the word before the cursor
+  Ctrl-W, Alt-Backspace  delete the word before the cursor
   Ctrl-R         search the drafts sent before this one
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row

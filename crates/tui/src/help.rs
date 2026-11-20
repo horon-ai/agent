@@ -45,7 +45,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_INTERRUPT,
         "interrupt the running turn, or send queued messages into it",
     ),
-    (ids::APP_QUIT, "leave"),
+    (
+        ids::APP_QUIT,
+        "leave; ctrl+d deletes at the cursor while the draft has text",
+    ),
     (ids::APP_SCROLL_PAGE_UP, "hold the transcript one page higher"),
     (
         ids::APP_SCROLL_PAGE_DOWN,

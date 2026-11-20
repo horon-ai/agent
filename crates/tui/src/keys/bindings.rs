@@ -132,6 +132,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SUBMIT, Scope::App, &["enter"]),
     ActionSpec::new(ids::APP_CANCEL, Scope::App, &["ctrl+c"]),
     ActionSpec::new(ids::APP_INTERRUPT, Scope::App, &["esc"]),
+    // `ctrl+d` follows the draft at this key alone: the app deletes forward
+    // while the draft has text and only leaves from an empty one. A file that
+    // moves the action to another key gets the plain leave back there.
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
     // The transcript's own keys: `up` and `down` stay with the draft and its
     // history, so the view moves on their shifted forms and on the page keys.
@@ -168,7 +171,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     ),
     ActionSpec::new(ids::EDITOR_KILL_TO_START, Scope::Editor, &["ctrl+u"]),
     ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
-    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
+    // Two spellings, both of them the word the cursor just left: `ctrl+w` is
+    // the one the editor grew with, `alt+backspace` is the one the terminals
+    // and the other clients send for the same intent.
+    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w", "alt+backspace"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
     ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),

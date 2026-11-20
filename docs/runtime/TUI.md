@@ -178,7 +178,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | Send the typed message |
 | `app.cancel` | `ctrl+c` | Cancel the running turn, or leave when nothing is running |
 | `app.interrupt` | `esc` | Send the queued messages into the running turn; with nothing queued, interrupt it. No action when idle |
-| `app.quit` | `ctrl+d` | Leave |
+| `app.quit` | `ctrl+d` | Delete at the cursor while the draft has text, or leave when the draft is empty and the editor is idle |
 | `app.scroll_page_up` | `pageup` | Hold the transcript one page higher |
 | `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
@@ -200,7 +200,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.newline` | `shift+enter`, `alt+enter`, `ctrl+j` | Start a new line without sending the draft |
 | `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
-| `editor.delete_word` | `ctrl+w` | Delete the word before the cursor |
+| `editor.delete_word` | `ctrl+w`, `alt+backspace` | Delete the word before the cursor |
 | `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
 | `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
 | `prompt.allow` | `y` | Approve the parked tool call once |
