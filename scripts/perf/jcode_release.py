@@ -358,22 +358,39 @@ def resolve(args: argparse.Namespace) -> int:
     return 0
 
 
-def materialize(args: argparse.Namespace) -> int:
-    tag = args.tag or os.environ.get("JCODE_VERSION") or None
-    selection = selection_of(args)
+def resolve_platform_release(tag: str | None, selection: str, expected_commit: str | None) -> dict:
+    """Resolve the platform's download before an install benchmark starts timing."""
     release, tag, api_url = release_for(tag)
     commit = peeled_commit(tag)
-    if args.expected_commit:
-        expected = args.expected_commit.strip().lower()
-        if not SHA_RE.fullmatch(expected):
-            raise ReleaseError(f"expected commit must be a hex sha, got {args.expected_commit!r}")
-        if expected != commit:
-            raise ReleaseError(f"release ref moved: expected {expected}, {tag} now points at {commit}")
+    if expected_commit:
+        if not SHA_RE.fullmatch(expected_commit):
+            raise ReleaseError(f"expected commit must be a hex sha, got {expected_commit!r}")
+        if expected_commit != commit:
+            raise ReleaseError(f"release ref moved: expected {expected_commit}, {tag} now points at {commit}")
     name = asset_name()
     if name is None:
         raise ReleaseError(f"no jcode release asset for {platform.system()}/{platform.machine()}")
-    asset = find_asset(release, name, tag)
-    sums_asset = find_asset(release, SUMS_ASSET, tag)
+    return {"tag": tag, "commit": commit, "selection": selection, "api_url": api_url, "name": name,
+            "asset_id": find_asset(release, name, tag).get("id"),
+            "sums_id": find_asset(release, SUMS_ASSET, tag).get("id")}
+
+
+def materialize(args: argparse.Namespace) -> int:
+    tag = args.tag or os.environ.get("JCODE_VERSION") or None
+    expected_commit = args.expected_commit or None
+    selection = selection_of(args)
+    if plan := os.environ.get("JCODE_INSTALL_PLAN"):
+        record = json.loads(plan)
+        if (record["name"] != asset_name() or not SHA_RE.fullmatch(record["commit"])
+                or (tag and tag != record["tag"]) or (expected_commit and expected_commit != record["commit"])
+                or record["selection"] not in ("latest", "pin")):
+            raise ReleaseError("install plan does not match the platform or resolved release")
+    else:
+        record = resolve_platform_release(tag, selection, expected_commit)
+    tag = validate_tag(record["tag"])
+    commit, selection, api_url, name = (record[key] for key in ("commit", "selection", "api_url", "name"))
+    asset = {"id": record["asset_id"]}
+    sums_asset = {"id": record["sums_id"]}
     dest = Path(args.dest)
     with tempfile.TemporaryDirectory(prefix="jcode-release-") as tmp:
         archive = Path(tmp) / name
@@ -427,7 +444,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return resolve(args) if args.command == "resolve" else materialize(args)
-    except ReleaseError as exc:
+    except (ReleaseError, ValueError, KeyError, TypeError) as exc:
         log(str(exc))
         return 1
 

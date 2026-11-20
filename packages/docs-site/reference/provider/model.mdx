@@ -39,6 +39,10 @@ Each wire appears in the model routes under its own `api_method` value from the 
 
 `prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. The model list comes from the profile's static `[[providers.<name>.models]]` array; no wire asks the endpoint for a list.
 
+### Tool parameter schemas
+
+A tool's `parameters` is sent as JSON Schema narrowed to the selected wire's dialect. A keyword the provider is not known to accept is dropped, and each drop is reported as a `schema_keyword_dropped` degradation. The two OpenAI wires require the function-parameters root to be a single object, so a root `anyOf`/`oneOf` of object alternatives — how a multi-action tool states that `label` is required only for `spawn` — is collapsed into that object before sending. Every alternative's properties are merged, a property several alternatives declare keeps the union of their `enum` values, and the `required` names every alternative demands are promoted to the root. A condition that holds for only some alternatives has no flat-object form, so such a tool is sent with `strict: false`, the removed `anyOf` is reported as `schema_keyword_dropped`, and the tool itself still rejects an incomplete call when it runs. A schema with no root combiner, and every other wire, is sent exactly as before.
+
 ```toml
 # Chat Completions, the default
 [providers.my-chat]

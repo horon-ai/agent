@@ -15,6 +15,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from jcode_release import ReleaseError, resolve_platform_release
+
 ROOT = Path(__file__).resolve().parents[2]
 COMPETITORS = ('jcode', 'claude_code', 'codex', 'opencode', 'pi', 'omp', 'omo')
 WINDOWS = os.name == 'nt'
@@ -182,14 +184,12 @@ def run_sample(tool, checkout, root, env, tag):
                 if candidate.is_file():
                     bash = str(candidate)
         cmd = [bash or 'bash', str(ROOT / 'scripts/perf/install_competitors.sh'), str(dest), tool]
-    # Resolving and verifying a competitor asks GitHub's API once per sample.
-    # Keep the job token on the installer process, never on the measured binary:
-    # the timed `--version` below runs with `env`, which has no credential.
+    # Only jcode's download fallback may need the API token. The timed first
+    # version call uses the isolated environment without any credential.
     install_env = env
-    if not horon:
+    if tool == 'jcode':
         tokens = {key: os.environ[key] for key in ('GH_TOKEN', 'GITHUB_TOKEN') if key in os.environ}
-        if tokens:
-            install_env = {**env, **tokens}
+        install_env = {**env, **tokens}
     start = time.perf_counter_ns()
     result = subprocess.run(cmd, cwd=root, env=install_env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=420)
@@ -288,6 +288,14 @@ def main():
     tools = ['horon', *others]
     if baseline_dir:
         tools.insert(1, 'horon-base')
+    jcode_plan = None
+    if 'jcode' in others:
+        jcode_tag = os.environ.get('JCODE_VERSION') or None
+        selection = os.environ.get('JCODE_RELEASE_SOURCE') or ('pin' if jcode_tag else 'latest')
+        try:
+            jcode_plan = json.dumps(resolve_platform_release(jcode_tag, selection, os.environ.get('JCODE_RELEASE_COMMIT')))
+        except ReleaseError as exc:
+            parser.error(f'cannot resolve jcode before installation: {exc}')
     rows, cleanup_errors = [], []
     report = {'suite': 'install', 'tag': args.tag, 'system': platform.system(), 'arch': platform.machine(),
               'release': platform.release(), 'runs': args.runs, 'samples': rows, 'summary_ms': {},
@@ -304,6 +312,8 @@ def main():
                 checkout = baseline_dir if name == 'horon-base' else candidate_dir
                 with original_user_path(), pair_directory(cleanup_errors) as root:
                     env = child_env(root, args.tag)
+                    if name == 'jcode' and jcode_plan:
+                        env['JCODE_INSTALL_PLAN'] = jcode_plan
                     cold_ok = True
                     for state in ('cold', 'warm'):
                         row = {'tool': name, 'round': i + 1, 'state': state}

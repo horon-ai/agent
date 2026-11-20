@@ -160,6 +160,7 @@ jobs:
       suites: ${{ steps.plan.outputs.suites }}
       install: ${{ steps.plan.outputs.install }}
       run: ${{ steps.plan.outputs.run }}
+      jcode: ${{ steps.plan.outputs.jcode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -176,6 +177,7 @@ jobs:
         env:
           SUITES_INPUT: ${{ inputs.suites }}
           OS_INPUT: ${{ inputs.os }}
+          COMPETITORS: ${{ inputs.competitors }}
         run: |
           set -euo pipefail
           strip() { sed -E 's/^,//; s/,$//; s/,,+/,/g; s/^,//; s/,$//'; }
@@ -189,6 +191,14 @@ jobs:
           hosts="$(printf '%s' "$hosts" | tr -d '[:space:]' | sed -E 's/,freebsd,/,/' | strip)"
           echo "install=$install" >> "$GITHUB_OUTPUT"
           echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          competitors=",${COMPETITORS//[[:space:]]/},"
+          compare=false
+          if [[ -n "${hosts//,/}" && ( ",$suites," == *,all,* || ",$suites," == *,compare,* ) ]]; then
+            compare=true
+          fi
+          if [[ "$competitors" == *,jcode,* && ( "$install" == true || "$compare" == true ) ]]; then
+            echo "jcode=true" >> "$GITHUB_OUTPUT"
+          fi
           # A matrix cannot be expanded from an empty include, so a skipped
           # selection hands over one placeholder that the job's `if` skips.
           placeholder='matrix={"include":[{"os":"none","runner":"ubuntu-24.04"}]}'
@@ -206,7 +216,8 @@ jobs:
     # One resolution per benchmark round, shared by the regular suites and the
     # install matrix: picking the release inside each OS job would let runners
     # race a publish and measure two different releases in one round.
-    if: ${{ contains(inputs.competitors, 'jcode') }}
+    needs: plan
+    if: ${{ needs.plan.outputs.jcode == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:

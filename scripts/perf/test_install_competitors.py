@@ -174,6 +174,7 @@ class JcodeReleaseInstallTests(unittest.TestCase):
         env.pop("JCODE_VERSION", None)
         env.pop("JCODE_RELEASE_COMMIT", None)
         env.pop("JCODE_RELEASE_SOURCE", None)
+        env.pop("JCODE_INSTALL_PLAN", None)
         env.pop("GH_TOKEN", None)
         env.pop("GITHUB_TOKEN", None)
         if version is not None:
@@ -313,6 +314,20 @@ class JcodeReleaseInstallTests(unittest.TestCase):
         self.assertFalse(dump.exists())
         self.assertEqual(meta["sha256"], hashlib.sha256(tarball).hexdigest())
 
+    def test_the_timed_installer_reuses_the_resolved_platform_release(self) -> None:
+        plan = {
+            "tag": VERSION, "commit": COMMIT, "selection": "latest", "name": self.asset,
+            "api_url": "https://api.github.com/repos/1jehuang/jcode/releases/latest",
+            "asset_id": ASSET_ID, "sums_id": SUMS_ID,
+        }
+        result = self.run_installer(latest="fail", extra_env={"JCODE_INSTALL_PLAN": json.dumps(plan)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.metadata()["commit"], COMMIT)
+        self.assertEqual(self.metadata()["sha256"], hashlib.sha256(self.tarball).hexdigest())
+        requests = (self.stub / "requests.log").read_text()
+        self.assertNotIn("api.github.com", requests)
+        self.assertIn("/releases/download/", requests)
+
     def test_github_token_never_reaches_the_release_binary(self) -> None:
         dump = self.tmp / "version-env.log"
         tarball = jcode_tarball(self.asset.removesuffix(".tar.gz"), env_dump=dump)
@@ -324,11 +339,15 @@ class JcodeReleaseInstallTests(unittest.TestCase):
         self.assertNotIn("other-secret", seen)
         self.assertIn("PATH=", seen)
 
-    def test_a_failing_npm_tool_only_degrades_the_comparison(self) -> None:
-        result = self.run_installer(tools="jcode,no_such_tool")
+    def test_a_failing_npm_tool_degrades_the_comparison_without_the_api_token(self) -> None:
+        npm = self.stub / "bin" / "npm"
+        npm.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >"$STUB_ROOT/npm-env"\nexit 1\n')
+        npm.chmod(0o755)
+        result = self.run_installer(tools="jcode,codex", extra_env={"GH_TOKEN": "fixture-token", "GITHUB_TOKEN": "fixture-token"})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.bin_path(result)
-        self.assertIn("no_such_tool\tunknown tool", self.failures())
+        self.assertIn("codex\tnpm install failed", self.failures())
+        self.assertEqual((self.stub / "npm-env").read_text().splitlines(), ["unset", "unset"])
 
 
 class ReleaseHelpers(unittest.TestCase):

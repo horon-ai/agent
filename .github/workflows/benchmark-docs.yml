@@ -170,9 +170,9 @@ jobs:
       - name: Commit the measurement to main and dev
         shell: bash
         run: |
-          # The renderer comes from the measured commit; each branch's own copy
-          # of the script may be older. bench_charts.py is imported by it.
-          cp scripts/perf/bench_docs.py scripts/perf/bench_charts.py "$RUNNER_TEMP/"
+          # Use the renderer and its dependencies from the measured commit,
+          # even when the target branch carries older copies of the scripts.
+          cp scripts/perf/{bench_docs,bench_charts,bench_request_bytes}.py "$RUNNER_TEMP/"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           short=$(git rev-parse --short "$SHA")
@@ -216,7 +216,7 @@ jobs:
                 }
               fi
               # Stage first so charts drawn for the first time are seen as changes.
-              git add -A -- "$DOC" "$DOC_KO" "$CHARTS"
+              git add -A -- "$DOC" "$DOC_KO" "$CHARTS" README.md README.ko.md
               if [[ "$mirror" == true ]]; then
                 git add -A -- packages/docs-site/reference packages/docs-site/ko/reference \
                   packages/docs-site/images/reference

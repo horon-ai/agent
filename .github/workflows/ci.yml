@@ -1253,6 +1253,8 @@ jobs:
         # overlay merged into a copy that is never stored.
         # `tool::inflight::tests` (3) pins the in-flight marks every dispatch
         # takes and releases, nested marks included.
+        # `tool::apply_patch::apply_patch_tests` (34) covers both patch formats,
+        # including rejection before writes, client buffers and local undo.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
@@ -1282,6 +1284,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 3 \
             -- tool::inflight::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 34 \
+            -- tool::apply_patch::apply_patch_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::client_fs::tests::apply_patch_tool_routes_unified_diffs_through_the_client --nocapture
 
       - name: Run instant handling cohort
         shell: bash
@@ -1542,16 +1552,20 @@ jobs:
         # recovery layer - was compiled here and executed in no workflow.
         # `--min-passed` is the measured count of each filter, so a renamed
         # module fails on the count instead of passing over an empty subset.
-        # libtest takes one filter per run, so the two cohorts are two runs.
+        # The request cohort also covers Responses definitions loaded on demand.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
-            --timeout 600 --min-passed 53 \
+            --timeout 600 --min-passed 56 \
             -- chat:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
-            --timeout 600 --min-passed 174 \
+            --timeout 600 --min-passed 175 \
             -- wire:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
+            --timeout 600 --min-passed 10 \
+            -- request::tests:: --nocapture
 
       - name: Run swarm plan proposal and lightweight comm cohort
         shell: bash
@@ -1574,6 +1588,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- server::client_lifecycle::tests::lightweight_comm --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::communicate::tests::spawn_label_validation --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::communicate::tests::spawn_execute_rejects_missing_label_before_sending_request --nocapture
 
       - name: Run turn end race cohort
         shell: bash

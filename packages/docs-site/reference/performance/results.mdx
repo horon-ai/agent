@@ -53,6 +53,31 @@ The interactive client is a second binary; these charts are drawn from the `tui`
 | TUI memory and size | [tui-02-memory.svg](/images/reference/performance/charts/tui-02-memory.svg) |
 
 
+## Versions in the latest automatic measurement
+
+
+Versions recorded by the latest automatic measurement. The table comes from each OS's `compare.json`, so a version appears once even when three runners installed it.
+
+| Tool | Version |
+| --- | --- |
+| horon | `horon-agent v0.1.0-dev (50d24d7)` |
+| jcode | `jcode v0.99.1 (7206efd0c)` |
+| Claude Code | `2.1.317 (Claude Code)` |
+| Codex CLI | `codex-cli 0.166.0` |
+| OpenCode | `1.19.5` |
+| pi | `1.5.0` |
+| oh-my-pi (omp) | `omp/18.18.0` |
+| oh-my-openagent (omo) | `omo 5.1.64 (engine: senpi 2026.11.5-1)` |
+
+jcode release identity per runner, from the `jcode-release.json` each job downloaded and verified.
+
+| OS | Tag | Commit | Asset | SHA-256 | Served by |
+| --- | --- | --- | --- | --- | --- |
+| Linux | — | — | — | — | not recorded |
+| macOS | — | — | — | — | not recorded |
+| Windows | — | — | — | — | not recorded |
+
+
 ## Measured results
 
 Dimension labels follow this rule. `MEMORY` is allocation and memory, `TIME` is wall-clock time, `WORK` is iteration counts and byte volumes, and `RESOURCES` is file descriptor, thread and task counts. Dimensions are listed separately so that an improvement in one is not read as an improvement in another.

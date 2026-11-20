@@ -109,7 +109,7 @@ npm_install_into() {
   if ! have npm; then
     return 1
   fi
-  npm install --prefix "$prefix" --no-audit --no-fund --loglevel=error "$spec" >&2
+  env -u GH_TOKEN -u GITHUB_TOKEN npm install --prefix "$prefix" --no-audit --no-fund --loglevel=error "$spec" >&2
 }
 
 record_bin() {
