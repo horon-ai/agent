@@ -5,7 +5,7 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/keys`, `/clear`, `/model`, `/effort`, `/new`,
-//!    `/settings`, `/resume`, `/skills` and `/switch`.
+//!    `/settings`, `/resume`, `/skills`, `/switch` and `/links`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -86,6 +86,8 @@ pub enum Local {
     Shell,
     /// Run `!!command` in this client, keeping neither the command nor its output.
     ShellExcluded,
+    /// List the http(s) links in the newest assistant answers and open one.
+    Links,
 }
 
 impl Local {
@@ -104,6 +106,7 @@ impl Local {
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
+            "links" => Some(Self::Links),
             _ => None,
         }
     }
@@ -128,6 +131,7 @@ impl Local {
             // deliberately absent from `LOCAL_NAMES`.
             Self::Shell => "shell",
             Self::ShellExcluded => "shell",
+            Self::Links => "links",
         }
     }
 }
@@ -620,8 +624,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 12] = [
-    "clear", "effort", "exit", "help", "keys", "model", "new", "quit", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 13] = [
+    "clear", "effort", "exit", "help", "keys", "links", "model", "new", "quit", "resume", "settings", "skills",
+    "switch",
 ];
 
 /// Every runtime command, in declaration order.

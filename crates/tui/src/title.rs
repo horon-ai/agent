@@ -7,6 +7,12 @@
 //!
 //! Nothing is written when standard output is not a terminal: a redirect writes
 //! a file rather than a window, and escape bytes in it are noise.
+//!
+//! With `title.state` on, the name is followed by what the turn is doing — a
+//! fixed word, not a spinner — so a window seen from another one says whether
+//! its session is busy. The word is written only when it changes, which is why
+//! it can be static: a moving glyph would need a timer and a sequence every
+//! frame for a decoration the terminal may not even show.
 
 use std::io::{IsTerminal, Stdout, Write};
 
@@ -140,6 +146,61 @@ pub(crate) fn set(label: &str) -> String {
     format!("\x1b]0;{name}\x07\x1b]2;{name}\x07")
 }
 
+/// What the turn is doing, as the window title says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunState {
+    /// A turn is in flight.
+    Running,
+    /// A prompt is on screen, waiting for the user's answer.
+    Waiting,
+    /// Nothing is happening.
+    Idle,
+}
+
+impl RunState {
+    /// The state these facts describe.
+    ///
+    /// The order is the status segment's: a prompt outranks the turn, because
+    /// the turn is stopped while the user decides, and a session the daemon
+    /// calls `generating` is running whether or not this client holds the turn.
+    pub(crate) fn of(prompt: bool, turn: bool, session_status: Option<&str>) -> Self {
+        if prompt {
+            return Self::Waiting;
+        }
+        if turn || session_status == Some("generating") {
+            return Self::Running;
+        }
+        Self::Idle
+    }
+
+    /// The word the title carries for this state.
+    pub(crate) fn marker(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Waiting => "waiting",
+            Self::Idle => "idle",
+        }
+    }
+}
+
+/// The label with the state marker appended, or the label alone when no state
+/// is shown.
+///
+/// The label is the one [`label`] returned, so the off case passes it through
+/// instead of copying it; it already carries no control characters, and the
+/// marker is a fixed word from this file.
+pub(crate) fn with_state(mut label: String, state: Option<RunState>) -> String {
+    match state {
+        None => label,
+        Some(state) if label.is_empty() => state.marker().to_string(),
+        Some(state) => {
+            label.push_str(SEPARATOR);
+            label.push_str(state.marker());
+            label
+        }
+    }
+}
+
 /// The window title, remembering what the window already says.
 ///
 /// `W` is the stream the sequences go to; it is a parameter so a test can read
@@ -186,6 +247,15 @@ impl<W: Write> Title<W> {
             stack,
             broken: false,
         }
+    }
+
+    /// Whether the title may carry the turn state marker.
+    ///
+    /// The marker rides the same sequences as the name, and a terminal that
+    /// keeps no title stack is one whose title handling cannot be trusted: it
+    /// keeps the name alone, exactly as it did before the setting existed.
+    pub(crate) fn state_supported(&self) -> bool {
+        self.stack
     }
 
     /// Push the title the terminal shows now, then name the window.

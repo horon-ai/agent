@@ -625,3 +625,169 @@ fn tab_walks_the_header_forwards_and_shift_tab_back() {
     press(&mut app, KeyCode::Left);
     assert_eq!(overlay(&app).tab_name(), Some("Status line"));
 }
+
+/// Type the search key and a query, the way a person narrows the list.
+fn search(app: &mut App, query: &str) {
+    press(app, KeyCode::Char('/'));
+    type_text(app, query);
+}
+
+/// The ids of the rows the screen lists, in the order it draws them.
+fn listed(app: &App) -> Vec<&'static str> {
+    overlay(app).rows().iter().map(|row| row.id).collect()
+}
+
+#[test]
+fn overlays_search_narrows_across_tabs_and_selects_the_match() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    assert_eq!(overlay(&app).tab_name(), Some("Appearance"));
+
+    // `newline` is in no label or key: only the description of
+    // `editor.submit_on_enter`, on a tab that is not the open one.
+    search(&mut app, "newline");
+    assert_eq!(listed(&app), vec!["editor.submit_on_enter"]);
+    assert_eq!(
+        overlay(&app).selected().map(|row| row.id),
+        Some("editor.submit_on_enter"),
+        "the only match is not the selected row"
+    );
+    assert_eq!(
+        overlay(&app).tab_name(),
+        Some("Editor"),
+        "the header did not follow the row the search landed on"
+    );
+
+    let text = buffer_text(&draw_screen(&mut app, 80, 24));
+    assert!(text.contains("Enter sends"), "the match was not drawn: {text}");
+    assert!(text.contains("Editor · Keys"), "{text}");
+    assert!(!text.contains("Symbol set"), "{text}");
+}
+
+#[test]
+fn overlays_search_finds_a_setting_by_its_key_on_another_tab() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+
+    search(&mut app, "path_max");
+    assert_eq!(listed(&app), vec!["statusline.path_max"]);
+    assert_eq!(overlay(&app).tab_name(), Some("Status line"));
+}
+
+#[test]
+fn overlays_escape_clears_the_search_before_closing() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    select(&mut app, "statusline.path_max");
+    assert_eq!(overlay(&app).tab_name(), Some("Status line"));
+
+    search(&mut app, "wheel");
+    assert_eq!(listed(&app), vec!["transcript.mouse_scroll"]);
+
+    press(&mut app, KeyCode::Esc);
+    assert!(app.overlay.is_some());
+    assert!(listed(&app).contains(&"transcript.show_reasoning"));
+    assert_eq!(
+        overlay(&app).tab_name(),
+        Some("Transcript"),
+        "clearing the filter lost the tab it had settled on"
+    );
+
+    press(&mut app, KeyCode::Esc);
+    assert!(app.overlay.is_none(), "the second `esc` did not close the screen");
+}
+
+#[test]
+fn overlays_escape_clears_a_kept_filter_before_closing() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+
+    search(&mut app, "wheel");
+    press(&mut app, KeyCode::Enter);
+    assert!(app.overlay.is_some());
+    assert_eq!(listed(&app), vec!["transcript.mouse_scroll"]);
+
+    press(&mut app, KeyCode::Esc);
+    assert!(app.overlay.is_some(), "the filter stayed on the first `esc`");
+    assert!(listed(&app).contains(&"transcript.show_reasoning"));
+    press(&mut app, KeyCode::Esc);
+    assert!(app.overlay.is_none());
+}
+
+#[test]
+fn overlays_search_with_no_match_says_so() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+
+    search(&mut app, "zzzz");
+    assert!(listed(&app).is_empty(), "a query with no hit keeps rows");
+    assert!(!overlay(&app).is_editing(), "a search is not a value editor");
+    let text = buffer_text(&draw_screen(&mut app, 80, 24));
+    assert!(text.contains("nothing matches"), "{text}");
+
+    press(&mut app, KeyCode::Esc);
+    assert!(app.overlay.is_some());
+    assert!(listed(&app).contains(&"theme"));
+}
+
+#[test]
+fn overlays_search_writes_no_settings_and_enter_changes_no_value() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+
+    search(&mut app, "context");
+    assert_eq!(app.input.text(), "", "the query leaked into the draft");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.take_setting_change(), None, "keeping a filter reported a change");
+    assert!(app.overlay.is_some());
+    assert_eq!(listed(&app), vec!["statusline.context_window"]);
+    assert!(!fixture.global().exists(), "searching wrote a settings file");
+}
+
+#[test]
+fn overlays_search_keeps_a_hangul_query_whole_and_backspaces_one_character() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+
+    search(&mut app, "한글");
+    assert!(listed(&app).is_empty());
+    let text = buffer_text(&draw_screen(&mut app, 80, 24));
+    assert!(
+        text.replace(' ', "").contains("nothingmatches\"한글\""),
+        "a multi-byte query was not kept whole: {text}"
+    );
+
+    press(&mut app, KeyCode::Backspace);
+    let text = buffer_text(&draw_screen(&mut app, 80, 24));
+    assert!(
+        text.replace(' ', "").contains("nothingmatches\"한\""),
+        "backspace did not cut exactly one character: {text}"
+    );
+}
+
+#[test]
+fn overlays_typing_on_the_row_list_does_not_start_a_search() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+
+    type_text(&mut app, "wheel");
+    assert!(listed(&app).contains(&"theme"), "plain typing opened a search");
+    assert_eq!(app.input.text(), "", "a stray character reached the draft");
+    assert!(app.overlay.is_some());
+}

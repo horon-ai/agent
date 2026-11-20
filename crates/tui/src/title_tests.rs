@@ -1,6 +1,7 @@
-//! The window title: which name it takes, what it drops, and the bytes it sends.
+//! The window title: which name it takes, what it drops, the state it adds, and
+//! the bytes it sends.
 
-use crate::title::{self, POP, PUSH, Title};
+use crate::title::{self, POP, PUSH, RunState, Title};
 
 #[test]
 fn the_session_title_names_the_window() {
@@ -188,4 +189,86 @@ fn title_stack_written_only_when_supported() {
     let mut sequence = Vec::<u8>::new();
     assert!(title::write_pop(&mut sequence, true));
     assert_eq!(sequence.as_slice(), POP.as_bytes());
+}
+
+#[test]
+fn the_state_marker_is_a_fixed_word_after_the_label() {
+    let label = |text: &str| text.to_string();
+    assert_eq!(
+        title::with_state(label("work"), None),
+        "work",
+        "with the setting off the window keeps the name it has today"
+    );
+    assert_eq!(
+        title::with_state(label("work"), Some(RunState::Running)),
+        "work · running"
+    );
+    assert_eq!(
+        title::with_state(label("work"), Some(RunState::Waiting)),
+        "work · waiting"
+    );
+    assert_eq!(title::with_state(label("work"), Some(RunState::Idle)), "work · idle");
+    assert_eq!(
+        title::with_state(label(""), Some(RunState::Idle)),
+        "idle",
+        "a window with no label still says what it is doing"
+    );
+}
+
+#[test]
+fn a_prompt_outranks_the_turn_and_a_generating_session_is_running() {
+    assert_eq!(RunState::of(false, false, Some("idle")), RunState::Idle);
+    assert_eq!(RunState::of(false, false, None), RunState::Idle);
+    assert_eq!(RunState::of(false, true, None), RunState::Running);
+    assert_eq!(
+        RunState::of(false, false, Some("generating")),
+        RunState::Running,
+        "a turn in flight is running even before this client holds it"
+    );
+    assert_eq!(
+        RunState::of(true, true, Some("generating")),
+        RunState::Waiting,
+        "a prompt stops the turn, so waiting outranks running"
+    );
+}
+
+#[test]
+fn a_state_change_is_the_only_thing_that_renames_the_window() {
+    let mut title = Title::with_stack(Vec::<u8>::new(), true, true);
+    let running = title::with_state("work".to_string(), Some(RunState::Running));
+    title.start(&running).expect("a buffer accepts every write");
+    let first = format!("{}{}", PUSH, title::set(&running));
+    assert_eq!(title.written().as_slice(), first.as_bytes());
+
+    // The frame after the one that wrote it carries the same state again.
+    title.show(&running).expect("a repeated state writes nothing new");
+    assert_eq!(
+        title.written().len(),
+        first.len(),
+        "an unchanged state wrote the title again"
+    );
+
+    let waiting = title::with_state("work".to_string(), Some(RunState::Waiting));
+    title.show(&waiting).expect("a changed state is written");
+    let second = format!("{}{}", first, title::set(&waiting));
+    assert_eq!(
+        title.written().as_slice(),
+        second.as_bytes(),
+        "the new state did not reach the title, or something else did"
+    );
+}
+
+#[test]
+fn a_terminal_without_a_title_stack_gets_no_state_marker() {
+    // The marker rides the same sequences as the name, so the terminal that is
+    // left with the name alone is the one whose title handling is already not
+    // trusted: no stack pair is written there either.
+    assert!(
+        Title::with_stack(Vec::<u8>::new(), true, true).state_supported(),
+        "an xterm-like terminal can carry the state"
+    );
+    assert!(
+        !Title::with_stack(Vec::<u8>::new(), true, false).state_supported(),
+        "a terminal without a title stack keeps the name it always had"
+    );
 }
