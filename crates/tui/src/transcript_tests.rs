@@ -28,6 +28,20 @@ fn empty_message_is_not_published() {
 }
 
 #[test]
+fn recent_assistant_text_keeps_answers_only() {
+    let mut transcript = Transcript::new();
+    transcript.push_user("look at https://user.example/");
+    transcript.push_assistant("first https://one.example/");
+    transcript.push_assistant("second https://two.example/");
+    transcript.text_delta(Some("m9"), "streaming https://three.example/");
+    assert_eq!(
+        transcript.recent_assistant_text(2).collect::<Vec<_>>(),
+        vec!["streaming https://three.example/", "second https://two.example/"]
+    );
+    assert_eq!(transcript.recent_assistant_text(8).count(), 3);
+}
+
+#[test]
 fn tool_done_updates_the_running_line() {
     let mut transcript = Transcript::new();
     transcript.tool_start("c1", "bash");

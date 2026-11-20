@@ -7,6 +7,7 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
+use std::time::Instant;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
@@ -21,7 +22,9 @@ use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
+use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
+use crate::transcript::CacheMiss;
 use crate::transcript::Decision;
 use crate::transcript::Transcript;
 
@@ -38,6 +41,9 @@ mod skills;
 
 #[cfg(test)]
 mod boundary_tests;
+
+#[cfg(test)]
+mod cache_miss_tests;
 
 #[cfg(test)]
 mod effort_cmd_tests;
@@ -271,6 +277,9 @@ pub struct App {
     pub bindings: Bindings,
     /// The slash command popup: the commands the draft offers, and its row.
     pub slash: crate::help::SlashPopup,
+    /// The local draft suggestion: a ghost suffix offered from drafts already
+    /// in memory, shown only for the exact text it was computed from.
+    pub(crate) suggestions: Suggestions,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
     /// The skills the harness reported for the session in force.
@@ -343,6 +352,7 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
@@ -403,6 +413,7 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
@@ -729,6 +740,34 @@ impl App {
                     cache_creation: optional_count(cache_creation_input),
                 });
             }
+            // The daemon classifies one miss per completed provider request and
+            // reports it right after that request's usage, so the mark lands
+            // under the answer that cost the resend. Only an avoidable miss is
+            // kept: a provider or model switch, an expiry, a documented reload,
+            // or a reason id this client does not know is not something the
+            // reader can act on, and `CacheMiss::from_report` says which.
+            ApiEvent::KvCacheMiss {
+                session_id,
+                reason,
+                harness_caused,
+                missed_tokens,
+                documented_cause,
+                ..
+            } => {
+                // A frame already queued when the client reattached can still
+                // arrive: showing it would put one conversation's miss under the
+                // one that replaced it, the same rule `BackgroundOutput` follows.
+                let follows = self
+                    .session_id
+                    .as_deref()
+                    .is_none_or(|current| current == session_id.as_str());
+                if follows
+                    && let Some(miss) =
+                        CacheMiss::from_report(reason, *harness_caused, documented_cause.as_deref(), *missed_tokens)
+                {
+                    self.transcript.push_cache_miss(miss);
+                }
+            }
             ApiEvent::Error { message, .. } => {
                 // The turn is not over: the daemon follows a failed turn's
                 // error with `TurnStopped` and `TurnDone`, which close the turn
@@ -796,6 +835,84 @@ impl App {
         }
         let text = self.input.text();
         self.slash.sync(&self.commands, &text);
+    }
+
+    /// Bring the local draft suggestion in line with the draft and the setting.
+    ///
+    /// A changed draft starts a new generation and asks the local provider
+    /// again; an unchanged one keeps the answer it has, so a dismiss or an
+    /// accepted line stays put until the next edit. The provider reads only the
+    /// drafts this editor already holds, and the answer is dropped unless it
+    /// names the generation and the exact text it was asked about.
+    pub fn sync_suggestions(&mut self) {
+        if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
+            self.suggestions.withdraw();
+            return;
+        }
+        let fingerprint = self.input.fingerprint();
+        if self.suggestions.is_synced(fingerprint) {
+            return;
+        }
+        // The cap is checked before the text is built, so a huge draft costs a
+        // length read rather than a copy.
+        if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
+            self.suggestions.skip(fingerprint);
+            return;
+        }
+        let text = self.input.text();
+        let App {
+            history, suggestions, ..
+        } = self;
+        let Some(request) = suggestions.begin(fingerprint, &text) else {
+            return;
+        };
+        let started = Instant::now();
+        let suffix = crate::suggestions::local_suffix(&text, history.drafts());
+        let elapsed = started.elapsed();
+        if let Some(suffix) = suffix {
+            suggestions.finish(&request, &suffix, elapsed);
+        }
+    }
+
+    /// The ghost suffix the editor draws after the caret, when one applies.
+    ///
+    /// The suffix belongs to the exact draft it completes, so it is looked up
+    /// against the text on screen rather than trusted from the last answer.
+    pub fn suggestion_text(&self) -> Option<String> {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
+            return None;
+        }
+        if !self.suggestions.pending() || !self.input.is_at_end() {
+            return None;
+        }
+        let text = self.input.text();
+        self.suggestions.visible(&text).map(str::to_string)
+    }
+
+    /// Accept the suggestion for the draft on screen.
+    ///
+    /// This is the only place the suffix reaches the input: until here the
+    /// draft is exactly what the user typed, and nothing is sent or queued.
+    fn accept_suggestion(&mut self) -> bool {
+        if !self.input.is_at_end() {
+            return false;
+        }
+        let text = self.input.text();
+        let Some(full) = self.suggestions.accept(&text) else {
+            return false;
+        };
+        self.history.reset();
+        self.input.set_text(&full);
+        true
+    }
+
+    /// Whether a suggestion for the draft on screen can take the next key.
+    fn suggestion_available(&self) -> bool {
+        if !self.suggestions.pending() || !self.input.is_at_end() {
+            return false;
+        }
+        let text = self.input.text();
+        self.suggestions.visible(&text).is_some()
     }
 
     /// Fill the draft from the command the popup has selected.

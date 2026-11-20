@@ -195,17 +195,18 @@ sweep은 10초마다 임계값을 다시 읽으므로 설정 파일을 고치면
 
 ### 해제하는 것
 
-`hibernate_idle_caches`는 다음 두 가지만 버린다.
+`hibernate_idle_caches`는 다음 항목을 해제합니다.
 
 - **provider projection**: `release_provider_messages_cache()`를 거쳐 `provider_messages_cache`,
   접두부 해시 캐시, 캐시 길이와 그 메모리 프로필 카운터를 비운다. 캐시 모드를 `Full`로 되돌리므로
   다음 `provider_messages()`는 빈 트랜스크립트를 보내지 않고 다시 만든다.
 - **도구 출력 인덱스**: `tool_call_ids`와 `tool_result_ids`를 `clear()`가 아니라 새 `HashSet`으로
   바꿔 할당 자체를 놓고, `tool_output_scan_index`를 0으로 되돌린다.
+- **Python eval 커널**은 세션에서 시작했을 때 정리합니다. 다음 셀은 새 상태에서 시작합니다.
 
 ### 남기는 것
 
-해제는 파생 캐시에만 손대고 영속·정본 상태는 건드리지 않는다.
+해제할 때 세션에 저장된 원본 상태를 보존합니다.
 
 - 정본 트랜스크립트와 이벤트 원본(`events.jsonl`, `blobs/`), 상주 active context
 - 얼린 시스템 프롬프트와 잠긴 도구 표면(`listed_tools_index`). 다음 턴이 도구 목록을 다시 협상하지
