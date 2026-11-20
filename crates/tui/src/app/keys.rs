@@ -184,6 +184,10 @@ impl App {
                 self.open_history_search();
                 return None;
             }
+            // Only an idle screen reaches this arm: a prompt, an overlay and a
+            // picker each take every key before the map is read, so the editor
+            // is never opened on top of a question waiting for an answer.
+            Some(keys::ids::EDITOR_EXTERNAL) => return Some(Action::EditDraft),
             Some(keys::ids::APP_CANCEL) => {
                 // Cancel whenever a turn is actually running, which includes
                 // the stretch after a mid-turn error: the daemon has not

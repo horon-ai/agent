@@ -91,6 +91,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "fill the popup's selected command, or complete the prefix",
     ),
     (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
+    (
+        ids::EDITOR_EXTERNAL,
+        "edit the draft in $VISUAL or $EDITOR, then load the saved text",
+    ),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),
     (
         ids::PROMPT_ALLOW_ALWAYS,

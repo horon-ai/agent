@@ -12,6 +12,7 @@
 pub mod app;
 pub mod commands;
 pub mod context;
+mod editor;
 mod fuzzy;
 pub mod help;
 pub mod history;
@@ -336,7 +337,7 @@ fn show_failure(message: &str) {
 /// The session's own title wins and the working directory names a session the
 /// daemon never titled, so a stack of terminals says which one belongs to which
 /// session and a fresh window still says where it is.
-fn window_label(app: &App) -> String {
+pub(crate) fn window_label(app: &App) -> String {
     title::label(app.session_title.as_deref(), app.cwd.as_deref())
 }
 
@@ -576,7 +577,25 @@ where
                     continue;
                 }
                 if let Some(action) = app.on_key(key) {
-                    loop_io::dispatch(app, commands, action);
+                    match action {
+                        // The child needs the terminal this loop draws on, so
+                        // the hand-over happens here rather than on the bridge
+                        // thread: the screen is given up, the editor runs, and
+                        // the frame that follows repaints all of it.
+                        crate::app::Action::EditDraft => {
+                            if let Some(message) = loop_io::hand_over_draft(terminal, app, title, &mut mouse_captured) {
+                                // The screen could not be taken back, so no
+                                // frame can be drawn and no key can be read:
+                                // the loop ends and the caller restores and
+                                // reports on the shell's screen.
+                                failure = Some(message);
+                                app.running = false;
+                                app.exit_code = 1;
+                                break;
+                            }
+                        }
+                        action => loop_io::dispatch(app, commands, action),
+                    }
                 }
                 flush_setting_change(app, reloader, themes);
             }

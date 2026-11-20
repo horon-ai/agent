@@ -19,10 +19,67 @@ use crate::{paste, scroll, title};
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
 pub(crate) fn restore() {
+    release(true);
+}
+
+/// Hand the terminal to a child process that draws on it.
+///
+/// The screen is released exactly as [`restore`] releases it, with one
+/// difference: the window title stays. The title names this client, and the
+/// child is this client's editor, so the stack entry [`restore`] pops is left
+/// for the exit rather than being popped and pushed once per hand-over.
+///
+/// A child that read a terminal still reporting bracketed pastes would take the
+/// client's paste mode into its own text, so nothing is left on.
+pub(crate) fn hand_over() {
+    release(false);
+}
+
+/// Take the terminal back after [`hand_over`].
+///
+/// The inverse of the release, so the next frame paints the whole screen
+/// instead of a difference against rows the editor overwrote. Pastes and the
+/// mouse belong to the caller, which reports their refusals where the startup
+/// path does; the title was never given up.
+///
+/// Attempt every step and report the first failure so the caller can restore
+/// the terminal and exit safely.
+pub(crate) fn take_back<B>(terminal: &mut ratatui::Terminal<B>) -> std::io::Result<()>
+where
+    B: ratatui::backend::Backend,
+    B::Error: std::fmt::Display,
+{
+    let mut failure = None;
+    let mut note = |error: String| {
+        if failure.is_none() {
+            failure = Some(std::io::Error::other(error));
+        }
+    };
+    if let Err(error) = crossterm::terminal::enable_raw_mode() {
+        note(format!("cannot turn raw mode back on: {error}"));
+    }
+    let mut output = std::io::stdout();
+    if let Err(error) = crossterm::execute!(output, crossterm::terminal::EnterAlternateScreen) {
+        note(format!("cannot enter the alternate screen again: {error}"));
+    }
+    if let Err(error) = terminal.clear() {
+        note(format!("cannot clear the screen: {error}"));
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Undo the modes the client turned on, or only step off the screen.
+fn release(pop_title: bool) {
     paste::disable();
     // The stack entry goes back with the screen: the title the shell set is the
-    // one the next prompt should be in.
-    title::pop();
+    // one the next prompt should be in. A hand-over keeps it, because the client
+    // still owns the window and only the screen is lent out.
+    if pop_title {
+        title::pop();
+    }
     // Released on the normal exit as well as the error one: a captured terminal
     // does not hand a drag back to its own text selection.
     scroll::disable_mouse();

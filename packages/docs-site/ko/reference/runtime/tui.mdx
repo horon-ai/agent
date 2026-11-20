@@ -206,19 +206,22 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.delete_word` | `ctrl+w` | 커서 앞 낱말을 지운다 |
 | `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
 | `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
+| `editor.external` | `ctrl+g` | `VISUAL` 또는 `EDITOR`에서 초안을 편집한다 |
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |
 | `prompt.allow_always` | `a` | 이 호출과 이후 같은 호출을 승인한다 |
 | `prompt.deny` | `n` | 대기 중인 도구 호출을 거절한다 |
 | `prompt.dismiss` | `esc` | 대기 중인 호출을 거절한다. 질문 프롬프트는 연 채로 둔다 |
 | `prompt.confirm` | `enter` | 여러 선택지 질문을 확정한다 |
 
-이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 서른세 동작에 각각이 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
+이 표는 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`를 따릅니다. `/help`와 `/keys`는 각 동작에 적용된 키를 표시합니다. `ctrl+o expands` 같은 안내도 현재 배치에 맞춥니다.
 
 대부분의 터미널은 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 믿을 만한 새 줄 키는 `alt+enter`와 `ctrl+j`이고, `shift+enter`는 터미널이 시프트 붙은 형태를 보고할 때만 응답한다.
 
 `up`과 `down`은 먼저 초안의 줄 사이를 오르내리고, 초안의 첫 줄과 마지막 줄에서만 입력 기록에 닿는다. 그래서 트랜스크립트 보기는 `shift+up`, `shift+down`, 페이지 키로 옮겼다. `shift+tab`은 추론 노력 단계를 옮기고 평범한 `tab`은 여전히 초안을 완성한다. 시프트가 들어간 바인딩이 시프트가 없는 바인딩보다 먼저 답하기 때문이다. 프롬프트가 열려 있으면 모든 키를 프롬프트가 받으므로, 프롬프트에 쓰려던 글자가 입력 줄에 닿지 않는다. 탭은 슬래시 명령 이름만 완성한다. 줄에 공백이 들어가면 인자 자리는 사용자의 몫이다.
 
 ## 편집기
+
+Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어 있으면 `EDITOR`를 사용합니다. 큰따옴표나 작은따옴표로 묶은 인수를 지원하며 셸 확장은 사용하지 않습니다. Horon은 비공개 임시 파일을 전달하고 편집기가 정상 종료하면 UTF-8로 읽습니다. 편집에 실패하면 기존 초안을 유지합니다. 편집한 글은 직접 전송할 때까지 입력란에 남습니다.
 
 입력 줄은 초안을 따라 자란다. 줄마다 한 행이고 최대 여덟 행까지 자라며, 그보다 긴 초안은 제 안에서 스크롤한다. 초안이 자라는 동안에도 대화는 최소 세 행을 지키므로 긴 메시지가 화면 전체를 가져가지 않는다.
 

@@ -143,6 +143,7 @@ fn keys_defaults_reproduce_the_shipped_keys() {
         (ids::EDITOR_END, "ctrl+e"),
         (ids::EDITOR_LEFT, "ctrl+b"),
         (ids::EDITOR_RIGHT, "ctrl+f"),
+        (ids::EDITOR_EXTERNAL, "ctrl+g"),
         (ids::APP_SCROLL_PAGE_UP, "pageup"),
         (ids::APP_SCROLL_PAGE_DOWN, "pagedown"),
         (ids::APP_SCROLL_UP, "shift+up"),

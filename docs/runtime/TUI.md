@@ -203,19 +203,22 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.delete_word` | `ctrl+w` | Delete the word before the cursor |
 | `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
 | `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
+| `editor.external` | `ctrl+g` | Edit the draft in `VISUAL` or `EDITOR` |
 | `prompt.allow` | `y` | Approve the parked tool call once |
 | `prompt.allow_always` | `a` | Approve this call and every later call like it |
 | `prompt.deny` | `n` | Deny the parked tool call |
 | `prompt.dismiss` | `esc` | Deny the parked call; a question stays open |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
-The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: thirty-three actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
+The table follows `ACTIONS` in `crates/tui/src/keys/bindings.rs`. `/help` and `/keys` list the keys in force for each action. Markers such as `ctrl+o expands` also show the current key.
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
 `up` and `down` move between the lines of a draft first and reach the input history only at its first and last line, which is why the transcript view moved to `shift+up`, `shift+down` and the page keys. `shift+tab` steps the reasoning effort and plain `tab` still completes the draft, because a binding that names shift answers before the one that does not. While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
 
 ## The editor
+
+Press Ctrl+G to edit the draft with `VISUAL`, or `EDITOR` when `VISUAL` is unset. The command accepts quoted arguments without shell expansion. Horon hands the editor a private temporary file and reads it back as UTF-8 after a successful exit. A failed edit leaves the draft intact. The edited text stays in the composer until you send it.
 
 The input line grows with the draft: one row per line, up to eight rows, and a taller draft scrolls inside its own pane. The conversation keeps at least three rows while the draft grows, so a long message never takes the whole screen.
 
