@@ -137,13 +137,13 @@ Keys:
                  interrupt it when nothing is queued
   Ctrl-C         cancel a running turn, or leave when nothing is running
   Ctrl-D         leave
-  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
   Ctrl-W         delete the word before the cursor
   Ctrl-R         search the drafts sent before this one
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Alt-P          pick the model this session uses
