@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" width="960" height="620" role="img" aria-labelledby="t d">
-<title id="t">horon-agent system overview</title><desc id="d">Clients on the left - horon-tui, the TypeScript and Python SDKs, editors over ACP and a host program over RPC - reach one horon-agent process over a Unix socket or stdio. The process starts at its entry points api-bridge, acp and rpc, which all sit on the daemon started by horon-agent serve. The daemon is built from the workspace crates, keeps sessions in the append-only event store under ~/.horon/sessions, and shares one MCP server pool across sessions. It POSTs directly to the endpoint the active profile's type names, with no router process and no plugin host in between. The terminal client is the separate horon-tui binary, built on horon-agent-sdk, which the agent binary never links.</desc>
+<title id="t">horon-agent system overview</title><desc id="d">Clients on the left - horon-tui, the TypeScript and Python SDKs, editors over ACP and a host program over RPC - reach one horon-agent process over a Unix socket or stdio. The process starts at its entry points api-bridge, acp and rpc, which all sit on the daemon started by horon-agent serve. The daemon is built from the workspace crates, keeps sessions in the append-only event store under ~/.horon/sessions, and shares one MCP server pool across sessions. One provider runtime POSTs directly to the endpoint named by the active profile's type. The terminal client is the separate horon-tui binary, built on horon-agent-sdk, which the agent binary never links.</desc>
 <style>
 :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
 @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
@@ -78,8 +78,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="840" y="298" font-size="10.5" class="m" text-anchor="middle">images: /images/*</text>
 <text x="840" y="328" font-size="11" class="m" text-anchor="middle">one of four wires,</text>
 <text x="840" y="344" font-size="11" class="m" text-anchor="middle">chosen by the type</text>
-<text x="840" y="372" font-size="11" class="m" text-anchor="middle">direct POST, no router,</text>
-<text x="840" y="388" font-size="11" class="m" text-anchor="middle">no plugin host</text>
+<text x="840" y="372" font-size="11" class="m" text-anchor="middle">one provider runtime</text>
+<text x="840" y="388" font-size="11" class="m" text-anchor="middle">direct POST to endpoint</text>
 
 <text x="480" y="580" font-size="12" class="m" text-anchor="middle">Every client reaches the same daemon; only the driver changes.</text>
 </svg>

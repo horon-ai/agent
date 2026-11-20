@@ -157,16 +157,26 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `env_file`, `auth`, `default_model`, and optional
   `[[providers.<name>.models]]`. Omitting `auth` applies the type default:
   `Authorization: Bearer` for the two OpenAI kinds, `x-api-key` for Anthropic
-  and `x-goog-api-key` for Gemini; an explicit `auth` always wins. There is
-  still one provider runtime, no router process, no plugin host. External tools
-  come in over MCP, which stays. The one documented exception is the optional
-  `generate_image` tool: when the active profile names `roles.image`, it POSTs
+  and `x-goog-api-key` for Gemini; an explicit `auth` always wins. Model calls
+  use one provider runtime and reach the endpoint directly. Keep routers and
+  provider plugins out of that path. External tools currently come in over MCP.
+  When the active profile names `roles.image`, the optional `generate_image`
+  tool POSTs
   `/images/generations` and `/images/edits` on that same profile, with the same
   base URL, credential and `extra_body`. It is a route beside the wires, not a
   runtime, and it is off unless `[tools] generate_image = true`. The `image`
   role is therefore the one role whose model does not speak Chat Completions,
   it is served only by an `openai-compatible` or `openai-responses` profile,
   and it is the only role with no text fallback.
+- User-installed Rust packages are an approved design (#635), pending
+  implementation. An extension declares a Rust executable. A plugin bundles
+  one extension and declared resources. Both use `horon package install` or
+  `$HORON_HOME/packages/inbox/<id>/`. Installation is consent. Register after
+  validation, apply the new package set at the next turn of an open session,
+  and check the recorded SHA-256 internally before starting the child. Load
+  packages only from the user's catalog. Run executable calls in a separate
+  child under the user's OS account and through the existing tool policy. Keep
+  in-process plugin loading prohibited and preserve the fixed requirements.
 - Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
