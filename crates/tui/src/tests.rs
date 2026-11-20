@@ -853,8 +853,10 @@ fn the_unicode_fixture_keeps_every_row_inside_a_narrow_pane() {
     const WIDTH: u16 = 32;
     let screen = gallery::frame("unicode", WIDTH, 14).unwrap_or_else(|message| panic!("{message}"));
     for row in screen.lines() {
-        // `TestBackend`'s Display wraps each row in quotes.
-        let inner = row.trim_matches('"');
+        // The backend appends a diagnostic for cells hidden by wide glyphs.
+        // It follows the quoted screen row and is never displayed in the pane.
+        let (cells, _) = row.split_once("\" Hidden by multi-width symbols:").unwrap_or((row, ""));
+        let inner = cells.trim_matches('"');
         assert!(
             unicode_width::UnicodeWidthStr::width(inner) <= usize::from(WIDTH),
             "a row is wider than the pane ({WIDTH}): {inner}"
