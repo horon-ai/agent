@@ -107,6 +107,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
+use crate::terminal::{show_failure, window_label, window_state};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -319,53 +320,6 @@ where
     }
 }
 
-/// Draw the connection-failure banner once, when there is a terminal to draw it
-/// on, then restore it.
-fn show_failure(message: &str) {
-    eprintln!("horon-tui: {message}");
-    let mut app = App::failure(message);
-    match ratatui::try_init() {
-        Ok(mut terminal) => {
-            let failure = draw(&mut terminal, &mut app).err();
-            paste::disable();
-            ratatui::restore();
-            if let Some(message) = failure {
-                eprintln!("horon-tui: {message}");
-            }
-        }
-        Err(error) => {
-            paste::disable();
-            ratatui::restore();
-            eprintln!("horon-tui: cannot open a terminal: {error}");
-        }
-    }
-}
-
-/// The name the window carries for the app's state.
-///
-/// The session's own title wins and the working directory names a session the
-/// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is. With `title.state` on,
-/// the turn state follows the name as a fixed word, so a window seen from
-/// another one says whether its session is busy without being switched to.
-fn window_label(app: &App, state_supported: bool) -> String {
-    let label = title::label(app.session_title.as_deref(), app.cwd.as_deref());
-    title::with_state(label, window_state(app, state_supported))
-}
-
-/// The state the title names, or none when the setting is off or the terminal
-/// keeps no title worth adding to.
-fn window_state(app: &App, state_supported: bool) -> Option<title::RunState> {
-    if !state_supported || !app.title_state {
-        return None;
-    }
-    Some(title::RunState::of(
-        app.prompt.is_some(),
-        app.pending_turn,
-        app.session_status.as_deref(),
-    ))
-}
-
 /// Drive the real terminal until the user leaves.
 fn run_interactive(
     runtime: Runtime,
@@ -375,11 +329,10 @@ fn run_interactive(
 ) -> i32 {
     let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
-    // Notes live in a file this client owns, beside the settings and themes it
-    // already reads. They are read here so a replay's notes are on screen with
-    // the conversation they describe, and never on a path that writes to
-    // `$HORON_HOME` from a test or an embedded `App`.
-    app.notes = notes::NoteStore::at(notes::NoteStore::default_path());
+    // Notes live in a file this client owns, read here so a replay's notes are
+    // on screen with the conversation they describe and never on a path a test
+    // or an embedded `App` writes to.
+    app.notes = notes::NoteStore::owned();
     app.load_notes();
     // The stderr copy of these warnings is wiped by the alternate screen, so
     // the transcript carries them for the person using the interface.
@@ -1029,7 +982,8 @@ fn block_source<'a>(
     look: &item_lines::Look<'_>,
     expand: Option<&tool_expand::Frame<'a>>,
     first: bool,
-    note: Option<&str>,
+    frame: &notes::Frame<'_>,
+    index: usize,
 ) -> wrap::Source<'a> {
     let mut source = match block {
         Block::Item(item) => item_lines::source(item, look, expand),
@@ -1040,7 +994,7 @@ fn block_source<'a>(
     // blank row so it reads as a mark beside the conversation rather than as
     // more of it. It is part of the block, so the height this source reports
     // already includes it and a held view keeps its place.
-    if let Some(text) = note {
+    if let Some(text) = frame.at(index) {
         source.append(wrap::Indented::plain(Line::default()));
         source.append(item_lines::note(text, look));
     }
@@ -1086,21 +1040,11 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
     // height measured here has to know about the expansion: a view held above
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
-    let keys = session_id
-        .as_deref()
-        .filter(|session| note_store.count(session) > 0)
-        .map(|_| notes::message_keys(transcript.items()));
+    let frame = notes::Frame::from_parts(note_store, session_id.as_deref(), transcript.items());
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
         // Counted, not built: the rows of a block that stays off screen are not
         // made to measure it.
-        Some(item) => block_source(
-            &Block::Item(item),
-            &look,
-            Some(&expand),
-            index == 0,
-            notes::note_at(note_store, session_id.as_deref(), keys.as_deref(), index),
-        )
-        .height(width),
+        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0, &frame, index).height(width),
         None => 0,
     });
 }
@@ -1118,7 +1062,7 @@ fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -
 fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
-    let keys = notes::frame_keys(app);
+    let frame = notes::Frame::new(app);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let blocks = blocks(app);
     for (index, block) in blocks.iter().enumerate().rev() {
@@ -1128,13 +1072,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
         // Only the rows this block contributes to the pane are built, and they
         // are built from the end: a block taller than the pane costs the pane's
         // rows, not its own.
-        let source = block_source(
-            block,
-            &look,
-            Some(&expand),
-            index == 0,
-            notes::note_at(&app.notes, app.session_id.as_deref(), keys.as_deref(), index),
-        );
+        let source = block_source(block, &look, Some(&expand), index == 0, &frame, index);
         let wanted = capacity - rows.len();
         let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
         rows.extend(window.into_iter().rev());
@@ -1151,7 +1089,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
-    let keys = notes::frame_keys(app);
+    let frame = notes::Frame::new(app);
     let blocks = blocks(app);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
@@ -1172,13 +1110,7 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
         if rows.len() >= capacity {
             break;
         }
-        let source = block_source(
-            block,
-            &look,
-            Some(&expand),
-            index == 0,
-            notes::note_at(&app.notes, app.session_id.as_deref(), keys.as_deref(), index),
-        );
+        let source = block_source(block, &look, Some(&expand), index == 0, &frame, index);
         let wanted = capacity - rows.len();
         // The rows below the view's bottom edge are counted and dropped; what
         // is built is the window above them that the pane fills with.

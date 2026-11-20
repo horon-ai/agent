@@ -283,6 +283,15 @@ impl NoteStore {
         horon_agent_sdk::user_horon_agent_home().join("tui-notes.json")
     }
 
+    /// The store this client owns, backed by [`Self::default_path`].
+    ///
+    /// It is opened only where the client owns the terminal, so a test or an
+    /// embedded `App` never writes to `$HORON_HOME`; the notes are read there
+    /// so a replay's notes are on screen with the conversation they describe.
+    pub fn owned() -> Self {
+        Self::at(Self::default_path())
+    }
+
     /// Read the file once, reporting anything the reader should know.
     ///
     /// A missing file is the ordinary first run. A file that is not this
@@ -614,17 +623,42 @@ pub(crate) fn note_at<'a>(
     store.note(session, key)
 }
 
-/// The message keys of a frame, built only when the session has a note.
+/// The notes one frame can hang under the blocks it draws.
 ///
 /// A conversation with no notes is the ordinary case, and it should not pay for
-/// a fingerprint per item on every frame; one lookup against the session's
-/// notes says whether the keys are needed at all.
-pub(crate) fn frame_keys(app: &App) -> Option<Vec<Option<MessageKey>>> {
-    let session = app.session_id.as_deref()?;
-    if app.notes.count(session) == 0 {
-        return None;
+/// a fingerprint per item on every frame, so the message keys are built only
+/// when the session has a note; one lookup against the session's notes says
+/// whether the keys are needed at all. The pane then asks this index once per
+/// block instead of carrying the store, the session and the keys through its
+/// own code.
+pub(crate) struct Frame<'a> {
+    store: &'a NoteStore,
+    session: Option<&'a str>,
+    keys: Option<Vec<Option<MessageKey>>>,
+}
+
+impl<'a> Frame<'a> {
+    /// The notes of the app's current session.
+    pub(crate) fn new(app: &'a App) -> Self {
+        Self::from_parts(&app.notes, app.session_id.as_deref(), app.transcript.items())
     }
-    Some(message_keys(app.transcript.items()))
+
+    /// The notes of `session` over `items`.
+    ///
+    /// The measuring walk has the store, the session and the items apart rather
+    /// than through an `App`, because it holds those fields of one borrowed
+    /// across the scroll's own mutable borrow.
+    pub(crate) fn from_parts(store: &'a NoteStore, session: Option<&'a str>, items: &[Item]) -> Self {
+        let keys = session
+            .filter(|session| store.count(session) > 0)
+            .map(|_| message_keys(items));
+        Self { store, session, keys }
+    }
+
+    /// The note of the block at `index`, if its message has one.
+    pub(crate) fn at(&self, index: usize) -> Option<&'a str> {
+        note_at(self.store, self.session, self.keys.as_deref(), index)
+    }
 }
 
 pub(crate) fn message_keys(items: &[Item]) -> Vec<Option<MessageKey>> {
