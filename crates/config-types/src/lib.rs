@@ -368,8 +368,10 @@ impl Default for CompactionConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ApprovalMode {
-    /// No approval gate; the behavior every existing config already has.
+    /// Auto-approve ordinary calls, subject to independent restrictions.
     #[default]
+    Yolo,
+    /// Explicit `off` configuration uses the same policy as `yolo`.
     Off,
     /// Ask before a call that can mutate files.
     Write,
@@ -378,8 +380,13 @@ pub enum ApprovalMode {
 }
 
 impl ApprovalMode {
+    pub fn auto_approves_ordinary_calls(self) -> bool {
+        matches!(self, Self::Yolo | Self::Off)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Yolo => "yolo",
             Self::Off => "off",
             Self::Write => "write",
             Self::All => "all",
@@ -389,6 +396,7 @@ impl ApprovalMode {
     /// Parse a mode name, returning `None` for unknown values.
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "yolo" => Some(Self::Yolo),
             "off" => Some(Self::Off),
             "write" => Some(Self::Write),
             "all" => Some(Self::All),
@@ -397,8 +405,8 @@ impl ApprovalMode {
     }
 }
 
-/// Lenient like [`UpdateChannel`]: a stale `approval_mode` value in config.toml
-/// falls back to `off` rather than discarding every other setting in the file.
+/// An unknown `approval_mode` falls back to the default without discarding
+/// the other settings in the file.
 impl<'de> Deserialize<'de> for ApprovalMode {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

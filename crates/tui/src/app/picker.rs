@@ -145,6 +145,7 @@ impl App {
         let session_id = session.session_id;
         self.description = session.description;
         self.session_id = Some(session_id.clone());
+        self.todos = Default::default();
         self.session_title = session.title;
         self.new_session_pending = false;
         self.pending_turn = false;

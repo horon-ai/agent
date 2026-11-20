@@ -432,6 +432,10 @@ The daemon wire is same-binary and private, so this is a one-pass removal rather
 than a deprecation window: no external producer speaks old swarm frames, and the
 harness API never carried them.
 
+## Live background output (protocol 1.23)
+
+Clients that consume live process output include `background_output_v1` in `hello.event_capabilities`. The bridge sends `background_output` events only to attached clients that requested the capability. An event carries `session_id` and bounded `text` identifying the job, stdout or stderr, and the matching line. Completion results and persisted job output keep their existing paths.
+
 ## Cancellable work (protocol 1.22)
 
 The harness API keeps major version 1 and moved from minor version 21 to 22.
@@ -557,6 +561,10 @@ client that cannot read it.
 - Implementation: `crates/app-core/src/server/background_work.rs`, `crates/app-core/src/server/tool_cancel.rs`, `crates/app-core/src/server/client_lifecycle.rs`
 - Capability constants: `CAPABILITY_CANCELLABLE_WORK_V1` in `crates/harness-api/src/lib.rs`, `cancellable_work_api` in `crates/app-core/src/server/session_connections.rs`
 - Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+
+## Live todo updates (protocol 1.24)
+
+Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
 ## Session event store and replication (protocol 1.12)
 

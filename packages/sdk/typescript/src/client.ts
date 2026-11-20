@@ -22,6 +22,7 @@ import {
 import {
   API_VERSION_MAJOR,
   ADVERTISED_CAPABILITIES,
+  EVENT_CAPABILITIES,
   MAX_REPLICATION_WIRE_BYTES,
   REPLICATION_PROTOCOL_VERSION,
   type ApiEvent,
@@ -554,6 +555,7 @@ export class HoronAgentClient extends EventEmitter {
       client: clientName,
       supports_user_response: options.supportsUserResponse ?? false,
       supports_ask_requests: options.supportsAskRequests ?? false,
+      event_capabilities: EVENT_CAPABILITIES,
     });
     if (!isEventOfKind(frame, "hello_ok")) {
       void client.close();

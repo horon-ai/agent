@@ -31,6 +31,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                 break;
             }
         };
+        let previously_changed = changed;
         changed = true;
         match delivery {
             Incoming::Event(event) => app.apply_event(&event),
@@ -39,6 +40,16 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Context(report) => app.transcript.push_context(*report),
             Incoming::Report(report) => app.transcript.push_report(*report),
+            Incoming::Todos { session_id, items } => {
+                changed = previously_changed;
+                if app.session_id.as_deref().is_none_or(|current| current == session_id) {
+                    let panel = crate::todo_panel::TodoPanel::from_items(&items);
+                    if app.todos != panel {
+                        app.todos = panel;
+                        changed = true;
+                    }
+                }
+            }
             Incoming::Models { models, current } => app.show_models(models, current),
             Incoming::RuntimeInfo {
                 provider,

@@ -185,6 +185,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | SoftInterruptInjected { session_id, .. }
         | WakeRequested { session_id, .. }
         | BackgroundProgress { session_id, .. }
+        | BackgroundOutput { session_id, .. }
         | MessageAccepted { session_id }
         | PermissionRequest { session_id, .. }
         | ApprovalPending { session_id, .. }
@@ -203,6 +204,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | TextMatches { session_id, .. }
         | FileStatus { session_id, .. }
         | TodoState { session_id, .. }
+        | TodoChanged { session_id }
         | Artifacts { session_id, .. }
         | Compacted { session_id, .. }
         | SessionRenamed { session_id, .. }

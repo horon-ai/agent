@@ -58,6 +58,8 @@ Five files shape the client. Four live under `$HORON_HOME` (`~/.horon` unless `H
 
 All five are read at startup and re-read while the client runs: the settings files are checked once a second, and the theme and key files follow the same cadence.
 
+`/info` shows the daemon's `approval mode` for TUI calls. It defaults to `yolo`; change `[tools] approval_mode` in the daemon's `config.toml`.
+
 ### Settings: `tui.toml`
 
 The settings of one process are the registry defaults, then the global file, then the project file, then every `--config` file in the order given, then the environment. A higher layer wins per key; a key a layer does not name keeps the value from below. The settings screen shows the winning layer for every key, as `default`, `global <path>`, `project <path>`, `config <path>` or `env <name>`.
@@ -242,11 +244,19 @@ The marker of the newest call whose preview hides something names the key that s
 
 A call the approval gate refused is drawn with one short label rather than the daemon's whole sentence, because the prompt beside it already asks the question, and the label follows the request: while the decision is pending the head row says `◐ needs approval`; once it is answered the row states the answer, `• allowed`, `• allowed always`, `✕ denied` for `n` or `esc`, or `✕ not answered` for a prompt that went away unanswered (a lost connection, a cancelled turn). None of those three says `failed`, because the call never ran: the gate held it and the model has to issue it again. Answering that prompt does not run the call: the decision is recorded and the model has to call the tool again, and the transcript says so.
 
+A `bash` job with `notify_pattern` displays live process-output notices in the launching session's transcript. Each notice identifies the job and its stdout or stderr stream.
+
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
 
 Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
 
 `transcript.markdown = false` turns the rendering off and draws the same text with its markers as typed.
+
+## Session todos
+
+The `Todos` panel shows the attached session's saved tasks, starting with the active item and then blocked items. A label shows each item's group and a blocked item includes its reason. The heading counts completed items and reports how many open items are outside the visible rows. On a short terminal the panel yields space to the conversation and input.
+
+The client loads the list when you attach and reads it again after a saved change. Switching sessions clears the old list. A daemon or bridge without live todo support leaves the panel hidden.
 
 ## Turn state
 

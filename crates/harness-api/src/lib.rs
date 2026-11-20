@@ -71,7 +71,7 @@ mod tool_done_verdict_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 22;
+pub const API_VERSION_MINOR: u32 = 24;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -98,6 +98,17 @@ pub const CAPABILITY_ASK_RECEIPTS_V1: &str = "ask_receipts_v1";
 /// protocol version to do the work, not merely the bridge, which is why the
 /// capability is advertised only when that daemon answered its probe.
 pub const CAPABILITY_CANCELLABLE_WORK_V1: &str = "cancellable_work_v1";
+/// A client can render live output notices from a finite background `bash` job
+/// and asked for them at handshake. Gates the `background_output` event.
+///
+/// Opt-in rather than always-sent because the notice is raw process text: a
+/// client that predates it has no branch for it and would either drop it
+/// silently or show it as model output. A connection that never named the
+/// capability receives no such frame at all, so an old client sees exactly the
+/// traffic it saw before.
+pub const CAPABILITY_BACKGROUND_OUTPUT_V1: &str = "background_output_v1";
+/// Receive invalidations for the attached session's committed todo list.
+pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -126,6 +137,8 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
             "list_background_work",
         ],
     ),
+    (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
+    (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -135,7 +148,15 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_SNAPSHOT_MARKER_V1,
     CAPABILITY_ASK_RECEIPTS_V1,
     CAPABILITY_CANCELLABLE_WORK_V1,
+    CAPABILITY_BACKGROUND_OUTPUT_V1,
+    CAPABILITY_LIVE_TODO_V1,
 ];
+
+/// The event capabilities a connection opts into at handshake.
+///
+/// A client requests these in `hello.event_capabilities`. The bridge echoes
+/// only capabilities that the daemon also supports.
+pub const OPT_IN_EVENT_CAPABILITIES: &[&str] = &[CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1];
 
 /// The structured refusal for a request this server cannot serve.
 ///

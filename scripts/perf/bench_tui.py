@@ -354,8 +354,8 @@ def start_mock_server() -> tuple[subprocess.Popen, str]:
 def write_config(root: str, base_url: str) -> str:
     """An isolated home whose only provider is the mock server.
 
-    `approval_mode` is left at its default (`off`) on purpose: this suite times a
-    turn, and a parked approval would time the operator instead.
+    Leave `approval_mode` unset so the default policy runs this workload's
+    ordinary calls without parking the turn for approval.
     """
     home = os.path.join(root, "home")
     os.makedirs(home, exist_ok=True)

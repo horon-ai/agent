@@ -185,14 +185,14 @@ memory = "essential"
 
 ### 승인 등급
 
-`ApprovalMode`는 `off`, `write`, `all` 셋입니다 (`crates/config-types/src/lib.rs:370`). 기본값은 `off`이고 (`crates/base/src/config.rs:1023`), 이는 지금까지처럼 묻지 않는 동작입니다.
+`[tools] approval_mode`의 기본값은 `"yolo"`입니다 (`crates/base/src/config.rs:1023`). 일반 호출을 자동 승인합니다. 기존 설정에 `"off"`를 명시했다면 같은 정책이 적용됩니다. 승인 요청을 켜려면 `$HORON_HOME/config.toml`의 `[tools]`에서 `approval_mode = "write"` 또는 `approval_mode = "all"`을 지정하고 데몬 설정을 다시 읽습니다.
 
 판정은 `evaluate`가 합니다 (`crates/app-core/src/approval.rs:232`). 순서가 중요합니다.
 
 1. `dual_confirm_classes`에 든 위험 등급이면 모드와 무관하게 승인을 요구합니다. 이 목록에 등급을 넣는 이유가 바로 어떤 모드도 그것을 자동 승인하지 못하게 하는 것입니다.
-2. `[tools] restricted_paths`에 걸리는 경로는 모드와 무관하게 승인을 요구합니다. `off` 반환보다도, bash 패턴 `allow`보다도 앞입니다. 등록된 경로는 상시 "물어봐 달라"는 뜻이고, 범위 승인도 이것을 덮지 못합니다.
+2. `[tools] restricted_paths`에 걸리는 경로는 모든 모드에서 승인을 요구하고 bash 패턴 `allow`보다 우선합니다. 범위 승인도 이 경로에는 적용되지 않습니다.
 3. 다음으로 `[[tools.bash_patterns]]` 판정이 결정합니다. `allow`는 자동 승인하고 `prompt`와 `deny`는 묻습니다. 위의 이중 확인 등급과 제한 경로가 이미 앞서 있습니다.
-4. 모드가 `off`면 여기서 곧바로 자동 승인으로 돌려줍니다. 읽기 전용 분기보다 앞입니다. 순서가 뒤집히면 아무것도 바꾸지 않아야 할 모드가 호출마다 감사 줄을 쓰기 시작합니다.
+4. `yolo`와 `off`는 남은 호출을 자동 승인하고 일반 승인 감사 기록을 쓰지 않습니다.
 5. 읽기만 하는 호출은 어떤 모드에서도 묻지 않습니다 (`crates/app-core/src/approval.rs:45`).
 6. `write` 모드는 프로세스를 실행하거나 네트워크에 닿거나, 이름을 댄 파일을 바꾸는 호출 앞에서 묻습니다. 쓰기 효과가 있어도 경로를 대지 않는 도구(할 일 목록, `ask`, `undo`, `monitor`, `checkpoint`, 컨텍스트 노트)는 묻지 않고 실행됩니다. 사용자가 승인할 파일이 없기 때문입니다.
 7. `all` 모드는 읽기 전용이 아닌 모든 호출 앞에서 묻습니다.
@@ -361,6 +361,12 @@ Chat Completions를 말하지 않는 모델을 쓰는 유일한 도구다. `[too
 - 완료 검사는 `blocked`를 완료로 보지 않습니다. 남은 항목이 `blocked` 하나뿐인 목록은 완료가 아니고, 자동 재촉도 그 항목을 남은 일로 셉니다 (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). 진행 중 항목을 하나만 두는 규칙에서도 `in_progress`로 세지 않습니다.
 - ACP 계획 항목은 세 상태만 있어 `blocked`를 `pending`으로 내보냅니다 (`crates/app-core/src/tool/todo.rs` `plan_entries`). 지금 아무도 하지 않는 열린 일이라는 뜻이고, 이유는 항목 자체의 `blocker`에 남습니다.
 - 도구 결과의 JSON에 `blocker`가 함께 나오므로 목록을 보는 쪽이 이유를 읽을 수 있습니다.
+
+## 백그라운드 실시간 출력 알림
+
+유한한 `bash` 호출에 `run_in_background: true`와 `notify_pattern`을 지정하면 실행 중에 표준 출력과 표준 오류에서 패턴과 일치한 줄을 받습니다. Rust 정규식은 최대 512 바이트입니다. 식이 잘못됐거나 포그라운드 호출 또는 이름이 있는 서비스에 식을 지정하면 프로세스를 시작하기 전에 거부합니다.
+
+작업을 시작한 세션은 일치한 줄을 최대 20 개 받습니다. 각 알림에는 작업과 출력 스트림을 표시합니다. 마지막 줄에 줄바꿈이 없어도 비교합니다. 출력은 `bg action=output`으로 계속 조회할 수 있고, 별도 완료 알림은 `notify`로 제어합니다. 실시간 알림은 모델을 깨우지 않습니다.
 
 ## 백그라운드 작업 기다리기
 

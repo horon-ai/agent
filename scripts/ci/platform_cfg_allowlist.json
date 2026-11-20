@@ -121,8 +121,8 @@
       "reason": "raw pipe-descriptor readiness test (FromRawFd)."
     },
     "crates/app-core/src/tool/bash.rs": {
-      "count": 6,
-      "reason": "`#[path]` gate for the POSIX-only bash test suite, plus the helpers only that suite calls (`parse_progress_marker` and the session-cwd, minimizer and non-interactive-env test overrides), gated with it so Windows does not compile them unused."
+      "count": 7,
+      "reason": "`#[path]` gates for the POSIX-only bash test suites (one per test file), plus the helpers only those suites call (`parse_progress_marker` and the session-cwd, minimizer and non-interactive-env test overrides), gated with them so Windows does not compile them unused."
     },
     "crates/app-core/src/tool/bash_destructive_gate.rs": {
       "count": 1,

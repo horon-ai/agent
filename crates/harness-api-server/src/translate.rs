@@ -1675,7 +1675,7 @@ impl BridgeState {
             )];
         }
         // Filter stale owner callbacks before updating any turn/text state.
-        if kind == "tool_call"
+        if matches!(kind, "tool_call" | "todo_changed")
             && (self.session_id.is_none() || event["session_id"].as_str() != self.session_id.as_deref())
         {
             return vec![];
@@ -2355,12 +2355,21 @@ impl BridgeState {
                     ServerFrame::event(self.runtime_info()),
                 ]
             }
+            "todo_changed" => vec![ServerFrame::event(ApiEvent::TodoChanged {
+                session_id: session(self),
+            })],
             // Background-task traffic reaches clients as a notification whose
             // body is the markdown the TUI renders. The API refuses to make
             // clients re-derive a progress bar from prose, so the two shapes
             // that matter (a progress tick and a task finishing) are parsed
             // into one typed event and everything else is dropped.
             "notification" => {
+                if event["notification_type"]["scope"] == "background_output" {
+                    return crate::background_progress::output_notice(event, self.session_id.as_deref())
+                        .map(ServerFrame::event)
+                        .into_iter()
+                        .collect();
+                }
                 let message = event["message"].as_str().unwrap_or("");
                 match parse_background_notification(message) {
                     Some(mut progress) => {

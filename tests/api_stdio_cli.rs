@@ -79,6 +79,7 @@ fn exercise_stdio(close_daemon_first: bool) {
             client: "isolated-stdio-cli-test".into(),
             supports_user_response: false,
             supports_ask_requests: false,
+            event_capabilities: Vec::new(),
         },
     );
     let hello = rx.recv_timeout(Duration::from_secs(15)).expect("CLI hello deadline");

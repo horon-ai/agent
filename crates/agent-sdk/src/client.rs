@@ -842,6 +842,10 @@ impl HoronAgentClient {
                 client: options.client_name.clone(),
                 supports_user_response: options.supports_user_response,
                 supports_ask_requests: options.supports_ask_requests,
+                event_capabilities: horon_agent_harness_api::OPT_IN_EVENT_CAPABILITIES
+                    .iter()
+                    .map(|capability| (*capability).to_owned())
+                    .collect(),
             },
             hello_timeout,
         )?;
@@ -2639,6 +2643,8 @@ fn event_session(event: &ApiEvent) -> Option<&str> {
         | SoftInterruptInjected { session_id, .. }
         | TurnStopped { session_id, .. }
         | BackgroundProgress { session_id, .. }
+        | BackgroundOutput { session_id, .. }
+        | TodoChanged { session_id }
         | MessageAccepted { session_id, .. }
         | PermissionRequest { session_id, .. }
         | SessionStatus { session_id, .. }

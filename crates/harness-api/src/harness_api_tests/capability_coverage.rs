@@ -269,6 +269,8 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "snapshot_marker_v1",
         "ask_receipts_v1",
         "cancellable_work_v1",
+        "background_output_v1",
+        "live_todo_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(
@@ -369,6 +371,13 @@ fn every_gated_request_names_a_defined_capability() {
         ApiEvent::BackgroundWorkList {
             session_id: "s1".into(),
             items: Vec::new(),
+        },
+        ApiEvent::BackgroundOutput {
+            session_id: "s1".into(),
+            text: "bash task 1 stdout: ready".into(),
+        },
+        ApiEvent::TodoChanged {
+            session_id: "s1".into(),
         },
     ];
     for event in events {

@@ -322,10 +322,10 @@ bash_interceptor = "off"
 # shared main checkout, where another session may hold uncommitted work. A
 # linked worktree is never refused. Off by default.
 git_guard = false
-# Which tool calls ask for approval first: "off" (default) never asks,
-# "write" asks before a call that can mutate files, "all" asks before anything
-# that is not read-only.
-approval_mode = "off"
+# "yolo" (default) auto-approves ordinary calls. Explicit "off" works the same.
+# "write" asks before commands, network calls, and named file writes. "all"
+# asks before non-read-only calls. Independent restrictions apply in every mode.
+approval_mode = "yolo"
 # Opt-in auxiliary completions for side tasks that must not disturb the main
 # conversation.
 aux_completion = false
@@ -339,7 +339,7 @@ secrets_mode = "off"
 # refuses outright. Default: empty, which leaves every class to approval_mode.
 # Example: ["destructive-shell"]
 dual_confirm_classes = []
-# Paths that always require approval, in every mode including "off". Each entry
+# Paths that always require approval, including in "yolo" and "off". Each entry
 # is a glob matched against the path a call names; `*` matches across directory
 # separators, so a broad pattern asks more often rather than fewer. A pattern
 # that cannot be parsed restricts every path, because a rule that cannot be read

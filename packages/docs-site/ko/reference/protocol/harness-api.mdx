@@ -442,6 +442,10 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 데몬 와이어는 같은 바이너리 안에서만 쓰는 사설 표면이므로 폐기 기간 없이 한 번에 제거했다. 옛
 swarm 프레임을 말하는 외부 생산자가 없고, 하네스 API가 그 프레임을 실어 나른 적도 없다.
 
+## 백그라운드 실시간 출력(프로토콜 1.23)
+
+실시간 프로세스 출력을 쓰는 클라이언트는 `hello.event_capabilities`에 `background_output_v1`을 넣습니다. 브리지는 연결된 클라이언트 중 기능을 요청한 곳에만 `background_output` 이벤트를 보냅니다. 이벤트에는 `session_id`와 작업, 표준 출력·오류 구분, 일치한 줄을 담은 제한된 길이의 `text`가 들어 있습니다. 완료 결과와 저장한 작업 출력은 기존 방식으로 받습니다.
+
 ## 취소 가능한 작업(프로토콜 1.22)
 
 하네스 API는 주 버전 1을 유지하고 부 버전이 21에서 22로 올라간다. 아래 내용은 모두 추가형이다.
@@ -541,6 +545,10 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 - 구현: `crates/app-core/src/server/background_work.rs`, `crates/app-core/src/server/tool_cancel.rs`, `crates/app-core/src/server/client_lifecycle.rs`
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_CANCELLABLE_WORK_V1`, `crates/app-core/src/server/session_connections.rs`의 `cancellable_work_api`
 - 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
+
+## 실시간 할 일 갱신(프로토콜 1.24)
+
+`hello.event_capabilities`에서 `live_todo_v1`을 요청하고 `hello_ok`에 같은 기능이 있는지 확인합니다. 데몬이 실시간 갱신을 지원해야 합니다. 할 일 변경을 저장하면 연결한 세션에 `session_id`가 담긴 `todo_changed`가 도착합니다. 이벤트에는 할 일 목록이 들어 있지 않습니다. 최초 `get_todo_state` 조회 전에 구독하고 연결 중인 세션의 변경 알림을 받으면 다시 조회합니다. 응답에는 최신 목록이 들어 있으므로 여러 알림에 한 번만 조회해도 됩니다. 기능을 요청하지 않은 클라이언트는 `todo_changed` 없이 목록을 계속 조회할 수 있습니다.
 
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 

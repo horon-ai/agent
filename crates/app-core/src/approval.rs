@@ -278,21 +278,12 @@ pub fn evaluate(call: ApprovalCall<'_>) -> ApprovalEvaluation {
         };
     }
 
-    if mode == ApprovalMode::Off {
-        return ApprovalEvaluation::AutoApproved {
-            reason: "approval disabled".to_string(),
-        };
-    }
-
-    if is_pure_read(effects) {
-        return ApprovalEvaluation::AutoApproved {
-            reason: "read-only call".to_string(),
-        };
-    }
-
     match mode {
-        ApprovalMode::Off => ApprovalEvaluation::AutoApproved {
+        ApprovalMode::Yolo | ApprovalMode::Off => ApprovalEvaluation::AutoApproved {
             reason: "approval disabled".to_string(),
+        },
+        _ if is_pure_read(effects) => ApprovalEvaluation::AutoApproved {
+            reason: "read-only call".to_string(),
         },
         ApprovalMode::Write => {
             // `write` asks before a call that can mutate files, and before a
@@ -333,7 +324,7 @@ pub fn evaluate(call: ApprovalCall<'_>) -> ApprovalEvaluation {
 /// audit line must still be written, with reason `grant`, so the log explains
 /// why the user was not asked.
 pub fn audit_granted_call(tool: &str, mode: ApprovalMode, tool_call_id: &str) {
-    if mode != ApprovalMode::Off {
+    if !mode.auto_approves_ordinary_calls() {
         audit(tool, mode, "grant", tool_call_id);
     }
 }
@@ -353,15 +344,13 @@ fn audit(tool: &str, mode: ApprovalMode, reason: &str, tool_call_id: &str) {
 
 /// [`evaluate`] plus the audit record its decision earns.
 ///
-/// Every auto-approval except the `Off` early return is recorded. `Off` writes
-/// nothing, which is what keeps an unconfigured session identical to what it did
-/// before approval modes existed.
+/// `yolo` and explicit `off` skip ordinary approval audit records.
 pub fn evaluate_and_audit(call: ApprovalCall<'_>, tool_call_id: &str) -> ApprovalEvaluation {
     let mode = call.mode;
     let tool = call.tool;
     let evaluation = evaluate(call);
     if let ApprovalEvaluation::AutoApproved { reason } = &evaluation
-        && mode != ApprovalMode::Off
+        && !mode.auto_approves_ordinary_calls()
     {
         audit(tool, mode, reason, tool_call_id);
     }

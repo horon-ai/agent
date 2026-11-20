@@ -188,14 +188,14 @@ Plan mode is off by default. The configuration field defaults to `false` (`crate
 
 ### Approval tiers
 
-`ApprovalMode` has three values, `off`, `write`, and `all` (`crates/config-types/src/lib.rs:370`). The default is `off` (`crates/base/src/config.rs:1023`), which is the same non-asking behaviour as before.
+`[tools] approval_mode` defaults to `"yolo"` (`crates/base/src/config.rs:1023`). It auto-approves ordinary calls. Explicit `"off"` keeps its equivalent policy. To require prompts, set `approval_mode = "write"` or `approval_mode = "all"` under `[tools]` in `$HORON_HOME/config.toml` and reload the daemon configuration.
 
 `evaluate` decides (`crates/app-core/src/approval.rs:232`). Order matters.
 
 1. A danger class in `dual_confirm_classes` requires approval regardless of mode. That is exactly why a class goes into this list: so no mode can auto-approve it.
-2. A path matching `[tools] restricted_paths` requires approval regardless of mode. This comes before the `off` return and before a bash-pattern allow, because a listed path is a standing "ask me", and a scoped grant never covers one.
+2. A path matching `[tools] restricted_paths` requires approval in every mode and takes precedence over a bash-pattern allow. A scoped grant cannot cover that path.
 3. A `[[tools.bash_patterns]]` verdict decides next: `allow` auto-approves, `prompt` and `deny` ask. A dual-confirm class and a restricted path above already outranked it.
-4. If the mode is `off`, return auto-approval right here. This comes before the read-only branch. Reversing the order would make a mode that should change nothing start writing an audit line per call.
+4. `yolo` and `off` auto-approve the remaining calls without writing ordinary approval audit records.
 5. A read-only call is never asked in any mode (`crates/app-core/src/approval.rs:45`).
 6. `write` mode asks before a call that runs a process, reaches the network, or mutates a file it names. A tool with a write effect that names no path (the todo list, `ask`, `undo`, `monitor`, `checkpoint`, context notes) runs without asking, because there is no file for the user to approve.
 7. `all` mode asks before every call that is not read-only.
@@ -375,6 +375,12 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - Completion checks do not treat `blocked` as done. A list whose only remaining item is `blocked` is not complete, and the automatic nudge counts that item as remaining work (`crates/todo-policy/src/followup.rs` `is_incomplete_todo`). It also does not count as `in_progress` for the rule that allows only one in-progress item.
 - ACP plan entries have only three states, so `blocked` is exported as `pending` (`crates/app-core/src/tool/todo.rs` `plan_entries`). That means an open item nobody is working on right now, and the reason stays on the item's own `blocker`.
 - The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
+
+## Live background output notices
+
+Set `run_in_background: true` and `notify_pattern` to receive matching stdout or stderr lines from a finite `bash` call while it runs. Use a Rust regex of at most 512 bytes. The tool rejects invalid patterns, foreground calls with a pattern, and patterns on named services before starting a process.
+
+The session that launched the job receives up to 20 matching lines. Each notice identifies the job and its output stream. A last line without a newline is eligible. The output remains available through `bg action=output`, and `notify` still controls the separate completion notice. These live notices do not wake the model.
 
 ## Waiting on background work
 
