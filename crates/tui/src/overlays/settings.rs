@@ -846,10 +846,11 @@ pub fn draw(
             );
             // The query is typed on the footer's second line, after the ` /`,
             // so the cursor follows the characters already typed.
+            let query_width = unicode_width::UnicodeWidthStr::width(overlay.query.as_str());
             let x = footer_area
                 .x
                 .saturating_add(2)
-                .saturating_add(u16::try_from(overlay.query.chars().count()).unwrap_or(u16::MAX));
+                .saturating_add(u16::try_from(query_width).unwrap_or(u16::MAX));
             cursor = Some((x, footer_area.y.saturating_add(1)));
         }
         Mode::Pick { choices, index } => {
