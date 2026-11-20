@@ -106,6 +106,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Reasoning(text) => reasoning(text, look),
         Item::Context(report) => crate::context::lines(report, look),
         Item::Report(report) => crate::report::lines(report, look),
+        Item::CacheMiss(miss) => cache_miss(miss, look),
     }
 }
 
@@ -116,6 +117,23 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
 /// are drawn either way.
 fn hidden(call: &crate::transcript::ToolCall, expand: Option<&tool_expand::Frame<'_>>) -> bool {
     expand.is_some_and(|frame| frame.hides_finished()) && call.finished_activity()
+}
+
+/// The marker a request leaves when the provider had to serve it without its
+/// cached prefix.
+///
+/// Drawn as one dim row: it belongs to the request above it and says what the
+/// resend cost, and it is neither the model's answer nor an error the reader can
+/// act on. The wording is the client's own, so it names the cause in words
+/// rather than echoing the daemon's reason id, and it carries no part of the
+/// prompt: the daemon never sends one.
+fn cache_miss(miss: &crate::transcript::CacheMiss, look: &Look<'_>) -> Vec<Indented> {
+    let style = Style::default().fg(look.theme.transcript.notice);
+    prefixed(
+        Span::styled(format!("{} cache miss: ", look.symbols.bullet), style),
+        &miss.summary(),
+        style,
+    )
 }
 
 /// The lines of one item, keeping a call's whole output as the text it came
