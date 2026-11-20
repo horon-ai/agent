@@ -46,6 +46,8 @@ pub mod ids {
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Show or hide the model's reasoning for the rest of the session.
+    pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -152,6 +154,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // Reasoning display for this session: the draft keeps every letter, so the
+    // toggle has to be a control key.
+    ActionSpec::new(ids::APP_TOGGLE_THINKING, Scope::App, &["ctrl+t"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),

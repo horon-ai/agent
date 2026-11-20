@@ -35,7 +35,7 @@ impl App {
         }
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
-        self.transcript.set_show_reasoning(show_reasoning);
+        self.transcript.apply_settings_show_reasoning(show_reasoning);
         // The setting is a number, so it can hold a `-1` that is not a row
         // count: anything that does not fit falls back to the default instead
         // of reading as "hide the preview".
@@ -51,5 +51,27 @@ impl App {
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }
+    }
+
+    /// Show, or hide, the model's reasoning for the rest of this session.
+    ///
+    /// The choice outranks `transcript.show_reasoning` until that setting value
+    /// changes, so an unrelated settings reload keeps the toggle in force. What
+    /// was dropped while reasoning was hidden is gone for good: the client
+    /// never kept it, and turning reasoning back on starts at the next delta.
+    /// The reasoning effort the model is asked for is a different setting and
+    /// is not touched.
+    pub fn toggle_thinking(&mut self) {
+        let show = !self.transcript.show_reasoning();
+        self.transcript.set_show_reasoning(show);
+        // A live notice rather than a recorded one: the toggle can be pressed
+        // while an answer is streaming, and committing that half-written answer
+        // to draw a line above it would split the message in two.
+        let notice = if show {
+            "reasoning shown for this session: it is kept from the next delta, the deltas dropped meanwhile stay gone, and the reasoning effort is unchanged"
+        } else {
+            "reasoning hidden for this session: later deltas are dropped, the reasoning already committed stays on screen, and the reasoning effort is unchanged"
+        };
+        self.transcript.push_live_notice(notice.to_string());
     }
 }

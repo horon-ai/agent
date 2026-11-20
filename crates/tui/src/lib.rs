@@ -125,6 +125,8 @@ Options:
   --cwd <dir>      Working directory for a newly created session
   --config <file>  Extra settings file, read after the global and project
                    files and before the environment (repeatable)
+  --hide-thinking  Hide the model's reasoning for this session, whatever
+                   transcript.show_reasoning says; ctrl+t toggles it again
   -V, --version    Print the version and exit
   -h, --help       Print this help and exit
 
@@ -145,6 +147,7 @@ Keys:
   Ctrl-End       follow the end of the conversation again
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
+  Ctrl-T         show or hide the model's reasoning for this session
   Alt-P          pick the model this session uses
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force.
@@ -179,6 +182,8 @@ pub struct Args {
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Start with the model's reasoning hidden, whatever the setting says.
+    pub hide_thinking: bool,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -197,6 +202,7 @@ impl Args {
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
+                "--hide-thinking" => parsed.hide_thinking = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
                     None => return Err("--socket needs a path".to_string()),
@@ -298,7 +304,7 @@ where
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, args.hide_thinking),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -341,7 +347,12 @@ fn window_label(app: &App) -> String {
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
+fn run_interactive(
+    runtime: Runtime,
+    reloader: &mut settings::Reloader,
+    keys: &mut keys::Loader,
+    hide_thinking: bool,
+) -> i32 {
     let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
     // The stderr copy of these warnings is wiped by the alternate screen, so
@@ -354,6 +365,21 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     }
     app.bindings = keys.bindings().clone();
     apply_settings(&mut app, reloader.settings(), &mut themes);
+    // The flag is a session choice, applied after the settings because it
+    // outranks them: `apply_settings` hands the transcript the setting, and
+    // this then overrides what that setting resolved to.
+    if hide_thinking {
+        app.transcript.set_show_reasoning(false);
+        // The notice names the key in force, not the shipped default: a
+        // rebound `app.toggle_thinking` has to be the key it tells the user to
+        // press.
+        let shows = match app.bindings.first_key(keys::ids::APP_TOGGLE_THINKING) {
+            Some(key) => format!("{key} shows it for this session"),
+            None => "no key is bound to show it; /help lists the keys in force".to_string(),
+        };
+        app.transcript
+            .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
+    }
     match std::env::current_dir() {
         Ok(directory) => app.cwd = Some(directory.display().to_string()),
         Err(error) => app.warn(format!("cannot read the working directory: {error}")),

@@ -232,6 +232,10 @@ impl App {
             }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
+            Some(keys::ids::APP_TOGGLE_THINKING) => {
+                self.toggle_thinking();
+                return None;
+            }
             // Every edit ends a walk through the history: the draft on screen
             // is being changed, and a later `down` must not replace the change
             // with the entry the walk started from.

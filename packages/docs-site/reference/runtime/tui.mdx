@@ -26,7 +26,7 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
 ```
 
 | Flag | Meaning |
@@ -35,6 +35,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
+| `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
 
@@ -86,6 +87,8 @@ The table is the settings registry (`crates/tui/src/settings/registry.rs`), twel
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
 
 `transcript.show_reasoning` is the thinking-block control, labelled `Show thinking` in the settings screen: `true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being stored, so turning it off hides the thinking blocks of every later turn.
+
+`ctrl+t` (`app.toggle_thinking`, the default binding) flips the same switch for the rest of the process without writing the file, and `--hide-thinking` starts it off hidden that way. The session choice outranks the setting: an unrelated reload or a theme change keeps it, while a change of `transcript.show_reasoning` itself is the newer choice and ends it. Hiding drops the thought still arriving but keeps the thoughts already committed on screen; showing begins at the next delta, because the deltas dropped meanwhile were never kept and are not recovered. Neither direction touches the reasoning effort the model is asked for. Each toggle leaves one notice in the transcript saying which way it went.
 
 The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working directory cannot be read. The file is read again a second after it changes in size or modification time, so a hand edit applies without a restart.
 
@@ -190,6 +193,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
+| `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
 | `editor.backspace` | `backspace` | Delete the character before the cursor |
 | `editor.delete` | `delete` | Delete the character at the cursor |
 | `editor.left` | `left`, `ctrl+b` | Move the cursor one character left |
@@ -212,7 +216,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | Deny the parked call; a question stays open |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
-The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: thirty-three actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
+The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: thirty-four actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
@@ -449,4 +453,4 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - A new session left without a message cannot be resumed, because the daemon does not keep it.
 - A skill is sent as a request to read `skill://<name>`, so it works only where the session can read that address.
 - `esc` has no hint on screen of its own: `/keys` is where the key and what it does are written.
-- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript; both apply from the next keystroke and the next reasoning delta once changed. The other transcript settings and the status line take effect as soon as the file reloads, which redraws the screen.
+- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript; both apply from the next keystroke and the next reasoning delta once changed. A session choice made with `--hide-thinking` or `ctrl+t` outranks that setting until the setting value itself changes, so editing another key in `tui.toml` does not put the setting back. The other transcript settings and the status line take effect as soon as the file reloads, which redraws the screen.
