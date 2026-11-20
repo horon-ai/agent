@@ -61,6 +61,10 @@ Denial is closure, not failure. The session keeps running and only the MCP serve
 
 The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:363` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
 
+## Python eval
+
+A Python cell needs explicit approval for its code and working directory. A directory grant cannot authorize it. The kernel inherits only selected environment variables. Approved Python runs with the user's filesystem, network and process access, which includes any credential files the user can read. The opt-in setting and approval control when execution starts.
+
 ## Crash bundles
 
 When a process panics, horon agent leaves a local diagnostic bundle. The bundle is written to disk only and sent nowhere. This document explains the location, contents, redaction, and the no-transmission guarantee in the current tree.

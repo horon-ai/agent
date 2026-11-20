@@ -808,3 +808,176 @@ fn clear_keeps_the_display_settings_the_transcript_owns() {
         "/clear turned reasoning off while /settings still shows it on"
     );
 }
+
+fn control(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::CONTROL)
+}
+
+/// Write `glyph` into every cell, as a program that believes it owns the
+/// terminal would.
+fn overwrite_screen(terminal: &mut Terminal<TestBackend>, glyph: &'static str) {
+    let area = terminal.backend().buffer().area;
+    let cells: Vec<(u16, u16, ratatui::buffer::Cell)> = area
+        .positions()
+        .map(|position| (position.x, position.y, ratatui::buffer::Cell::new(glyph)))
+        .collect();
+    terminal
+        .backend_mut()
+        .draw(cells.iter().map(|(column, row, cell)| (*column, *row, cell)))
+        .expect("the test backend takes cells");
+}
+
+/// Press the repaint key without handing an action to the harness.
+fn press_repaint(app: &mut App) {
+    assert_eq!(
+        app.on_key(control(crossterm::event::KeyCode::Char('l'))),
+        None,
+        "the repaint key handed an action to the harness"
+    );
+}
+
+#[test]
+fn the_repaint_key_draws_a_corrupted_screen_again_and_keeps_the_view() {
+    let mut app = app_with(None);
+    for index in 0..40 {
+        app.transcript.push_notice(format!("line {index:02}"));
+    }
+    for character in "draft kept".chars() {
+        app.on_key(key(crossterm::event::KeyCode::Char(character)));
+    }
+    let mut terminal = Terminal::new(TestBackend::new(60, 12)).expect("test backend failed");
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    // A held view is the state the key must not move: it is measured from the
+    // rows counted before the press, and the key changes none of them.
+    app.on_key(key(crossterm::event::KeyCode::PageUp));
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    let intact = format!("{}", terminal.backend());
+    assert!(intact.contains("draft kept"), "the draft is not on screen:\n{intact}");
+    assert!(!app.scroll.is_following(), "the view did not leave the end");
+    let offset = app.scroll.offset();
+
+    // Another program writes over the frame. Ratatui still holds the picture it
+    // drew, so the next ordinary frame leaves the damage where it is: that is
+    // the state the key exists for.
+    overwrite_screen(&mut terminal, "#");
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    let damaged = format!("{}", terminal.backend());
+    assert!(
+        damaged.matches('#').count() >= 60 * 12,
+        "the corruption did not cover the screen"
+    );
+
+    press_repaint(&mut app);
+    if let Err(message) = draw(&mut terminal, &mut app) {
+        panic!("draw failed: {message}");
+    }
+    // Every cell was written again: no `#` the other program left survives,
+    // and the rows the client wants are back.
+    let repainted = format!("{}", terminal.backend());
+    assert!(
+        !repainted.contains('#'),
+        "cells the other program wrote survived the repaint:\n{repainted}"
+    );
+    assert!(
+        repainted.contains("draft kept"),
+        "the draft did not come back:\n{repainted}"
+    );
+    assert_eq!(app.scroll.offset(), offset, "the repaint moved a held view");
+    assert_eq!(app.input.text(), "draft kept", "the repaint touched the draft");
+}
+
+#[test]
+fn the_repaint_key_asks_for_one_draw_and_leaves_the_session_alone() {
+    let mut app = app_with(None);
+    for character in "keep me".chars() {
+        app.on_key(key(crossterm::event::KeyCode::Char(character)));
+    }
+    let items = app.transcript.items().len();
+    assert!(!app.take_repaint_request(), "a fresh app asked for a repaint");
+
+    press_repaint(&mut app);
+    assert!(app.take_repaint_request(), "the repaint key asked for no draw");
+    assert!(!app.take_repaint_request(), "one press asked for two draws");
+    assert_eq!(app.input.text(), "keep me", "the repaint key edited the draft");
+    assert_eq!(app.input.cursor(), 7, "the repaint key moved the caret");
+    assert_eq!(app.transcript.items().len(), items, "the repaint key wrote a line");
+    assert!(app.running, "the repaint key ended the session");
+    assert!(!app.pending_turn, "the repaint key started or stopped a turn");
+}
+
+#[test]
+fn the_repaint_key_answers_under_every_surface_without_taking_its_keys() {
+    // The settings screen: the key reaches the display, and the screen keeps
+    // both its selection and the keys it answers.
+    let mut app = app_with(None);
+    // The screen lists the `*.json` files in its theme directory, so the test
+    // points it at an empty one instead of the user's own themes folder.
+    let themes = tempfile::tempdir().expect("a temporary theme directory");
+    app.themes_dir = themes.path().to_path_buf();
+    app.open_settings();
+    app.on_key(key(crossterm::event::KeyCode::Down));
+    let selected = app
+        .overlay
+        .as_ref()
+        .and_then(|overlay| overlay.selected())
+        .map(|row| row.id);
+    press_repaint(&mut app);
+    assert_eq!(
+        app.overlay
+            .as_ref()
+            .and_then(|overlay| overlay.selected())
+            .map(|row| row.id),
+        selected,
+        "the repaint moved the settings selection"
+    );
+    app.on_key(key(crossterm::event::KeyCode::Esc));
+    assert!(app.overlay.is_none(), "the settings screen stopped answering `esc`");
+
+    // The list: same rule, and its cursor stays on the row it was on.
+    app.picker = Some(crate::overlays::picker::Picker::new(
+        crate::overlays::picker::Kind::Models,
+        "Select model",
+        vec![
+            crate::overlays::picker::Row::new("alpha", "alpha"),
+            crate::overlays::picker::Row::new("beta", "beta"),
+        ],
+        "no models",
+    ));
+    app.on_key(key(crossterm::event::KeyCode::Down));
+    let row = app
+        .picker
+        .as_ref()
+        .and_then(|picker| picker.selected_label())
+        .map(str::to_string);
+    press_repaint(&mut app);
+    assert_eq!(
+        app.picker
+            .as_ref()
+            .and_then(|picker| picker.selected_label())
+            .map(str::to_string),
+        row,
+        "the repaint moved the list cursor"
+    );
+    app.on_key(key(crossterm::event::KeyCode::Esc));
+    assert!(app.picker.is_none(), "the list stopped answering `esc`");
+
+    // A prompt owns every key but this one, and it still answers its own.
+    app.prompt = Some(crate::prompts::Prompt::approval("r1".into(), "bash".into()));
+    press_repaint(&mut app);
+    assert!(app.prompt.is_some(), "the repaint key answered the prompt");
+    assert_eq!(
+        app.on_key(key(crossterm::event::KeyCode::Char('y'))),
+        Some(Action::Approval {
+            request_id: "r1".into(),
+            approved: true,
+            always: false
+        }),
+        "the prompt stopped answering its own key"
+    );
+}

@@ -10,8 +10,14 @@
 //!
 //! The Unix half below runs the same restore sequence from those signals and
 //! then re-raises, so the exit status still reports the signal.
+//!
+//! Handing the screen to the external editor and taking it back lives here too,
+//! because both are the client giving up and reclaiming the terminal it owns.
+//! What the window is named is [`crate::window`]'s job; the single frame drawn
+//! before the client gives up on a terminal it cannot start is here, because it
+//! needs the real terminal and the app state at once.
 
-use crate::{paste, scroll, title};
+use crate::{app::App, draw, paste, scroll, title};
 
 /// Put the terminal back the way the client found it.
 ///
@@ -102,6 +108,28 @@ pub(crate) fn guard_signals() -> std::io::Result<()> {
         // the process, and a console-control handler would need a Windows
         // dependency the client does not carry.
         Ok(())
+    }
+}
+
+/// Draw the connection-failure banner once, when there is a terminal to draw it
+/// on, then restore it.
+pub(crate) fn show_failure(message: &str) {
+    eprintln!("horon-tui: {message}");
+    let mut app = App::failure(message);
+    match ratatui::try_init() {
+        Ok(mut terminal) => {
+            let failure = draw(&mut terminal, &mut app).err();
+            paste::disable();
+            ratatui::restore();
+            if let Some(message) = failure {
+                eprintln!("horon-tui: {message}");
+            }
+        }
+        Err(error) => {
+            paste::disable();
+            ratatui::restore();
+            eprintln!("horon-tui: cannot open a terminal: {error}");
+        }
     }
 }
 
