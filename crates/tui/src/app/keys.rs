@@ -29,6 +29,17 @@ impl App {
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The repaint key answers before every surface, and it takes no other
+        // key from them: it changes nothing on screen, so a picker, the
+        // settings screen or a prompt must not swallow it, and none of their
+        // own keys may be claimed in exchange. What it throws away is the
+        // frame the terminal holds, not the state it shows.
+        if Key::from_event(key)
+            .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
+        {
+            self.request_repaint();
+            return None;
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.

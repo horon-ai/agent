@@ -602,11 +602,19 @@ where
 }
 
 /// Render one frame.
+///
+/// A pending repaint request is answered first: `clear` erases the screen and
+/// resets the frame Ratatui keeps, so the draw below writes every cell instead
+/// of only the rows that differ. That is what recovers a screen something else
+/// has overwritten, and it is the whole of what the repaint key does.
 pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    if app.take_repaint_request() {
+        terminal.clear().map_err(|error| error.to_string())?;
+    }
     terminal
         .draw(|frame| render(frame, app))
         .map(|_| ())

@@ -46,6 +46,8 @@ pub mod ids {
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Paint the whole screen again, discarding the frame the terminal holds.
+    pub const APP_REPAINT: &str = "app.repaint";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -149,6 +151,12 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // The one key that changes nothing: it throws away the frame Ratatui kept,
+    // so a screen another program wrote over is drawn again in full. It answers
+    // before every surface and takes no key from one, because only the frames
+    // are discarded, not the state they show. `ctrl+l` is the key a shell uses
+    // for the same repair.
+    ActionSpec::new(ids::APP_REPAINT, Scope::App, &["ctrl+l"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
