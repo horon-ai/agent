@@ -26,7 +26,7 @@ description: "horon-tui는 TUI 바이너리다. 사람이 터미널에서 세션
 클라이언트는 자체 인자를 받는다.
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
 ```
 
 | 플래그 | 뜻 |
@@ -35,6 +35,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | 새 세션을 만들지 않고 기존 세션에 붙는다 |
 | `--cwd <dir>` | 이 클라이언트가 만드는 세션의 작업 디렉터리 |
 | `--config <file>` | 설정 파일을 하나 더 읽는다. 여러 번 쓸 수 있다 |
+| `--hide-thinking` | `transcript.show_reasoning`과 무관하게 이 세션에서 모델 추론을 숨긴 채 시작한다. `ctrl+t`(기본값)로 다시 켜고 끌 수 있다 |
 | `-V`, `--version` | 버전을 출력하고 끝낸다 |
 | `-h`, `--help` | 사용법을 출력하고 끝낸다 |
 
@@ -43,6 +44,8 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 클라이언트가 도는 중에 끊긴 연결은 다르게 처리한다. 실패와 대화를 읽을 수 있도록 화면은 그대로 둔다. 상태 줄이 `disconnected`를 보여 주고, 전송은 경고 한 줄과 함께 거절되며 입력한 글자는 입력 줄에 남고, 대기열에 남은 메시지는 보내지 않으며, 돌고 있던 턴의 프롬프트는 거둔다. Ctrl-C로 나가고, 세션이 실패했으므로 프로세스는 그래도 종료 코드 1로 끝난다.
 
 클라이언트는 터미널 창의 이름을 `horon · <label>`로 짓는다. 터미널을 여러 개 띄워 두면 어느 창이 어느 세션인지 알 수 있다. label은 세션 자신의 제목이고, 데몬이 제목을 붙이지 않은 세션은 작업 디렉터리의 마지막 구성 요소를 쓴다. 제어 문자는 버리고 label은 여든 글자에서 멈춘다. 셸이 정해 둔 제목은 먼저 터미널의 제목 스택에 밀어 넣었다가 정상 종료, 오류 경로, 패닉 훅 어느 쪽으로 끝나도 되돌린다. 떠난 뒤에도 창은 셸의 것이기 때문이다. 스택 쌍(`CSI 22 ; 2 t`로 넣고 `CSI 23 ; 2 t`로 되돌린다)은 확장 기능이므로 제목 스택을 유지하는 터미널에만 쓴다. xterm 계열(`TERM`이 `dumb`이 아님), Windows Terminal(`WT_SESSION`), ConEmu(`ConEmuANSI`)는 제목을 되돌리고, 그 표시가 없는 Windows 콘솔과 스스로 `dumb`이라 답하는 터미널은 제목만 받으므로 클라이언트가 떠난 뒤에도 창이 `horon · <label>`로 남는다. 표준 출력이 터미널이 아니면 아무것도 쓰지 않는다.
+
+제목 스택을 지원하는 터미널에서는 `title.state = true`로 제목 뒤에 `running`, `waiting` 또는 `idle`을 붙일 수 있습니다. 턴이 시작하거나 끝날 때와 질문 또는 승인을 기다리는 동안 표시가 바뀝니다. 종료하면 기존 제목을 돌려놓습니다.
 
 ## 사용자 파일
 
@@ -68,6 +71,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | --- | --- | --- | --- |
 | `theme` | 문자열 | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `title.state` | 참·거짓 | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | 세그먼트 이름 배열 | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
 | `statusline.right` | 세그먼트 이름 배열 | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
@@ -79,13 +83,15 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열두 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
+
+`ctrl+t`(`app.toggle_thinking`, 기본 바인딩)는 파일을 쓰지 않고 프로세스가 끝날 때까지 같은 스위치를 뒤집고, `--hide-thinking`은 그 선택을 숨김으로 시작한다. 세션 선택은 설정보다 우선한다. 다른 키를 고친 설정 재적용이나 테마 변경은 이 선택을 그대로 두고, `transcript.show_reasoning` 자체가 바뀌면 그것이 더 새로운 선택이므로 세션 선택을 끝낸다. 숨기면 아직 도착 중인 생각은 버리지만 이미 확정된 생각은 화면에 남기고, 다시 보이게 하면 다음 조각부터 남긴다. 숨겨 둔 동안 버린 조각은 애초에 남기지 않았으므로 되살리지 않는다. 어느 방향이든 모델에 요청하는 추론 노력 값은 건드리지 않는다. 토글할 때마다 어느 쪽으로 바뀌었는지 트랜스크립트에 한 줄 남는다.
 
 프로젝트 파일은 `<cwd>/.horon/tui.toml`이다. 작업 디렉터리를 읽을 수 없으면 건너뛴다. 파일의 크기나 수정 시각이 바뀐 뒤 1초가 지나면 다시 읽으므로, 손으로 고친 값이 재시작 없이 적용된다.
 
@@ -181,7 +187,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | 입력한 메시지를 보낸다 |
 | `app.cancel` | `ctrl+c` | 실행 중인 턴을 취소하고, 아무것도 돌지 않으면 나간다 |
 | `app.interrupt` | `esc` | 대기 중인 메시지를 도는 턴으로 보낸다. 대기 중인 메시지가 없으면 턴을 멈춘다. 놀고 있을 때는 아무것도 하지 않는다 |
-| `app.quit` | `ctrl+d` | 나간다 |
+| `app.quit` | `ctrl+d` | 초안에 글자가 있으면 커서 위치의 글자를 지운다. 편집기가 대기 중이고 초안이 비어 있으면 나간다 |
 | `app.scroll_page_up` | `pageup` | 트랜스크립트를 한 페이지 위에 붙잡아 둔다 |
 | `app.scroll_page_down` | `pagedown` | 트랜스크립트를 한 페이지 끝 쪽으로 옮긴다 |
 | `app.scroll_up` | `shift+up` | 트랜스크립트를 한 줄 위에 붙잡아 둔다 |
@@ -190,6 +196,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
+| `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
 | `editor.delete` | `delete` | 커서 자리 글자를 지운다 |
 | `editor.left` | `left`, `ctrl+b` | 커서를 한 글자 왼쪽으로 옮긴다 |
@@ -203,7 +210,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.newline` | `shift+enter`, `alt+enter`, `ctrl+j` | 초안을 보내지 않고 새 줄을 시작한다 |
 | `editor.kill_to_start` | `ctrl+u` | 그 줄 맨 앞부터 커서까지 지운다 |
 | `editor.kill_to_end` | `ctrl+k` | 커서부터 그 줄 맨 끝까지 지운다 |
-| `editor.delete_word` | `ctrl+w` | 커서 앞 낱말을 지운다 |
+| `editor.delete_word` | `ctrl+w`, `alt+backspace` | 커서 앞 낱말을 지운다 |
 | `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
 | `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
 | `editor.external` | `ctrl+g` | `VISUAL` 또는 `EDITOR`에서 초안을 편집한다 |
@@ -213,7 +220,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | 대기 중인 호출을 거절한다. 질문 프롬프트는 연 채로 둔다 |
 | `prompt.confirm` | `enter` | 여러 선택지 질문을 확정한다 |
 
-이 표는 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`를 따릅니다. `/help`와 `/keys`는 각 동작에 적용된 키를 표시합니다. `ctrl+o expands` 같은 안내도 현재 배치에 맞춥니다.
+이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 서른다섯 동작에 각각이 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
 
 대부분의 터미널은 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 믿을 만한 새 줄 키는 `alt+enter`와 `ctrl+j`이고, `shift+enter`는 터미널이 시프트 붙은 형태를 보고할 때만 응답한다.
 
@@ -295,7 +302,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 ## 선택 목록
 
-선택 목록 다섯은 한 화면을 함께 쓴다. 모델 목록(인자 없는 `/model`, 또는 `alt+p`), 추론 노력 사다리(인자 없는 `/effort`), 저장된 세션(`/switch`와 `/resume`), 하네스가 보고한 스킬(`/skills`), 앞서 보낸 초안(`ctrl+r`)이다. 모두 대화 위에 뜨는 패널이고, 제목, 무언가를 입력하기 전까지 `type to filter`라고 적힌 거르기 줄, 선택지마다 행 하나, 그리고 선택된 행의 자리와 전체 개수를 보여 준 뒤 `enter select`, `esc close`, `↑↓ move`, `type to filter`를 붙인 바닥 줄을 갖는다. `esc`가 패널을 닫고, `enter`가 선택된 행을 알리며, `up`, `down`, `pageup`, `pagedown`이 움직이고, `backspace`가 거르기 글자를 고친다. 패널이 열려 있는 동안에는 평범한 글자를 포함한 모든 키가 패널로 간다. 거르기가 글자를 통과시키면 그 글자가 아래 초안에 써 넣어지기 때문이다.
+모델, 추론 단계, 세션, 스킬, 링크와 초안 목록은 같은 선택 창을 씁니다. 창에는 제목, 검색 줄, 선택지별 행과 현재 선택의 위치가 표시됩니다. Enter로 선택하고 Esc로 닫습니다. 방향 키와 페이지 키로 이동하고 Backspace로 검색어를 편집합니다. 창이 열린 동안 입력한 글자는 검색어에 들어갑니다.
 
 거르기는 슬래시 팝업과 같은 부분 수열 맞추기이고, 행의 이름과 두 번째 열, 세션이면 미리보기가 담은 대화 줄까지 본다. 그 줄은 검색 대상이고 미리보기의 머리 줄은 아니다. 머리 줄은 한 디렉터리의 모든 행이 함께 쓰는 디렉터리와 시각을 적기 때문이다. 걸러 낸 행은 점수 순으로 놓이고 점수가 같으면 목록이 준 순서를 지키므로, 거르기가 비어 있으면 목록이 원래 순서대로 보인다. 아무것도 남지 않는 거르기는 `nothing matches that filter`라고 알린다.
 
@@ -312,6 +319,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 행을 고르거나 `/switch <id>`, `/resume <id>`를 입력하면 곧바로 붙고, 데몬은 여섯 글자 이상의 유일한 접두사도 받는다. 붙으면 이전 세션의 화면을 지우고 저장된 대화를 사용자 메시지와 어시스턴트 메시지로 다시 그리며, `started a new session <id>` 또는 `resumed <id>`를 남기고, 새 세션의 정체성에서 모델, 프로바이더, 노력 단계, 제목을 받는다. 그래서 상태 줄은 계속 `provider/model`을 보여 준다. `/new`는 이 디렉터리의 세션을 요청해 같은 방식으로 옮겨 가고, 떠나온 세션은 저장된 채로 남는다. 클라이언트는 떠나온 모든 세션의 이벤트를 버리므로 두 대화의 행이 서로에게 닿지 않는다. 세션 변경은 턴이 돌거나 모델이나 노력 단계 변경이 아직 적용 중이면 기다리고, 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
 
 `/skills`는 하네스가 이 세션에 보고한 스킬을 나열한다. 이름, 두 번째 열의 하네스 설명, 그리고 스킬을 읽은 파일과 쓸 수 있는 도구를 적고 `enter`가 초안에 그 호출을 넣는다는 줄로 끝나는 미리보기다. 행을 고르면 `/skill:<name>`과 뒤따르는 공백 하나를 보내지 않고 편집기에 쓰므로, 그 뒤의 요청은 사용자가 적는다.
+
+`/links`는 최근 어시스턴트 답변 8개에서 HTTP와 HTTPS 링크를 최신순으로 표시합니다. 행에서 Enter를 누르면 표시된 주소를 시스템 브라우저에서 엽니다. Esc를 누르면 목록이 닫힙니다. 잘못된 주소, 로컬 파일과 자격 증명이 포함된 링크는 목록에서 빠집니다.
 
 패널을 그리기에 화면이 너무 작으면 선택 목록과 설정 화면이 패널 대신 한 줄을 그린다. `list hidden: window too small, esc closes`이거나 `settings hidden: window too small, esc closes`이다. 그때도 오버레이는 모든 키를 가져가므로 `esc`로 닫는다.
 
@@ -353,6 +362,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/exit` | `/quit`과 같이 나간다 |
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
+| `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
 | `/quit` | 나간다 |
@@ -361,7 +371,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열두 명령을 이름 순으로 적었다.
+이 표에는 클라이언트 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 
@@ -372,6 +382,7 @@ built-in commands:
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
   /keys                list the keys in force and what each does
+  /links               list the http(s) links in recent answers and open one
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /quit                leave
@@ -452,4 +463,4 @@ harness commands:
 - 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
 - 스킬은 `skill://<name>`을 읽어 달라는 요청으로 보내므로 세션이 그 주소를 읽을 수 있을 때만 동작한다.
 - `esc`는 화면에 제 힌트를 두지 않는다. 그 키와 하는 일은 `/keys`에 적혀 있다.
-- `editor.submit_on_enter`는 전송 키 처리가, `transcript.show_reasoning`은 트랜스크립트가 읽는다. 둘 다 바꾼 뒤 다음 키 입력과 다음 추론 조각부터 적용된다. 나머지 트랜스크립트 설정과 상태 줄은 파일이 다시 적용되는 즉시, 곧 화면을 다시 그리면서 효력을 낸다.
+- `editor.submit_on_enter`는 전송 키 처리가, `transcript.show_reasoning`은 트랜스크립트가 읽는다. 둘 다 바꾼 뒤 다음 키 입력과 다음 추론 조각부터 적용된다. `--hide-thinking`이나 `ctrl+t`로 만든 세션 선택은 그 설정 값 자체가 바뀔 때까지 설정보다 우선하므로, `tui.toml`의 다른 키를 고쳐도 설정이 세션 선택을 되돌리지 않는다. 나머지 트랜스크립트 설정과 상태 줄은 파일이 다시 적용되는 즉시, 곧 화면을 다시 그리면서 효력을 낸다.
