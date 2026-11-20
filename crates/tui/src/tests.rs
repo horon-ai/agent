@@ -497,7 +497,7 @@ fn ctrl_t_hides_later_reasoning_and_the_choice_outlives_an_unrelated_reload() {
 fn the_settings_screen_keeps_the_toggle_key_to_itself() {
     let mut app = app_with(None);
     app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
-    app.open_settings();
+    let _ = app.open_settings();
 
     assert_eq!(app.on_key(ctrl('t')), None);
     assert!(

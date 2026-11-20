@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 mod client;
 mod edit_stats;
+mod effective_settings;
 mod events;
 mod handoff;
 mod message_modes;
@@ -35,6 +36,7 @@ mod sockets;
 mod swarm_metadata;
 
 pub use client::{FrameError, HarnessClient, MAX_FRAME_BYTES, read_frame, write_frame};
+pub use effective_settings::{EffectiveSetting, SettingSource};
 pub use events::*;
 pub use horon_agent_session_types::TurnStopReason;
 pub use horon_agent_tool_types::ToolVerdict;
@@ -45,6 +47,9 @@ pub use requests::*;
 pub use sockets::{api_socket_path, legacy_socket_path, runtime_dir};
 pub use swarm_metadata::{enrich_sessions_from_local_swarm_state, enrich_sessions_from_swarm_state};
 
+#[cfg(test)]
+#[path = "harness_api_tests/effective_settings_snapshot.rs"]
+mod effective_settings_snapshot_tests;
 #[cfg(test)]
 #[path = "harness_api_tests/message_modes_snapshot.rs"]
 mod message_modes_snapshot_tests;
@@ -71,7 +76,7 @@ mod tool_done_verdict_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 24;
+pub const API_VERSION_MINOR: u32 = 25;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -109,6 +114,16 @@ pub const CAPABILITY_CANCELLABLE_WORK_V1: &str = "cancellable_work_v1";
 pub const CAPABILITY_BACKGROUND_OUTPUT_V1: &str = "background_output_v1";
 /// Receive invalidations for the attached session's committed todo list.
 pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
+/// A client can read the small allow-list of daemon values a settings screen
+/// displays, each with the layer that supplied it. Gates
+/// `get_effective_settings`.
+///
+/// The gate is what makes the read-only promise enforceable: a server that
+/// predates the request answers `unknown_request`, and a client that checks
+/// before sending sees the capability missing instead of guessing. The reply
+/// never carries a value outside the allow-list, so no credential and no raw
+/// file text can travel however the config file is written.
+pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -139,6 +154,7 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     ),
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
+    (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -150,6 +166,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_CANCELLABLE_WORK_V1,
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
+    CAPABILITY_EFFECTIVE_SETTINGS_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

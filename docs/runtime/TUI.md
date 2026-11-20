@@ -404,12 +404,15 @@ Every other harness command prints the message the daemon wrote, except one whos
 
 `/settings` is generated from the settings registry: one row per key, grouped into the Appearance, Status line, Editor and Transcript tabs, with the label and description the registry declares. Each row also shows the layer the value came from.
 
+A fifth tab, `Daemon`, is not built from the registry: it lists the daemon values this client may only read, which arrive from `get_effective_settings` on the harness API. Each row shows the label, the value in force and where it came from (`daemon default`, the config file path, or `env <NAME>`). Nothing on this tab is editable and `enter` there changes nothing, because the daemon owns those values; `r` asks for them again. Opening the screen asks once, and the tab says `reading the daemon settings` until the answer lands. A daemon or bridge that predates the request cannot report them, and the tab then says so while every local tab keeps working.
+
 | Key | Effect |
 | --- | --- |
 | `up`, `down` | Move between rows |
 | `left`, `tab` | Move to the previous tab |
 | `right`, `shift+tab` | Move to the next tab |
 | `enter` | Open the editor or the pick list of the row, or confirm |
+| `r` | On the `Daemon` tab, read the daemon's values again |
 | `esc` | Close the editor or pick list, then the screen |
 
 A value that the key's type rejects is shown as an inline error and nothing is written. A save goes to the global `tui.toml` only; the project and `--config` layers are never rewritten.

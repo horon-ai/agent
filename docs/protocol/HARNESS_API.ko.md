@@ -547,6 +547,53 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 
 `hello.event_capabilities`에서 `live_todo_v1`을 요청하고 `hello_ok`에 같은 기능이 있는지 확인합니다. 데몬이 실시간 갱신을 지원해야 합니다. 할 일 변경을 저장하면 연결한 세션에 `session_id`가 담긴 `todo_changed`가 도착합니다. 이벤트에는 할 일 목록이 들어 있지 않습니다. 최초 `get_todo_state` 조회 전에 구독하고 연결 중인 세션의 변경 알림을 받으면 다시 조회합니다. 응답에는 최신 목록이 들어 있으므로 여러 알림에 한 번만 조회해도 됩니다. 기능을 요청하지 않은 클라이언트는 `todo_changed` 없이 목록을 계속 조회할 수 있습니다.
 
+## 데몬 유효 설정(프로토콜 1.25)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 24에서 25로 옮겼습니다. 이 요청을 보내지 않는 클라이언트는 이전과 같은 프레임을 읽으므로 모두 추가형입니다.
+
+클라이언트 자체 선호만 보여 주는 설정 화면으로는 턴이 왜 그렇게 동작하는지 설명할 수 없습니다. `get_effective_settings`는 **고정 허용 목록**에 있는 데몬 값과 그 값을 공급한 계층을 보고합니다. 전부 덤프가 아니라 목록입니다. 다른 키를 담는 필드도, 원본 파일 텍스트도 없으므로 설정 파일에 자격 증명이 들어 있어도 어떤 형태로든 클라이언트에 닿지 않습니다. `effective_settings_v1`이 이 쌍을 게이트합니다.
+
+### 요청: `get_effective_settings`
+
+```json
+{"v":1,"id":7,"req":"get_effective_settings","session_id":"s-1"}
+```
+
+| 필드 | 형식 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | 문자열 | 예 | 질문 대상 세션 |
+
+### 응답: `effective_settings`
+
+```json
+{"v":1,"reply_to":7,"ev":"effective_settings","session_id":"s-1",
+ "settings":[{"key":"provider.stream_idle_timeout_secs",
+              "label":"Stream idle timeout (seconds)",
+              "value":"240","source":"file","origin":"/home/u/.horon/config.toml"}]}
+```
+
+| 필드 | 형식 | 뜻 |
+| --- | --- | --- |
+| `key` | 문자열 | 설정 경로. 예: `provider.stream_idle_timeout_secs` |
+| `label` | 문자열 | 행에 보일 사람이 읽는 이름 |
+| `value` | 문자열 | 유효 값. 화면이 인쇄하는 그대로 |
+| `source` | `default`, `file`, `env` | 값을 공급한 계층 |
+| `origin` | 문자열, `default`면 없음 | `source`가 가리키는 파일 경로나 변수 이름 |
+
+`value`가 문자열인 이유는 화면이 그대로 인쇄하기 때문입니다. 클라이언트가 숫자를 직접 렌더링하면 어느 키가 숫자인지 알아야 하고, 그 지식은 모든 클라이언트가 아니라 허용 목록 옆에 있어야 합니다.
+
+### 허용 목록
+
+행은 `provider.openai_reasoning_effort`, `provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`, `provider.max_retries`, `tools.profile`, `tools.mcp_tools`, `tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`, `compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`입니다. 서버의 `SPECS` 표에 키를 넣는 것만이 행을 만드는 방법이고, 그 밖의 값은 보고될 수 없습니다.
+
+### 동작
+
+값은 데몬 설정이며, 데몬이 파싱한 것과 같은 파일에서 읽습니다. 브리지는 `crates/harness-api-server/src/effective_settings.rs`에서 데몬 왕복 없이, 세션 존재 확인 없이 답합니다. `get_message_modes`와 같은 형태입니다. 이 요청을 모르는 데몬 릴리스에서도 읽기가 동작하는 이유가 이것입니다. 요청이 데몬에 닿지 않습니다.
+
+계층은 환경 변수를 먼저 보고 파일을 다음에 보아 정합니다. 데몬이 적용하는 순서가 그것이기 때문입니다. 데몬이 무시할 변수(0인 타임아웃, 파싱되지 않는 재시도 횟수, 모르는 모드)는 유효 값의 출처로 보고하지 않습니다. 파싱되지 않는 파일은 아무것도 공급하지 않았으므로 그 행은 `default`로 읽힙니다.
+
+쓰기는 없습니다. 요청은 구조상 읽기 전용이고, 읽지 못하는 클라이언트는 데몬 기본값으로 계속 동작합니다. SDK는 이 호출을 `get_effective_settings`(Rust, Python)와 `getEffectiveSettings`(TypeScript)로 노출하고, 기능이 광고되지 않았으면 보내기 전에 거부합니다. TUI의 `Daemon` 탭이 배포되는 소비자입니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두

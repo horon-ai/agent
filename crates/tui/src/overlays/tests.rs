@@ -233,8 +233,14 @@ fn overlays_rows_are_generated_from_the_registry() {
     let tabs: Vec<&'static str> = overlay(&app).tabs().to_vec();
     assert_eq!(
         tabs,
-        vec!["Appearance", "Status line", "Editor", "Transcript"],
-        "tabs follow the order the registry declares"
+        vec![
+            "Appearance",
+            "Status line",
+            "Editor",
+            "Transcript",
+            super::settings::DAEMON_TAB
+        ],
+        "tabs follow the order the registry declares, then the daemon's own"
     );
     for tab in tabs {
         let overlay = app.overlay.as_mut().expect("the settings screen is open");
@@ -624,4 +630,109 @@ fn tab_walks_the_header_forwards_and_shift_tab_back() {
     assert_eq!(overlay(&app).tab_name(), Some("Editor"), "shift+tab did not walk back");
     press(&mut app, KeyCode::Left);
     assert_eq!(overlay(&app).tab_name(), Some("Status line"));
+}
+
+/// The daemon tab's rows are the server's, and the screen never derives one.
+fn daemon_tab_listing() -> crate::settings::DaemonSettings {
+    crate::settings::DaemonSettings::from(vec![
+        horon_agent_sdk::api::EffectiveSetting {
+            key: "provider.stream_idle_timeout_secs".into(),
+            label: "Stream idle timeout (seconds)".into(),
+            value: "240".into(),
+            source: horon_agent_sdk::api::SettingSource::File,
+            origin: Some("/home/u/config.toml".into()),
+        },
+        horon_agent_sdk::api::EffectiveSetting {
+            key: "provider.anthropic_reasoning_effort".into(),
+            label: "Anthropic reasoning effort".into(),
+            value: "(unset)".into(),
+            source: horon_agent_sdk::api::SettingSource::Default,
+            origin: None,
+        },
+    ])
+}
+
+#[test]
+fn the_daemon_tab_draws_the_values_and_sources_the_server_reported() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    app.show_daemon_settings(daemon_tab_listing());
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+
+    let buffer = draw_screen(&mut app, 100, 30);
+    let text = buffer_text(&buffer);
+    assert!(text.contains("Stream idle timeout (seconds)"), "{text}");
+    assert!(text.contains("240"), "{text}");
+    assert!(
+        text.contains("/home/u/config.toml"),
+        "the file is named as the source: {text}"
+    );
+    assert!(text.contains("daemon default"), "a default row says so: {text}");
+}
+
+#[test]
+fn a_daemon_value_is_not_editable_and_enter_changes_nothing() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    app.show_daemon_settings(daemon_tab_listing());
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+
+    press(&mut app, KeyCode::Enter);
+    assert!(!overlay(&app).is_editing(), "a daemon value opens no editor");
+    assert_eq!(app.take_setting_change(), None, "and it reports no change to write");
+}
+
+#[test]
+fn r_on_the_daemon_tab_asks_for_the_values_again_and_keeps_the_screen_open() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    app.show_daemon_settings(daemon_tab_listing());
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+
+    let action = app.on_key(key(KeyCode::Char('r')));
+    assert_eq!(action, Some(crate::app::Action::DaemonSettings));
+    assert!(
+        app.overlay.is_some(),
+        "the screen stays open while the answer is in flight"
+    );
+}
+
+#[test]
+fn a_daemon_that_cannot_report_its_settings_still_opens_the_screen() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    app.show_daemon_settings(crate::settings::DaemonSettings::Unavailable(
+        "the daemon does not report daemon settings".into(),
+    ));
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+
+    let buffer = draw_screen(&mut app, 100, 30);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("does not report daemon settings"),
+        "the tab explains the gap: {text}"
+    );
+    // The registry tabs are untouched, which is what keeps the screen usable.
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(
+        overlay.select_tab("Editor"),
+        "the local tabs still work: {:?}",
+        overlay.tabs()
+    );
+    assert!(
+        !overlay.rows().is_empty(),
+        "the editor tab still lists its rows while the daemon tab reports nothing"
+    );
 }

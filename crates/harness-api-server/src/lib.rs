@@ -21,6 +21,7 @@ pub mod allocator;
 pub mod background_progress;
 mod bridge;
 mod degradation_receipts;
+mod effective_settings;
 mod message_content;
 mod message_modes;
 pub mod replication;
@@ -127,6 +128,10 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     horon_agent_harness_api::CAPABILITY_CANCELLABLE_WORK_V1,
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
+    // Read from the daemon's own config file, answered by the bridge without a
+    // daemon round trip, so it is advertised unconditionally: a client that
+    // checks before sending must find it whatever the daemon can do.
+    horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -602,6 +607,15 @@ where
                         // than session state, so the bridge answers them here and
                         // the daemon never sees the request.
                         if let Some(frame) = message_modes::reply(&request) {
+                            send_frame!('translate, frame);
+                            continue;
+                        }
+                        // The allow-listed daemon settings are read from the
+                        // same config file the daemon loaded, so the bridge
+                        // serves them itself; an old daemon never sees the
+                        // request, which is what keeps the read working on a
+                        // release that predates it.
+                        if let Some(frame) = effective_settings::reply(&request) {
                             send_frame!('translate, frame);
                             continue;
                         }

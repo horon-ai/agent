@@ -223,7 +223,8 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | CancelTurnResult { session_id, .. }
         | ToolCallCancelResult { session_id, .. }
         | BackgroundWorkList { session_id, .. }
-        | MessageModes { session_id, .. } => Some(session_id.as_str()),
+        | MessageModes { session_id, .. }
+        | EffectiveSettings { session_id, .. } => Some(session_id.as_str()),
         Attached { session } | SessionForked { session } => Some(session.session_id.as_str()),
         // A report narrowed to one session names it; a full report names none,
         // so it belongs to the connection rather than to a conversation.

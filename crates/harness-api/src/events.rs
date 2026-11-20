@@ -806,6 +806,17 @@ pub enum ApiEvent {
         modes: crate::MessageModes,
     },
 
+    /// Reply to `GetEffectiveSettings`: the allow-listed daemon values a
+    /// settings screen displays, each with the layer that supplied it.
+    ///
+    /// Requires `effective_settings_v1`. The report names only keys the
+    /// allow-list holds, so a client that shows it cannot display a value the
+    /// server did not choose to report.
+    EffectiveSettings {
+        session_id: String,
+        settings: Vec<crate::EffectiveSetting>,
+    },
+
     /// Forward-compatibility catch-all: clients must skip this silently.
     #[serde(other)]
     Unknown,
@@ -830,6 +841,7 @@ impl ApiEvent {
             }
             Self::BackgroundOutput { .. } => Some(crate::CAPABILITY_BACKGROUND_OUTPUT_V1),
             Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
+            Self::EffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
             _ => None,
         }
     }

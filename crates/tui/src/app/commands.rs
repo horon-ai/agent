@@ -70,10 +70,7 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
-            Local::Settings => {
-                self.open_settings();
-                None
-            }
+            Local::Settings => self.open_settings(),
             // `/switch` and `/resume` are one flow under two names: the list
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),

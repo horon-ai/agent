@@ -46,6 +46,12 @@ impl App {
                     self.pending_change = Some(change);
                     self.overlay = Some(overlay);
                 }
+                // The daemon tab asked for its values again. The screen stays
+                // open, showing what it already has until the answer lands.
+                Outcome::Reload => {
+                    self.overlay = Some(overlay);
+                    return Some(Action::DaemonSettings);
+                }
             }
             return None;
         }

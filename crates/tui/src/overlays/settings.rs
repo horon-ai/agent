@@ -8,6 +8,12 @@
 //! a confirmed change leaves as a [`SettingChange`] for the event loop to write
 //! through [`crate::settings::Reloader::save_global`]. The overlay never writes
 //! a file itself, which keeps the write and the re-apply in one place.
+//!
+//! One tab is not built from the registry: `Daemon` lists the values the
+//! daemon reports through `get_effective_settings`, which this client can only
+//! read. Its rows carry no widget, `Enter` does nothing there, and `r` asks for
+//! a fresh read, so a screen that is mostly editable stays honest about the
+//! part that is not.
 
 use std::path::PathBuf;
 
@@ -18,11 +24,14 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use crate::settings::{self, Provenance, SettingKind, SettingSpec, SettingValue, Settings};
+use crate::settings::{self, DaemonRow, DaemonSettings, Provenance, SettingKind, SettingSpec, SettingValue, Settings};
 use crate::theme::{Symbols, Theme};
 
 /// The id whose values are theme files rather than an enum.
 const THEME_ID: &str = "theme";
+
+/// The tab listing the daemon's own values, which this client only reads.
+pub const DAEMON_TAB: &str = "Daemon";
 
 /// A confirmed change the event loop must write and re-apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +81,8 @@ pub enum Outcome {
     Closed,
     /// A widget was confirmed; write and re-apply this value.
     Change(SettingChange),
+    /// `r` on the daemon tab: ask the harness for the values again.
+    Reload,
 }
 
 /// The editing state of the overlay.
@@ -93,6 +104,10 @@ pub struct SettingsOverlay {
     rows: Vec<Row>,
     tab_rows: Vec<usize>,
     mode: Mode,
+    /// The daemon values, as last reported, and why there are none.
+    daemon: DaemonSettings,
+    /// The selected row of the daemon tab, which is not a registry row.
+    daemon_row: usize,
     themes_dir: PathBuf,
     theme_choices: Vec<String>,
 }
@@ -109,6 +124,8 @@ impl SettingsOverlay {
             rows: Vec::new(),
             tab_rows: Vec::new(),
             mode: Mode::Browse,
+            daemon: DaemonSettings::default(),
+            daemon_row: 0,
             themes_dir,
             theme_choices,
         };
@@ -137,9 +154,26 @@ impl SettingsOverlay {
         self.rebuild_tab();
     }
 
-    /// The tabs, in registry order.
+    /// Replace the daemon snapshot, keeping the selection where it was.
+    pub fn set_daemon(&mut self, daemon: DaemonSettings) {
+        self.daemon = daemon;
+        self.daemon_row = 0;
+        self.rebuild_tab();
+    }
+
+    /// The tabs: the registry's own, then the read-only daemon tab.
     pub fn tabs(&self) -> &[&'static str] {
         &self.tabs
+    }
+
+    /// Whether the selected tab is the daemon's own.
+    pub fn on_daemon_tab(&self) -> bool {
+        self.tab_name() == Some(DAEMON_TAB)
+    }
+
+    /// The daemon rows, which are drawn on their own tab.
+    pub fn daemon(&self) -> &DaemonSettings {
+        &self.daemon
     }
 
     /// The selected tab's name.
@@ -148,8 +182,19 @@ impl SettingsOverlay {
     }
 
     /// The selected tab's rows, in registry order.
+    ///
+    /// Empty on the daemon tab, where the rows come from [`Self::daemon`] and
+    /// none of them is a value this client can change.
     pub fn rows(&self) -> Vec<&Row> {
         self.tab_rows.iter().filter_map(|index| self.rows.get(*index)).collect()
+    }
+
+    /// The daemon row the selection is on, when the daemon tab is open.
+    pub fn selected_daemon(&self) -> Option<&DaemonRow> {
+        if !self.on_daemon_tab() {
+            return None;
+        }
+        self.daemon.rows().get(self.daemon_row)
     }
 
     /// The row the selection is on.
@@ -261,6 +306,16 @@ impl SettingsOverlay {
             // the same meaning.
             KeyCode::Left | KeyCode::BackTab => self.left(),
             KeyCode::Right | KeyCode::Tab => self.right(),
+            // `r` asks for the daemon's report again, and only on its own tab:
+            // every other tab edits a local file, which `r` would have nothing
+            // to reread.
+            KeyCode::Char('r')
+                if self.on_daemon_tab()
+                    && matches!(self.mode, Mode::Browse)
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                return Outcome::Reload;
+            }
             _ => {}
         }
         Outcome::Handled
@@ -304,7 +359,16 @@ impl SettingsOverlay {
     }
 
     /// Move the selection within the rows or the open pick list.
+    ///
+    /// The daemon tab has no registry row, so its selection is the daemon
+    /// report's: moving it here keeps the two from sharing an index that means
+    /// different things on different tabs.
     fn step(&mut self, delta: i32) {
+        if self.on_daemon_tab() && matches!(self.mode, Mode::Browse) {
+            let length = self.daemon.rows().len();
+            self.daemon_row = stepped(self.daemon_row, length, delta);
+            return;
+        }
         let (length, position) = match &mut self.mode {
             Mode::Browse => (self.tab_rows.len(), &mut self.row),
             Mode::Pick { choices, index } => (choices.len(), index),
@@ -314,12 +378,7 @@ impl SettingsOverlay {
             *position = 0;
             return;
         }
-        let last = length - 1;
-        *position = if delta < 0 {
-            position.saturating_sub(delta.unsigned_abs() as usize)
-        } else {
-            (*position + delta as usize).min(last)
-        };
+        *position = stepped(*position, length, delta);
     }
 
     /// Move to the previous or next tab, wrapping around.
@@ -339,7 +398,20 @@ impl SettingsOverlay {
     }
 
     /// Rebuild the selected tab's row indices.
+    ///
+    /// The daemon tab holds no registry row: its length is the server's report,
+    /// so the selection is clamped to that instead and every registry row is
+    /// hidden while it is open.
     fn rebuild_tab(&mut self) {
+        if self.on_daemon_tab() {
+            self.tab_rows.clear();
+            self.row = 0;
+            self.daemon_row = match self.daemon.rows().len() {
+                0 => 0,
+                length => self.daemon_row.min(length - 1),
+            };
+            return;
+        }
         let tab = self.tab_name();
         self.tab_rows = self
             .rows
@@ -355,7 +427,14 @@ impl SettingsOverlay {
     }
 
     /// Act on the selected row: open its widget, or settle it.
+    ///
+    /// Nothing on the daemon tab opens a widget, because the client cannot
+    /// write a daemon value: `Enter` there is read as "nothing to do" rather
+    /// than reported as a failure.
     fn confirm(&mut self) -> Outcome {
+        if self.on_daemon_tab() {
+            return Outcome::Handled;
+        }
         let Some((id, spec, current, text)) = self
             .selected()
             .map(|row| (row.id, row.spec, row.value.clone(), row.text()))
@@ -424,7 +503,23 @@ impl SettingsOverlay {
     }
 }
 
-/// The tabs in registry order, each named once.
+/// One step within a list of `length` rows, clamped at both ends.
+fn stepped(position: usize, length: usize, delta: i32) -> usize {
+    if length == 0 {
+        return 0;
+    }
+    let last = length - 1;
+    if delta < 0 {
+        position.saturating_sub(delta.unsigned_abs() as usize)
+    } else {
+        (position + delta as usize).min(last)
+    }
+}
+
+/// The tabs in registry order, each named once, then the daemon tab.
+///
+/// The daemon tab is last and is not a registry tab: its rows come from the
+/// server, so nothing in the registry can add or remove it.
 fn tab_names() -> Vec<&'static str> {
     let mut tabs: Vec<&'static str> = Vec::new();
     for spec in settings::registry::REGISTRY {
@@ -432,6 +527,7 @@ fn tab_names() -> Vec<&'static str> {
             tabs.push(spec.ui.tab);
         }
     }
+    tabs.push(DAEMON_TAB);
     tabs
 }
 
@@ -529,6 +625,77 @@ pub fn panel(area: Rect) -> Rect {
     }
 }
 
+/// The daemon tab's rows, in the order the server reported them.
+///
+/// A row prints the label the server sent, its value, and where the value came
+/// from. None of the three is computed here: the client draws what it was told,
+/// which is what keeps this tab honest about values it cannot set.
+fn daemon_lines(overlay: &SettingsOverlay, theme: &Theme) -> Vec<Line<'static>> {
+    if overlay.daemon().rows().is_empty() {
+        // Every state without rows says which one it is: "not read yet",
+        // "this daemon cannot say", and "it said nothing" read differently,
+        // and a blank table would look like the third when it may be the first.
+        return vec![Line::from(Span::styled(
+            format!(" {}", overlay.daemon().notice()),
+            Style::default().fg(theme.core.muted),
+        ))];
+    }
+    overlay
+        .daemon()
+        .rows()
+        .iter()
+        .enumerate()
+        .map(|(position, row)| {
+            let chosen = position == overlay.daemon_row;
+            let base = if chosen {
+                Style::default()
+                    .fg(theme.core.text)
+                    .bg(theme.prompt.selected_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.core.text)
+            };
+            let origin = if chosen {
+                Style::default()
+                    .fg(theme.core.text)
+                    .bg(theme.prompt.selected_bg)
+                    .add_modifier(Modifier::ITALIC)
+            } else {
+                Style::default().fg(theme.core.muted)
+            };
+            Line::from(vec![
+                Span::styled(format!("  {:<28}", row.label), base),
+                Span::styled(row.value.clone(), base),
+                Span::styled(format!("  {}", row.source_label()), origin),
+            ])
+        })
+        .collect()
+}
+
+/// The daemon tab's footer: what the row is, and the two keys it answers to.
+fn draw_daemon_footer(frame: &mut Frame<'_>, area: Rect, overlay: &SettingsOverlay, theme: &Theme) {
+    let description = match overlay.daemon() {
+        DaemonSettings::Unavailable(reason) => reason.clone(),
+        DaemonSettings::Unknown | DaemonSettings::Loaded(_) => overlay
+            .selected_daemon()
+            .map(|row| format!("{} — read-only, from the daemon", row.key))
+            .unwrap_or_else(|| overlay.daemon().notice().to_string()),
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!(" {description}"),
+                Style::default().fg(theme.core.text),
+            )),
+            Line::from(Span::styled(
+                " r reload  up/down move  tab switch  esc close",
+                Style::default().fg(theme.core.muted),
+            )),
+        ]),
+        area,
+    );
+}
+
 /// Draw the overlay over `area`, returning where an open editor wants the
 /// cursor.
 pub fn draw(
@@ -588,6 +755,20 @@ pub fn draw(
     let visible = body_area.height as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut selected_line = 0usize;
+    if overlay.on_daemon_tab() {
+        // The daemon tab is a read-only table, so it draws its own rows and
+        // footer and returns before the registry path can draw a widget over
+        // a value no client can change.
+        let lines = daemon_lines(overlay, theme);
+        let offset = match visible {
+            0 => 0,
+            _ if overlay.daemon_row < visible => 0,
+            _ => (overlay.daemon_row + 1 - visible) as u16,
+        };
+        frame.render_widget(Paragraph::new(lines).scroll((offset, 0)), body_area);
+        draw_daemon_footer(frame, footer_area, overlay, theme);
+        return None;
+    }
     let mut group = "";
     for (position, row) in overlay.rows().into_iter().enumerate() {
         if row.spec.ui.group != group {

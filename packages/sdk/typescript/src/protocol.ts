@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 24;
+export const API_VERSION_MINOR = 25;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -29,6 +29,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ],
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
+  ["effective_settings_v1", ["get_effective_settings"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -338,6 +339,28 @@ export interface MessageModes {
   interrupt_mode: string;
 }
 
+/**
+ * Where one effective-setting value came from.
+ *
+ * Stable spellings, not prose: a client maps them to its own words and prints
+ * `origin` (a file path or a variable name) beside them.
+ */
+export type SettingSource = "default" | "file" | "env";
+
+/** One daemon value a settings screen may display. */
+export interface EffectiveSetting {
+  /** Dotted config path, e.g. `provider.stream_idle_timeout_secs`. */
+  key: string;
+  /** Human-readable name for the row. */
+  label: string;
+  /** The value in force, as the screen prints it. */
+  value: string;
+  /** The layer that supplied it. */
+  source: SettingSource;
+  /** File path or variable name `source` points at; absent for `default`. */
+  origin?: string;
+}
+
 /** Wire-level session tool policy. Callback functions never cross the wire. */
 export interface ToolConfiguration {
   enabled?: string[] | null;
@@ -614,6 +637,7 @@ export type ApiRequest =
   | { req: "configure_tools"; session_id: string; tools: ToolConfiguration }
   | { req: "list_tools"; session_id: string }
   | { req: "get_message_modes"; session_id: string }
+  | { req: "get_effective_settings"; session_id: string }
   | { req: "tool_result"; session_id: string; call_id: string; output: string; error?: string }
   | {
       req: "send_message";
@@ -814,6 +838,7 @@ export type ApiEvent =
   | { ev: "tool_exec"; session_id: string; call_id: string; name: string }
   | { ev: "tools"; session_id: string; tools: SessionToolDefinition[] }
   | { ev: "message_modes"; session_id: string; modes: MessageModes }
+  | { ev: "effective_settings"; session_id: string; settings: EffectiveSetting[] }
   | { ev: "tool_call"; session_id: string; call_id: string; name: string; input: unknown }
   | {
       ev: "tool_done";
@@ -1133,6 +1158,7 @@ export const KNOWN_EVENT_KINDS = [
   "tool_start",
   "tools",
   "message_modes",
+  "effective_settings",
   "tool_call",
   "tool_input_delta",
   "tool_exec",
@@ -1210,6 +1236,7 @@ export const KNOWN_REQUEST_KINDS = [
   "configure_tools",
   "list_tools",
   "get_message_modes",
+  "get_effective_settings",
   "tool_result",
   "send_message",
   "cancel",

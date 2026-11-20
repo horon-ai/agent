@@ -95,6 +95,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("configure_tools", "configureTools"),
     cap("list_tools", "listTools"),
     cap("get_message_modes", "getMessageModes"),
+    cap("get_effective_settings", "getEffectiveSettings"),
     cap("submit_tool_result", "submitToolResult"),
     cap("set_reasoning_effort", "setReasoningEffort"),
     cap("compact", "compact"),

@@ -1,16 +1,31 @@
 //! The settings screen and the settings that change behavior as they are
 //! applied, rather than on the next drawing call.
 
-use super::App;
+use super::{Action, App};
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
-use crate::settings::Settings;
+use crate::settings::{DaemonSettings, Settings};
 
 impl App {
     /// Show the settings screen, seeded from the settings in force.
-    pub fn open_settings(&mut self) {
+    ///
+    /// The daemon's own values are asked for at the same moment: the screen
+    /// opens on the local tabs without waiting, and the daemon tab fills in
+    /// when the answer lands. A connection that is already gone skips the ask
+    /// rather than reporting a failure the user cannot act on.
+    pub fn open_settings(&mut self) -> Option<Action> {
         let mut overlay = SettingsOverlay::new(self.themes_dir.clone());
         overlay.refresh(&self.settings);
+        overlay.set_daemon(self.daemon_settings.clone());
         self.overlay = Some(overlay);
+        (!self.disconnected).then_some(Action::DaemonSettings)
+    }
+
+    /// The daemon's report arrived: keep it and redraw the tab if it is open.
+    pub fn show_daemon_settings(&mut self, settings: DaemonSettings) {
+        self.daemon_settings = settings.clone();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.set_daemon(settings);
+        }
     }
 
     /// Take the change the settings screen confirmed, for the caller to write.
