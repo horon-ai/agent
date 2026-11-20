@@ -926,8 +926,8 @@ pub struct ToolConfig {
     /// Opt-in `irc`: expose the tool that sends and receives messages between
     /// agents of the same daemon. Off by default; `HORON_AGENT_IRC` overrides.
     pub irc: bool,
-    /// Which calls ask for approval before they run. `off` (default) keeps the
-    /// current behavior of never asking; see [`ApprovalMode`].
+    /// Which calls ask before they run. `yolo` auto-approves ordinary calls.
+    /// See [`ApprovalMode`] for the modes and their restrictions.
     pub approval_mode: ApprovalMode,
     /// Let `bash` remember the directory the last command ended in and start
     /// the next call there. On by default because an agent that has to prefix
@@ -1020,7 +1020,7 @@ impl Default for ToolConfig {
             plan_mode: false,
             checkpoint: false,
             irc: false,
-            approval_mode: ApprovalMode::Off,
+            approval_mode: ApprovalMode::default(),
             bash_session_cwd: true,
             bash_non_interactive_env: true,
             bash_minimizer: false,
