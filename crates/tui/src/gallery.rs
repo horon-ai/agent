@@ -128,7 +128,7 @@ pub fn frame(name: &str, width: u16, height: u16) -> std::io::Result<String> {
         ));
     };
     let backend = TestBackend::new(width, height);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend).map_err(std::io::Error::other)?;
     crate::draw(&mut terminal, &mut app).map_err(std::io::Error::other)?;
     Ok(format!("{}", terminal.backend()))
 }
