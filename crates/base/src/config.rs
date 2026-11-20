@@ -963,11 +963,10 @@ pub struct ToolConfig {
     /// Opt-in auxiliary completions: a separate small completion path for
     /// side tasks that must not disturb the main conversation.
     pub aux_completion: bool,
-    /// Opt-in image generation: registers `generate_image`, which posts to the
-    /// profile's `/images/generations` route through the `image` model role.
-    /// Off by default, and inert without an `image` entry in the active
-    /// profile, so a session that never generates an image pays nothing.
+    /// Opt in to `generate_image` on profiles with an `image` model role.
     pub generate_image: bool,
+    /// Opt in to Python cells that require explicit approval to run.
+    pub eval: bool,
     /// How credentials in outbound text are handled. `off` (default) leaves
     /// text untouched; see [`SecretsMode`].
     pub secrets_mode: SecretsMode,
@@ -1029,6 +1028,7 @@ impl Default for ToolConfig {
             git_guard: false,
             aux_completion: false,
             generate_image: false,
+            eval: false,
             secrets_mode: SecretsMode::Off,
             dual_confirm_classes: Vec::new(),
             restricted_paths: Vec::new(),
