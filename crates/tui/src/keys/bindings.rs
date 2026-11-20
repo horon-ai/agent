@@ -46,6 +46,8 @@ pub mod ids {
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Show or hide the model's reasoning for the rest of the session.
+    pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -134,6 +136,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_SUBMIT, Scope::App, &["enter"]),
     ActionSpec::new(ids::APP_CANCEL, Scope::App, &["ctrl+c"]),
     ActionSpec::new(ids::APP_INTERRUPT, Scope::App, &["esc"]),
+    // `ctrl+d` follows the draft at this key alone: the app deletes forward
+    // while the draft has text and only leaves from an empty one. A file that
+    // moves the action to another key gets the plain leave back there.
     ActionSpec::new(ids::APP_QUIT, Scope::App, &["ctrl+d"]),
     // The transcript's own keys: `up` and `down` stay with the draft and its
     // history, so the view moves on their shifted forms and on the page keys.
@@ -151,6 +156,9 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // Reasoning display for this session: the draft keeps every letter, so the
+    // toggle has to be a control key.
+    ActionSpec::new(ids::APP_TOGGLE_THINKING, Scope::App, &["ctrl+t"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),
@@ -170,7 +178,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     ),
     ActionSpec::new(ids::EDITOR_KILL_TO_START, Scope::Editor, &["ctrl+u"]),
     ActionSpec::new(ids::EDITOR_KILL_TO_END, Scope::Editor, &["ctrl+k"]),
-    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w"]),
+    // Two spellings, both of them the word the cursor just left: `ctrl+w` is
+    // the one the editor grew with, `alt+backspace` is the one the terminals
+    // and the other clients send for the same intent.
+    ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w", "alt+backspace"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
     ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
     // The draft leaves the client for the length of one edit. `ctrl+g` is

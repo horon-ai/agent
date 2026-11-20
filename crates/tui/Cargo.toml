@@ -35,6 +35,13 @@ toml_edit = "0.20"
 # input. `ratatui` already depends on the same version.
 unicode-width = "0.2"
 serde_json = "1"
+# `/links` shows an http(s) URL from an assistant answer and hands the chosen
+# one to the desktop. `url` reads the scheme, authority and port the same way
+# the harness does, and `open` is the launcher the login flow already uses: it
+# passes the URL as one argument and returns once the handler was started. Both
+# are already in the workspace's lock file, so this adds no package.
+url = "2"
+open = "5"
 # The `time` segment shows local wall-clock time. The client reaches no
 # workspace crate except the SDK and the tool contract crate, so it reads the
 # clock it already gets from `time` through the SDK's dependency graph and asks

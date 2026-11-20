@@ -400,6 +400,7 @@ fn builtin_help_lists_every_built_in_command() {
         "/exit",
         "/help",
         "/keys",
+        "/links",
         "/model",
         "/new",
         "/quit",

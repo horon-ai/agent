@@ -87,10 +87,20 @@ impl Program {
 
     /// The program this session's environment names.
     pub(crate) fn from_environment() -> Result<Self, Problem> {
-        let visual = std::env::var("VISUAL").ok();
-        let editor = std::env::var("EDITOR").ok();
+        let visual = environment("VISUAL");
+        let editor = environment("EDITOR");
         Self::resolve(visual.as_deref(), editor.as_deref())
     }
+}
+
+/// A variable's value, or none where a program cannot be named.
+///
+/// `var_os` answers "not set" without an error to discard. A value that is not
+/// UTF-8 is skipped exactly as an unset one is: it cannot be split into a
+/// command line, and a `VISUAL` the shell wrote in another encoding must still
+/// let `EDITOR` answer.
+fn environment(name: &str) -> Option<String> {
+    std::env::var_os(name).and_then(|value| value.to_str().map(str::to_owned))
 }
 
 /// Why a draft did not come back.
