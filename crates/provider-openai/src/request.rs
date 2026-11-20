@@ -136,20 +136,14 @@ fn flatten_parameter_alternatives(schema: &mut Value) -> bool {
     let Some(alternatives) = root.remove("anyOf") else {
         return false;
     };
-    let mut properties = root
-        .remove("properties")
-        .and_then(|value| match value {
-            Value::Object(properties) => Some(properties),
-            _ => None,
-        })
-        .unwrap_or_default();
-    let mut required = root
-        .remove("required")
-        .and_then(|value| match value {
-            Value::Array(required) => Some(required),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let mut properties = match root.remove("properties") {
+        Some(Value::Object(properties)) => properties,
+        _ => Map::new(),
+    };
+    let mut required = match root.remove("required") {
+        Some(Value::Array(required)) => required,
+        _ => Vec::new(),
+    };
     if let Value::Array(branches) = alternatives {
         let mut branch_properties = BTreeMap::<String, Vec<Value>>::new();
         let mut common_required: Option<Vec<Value>> = None;
@@ -181,23 +175,23 @@ fn flatten_parameter_alternatives(schema: &mut Value) -> bool {
                 }
             }
         }
-        for name in common_required.unwrap_or_default() {
-            if name.is_string() && !required.contains(&name) {
-                required.push(name);
+        if let Some(common_required) = common_required {
+            for name in common_required {
+                if name.is_string() && !required.contains(&name) {
+                    required.push(name);
+                }
             }
         }
-        let promoted: Map<_, _> = branch_properties
-            .into_iter()
-            .map(|(name, variants)| {
-                let field = if variants.len() == 1 {
-                    variants.into_iter().next().unwrap_or(Value::Null)
-                } else {
-                    serde_json::json!({"anyOf": variants})
-                };
-                (name, field)
-            })
-            .collect();
-        properties.extend(promoted);
+        for (name, mut variants) in branch_properties {
+            let Some(last) = variants.pop() else { continue };
+            let field = if variants.is_empty() {
+                last
+            } else {
+                variants.push(last);
+                serde_json::json!({"anyOf": variants})
+            };
+            properties.insert(name, field);
+        }
     }
     root.insert("type".into(), Value::String("object".into()));
     root.insert("properties".into(), Value::Object(properties));
