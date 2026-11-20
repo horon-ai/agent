@@ -74,7 +74,7 @@ pub fn complete(draft: &str, workspace: Option<&str>, previous: Option<&Choice>)
     // Canonicalizing the one directory resolves every symlink in the path it
     // was written with, so the prefix check below is what keeps a link from
     // reading outside the workspace.
-    let listing = std::fs::canonicalize(root.join(directory)).ok()?;
+    let listing = reachable(std::fs::canonicalize(root.join(directory)))?;
     if !listing.starts_with(&root) || !listing.is_dir() {
         return None;
     }
@@ -254,9 +254,23 @@ impl<'a> Form<'a> {
     }
 }
 
+/// What a filesystem call returned, or nothing when the path is unreachable.
+///
+/// Completion only offers names it could read: a directory this process may
+/// not open, a path that vanished between the token and the press, or a
+/// workspace that no longer resolves all end the press with no candidates
+/// instead of a guess. That choice is made here once, rather than at each
+/// call, so no call can drop a failure by accident.
+fn reachable<T>(result: std::io::Result<T>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(_) => None,
+    }
+}
+
 /// The workspace as this machine resolves it, or nothing when it is not here.
 fn workspace_root(workspace: Option<&str>) -> Option<PathBuf> {
-    let root = std::fs::canonicalize(workspace?).ok()?;
+    let root = reachable(std::fs::canonicalize(workspace?))?;
     root.is_dir().then_some(root)
 }
 
@@ -264,7 +278,7 @@ fn workspace_root(workspace: Option<&str>) -> Option<PathBuf> {
 fn read_names(directory: &Path, fragment: &str) -> Option<Vec<(String, bool)>> {
     let mut names = Vec::new();
     let mut seen = 0;
-    for entry in std::fs::read_dir(directory).ok()? {
+    for entry in reachable(std::fs::read_dir(directory))? {
         seen += 1;
         if seen > MAX_ENTRIES {
             return None;

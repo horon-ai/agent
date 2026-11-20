@@ -311,19 +311,22 @@ where
     // session is created with, so the client's own idea of the workspace and
     // the session's cannot disagree. Only a daemon that reports no directory
     // of its own falls back to it.
-    let launch_dir = args.cwd.clone().or_else(|| std::env::current_dir().ok());
+    let launch_dir = match args.cwd.clone() {
+        Some(dir) => Some(dir),
+        // A process with no readable working directory has no directory to
+        // fall back to, which is the same absence as not asking for one: the
+        // daemon's own directory is shown and nothing else is reported.
+        None => match std::env::current_dir() {
+            Ok(dir) => Some(dir),
+            Err(_) => None,
+        },
+    };
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(
-            runtime,
-            &mut reloader,
-            &mut keys,
-            launch_dir,
-            args.hide_thinking,
-        ),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
