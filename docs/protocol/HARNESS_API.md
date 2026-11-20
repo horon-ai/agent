@@ -432,6 +432,10 @@ The daemon wire is same-binary and private, so this is a one-pass removal rather
 than a deprecation window: no external producer speaks old swarm frames, and the
 harness API never carried them.
 
+## Live background output (protocol 1.23)
+
+Clients that consume live process output include `background_output_v1` in `hello.event_capabilities`. The bridge sends `background_output` events only to attached clients that requested the capability. An event carries `session_id` and bounded `text` identifying the job, stdout or stderr, and the matching line. Completion results and persisted job output keep their existing paths.
+
 ## Cancellable work (protocol 1.22)
 
 The harness API keeps major version 1 and moved from minor version 21 to 22.

@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 22
+API_VERSION_MINOR = 23
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -32,6 +32,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "cancellable_work_v1",
         ("cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"),
     ),
+    ("background_output_v1", ("background_output",)),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -43,6 +44,8 @@ back. ``structured_compaction_v1`` sets the same precedent.
 """
 
 ADVERTISED_CAPABILITIES: tuple[str, ...] = tuple(capability for capability, _ in CAPABILITY_SURFACES)
+
+EVENT_CAPABILITIES = ("background_output_v1",)
 
 RuntimeCommand: TypeAlias = Literal[
     "skills",
@@ -744,6 +747,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "text_matches",
     "file_status",
     "todo_state",
+    "background_output",
     "session_search_results",
     "artifacts",
     "usage_report",

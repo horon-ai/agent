@@ -552,6 +552,47 @@ fn cap_chars(s: &str, cap: usize) -> String {
     out
 }
 
+/// The notification scope a live `bash` output line travels under.
+///
+/// One stable string for the daemon, the bridge and every server, so the bridge
+/// can recognise the scope without matching on prose.
+pub(crate) const BACKGROUND_OUTPUT_SCOPE: &str = "background_output";
+
+/// Forward one matched `bash` output line to the session that owns the job.
+///
+/// `text` is already a bounded, control-stripped notice naming the job and the
+/// stream it came from (the producer's format), so this only decides who may
+/// see it: the owning session's live attachments, never the swarm, never another
+/// session, and never the model. Completion keeps its own `notify`/`wake` path,
+/// so a live notice cannot start or inject into a turn.
+///
+/// Zero recipients is the ordinary case, not a failure: an unattended session
+/// has no client attached, and a job that keeps matching would otherwise write
+/// one warning per line. The delivery count is therefore discarded.
+pub(super) async fn dispatch_background_output(
+    session_id: String,
+    text: String,
+    swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
+) {
+    fanout_session_event(
+        swarm_members,
+        &session_id,
+        ServerEvent::Notification {
+            // The owner is named here, not inferred from whoever the bridge is
+            // attached to when the frame arrives: a queued notice must arrive
+            // for the session that ran the job even after a client reattached.
+            from_session: session_id.clone(),
+            from_name: Some("bash".to_string()),
+            notification_type: NotificationType::Message {
+                scope: Some(BACKGROUND_OUTPUT_SCOPE.to_string()),
+                tldr: None,
+            },
+            message: text,
+        },
+    )
+    .await;
+}
+
 pub(super) async fn dispatch_ui_activity(
     activity: &crate::bus::UiActivity,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
@@ -671,5 +712,85 @@ mod tests {
         let captured = items[0].tool_intents[0].progress.as_ref().expect("progress captured");
         assert_eq!((captured.current, captured.total), (27, 43));
         assert!(!update_active_todo_batch_progress(&mut items, &progress));
+    }
+
+    /// A live output line reaches the session that ran the job and nobody else,
+    /// under the dedicated scope and with that session named as its owner.
+    ///
+    /// The owner in `from_session` is the guarantee: the bridge translates that
+    /// field rather than its own attachment, so a notice queued across a
+    /// reattach cannot surface under the wrong conversation.
+    #[tokio::test]
+    async fn live_output_reaches_only_the_owning_session() {
+        use crate::server::SwarmMember;
+        use std::time::Instant;
+
+        let member = |session_id: &str| {
+            let (event_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            (
+                SwarmMember {
+                    session_id: session_id.to_string(),
+                    event_tx,
+                    event_txs: HashMap::new(),
+                    working_dir: None,
+                    swarm_id: None,
+                    swarm_enabled: false,
+                    status: "ready".to_string(),
+                    detail: None,
+                    task_label: None,
+                    friendly_name: None,
+                    report_back_to_session_id: None,
+                    latest_completion_report: None,
+                    role: "agent".to_string(),
+                    joined_at: Instant::now(),
+                    last_status_change: Instant::now(),
+                    is_headless: false,
+                    output_tail: None,
+                    todo_progress: None,
+                    todo_items: Vec::new(),
+                    runtime: crate::protocol::SwarmMemberRuntime::default(),
+                },
+                rx,
+            )
+        };
+
+        let (owner, mut owner_rx) = member("owner");
+        let (other, mut other_rx) = member("other");
+        let members = Arc::new(RwLock::new(HashMap::from([
+            ("owner".to_string(), owner),
+            ("other".to_string(), other),
+        ])));
+
+        dispatch_background_output(
+            "owner".to_string(),
+            "bash task t1 stdout: milestone".to_string(),
+            &members,
+        )
+        .await;
+
+        match owner_rx.try_recv().expect("the owning session must receive the notice") {
+            ServerEvent::Notification {
+                from_session,
+                notification_type,
+                message,
+                ..
+            } => {
+                assert_eq!(from_session, "owner");
+                assert!(
+                    matches!(
+                        notification_type,
+                        NotificationType::Message { scope, .. }
+                            if scope.as_deref() == Some(BACKGROUND_OUTPUT_SCOPE)
+                    ),
+                    "the notice must carry the dedicated scope"
+                );
+                assert_eq!(message, "bash task t1 stdout: milestone");
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        assert!(
+            other_rx.try_recv().is_err(),
+            "another session received process output that was not its own"
+        );
     }
 }

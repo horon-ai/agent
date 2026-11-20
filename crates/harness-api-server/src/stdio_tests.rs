@@ -36,6 +36,7 @@ async fn stdio_stream_handshake_ping_and_eof_release_daemon_connection() {
                 client: "stdio-test".into(),
                 supports_user_response: false,
                 supports_ask_requests: false,
+                event_capabilities: Vec::new(),
             },
         ),
     )
@@ -239,6 +240,111 @@ async fn session_tools_negotiation_and_stream_translation() {
             .unwrap();
         read_frame(&mut read, &mut line).await.unwrap();
         assert_eq!(serde_json::from_str::<Value>(&line).unwrap()["ev"], "pong");
+        write.shutdown().await.unwrap();
+        task.await.unwrap().unwrap();
+        drop(listener);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_output_requires_opt_in_on_the_attached_session() {
+    use serde_json::json;
+    use std::time::Duration;
+
+    for (request_capability, daemon_supports) in [(false, true), (true, false), (true, true)] {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .subsec_nanos();
+        let root = std::env::temp_dir().join(format!("horon-output-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("daemon.sock");
+        let mut listener = Listener::bind(&socket).unwrap();
+        let (client, bridge) = tokio::io::duplex(8192);
+        let (bridge_read, bridge_write) = tokio::io::split(bridge);
+        let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, socket));
+        let (read, mut write) = tokio::io::split(client);
+        let mut read = BufReader::new(read);
+        let mut hello = json!({"v":1,"id":1,"req":"hello","min_version":1,"max_version":1,"client":"output-test"});
+        if request_capability {
+            hello["event_capabilities"] = json!([CAPABILITY_BACKGROUND_OUTPUT_V1]);
+        }
+        write_json_line(&mut write, &hello).await.unwrap();
+        let (daemon, _) = listener.accept().await.unwrap();
+        let (probe, _) = listener.accept().await.unwrap();
+        let mut probe = BufReader::new(probe);
+        let mut line = String::new();
+        read_frame(&mut probe, &mut line).await.unwrap();
+        let mut pong = json!({"type":"pong","id":0});
+        if daemon_supports {
+            pong["capabilities"] = json!([CAPABILITY_BACKGROUND_OUTPUT_V1]);
+        }
+        write_json_line(probe.get_mut(), &pong).await.unwrap();
+        drop(probe);
+        read_frame(&mut read, &mut line).await.unwrap();
+        let reply: Value = serde_json::from_str(&line).unwrap();
+        let negotiated = request_capability && daemon_supports;
+        assert_eq!(
+            reply["capabilities"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(CAPABILITY_BACKGROUND_OUTPUT_V1)),
+            negotiated
+        );
+
+        let (daemon_read, mut daemon_write) = daemon.into_split();
+        let mut daemon_read = BufReader::new(daemon_read);
+        write_json_line(
+            &mut write,
+            &json!({"v":1,"id":2,"req":"attach_session","session_id":"owner"}),
+        )
+        .await
+        .unwrap();
+        for _ in 0..3 {
+            read_frame(&mut daemon_read, &mut line).await.unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            if request["type"] == "state" {
+                write_json_line(
+                    &mut daemon_write,
+                    &json!({"type":"state","id":request["id"],"session_id":"owner"}),
+                )
+                .await
+                .unwrap();
+            }
+        }
+        for (owner, text) in [("other", "must stay in other session"), ("owner", "matched line")] {
+            write_json_line(
+                &mut daemon_write,
+                &json!({"type":"notification","from_session":owner,"from_name":"bash","notification_type":{"kind":"message","scope":"background_output"},"message":text}),
+            )
+            .await
+            .unwrap();
+        }
+        write_json_line(&mut daemon_write, &json!({"type":"text_delta","text":"normal stream"}))
+            .await
+            .unwrap();
+
+        let observed = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut notices = Vec::new();
+            loop {
+                read_frame(&mut read, &mut line).await.unwrap();
+                let frame: Value = serde_json::from_str(&line).unwrap();
+                match frame["ev"].as_str() {
+                    Some("background_output") => notices.push((frame["session_id"].clone(), frame["text"].clone())),
+                    Some("text_delta") => return notices,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("the ordinary stream continues even when the notice is filtered");
+        let expected = if negotiated {
+            vec![(json!("owner"), json!("matched line"))]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(observed, expected);
         write.shutdown().await.unwrap();
         task.await.unwrap().unwrap();
         drop(listener);

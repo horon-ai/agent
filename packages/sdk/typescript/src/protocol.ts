@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 22;
+export const API_VERSION_MINOR = 23;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -27,10 +27,13 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
     "cancellable_work_v1",
     ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"],
   ],
+  ["background_output_v1", ["background_output"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
 export const ADVERTISED_CAPABILITIES: readonly string[] = CAPABILITY_SURFACES.map(([capability]) => capability);
+
+export const EVENT_CAPABILITIES = ["background_output_v1"] as const;
 
 export type RuntimeCommand =
   | "skills"
@@ -588,7 +591,15 @@ export interface StoreErrorDetail {
 }
 
 export type ApiRequest =
-  | { req: "hello"; min_version: number; max_version: number; client: string; supports_user_response?: boolean; supports_ask_requests?: boolean }
+  | {
+      req: "hello";
+      min_version: number;
+      max_version: number;
+      client: string;
+      supports_user_response?: boolean;
+      supports_ask_requests?: boolean;
+      event_capabilities?: readonly string[];
+    }
   | { req: "list_sessions"; include_archived?: boolean; limit?: number }
   | { req: "archive_session"; session_id: string }
   | { req: "restore_session"; session_id: string }
@@ -987,6 +998,7 @@ export type ApiEvent =
       modified_ms?: number;
     }
   | { ev: "todo_state"; session_id: string; state: TodoSnapshot }
+  | { ev: "background_output"; session_id: string; text: string }
   | { ev: "session_search_results"; query: string; results: SessionSearchHit[] }
   | { ev: "artifacts"; session_id: string; artifacts: ArtifactEntry[] }
   /** Reply to `usage_report`; see {@link UsageReport} for what the counts mean. */
@@ -1155,6 +1167,7 @@ export const KNOWN_EVENT_KINDS = [
   "text_matches",
   "file_status",
   "todo_state",
+  "background_output",
   "session_search_results",
   "artifacts",
   "usage_report",

@@ -376,6 +376,12 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - ACP plan entries have only three states, so `blocked` is exported as `pending` (`crates/app-core/src/tool/todo.rs` `plan_entries`). That means an open item nobody is working on right now, and the reason stays on the item's own `blocker`.
 - The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
 
+## Live background output notices
+
+Set `run_in_background: true` and `notify_pattern` to receive matching stdout or stderr lines from a finite `bash` call while it runs. Use a Rust regex of at most 512 bytes. The tool rejects invalid patterns, foreground calls with a pattern, and patterns on named services before starting a process.
+
+The session that launched the job receives up to 20 matching lines. Each notice identifies the job and its output stream. A last line without a newline is eligible. The output remains available through `bg action=output`, and `notify` still controls the separate completion notice. These live notices do not wake the model.
+
 ## Waiting on background work
 
 `bg action=wait` blocks on background tasks. Two optional flags widen it to other events, and a call that sets neither keeps the behaviour it always had (`crates/app-core/src/tool/bg_wait.rs`).
