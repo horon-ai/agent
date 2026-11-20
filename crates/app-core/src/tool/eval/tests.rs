@@ -433,3 +433,194 @@ fn eval_editor_approves_one_cell_without_releasing_another() {
         assert_eq!(runs[0].output, "one editor approval\n");
     });
 }
+
+#[test]
+fn eval_bridge_reads_and_runs_shell_through_the_registry() {
+    isolated(async |home| {
+        home.config(
+            "profile = 'full'\neval = true\n[[tools.bash_patterns]]\npattern = 'echo bridge-denied'\napproval = 'deny'",
+        );
+        std::fs::write(home.cwd.join("bridge.txt"), "hello from the scoped file\n").expect("write fixture");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-tool-access", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({"code": r#"
+text = await tool.read(file_path='bridge.txt')
+print('read verified' if 'hello from the scoped file' in text else text)
+shell = await tool.bash(command='echo bridge-allowed')
+print('shell verified' if any(line.strip() == 'bridge-allowed' for line in shell.splitlines()) else shell)
+try:
+    await tool.bash(command='echo bridge-denied')
+except RuntimeError as error:
+    print('deny verified' if "bash pattern 'echo bridge-denied'" in str(error) else error)
+"#}),
+            )
+            .await;
+        assert_eq!(output.output, "read verified\nshell verified\ndeny verified\n");
+    });
+}
+
+#[test]
+fn eval_bridge_requires_separate_approval_for_a_shell_call() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true\napproval_mode = 'all'");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-tool-approval", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({"code": r#"
+try:
+    await tool.bash(command='echo side-effect > bridge-approval.txt')
+except RuntimeError as error:
+    print('approval queued' if 'needs approval before it runs' in str(error) else error)
+"#}),
+            )
+            .await;
+        assert_eq!(output.output, "approval queued\n");
+        assert!(!home.cwd.join("bridge-approval.txt").exists());
+    });
+}
+
+#[test]
+fn eval_bridge_refuses_off_tools_dispatchers_and_background_shell() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true\n[tools.load_mode]\nread = 'off'");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-tool-policy", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({"code": r#"
+for call in [tool.read(file_path='no-access'), tool.eval(code='42'), tool.toolbox(action='list'),
+             tool.bash(command='echo unexpected', run_in_background=True)]:
+    try:
+        await call
+    except RuntimeError as error:
+        print(error)
+"#}),
+            )
+            .await;
+        assert_eq!(
+            output.output,
+            concat!(
+                "Tool 'read' is not available in this session.\n",
+                "Tool 'eval' cannot be called from a Python cell.\n",
+                "Tool 'toolbox' cannot be called from a Python cell.\n",
+                "Python tool calls cannot start background shell commands or services\n",
+            )
+        );
+    });
+}
+
+#[test]
+fn eval_bridge_limits_calls_and_keeps_the_next_cell_usable() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true");
+        std::fs::write(home.cwd.join("small.txt"), "bridge fixture contents\n").expect("write fixture");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-tool-limit", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({"code": r#"
+count = 0
+try:
+    for _ in range(65):
+        await tool.read(file_path='small.txt')
+        count += 1
+except RuntimeError as error:
+    print(count, error)
+"#}),
+            )
+            .await;
+        assert_eq!(output.output, "64 Python eval allows at most 64 tool calls per cell\n");
+        let direct = registry
+            .execute(
+                "read",
+                json!({"file_path": "small.txt"}),
+                session.context("direct-read"),
+            )
+            .await
+            .expect("read from the model context");
+        assert!(direct.output.contains("bridge fixture contents"), "{}", direct.output);
+        let next = session
+            .approved(
+                &registry,
+                json!({"code": r#"
+text = await tool.read(file_path='small.txt')
+print('read verified' if 'bridge fixture contents' in text else text)
+"#}),
+            )
+            .await;
+        assert_eq!(next.output, "read verified\n");
+    });
+}
+
+#[test]
+fn eval_bridge_timeout_stops_running_shell() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-tool-timeout", &home.cwd);
+        let output = session.approved(&registry, json!({"timeout": 5, "code": r#"
+import sys
+command = f'''"{sys.executable}" -c "import os, time; open('bridge-pid', 'w').write(str(os.getpid())); time.sleep(60)"'''
+await tool.bash(command=command)
+"#})).await;
+        assert_eq!(output.verdict, Some(ToolVerdict::Interrupted));
+        assert!(output.output.contains("timed out after 5s"), "{}", output.output);
+        let pid: u32 = std::fs::read_to_string(home.cwd.join("bridge-pid"))
+            .expect("the child of the bridge shell started")
+            .parse()
+            .expect("valid pid");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while horon_agent_platform::is_process_running(pid) {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("the bridge shell's child was stopped");
+
+        if horon_agent_platform::process::process_groups_supported() {
+            let output = session
+                .approved(
+                    &registry,
+                    json!({"code": r#"
+await tool.bash(command='sleep 60 >/dev/null 2>&1 & echo $! > bridge-finished-pid')
+print('shell returned')
+"#}),
+                )
+                .await;
+            assert!(output.output.ends_with("shell returned\n"), "{}", output.output);
+            let descendant: u32 = std::fs::read_to_string(home.cwd.join("bridge-finished-pid"))
+                .expect("shell wrote the descendant PID")
+                .trim()
+                .parse()
+                .expect("valid pid");
+            tokio::time::timeout(Duration::from_secs(5), async {
+                // Linux can keep an exited orphan's PID until init reaps it.
+                // Check whether the child can still execute, not just whether
+                // the kernel still has a process table entry for it.
+                loop {
+                    let status = tokio::process::Command::new("ps")
+                        .args(["-o", "stat=", "-p", &descendant.to_string()])
+                        .output()
+                        .await
+                        .expect("read descendant process status");
+                    let state = String::from_utf8_lossy(&status.stdout);
+                    let state = state.trim();
+                    if state.starts_with('Z') || (status.status.code() == Some(1) && state.is_empty()) {
+                        break;
+                    }
+                    assert!(status.status.success() && !state.is_empty(), "{status:?}");
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .expect("the shell's group was stopped after its leader exited");
+        }
+    });
+}

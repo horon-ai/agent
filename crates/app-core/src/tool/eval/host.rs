@@ -7,6 +7,7 @@ use std::task::Poll;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader, ReadBuf};
 use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
 
+use super::bridge::{Bridge, MAX_CALLS, ToolRequest};
 use super::output::Capture;
 
 const RUNNER: &str = include_str!("runner.py");
@@ -47,13 +48,33 @@ pub(super) fn code_fits_frame(code: &str) -> bool {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum Frame {
-    Started { id: u64 },
-    Stdout { id: u64, text: String },
-    Stderr { id: u64, text: String },
-    Error { id: Option<u64>, text: String },
-    Done { id: u64, ok: bool },
+    Started {
+        id: u64,
+    },
+    Stdout {
+        id: u64,
+        text: String,
+    },
+    Stderr {
+        id: u64,
+        text: String,
+    },
+    Error {
+        id: Option<u64>,
+        text: String,
+    },
+    Done {
+        id: u64,
+        ok: bool,
+    },
+    ToolCall {
+        id: u64,
+        seq: u32,
+        name: String,
+        args: serde_json::Value,
+    },
 }
 
 pub(super) struct Kernel {
@@ -100,7 +121,7 @@ impl Kernel {
         })
     }
 
-    pub(super) async fn execute(&mut self, code: &str, output: &mut Capture) -> Result<bool> {
+    pub(super) async fn execute(&mut self, code: &str, bridge: &Bridge<'_>, output: &mut Capture) -> Result<bool> {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
         serde_json::to_writer(&mut self.frame, &Request { id, code })?;
@@ -115,6 +136,7 @@ impl Kernel {
         self.frame.clear();
 
         let mut started = false;
+        let mut calls = 0;
         let mut native = [0; 4096];
         loop {
             let frame = tokio::select! {
@@ -141,7 +163,29 @@ impl Kernel {
                 } if started && received == id => {
                     output.push(&text);
                 }
-                Frame::Error { id: None, text } if !started => bail!("Python eval runner rejected the request: {text}"),
+                Frame::Error { id: None, text } => bail!("Python eval runner stopped: {text}"),
+                Frame::ToolCall {
+                    id: received,
+                    seq,
+                    name,
+                    args,
+                } if started && received == id => {
+                    if seq != calls + 1 || seq > MAX_CALLS {
+                        bail!("Python eval returned an invalid tool call sequence");
+                    }
+                    calls = seq;
+                    let reply = bridge.dispatch(id, seq, ToolRequest { name, args }).await;
+                    serde_json::to_writer(&mut self.frame, &reply)?;
+                    if self.frame.len() >= MAX_FRAME {
+                        bail!("Python tool response exceeds the 256 KiB frame limit");
+                    }
+                    self.frame.push(b'\n');
+                    self.stdin
+                        .write_all(&self.frame)
+                        .await
+                        .context("send Python tool response")?;
+                    self.frame.clear();
+                }
                 Frame::Done { id: received, ok } if started && received == id => {
                     self.drain_diagnostics(output, &mut native).await;
                     return Ok(ok);
@@ -198,7 +242,7 @@ impl Drop for Kernel {
     }
 }
 
-fn stop_child(mut child: Child) {
+pub(in crate::tool) fn stop_child(mut child: Child) {
     if let Some(pid) = child.id()
         && horon_agent_platform::process::force_stop_process_group(pid).is_err()
     {
