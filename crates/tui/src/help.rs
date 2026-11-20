@@ -63,6 +63,16 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (ids::APP_COPY_DRAFT, "copy the draft to the terminal clipboard"),
+    (
+        ids::APP_COPY_LINE,
+        "copy the line under the cursor to the terminal clipboard",
+    ),
+    (ids::APP_COPY_LAST, "copy the last answer to the terminal clipboard"),
+    (
+        ids::APP_COPY_CODE,
+        "copy the newest code block to the terminal clipboard",
+    ),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -105,6 +115,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
+        "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",

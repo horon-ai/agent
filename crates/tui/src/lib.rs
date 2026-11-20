@@ -10,6 +10,7 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+mod clipboard;
 pub mod commands;
 pub mod context;
 mod fuzzy;
@@ -146,14 +147,23 @@ Keys:
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Alt-P          pick the model this session uses
+  Alt-D          copy the draft to the terminal clipboard
+  Alt-K          copy the line under the cursor to the terminal clipboard
+  Alt-L          copy the last answer to the terminal clipboard
+  Alt-C          copy the newest code block to the terminal clipboard
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
-  the keys in force.
+  the keys in force. Copying uses the terminal's OSC 52 sequence: a
+  terminal or a multiplexer that does not take it keeps the text on
+  screen for selection, and HORON_TUI_OSC52=0 turns copying off.
 
 Commands:
   /help          list the commands (built-in, harness, command files),
                  the skills and the keys in force; /help <command>
                  describes one of them
   /clear         clear the transcript pane
+  /copy [last|code]
+                 open the list of recent answers and code blocks, or copy
+                 the last answer or the newest code block
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
@@ -538,6 +548,12 @@ where
         // own stamp moved.
         changed |= app.tick_commands();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
+            changed = true;
+        }
+        // The one place a copy reaches standard output: the app decided what it
+        // carries, and the terminal is asked here, after the frame is measured
+        // and before it is drawn.
+        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), |name| std::env::var(name).ok()) {
             changed = true;
         }
         let minute = statusline::local_minute();

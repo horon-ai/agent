@@ -125,6 +125,12 @@ impl App {
                     self.draft_skill(&value);
                     None
                 }
+                // The chosen text leaves through the same queue the copy keys
+                // use, so the list and the keys cannot carry different bytes.
+                Kind::Copies => {
+                    self.copy_selection(&value);
+                    None
+                }
             },
         }
     }

@@ -185,6 +185,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
 | `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
+| `app.copy_code` | `alt+c` | Choose a code block from the latest answer and copy it |
+| `app.copy_last` | `alt+l` | Copy the latest answer |
+| `app.copy_draft` | `alt+d` | Copy the whole draft |
+| `app.copy_line` | `alt+k` | Copy the line under the cursor |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `editor.backspace` | `backspace` | Delete the character before the cursor |
@@ -342,6 +346,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 
 | Command | Effect |
 | --- | --- |
+| `/copy` | Choose which text to copy |
 | `/clear` | Clear the transcript pane |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
@@ -355,7 +360,9 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twelve commands the client answers itself, in name order.
+The table lists the commands the client handles (`Local` in `crates/tui/src/commands/mod.rs`).
+
+Copy uses the OSC 52 clipboard request on terminals that declare support. Set `HORON_TUI_OSC52=0` to turn it off. When the terminal cannot accept the request, the text stays available for manual selection.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 

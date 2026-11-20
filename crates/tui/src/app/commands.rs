@@ -51,6 +51,9 @@ impl App {
                 self.transcript.clear();
                 None
             }
+            // Copying is answered here and written by the loop: the app decides
+            // what a copy carries and never touches the terminal.
+            Local::Copy => self.copy_command(arguments),
             // No argument asks for the list the picker draws; a name still
             // switches straight away, or waits for the turn to end, which is
             // what a script or a habit uses.

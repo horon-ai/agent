@@ -40,6 +40,8 @@ pub enum Kind {
     Skills,
     /// The drafts sent before this one.
     History,
+    /// The text this session can copy: the draft, answers, code blocks.
+    Copies,
 }
 
 /// One row of the list.

@@ -104,6 +104,17 @@ impl Input {
         self.line_starts.partition_point(|start| *start <= self.cursor) - 1
     }
 
+    /// The line the cursor is on, without the newline that ends it.
+    ///
+    /// This is what a copy of "the current line" carries: the draft may hold a
+    /// whole message, and the row under the caret is the one the user is working
+    /// on.
+    pub fn current_line(&self) -> String {
+        let line = self.line_of_cursor();
+        let (start, end) = (self.line_start(line), self.line_end(line));
+        self.characters[start..end].iter().collect()
+    }
+
     /// The index of the first character of a line.
     fn line_start(&self, line: usize) -> usize {
         self.line_starts[line]
