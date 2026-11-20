@@ -38,6 +38,24 @@ fn app() -> App {
     App::new("socket · session".to_string(), receiver)
 }
 
+/// Settings resolved from the registry defaults and one set of environment
+/// overrides, which is how a display preference reaches the app.
+fn settings_with(env: &[(&str, &str)]) -> crate::settings::Settings {
+    let sources = crate::settings::Sources {
+        global: std::path::PathBuf::from("/nonexistent/global.toml"),
+        project: None,
+        configs: Vec::new(),
+    };
+    let set = crate::settings::layers::LayerSet::new(&sources);
+    let (settings, warnings) = set.resolve(|name| {
+        env.iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| (*value).to_string())
+    });
+    assert!(warnings.is_empty(), "no layer warns: {warnings:?}");
+    settings
+}
+
 fn tool_start(call_id: &str) -> ApiEvent {
     ApiEvent::ToolStart {
         session_id: "s1".to_string(),
@@ -59,6 +77,10 @@ fn tool_done(call_id: &str, output: &str) -> ApiEvent {
 
 fn ctrl_o() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)
+}
+
+fn alt_t() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('t'), KeyModifiers::ALT)
 }
 
 fn page_up() -> KeyEvent {
@@ -736,4 +758,211 @@ fn a_held_view_builds_only_the_rows_it_shows() {
     let built = crate::wrap::built_rows();
     assert!(built < 200, "a held frame built {built} rows for forty: {screen}");
     assert!(screen.contains("rows below"), "the held view said nothing: {screen}");
+}
+
+#[test]
+fn the_selected_call_is_the_one_the_expand_key_opens() {
+    let mut state = state_with(&[("c1", "a\nb\n"), ("c2", "c\nd\n")]);
+    assert_eq!(state.selected(), Some("c2"), "the newest call is not the default");
+    assert!(state.select("c1"), "a kept call could not be selected");
+    assert_eq!(state.selected(), Some("c1"));
+    assert!(state.toggle());
+    assert!(state.is_expanded("c1"), "the selected earlier call did not open");
+    assert!(!state.is_expanded("c2"), "an unselected call opened too");
+    let frame = tool_expand::Frame::new(&state, &Bindings::default());
+    assert!(
+        frame.retained("c1").selected,
+        "the open call is not marked as the selection"
+    );
+    assert!(
+        !frame.retained("c2").selected,
+        "another call was marked as the selection"
+    );
+}
+
+#[test]
+fn a_selection_the_reader_moved_survives_the_next_result() {
+    let mut state = state_with(&[("c1", "a\nb\n")]);
+    assert!(state.select("c1"));
+    state.record("c2", "c\nd\n");
+    assert_eq!(
+        state.selected(),
+        Some("c1"),
+        "a result arriving below a held view took the selection away"
+    );
+    state.follow_newest();
+    assert_eq!(state.selected(), Some("c2"), "following the end kept an old selection");
+}
+
+#[test]
+fn the_rows_in_view_decide_which_result_is_selected() {
+    let mut transcript = Transcript::new();
+    let output = big_output();
+    transcript.tool_done("c1", "bash", Some(output.as_str()), None);
+    for index in 0..5 {
+        transcript.push_notice(format!("notice {index}"));
+    }
+    transcript.tool_done("c2", "bash", Some(output.as_str()), None);
+    // c1 takes five rows, each notice one, and c2 another five.
+    let heights = [5, 1, 1, 1, 1, 1, 5];
+    transcript.select_tool_at(&heights, 0, 4);
+    assert_eq!(transcript.expand_state().selected(), Some("c1"));
+    transcript.select_tool_at(&heights, 6, 2);
+    assert_eq!(
+        transcript.expand_state().selected(),
+        None,
+        "a window showing only notices still selected a call"
+    );
+    transcript.select_tool_at(&heights, 10, 2);
+    assert_eq!(transcript.expand_state().selected(), Some("c2"));
+    // A stale measurement is not read against items it never saw.
+    transcript.select_tool_at(&heights[..3], 0, 4);
+    assert_eq!(transcript.expand_state().selected(), Some("c2"));
+}
+
+#[test]
+fn an_earlier_result_opens_and_folds_without_moving_the_view() {
+    let mut app = app_with_lines(5);
+    app.apply_event(&tool_start("c1"));
+    app.apply_event(&tool_done("c1", &big_output()));
+    app.transcript.push_notice("between the calls");
+    app.apply_event(&tool_start("c2"));
+    app.apply_event(&tool_done("c2", &big_output()));
+    let _ = draw_at(&mut app, 60, 16);
+    assert_eq!(app.on_key(page_up()), None, "the view keeps its own key");
+    let held = draw_at(&mut app, 60, 16);
+    let before_top = top_rows(&held, 7);
+    let before_offset = app.scroll.offset();
+    assert!(before_offset > 0, "the view did not hold:\n{held}");
+    assert_eq!(
+        app.transcript.expand_state().selected(),
+        Some("c2"),
+        "the newest call stopped being the selection before a key was pressed:\n{held}"
+    );
+
+    // The frame just drawn decides which call is on screen: the earlier one,
+    // not the newest one the selection still named.
+    assert_eq!(app.on_key(ctrl_o()), None);
+    let open = draw_at(&mut app, 60, 16);
+    assert!(
+        app.transcript.expand_state().is_expanded("c1"),
+        "the earlier result on screen did not open"
+    );
+    assert!(
+        !app.transcript.expand_state().is_expanded("c2"),
+        "the newest result opened instead of the one on screen"
+    );
+    assert_eq!(
+        top_rows(&open, 7),
+        before_top,
+        "opening the result moved the view:\n{open}"
+    );
+    assert!(
+        app.scroll.offset() > before_offset,
+        "the rows the open result added did not move the held offset:\n{open}"
+    );
+    let open_offset = app.scroll.offset();
+
+    assert_eq!(app.on_key(ctrl_o()), None);
+    let shut = draw_at(&mut app, 60, 16);
+    assert!(
+        !app.transcript.expand_state().is_expanded("c1"),
+        "the second press did not fold the result"
+    );
+    assert_eq!(
+        top_rows(&shut, 7),
+        before_top,
+        "folding the result moved the view:\n{shut}"
+    );
+    assert!(
+        app.scroll.offset() < open_offset,
+        "the folded result did not give its rows back"
+    );
+}
+
+#[test]
+fn a_block_that_changes_above_the_view_leaves_its_offset_alone() {
+    let mut scroll = crate::scroll::Scroll::new();
+    scroll.up(1);
+    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    assert_eq!(scroll.offset(), 1);
+
+    // The first block grows by eight rows, all above the two rows on screen.
+    // The rows being read move down with the block, but the view shows the same
+    // rows, which is exactly what leaving the offset alone does.
+    scroll.reflow();
+    scroll.measure(20, 3, [0, 0], 2, |index| if index == 0 { 10 } else { 2 });
+    assert_eq!(scroll.offset(), 1, "a block growing above the view moved it");
+
+    // Hiding it again has the same answer in the other direction.
+    scroll.reflow();
+    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    assert_eq!(scroll.offset(), 1, "a block shrinking above the view moved it");
+}
+
+#[test]
+fn a_block_that_changes_below_the_view_moves_its_offset_by_that_change() {
+    let mut scroll = crate::scroll::Scroll::new();
+    scroll.up(1);
+    scroll.measure(20, 3, [0, 0], 2, |_| 2);
+    assert_eq!(scroll.offset(), 1);
+
+    // The last block grows by eight rows below the view's top edge: those rows
+    // sit between the view and the end, so the offset grows with them.
+    scroll.reflow();
+    scroll.measure(20, 3, [0, 0], 2, |index| if index == 2 { 10 } else { 2 });
+    assert_eq!(scroll.offset(), 9, "rows below the view did not push the offset");
+}
+
+#[test]
+fn the_activity_setting_hides_and_restores_the_finished_calls() {
+    let mut app = app();
+    app.apply_event(&tool_start("c1"));
+    app.apply_event(&tool_done("c1", &big_output()));
+    assert!(draw_to_string(&mut app).contains("ctrl+o expands"));
+
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY", "false")]));
+    let hidden = draw_to_string(&mut app);
+    assert!(!hidden.contains("bash"), "the setting did not hide the call:\n{hidden}");
+
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY", "true")]));
+    let shown = draw_to_string(&mut app);
+    assert!(
+        shown.contains("ctrl+o expands"),
+        "the kept output was dropped with the hidden line:\n{shown}"
+    );
+}
+
+#[test]
+fn hiding_tool_activity_keeps_the_running_call_and_the_parked_approval() {
+    let mut app = app();
+    app.apply_event(&tool_start("c1"));
+    app.apply_event(&tool_done("c1", &big_output()));
+    assert!(draw_to_string(&mut app).contains("bash"));
+
+    assert_eq!(app.on_key(alt_t()), None);
+    let hidden = draw_to_string(&mut app);
+    assert!(!hidden.contains("bash"), "a finished call was still drawn:\n{hidden}");
+    assert!(
+        matches!(
+            app.transcript.items().last(),
+            Some(Item::Tool(call)) if call.state == crate::transcript::ToolState::Done
+        ),
+        "hiding the line stopped the result from reaching the transcript"
+    );
+
+    app.apply_event(&tool_start("c2"));
+    let running = draw_to_string(&mut app);
+    assert!(running.contains("bash"), "the running call vanished:\n{running}");
+
+    let refusal = "Tool 'bash' needs approval before it runs: bash runs a process. Request req_1 is \
+                   queued; answer it through the approval surface. Nothing was executed.";
+    app.transcript
+        .tool_done("c2", "bash", Some(big_output().as_str()), Some(refusal));
+    app.transcript.park_request("req_1");
+    let waiting = draw_to_string(&mut app);
+    assert!(
+        waiting.contains("needs approval"),
+        "the parked approval vanished:\n{waiting}"
+    );
 }

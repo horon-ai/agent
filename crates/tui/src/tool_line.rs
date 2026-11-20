@@ -10,7 +10,7 @@
 
 use std::time::Instant;
 
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -71,7 +71,9 @@ impl OutputHead {
 /// name it, and `text` is the whole output while the call is drawn expanded.
 /// `kept` says the client still holds the text, which the marker needs even when
 /// the call no longer names the key: a line that hid output keeps its count row
-/// after the label moves to a newer call, so the two states take the same rows.
+/// after the label moves to another call, so the two states take the same rows.
+/// `selected` marks the call the expand key acts on, which is the one the view
+/// shows.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Retained<'a> {
     /// The key that shows the rest of this call's output.
@@ -80,6 +82,8 @@ pub struct Retained<'a> {
     pub text: Option<&'a str>,
     /// Whether the client still holds this call's text.
     pub kept: bool,
+    /// Whether this is the call the expand key acts on.
+    pub selected: bool,
 }
 
 /// Append streamed argument bytes, stopping at [`MAX_INPUT_BYTES`].
@@ -352,9 +356,15 @@ pub(crate) fn rows_with<'a>(
 
     let lead = format!("{} ", symbols.tool_lead);
     let fixed = lead.width() + call.name.width() + tail.width();
+    let mut name = Style::default().fg(theme.transcript.tool_title);
+    if retained.selected {
+        // The view decides which call the key acts on, so the line has to show
+        // it even where the marker's key label does not fit on one row.
+        name = name.add_modifier(Modifier::UNDERLINED);
+    }
     let mut head = vec![
         Span::styled(lead, Style::default().fg(color)),
-        Span::styled(call.name.clone(), Style::default().fg(theme.transcript.tool_title)),
+        Span::styled(call.name.clone(), name),
     ];
     if let Some(summary) = summarize(&call.input) {
         let budget = usize::from(width).max(1).saturating_sub(fixed + 1);

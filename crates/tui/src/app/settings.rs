@@ -44,6 +44,13 @@ impl App {
             None => crate::tool_line::DEFAULT_OUTPUT_LINES,
         };
         self.transcript.set_tool_output_lines(output_lines);
+        // Finished tool lines take rows or give them back, which a held view
+        // has to recount the same way the expand key does.
+        let show_tool_activity = settings.boolean("transcript.show_tool_activity").unwrap_or(true);
+        if show_tool_activity != self.transcript.show_tool_activity() {
+            self.transcript.set_tool_activity(show_tool_activity);
+            self.scroll.reflow();
+        }
         // A terminal that already reported the wheel keeps doing so until the
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.

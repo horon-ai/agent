@@ -72,11 +72,12 @@ The settings of one process are the registry defaults, then the global file, the
 | `statusline.context_window` | number | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.show_tool_activity` | boolean | `true` | `HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY` |
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-The table is the settings registry (`crates/tui/src/settings/registry.rs`), twelve keys in its order, and it is what the settings screen draws.
+The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
 
@@ -184,7 +185,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
-| `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
+| `app.expand_tool` | `ctrl+o` | Expand or fold the selected retained tool result |
+| `app.toggle_tool_activity` | `alt+t` | Show or hide completed tool activity for this session |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `editor.backspace` | `backspace` | Delete the character before the cursor |
@@ -244,6 +246,8 @@ A call the approval gate refused is drawn with one short label rather than the d
 A `bash` job with `notify_pattern` displays live process-output notices in the launching session's transcript. Each notice identifies the job and its stdout or stderr stream.
 
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
+
+Scroll to an older retained tool result and press Ctrl+O to expand or fold it. Alt+T hides or restores completed tool rows. Running calls and pending approvals remain visible.
 
 Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
 

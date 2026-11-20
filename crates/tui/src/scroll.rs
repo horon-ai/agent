@@ -89,6 +89,14 @@ pub struct Scroll {
     /// how many rows the item wraps to, and the row count is what the offset is
     /// made of.
     hold_newest: bool,
+    /// A block changed height without any output arriving, and the next held
+    /// frame has to move the offset with it.
+    ///
+    /// A rebuild alone skips that move, because a width change recounts rows
+    /// rather than adding them. A tool call opened or a tool line hidden is the
+    /// other kind of change: the same content, wrapped differently, and the top
+    /// row the reader is on must not slide.
+    anchor: bool,
 }
 
 impl Scroll {
@@ -135,6 +143,18 @@ impl Scroll {
     /// that can place it.
     pub fn invalidate(&mut self) {
         self.tally = None;
+    }
+
+    /// Recount the content after a block changed height on its own.
+    ///
+    /// A tool call opened or closed, or the tool lines were hidden: no output
+    /// arrived, so the rows below the view did not grow by themselves, but the
+    /// block the reader is on wraps differently now. The next held frame
+    /// recounts and moves the offset by the difference, which is what keeps the
+    /// top row where it was instead of jumping to the end of the conversation.
+    pub fn reflow(&mut self) {
+        self.tally = None;
+        self.anchor = true;
     }
 
     /// Hold the view `rows` higher.
@@ -196,6 +216,10 @@ impl Scroll {
     /// scroll is stale by however many rows arrived while the view followed.
     pub fn following_frame(&mut self) {
         self.held_frame = false;
+        // Nothing measures a frame that follows the end, so a change that
+        // asked for an anchored recount has nothing to move against; the next
+        // held frame takes its height as a fresh baseline anyway.
+        self.anchor = false;
     }
 
     /// Note what the content holds now.
@@ -215,11 +239,13 @@ impl Scroll {
     /// Bring the counted height of the content up to date, and return it.
     ///
     /// `rows_of` answers the wrapped height of one committed item. A held view
-    /// is moved by however much the content changed below it, which is what
-    /// keeps the rows on screen from sliding while output arrives. Everything
-    /// already measured is reused except the newest item, so the cost of a frame
-    /// is that item, the items that are new, and the block still streaming —
-    /// never the whole conversation.
+    /// is moved by however much the content changed at or below its top edge,
+    /// which is what keeps the rows on screen from sliding while output arrives;
+    /// a block above that edge moves the content without changing the rows the
+    /// view shows, so it does not move the view. Everything already measured is
+    /// reused except the newest item, so the cost of a frame is that item, the
+    /// items that are new, and the block still streaming — never the whole
+    /// conversation.
     pub fn measure(
         &mut self,
         width: u16,
@@ -233,6 +259,11 @@ impl Scroll {
         // baseline: nothing measured it while the view was at the end, so every
         // row added since then would otherwise read as growth below the view.
         let baseline = !self.held_frame;
+        // A change the caller made on purpose moves the offset against the
+        // height it found, even though the recount below is a rebuild. The
+        // tally it was drawn against is kept for that move.
+        let anchored = std::mem::take(&mut self.anchor);
+        let previous_tally = if anchored { self.tally.clone() } else { None };
         let rebuilt = match &self.tally {
             Some(tally) => tally.width != width || tally.items.len() > items,
             None => true,
@@ -267,22 +298,43 @@ impl Scroll {
         };
         let previous = self.height.replace(height);
         // A rebuild recounts the same rows at a new width, which is not output
-        // arriving: only a height that grew across two measurements of the same
-        // width moves the offset.
-        if !rebuilt
-            && !baseline
-            && let Some(previous) = previous
-            && height != previous
+        // arriving: only a change the caller announced with `reflow` moves the
+        // view then. A change there is measured from the view's top edge, so a
+        // block above that edge cannot pull the view with it.
+        if !baseline
+            && let Some(previous_height) = previous
+            && height != previous_height
             && self.offset > 0
         {
-            // Rows that arrived below the view push the offset down with them,
-            // and rows that went away pull it back: either way the rows on
-            // screen stay where the user left them.
-            if height > previous {
-                self.offset = self.offset.saturating_add(height - previous);
-                self.fresh = true;
+            let delta = if anchored {
+                match (previous_tally.as_ref(), self.tally.as_ref()) {
+                    (Some(old), Some(new)) if old.width == width && old.items.len() == new.items.len() => {
+                        anchor_delta(old, new, previous_height, self.offset, view)
+                    }
+                    // A width or item-count change at the same time names no
+                    // reliable row; like any resize, it leaves the offset
+                    // where it was.
+                    _ => 0,
+                }
+            } else if !rebuilt {
+                i64::try_from(height).unwrap_or(i64::MAX) - i64::try_from(previous_height).unwrap_or(i64::MAX)
             } else {
-                self.offset = self.offset.saturating_sub(previous - height);
+                0
+            };
+            // Rows added below the view push the offset down with them, and
+            // rows that went away pull it back: either way the rows on screen
+            // stay where the user left them.
+            if delta > 0 {
+                self.offset = self.offset.saturating_add(usize::try_from(delta).unwrap_or(usize::MAX));
+                // Only output arriving is worth the "new output" line; a press
+                // the reader made is not.
+                if !anchored {
+                    self.fresh = true;
+                }
+            } else if delta < 0 {
+                self.offset = self
+                    .offset
+                    .saturating_sub(usize::try_from(delta.unsigned_abs()).unwrap_or(usize::MAX));
             }
         }
         // `view` here is the rows a held frame can fill, because the frame that
@@ -319,6 +371,51 @@ impl Scroll {
         self.held_frame = true;
         height
     }
+}
+
+/// How many rows a recount added at or below the view's top edge.
+///
+/// `previous` is the tally the view was drawn against, `height` the content
+/// height it had then, and `offset`/`view` the window it showed. A block above
+/// the top edge may grow or shrink freely: it moves the rows on screen without
+/// changing which rows they are, so it contributes nothing. The block holding
+/// the top edge and every block below it do change what the bottom edge is, and
+/// the offset moves by their own change. A block that sat entirely above the
+/// top edge is skipped by its end row, so hiding or expanding it never drags
+/// the reader away from what they were reading.
+fn anchor_delta(previous: &Tally, now: &Tally, height: usize, offset: usize, view: usize) -> i64 {
+    let top = height.saturating_sub(offset).saturating_sub(view);
+    let mut start = 0usize;
+    let mut delta = 0i64;
+    let mut counting = false;
+    for (index, old) in previous.items.iter().enumerate() {
+        let end = start.saturating_add(*old);
+        if !counting && start < top && end <= top {
+            start = end;
+            continue;
+        }
+        counting = true;
+        let new = now.items.get(index).copied().unwrap_or(0);
+        delta = delta.saturating_add(row_delta(*old, new));
+        start = end;
+    }
+    for (index, old) in previous.open.iter().enumerate() {
+        let end = start.saturating_add(*old);
+        if !counting && start < top && end <= top {
+            start = end;
+            continue;
+        }
+        counting = true;
+        let new = now.open.get(index).copied().unwrap_or(0);
+        delta = delta.saturating_add(row_delta(*old, new));
+        start = end;
+    }
+    delta
+}
+
+/// The signed rows one block gained or lost, for a row total.
+fn row_delta(old: usize, new: usize) -> i64 {
+    i64::try_from(new).unwrap_or(i64::MAX) - i64::try_from(old).unwrap_or(i64::MAX)
 }
 
 /// Ask the terminal to report the wheel and the other mouse events.

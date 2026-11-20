@@ -56,7 +56,11 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
     (
         ids::APP_EXPAND_TOOL,
-        "show the whole output of the newest cut tool call, or hide it again",
+        "show the whole output of the selected cut tool call, or hide it again",
+    ),
+    (
+        ids::APP_TOGGLE_TOOL_ACTIVITY,
+        "hide or show the record of finished tool calls",
     ),
     (
         ids::APP_CYCLE_EFFORT,

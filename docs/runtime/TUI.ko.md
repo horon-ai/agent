@@ -72,11 +72,12 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `statusline.context_window` | 숫자 | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.show_tool_activity` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY` |
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열두 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
@@ -184,7 +185,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | 트랜스크립트를 한 줄 위에 붙잡아 둔다 |
 | `app.scroll_down` | `shift+down` | 트랜스크립트를 한 줄 끝 쪽으로 옮긴다 |
 | `app.scroll_bottom` | `ctrl+end` | 다시 대화의 끝을 따라간다 |
-| `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
+| `app.expand_tool` | `ctrl+o` | 선택한 보존 도구 결과를 펼치거나 접는다 |
+| `app.toggle_tool_activity` | `alt+t` | 현재 세션에서 완료된 도구 활동을 표시하거나 숨긴다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
@@ -244,6 +246,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시합니다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시됩니다.
 
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
+
+이전에 보존된 도구 결과까지 스크롤한 뒤 Ctrl+O를 눌러 펼치거나 접습니다. Alt+T로 완료된 도구 행을 숨기거나 되살립니다. 실행 중인 호출과 대기 중인 승인은 화면에 남습니다.
 
 어시스턴트 글은 마크다운으로 그린다. 제목, 강조, 인라인 코드, 목록, 인용, 펜스 코드, 가로줄을 다룬다. 목록은 최대 여섯 단계까지 중첩되고, 단계마다 두 칸 또는 탭 하나를 쓰며, 모델이 적은 들여쓰기에서 중첩을 그린다. 펜스 코드는 적힌 글자를 그대로 두고, 여는 펜스 줄이 완성되면 그 첫 낱말을 언어 표시로 그리므로, 절반만 도착한 ` ```ru `가 잠깐 표시를 띄웠다가 바뀌지 않는다. 표, 링크, 렌더러가 다루지 않는 문법은 모델이 적은 원문 그대로 남는다. 글을 지우면 모델이 한 말을 잃기 때문이다. 줄바꿈된 행은 이어지는 행의 들여쓰기를 지키므로, 중첩된 항목은 줄이 바뀐 뒤에도 중첩으로 읽힌다. 새 턴은 앞 턴에서 한 행 비운 아래에서 시작한다.
 

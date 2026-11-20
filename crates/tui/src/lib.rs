@@ -1109,7 +1109,9 @@ fn indicator_line(app: &App, below: usize) -> Line<'static> {
 
 /// What an empty transcript says instead of nothing.
 fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    if !rows.is_empty() {
+    // A conversation whose only rows are hidden tool calls still has content:
+    // asking the reader to send a message would misread what is on screen.
+    if !rows.is_empty() || !app.transcript.items().is_empty() {
         return rows;
     }
     wrap::wrap_line(
