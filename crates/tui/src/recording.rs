@@ -303,7 +303,7 @@ fn scrub(text: &str) -> String {
             match chars.peek().copied() {
                 Some('[') => {
                     chars.next();
-                    while let Some(next) = chars.next() {
+                    for next in chars.by_ref() {
                         if ('\u{40}'..='\u{7e}').contains(&next) {
                             break;
                         }
