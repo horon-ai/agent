@@ -22,6 +22,7 @@ mod loop_io;
 mod markdown;
 pub mod overlays;
 pub mod paste;
+mod progress;
 pub mod prompts;
 pub mod report;
 pub mod scroll;
@@ -52,6 +53,10 @@ mod tool_expand_tests;
 #[cfg(test)]
 #[path = "title_tests.rs"]
 mod title_tests;
+
+#[cfg(test)]
+#[path = "progress_tests.rs"]
+mod progress_tests;
 
 #[cfg(test)]
 #[path = "turn_state_tests.rs"]
@@ -376,6 +381,7 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     paste::guard_panics();
     scroll::guard_panics();
     title::guard_panics();
+    progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
@@ -385,6 +391,9 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     if let Err(error) = title.start(&window_label(&app)) {
         app.warn(format!("title: {error}"));
     }
+    // The tab indicator and the status record follow the app state; nothing is
+    // written until a state differs from the one the terminal already holds.
+    let mut signals = progress::Signals::stdout();
     // Installed once the modes it restores are on: a signal before this point
     // had nothing to undo. A refusal is reported and the client keeps running.
     if let Err(error) = terminal::guard_signals() {
@@ -393,16 +402,28 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     let (code, failure) = event_loop(
         &mut terminal,
         &mut app,
-        &mut title,
+        Channels {
+            title: &mut title,
+            signals: &mut signals,
+        },
         &runtime.commands,
         reloader,
         &mut themes,
         keys,
     );
+    // The tab indicator and the status record come down before the alternate
+    // screen does: this writer knows exactly which sequences it put on the wire,
+    // so it removes only those. The panic and signal paths have no writer left
+    // to ask and go through `terminal::restore`, which finds nothing left to
+    // undo here.
+    let signals_error = signals.clear().err();
     // The same sequence the signal path runs: see `terminal::restore`.
     terminal::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
+    }
+    if let Some(error) = signals_error {
+        eprintln!("horon-tui: terminal signals: {error}");
     }
     code
 }
@@ -459,6 +480,16 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
     }
 }
 
+/// The channels the loop keeps in step with the app state.
+///
+/// Both are escape sequences out to the terminal — the window title and the
+/// progress and status signals — and both deduplicate against what they last
+/// sent, so the loop can call them every frame.
+struct Channels<'a> {
+    title: &'a mut title::WindowTitle,
+    signals: &'a mut progress::Signals<std::io::Stdout>,
+}
+
 /// The main loop: drain SDK events, redraw, then read at most one keystroke.
 ///
 /// A failure that ends the loop is returned instead of printed: the alternate
@@ -467,7 +498,7 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    title: &mut title::WindowTitle,
+    channels: Channels<'_>,
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
@@ -499,12 +530,20 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
+        // The tab indicator and the status record follow the state the status
+        // line reads. The call is cheap when nothing moved, because the signals
+        // compare against what the terminal already holds.
+        let signal = app.terminal_signal();
+        if let Err(error) = channels.signals.sync(signal, app.terminal_signals) {
+            app.warn(format!("terminal signals: {error}"));
+            changed = true;
+        }
         // The session and the working directory can change while the client
         // runs; the window is renamed only when the label on it is not the one
         // the app now names.
         if changed {
             let label = window_label(app);
-            if let Err(error) = title.show(&label) {
+            if let Err(error) = channels.title.show(&label) {
                 app.warn(format!("title: {error}"));
                 changed = true;
             }

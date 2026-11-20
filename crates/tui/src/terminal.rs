@@ -19,6 +19,11 @@ use crate::{paste, scroll, title};
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
 pub(crate) fn restore() {
+    // The progress indicator and the status record outlive the process that
+    // wrote them. The normal exit clears them through its own writer, which
+    // knows what it wrote; this covers the panic hook and the signal thread,
+    // which have no writer left, and finds nothing to do after the writer ran.
+    crate::progress::clear_stdout();
     paste::disable();
     // The stack entry goes back with the screen: the title the shell set is the
     // one the next prompt should be in.

@@ -59,6 +59,18 @@ impl TodoPanel {
         panel
     }
 
+    /// Share of the list that is done, or none when there is nothing to count.
+    ///
+    /// A cancelled item is not in `total`, so the share describes the work that
+    /// is still expected; an empty list has no share at all, which is what makes
+    /// a progress report from it indeterminate rather than 0%.
+    pub(crate) fn percent(&self) -> Option<u8> {
+        if self.total == 0 {
+            return None;
+        }
+        Some((self.completed * 100 / self.total) as u8)
+    }
+
     pub(crate) fn height(&self, available: u16) -> u16 {
         if self.total == 0 || (available < 2 && self.open > 0) {
             return 0;

@@ -48,6 +48,10 @@ impl App {
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
         self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
+        // The loop reads the two signal channels here rather than per frame; a
+        // channel turned off is cleared by the next sync, so a report does not
+        // outlive the setting that asked for it.
+        self.terminal_signals = crate::progress::Options::from_settings(settings);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

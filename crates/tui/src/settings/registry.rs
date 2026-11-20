@@ -200,6 +200,30 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "terminal.progress",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TERMINAL_PROGRESS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Terminal",
+            label: "Tab progress",
+            description: "Report a turn's progress to the terminal's tab and taskbar (OSC 9;4), where the terminal supports it.",
+        },
+    },
+    SettingSpec {
+        id: "terminal.program_status",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TERMINAL_PROGRAM_STATUS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Terminal",
+            label: "Program status",
+            description: "Report working, waiting, done and failed states to the terminal (OSC 7501), where the terminal supports it.",
+        },
+    },
+    SettingSpec {
         id: "editor.submit_on_enter",
         kind: SettingKind::Bool,
         env: "HORON_TUI_EDITOR_SUBMIT_ON_ENTER",

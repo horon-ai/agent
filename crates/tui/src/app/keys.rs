@@ -18,6 +18,10 @@ impl App {
     /// decides what each key means; a printable character that no action claims
     /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A key means the user is at the client: a mark a finished or failed
+        // turn left on the terminal tab has been seen, so it goes before this
+        // key changes the state the next report carries.
+        self.note_user_attention();
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
         // the draft leaves a list that belongs to the text it left behind.

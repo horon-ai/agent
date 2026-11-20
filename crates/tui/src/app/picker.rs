@@ -149,6 +149,9 @@ impl App {
         self.session_title = session.title;
         self.new_session_pending = false;
         self.pending_turn = false;
+        // A session the user switched to is a client they are watching, so an
+        // outcome of the session before it is not worth a tab mark.
+        self.note_user_attention();
         self.in_flight = None;
         self.queue.clear();
         self.prompt = None;
