@@ -93,6 +93,21 @@ impl Input {
         self.cursor
     }
 
+    /// Whether the cursor sits after the last character of the draft.
+    ///
+    /// A suffix suggestion is drawn after the caret, so it only applies there.
+    pub fn is_at_end(&self) -> bool {
+        self.cursor == self.characters.len()
+    }
+
+    /// How many characters the draft holds.
+    ///
+    /// A caller that bounds its work by the draft's size reads this instead of
+    /// building the text to measure it.
+    pub fn char_count(&self) -> usize {
+        self.characters.len()
+    }
+
     /// How many lines the draft has; an empty draft has one.
     pub fn line_count(&self) -> usize {
         self.line_starts.len()
@@ -453,6 +468,34 @@ fn is_space(character: char) -> bool {
 /// The cells one character occupies, matching what the terminal draws.
 fn char_width(character: char) -> usize {
     UnicodeWidthChar::width(character).unwrap_or(0)
+}
+
+/// The cells `text` occupies, measured the way the pane measures its rows.
+///
+/// The renderer uses it to find the room left on a row after the draft, so a
+/// suffix cannot paint past the pane.
+pub fn text_cells(text: &str) -> u16 {
+    let cells: usize = text.chars().map(char_width).sum();
+    u16::try_from(cells).unwrap_or(u16::MAX)
+}
+
+/// The longest prefix of `text` that fits in `cells` cells.
+///
+/// A wide character that would cross the edge is left out rather than counted
+/// as one, which is what keeps the drawn row the width the pane reserved.
+pub fn clip_cells(text: &str, cells: u16) -> String {
+    let room = usize::from(cells);
+    let mut used = 0;
+    let mut clipped = String::new();
+    for character in text.chars() {
+        let width = char_width(character);
+        if used + width > room {
+            break;
+        }
+        used += width;
+        clipped.push(character);
+    }
+    clipped
 }
 
 /// Characters hashed before the scan stops.
