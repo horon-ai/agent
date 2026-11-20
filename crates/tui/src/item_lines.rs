@@ -39,6 +39,7 @@ pub(crate) struct Look<'a> {
     pub(crate) symbols: Symbols,
     pub(crate) width: u16,
     pub(crate) markdown: bool,
+    pub(crate) visual_blocks: bool,
 }
 
 impl<'a> Look<'a> {
@@ -49,6 +50,7 @@ impl<'a> Look<'a> {
             symbols: app.symbols,
             width,
             markdown: markdown_enabled(&app.settings),
+            visual_blocks: visual_blocks_enabled(&app.settings),
         }
     }
 }
@@ -60,6 +62,15 @@ impl<'a> Look<'a> {
 /// agree with the measurement it just took reads it fresh.
 pub(crate) fn markdown_enabled(settings: &Settings) -> bool {
     settings.boolean("transcript.markdown").unwrap_or(true)
+}
+
+/// Whether a supported visual block is drawn rather than left as source.
+///
+/// Read fresh for the same reason as `markdown_enabled`: the settings screen
+/// flips it while the transcript is on screen, and the frame that draws a block
+/// has to agree with the height the scrollback measured for it.
+pub(crate) fn visual_blocks_enabled(settings: &Settings) -> bool {
+    settings.boolean("transcript.visual_blocks").unwrap_or(true)
 }
 
 /// The lines of one item, in display order.
@@ -199,7 +210,10 @@ pub(crate) fn note(text: &str, look: &Look<'_>) -> Indented {
 /// An assistant message, committed or still streaming.
 pub(crate) fn answer(text: &str, look: &Look<'_>) -> Vec<Indented> {
     if look.markdown {
-        return markdown::render(text, look.theme, look.symbols, look.width);
+        let options = markdown::Options {
+            visual_blocks: look.visual_blocks,
+        };
+        return markdown::render(text, look.theme, look.symbols, look.width, options);
     }
     plain_lines(text, Style::default().fg(look.theme.transcript.assistant_text), 0)
 }

@@ -288,6 +288,21 @@ The journal never touches files itself. It returns the bytes to restore, and the
 - On success it commits that change as a new mutation unit, so it can be undone again.
 - The redo queue lives in per-session module state and disappears when the process ends.
 
+### apply_patch preflight
+
+`apply_patch` accepts its Codex envelope and plain unified diffs (`---`/`+++`), which route to the same applier (`crates/app-core/src/tool/patch.rs`). The unified path reads and validates every file in the request before the first write.
+
+- Hunk headers are parsed as `@@ -start[,count] +start[,count] @@`, and the declared counts must match the supplied lines. The declared new range must match the hunk's position, so an insertion is counted in later `+start` values.
+- Only `--- ` and `+++ ` lines are file headers. A body line whose content starts with `--` stays inside the hunk because parsing follows the declared counts.
+- A hunk with no old lines inserts at `old_start`; `-0,0` inserts before the first line. Hunks must appear in file order and must not overlap.
+- Removed and context lines must match the current text exactly at the declared position. The applier does not shift the hunk or search for a nearby match.
+- A missing final newline is preserved, and the `\ No newline at end of file` marker sets the ending for the new text. The marker is valid only on the last line of its side, and the old-side marker must agree with the original ending. A uniformly CRLF file keeps CRLF; mixed endings fail the context check instead of being converted.
+- Two paths that resolve to the same file are refused, so one operation cannot overwrite what an earlier one produced.
+- Reads go through `client_fs`, so a patch that matches only the stale disk copy is rejected while an editor buffer is served. Deletes still act on disk.
+- Preflight runs under the per-path locks and writes nothing. A failure reports `✗ <path>` and `No files changed`, records no undo unit, and carries the `failed` verdict.
+- A failure after preflight is external I/O: files written before it stay written, and the result states how many changed so it cannot be mistaken for a preflight refusal. That result carries `partial` when at least one file changed and `failed` otherwise.
+- A protected delete path is refused during preflight too, keeping the issue #604 policy on this route.
+
 ### hashline anchors
 
 Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:164`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
@@ -317,6 +332,24 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 | Overlapping spans | The whole call is refused. |
 
 The crate never reads the file system, so it cannot detect outside changes by itself. Detection happens when the caller compares current bytes with the recorded state through `BlobId::of`. History never leaves the process and is not shared with another process or a restarted session.
+
+## `eval`
+
+`eval` runs one Python cell in a child process. A session reuses its Python state while the kernel is alive and the working directory stays the same. Python 3.10 or later must be available on an absolute `PATH` entry outside the session working directory.
+
+```toml
+[tools]
+profile = "full"
+eval = true
+```
+
+The default is `eval = false`. With an explicit `enabled` list, include `eval` and keep `eval = true`. The closed `core`, `acp` and `minimal` profiles do not add it automatically. The session's tool load mode and allow-list still apply.
+
+Send `code` as a Python string. `timeout` accepts 1 to 3600 seconds and defaults to 30. Use `reset = true` to discard the previous kernel before executing the cell. Top-level `await`, stdout, stderr and the last expression's value are supported. A timeout, cancellation, directory change, session close or idle sweep discards the kernel. The next cell in that session starts with fresh state.
+
+Each cell needs explicit approval before it runs, including in `yolo` and `off`. Approved Python can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](/reference/safety/security#python-eval) for the execution boundary.
+
+Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
 
 ## `generate_image`
 
