@@ -82,4 +82,5 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="840" y="388" font-size="11" class="m" text-anchor="middle">direct POST to endpoint</text>
 
 <text x="480" y="580" font-size="12" class="m" text-anchor="middle">Every client reaches the same daemon; only the driver changes.</text>
+<text x="480" y="602" font-size="11" class="m" text-anchor="middle">Planned Rust packages share one data-contract crate. The TUI stays a separate client.</text>
 </svg>
