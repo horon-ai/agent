@@ -1,3 +1,6 @@
+//! Settings that change behavior as they are applied rather than on the next
+//! drawing call.
+//!
 //! `transcript.tool_output_lines` is a number, so a settings file can hold a
 //! `-1` that is not a row count. A value that cannot be used falls back to the
 //! default instead of reading as "hide the preview", and a usable one is
@@ -5,7 +8,9 @@
 //!
 //! The status line's own two choices are checked the same way: a settings
 //! snapshot the client resolves, applied through the path a settings save and a
-//! file reload both take, changes the row the next frame draws.
+//! file reload both take, changes the row the next frame draws. `title.state`
+//! follows the same path into the app, where the event loop reads it before it
+//! writes the window title.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -127,4 +132,15 @@ fn a_saved_status_line_style_reaches_the_drawn_bottom_line() {
         backgrounds.iter().all(|background| *background == Color::Reset),
         "the line is still painted: {backgrounds:?}"
     );
+}
+
+#[test]
+fn the_title_state_setting_reaches_the_app() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), ""));
+    assert!(!app.title_state, "the title state is on before anything asked for it");
+
+    app.refresh_settings(&settings_with(dir.path(), "[title]\nstate = true\n"));
+    assert!(app.title_state, "the setting did not reach the window title");
 }

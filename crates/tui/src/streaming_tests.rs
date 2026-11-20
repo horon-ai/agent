@@ -47,6 +47,48 @@ fn turn_done() -> ApiEvent {
 }
 
 #[test]
+fn ctrl_t_changes_what_later_reasoning_deltas_draw() {
+    let mut app = app();
+    app.on_key(toggle_thinking());
+    app.apply_event(&reasoning_delta("FIRST THOUGHT"));
+    app.apply_event(&reasoning_done());
+    app.on_key(toggle_thinking());
+    app.apply_event(&reasoning_delta("SECOND THOUGHT"));
+    app.on_key(toggle_thinking());
+
+    let screen = draw_screen(&mut app);
+    assert!(
+        screen.contains("FIRST THOUGHT"),
+        "reasoning committed while the toggle was on left the screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("SECOND THOUGHT"),
+        "a delta dropped while the toggle was off was kept or drawn:\n{screen}"
+    );
+}
+
+fn toggle_thinking() -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('t'),
+        crossterm::event::KeyModifiers::CONTROL,
+    )
+}
+
+fn reasoning_delta(text: &str) -> ApiEvent {
+    ApiEvent::ReasoningDelta {
+        session_id: "s1".into(),
+        text: text.into(),
+    }
+}
+
+fn reasoning_done() -> ApiEvent {
+    ApiEvent::ReasoningDone {
+        session_id: "s1".into(),
+        duration_secs: None,
+    }
+}
+
+#[test]
 fn streamed_text_is_on_screen_before_the_turn_ends() {
     let mut app = app();
     app.apply_event(&delta("STREAMING "));
