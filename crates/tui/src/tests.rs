@@ -9,7 +9,7 @@ use super::*;
 use crate::app::Action;
 use crate::transcript::ToolState;
 use horon_agent_sdk::api::ApiEvent;
-use ratatui::backend::{Backend as _, TestBackend};
+use ratatui::backend::TestBackend;
 
 fn app_with(socket: Option<std::path::PathBuf>) -> App {
     let (_sender, receiver) = std::sync::mpsc::channel();
