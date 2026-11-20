@@ -11,7 +11,29 @@
 //! The Unix half below runs the same restore sequence from those signals and
 //! then re-raises, so the exit status still reports the signal.
 
-use crate::{paste, scroll, title};
+use crate::{app::App, draw, paste, scroll, title};
+
+/// Draw the connection-failure banner once, when there is a terminal to draw it
+/// on, then restore it.
+pub(crate) fn show_failure(message: &str) {
+    eprintln!("horon-tui: {message}");
+    let mut app = App::failure(message);
+    match ratatui::try_init() {
+        Ok(mut terminal) => {
+            let failure = draw(&mut terminal, &mut app).err();
+            paste::disable();
+            ratatui::restore();
+            if let Some(message) = failure {
+                eprintln!("horon-tui: {message}");
+            }
+        }
+        Err(error) => {
+            paste::disable();
+            ratatui::restore();
+            eprintln!("horon-tui: cannot open a terminal: {error}");
+        }
+    }
+}
 
 /// Put the terminal back the way the client found it.
 ///

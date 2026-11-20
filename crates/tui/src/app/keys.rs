@@ -22,8 +22,10 @@ impl App {
         // changes it, and brought up to date again after it: a key that moved
         // the draft leaves a list that belongs to the text it left behind.
         self.sync_slash();
+        self.sync_suggestions();
         let action = self.handle_key(key);
         self.sync_slash();
+        self.sync_suggestions();
         action
     }
 
@@ -148,6 +150,21 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+        }
+        // A ghost suggestion sits above the editor and below the popup: the
+        // accept key fills the rest of the draft, and `esc` puts the offer away
+        // instead of interrupting the turn. Every other key reaches the editor,
+        // and the sync after this key withdraws an offer the changed draft no
+        // longer matches.
+        if self.suggestion_available() {
+            if key.code == KeyCode::Esc || bound == Some(keys::ids::APP_INTERRUPT) {
+                self.suggestions.dismiss();
+                return None;
+            }
+            if bound == Some(keys::ids::EDITOR_ACCEPT_SUGGESTION) {
+                self.accept_suggestion();
+                return None;
             }
         }
         match bound {

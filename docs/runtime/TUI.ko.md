@@ -75,6 +75,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `statusline.path_max` | 숫자 | `40` | `HORON_TUI_STATUSLINE_PATH_MAX` |
 | `statusline.context_window` | 숫자 | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
+| `editor.suggestions` | 참·거짓 | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
@@ -209,6 +210,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_end` | `ctrl+k` | 커서부터 그 줄 맨 끝까지 지운다 |
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | 커서 앞 낱말을 지운다 |
 | `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
+| `editor.accept_suggestion` | `ctrl+right` | 화면에 보이는 제안을 초안에 넣는다 |
 | `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
 | `editor.external` | `ctrl+g` | `VISUAL` 또는 `EDITOR`에서 초안을 편집한다 |
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |
@@ -224,6 +226,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 `up`과 `down`은 먼저 초안의 줄 사이를 오르내리고, 초안의 첫 줄과 마지막 줄에서만 입력 기록에 닿는다. 그래서 트랜스크립트 보기는 `shift+up`, `shift+down`, 페이지 키로 옮겼다. `shift+tab`은 추론 노력 단계를 옮기고 평범한 `tab`은 여전히 초안을 완성한다. 시프트가 들어간 바인딩이 시프트가 없는 바인딩보다 먼저 답하기 때문이다. 프롬프트가 열려 있으면 모든 키를 프롬프트가 받으므로, 프롬프트에 쓰려던 글자가 입력 줄에 닿지 않는다. 탭은 슬래시 명령 이름만 완성한다. 줄에 공백이 들어가면 인자 자리는 사용자의 몫이다.
 
 ## 편집기
+
+`editor.suggestions = true`로 지정하면 현재 세션에서 이미 보낸 글을 참고해 초안에 이어 쓸 내용을 표시합니다. Ctrl+Right로 제안을 초안에 넣고 Esc로 닫습니다. 초안이 바뀌면 이전 제안은 사라집니다. 제안은 로컬에서 만들며 네트워크 요청은 보내지 않습니다.
 
 Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어 있으면 `EDITOR`를 사용합니다. 큰따옴표나 작은따옴표로 묶은 인수를 지원하며 셸 확장은 사용하지 않습니다. Horon은 비공개 임시 파일을 전달하고 편집기가 정상 종료하면 UTF-8로 읽습니다. 편집에 실패하면 기존 초안을 유지합니다. 편집한 글은 직접 전송할 때까지 입력란에 남습니다.
 
@@ -252,6 +256,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
 
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시합니다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시됩니다.
+
+피할 수 있었던 프롬프트 캐시 미스는 관련 요청 뒤에 표시됩니다. 원인과 다시 보낸 토큰의 대략적인 수가 표시되며 프롬프트 원문과 캐시 식별자는 빠집니다. 모델이나 프로바이더 변경, 만료 또는 이유가 기록된 무효화에는 표식을 붙이지 않습니다. 데몬의 `config.toml`에서 `[features] kv_cache_miss_notices = false`를 지정하면 보고를 끌 수 있습니다.
 
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
 
@@ -415,13 +421,16 @@ harness commands:
 
 `/settings`는 설정 레지스트리에서 생성된다. 키마다 행 하나를 Appearance, Status line, Editor, Transcript 탭으로 묶고, 레지스트리가 선언한 이름표와 설명을 쓴다. 행마다 값이 온 계층도 함께 보여 준다.
 
+`/`를 누르면 설정 이름, 키 또는 설명으로 모든 탭을 검색합니다. 결과 행에는 각 항목이 속한 탭도 표시됩니다. Enter를 누르면 검색 결과를 유지한 채 목록으로 돌아갑니다. 검색하거나 결과 사이를 이동해도 설정값은 그대로입니다.
+
 | 키 | 하는 일 |
 | --- | --- |
+| `/` | 모든 탭의 설정을 검색하거나 현재 검색어를 편집한다 |
 | `up`, `down` | 행 사이를 옮긴다 |
 | `left`, `tab` | 이전 탭으로 옮긴다 |
 | `right`, `shift+tab` | 다음 탭으로 옮긴다 |
 | `enter` | 그 행의 편집기나 고르기 목록을 열거나 확정한다 |
-| `esc` | 편집기나 고르기 목록을 닫고, 그다음 화면을 닫는다 |
+| `esc` | 편집기나 선택 목록을 닫고, 검색을 해제한 다음 화면을 닫는다 |
 
 키의 형식이 거절하는 값은 인라인 오류로 보이고 아무것도 쓰지 않는다. 저장은 전역 `tui.toml`로만 가고, 프로젝트 계층과 `--config` 계층은 다시 쓰지 않는다.
 

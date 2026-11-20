@@ -31,6 +31,7 @@ pub mod scroll;
 pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
+mod suggestions;
 mod terminal;
 pub mod theme;
 mod title;
@@ -112,6 +113,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
+use crate::terminal::show_failure;
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -322,28 +324,6 @@ where
             // stderr, and exit non-zero so a script can see the failure.
             show_failure(&message);
             1
-        }
-    }
-}
-
-/// Draw the connection-failure banner once, when there is a terminal to draw it
-/// on, then restore it.
-fn show_failure(message: &str) {
-    eprintln!("horon-tui: {message}");
-    let mut app = App::failure(message);
-    match ratatui::try_init() {
-        Ok(mut terminal) => {
-            let failure = draw(&mut terminal, &mut app).err();
-            paste::disable();
-            ratatui::restore();
-            if let Some(message) = failure {
-                eprintln!("horon-tui: {message}");
-            }
-        }
-        Err(error) => {
-            paste::disable();
-            ratatui::restore();
-            eprintln!("horon-tui: cannot open a terminal: {error}");
         }
     }
 }
@@ -624,36 +604,24 @@ where
                     continue;
                 }
                 if let Some(action) = app.on_key(key) {
-                    match action {
-                        // The child needs the terminal this loop draws on, so
-                        // the hand-over happens here rather than on the bridge
-                        // thread: the screen is given up, the editor runs, and
-                        // the frame that follows repaints all of it.
+                    // Editor actions borrow the terminal owned by this loop.
+                    let error = match action {
                         crate::app::Action::EditDraft => {
-                            if let Some(message) = loop_io::hand_over_draft(terminal, app, title, &mut mouse_captured) {
-                                // The screen could not be taken back, so no
-                                // frame can be drawn and no key can be read:
-                                // the loop ends and the caller restores and
-                                // reports on the shell's screen.
-                                failure = Some(message);
-                                app.running = false;
-                                app.exit_code = 1;
-                                break;
-                            }
+                            loop_io::hand_over_draft(terminal, app, title, &mut mouse_captured)
                         }
-                        // The artifact was resolved before the action left
-                        // the app; only the screen is lent to the editor here.
                         crate::app::Action::OpenArtifact(path) => {
-                            if let Some(message) =
-                                loop_io::hand_over_artifact(terminal, app, title, &mut mouse_captured, &path)
-                            {
-                                failure = Some(message);
-                                app.running = false;
-                                app.exit_code = 1;
-                                break;
-                            }
+                            loop_io::hand_over_artifact(terminal, app, title, &mut mouse_captured, &path)
                         }
-                        action => loop_io::dispatch(app, commands, action),
+                        action => {
+                            loop_io::dispatch(app, commands, action);
+                            None
+                        }
+                    };
+                    if let Some(message) = error {
+                        failure = Some(message);
+                        app.running = false;
+                        app.exit_code = 1;
+                        break;
                     }
                 }
                 flush_setting_change(app, reloader, themes);
@@ -697,9 +665,11 @@ const MIN_TRANSCRIPT_ROWS: u16 = 3;
 const MAX_INPUT_ROWS: u16 = 8;
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-    // The popup is read from the draft on screen, before anything borrows the
-    // app to draw.
+    // The popup and the local suggestion are read from the draft on screen,
+    // before anything borrows the app to draw.
     app.sync_slash();
+    app.sync_suggestions();
+    let ghost = app.suggestion_text();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -860,16 +830,29 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // itself instead of under the marker.
     let marker = format!("{} ", symbols.prompt_marker);
     let padding = " ".repeat(usize::from(marker_width) + 1);
+    // The ghost suffix is drawn after the caret on the row the caret is on.
+    // The offer was checked against the exact draft before this frame, so what
+    // is drawn here is a suffix of the text already on screen.
     let rows: Vec<Line<'static>> = view
         .rows
         .iter()
         .enumerate()
         .map(|(row, text)| {
             let lead = if row == 0 { marker.clone() } else { padding.clone() };
-            Line::from(vec![
+            let mut spans = vec![
                 Span::styled(lead, Style::default().fg(theme.core.accent)),
                 Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
-            ])
+            ];
+            if row == view.cursor_row
+                && let Some(ghost) = ghost.as_deref()
+            {
+                let room = text_width.saturating_sub(crate::input::text_cells(text));
+                let tail = crate::input::clip_cells(ghost, room);
+                if !tail.is_empty() {
+                    spans.push(Span::styled(tail, Style::default().fg(theme.core.muted)));
+                }
+            }
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(rows), input_area);

@@ -150,6 +150,110 @@ pub enum Item {
     /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
     /// large, and most items carry a message instead.
     Report(Box<crate::report::Report>),
+    /// A request boundary the provider had to serve without its cached prefix.
+    ///
+    /// Drawn under the request it belongs to, and only for an avoidable miss:
+    /// see [`CacheMiss::from_report`] for what counts as one.
+    CacheMiss(CacheMiss),
+}
+
+/// Which part of the cached prompt prefix the harness changed.
+///
+/// The three are exactly the reasons the daemon classifies as harness-caused
+/// (`MissReason::harness_caused` in `crates/base/src/kv_cache_monitor.rs`): the
+/// prompt is the harness's to build, so a change to it there was avoidable. A
+/// provider switch, an expiry or a documented reload is not, and never reaches
+/// this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheCause {
+    /// The system prompt's static part.
+    System,
+    /// The tool definitions sent with the request.
+    Tools,
+    /// A message that was already part of the prefix.
+    Prefix,
+}
+
+impl CacheCause {
+    /// The cause the daemon's stable reason id names, `None` for any other id.
+    ///
+    /// The ids mirror `MissReason::id`; one this client does not know is left
+    /// unclassified rather than drawn as an alarm, because the marker would
+    /// then claim a cause the client cannot check.
+    fn from_reason(reason: &str) -> Option<Self> {
+        match reason {
+            "system_changed" => Some(Self::System),
+            "tools_changed" => Some(Self::Tools),
+            "prefix_changed" => Some(Self::Prefix),
+            _ => None,
+        }
+    }
+
+    /// How the marker names the cause.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "the system prompt changed",
+            Self::Tools => "the tool set changed",
+            Self::Prefix => "an earlier message changed",
+        }
+    }
+}
+
+/// An avoidable prompt-cache miss, as the transcript marks it.
+///
+/// Only the classification and the size of the resend are kept. The prompt text
+/// and the cache's identity never reach the client, and nothing here could hold
+/// them: a mark is the reader's summary of one request boundary, not a record
+/// of what was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheMiss {
+    /// Which part of the request prefix the harness changed.
+    pub cause: CacheCause,
+    /// Tokens the provider had to be sent again.
+    pub missed_tokens: u64,
+}
+
+impl CacheMiss {
+    /// The mark for one daemon report, or `None` when the report is not an
+    /// avoidable, classified miss.
+    ///
+    /// `harness_caused` and the reason id are both required: the daemon derives
+    /// one from the other, so a report where they disagree cannot be trusted to
+    /// describe an avoidable miss. A documented cause is an intentional
+    /// invalidation (a config or skill reload) and is not an alarm either.
+    pub fn from_report(
+        reason: &str,
+        harness_caused: bool,
+        documented_cause: Option<&str>,
+        missed_tokens: u64,
+    ) -> Option<Self> {
+        let cause = CacheCause::from_reason(reason)?;
+        if !harness_caused || documented_cause.is_some_and(|cause| !cause.trim().is_empty()) {
+            return None;
+        }
+        Some(Self { cause, missed_tokens })
+    }
+
+    /// The one line the marker draws.
+    pub fn summary(&self) -> String {
+        format!(
+            "{}, ~{} tokens resent",
+            self.cause.label(),
+            compact_tokens(self.missed_tokens)
+        )
+    }
+}
+
+/// A token count at the width the marker can spare, as the daemon's own summary
+/// writes it.
+fn compact_tokens(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}M", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{}K", value / 1_000)
+    } else {
+        value.to_string()
+    }
 }
 
 /// The streaming message being assembled.
@@ -398,6 +502,27 @@ impl Transcript {
     pub fn push_warning(&mut self, text: impl Into<String>) {
         self.finish_stream();
         self.items.push(Item::Warning(text.into()));
+    }
+
+    /// Record an avoidable cache miss at the boundary of the request it belongs
+    /// to.
+    ///
+    /// The daemon reports the miss immediately after the usage of the request
+    /// that missed, so the caller hands it over while that request's output is
+    /// the newest thing drawn; committing the open stream first is what puts the
+    /// mark under the answer that cost the resend rather than over it.
+    ///
+    /// The same mark twice in a row is one event delivered twice — a replayed
+    /// tail after a reconnect — not two requests: a request that misses always
+    /// draws its own output in between, so nothing in between means nothing
+    /// happened.
+    pub fn push_cache_miss(&mut self, miss: CacheMiss) {
+        self.finish_stream();
+        let item = Item::CacheMiss(miss);
+        if self.items.last() == Some(&item) {
+            return;
+        }
+        self.items.push(item);
     }
 
     /// Record a message waiting for the running turn to end.
@@ -894,194 +1019,5 @@ impl Transcript {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deltas_accumulate_and_a_new_message_id_splits() {
-        let mut transcript = Transcript::new();
-        transcript.text_delta(Some("m1"), "one ");
-        transcript.text_delta(Some("m1"), "two");
-        transcript.text_delta(Some("m2"), "three");
-        transcript.finish_stream();
-        assert_eq!(
-            transcript.items(),
-            &[
-                Item::Assistant("one two".to_string()),
-                Item::Assistant("three".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_message_is_not_published() {
-        let mut transcript = Transcript::new();
-        transcript.text_delta(Some("m1"), "draft");
-        transcript.text_replace(Some("m1"), "");
-        transcript.finish_stream();
-        assert!(transcript.items().is_empty());
-    }
-
-    #[test]
-    fn recent_assistant_text_keeps_answers_only() {
-        let mut transcript = Transcript::new();
-        transcript.push_user("look at https://user.example/");
-        transcript.push_assistant("first https://one.example/");
-        transcript.push_assistant("second https://two.example/");
-        transcript.text_delta(Some("m9"), "streaming https://three.example/");
-        assert_eq!(
-            transcript.recent_assistant_text(2).collect::<Vec<_>>(),
-            vec!["streaming https://three.example/", "second https://two.example/"]
-        );
-        assert_eq!(transcript.recent_assistant_text(8).count(), 3);
-    }
-
-    #[test]
-    fn tool_done_updates_the_running_line() {
-        let mut transcript = Transcript::new();
-        transcript.tool_start("c1", "bash");
-        transcript.tool_done("c1", "bash", None, None);
-        let items = transcript.items();
-        assert_eq!(items.len(), 1, "{items:?}");
-        let Item::Tool(call) = &items[0] else {
-            panic!("expected one tool line: {items:?}");
-        };
-        assert_eq!(call.name, "bash");
-        assert_eq!(call.state, ToolState::Done);
-    }
-
-    #[test]
-    fn open_text_reports_the_message_until_it_is_committed() {
-        let mut transcript = Transcript::new();
-        assert_eq!(transcript.open_text(), None, "nothing is open yet");
-
-        transcript.text_delta(Some("m1"), "partial");
-        assert_eq!(transcript.open_text(), Some("partial"));
-
-        transcript.text_delta(Some("m1"), " more");
-        assert_eq!(transcript.open_text(), Some("partial more"));
-
-        // The committed item is the same text, so the renderer must stop
-        // drawing the open one or the reply would appear twice.
-        transcript.finish_stream();
-        assert_eq!(transcript.open_text(), None);
-        assert_eq!(transcript.items(), &[Item::Assistant("partial more".to_string())]);
-    }
-
-    #[test]
-    fn open_text_hides_blank_and_retracted_messages() {
-        let mut transcript = Transcript::new();
-        transcript.text_delta(Some("m1"), "  \n\t");
-        assert_eq!(transcript.open_text(), None, "whitespace is never published");
-
-        // Deltas append, so the whitespace that was hidden on its own is now
-        // part of the message; drawing anything but the raw buffer would make
-        // the open row differ from the item `finish_stream` commits.
-        transcript.text_delta(Some("m1"), "draft");
-        assert_eq!(transcript.open_text(), Some("  \n\tdraft"));
-        transcript.text_replace(Some("m1"), "");
-        assert_eq!(transcript.open_text(), None, "a retraction must not be drawn");
-    }
-
-    #[test]
-    fn reasoning_is_dropped_while_the_setting_is_off() {
-        let mut transcript = Transcript::new();
-        transcript.reasoning_delta("thinking about it");
-        assert_eq!(
-            transcript.open_reasoning(),
-            None,
-            "off means the client keeps nothing to draw"
-        );
-        transcript.reasoning_done();
-        assert!(
-            !transcript.items().iter().any(|item| matches!(item, Item::Reasoning(_))),
-            "and nothing reaches the transcript: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn reasoning_is_kept_apart_from_the_answer_when_the_setting_is_on() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("first I look");
-        transcript.reasoning_delta(" at the file");
-        assert_eq!(transcript.open_reasoning(), Some("first I look at the file"));
-        transcript.reasoning_done();
-        assert_eq!(transcript.open_reasoning(), None, "a boundary commits it");
-
-        transcript.text_delta(None, "here is the answer");
-        assert_eq!(
-            transcript.open_text(),
-            Some("here is the answer"),
-            "the reasoning never joins the answer"
-        );
-        transcript.text_done();
-
-        let items = transcript.items();
-        assert_eq!(
-            items,
-            &[
-                Item::Reasoning("first I look at the file".to_string()),
-                Item::Assistant("here is the answer".to_string()),
-            ],
-            "reasoning precedes its answer in display order"
-        );
-    }
-
-    #[test]
-    fn a_tool_call_commits_the_reasoning_that_preceded_it() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("I need to read the file");
-        transcript.tool_start("c1", "read");
-        assert_eq!(transcript.open_reasoning(), None);
-        assert_eq!(
-            transcript.items().first(),
-            Some(&Item::Reasoning("I need to read the file".to_string())),
-            "the thought belongs above the call it caused: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn turning_reasoning_off_retracts_a_half_written_thought() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("half a thought");
-        transcript.set_show_reasoning(false);
-        assert_eq!(transcript.open_reasoning(), None);
-        transcript.reasoning_done();
-        assert!(
-            !transcript.items().iter().any(|item| matches!(item, Item::Reasoning(_))),
-            "nothing half-finished stays on screen: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn blank_reasoning_is_never_published() {
-        let mut transcript = Transcript::new();
-        transcript.set_show_reasoning(true);
-        transcript.reasoning_delta("   ");
-        transcript.reasoning_done();
-        assert!(
-            transcript.items().is_empty(),
-            "whitespace alone is not a thought: {:?}",
-            transcript.items()
-        );
-    }
-
-    #[test]
-    fn tool_done_without_a_start_still_renders() {
-        let mut transcript = Transcript::new();
-        transcript.tool_done("c1", "read", None, Some("no such file"));
-        let items = transcript.items();
-        assert_eq!(items.len(), 1, "{items:?}");
-        let Item::Tool(call) = &items[0] else {
-            panic!("expected one tool line: {items:?}");
-        };
-        assert_eq!(call.name, "read");
-        assert_eq!(call.state, ToolState::Failed("no such file".to_string()));
-    }
-}
+#[path = "transcript_tests.rs"]
+mod tests;
