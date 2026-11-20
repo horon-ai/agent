@@ -50,10 +50,10 @@ fn turn_done() -> ApiEvent {
 fn ctrl_t_changes_what_later_reasoning_deltas_draw() {
     let mut app = app();
     app.on_key(toggle_thinking());
-    app.apply_event(reasoning_delta("FIRST THOUGHT"));
-    app.apply_event(reasoning_done());
+    app.apply_event(&reasoning_delta("FIRST THOUGHT"));
+    app.apply_event(&reasoning_done());
     app.on_key(toggle_thinking());
-    app.apply_event(reasoning_delta("SECOND THOUGHT"));
+    app.apply_event(&reasoning_delta("SECOND THOUGHT"));
     app.on_key(toggle_thinking());
 
     let screen = draw_screen(&mut app);
