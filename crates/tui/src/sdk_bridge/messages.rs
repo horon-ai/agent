@@ -43,6 +43,14 @@ pub enum Command {
     Models,
     /// List the sessions stored for a working directory.
     Sessions { working_dir: Option<String> },
+    /// Ask which of these session ids the harness no longer stores.
+    ///
+    /// The client asks per id rather than reading one list, because a list
+    /// leaves archived sessions out and an archived session is not deleted:
+    /// its notes must survive. Any failure other than an unknown id leaves the
+    /// session out of the answer, so a harness that cannot be asked keeps the
+    /// notes rather than losing them.
+    CheckSessions(Vec<String>),
     /// Create a session and follow it; the directory is where it starts.
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
@@ -114,6 +122,8 @@ pub enum Incoming {
     },
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// Noted sessions that no longer exist, and how many could not be checked.
+    SessionsChecked { gone: Vec<String>, unverified: usize },
     /// The skills the harness reports for the session it serves.
     Skills(Vec<SkillRow>),
     /// The running turn took the text a steer carried, echoed back so the

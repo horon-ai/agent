@@ -468,6 +468,19 @@ impl Transcript {
         self.finish_stream();
     }
 
+    /// Split a rendered history body into its reasoning and its answer.
+    ///
+    /// The daemon re-renders persisted reasoning with the markup the live
+    /// stream used, and the terminal reads it back with the daemon's own
+    /// helper instead of keeping a second copy of the convention. A body with
+    /// no reasoning markup is all answer, including its leading blank lines.
+    pub(crate) fn split_rendered_assistant(content: &str) -> (Option<String>, String) {
+        match horon_agent_sdk::transcript_text::split_rendered_reasoning(content) {
+            Some((reasoning, answer)) => (Some(reasoning), answer),
+            None => (None, content.to_string()),
+        }
+    }
+
     /// Reasoning text arrived for the message being assembled.
     ///
     /// Dropped when the setting is off, and dropped rather than buffered: a

@@ -548,6 +548,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             let rows = session_rows(client, session_id, working_dir.as_deref())?;
             Ok(Some(Incoming::Sessions(rows)))
         }
+        Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
@@ -579,6 +580,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::CheckSessions(_)
         | Command::Skills { .. }
         | Command::Steer(_)
         | Command::Runtime { .. }
@@ -624,6 +626,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::CheckSessions(_) => "could not check the noted sessions",
         Command::Skills { .. } => "could not list the skills",
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",
@@ -665,6 +668,60 @@ fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&s
         });
     }
     Ok(rows)
+}
+
+/// What one existence probe found.
+enum Probe {
+    /// The session still has a readable conversation or a stored event log.
+    Exists,
+    /// The session is gone: nothing readable and no event log either.
+    Gone,
+    /// The harness could not answer, so the notes must stay.
+    Unverified,
+}
+
+/// Which of `sessions` the harness no longer stores.
+///
+/// Archiving is reversible, so an archived session is kept. The tail read is
+/// asked first because it serves a single-file record from an earlier release
+/// as well as a current folder; an empty tail is then checked against the event
+/// log, which a current session always has and a deleted one loses. A harness
+/// too old for either answer counts as unverified rather than gone, so a
+/// missing capability can never delete notes.
+fn sessions_checked(client: &HoronAgentClient, sessions: &[String]) -> Incoming {
+    let mut gone = Vec::new();
+    let mut unverified = 0;
+    for session in sessions {
+        match probe_session(client, session) {
+            Probe::Exists => {}
+            Probe::Gone => gone.push(session.clone()),
+            Probe::Unverified => unverified += 1,
+        }
+    }
+    Incoming::SessionsChecked { gone, unverified }
+}
+
+/// Whether one session is still stored.
+///
+/// `peek_session` answers without attaching and reads a single-file record from
+/// an earlier release too, but it cannot tell "no such session" from "no
+/// conversation": both are an empty tail. The history page can tell them apart,
+/// because a stored session has an event log and a deleted one does not.
+fn probe_session(client: &HoronAgentClient, session: &str) -> Probe {
+    match client.peek_session(session, Some(1)) {
+        Ok(messages) if !messages.is_empty() => Probe::Exists,
+        Ok(_) => match client.get_history_page(session, None, None, Some(1)) {
+            Ok(_) => Probe::Exists,
+            Err(error) if matches!(&error.kind, ErrorKind::UnknownSession { .. }) => Probe::Gone,
+            Err(_) => Probe::Unverified,
+        },
+        // The tail read answers an unknown id with an empty history rather
+        // than an error, but a harness that does report one still means gone.
+        // (A single-file record from an earlier release is read above, so the
+        // difference never hides a session that can still be resumed.)
+        Err(error) if matches!(&error.kind, ErrorKind::UnknownSession { .. }) => Probe::Gone,
+        Err(_) => Probe::Unverified,
+    }
 }
 
 /// The second column of a session row: when it was last written, or what it is

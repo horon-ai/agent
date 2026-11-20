@@ -252,6 +252,10 @@ class HistoryMessage(TypedDict, total=False):
     response_stats: ResponseStats
     role: str
     content: str
+    # Visible answer of an assistant row that also carries a reasoning trace.
+    # ``content`` keeps its historical value (every typed block joined);
+    # ``answer`` joins only ``text`` blocks and is absent on other rows.
+    answer: str
 
 
 class UsageSession(TypedDict, total=False):

@@ -183,13 +183,37 @@ impl App {
         for message in &session.history {
             match message.role.as_str() {
                 "user" => self.transcript.push_user(message.content.clone()),
-                "assistant" => self.transcript.push_assistant(message.content.clone()),
+                // A stored assistant row carries the reasoning the daemon
+                // re-rendered before the answer. Reading it back with the
+                // daemon's own markup helper keeps the answer row identical to
+                // the one the live stream produced, which is what a note on it
+                // is keyed by.
+                "assistant" => {
+                    let (reasoning, split) = crate::transcript::Transcript::split_rendered_assistant(&message.content);
+                    if let Some(reasoning) = reasoning {
+                        self.transcript.reasoning_delta(&reasoning);
+                        self.transcript.reasoning_done();
+                    }
+                    // A history row that names its answer separately is read
+                    // from that field: a raw stored row can carry reasoning and
+                    // answer as one unmarked string, and `content` keeps that
+                    // historical value for clients that do not know the field.
+                    let answer = message.answer.clone().unwrap_or(split);
+                    if !answer.is_empty() {
+                        self.transcript.push_assistant(answer);
+                    }
+                }
                 // Tool rows are the daemon's record of what ran, not the
                 // conversation; the answers they produced are in the assistant
                 // messages that follow them.
                 _ => {}
             }
         }
+        // The notes are read before the notice below, so anything the file
+        // said about itself is drawn before the line naming the session. A
+        // note belongs to a session id, so the ones drawn from here on are
+        // this session's, never the one just left.
+        self.load_notes();
         if session.history.is_empty() && !started {
             self.transcript.push_notice("the stored session has no messages");
         }

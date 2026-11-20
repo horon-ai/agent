@@ -32,6 +32,48 @@ pub fn reasoning_line_content(line: &str) -> Option<String> {
     Some(content)
 }
 
+/// Split a rendered history body into the reasoning it starts with and the
+/// answer that follows.
+///
+/// The daemon writes a stored assistant row as the reasoning markup, the block
+/// terminator, then the answer. Blank lines inside the reasoning are paragraph
+/// breaks and belong to it; the blank line that ends the block is dropped.
+/// Answers `None` when the body carries no reasoning markup, so a caller can
+/// keep the body as it is for every other row.
+pub fn split_rendered_reasoning(content: &str) -> Option<(String, String)> {
+    let mut reasoning: Vec<String> = Vec::new();
+    let mut blanks = 0usize;
+    let mut answer: Vec<&str> = Vec::new();
+    let mut in_answer = false;
+    for line in content.split('\n') {
+        if in_answer {
+            answer.push(line);
+            continue;
+        }
+        if line.trim().is_empty() {
+            blanks += 1;
+            continue;
+        }
+        match reasoning_line_content(line) {
+            Some(text) => {
+                for _ in 0..blanks {
+                    reasoning.push(String::new());
+                }
+                blanks = 0;
+                reasoning.push(text);
+            }
+            None => {
+                answer.push(line);
+                in_answer = true;
+            }
+        }
+    }
+    if reasoning.is_empty() {
+        return None;
+    }
+    Some((reasoning.join("\n"), answer.join("\n")))
+}
+
 /// Escape the characters that would otherwise be interpreted as inline markdown
 /// inside a reasoning line, so the body renders literally inside the dim/italic
 /// emphasis run.

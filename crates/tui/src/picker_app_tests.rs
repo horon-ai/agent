@@ -60,6 +60,7 @@ fn history(rows: &[(&str, &str)]) -> Vec<HistoryMessage> {
             role: (*role).to_string(),
             content: (*content).to_string(),
             response_stats: None,
+            answer: None,
         })
         .collect()
 }

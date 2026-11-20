@@ -20,6 +20,7 @@ mod item_lines;
 pub mod keys;
 mod loop_io;
 mod markdown;
+pub mod notes;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
@@ -344,6 +345,12 @@ fn window_label(app: &App) -> String {
 fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
     let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
+    // Notes live in a file this client owns, beside the settings and themes it
+    // already reads. They are read here so a replay's notes are on screen with
+    // the conversation they describe, and never on a path that writes to
+    // `$HORON_HOME` from a test or an embedded `App`.
+    app.notes = notes::NoteStore::at(notes::NoteStore::default_path());
+    app.load_notes();
     // The stderr copy of these warnings is wiped by the alternate screen, so
     // the transcript carries them for the person using the interface.
     for warning in reloader.warnings() {
@@ -947,12 +954,21 @@ fn block_source<'a>(
     look: &item_lines::Look<'_>,
     expand: Option<&tool_expand::Frame<'a>>,
     first: bool,
+    note: Option<&str>,
 ) -> wrap::Source<'a> {
     let mut source = match block {
         Block::Item(item) => item_lines::source(item, look, expand),
         Block::Reasoning(text) => wrap::Source::built(item_lines::reasoning(text, look)),
         Block::Answer(text) => wrap::Source::built(item_lines::answer(text, look)),
     };
+    // The reader's note hangs under the message it describes, separated by one
+    // blank row so it reads as a mark beside the conversation rather than as
+    // more of it. It is part of the block, so the height this source reports
+    // already includes it and a held view keeps its place.
+    if let Some(text) = note {
+        source.append(wrap::Indented::plain(Line::default()));
+        source.append(item_lines::note(text, look));
+    }
     // A turn starts one blank row below the previous one, so a new message is
     // not read as more of the answer above it. It is a line of the block, so a
     // window that starts at the block's first row still counts it.
@@ -977,6 +993,8 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         symbols,
         settings,
         bindings,
+        notes: note_store,
+        session_id,
         ..
     } = app;
     let look = item_lines::Look {
@@ -993,10 +1011,21 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
     // height measured here has to know about the expansion: a view held above
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
+    let keys = session_id
+        .as_deref()
+        .filter(|session| note_store.count(session) > 0)
+        .map(|_| notes::message_keys(transcript.items()));
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
         // Counted, not built: the rows of a block that stays off screen are not
         // made to measure it.
-        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0).height(width),
+        Some(item) => block_source(
+            &Block::Item(item),
+            &look,
+            Some(&expand),
+            index == 0,
+            notes::note_at(note_store, session_id.as_deref(), keys.as_deref(), index),
+        )
+        .height(width),
         None => 0,
     });
 }
@@ -1014,6 +1043,7 @@ fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -
 fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
+    let keys = notes::frame_keys(app);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let blocks = blocks(app);
     for (index, block) in blocks.iter().enumerate().rev() {
@@ -1023,7 +1053,13 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
         // Only the rows this block contributes to the pane are built, and they
         // are built from the end: a block taller than the pane costs the pane's
         // rows, not its own.
-        let source = block_source(block, &look, Some(&expand), index == 0);
+        let source = block_source(
+            block,
+            &look,
+            Some(&expand),
+            index == 0,
+            notes::note_at(&app.notes, app.session_id.as_deref(), keys.as_deref(), index),
+        );
         let wanted = capacity - rows.len();
         let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
         rows.extend(window.into_iter().rev());
@@ -1040,6 +1076,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
+    let keys = notes::frame_keys(app);
     let blocks = blocks(app);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
@@ -1060,7 +1097,13 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
         if rows.len() >= capacity {
             break;
         }
-        let source = block_source(block, &look, Some(&expand), index == 0);
+        let source = block_source(
+            block,
+            &look,
+            Some(&expand),
+            index == 0,
+            notes::note_at(&app.notes, app.session_id.as_deref(), keys.as_deref(), index),
+        );
         let wanted = capacity - rows.len();
         // The rows below the view's bottom edge are counted and dropped; what
         // is built is the window above them that the pane fills with.

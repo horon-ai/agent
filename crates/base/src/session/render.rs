@@ -2,7 +2,7 @@ mod response_stats;
 
 #[path = "render_markup.rs"]
 pub(crate) mod render_markup;
-pub use self::render_markup::{reasoning_line_content, reasoning_line_markup};
+pub use self::render_markup::{reasoning_line_content, reasoning_line_markup, split_rendered_reasoning};
 
 use super::{Session, StoredDisplayRole};
 use crate::message::{ContentBlock, Role, ToolCall};

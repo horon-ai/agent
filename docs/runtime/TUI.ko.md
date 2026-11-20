@@ -43,7 +43,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 
 ## 사용자 파일
 
-다섯 파일이 클라이언트의 동작을 정한다. 넷은 `$HORON_HOME`(설정하지 않으면 `~/.horon`) 아래에, 하나는 프로젝트 아래에 둔다.
+여섯 파일이 클라이언트의 동작을 정한다. 다섯은 `$HORON_HOME`(설정하지 않으면 `~/.horon`) 아래에, 하나는 프로젝트 아래에 둔다.
 
 | 파일 | 범위 | 역할 |
 | --- | --- | --- |
@@ -51,9 +51,10 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `$HORON_HOME/themes/<name>.json` | 모든 프로젝트 | 색 테마와 글리프 프리셋 |
 | `$HORON_HOME/keybindings.toml` | 모든 프로젝트 | 다시 배치한 키 |
 | `$HORON_HOME/commands/<name>.md` | 모든 프로젝트 | 슬래시 명령 |
+| `$HORON_HOME/tui-notes.json` | 모든 프로젝트 | 전사 메시지에 붙인 로컬 메모. `/note`가 쓴다 |
 | `<cwd>/.horon/commands/<name>.md` | 프로젝트 하나 | 그 프로젝트의 슬래시 명령 |
 
-다섯 파일은 시작할 때 읽고 클라이언트가 도는 동안 다시 읽는다. 설정 파일은 1초에 한 번 확인하고, 테마 파일과 키 파일도 같은 주기를 따른다.
+설정 파일 다섯은 시작할 때 읽고 클라이언트가 도는 동안 다시 읽는다. 설정 파일은 1초에 한 번 확인하고, 테마 파일과 키 파일도 같은 주기를 따른다. `tui-notes.json`은 시작할 때 한 번 읽고 `/note`가 쓰며, 소유자만 읽을 수 있게(`0600`) 만들고, 더 넓은 권한으로 발견한 파일은 다음 읽기에서 좁힌다.
 
 `/info`는 터미널 호출에 적용되는 데몬의 `approval mode`를 보여 줍니다. 기본값은 `yolo`입니다. 변경하려면 데몬의 `config.toml`에서 `[tools] approval_mode`를 지정합니다.
 
@@ -249,6 +250,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 `transcript.markdown = false`는 이 렌더링을 끄고 같은 글을 표시까지 그대로 그린다.
 
+메시지마다 읽는 사람의 짧은 메모를 하나 붙일 수 있고, 그 메시지 아래에 `note: …`로 강조 색으로 그린다. `/note <text>`는 가장 최근 메시지에 붙이고, `/note add [<주소>] <text>`는 주소가 가리키는 메시지나 가장 최근 메시지에 붙이며, `/note edit <주소> <text>`는 이미 있는 메모만 바꾸고 없는 메시지는 거부한다. `/note remove [<주소>]`는 지우고, `/note`는 세션의 메모를 주소와 메시지 인용과 함께 나열한다. 주소는 `u<n>`이나 `a<n>`이고, 세션의 사용자 메시지나 어시스턴트 메시지 가운데 그 메시지의 자리다. 주소는 입력하는 이름일 뿐 저장 열쇠가 아니다. 메모는 세션 아이디와 메시지 본문(공백을 정규화하고, 같은 본문이 여럿이면 중복 순번을 붙임)으로 저장되므로, 다시 붙은 뒤에도 같은 메시지 아래에 그려지고, 같은 자리를 나중에 차지한 다른 본문으로 옮겨 가지 않는다. 이 세션의 전사에 없는 주소는 거부하며, 메시지가 사라진 메모도 처음 적은 주소로 지울 수 있다. 저장된 어시스턴트 행은 본문 옆에 추론을 담을 수 있다. 기록 응답이 답을 따로 이름 붙이면 클라이언트는 그 필드를 읽고, 데몬의 추론 마크업만 있는 행은 데몬의 헬퍼로 되읽는다. 어느 경우든 추론은 `transcript.show_reasoning`을 따르고 메모는 본문과 계속 일치한다.
+
+메모는 읽는 사람의 파일이다. 어떤 명령도 메모를 보내지 않고, 메모는 대화에 섞이지 않으며, 세션 기록의 일부가 아니다. `/note prune`은 메모를 가진 세션마다 하네스에 물어 더 이상 없는 아이디의 메모를 지운다. 보관(아카이브)된 세션이라서 답하는 경우에는 메모를 남긴다. 저장할 때는 잠금 아래에서 파일을 다시 읽고 이 클라이언트가 바꾼 세션만 합치므로, 같은 순간에 쓰는 두 번째 `horon-tui`도 자기 세션을 지킨다. 이 빌드가 읽을 수 없는 파일은 덮어쓰지 않고 `tui-notes.json.corrupt`로 옮기며, 더 새로운 스키마의 파일은 알리고 그대로 둔다.
+
 ## 세션 할 일
 
 `Todos` 영역은 연결한 세션에 저장된 할 일에서 현재 작업과 차단된 항목을 먼저 보여 줍니다. 각 항목에는 그룹 이름이 표시되고 차단된 항목에는 사유가 붙습니다. 제목에는 완료한 항목 수와 화면에 들어가지 않은 미완료 항목 수가 표시됩니다. 터미널 높이가 낮으면 대화와 입력 줄을 먼저 표시합니다.
@@ -349,13 +354,14 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
+| `/note [add\|edit\|remove\|list\|prune] [주소] [text]` | 전사 메시지의 로컬 메모를 남기거나 나열하거나 지운다 |
 | `/quit` | 나간다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열두 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열세 명령을 이름 순으로 적었다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 
@@ -368,6 +374,7 @@ built-in commands:
   /keys                list the keys in force and what each does
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
+  /note                note, list or remove a local note on a transcript message
   /quit                leave
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen

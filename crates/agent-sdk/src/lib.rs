@@ -184,6 +184,27 @@ pub use structured::{
 };
 pub use turn_retry::{FailureKind, RetryDecision, RetryPolicy, TurnRetry, classify_failure};
 
+/// Filesystem primitives for a file the client owns, re-exported from the
+/// platform crate so a terminal client needs one dependency, not two.
+///
+/// The platform adapters pick the syscall: POSIX modes on Unix, an owner-only
+/// DACL on Windows, with no `cfg` branch in the caller.
+pub mod private_fs {
+    pub use horon_agent_platform::fs::{
+        harden_credential_open, is_private_file, mode_bits, set_file_permissions_owner_only,
+        set_permissions_owner_only_file,
+    };
+}
+
+/// The daemon's reasoning markup, re-exported so a client reads a stored
+/// transcript back with the same helpers the daemon wrote it with.
+///
+/// Persisted reasoning is re-rendered as the dim+italic markdown the live
+/// stream used; [`reasoning_line_content`] recovers the original line.
+pub mod transcript_text {
+    pub use horon_agent_base::session::{reasoning_line_content, reasoning_line_markup, split_rendered_reasoning};
+}
+
 /// The protocol types, re-exported so a client needs one dependency, not two.
 pub use horon_agent_harness_api as api;
 pub use horon_agent_harness_api::{

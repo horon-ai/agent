@@ -145,6 +145,7 @@ fn bridge_wiring_snapshot_is_preceded_by_one_matching_marker() {
         state: horon_agent_harness_api::RuntimeStateSummary::default(),
         messages: vec![horon_agent_harness_api::HistoryMessage {
             response_stats: None,
+            answer: None,
             role: "assistant".into(),
             content: "hello".into(),
         }],
