@@ -249,7 +249,7 @@ fn a_terminal_that_cannot_take_the_sequence_keeps_the_text_on_screen() {
     assert_eq!(app.input.text(), "stay selectable");
 
     // The same text with the emission turned off.
-    let mut app = app();
+    let mut app = self::app();
     app.input.set_text("stay selectable");
     app.copy_draft();
     let mut written = Vec::new();
