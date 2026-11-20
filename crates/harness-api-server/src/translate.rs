@@ -2357,6 +2357,7 @@ impl BridgeState {
             }
             "todo_changed" => event["session_id"]
                 .as_str()
+                .filter(|id| self.session_id.as_deref() == Some(*id))
                 .map(|id| {
                     ServerFrame::event(ApiEvent::TodoChanged {
                         session_id: id.to_owned(),

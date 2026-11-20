@@ -249,7 +249,7 @@ Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, 
 
 The `Todos` panel shows the attached session's saved tasks, starting with the active item and then blocked items. A label shows each item's group and a blocked item includes its reason. The heading counts completed items and reports how many open items are outside the visible rows. On a short terminal the panel yields space to the conversation and input.
 
-The client loads the list when you attach and reads it again after a saved change. Switching sessions clears the old list. A bridge without `todo_state` leaves the panel hidden.
+The client loads the list when you attach and reads it again after a saved change. Switching sessions clears the old list. A daemon or bridge without live todo support leaves the panel hidden.
 
 ## Turn state
 

@@ -49,7 +49,9 @@ pub use bridge::run_bridge;
 pub(crate) use bridge::{run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock};
 
 use anyhow::{Context, Result};
-use horon_agent_harness_api::{API_VERSION_MAJOR, ApiEvent, ErrorCode, ServerFrame};
+use horon_agent_harness_api::{
+    API_VERSION_MAJOR, ApiEvent, CAPABILITY_LIVE_TODO_V1, ErrorCode, OPT_IN_EVENT_CAPABILITIES, ServerFrame,
+};
 use serde_json::Value;
 use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -122,6 +124,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // `unsupported` reply naming the daemon capability instead of being
     // forwarded a frame it would silently drop.
     horon_agent_harness_api::CAPABILITY_CANCELLABLE_WORK_V1,
+    CAPABILITY_LIVE_TODO_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -353,6 +356,13 @@ where
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
+    let requested_events = hello["event_capabilities"].as_array();
+    let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
+        let capability = OPT_IN_EVENT_CAPABILITIES[index];
+        (daemon_caps.iter().any(|cap| cap == capability)
+            && requested_events.is_some_and(|requested| requested.iter().any(|cap| cap.as_str() == Some(capability))))
+        .then_some(capability)
+    });
     let hello_ok = ServerFrame::reply(
         reply_to,
         ApiEvent::HelloOk {
@@ -361,6 +371,7 @@ where
             capabilities: BRIDGE_CAPABILITIES
                 .iter()
                 .copied()
+                .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
@@ -691,6 +702,11 @@ where
                         let seq = event["seq"].as_u64();
                         drop(event);
                         for frame in frames {
+                            if frame.event.required_capability().is_some_and(|cap| {
+                                OPT_IN_EVENT_CAPABILITIES.contains(&cap) && !event_capabilities.contains(&Some(cap))
+                            }) {
+                                continue;
+                            }
                             if matches!(
                                 frame.event,
                                 ApiEvent::Snapshot { .. } | ApiEvent::SnapshotMarker { .. }

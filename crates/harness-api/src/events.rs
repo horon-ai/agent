@@ -810,6 +810,7 @@ impl ApiEvent {
             Self::CancelTurnResult { .. } | Self::ToolCallCancelResult { .. } | Self::BackgroundWorkList { .. } => {
                 Some(crate::CAPABILITY_CANCELLABLE_WORK_V1)
             }
+            Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
             _ => None,
         }
     }

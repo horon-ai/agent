@@ -558,9 +558,9 @@ client that cannot read it.
 - Capability constants: `CAPABILITY_CANCELLABLE_WORK_V1` in `crates/harness-api/src/lib.rs`, `cancellable_work_api` in `crates/app-core/src/server/session_connections.rs`
 - Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
 
-## Live todo updates
+## Live todo updates (protocol 1.24)
 
-An attached session can emit `todo_changed` with its `session_id` after a todo write is saved. The event is an invalidation and carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot, then read again on an invalidation for the attached session. Multiple invalidations can share one read because the response holds the latest list. Older clients skip the event and older bridges can continue serving snapshots if they advertise `todo_state`.
+Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
 ## Session event store and replication (protocol 1.12)
 

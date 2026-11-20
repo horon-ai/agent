@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 22;
+export const API_VERSION_MINOR = 24;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -27,10 +27,13 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
     "cancellable_work_v1",
     ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"],
   ],
+  ["live_todo_v1", ["todo_changed"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
 export const ADVERTISED_CAPABILITIES: readonly string[] = CAPABILITY_SURFACES.map(([capability]) => capability);
+
+export const EVENT_CAPABILITIES = ["live_todo_v1"] as const;
 
 export type RuntimeCommand =
   | "skills"
@@ -588,7 +591,15 @@ export interface StoreErrorDetail {
 }
 
 export type ApiRequest =
-  | { req: "hello"; min_version: number; max_version: number; client: string; supports_user_response?: boolean; supports_ask_requests?: boolean }
+  | {
+      req: "hello";
+      min_version: number;
+      max_version: number;
+      client: string;
+      supports_user_response?: boolean;
+      supports_ask_requests?: boolean;
+      event_capabilities?: readonly string[];
+    }
   | { req: "list_sessions"; include_archived?: boolean; limit?: number }
   | { req: "archive_session"; session_id: string }
   | { req: "restore_session"; session_id: string }

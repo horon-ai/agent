@@ -2,6 +2,10 @@
 
 use crate::*;
 
+#[path = "typescript_variant.rs"]
+mod typescript_variant;
+use typescript_variant::sdk_variant_block;
+
 #[test]
 fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
     let legacy_ask = r#"{"v":1,"id":4,"req":"ask_response","session_id":"s1","ask_id":"a1","answers":[{"question_id":"q1","selected":["Fast"]}]}"#;
@@ -24,6 +28,7 @@ fn minor_fourteen_requests_are_additive_and_keep_legacy_goldens() {
             client: "legacy/1".into(),
             supports_user_response: false,
             supports_ask_requests: false,
+            event_capabilities: Vec::new(),
         },
     );
     assert_eq!(
@@ -823,6 +828,7 @@ fn request_roundtrip() {
             client: "test/0".into(),
             supports_user_response: false,
             supports_ask_requests: false,
+            event_capabilities: vec![crate::CAPABILITY_LIVE_TODO_V1.into()],
         },
         ApiRequest::ListSessions {
             include_archived: false,
@@ -1059,27 +1065,6 @@ fn typescript_sdk_lists_every_field() {
             }
         }
     }
-}
-
-/// The `{ ev: "tag"; ... }` object literal for one variant, braces balanced.
-fn sdk_variant_block(sdk: &str, tag: &str, variant: &str) -> Option<String> {
-    let needle = format!("{tag}: \"{variant}\"");
-    let hit = sdk.find(&needle)?;
-    let open = sdk[..hit].rfind('{')?;
-    let mut depth = 0usize;
-    for (offset, ch) in sdk[open..].char_indices() {
-        match ch {
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(sdk[open..open + offset + 1].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 /// Snake-cased variant names paired with their serialized field names.

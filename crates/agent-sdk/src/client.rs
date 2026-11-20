@@ -842,6 +842,10 @@ impl HoronAgentClient {
                 client: options.client_name.clone(),
                 supports_user_response: options.supports_user_response,
                 supports_ask_requests: options.supports_ask_requests,
+                event_capabilities: horon_agent_harness_api::OPT_IN_EVENT_CAPABILITIES
+                    .iter()
+                    .map(|capability| (*capability).to_owned())
+                    .collect(),
             },
             hello_timeout,
         )?;

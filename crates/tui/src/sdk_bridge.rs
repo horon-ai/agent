@@ -283,7 +283,8 @@ fn run_worker(
             || client.is_closed(),
             &session_id,
         );
-        if refresh_todos && !report_todos(&events, &client, &session_id) {
+        if !matches!(step, Step::UiGone | Step::Closed) && refresh_todos && !report_todos(&events, &client, &session_id)
+        {
             return;
         }
         match step {
@@ -465,7 +466,7 @@ where
 }
 
 fn report_todos(events: &Sender<Incoming>, client: &HoronAgentClient, session_id: &str) -> bool {
-    if !client.supports("todo_state") {
+    if !client.supports("todo_state") || !client.supports(horon_agent_sdk::api::CAPABILITY_LIVE_TODO_V1) {
         return true;
     }
     let incoming = match client.todo_state(session_id) {
