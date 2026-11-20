@@ -417,13 +417,16 @@ Every other harness command prints the message the daemon wrote, except one whos
 
 `/settings` is generated from the settings registry: one row per key, grouped into the Appearance, Status line, Editor and Transcript tabs, with the label and description the registry declares. Each row also shows the layer the value came from.
 
+Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone.
+
 | Key | Effect |
 | --- | --- |
+| `/` | Search settings across tabs or edit the current query |
 | `up`, `down` | Move between rows |
 | `left`, `tab` | Move to the previous tab |
 | `right`, `shift+tab` | Move to the next tab |
 | `enter` | Open the editor or the pick list of the row, or confirm |
-| `esc` | Close the editor or pick list, then the screen |
+| `esc` | Close the editor or pick list, then clear the search, then close the screen |
 
 A value that the key's type rejects is shown as an inline error and nothing is written. A save goes to the global `tui.toml` only; the project and `--config` layers are never rewritten.
 
