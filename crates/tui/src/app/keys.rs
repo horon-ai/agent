@@ -1,7 +1,7 @@
 //! Keystroke, paste and mouse handling: the key map in force decides what a key
 //! means, a live prompt or overlay gets the key first, and nothing is swallowed.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{Action, App};
 use crate::keys::{self, Key};
@@ -31,6 +31,17 @@ impl App {
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The repaint key answers before every surface, and it takes no other
+        // key from them: it changes nothing on screen, so a picker, the
+        // settings screen or a prompt must not swallow it, and none of their
+        // own keys may be claimed in exchange. What it throws away is the
+        // frame the terminal holds, not the state it shows.
+        if Key::from_event(key)
+            .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
+        {
+            self.request_repaint();
+            return None;
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.
@@ -366,12 +377,13 @@ impl App {
         usize::from(self.viewport_height.unwrap_or(24).saturating_sub(1).max(1))
     }
 
-    /// Take a mouse event into the transcript view.
+    /// Take a mouse event into the transcript view or the draft.
     ///
-    /// Only the wheel is used, and only while `transcript.mouse_scroll` holds
-    /// the capture that makes the terminal report it: a client with no
-    /// focusable regions has nothing for a click to mean, and the settings
-    /// screen covers the pane the wheel would move.
+    /// The wheel is used only while `transcript.mouse_scroll` holds the capture
+    /// that makes the terminal report it, and the settings screen covers the
+    /// pane the wheel would move. A left click in the draft places the caret at
+    /// the cell it covered on the last frame; a click elsewhere on screen has
+    /// nothing to mean.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() {
             return;
@@ -379,6 +391,9 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll.up(scroll::WHEEL_ROWS),
             MouseEventKind::ScrollDown => self.scroll.down(scroll::WHEEL_ROWS),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.input.place_caret(mouse.column, mouse.row);
+            }
             _ => {}
         }
     }
