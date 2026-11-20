@@ -127,10 +127,10 @@ A proposed change fits when it:
 The user-installed Rust package design has one exception to item 3's graph
 limit. It may add the internal data-contract crate `extension-types`, with
 dependencies drawn from the existing workspace dependency set and no new
-external runtime dependencies. The GitHub Actions structural performance gate
-must verify that the no-package execution path meets the existing performance
-and binary size baseline. Keep ACP v1/v2, the SDKs, the TUI dependency boundary,
-and stored sessions compatible.
+external runtime dependencies. Keep the no-package performance and binary size
+baselines. Extend the GitHub Actions structural performance gate with a
+binary-size check and verify the no-package path against both baselines. Keep
+ACP v1/v2, the SDKs, the TUI dependency boundary, and stored sessions compatible.
 
 Does not do: forced tool-call steps, streaming dry-run, a `report_issue` tool,
 per-tool `family@rev` versions, a KDL model catalog, wholesale `anyhow` or

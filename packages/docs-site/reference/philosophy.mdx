@@ -41,9 +41,10 @@ A proposal fits when the answer to all five is yes. Section "Design principles" 
 
 The user-installed Rust package design may add one internal data-contract crate,
 `extension-types`, using existing workspace dependencies only. The exception
-covers the dependency graph. The no-package runtime and binary size baselines
-still apply, and the structural performance gate checks them. Preserve ACP
-v1/v2, SDK and stored-session compatibility, and the TUI dependency boundary.
+covers the dependency graph. Keep the no-package performance and binary size
+baselines. Extend the structural performance gate with a binary-size check.
+Preserve ACP v1/v2, SDK and stored-session compatibility, and the TUI
+dependency boundary.
 
 ## Adopted from omp2
 
