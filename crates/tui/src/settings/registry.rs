@@ -284,6 +284,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.visual_blocks",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Visual blocks",
+            description: "Draw a diagram fence's one-line flow; off draws the fence as typed.",
+        },
+    },
+    SettingSpec {
         id: "models.shortlist",
         kind: SettingKind::Array,
         env: "HORON_TUI_MODELS_SHORTLIST",
