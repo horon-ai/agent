@@ -35,6 +35,18 @@ on:
       baseline_ref:
         type: string
         default: ""
+      jcode_version:
+        description: "Published jcode tag resolved once by benchmark.yml; empty lets each job resolve the newest stable release"
+        type: string
+        default: ""
+      jcode_release_commit:
+        description: "Commit the resolved jcode tag peeled to; the installer refuses a tag that has moved"
+        type: string
+        default: ""
+      jcode_release_source:
+        description: "How benchmark.yml chose the tag: latest (newest stable release) or pin (explicit jcode_version)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -65,6 +77,9 @@ jobs:
           OS_INPUT: ${{ inputs.os }}
           RUNS: ${{ inputs.runs }}
           COMPETITORS: ${{ inputs.competitors }}
+          JCODE_VERSION: ${{ inputs.jcode_version }}
+          JCODE_RELEASE_COMMIT: ${{ inputs.jcode_release_commit }}
+          JCODE_RELEASE_SOURCE: ${{ inputs.jcode_release_source }}
         run: |
           set -euo pipefail
           if [[ ! "$RUNS" =~ ^[0-9]+$ ]] || [ "$RUNS" -lt 5 ]; then
@@ -73,6 +88,17 @@ jobs:
           # The value reaches the FreeBSD guest's shell word for word.
           if [[ -n "$COMPETITORS" && ! "$COMPETITORS" =~ ^[a-z0-9_,.-]+$ ]]; then
             echo '::error::invalid competitor list'; exit 1
+          fi
+          # benchmark.yml resolves these; reject anything that could change the
+          # shell meaning of a value the guest receives.
+          if [[ -n "$JCODE_VERSION" && ! "$JCODE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo '::error::jcode_version must be a published vX.Y.Z tag'; exit 1
+          fi
+          if [[ -n "$JCODE_RELEASE_COMMIT" && ! "$JCODE_RELEASE_COMMIT" =~ ^[0-9a-f]{40,64}$ ]]; then
+            echo '::error::jcode_release_commit must be a hex commit'; exit 1
+          fi
+          if [[ -n "$JCODE_RELEASE_SOURCE" && ! "$JCODE_RELEASE_SOURCE" =~ ^(latest|pin)$ ]]; then
+            echo '::error::jcode_release_source must be latest or pin'; exit 1
           fi
           python3 - "$GITHUB_OUTPUT" <<'PY'
           import json, os
@@ -111,6 +137,15 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       CANDIDATE_DIR: ${{ inputs.ref != '' && '.bench-candidate' || '' }}
       BASELINE_DIR: ${{ inputs.baseline_ref != '' && '.bench-baseline' || '' }}
+      # The tag resolved once for this round. Every cold and warm sample installs
+      # and verifies this release instead of asking GitHub for "latest" again.
+      JCODE_VERSION: ${{ inputs.jcode_version }}
+      JCODE_RELEASE_COMMIT: ${{ inputs.jcode_release_commit }}
+      JCODE_RELEASE_SOURCE: ${{ inputs.jcode_release_source }}
+      # bench_install.py hands this only to the installer subprocess, never to an
+      # installed binary or an npm script: verification needs the API rate limit,
+      # a measured tool does not need the credential.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         id: harness
@@ -182,7 +217,7 @@ jobs:
           usesh: true
           mem: 4096
           cpu: 2
-          envs: RELEASE_TAG RUNS COMPETITORS CANDIDATE_DIR BASELINE_DIR GITHUB_ACTIONS RUNNER_ENVIRONMENT INSTALL_CANDIDATE_HEAD INSTALL_BASELINE_HEAD
+          envs: RELEASE_TAG RUNS COMPETITORS CANDIDATE_DIR BASELINE_DIR GITHUB_ACTIONS RUNNER_ENVIRONMENT INSTALL_CANDIDATE_HEAD INSTALL_BASELINE_HEAD JCODE_VERSION JCODE_RELEASE_COMMIT JCODE_RELEASE_SOURCE GH_TOKEN
           # Python drives the harness, bash runs the installer, coreutils
           # supplies the GNU tools the checksum probes look for, and Node plus
           # npm are what the npm competitors install through.
