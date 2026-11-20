@@ -112,6 +112,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "quit" => "leave",
+        "record" => "record the conversation to a local file, or stop (stop, status)",
+        "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",

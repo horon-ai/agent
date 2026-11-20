@@ -20,15 +20,27 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
-        // the draft leaves a list that belongs to the text it left behind.
-        self.sync_slash();
+        // the draft leaves a list that belongs to the text it left behind. A
+        // replay is not editing that draft — no key reaches it — so the list
+        // stays closed while the recording is on screen.
+        if !self.replaying() {
+            self.sync_slash();
+        }
         let action = self.handle_key(key);
-        self.sync_slash();
+        if !self.replaying() {
+            self.sync_slash();
+        }
         action
     }
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A replay owns the keyboard while it plays: its keys move the playback,
+        // and a letter must not reach the draft behind the recording. The two
+        // keys that leave the client still leave it.
+        if self.replaying() && self.replay_key(key) {
+            return None;
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.

@@ -23,6 +23,7 @@ mod markdown;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
+pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
@@ -76,6 +77,10 @@ mod scroll_tests;
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "recording_tests.rs"]
+mod recording_tests;
 
 #[cfg(test)]
 #[path = "report_tests.rs"]
@@ -146,6 +151,9 @@ Keys:
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Alt-P          pick the model this session uses
+  While a replay plays, space pauses, left/right seek five seconds,
+  +/- change the speed, home/end jump to the start or the end, and esc
+  stops it.
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force.
 
@@ -160,6 +168,8 @@ Commands:
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
+  /record [path] record the conversation to a local file (stop, status)
+  /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
   /skills        list the skills the harness reports, and put one in the
@@ -537,6 +547,9 @@ where
         // Command directories are only stat-ed here; a file is re-read when its
         // own stamp moved.
         changed |= app.tick_commands();
+        // A replay is a clock over the conversation: each frame plays the events
+        // that became due and reports whether the pane changed.
+        changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }
