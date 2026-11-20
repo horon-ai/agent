@@ -37,6 +37,17 @@ impl App {
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The repaint key answers before every surface, and it takes no other
+        // key from them: it changes nothing on screen, so a picker, the
+        // settings screen or a prompt must not swallow it, and none of their
+        // own keys may be claimed in exchange. What it throws away is the
+        // frame the terminal holds, not the state it shows.
+        if Key::from_event(key)
+            .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
+        {
+            self.request_repaint();
+            return None;
+        }
         // A replay owns the keyboard while it plays: its keys move the playback,
         // and a letter must not reach the draft behind the recording. The two
         // keys that leave the client still leave it.
