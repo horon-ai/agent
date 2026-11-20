@@ -422,12 +422,12 @@ fn a_closed_popup_leaves_up_and_down_to_the_history() {
 fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     let mut app = app();
     type_text(&mut app, "/re");
-    for _ in 0..4 {
+    for _ in 0..6 {
         press(&mut app, KeyCode::Down);
     }
-    assert_eq!(app.slash.selected(), 4, "down stopped before the last row");
+    assert_eq!(app.slash.selected(), 6, "down did not reach /review");
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/resume");
+    assert_eq!(app.input.text(), "/review");
     assert!(!app.slash.is_open(), "the popup stayed open after the fill");
     app.input.set_text("/re");
     app.sync_slash();
