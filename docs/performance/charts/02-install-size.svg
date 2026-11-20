@@ -54,7 +54,7 @@
 <text x="303.9" y="465.5" font-size="12" fill="#1f2328" text-anchor="start" font-weight="bold">94.3</text>
 <text x="192.2" y="495.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">jcode</text>
 <rect x="202.2" y="482.0" width="135.3" height="18" rx="3" fill="#d3d9e1"/>
-<text x="345.6" y="495.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">136 (1.45×)</text>
+<text x="345.6" y="495.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">136 (1.44×)</text>
 <text x="192.2" y="525.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Claude Code</text>
 <rect x="202.2" y="512.0" width="592.6" height="18" rx="3" fill="#d3d9e1"/>
 <text x="802.8" y="525.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">597 (6.33×)</text>
@@ -109,6 +109,6 @@
 <text x="192.2" y="985.5" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">oh-my-openagent (omo)</text>
 <rect x="202.2" y="972.0" width="383.4" height="18" rx="3" fill="#d3d9e1"/>
 <text x="593.7" y="985.5" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">515 (5.39×)</text>
-<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 2f63e44 · measured 2026-11-19 14:03 UTC · run 44537447832</text>
+<text x="32.0" y="1032.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: horon-ai/agent 674f49d · measured 2026-11-20 02:16 UTC · run 44658465265</text>
 <text x="32.0" y="1050.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each OS ran on a different GitHub-hosted runner with a mock model: compare tools within one OS, not across OSes.</text>
 </svg>

@@ -149,6 +149,7 @@ fn booleans_and_absences_read_as_words() {
 #[test]
 fn a_long_value_wraps_under_its_own_column() {
     let data = json!({
+        "approval_mode": "yolo",
         "profiles": [{
             "profile": "remote",
             "base_url": "https://example.invalid/a/very/long/path/that/will/not/fit/in/forty/columns",
@@ -157,6 +158,11 @@ fn a_long_value_wraps_under_its_own_column() {
     let report = Report::from_answer(RuntimeCommand::Info, &data, &serde_json::to_string(&data).unwrap()).unwrap();
     let rows = drawn(&report, 40);
     assert!(rows.iter().all(|row| row.chars().count() <= 40), "{rows:?}");
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("approval mode") && row.ends_with("yolo")),
+        "{rows:?}"
+    );
     let head = rows
         .iter()
         .position(|row| row.contains("base url"))

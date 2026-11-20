@@ -47,7 +47,7 @@ fn lock() -> MutexGuard<'static, HashMap<String, Installed>> {
 pub(crate) fn parse_acp_mode(value: &str) -> Result<ApprovalMode, String> {
     match ApprovalMode::parse(value) {
         Some(mode @ (ApprovalMode::Off | ApprovalMode::Write)) => Ok(mode),
-        Some(ApprovalMode::All) => Err(format!(
+        Some(ApprovalMode::Yolo | ApprovalMode::All) => Err(format!(
             "approval mode `{value}` is not available to ACP sessions; use `off` or `write`"
         )),
         None => Err(format!("unknown approval mode `{value}`; use `off` or `write`")),

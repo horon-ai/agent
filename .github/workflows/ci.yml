@@ -1178,6 +1178,22 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- agent::post_tool_feedback_replace_tests --nocapture
 
+      - name: Run approval policy and reporting cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 21 \
+            -- approval::tests:: --test-threads=1
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- approval_grants::tests::an_append_grant_does_not_authorise_a_write
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::runtime_commands::tests::runtime_commands_read_actual_state_without_inference
+
       - name: Run tool verdict and prewalk cohort
         shell: bash
         # These tests merged with the typed tool verdict (#212) and the prewalk
