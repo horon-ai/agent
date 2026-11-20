@@ -41,6 +41,8 @@ A connection lost while the client runs is handled differently: the screen stays
 
 The client names the terminal window `horon · <label>`, so a stack of terminals says which one belongs to which session. The label is the session's own title, and the last component of the working directory for a session the daemon never titled; control characters are dropped and the label stops at eighty characters. The title the shell set is pushed onto the terminal's title stack first and comes back on every way out — the normal exit, the error path and the panic hook — because the shell still owns the window afterwards. The stack pair (`CSI 22 ; 2 t` to push, `CSI 23 ; 2 t` to pop) is an extension, so it is written only where the terminal keeps a stack: an xterm-like terminal (`TERM` other than `dumb`), Windows Terminal (`WT_SESSION`) and ConEmu (`ConEmuANSI`) restore the title, while a Windows console without either marker and any terminal that calls itself `dumb` get the title without the pair and keep `horon · <label>` after the client exits. Nothing is written when standard output is not a terminal.
 
+Set `title.state = true` to append `running`, `waiting` or `idle` to the title on terminals with a title stack. The marker changes with the turn or the pending prompt. Exit restores the previous title.
+
 ## User files
 
 Five files shape the client. Four live under `$HORON_HOME` (`~/.horon` unless `HORON_HOME` is set) and one under the project.
@@ -65,6 +67,7 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | array of segment names | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
 | `statusline.right` | array of segment names | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
@@ -76,7 +79,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-The table is the settings registry (`crates/tui/src/settings/registry.rs`), twelve keys in its order, and it is what the settings screen draws.
+The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
 

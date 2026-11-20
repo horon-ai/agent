@@ -22,10 +22,11 @@ impl App {
     ///
     /// The settings that change behavior are applied to the parts that read them
     /// here rather than in each drawing call: the transcript keeps or drops
-    /// reasoning as it streams, the editor asks before it sends, and the mouse
+    /// reasoning as it streams, the editor asks before it sends, the mouse
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
-    /// says so. Whether the terminal is actually captured is the event loop's
-    /// decision, because a capture is a terminal mode.
+    /// says so, and the window title carries the turn state only while
+    /// `title.state` says so. Whether the terminal is actually captured is the
+    /// event loop's decision, because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
         // Markdown changes how many rows an item takes, and the scrollback keeps
         // the counts it measured: a view held across the switch would be moved
@@ -48,6 +49,9 @@ impl App {
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
         self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
+        // Read here and acted on where the title is written, which is also the
+        // only place that knows whether the terminal keeps a title at all.
+        self.title_state = settings.boolean("title.state").unwrap_or(false);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }
