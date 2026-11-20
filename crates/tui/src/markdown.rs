@@ -5,9 +5,17 @@
 //! a model actually emits into lines of styled spans: headings, bold, italic,
 //! inline code, lists, block quotes, fenced code and horizontal rules.
 //!
-//! Anything it does not claim stays as typed. A table drawn as its own pipe
-//! characters is still readable, and dropping the text instead would lose what
-//! the model said, which is worse than showing the source it wrote.
+//! Anything it does not claim stays as typed. A diagram or image kind it cannot
+//! draw is shown as the characters the model wrote, and dropping the text
+//! instead would lose what the model said, which is worse than showing the
+//! source it wrote.
+//!
+//! The one visual block the renderer draws is a `diagram` fence whose body is a
+//! single `label -> label` flow, and only when the labels are inside the limits
+//! in [`crate::visual_blocks`] and the row fits the pane. Anything else — a
+//! malformed flow, another diagram language, an image, an embedded page, a
+//! flow past a limit — stays as its source. Nothing in that path reads a URL,
+//! runs a command or draws from anything but the text already in the message.
 //!
 //! The message on screen is often still arriving, so the renderer has to cope
 //! with half a construct: a fence with no end, a `**` with no partner. Those are
@@ -19,6 +27,7 @@ use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::{Symbols, Theme};
+use crate::visual_blocks::{self, Ink};
 use crate::wrap::Indented;
 
 /// Columns a code block's lines are indented by, so the block reads as one.
@@ -78,14 +87,32 @@ impl Palette {
     }
 }
 
-/// Render `text` as lines, each with the columns its continuation rows keep.
+/// What the renderer may draw beside the plain marks.
+///
+/// The settings screen can turn a whole kind of drawing off, and the transcript
+/// then has to measure and draw the same text as the source it wrote, so the
+/// choice travels with the render call instead of being cached in a renderer.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Options {
+    /// Draw the one supported visual block when it is inside its limits.
+    pub(crate) visual_blocks: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { visual_blocks: true }
+    }
+}
+
+/// Render `text` as lines, drawing what `options` allows.
 ///
 /// `width` is the pane width the block is drawn at: a horizontal rule spans it
-/// rather than carrying its own fixed length.
-pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<Indented> {
+/// rather than carrying its own fixed length, and a diagram wider than it stays
+/// as the source the model wrote.
+pub(crate) fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16, options: Options) -> Vec<Indented> {
     let palette = Palette::new(theme, symbols);
     let mut rows: Vec<Indented> = Vec::new();
-    let mut fence: Option<&'static str> = None;
+    let mut fence: Option<Fence<'_>> = None;
     let mut lines = text.lines().peekable();
     while let Some(raw) = lines.next() {
         // An opening fence that is the last line of a message with no newline
@@ -93,12 +120,23 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
         // half-received ` ```ru ` must not flash a label that then changes.
         let complete = lines.peek().is_some() || text.ends_with('\n');
         let line = raw.trim_end();
-        if let Some(opened) = fence {
-            if closes_fence(line, opened) {
-                fence = None;
-            } else {
-                // Inside a fence the text is code as typed, marks and all.
-                rows.push(code_line(line, &palette));
+        if let Some(open) = fence.take() {
+            match open {
+                Fence::Code(marker) => {
+                    if !closes_fence(line, marker) {
+                        // Inside a fence the text is code as typed, marks and all.
+                        rows.push(code_line(line, &palette));
+                        fence = Some(Fence::Code(marker));
+                    }
+                }
+                Fence::Diagram(mut diagram) => {
+                    if closes_fence(line, diagram.marker) {
+                        rows.extend(diagram_rows(diagram, &palette, width, options));
+                    } else {
+                        diagram.body.push(line);
+                        fence = Some(Fence::Diagram(diagram));
+                    }
+                }
             }
             continue;
         }
@@ -108,9 +146,19 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
             continue;
         }
         if let Some((opened, info)) = fence_info(body) {
-            fence = Some(opened);
-            if complete && let Some(label) = info.split_whitespace().next() {
-                rows.push(fence_label(label, &palette));
+            if info.split_whitespace().next() == Some(DIAGRAM_TAG) {
+                // The diagram waits for its closing fence so a half-received
+                // flow is never drawn as a shorter one; until then it is source.
+                fence = Some(Fence::Diagram(Diagram {
+                    marker: opened,
+                    label: complete,
+                    body: Vec::new(),
+                }));
+            } else {
+                fence = Some(Fence::Code(opened));
+                if complete && let Some(label) = info.split_whitespace().next() {
+                    rows.push(fence_label(label, &palette));
+                }
             }
             continue;
         }
@@ -130,8 +178,66 @@ pub fn render(text: &str, theme: &Theme, symbols: Symbols, width: u16) -> Vec<In
             rows.push(list_line(marker, text, indent, width, &palette));
             continue;
         }
-        // Tables and syntax this renderer does not claim stay as typed.
+        // Syntax the renderer does not claim stays as typed.
         rows.push(with_indent(indent, inline(body, palette.text, &palette, 0)));
+    }
+    // A diagram fence that never closed is still growing, so its body is drawn
+    // as the source it was rather than as a flow that could still change.
+    if let Some(Fence::Diagram(diagram)) = fence {
+        rows.extend(diagram_source(diagram, &palette));
+    }
+    rows
+}
+
+/// The info-string word that opens a diagram fence.
+const DIAGRAM_TAG: &str = "diagram";
+
+/// One open fence, as the lines after it are collected.
+enum Fence<'a> {
+    /// A fenced code block, drawn as typed.
+    Code(&'static str),
+    /// A diagram fence, held until its closing fence names the whole body.
+    Diagram(Diagram<'a>),
+}
+
+/// One diagram fence's body and how its opening line was drawn.
+struct Diagram<'a> {
+    /// The fence marker that opened it.
+    marker: &'static str,
+    /// Whether the opening line was complete enough to carry a label row.
+    label: bool,
+    /// The body lines, as written.
+    body: Vec<&'a str>,
+}
+
+/// The rows of a diagram fence, drawn as a flow or as the source it was.
+fn diagram_rows(diagram: Diagram<'_>, palette: &Palette, width: u16, options: Options) -> Vec<Indented> {
+    if options.visual_blocks
+        && let Some(rows) = visual_blocks::flow(
+            &diagram.body,
+            width,
+            Ink {
+                node: palette.heading,
+                arrow: palette.marker,
+            },
+        )
+    {
+        return rows;
+    }
+    diagram_source(diagram, palette)
+}
+
+/// The rows of a diagram fence that is not drawn as a flow.
+///
+/// The label row and the indented body are exactly what a fenced code block
+/// draws, so a malformed or oversized flow loses none of its text.
+fn diagram_source(diagram: Diagram<'_>, palette: &Palette) -> Vec<Indented> {
+    let mut rows = Vec::with_capacity(diagram.body.len() + 1);
+    if diagram.label {
+        rows.push(fence_label(DIAGRAM_TAG, palette));
+    }
+    for line in diagram.body {
+        rows.push(code_line(line, palette));
     }
     rows
 }

@@ -36,6 +36,7 @@ fn drawn(report: &ContextReport, width: u16) -> Vec<String> {
         symbols: Symbols::default(),
         width,
         markdown: true,
+        visual_blocks: true,
     };
     wrap::wrap_rows(crate::context::lines(report, &look), width)
         .iter()
@@ -150,6 +151,7 @@ fn a_report_is_drawn_above_the_rest_of_the_conversation() {
         symbols: Symbols::default(),
         width: 60,
         markdown: true,
+        visual_blocks: true,
     };
     assert!(item_lines::lines(&items[1], &look, None).len() > 1);
 }

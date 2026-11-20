@@ -84,6 +84,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 | `transcript.turn_usage` | boolean | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
+| `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
 
@@ -195,6 +196,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
+| `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
 | `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
@@ -222,7 +224,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | Deny the parked call; a question stays open |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
-The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: thirty-four actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
+The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`, each action with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
@@ -265,6 +267,8 @@ The client marks avoidable prompt cache misses after the request that caused the
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
 
 Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
+
+A `diagram` fence can draw a one-line flow such as `load -> parse -> render`. It accepts up to eight labels, with at most 24 characters and 24 display cells per label. The source must fit within 4 KiB and the rendered flow must fit the pane. Incomplete, malformed and oversized flows remain readable as source. Set `transcript.visual_blocks = false` to show every flow as source.
 
 `transcript.markdown = false` turns the rendering off and draws the same text with its markers as typed.
 

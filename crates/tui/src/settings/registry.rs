@@ -295,6 +295,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             description: "Show each completed turn's elapsed time and token usage under it; off hides the footer.",
         },
     },
+    SettingSpec {
+        id: "transcript.visual_blocks",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Visual blocks",
+            description: "Draw a diagram fence's one-line flow; off draws the fence as typed.",
+        },
+    },
 ];
 
 /// The spec for `id`, or `None` when the key is not declared.

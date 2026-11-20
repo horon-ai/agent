@@ -84,6 +84,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 | `transcript.turn_usage` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
+| `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 
 이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
 
@@ -195,6 +196,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | 트랜스크립트를 한 줄 위에 붙잡아 둔다 |
 | `app.scroll_down` | `shift+down` | 트랜스크립트를 한 줄 끝 쪽으로 옮긴다 |
 | `app.scroll_bottom` | `ctrl+end` | 다시 대화의 끝을 따라간다 |
+| `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
 | `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
@@ -222,7 +224,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | 대기 중인 호출을 거절한다. 질문 프롬프트는 연 채로 둔다 |
 | `prompt.confirm` | `enter` | 여러 선택지 질문을 확정한다 |
 
-이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 서른네 동작에 각각이 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
+이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 동작마다 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
 
 대부분의 터미널은 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 믿을 만한 새 줄 키는 `alt+enter`와 `ctrl+j`이고, `shift+enter`는 터미널이 시프트 붙은 형태를 보고할 때만 응답한다.
 
@@ -265,6 +267,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
 
 어시스턴트 글은 마크다운으로 그린다. 제목, 강조, 인라인 코드, 목록, 인용, 펜스 코드, 가로줄을 다룬다. 목록은 최대 여섯 단계까지 중첩되고, 단계마다 두 칸 또는 탭 하나를 쓰며, 모델이 적은 들여쓰기에서 중첩을 그린다. 펜스 코드는 적힌 글자를 그대로 두고, 여는 펜스 줄이 완성되면 그 첫 낱말을 언어 표시로 그리므로, 절반만 도착한 ` ```ru `가 잠깐 표시를 띄웠다가 바뀌지 않는다. 표, 링크, 렌더러가 다루지 않는 문법은 모델이 적은 원문 그대로 남는다. 글을 지우면 모델이 한 말을 잃기 때문이다. 줄바꿈된 행은 이어지는 행의 들여쓰기를 지키므로, 중첩된 항목은 줄이 바뀐 뒤에도 중첩으로 읽힌다. 새 턴은 앞 턴에서 한 행 비운 아래에서 시작한다.
+
+`diagram` 코드 블록은 `load -> parse -> render`처럼 한 줄 흐름을 그립니다. 이름을 최대 8개까지 넣을 수 있고 이름 하나는 24글자와 표시 칸 24개 이하여야 합니다. 원문이 4 KiB를 넘거나 흐름이 창 너비를 넘으면 원문을 표시합니다. 미완성 블록과 잘못된 문법도 원문으로 남습니다. `transcript.visual_blocks = false`를 지정하면 모든 흐름을 원문으로 표시합니다.
 
 `transcript.markdown = false`는 이 렌더링을 끄고 같은 글을 표시까지 그대로 그린다.
 
