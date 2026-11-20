@@ -89,7 +89,7 @@ fn a_local_command_runs_once_and_keeps_its_output() {
     let _serial = serial();
     let directory = tempfile::tempdir().expect("a working directory");
     let mut app = app_in(directory.path());
-    let action = app.submit("!echo once > once.txt && echo printed");
+    let action = app.submit("!echo once>once.txt&& echo printed");
     assert!(action.is_none(), "a local command must not ask the bridge to send");
     assert!(app.in_flight.is_none());
     assert!(app.queue.is_empty());
