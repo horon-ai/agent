@@ -65,6 +65,9 @@ impl App {
             return None;
         }
         if let Some(model) = self.model_after_turn.take() {
+            // The cycle keys step from here until an answer names the model,
+            // exactly as one sent straight away does.
+            self.model_requested = Some(model.clone());
             return Some(Action::Model(model));
         }
         if let Some(level) = self.effort_after_turn.take() {

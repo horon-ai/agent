@@ -46,6 +46,10 @@ pub mod ids {
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Step forward to the next model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL: &str = "app.cycle_model";
+    /// Step backward to the previous model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL_BACK: &str = "app.cycle_model_back";
     /// Delete the character before the cursor.
     pub const EDITOR_BACKSPACE: &str = "editor.backspace";
     /// Delete the character at the cursor.
@@ -149,6 +153,12 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // Two steps through a shortlist of the user's own, forward and backward.
+    // `ctrl+p` is free of the editor's own keys, and `ctrl+alt+p` is the same
+    // letter with one modifier more, which every terminal reports apart from
+    // `ctrl+p`; either can be rebound in `keybindings.toml`.
+    ActionSpec::new(ids::APP_CYCLE_MODEL, Scope::App, &["ctrl+p"]),
+    ActionSpec::new(ids::APP_CYCLE_MODEL_BACK, Scope::App, &["ctrl+alt+p"]),
     ActionSpec::new(ids::EDITOR_BACKSPACE, Scope::Editor, &["backspace"]),
     ActionSpec::new(ids::EDITOR_DELETE, Scope::Editor, &["delete"]),
     ActionSpec::new(ids::EDITOR_LEFT, Scope::Editor, &["left", "ctrl+b"]),

@@ -63,6 +63,14 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (
+        ids::APP_CYCLE_MODEL,
+        "switch to the next model in models.shortlist, wrapping at the last one",
+    ),
+    (
+        ids::APP_CYCLE_MODEL_BACK,
+        "switch to the previous model in models.shortlist, wrapping at the first one",
+    ),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),

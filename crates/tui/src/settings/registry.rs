@@ -259,6 +259,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             description: "Render the model's Markdown; off draws its text with the markers as typed.",
         },
     },
+    SettingSpec {
+        id: "models.shortlist",
+        kind: SettingKind::Array,
+        env: "HORON_TUI_MODELS_SHORTLIST",
+        default: DefaultValue::List(&[]),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Models",
+            label: "Cycle list",
+            description: "Model ids the cycle keys step through, in this order; leave empty to disable cycling.",
+        },
+    },
 ];
 
 /// The spec for `id`, or `None` when the key is not declared.

@@ -48,6 +48,11 @@ impl App {
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
         self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
+        // The list the model cycle keys walk belongs to the settings, not to a
+        // session, so every refresh replaces it; the cycle itself reads it on
+        // the press, which keeps a file edit one keypress away from the walk.
+        let shortlist = settings.list("models.shortlist").unwrap_or_default();
+        self.apply_model_shortlist(shortlist);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }
