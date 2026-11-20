@@ -144,6 +144,7 @@ fn keys_defaults_reproduce_the_shipped_keys() {
         (ids::EDITOR_END, "ctrl+e"),
         (ids::EDITOR_LEFT, "ctrl+b"),
         (ids::EDITOR_RIGHT, "ctrl+f"),
+        (ids::EDITOR_ACCEPT_SUGGESTION, "ctrl+right"),
         (ids::APP_SCROLL_PAGE_UP, "pageup"),
         (ids::APP_SCROLL_PAGE_DOWN, "pagedown"),
         (ids::APP_SCROLL_UP, "shift+up"),
@@ -595,4 +596,91 @@ fn a_refused_send_restores_the_whole_multi_line_draft() {
     app.send_failed("line one\nline two", "the harness refused it", false);
     assert_eq!(app.input.text(), "line one\nline two", "every line comes back");
     assert_eq!(app.input.line_count(), 2);
+}
+
+/// Turn on `editor.suggestions` through a settings file, which is the path the
+/// client itself resolves.
+fn enable_suggestions(app: &mut App) {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let global = directory.path().join("tui.toml");
+    std::fs::write(&global, "[editor]\nsuggestions = true\n").expect("write the settings");
+    let sources = crate::settings::Sources {
+        global,
+        project: None,
+        configs: Vec::new(),
+    };
+    let mut warnings = Vec::new();
+    let mut layers = crate::settings::layers::LayerSet::new(&sources);
+    layers.refresh(&mut warnings);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let (settings, resolve_warnings) = layers.resolve(|_: &str| None);
+    assert!(resolve_warnings.is_empty(), "{resolve_warnings:?}");
+    app.refresh_settings(&settings);
+}
+
+/// Type `text` one character at a time, as the terminal delivers it.
+fn type_line(app: &mut App, text: &str) {
+    for character in text.chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+}
+
+#[test]
+fn a_suggestion_is_off_by_default_and_never_sends_the_draft() {
+    let mut app = app();
+    app.history.record("hello world");
+    type_line(&mut app, "hel");
+    assert_eq!(app.suggestion_text(), None, "the setting is off by default");
+    assert_eq!(app.input.text(), "hel");
+    // The accept key does nothing while there is no offer: it is not a send,
+    // and it is not an edit.
+    assert_eq!(app.on_key(modified(KeyCode::Right, KeyModifiers::CONTROL)), None);
+    assert_eq!(app.input.text(), "hel");
+    assert!(app.in_flight.is_none());
+    assert!(app.queue.is_empty());
+}
+
+#[test]
+fn a_suggestion_is_accepted_without_touching_the_draft_before_the_key() {
+    let mut app = app();
+    enable_suggestions(&mut app);
+    app.history.record("hello world");
+    type_line(&mut app, "hel");
+    assert_eq!(app.suggestion_text().as_deref(), Some("lo world"));
+    assert_eq!(app.input.text(), "hel", "the draft is still what was typed");
+    assert_eq!(app.on_key(modified(KeyCode::Right, KeyModifiers::CONTROL)), None);
+    assert_eq!(app.input.text(), "hello world", "the key filled the rest");
+    assert_eq!(app.suggestion_text(), None, "the accepted offer is spent");
+    assert!(app.in_flight.is_none() && app.queue.is_empty());
+}
+
+#[test]
+fn escape_dismisses_a_suggestion_and_leaves_the_draft_alone() {
+    let mut app = app();
+    enable_suggestions(&mut app);
+    app.history.record("hello");
+    app.pending_turn = true;
+    type_line(&mut app, "he");
+    assert_eq!(app.suggestion_text().as_deref(), Some("llo"));
+    assert_eq!(app.on_key(key(KeyCode::Esc)), None);
+    assert_eq!(app.input.text(), "he");
+    assert_eq!(app.suggestion_text(), None);
+    assert!(app.running, "`esc` dismissed the offer instead of leaving");
+    assert!(app.in_flight.is_none() && app.queue.is_empty());
+}
+
+#[test]
+fn editing_withdraws_a_suggestion_and_the_accept_key_cannot_bring_it_back() {
+    let mut app = app();
+    enable_suggestions(&mut app);
+    app.history.record("hello there");
+    type_line(&mut app, "hel");
+    assert_eq!(app.suggestion_text().as_deref(), Some("lo there"));
+    // The old answer named "hel"; the draft now says "help", which no history
+    // entry completes, so nothing stale may be drawn or accepted.
+    app.on_key(key(KeyCode::Char('p')));
+    assert_eq!(app.input.text(), "help");
+    assert_eq!(app.suggestion_text(), None);
+    app.on_key(modified(KeyCode::Right, KeyModifiers::CONTROL));
+    assert_eq!(app.input.text(), "help");
 }

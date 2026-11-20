@@ -2472,6 +2472,7 @@ dependencies = [
  "horon-agent-sdk",
  "horon-agent-tool-types",
  "libc",
+ "open",
  "ratatui",
  "serde_json",
  "tempfile",
@@ -2479,6 +2480,7 @@ dependencies = [
  "toml",
  "toml_edit 0.20.2",
  "unicode-width",
+ "url",
 ]
 
 [[package]]

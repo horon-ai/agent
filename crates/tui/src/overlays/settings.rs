@@ -14,6 +14,13 @@
 //! read. Its rows carry no widget, `Enter` does nothing there, and `r` asks for
 //! a fresh read, so a screen that is mostly editable stays honest about the
 //! part that is not.
+//!
+//! `/` opens a search line that narrows the rows to the ones whose label, key
+//! or description contains what was typed, across every tab: the header moves
+//! to the tab of the row the selection lands on. The query is screen state
+//! only, so typing one never writes a settings file, and `esc` clears it before
+//! it closes the screen. A query in force covers the registry's rows and takes
+//! the screen off the daemon tab, whose rows the client does not name.
 
 use std::path::PathBuf;
 
@@ -90,6 +97,8 @@ pub enum Outcome {
 enum Mode {
     /// Moving between rows and tabs.
     Browse,
+    /// Typing the search line, which narrows the rows and edits no value.
+    Search,
     /// Choosing from a closed list.
     Pick { choices: Vec<String>, index: usize },
     /// Editing one line of text.
@@ -104,6 +113,9 @@ pub struct SettingsOverlay {
     rows: Vec<Row>,
     tab_rows: Vec<usize>,
     mode: Mode,
+    /// What the search line holds. Empty means no filter is applied, so the
+    /// rows are the selected tab's.
+    query: String,
     /// The daemon values, as last reported, and why there are none.
     daemon: DaemonSettings,
     /// The selected row of the daemon tab, which is not a registry row.
@@ -124,6 +136,7 @@ impl SettingsOverlay {
             rows: Vec::new(),
             tab_rows: Vec::new(),
             mode: Mode::Browse,
+            query: String::new(),
             daemon: DaemonSettings::default(),
             daemon_row: 0,
             themes_dir,
@@ -184,7 +197,9 @@ impl SettingsOverlay {
     /// The selected tab's rows, in registry order.
     ///
     /// Empty on the daemon tab, where the rows come from [`Self::daemon`] and
-    /// none of them is a value this client can change.
+    /// none of them is a value this client can change. A search lists the
+    /// registry's matches instead, so a row can come from a tab that is not
+    /// the one last selected.
     pub fn rows(&self) -> Vec<&Row> {
         self.tab_rows.iter().filter_map(|index| self.rows.get(*index)).collect()
     }
@@ -214,14 +229,14 @@ impl SettingsOverlay {
 
     /// Whether an editor or pick list is open.
     pub fn is_editing(&self) -> bool {
-        !matches!(self.mode, Mode::Browse)
+        matches!(self.mode, Mode::Pick { .. } | Mode::Edit { .. })
     }
 
     /// The inline error from a rejected edit, if there is one.
     pub fn error(&self) -> Option<&str> {
         match &self.mode {
             Mode::Edit { error, .. } => error.as_deref(),
-            Mode::Browse | Mode::Pick { .. } => None,
+            Mode::Browse | Mode::Search | Mode::Pick { .. } => None,
         }
     }
 
@@ -229,7 +244,7 @@ impl SettingsOverlay {
     pub fn choices(&self) -> Option<&[String]> {
         match &self.mode {
             Mode::Pick { choices, .. } => Some(choices),
-            Mode::Browse | Mode::Edit { .. } => None,
+            Mode::Browse | Mode::Search | Mode::Edit { .. } => None,
         }
     }
 
@@ -237,7 +252,7 @@ impl SettingsOverlay {
     pub fn pick_index(&self) -> Option<usize> {
         match &self.mode {
             Mode::Pick { index, .. } => Some(*index),
-            Mode::Browse | Mode::Edit { .. } => None,
+            Mode::Browse | Mode::Search | Mode::Edit { .. } => None,
         }
     }
 
@@ -246,10 +261,13 @@ impl SettingsOverlay {
         let Some(index) = self.tabs.iter().position(|tab| *tab == name) else {
             return false;
         };
-        if self.tab != index {
+        if self.tab != index || !self.query.is_empty() {
             self.tab = index;
             self.row = 0;
             self.mode = Mode::Browse;
+            // Naming a tab asks for that tab's rows, so a filter in force is
+            // dropped rather than left drawing another tab's matches.
+            self.query.clear();
             self.rebuild_tab();
         }
         true
@@ -260,6 +278,11 @@ impl SettingsOverlay {
         let Some(index) = self.rows.iter().position(|row| row.id == id) else {
             return false;
         };
+        // The row may be hidden by a filter, and a caller naming it wants it
+        // selected, so the filter goes first.
+        if !self.query.is_empty() {
+            self.clear_query();
+        }
         let tab = self.rows[index].spec.ui.tab;
         if self.select_tab(tab) || self.tab_name() == Some(tab) {
             self.row = self
@@ -275,12 +298,28 @@ impl SettingsOverlay {
     /// Translate one keystroke.
     ///
     /// Every key is consumed: the editor under the overlay must not receive a
-    /// letter meant for a value.
+    /// letter meant for a value or for the search line.
     pub fn on_key(&mut self, key: KeyEvent) -> Outcome {
         match key.code {
             KeyCode::Esc => return self.escape(),
             KeyCode::Enter => return self.confirm(),
             _ => {}
+        }
+        if matches!(self.mode, Mode::Search) {
+            match key.code {
+                KeyCode::Backspace => {
+                    self.query.pop();
+                    self.restart_search();
+                }
+                KeyCode::Char(character) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.query.push(character);
+                    self.restart_search();
+                }
+                KeyCode::Up => self.step(-1),
+                KeyCode::Down => self.step(1),
+                _ => {}
+            }
+            return Outcome::Handled;
         }
         if let Mode::Edit { buffer, error } = &mut self.mode {
             match key.code {
@@ -306,11 +345,22 @@ impl SettingsOverlay {
             // the same meaning.
             KeyCode::Left | KeyCode::BackTab => self.left(),
             KeyCode::Right | KeyCode::Tab => self.right(),
+            // `/` opens the search line, and only from the row list: an open
+            // pick list keeps the key, so a query never throws away a choice.
+            // No other printable key starts one, so a stray character on the
+            // list does nothing instead of changing what the screen shows.
+            KeyCode::Char('/')
+                if !key.modifiers.contains(KeyModifiers::CONTROL) && matches!(self.mode, Mode::Browse) =>
+            {
+                self.mode = Mode::Search;
+            }
             // `r` asks for the daemon's report again, and only on its own tab:
             // every other tab edits a local file, which `r` would have nothing
-            // to reread.
+            // to reread. A filter takes the screen off that tab, so it also
+            // takes `r` with it.
             KeyCode::Char('r')
                 if self.on_daemon_tab()
+                    && self.query.is_empty()
                     && matches!(self.mode, Mode::Browse)
                     && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
@@ -321,13 +371,31 @@ impl SettingsOverlay {
         Outcome::Handled
     }
 
-    /// Leave the open widget, or close the overlay when nothing is open.
+    /// Leave the open widget, then the filter, and only then close the screen.
+    ///
+    /// A value being edited is abandoned first, so an `esc` that changes the
+    /// screen never throws away what the row still shows. A filter is cleared
+    /// next: closing the screen is the last thing `esc` does, which keeps a
+    /// half-typed query from taking the screen with it.
     fn escape(&mut self) -> Outcome {
-        if matches!(self.mode, Mode::Browse) {
-            return Outcome::Closed;
+        match self.mode {
+            Mode::Pick { .. } | Mode::Edit { .. } => {
+                self.mode = Mode::Browse;
+                Outcome::Handled
+            }
+            Mode::Search => {
+                self.mode = Mode::Browse;
+                self.clear_query();
+                Outcome::Handled
+            }
+            Mode::Browse => {
+                if self.query.is_empty() {
+                    return Outcome::Closed;
+                }
+                self.clear_query();
+                Outcome::Handled
+            }
         }
-        self.mode = Mode::Browse;
-        Outcome::Handled
     }
 
     /// Left: move inside a pick list, otherwise to the previous tab.
@@ -364,13 +432,13 @@ impl SettingsOverlay {
     /// report's: moving it here keeps the two from sharing an index that means
     /// different things on different tabs.
     fn step(&mut self, delta: i32) {
-        if self.on_daemon_tab() && matches!(self.mode, Mode::Browse) {
+        if self.on_daemon_tab() && self.query.is_empty() && matches!(self.mode, Mode::Browse) {
             let length = self.daemon.rows().len();
             self.daemon_row = stepped(self.daemon_row, length, delta);
             return;
         }
         let (length, position) = match &mut self.mode {
-            Mode::Browse => (self.tab_rows.len(), &mut self.row),
+            Mode::Browse | Mode::Search => (self.tab_rows.len(), &mut self.row),
             Mode::Pick { choices, index } => (choices.len(), index),
             Mode::Edit { .. } => return,
         };
@@ -379,11 +447,15 @@ impl SettingsOverlay {
             return;
         }
         *position = stepped(*position, length, delta);
+        self.follow_selection();
     }
 
     /// Move to the previous or next tab, wrapping around.
+    ///
+    /// A filter already decides which rows are on screen and which tab the
+    /// header names, so the tab keys do nothing until it is cleared.
     fn switch_tab(&mut self, delta: i32) {
-        if self.tabs.is_empty() {
+        if self.tabs.is_empty() || !self.query.is_empty() {
             return;
         }
         let count = self.tabs.len();
@@ -397,13 +469,31 @@ impl SettingsOverlay {
         self.rebuild_tab();
     }
 
-    /// Rebuild the selected tab's row indices.
+    /// A new query reads from the top of its own result.
+    fn restart_search(&mut self) {
+        self.row = 0;
+        self.rebuild_tab();
+    }
+
+    /// Drop the filter and show the selected tab's rows again.
+    fn clear_query(&mut self) {
+        if self.query.is_empty() {
+            return;
+        }
+        self.query.clear();
+        self.row = 0;
+        self.rebuild_tab();
+    }
+
+    /// Rebuild the visible row indices: the selected tab's, or every match
+    /// while a query is in force.
     ///
     /// The daemon tab holds no registry row: its length is the server's report,
     /// so the selection is clamped to that instead and every registry row is
-    /// hidden while it is open.
+    /// hidden while it is open. A query outranks it, because the filter
+    /// searches the registry's rows and none of the daemon's.
     fn rebuild_tab(&mut self) {
-        if self.on_daemon_tab() {
+        if self.on_daemon_tab() && self.query.is_empty() {
             self.tab_rows.clear();
             self.row = 0;
             self.daemon_row = match self.daemon.rows().len() {
@@ -412,18 +502,48 @@ impl SettingsOverlay {
             };
             return;
         }
-        let tab = self.tab_name();
-        self.tab_rows = self
-            .rows
-            .iter()
-            .enumerate()
-            .filter(|(_, row)| Some(row.spec.ui.tab) == tab)
-            .map(|(index, _)| index)
-            .collect();
+        self.tab_rows = if self.query.is_empty() {
+            let tab = self.tab_name();
+            self.rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| Some(row.spec.ui.tab) == tab)
+                .map(|(index, _)| index)
+                .collect()
+        } else {
+            // Best hit first, so the selection a query lands on is the row it
+            // describes best rather than the first one that happens to share
+            // its letters. Equal scores keep registry order, which is why a
+            // one-letter query still reads top to bottom.
+            let needle = self.query.to_lowercase();
+            let mut ranked: Vec<(i32, usize)> = self
+                .rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| match_score(&needle, row).map(|score| (score, index)))
+                .collect();
+            ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+            ranked.into_iter().map(|(_, index)| index).collect()
+        };
         self.row = match self.tab_rows.len() {
             0 => 0,
             length => self.row.min(length - 1),
         };
+        self.follow_selection();
+    }
+
+    /// Name the tab the selected match lives on, so the header says where the
+    /// row a filter landed on came from.
+    fn follow_selection(&mut self) {
+        if self.query.is_empty() {
+            return;
+        }
+        let Some(tab) = self.selected().map(|row| row.spec.ui.tab) else {
+            return;
+        };
+        if let Some(index) = self.tabs.iter().position(|candidate| *candidate == tab) {
+            self.tab = index;
+        }
     }
 
     /// Act on the selected row: open its widget, or settle it.
@@ -432,7 +552,14 @@ impl SettingsOverlay {
     /// write a daemon value: `Enter` there is read as "nothing to do" rather
     /// than reported as a failure.
     fn confirm(&mut self) -> Outcome {
-        if self.on_daemon_tab() {
+        // Enter in the search line hands the keys back to the rows without
+        // touching the setting the filter landed on: a search types a query,
+        // it does not change a value.
+        if matches!(self.mode, Mode::Search) {
+            self.mode = Mode::Browse;
+            return Outcome::Handled;
+        }
+        if self.on_daemon_tab() && self.query.is_empty() {
             return Outcome::Handled;
         }
         let Some((id, spec, current, text)) = self
@@ -486,6 +613,8 @@ impl SettingsOverlay {
                     Outcome::Handled
                 }
             },
+            // Handled above, before a row is read at all.
+            Mode::Search => Outcome::Handled,
         }
     }
 
@@ -514,6 +643,23 @@ fn stepped(position: usize, length: usize, delta: i32) -> usize {
     } else {
         (position + delta as usize).min(last)
     }
+}
+
+/// How well a lowercased query matches this row, or nothing when it does not.
+///
+/// A row is searched by its visible label, its key and its description, each as
+/// a case-insensitive substring: the three fields spell out what a reader would
+/// type, so `wheel` finds `Wheel scrolls`, `context` finds
+/// `statusline.context_window`, and a word only a key or a description carries
+/// finds its row on a tab that is not open. The best field decides the rank, so
+/// the row a query lands on is the one whose name it matches before the ones it
+/// only shares a key or a sentence with.
+fn match_score(needle: &str, row: &Row) -> Option<i32> {
+    [(3, row.spec.ui.label), (2, row.id), (1, row.spec.ui.description)]
+        .into_iter()
+        .filter(|(_, field)| field.to_lowercase().contains(needle))
+        .map(|(rank, _)| rank)
+        .max()
 }
 
 /// The tabs in registry order, each named once, then the daemon tab.
@@ -750,15 +896,26 @@ pub fn draw(
         tabs.push(Span::styled(format!(" {tab} "), style));
         tabs.push(Span::raw(" "));
     }
+    let searching = !overlay.query.is_empty();
+    // A filter outlives the search line, and it decides which rows are on
+    // screen, so the header keeps it in view: otherwise a short list with the
+    // matching tab highlighted would read as the whole tab.
+    if searching {
+        tabs.push(Span::styled(
+            format!("/{}", overlay.query),
+            Style::default().fg(theme.core.text).add_modifier(Modifier::BOLD),
+        ));
+    }
     frame.render_widget(Line::from(tabs), tabs_area);
 
     let visible = body_area.height as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut selected_line = 0usize;
-    if overlay.on_daemon_tab() {
+    if overlay.on_daemon_tab() && !searching {
         // The daemon tab is a read-only table, so it draws its own rows and
         // footer and returns before the registry path can draw a widget over
-        // a value no client can change.
+        // a value no client can change. A filter outranks it, since the query
+        // names registry rows and leaves this tab with nothing to show.
         let lines = daemon_lines(overlay, theme);
         let offset = match visible {
             0 => 0,
@@ -769,14 +926,22 @@ pub fn draw(
         draw_daemon_footer(frame, footer_area, overlay, theme);
         return None;
     }
-    let mut group = "";
+    let mut group: Option<String> = None;
     for (position, row) in overlay.rows().into_iter().enumerate() {
-        if row.spec.ui.group != group {
-            group = row.spec.ui.group;
+        // A filter puts rows from every tab in one list, so the header names
+        // the tab as well: one `Content` heading under `Transcript` and another
+        // under `Editor` would read as the same group twice.
+        let heading = if searching {
+            format!("{} · {}", row.spec.ui.tab, row.spec.ui.group)
+        } else {
+            row.spec.ui.group.to_string()
+        };
+        if group.as_deref() != Some(heading.as_str()) {
             lines.push(Line::from(Span::styled(
-                format!(" {group}"),
+                format!(" {heading}"),
                 Style::default().fg(theme.core.muted).add_modifier(Modifier::BOLD),
             )));
+            group = Some(heading);
         }
         let chosen = position == overlay.row;
         if chosen {
@@ -804,6 +969,14 @@ pub fn draw(
             Span::styled(format!("  {}", row.source()), origin),
         ]));
     }
+    if lines.is_empty() && searching {
+        // A filter with no hit is a result, not a blank panel: the screen says
+        // the query kept nothing so the row area reads as empty on purpose.
+        lines.push(Line::from(Span::styled(
+            format!(" nothing matches \"{}\"", overlay.query),
+            Style::default().fg(theme.core.muted),
+        )));
+    }
     let offset = if visible == 0 || selected_line < visible {
         0
     } else {
@@ -817,20 +990,56 @@ pub fn draw(
             let description = overlay
                 .selected()
                 .map(|row| row.spec.ui.description)
-                .unwrap_or("no settings are declared");
+                .unwrap_or(if searching {
+                    "no setting matches that search"
+                } else {
+                    "no settings are declared"
+                });
+            // A filter that is still in force says so, so a short list reads as
+            // the query's result rather than as the whole tab, and `esc` says
+            // what it does next: clear the filter, not close the screen.
+            let hint = if searching {
+                " / edit filter  Enter change  up/down move  esc clears filter"
+            } else {
+                " / search  Enter change  up/down move  tab switch  esc close"
+            };
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::from(Span::styled(
                         format!(" {description}"),
                         Style::default().fg(theme.core.text),
                     )),
-                    Line::from(Span::styled(
-                        " Enter change  up/down move  tab switch  esc close",
-                        Style::default().fg(theme.core.muted),
-                    )),
+                    Line::from(Span::styled(hint, Style::default().fg(theme.core.muted))),
                 ]),
                 footer_area,
             );
+        }
+        Mode::Search => {
+            let description = overlay
+                .selected()
+                .map(|row| row.spec.ui.description)
+                .unwrap_or("no setting matches that search");
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        format!(" {description}"),
+                        Style::default().fg(theme.core.text),
+                    )),
+                    Line::from(vec![
+                        Span::styled(format!(" /{}", overlay.query), Style::default().fg(theme.core.text)),
+                        Span::styled("  enter keep filter  esc clear", Style::default().fg(theme.core.muted)),
+                    ]),
+                ]),
+                footer_area,
+            );
+            // The query is typed on the footer's second line, after the ` /`,
+            // so the cursor follows the characters already typed.
+            let query_width = unicode_width::UnicodeWidthStr::width(overlay.query.as_str());
+            let x = footer_area
+                .x
+                .saturating_add(2)
+                .saturating_add(u16::try_from(query_width).unwrap_or(u16::MAX));
+            cursor = Some((x, footer_area.y.saturating_add(1)));
         }
         Mode::Pick { choices, index } => {
             let mut spans = vec![Span::styled(" choose ", Style::default().fg(theme.core.muted))];
