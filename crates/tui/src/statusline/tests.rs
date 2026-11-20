@@ -4,16 +4,18 @@ use std::time::Duration;
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::style::Color;
 use ratatui::widgets::Paragraph;
 use time::Time;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, compact, render, shorten_path, status_word,
+    Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, apply_appearance, compact, render, shorten_path,
+    status_word,
 };
 use crate::settings::{Reloader, Settings, Sources};
 use crate::theme::schema::BUILTIN_DARK;
-use crate::theme::{ChangePalette, Symbols, Theme, changes, parse};
+use crate::theme::{ChangePalette, SymbolPreset, Symbols, Theme, changes, parse};
 
 fn settings_from(text: &str) -> Settings {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -273,6 +275,79 @@ fn statusline_catalogue_round_trips() {
         assert_eq!(preset.as_str(), name);
     }
     assert!(Preset::parse("bogus").is_none());
+}
+
+/// The theme and the glyphs a settings file resolves to.
+fn appearance(text: &str) -> (Theme, Symbols) {
+    let mut theme = Theme::default();
+    let mut symbols = Symbols::default();
+    apply_appearance(&settings_from(text), &mut theme, &mut symbols);
+    (theme, symbols)
+}
+
+#[test]
+fn a_chosen_separator_joins_every_part_of_the_line() {
+    let (theme, symbols) = appearance("[statusline]\nseparator = \"bar\"\n");
+    let line = render(&sample(), &Layout::default(), &theme, symbols, 100).to_string();
+    assert!(
+        line.starts_with("idle | anthropic/claude-sonnet-4 | ~/proj"),
+        "left side wrong: {line:?}"
+    );
+    assert!(line.ends_with("↑200 ↓50 | 09:05"), "right side wrong: {line:?}");
+    assert!(!line.contains('·'), "the glyph set's mark survived: {line:?}");
+
+    // The model and its effort are parts of the same line, so the chosen mark
+    // joins them too.
+    let mut data = sample();
+    data.effort = Some("high");
+    let line = render(&data, &Layout::default(), &theme, symbols, 100).to_string();
+    assert!(line.contains("anthropic/claude-sonnet-4 | high"), "{line:?}");
+
+    // `preset` keeps whatever the glyph set draws, whichever set it is.
+    let mut ascii = SymbolPreset::Ascii.symbols();
+    apply_appearance(
+        &settings_from("[statusline]\nseparator = \"preset\"\n"),
+        &mut Theme::default(),
+        &mut ascii,
+    );
+    assert_eq!(ascii.separator, "|");
+}
+
+#[test]
+fn a_chosen_separator_keeps_the_narrow_priority_order() {
+    let (theme, symbols) = appearance("[statusline]\nseparator = \"bar\"\n");
+    let layout = Layout {
+        context_window: 1000,
+        ..Layout::default()
+    };
+    let narrow = render(&sample(), &layout, &theme, symbols, 20).to_string();
+    assert!(narrow.contains("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
+    assert!(!narrow.contains('↑'), "the tokens should go second: {narrow:?}");
+    assert!(
+        !narrow.contains('|'),
+        "a separator was left with nothing beside it: {narrow:?}"
+    );
+}
+
+#[test]
+fn the_background_setting_chooses_the_theme_or_the_terminal() {
+    let theme = Theme::default();
+    let (themed, _) = appearance("[statusline]\nbackground = \"theme\"\n");
+    assert_eq!(themed.status.status_bg, theme.status.status_bg);
+
+    let (unset, _) = appearance("");
+    assert_eq!(
+        unset.status.status_bg, theme.status.status_bg,
+        "the default is the theme's background"
+    );
+
+    let (terminal, _) = appearance("[statusline]\nbackground = \"terminal\"\n");
+    assert_eq!(terminal.status.status_bg, Color::Reset);
+    assert_eq!(
+        terminal.status.status_text, theme.status.status_text,
+        "the setting changed more than the background"
+    );
 }
 
 #[test]

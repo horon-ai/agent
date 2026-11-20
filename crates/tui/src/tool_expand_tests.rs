@@ -372,6 +372,7 @@ fn an_expanded_call_wraps_inside_the_pane_like_the_preview_does() {
         symbols: crate::theme::Symbols::default(),
         width: 40,
         markdown: false,
+        visual_blocks: true,
     };
     let frame = tool_expand::Frame::new(transcript.expand_state(), &Bindings::default());
     let wrapped = crate::wrap::wrap_rows(crate::item_lines::lines(&Item::Tool(call), &look, Some(&frame)), 40);
@@ -665,6 +666,7 @@ fn the_key_label_costs_the_line_no_rows_at_any_width() {
             symbols: crate::theme::Symbols::default(),
             width,
             markdown: false,
+            visual_blocks: true,
         };
         let rows = |state: &ExpandState| {
             let frame = tool_expand::Frame::new(state, &bindings);

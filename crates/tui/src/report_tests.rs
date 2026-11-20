@@ -20,6 +20,7 @@ fn drawn(report: &Report, width: u16) -> Vec<String> {
         symbols: Symbols::default(),
         width,
         markdown: true,
+        visual_blocks: true,
     };
     wrap::wrap_rows(crate::report::lines(report, &look), width)
         .iter()
