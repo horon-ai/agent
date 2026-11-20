@@ -1659,7 +1659,7 @@ impl BashTool {
 
         let has_stdin_channel = !bridged && ctx.stdin_request_tx.is_some();
 
-        let session_cwd = bash_session_cwd_enabled();
+        let session_cwd = !bridged && bash_session_cwd_enabled();
         let start_dir = resolve_bash_start_dir(params.cwd.as_deref(), ctx, session_cwd);
         let cwd_capture = session_cwd.then(BashCwdCapture::new);
         let command_text = if cwd_capture.is_some() {
@@ -1792,10 +1792,10 @@ impl BashTool {
         // the still-running task off to the background manager instead of killing it.
         // Arm the process-tree cleanup before the worker can be cancelled.
         let mut process_group_guard =
-            horon_agent_platform::process::ProcessGroupGuard::new((!has_terminal && !bridged).then_some(child_pid));
+            horon_agent_platform::process::ProcessGroupGuard::new((!has_terminal).then_some(child_pid));
         let mut child = ForegroundChild {
             child: Some(child),
-            bridged,
+            bridged: bridged && !horon_agent_platform::process::process_groups_supported(),
         };
         let mut work_handle: tokio::task::JoinHandle<Result<ToolOutput>> = tokio::spawn(async move {
             let stdout_task = tokio::spawn(stream::collect_output(stdout_handle, stdout_progress, stdout_stream));
@@ -1860,7 +1860,10 @@ impl BashTool {
             };
 
             let status = child.wait().await?;
-            process_group_guard.disarm();
+            if !bridged {
+                process_group_guard.disarm();
+            }
+            drop(process_group_guard);
 
             if let Some(task) = stdin_task {
                 task.abort();

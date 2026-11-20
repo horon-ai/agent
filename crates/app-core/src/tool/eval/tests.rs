@@ -571,5 +571,30 @@ await tool.bash(command=command)
         })
         .await
         .expect("the bridge shell's child was stopped");
+
+        if horon_agent_platform::process::process_groups_supported() {
+            let output = session
+                .approved(
+                    &registry,
+                    json!({"code": r#"
+await tool.bash(command='sleep 60 >/dev/null 2>&1 & echo $! > bridge-finished-pid')
+print('shell returned')
+"#}),
+                )
+                .await;
+            assert!(output.output.ends_with("shell returned\n"), "{}", output.output);
+            let descendant: u32 = std::fs::read_to_string(home.cwd.join("bridge-finished-pid"))
+                .expect("shell wrote the descendant PID")
+                .trim()
+                .parse()
+                .expect("valid pid");
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while horon_agent_platform::is_process_running(descendant) {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .expect("the shell's group was stopped after its leader exited");
+        }
     });
 }
