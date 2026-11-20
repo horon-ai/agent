@@ -22,10 +22,12 @@ impl App {
     ///
     /// The settings that change behavior are applied to the parts that read them
     /// here rather than in each drawing call: the transcript keeps or drops
-    /// reasoning as it streams, the editor asks before it sends, and the mouse
+    /// reasoning as it streams, the editor asks before it sends, the mouse
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
-    /// says so. Whether the terminal is actually captured is the event loop's
-    /// decision, because a capture is a terminal mode.
+    /// says so, the window title carries the turn state only while
+    /// `title.state` says so, and the model cycle walks `models.shortlist`.
+    /// Whether the terminal is actually captured is the event loop's decision,
+    /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
         // Markdown changes how many rows an item takes, and the scrollback keeps
         // the counts it measured: a view held across the switch would be moved
@@ -35,7 +37,7 @@ impl App {
         }
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
-        self.transcript.set_show_reasoning(show_reasoning);
+        self.transcript.apply_settings_show_reasoning(show_reasoning);
         // The setting is a number, so it can hold a `-1` that is not a row
         // count: anything that does not fit falls back to the default instead
         // of reading as "hide the preview".
@@ -53,8 +55,33 @@ impl App {
         // the press, which keeps a file edit one keypress away from the walk.
         let shortlist = settings.list("models.shortlist").unwrap_or_default();
         self.apply_model_shortlist(shortlist);
+        // Read here and acted on where the title is written, which is also the
+        // only place that knows whether the terminal keeps a title at all.
+        self.title_state = settings.boolean("title.state").unwrap_or(false);
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }
+    }
+
+    /// Show, or hide, the model's reasoning for the rest of this session.
+    ///
+    /// The choice outranks `transcript.show_reasoning` until that setting value
+    /// changes, so an unrelated settings reload keeps the toggle in force. What
+    /// was dropped while reasoning was hidden is gone for good: the client
+    /// never kept it, and turning reasoning back on starts at the next delta.
+    /// The reasoning effort the model is asked for is a different setting and
+    /// is not touched.
+    pub fn toggle_thinking(&mut self) {
+        let show = !self.transcript.show_reasoning();
+        self.transcript.set_show_reasoning(show);
+        // A live notice rather than a recorded one: the toggle can be pressed
+        // while an answer is streaming, and committing that half-written answer
+        // to draw a line above it would split the message in two.
+        let notice = if show {
+            "reasoning shown for this session: it is kept from the next delta, the deltas dropped meanwhile stay gone, and the reasoning effort is unchanged"
+        } else {
+            "reasoning hidden for this session: later deltas are dropped, the reasoning already committed stays on screen, and the reasoning effort is unchanged"
+        };
+        self.transcript.push_live_notice(notice.to_string());
     }
 }

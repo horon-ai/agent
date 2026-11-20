@@ -1,7 +1,13 @@
+//! Settings that change behavior as they are applied rather than on the next
+//! drawing call.
+//!
 //! `transcript.tool_output_lines` is a number, so a settings file can hold a
 //! `-1` that is not a row count. A value that cannot be used falls back to the
 //! default instead of reading as "hide the preview", and a usable one is
-//! applied as written.
+//! applied as written. `title.state` follows the same path into the app, where
+//! the event loop reads it before it writes the window title. `models.shortlist`
+//! is read from the settings on every refresh, because the cycle reads it on the
+//! press.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -96,4 +102,15 @@ fn a_repeated_shortlist_entry_warns_once_per_file_edit() {
         .filter(|item| matches!(item, crate::transcript::Item::Warning(text) if text.contains("twice")))
         .count();
     assert_eq!(warnings, 1, "the same file warned again");
+}
+
+#[test]
+fn the_title_state_setting_reaches_the_app() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), ""));
+    assert!(!app.title_state, "the title state is on before anything asked for it");
+
+    app.refresh_settings(&settings_with(dir.path(), "[title]\nstate = true\n"));
+    assert!(app.title_state, "the setting did not reach the window title");
 }
