@@ -22,13 +22,26 @@ impl App {
         // changes it, and brought up to date again after it: a key that moved
         // the draft leaves a list that belongs to the text it left behind.
         self.sync_slash();
+        self.sync_suggestions();
         let action = self.handle_key(key);
         self.sync_slash();
+        self.sync_suggestions();
         action
     }
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The repaint key answers before every surface, and it takes no other
+        // key from them: it changes nothing on screen, so a picker, the
+        // settings screen or a prompt must not swallow it, and none of their
+        // own keys may be claimed in exchange. What it throws away is the
+        // frame the terminal holds, not the state it shows.
+        if Key::from_event(key)
+            .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
+        {
+            self.request_repaint();
+            return None;
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.
@@ -152,6 +165,21 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+        }
+        // A ghost suggestion sits above the editor and below the popup: the
+        // accept key fills the rest of the draft, and `esc` puts the offer away
+        // instead of interrupting the turn. Every other key reaches the editor,
+        // and the sync after this key withdraws an offer the changed draft no
+        // longer matches.
+        if self.suggestion_available() {
+            if key.code == KeyCode::Esc || bound == Some(keys::ids::APP_INTERRUPT) {
+                self.suggestions.dismiss();
+                return None;
+            }
+            if bound == Some(keys::ids::EDITOR_ACCEPT_SUGGESTION) {
+                self.accept_suggestion();
+                return None;
             }
         }
         match bound {
