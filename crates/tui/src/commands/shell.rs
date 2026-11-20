@@ -59,6 +59,7 @@ static ACTIVE_PID: AtomicU32 = AtomicU32::new(0);
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
 /// The one command that may be pending or running, and its result.
+#[derive(Default)]
 struct State {
     /// A header was drawn, and the worker may not start until the next frame.
     pending: Option<Launch>,
@@ -66,16 +67,6 @@ struct State {
     busy: bool,
     /// Results the event loop has not collected.
     done: VecDeque<Done>,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            pending: None,
-            busy: false,
-            done: VecDeque::new(),
-        }
-    }
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State::default()));
@@ -194,10 +185,7 @@ pub(crate) fn kill_active_group() {
     if pid != 0 {
         // Best effort: the command may already have ended, and the caller is
         // about to end the client anyway.
-        match process::force_stop_process_group(pid) {
-            Ok(()) => {}
-            Err(_) => {}
-        }
+        drop(process::force_stop_process_group(pid));
     }
 }
 
@@ -302,10 +290,7 @@ impl Drop for Active {
         if self.armed {
             // The command is being abandoned: a panic, an early return or a
             // write that failed. The platform takes the tree down.
-            match process::force_stop_process_group(self.pid) {
-                Ok(()) => {}
-                Err(_) => {}
-            }
+            drop(process::force_stop_process_group(self.pid));
         }
         if ACTIVE_PID.load(Ordering::SeqCst) == self.pid {
             ACTIVE_PID.store(0, Ordering::SeqCst);
@@ -403,9 +388,8 @@ fn read_output(mut file: File) -> Result<String, ShellError> {
 /// The result ends with `… output truncated` when anything was cut.
 fn bounded(raw: &str) -> String {
     let mut kept = String::new();
-    let mut lines = 0usize;
     let mut cut = false;
-    for line in raw.lines() {
+    for (lines, line) in raw.lines().enumerate() {
         if lines == MAX_OUTPUT_LINES {
             cut = true;
             break;
@@ -436,7 +420,6 @@ fn bounded(raw: &str) -> String {
             kept.push('\n');
         }
         kept.push_str(&piece);
-        lines += 1;
     }
     if cut {
         if !kept.is_empty() {
