@@ -217,7 +217,7 @@ fn identity_path(path: &Path) -> std::path::PathBuf {
 
 /// A git-style file header, not a body line whose content begins with `--`.
 fn is_old_file_header(line: &str) -> bool {
-    line == "---" || line.starts_with("--- ") || line.starts_with("---\t")
+    line.starts_with("--- ") || line.starts_with("---\t")
 }
 
 fn is_new_file_header(line: &str) -> bool {
@@ -446,6 +446,7 @@ fn parse_hunk(lines: &[&str], i: &mut usize, path: &str) -> Result<Hunk> {
 
     if let Some(next) = lines.get(*i)
         && (next.starts_with('+') || next.starts_with(' ') || (next.starts_with('-') && !is_old_file_header(next)))
+        && !is_mail_signature(&lines[*i..])
     {
         anyhow::bail!("hunk '{header}' in {path} has more lines than it declares");
     }
@@ -459,6 +460,13 @@ fn parse_hunk(lines: &[&str], i: &mut usize, path: &str) -> Result<Hunk> {
         old_no_newline,
         new_no_newline,
     })
+}
+
+fn is_mail_signature(lines: &[&str]) -> bool {
+    let ["-- ", version, trailing @ ..] = lines else {
+        return false;
+    };
+    version.as_bytes().first().is_some_and(u8::is_ascii_digit) && trailing.iter().all(|line| line.is_empty())
 }
 
 fn mark_no_newline(
@@ -749,7 +757,10 @@ async fn apply_prepared(
                         }
                         Err(error) => return Err(error.into()),
                     };
-                    handle.write_all(content.as_bytes()).await
+                    match handle.write_all(content.as_bytes()).await {
+                        Ok(()) => handle.flush().await,
+                        Err(error) => Err(error),
+                    }
                 };
                 if let Err(error) = write_result {
                     if let Err(cleanup) = tokio::fs::remove_file(&file.resolved).await {

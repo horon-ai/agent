@@ -249,7 +249,11 @@ fn multi_action_tool() -> ToolDefinition {
                     "properties": {
                         "action": { "type": "string", "enum": ["list", "message"] },
                         "mode": { "type": "string", "enum": ["safe"] }
-                    }
+                    },
+                    "anyOf": [
+                        {"properties": {"query": {"type": "string"}}},
+                        {"properties": {"limit": {"type": "integer"}}}
+                    ]
                 }
             ]
         }),
@@ -274,7 +278,7 @@ fn a_root_alternative_becomes_one_object_schema_for_chat_tools() {
 
     // Every alternative's parameters are still advertised, and a shared name
     // keeps the root description.
-    for name in ["action", "to_session", "label", "mode"] {
+    for name in ["action", "to_session", "label", "mode", "query", "limit"] {
         assert!(
             parameters["properties"].get(name).is_some(),
             "`{name}` was dropped: {parameters}"

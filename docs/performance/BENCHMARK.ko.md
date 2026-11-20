@@ -98,6 +98,8 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 
 **측정 구간.** `install_ms`는 설치 프로세스가 성공으로 종료할 때까지 걸린 시간이다. `first_version_ms`는 설치된 실행 파일의 첫 `--version` 프로세스가 종료할 때까지 걸린 시간이다. `total_ms`에는 두 구간과 그 사이에 실행 파일 경로를 찾는 시간이 들어간다. Horon은 고정한 태그와 같은 버전을 출력해야 한다. jcode 설치기는 실행 파일을 실행하지 않고, 같은 첫 호출이 해석한 릴리스 버전을 출력하는지 그 호출에서 확인하므로 timed 실행 전에 미리 데우지 않는다. 실패한 표본에는 오류를 기록하고 통계에서 제외한다. Horon 표본이 실패하거나 jcode 릴리스 검증이 실패하면 보고서를 쓴 뒤 작업을 실패로 처리하며, 보고서에는 `releases.jcode`(태그·푼 커밋·자산·주소·SHA-256)가 남는다.
 
+설치 러너는 시간을 재기 전에 플랫폼 자산과 태그가 가리키는 커밋을 확인한다. 설치 시간에는 압축 파일을 받고 검증하고 푸는 시간이 들어간다. 첫 버전 확인 결과는 같은 표본에 기록한다.
+
 | 모드 | 시작 상태 |
 | --- | --- |
 | 콜드 | 새 임시 설치 폴더, 비어 있는 `XDG_CACHE_HOME`을 가진 새 홈, 빈 릴리스 다운로드 폴더, 빈 npm 캐시. 압축 파일과 npm 타르볼이 모두 네트워크로 온다 |
@@ -133,7 +135,7 @@ macOS를 포함한 모든 플랫폼에서 위 명령으로 측정을 시작한�
 
 같은 아티팩트로 생성 구간 두 개를 더 쓴다. README의 `bench-summary` 구간은 대표 표이고, 각 행이 지표, 각 칸이 그 실행이 기록한 중앙값이며, jcode 버전은 그 실행이 설치한 바이너리에서, 릴리스 신원은 `jcode-release.json`에서 읽는다. RESULTS의 `bench-versions` 구간은 측정한 도구 버전과 러너별 jcode 릴리스(태그, 푼 커밋, 자산, SHA-256, 제공 경로)를 적는다. 두 구간 모두 이전 측정값을 물려받지 않고, 생성 구간 밖의 과거 표는 그 값을 낸 버전 표기를 그대로 유지한다.
 
-RESULTS의 기록 구간은 `--require-complete`를 줄 때만 교체한다. 이 옵션은 compare, startup, loading, tools, reload, compile, tui 가운데 산출물이 하나도 없는 묶음이 있으면 렌더를 거부한다. 그래서 compare만 잰 회차는 README 요약만 갱신하고, 앞선 전체 측정의 startup·loading·TUI 기록은 건드리지 않는다.
+자동 생성은 `--require-complete`를 써서 모든 시험 묶음에 산출물이 있을 때 RESULTS 전체 기록을 갱신한다. `suites=compare`를 수동으로 실행한 뒤에는 영·한 README와 RESULTS 각각에 `bench_docs.py render --comparison-only`를 실행한다. 비교 요약과 측정 버전이 갱신되고 전체 기록과 차트가 보존된다.
 
 미러는 `RESULTS.md`와 `RESULTS.ko.md`를 함께 쓰므로 영어와 한국어 Reference 페이지를 같이 다시 만든다. `packages/docs-site/reference/performance/`, `packages/docs-site/ko/reference/performance/`, `packages/docs-site/images/reference/`가 대상이다. 한쪽 언어만 스테이징하면 사이트가 낡은 채로 남고 다음 Documentation Site 검사가 실패한다.
 

@@ -805,6 +805,29 @@ async fn unified_patch_keeps_a_dash_prefixed_body_line_inside_its_hunk() {
 }
 
 #[tokio::test]
+async fn unified_patch_accepts_a_git_format_patch_envelope() {
+    let _env = TestEnv::new();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, "old\n").expect("seed");
+
+    let output = run_patch(
+        dir.path(),
+        "unified-format-patch",
+        concat!(
+            "From 1234567890abcdef1234567890abcdef12345678 Mon Sep 17 00:00:00 2001\n",
+            "Subject: [PATCH] Update notes\n\n---\n notes.txt | 2 +-\n\n",
+            "diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n",
+            "@@ -1 +1 @@\n-old\n+new\n-- \n2.53.0\n\n"
+        ),
+    )
+    .await;
+
+    assert!(body(&output).contains("✓ notes.txt: modified"), "{}", body(&output));
+    assert_eq!(std::fs::read(&file).expect("patched notes"), b"new\n");
+}
+
+#[tokio::test]
 async fn unified_patch_creates_a_file_from_a_new_file_hunk() {
     let _env = TestEnv::new();
     let dir = tempfile::tempdir().expect("temp dir");

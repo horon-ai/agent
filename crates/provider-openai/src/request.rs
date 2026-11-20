@@ -7,7 +7,7 @@ use horon_agent_provider_core::openai_schema::{
     strict_normalize_schema,
 };
 use serde_json::{Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static REWRITTEN_ORPHAN_TOOL_OUTPUTS: AtomicU64 = AtomicU64::new(0);
@@ -83,7 +83,12 @@ pub fn build_tool_reporting(t: &ToolDefinition, sink: Option<&mut Vec<Degradatio
     let supports_strict = !flattened && schema_supports_strict(&strict_schema);
     let parameters = if flattened {
         if sink.is_some() {
-            dropped.push("anyOf".to_string());
+            let keyword = if t.input_schema.get("oneOf").is_some() && t.input_schema.get("anyOf").is_none() {
+                "oneOf"
+            } else {
+                "anyOf"
+            };
+            dropped.push(keyword.to_string());
         }
         strict_schema
     } else if supports_strict {
@@ -146,21 +151,25 @@ fn flatten_parameter_alternatives(schema: &mut Value) -> bool {
         })
         .unwrap_or_default();
     if let Value::Array(branches) = alternatives {
-        let mut branch_properties = HashMap::<String, Vec<Value>>::new();
-        if let Some(common) = branches.first().and_then(|branch| branch["required"].as_array()) {
-            for name in common {
-                if !required.contains(name)
-                    && name.is_string()
-                    && branches[1..]
-                        .iter()
-                        .all(|branch| branch["required"].as_array().is_some_and(|names| names.contains(name)))
-                {
-                    required.push(name.clone());
-                }
+        let mut branch_properties = BTreeMap::<String, Vec<Value>>::new();
+        let mut common_required: Option<Vec<Value>> = None;
+        for mut branch in branches {
+            if branch["type"].as_str().is_some_and(|kind| kind != "object") || branch == Value::Bool(false) {
+                continue;
             }
-        }
-        for branch in branches {
-            let Value::Object(mut branch) = branch else { continue };
+            flatten_parameter_alternatives(&mut branch);
+            let Value::Object(mut branch) = branch else {
+                common_required = Some(Vec::new());
+                continue;
+            };
+            let names = match branch.remove("required") {
+                Some(Value::Array(names)) => names,
+                _ => Vec::new(),
+            };
+            match &mut common_required {
+                Some(common) => common.retain(|name| names.contains(name)),
+                None => common_required = Some(names),
+            }
             if let Some(Value::Object(fields)) = branch.remove("properties") {
                 for (name, field) in fields {
                     if !properties.contains_key(&name) {
@@ -170,6 +179,11 @@ fn flatten_parameter_alternatives(schema: &mut Value) -> bool {
                         }
                     }
                 }
+            }
+        }
+        for name in common_required.unwrap_or_default() {
+            if name.is_string() && !required.contains(&name) {
+                required.push(name);
             }
         }
         let promoted: Map<_, _> = branch_properties

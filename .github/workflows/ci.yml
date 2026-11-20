@@ -1253,7 +1253,7 @@ jobs:
         # overlay merged into a copy that is never stored.
         # `tool::inflight::tests` (3) pins the in-flight marks every dispatch
         # takes and releases, nested marks included.
-        # `tool::apply_patch::apply_patch_tests` (34) covers both patch formats,
+        # `tool::apply_patch::apply_patch_tests` (35) covers both patch formats,
         # including rejection before writes, client buffers and local undo.
         run: |
           python3 scripts/ci/run_lib_tests.py \
@@ -1286,7 +1286,7 @@ jobs:
             -- tool::inflight::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 34 \
+            --timeout 600 --min-passed 35 \
             -- tool::apply_patch::apply_patch_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \

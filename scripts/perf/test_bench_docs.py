@@ -516,7 +516,7 @@ def summary_results(results: Path, with_release: bool = True) -> None:
         "compare.json": json.dumps({
             "suite": "compare", "started_at": "2026-11-10T00:03:56Z",
             "results": [
-                summary_result("jcode", "jcode v0.99.1 (7206efd0c)", 150.0, 38.6e6, 57.0, 179.0, 160.0e3, 163.4e6,
+                summary_result("jcode", "jcode v1.0.1 (10114429c)", 150.0, 38.6e6, 57.0, 179.0, 160.0e3, 163.4e6,
                                body=3245, tools=1433),
                 summary_result("horon", "horon-agent v0.1.0-dev (50d24d7)", 60.0, 38.4e6, 36.0, 62.0, 80.0e3, 112.1e6),
             ],
@@ -565,7 +565,7 @@ class MeasuredSummary(unittest.TestCase):
             results = Path(tmp)
             summary_results(results)
             body = bench_docs.versions_body(bench_docs.find_platform_dirs(results), "abc1234")
-        self.assertIn("| jcode | `jcode v0.99.1 (7206efd0c)` |", body)
+        self.assertIn("| jcode | `jcode v1.0.1 (10114429c)` |", body)
         self.assertIn("| horon | `horon-agent v0.1.0-dev (50d24d7)` |", body)
         self.assertIn(f"| Linux | `v1.0.1` | `{RELEASE['commit']}` | `jcode-linux-x86_64.tar.gz` |", body)
         self.assertIn("`" + "ab" * 32 + "`", body)
@@ -625,6 +625,21 @@ class PartialRuns(unittest.TestCase):
             self.assertEqual(doc.read_text(encoding="utf-8"), DOC)
             self.assertEqual(bench_docs.missing_suite_groups(bench_docs.find_platform_dirs(results)),
                              ["startup", "loading", "tools", "reload", "compile", "tui"])
+
+    def test_compare_only_refreshes_versions_without_touching_the_full_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "bench-results"
+            results.mkdir()
+            summary_results(results)
+            doc = root / "RESULTS.md"
+            doc.write_text("<!-- bench-versions:start -->\nold\n<!-- bench-versions:end -->\n\n" + DOC, encoding="utf-8")
+            code = bench_docs.main(["render", "--doc", str(doc), "--results", str(results),
+                                    "--commit", "abc1234", "--comparison-only"])
+            self.assertEqual(code, 0)
+            text = doc.read_text(encoding="utf-8")
+        self.assertIn("| jcode | `jcode v1.0.1 (10114429c)` |", text)
+        self.assertIn(DOC, text)
 
     def test_a_full_run_replaces_the_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

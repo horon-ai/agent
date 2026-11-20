@@ -98,6 +98,8 @@ The measured artifact is the **published release**, not the code under test, and
 
 **What is timed.** `install_ms` measures the installer process through successful exit. `first_version_ms` measures the installed executable's first `--version` process through exit. `total_ms` covers both plus the harness time to locate the executable. Horon must report the pinned tag. jcode's installer does not run the binary: the same first call must name the resolved release, and its value is checked from that call, so nothing warms it before the timed launch. Failed samples retain the error and are excluded from the statistics. A failed Horon sample and any failed jcode release verification fail the job after the report is written; the report keeps `releases.jcode` (tag, peeled commit, asset, URLs, SHA-256).
 
+The install runner resolves the platform asset and checks the tag's commit before starting the timer. The timed installation includes downloading and checking the archive, plus extraction. It records the first version check in the same sample.
+
 | Mode | Starting state |
 | --- | --- |
 | cold | a fresh temporary install folder, a fresh home with an empty `XDG_CACHE_HOME`, an empty release download directory, and an empty npm cache, so the archive and every npm tarball come over the network |
@@ -133,7 +135,7 @@ The document section holds an OS summary table (runner, binary, status) and a pe
 
 Two more blocks come from the same artifacts. README's `bench-summary` block is the headline table: each row is a metric and each cell is the median the run recorded, with the jcode version read from that run's binary and the release identity from its `jcode-release.json`. RESULTS' `bench-versions` block lists the measured tool versions and each runner's jcode release (tag, peeled commit, asset, SHA-256, served by). Neither block carries a number from an earlier measurement, and historical tables outside the generated blocks stay attributed to the version that produced them.
 
-`RESULTS` is replaced only with `--require-complete`, which refuses a results directory where any suite group (compare, startup, loading, tools, reload, compile, tui) has no artifact at all. A compare-only round therefore updates the README summary but leaves the recorded startup, loading and TUI history untouched.
+The automatic renderer uses `--require-complete` to replace the full RESULTS record only when every suite group has artifacts. After a manual `suites=compare` run, pass `--comparison-only` to `bench_docs.py render` for both READMEs and both RESULTS files. This updates the summary and measured versions and preserves the full record and charts.
 
 The mirror regenerates the English and Korean Reference pages together, `packages/docs-site/reference/performance/` and `packages/docs-site/ko/reference/performance/` plus `packages/docs-site/images/reference/`, because the renderer writes both `RESULTS.md` and `RESULTS.ko.md`. Staging only one language left the site stale and failed the next Documentation Site check.
 
