@@ -71,6 +71,7 @@ fn motion_full_animates_a_running_turn_and_reduced_freezes_it() {
     assert_ne!(first, second, "the spinner did not advance between frames");
 
     app.refresh_settings(&settings_with(dir.path(), "[motion]\npreset = \"reduced\"\n"));
+    assert!(!app.animating(), "a still spinner asked the loop for frames");
     app.motion_frame = 0;
     let frozen = spinner(&app).expect("a reduced preset keeps one frame");
     app.motion_frame = 3;
@@ -85,13 +86,16 @@ fn motion_static_draws_no_spinner_and_no_idle_frame() {
     app.refresh_settings(&settings_with(dir.path(), "[motion]\npreset = \"static\"\n"));
     app.pending_turn = true;
     assert_eq!(spinner(&app), None, "a static preset drew a spinner");
+    assert!(!app.animating(), "a static preset asked the loop for frames");
 
     // A prompt and a lost connection already say more than a turning mark, so
     // even a full preset stops drawing one for them.
     app.refresh_settings(&settings_with(dir.path(), "[motion]\npreset = \"full\"\n"));
     assert!(spinner(&app).is_some());
+    assert!(app.animating(), "a full preset animating a turn asked for no frame");
     app.disconnected = true;
     assert_eq!(spinner(&app), None, "a lost connection kept the spinner");
+    assert!(!app.animating(), "a lost connection kept animating");
 }
 
 #[test]

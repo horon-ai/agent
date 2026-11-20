@@ -600,7 +600,7 @@ where
         if changed {
             frames.request();
         }
-        if let Some(frame) = frames.due(app.pending_turn) {
+        if let Some(frame) = frames.due(app.animating()) {
             app.motion_frame = frame;
             if let Err(message) = draw(terminal, app) {
                 failure = Some(message);

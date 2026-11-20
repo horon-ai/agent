@@ -1,13 +1,14 @@
 //! Motion presets, the bounded numbers behind them, and the frame scheduler.
 //!
-//! The tests read a settings snapshot from a temporary file and drive the
-//! scheduler with an explicit `Instant` gap, so none of them sleeps.
+//! The tests read a settings snapshot from a temporary file, and the one that
+//! needs a real gap between frames waits for the shortest cadence the settings
+//! allow rather than for the default.
 
 use std::time::Duration;
 
 use super::{
-    DEFAULT_MAX_FPS, DEFAULT_SPINNER_INTERVAL, MAX_MAX_FPS, MAX_SPINNER_INTERVAL, MIN_MAX_FPS, MIN_SPINNER_INTERVAL,
-    Motion, MotionMode, launch_overrides, parse_max_fps, parse_mode, parse_spinner_interval,
+    DEFAULT_MAX_FPS, DEFAULT_SPINNER_INTERVAL, Motion, MotionMode, launch_overrides, parse_max_fps, parse_mode,
+    parse_spinner_interval,
 };
 use crate::loop_io::Frames;
 use crate::settings::{Reloader, Settings, Sources};
@@ -158,8 +159,6 @@ fn flag_values_are_bounded_and_reported() {
     assert_eq!(parse_max_fps("60"), Ok(60));
     assert!(parse_max_fps("0").is_err());
     assert!(parse_max_fps("241").is_err());
-    assert!(MIN_SPINNER_INTERVAL < MAX_SPINNER_INTERVAL);
-    assert!(MIN_MAX_FPS < MAX_MAX_FPS);
 }
 
 #[test]

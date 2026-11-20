@@ -215,7 +215,8 @@ impl Frames {
     /// The pass count taken when a frame is drawn, so the caller knows which
     /// spinner frame it used.
     ///
-    /// `animate` is whether a turn is in flight: `false` makes every pass idle,
+    /// `animate` is whether the screen is moving on its own, which is a turn in
+    /// flight under a preset that draws a spinner: `false` makes every pass idle,
     /// and an idle pass never draws without an event, whatever the interval.
     pub fn due(&mut self, animate: bool) -> Option<usize> {
         let due = if self.pending {

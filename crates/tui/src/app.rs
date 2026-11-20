@@ -517,6 +517,16 @@ impl App {
         }
     }
 
+    /// Whether the screen animates on its own right now.
+    ///
+    /// A turn in flight is the only source of motion, and only a `full` preset
+    /// draws a moving spinner for it: `reduced` leaves one still mark, `static`
+    /// none, and a parked prompt or a lost connection draws none, so the loop
+    /// has no reason to add frames for any of them.
+    pub fn animating(&self) -> bool {
+        self.motion.turns() && self.spinner_glyph().is_some()
+    }
+
     /// The spinner glyph the status segment draws, if any.
     ///
     /// Only a turn in flight animates, and only while the preset allows it: a

@@ -95,8 +95,8 @@ impl Motion {
         // The enum declaration refuses a value outside the list before it gets
         // here, so an unreadable preset means the key was never set.
         let mode = match settings.text("motion.preset").and_then(MotionMode::parse) {
-            Some(mode) => mode,
-            None => MotionMode::default(),
+            Some(preset) => preset,
+            None => MotionMode::Full,
         };
         let spinner_interval = bounded(
             settings.number("motion.spinner_interval"),
@@ -120,12 +120,14 @@ impl Motion {
     fn from_values(mode: MotionMode, spinner_interval: i64, max_fps: i64) -> Self {
         // The limit is a floor on the interval, so a slow spinner interval and a
         // high limit cannot both be honoured: the frame the setting asks for
-        // stays, and the limit only adds frames below it.
-        let fastest_frame = Duration::from_micros(1_000_000 / u64::try_from(max_fps.max(1)).unwrap_or(1));
+        // stays, and the limit only adds frames below it. Both callers bound
+        // their numbers first, so a zero can only reach here from a constant.
+        let fps = u64::try_from(max_fps).unwrap_or(MIN_MAX_FPS as u64).max(1);
+        let fastest_frame = Duration::from_micros(1_000_000 / fps).max(Duration::from_millis(1));
         Self {
             mode,
             spinner_interval: Duration::from_millis(u64::try_from(spinner_interval.max(1)).unwrap_or(1)),
-            fastest_frame: fastest_frame.max(Duration::from_millis(1)),
+            fastest_frame,
         }
     }
 
@@ -136,6 +138,14 @@ impl Motion {
             MotionMode::Full => Some(self.spinner_interval.max(self.fastest_frame)),
             MotionMode::Reduced | MotionMode::Static => None,
         }
+    }
+
+    /// Whether the spinner turns frame by frame.
+    ///
+    /// `reduced` draws one still mark and `static` draws none, so neither has
+    /// anything to animate and neither asks the loop for a frame.
+    pub fn turns(self) -> bool {
+        matches!(self.mode, MotionMode::Full)
     }
 
     /// The glyph a running turn draws at `frame`, or `None` for a preset that
