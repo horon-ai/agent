@@ -428,6 +428,11 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
     app.refresh_settings(settings);
     app.theme = themes.theme().clone();
     app.symbols = *themes.symbols();
+    // The status line's own two choices sit on top of the theme and the glyph
+    // preset, so they are applied here where every snapshot arrives rather than
+    // in the drawing call: a save from the settings screen and a hand edit of
+    // `tui.toml` then take effect on the next frame alike.
+    statusline::apply_appearance(settings, &mut app.theme, &mut app.symbols);
 }
 
 /// Write the change the settings screen confirmed, then re-apply it.
@@ -875,7 +880,8 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 }
 
 /// The bottom line: the segments the status-line layout names, joined by the
-/// theme's separator with the right-hand group aligned to the edge.
+/// separator in force, on the theme's background unless `statusline.background`
+/// leaves the terminal's own showing.
 fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     let mut data = app.status_data();
     data.now = Some(statusline::local_now());

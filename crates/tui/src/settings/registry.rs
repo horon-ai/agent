@@ -107,6 +107,8 @@ impl SettingSpec {
 
 const SYMBOLS: &[&str] = &["unicode", "nerd", "ascii"];
 const STATUSLINE_PRESETS: &[&str] = &["default", "minimal", "custom"];
+const STATUSLINE_SEPARATORS: &[&str] = &["preset", "dot", "bar"];
+const STATUSLINE_BACKGROUNDS: &[&str] = &["theme", "terminal"];
 
 /// Every setting the client knows.
 ///
@@ -209,6 +211,30 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Segments",
             label: "Context window",
             description: "Tokens the model can hold, used for the context percentage; 0 hides the segment.",
+        },
+    },
+    SettingSpec {
+        id: "statusline.separator",
+        kind: SettingKind::Enum(STATUSLINE_SEPARATORS),
+        env: "HORON_TUI_STATUSLINE_SEPARATOR",
+        default: DefaultValue::Text("preset"),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Style",
+            label: "Separator",
+            description: "Mark between the parts: the glyph set's own (`preset`), a dot, or a bar.",
+        },
+    },
+    SettingSpec {
+        id: "statusline.background",
+        kind: SettingKind::Enum(STATUSLINE_BACKGROUNDS),
+        env: "HORON_TUI_STATUSLINE_BACKGROUND",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Style",
+            label: "Background",
+            description: "The theme's bottom-line colour, or the terminal's own background unpainted.",
         },
     },
     SettingSpec {

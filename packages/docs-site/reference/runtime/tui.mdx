@@ -77,6 +77,8 @@ The settings of one process are the registry defaults, then the global file, the
 | `statusline.right` | array of segment names | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
 | `statusline.path_max` | number | `40` | `HORON_TUI_STATUSLINE_PATH_MAX` |
 | `statusline.context_window` | number | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
+| `statusline.separator` | `preset`, `dot`, `bar` | `preset` | `HORON_TUI_STATUSLINE_SEPARATOR` |
+| `statusline.background` | `theme`, `terminal` | `theme` | `HORON_TUI_STATUSLINE_BACKGROUND` |
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | boolean | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
@@ -88,6 +90,8 @@ The settings of one process are the registry defaults, then the global file, the
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
+
+`statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
 
