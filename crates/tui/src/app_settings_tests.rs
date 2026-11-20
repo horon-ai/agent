@@ -1,7 +1,11 @@
+//! Settings that change behavior as they are applied rather than on the next
+//! drawing call.
+//!
 //! `transcript.tool_output_lines` is a number, so a settings file can hold a
 //! `-1` that is not a row count. A value that cannot be used falls back to the
 //! default instead of reading as "hide the preview", and a usable one is
-//! applied as written.
+//! applied as written. `title.state` follows the same path into the app, where
+//! the event loop reads it before it writes the window title.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -115,4 +119,15 @@ fn a_refused_motion_number_is_reported_and_the_default_cadence_stays() {
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(warnings[0].contains("motion.max_fps"), "{warnings:?}");
     assert_eq!(app.motion, crate::settings::Motion::default());
+}
+
+#[test]
+fn the_title_state_setting_reaches_the_app() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), ""));
+    assert!(!app.title_state, "the title state is on before anything asked for it");
+
+    app.refresh_settings(&settings_with(dir.path(), "[title]\nstate = true\n"));
+    assert!(app.title_state, "the setting did not reach the window title");
 }
