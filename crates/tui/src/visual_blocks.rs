@@ -71,9 +71,7 @@ pub(crate) fn flow(body: &[&str], width: u16, ink: Ink) -> Option<Vec<Indented>>
     if rows != MAX_ROWS {
         return None;
     }
-    let Some(line) = body.iter().map(|line| line.trim()).find(|line| !line.is_empty()) else {
-        return None;
-    };
+    let line = body.iter().map(|line| line.trim()).find(|line| !line.is_empty())?;
     let label_count = line.split("->").count();
     if !(2..=MAX_LABELS).contains(&label_count) {
         return None;
