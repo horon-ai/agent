@@ -362,9 +362,9 @@ fn a_click_places_the_caret_on_the_cell_it_covered() {
     // cursor can occupy.
     assert!(input.place_caret(5, 5));
     assert_eq!(input.cursor(), 0);
-    assert!(input.place_caret(8, 5));
+    assert!(input.place_caret(7, 5));
     assert_eq!(input.cursor(), 1);
-    assert!(input.place_caret(9, 5));
+    assert!(input.place_caret(8, 5));
     assert_eq!(input.cursor(), 2, "past the last cell is the end of the line");
     // The second row is its own line, and a click on the marker before the
     // text starts that line.
