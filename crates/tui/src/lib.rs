@@ -19,6 +19,7 @@ pub mod history;
 pub mod input;
 mod item_lines;
 pub mod keys;
+mod links;
 mod loop_io;
 mod markdown;
 pub mod overlays;
@@ -131,6 +132,8 @@ Options:
                    no socket is opened and no session is read. Scenes:
                    conversation, tools, error, prompt, unicode
                    (default: conversation)
+  --hide-thinking  Hide the model's reasoning for this session, whatever
+                   transcript.show_reasoning says; ctrl+t toggles it again
   -V, --version    Print the version and exit
   -h, --help       Print this help and exit
 
@@ -147,15 +150,16 @@ Keys:
   Esc            send the queued messages into the running turn, or
                  interrupt it when nothing is queued
   Ctrl-C         cancel a running turn, or leave when nothing is running
-  Ctrl-D         leave
+  Ctrl-D         delete at the cursor, or leave with an empty idle draft
   Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
-  Ctrl-W         delete the word before the cursor
+  Ctrl-W, Alt-Backspace  delete the word before the cursor
   Ctrl-R         search the drafts sent before this one
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
+  Ctrl-T         show or hide the model's reasoning for this session
   Alt-P          pick the model this session uses
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force.
@@ -168,6 +172,7 @@ Commands:
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
+  /links         list the http(s) links in recent answers and open one
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
@@ -195,6 +200,8 @@ pub struct Args {
     /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
     /// the scene either way and `run` has one branch to take.
     pub gallery: Option<String>,
+    /// Start with the model's reasoning hidden, whatever the setting says.
+    pub hide_thinking: bool,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -214,6 +221,7 @@ impl Args {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
                 "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
+                "--hide-thinking" => parsed.hide_thinking = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
                     None => return Err("--socket needs a path".to_string()),
@@ -326,7 +334,7 @@ where
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, args.hide_thinking),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -363,13 +371,34 @@ fn show_failure(message: &str) {
 ///
 /// The session's own title wins and the working directory names a session the
 /// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is.
-fn window_label(app: &App) -> String {
-    title::label(app.session_title.as_deref(), app.cwd.as_deref())
+/// session and a fresh window still says where it is. With `title.state` on,
+/// the turn state follows the name as a fixed word, so a window seen from
+/// another one says whether its session is busy without being switched to.
+fn window_label(app: &App, state_supported: bool) -> String {
+    let label = title::label(app.session_title.as_deref(), app.cwd.as_deref());
+    title::with_state(label, window_state(app, state_supported))
+}
+
+/// The state the title names, or none when the setting is off or the terminal
+/// keeps no title worth adding to.
+fn window_state(app: &App, state_supported: bool) -> Option<title::RunState> {
+    if !state_supported || !app.title_state {
+        return None;
+    }
+    Some(title::RunState::of(
+        app.prompt.is_some(),
+        app.pending_turn,
+        app.session_status.as_deref(),
+    ))
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
+fn run_interactive(
+    runtime: Runtime,
+    reloader: &mut settings::Reloader,
+    keys: &mut keys::Loader,
+    hide_thinking: bool,
+) -> i32 {
     let mut themes = ThemeLoader::new();
     let mut app = App::new(runtime.description.clone(), runtime.events);
     // The stderr copy of these warnings is wiped by the alternate screen, so
@@ -382,6 +411,21 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     }
     app.bindings = keys.bindings().clone();
     apply_settings(&mut app, reloader.settings(), &mut themes);
+    // The flag is a session choice, applied after the settings because it
+    // outranks them: `apply_settings` hands the transcript the setting, and
+    // this then overrides what that setting resolved to.
+    if hide_thinking {
+        app.transcript.set_show_reasoning(false);
+        // The notice names the key in force, not the shipped default: a
+        // rebound `app.toggle_thinking` has to be the key it tells the user to
+        // press.
+        let shows = match app.bindings.first_key(keys::ids::APP_TOGGLE_THINKING) {
+            Some(key) => format!("{key} shows it for this session"),
+            None => "no key is bound to show it; /help lists the keys in force".to_string(),
+        };
+        app.transcript
+            .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
+    }
     match std::env::current_dir() {
         Ok(directory) => app.cwd = Some(directory.display().to_string()),
         Err(error) => app.warn(format!("cannot read the working directory: {error}")),
@@ -410,7 +454,11 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
         app.warn(format!("paste: {error}"));
     }
     let mut title = title::WindowTitle::stdout();
-    if let Err(error) = title.start(&window_label(&app)) {
+    // Decided once: the terminal's answer about its own title handling does not
+    // change while the client runs, and a terminal that has none is left as it
+    // was before `title.state` existed.
+    let state_supported = title.state_supported();
+    if let Err(error) = title.start(&window_label(&app, state_supported)) {
         app.warn(format!("title: {error}"));
     }
     // Installed once the modes it restores are on: a signal before this point
@@ -516,6 +564,12 @@ where
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
     let mut clock = statusline::local_minute();
+    // Whether the terminal keeps a title worth adding the state to; asked once,
+    // because the answer is the terminal's and does not change while it runs.
+    let state_supported = title.state_supported();
+    // The state the window title already carries: `title.start` wrote it, and
+    // the first frame must not write it again.
+    let mut shown_state = window_state(app, state_supported);
     loop {
         let mut changed = loop_io::drain_events(app);
         if !app.running {
@@ -528,10 +582,15 @@ where
             changed = true;
         }
         // The session and the working directory can change while the client
-        // runs; the window is renamed only when the label on it is not the one
-        // the app now names.
-        if changed {
-            let label = window_label(app);
+        // runs, and a key can start a turn, answer a prompt or leave one
+        // without any event arriving; the window is renamed only when the name
+        // it would carry is not the one on it. The state is one fixed word, so
+        // comparing it every frame costs nothing and a repeated state writes
+        // nothing.
+        let state = window_state(app, state_supported);
+        if changed || state != shown_state {
+            shown_state = state;
+            let label = window_label(app, state_supported);
             if let Err(error) = title.show(&label) {
                 app.warn(format!("title: {error}"));
                 changed = true;
