@@ -344,7 +344,7 @@ mod tests {
     fn control_characters_are_dropped_before_the_carry() {
         let prepared = prepare("a\u{1b}]0;title\u{7}b\tc\nd");
         assert_eq!(prepared.text, "a]0;titleb\tc\nd");
-        assert_eq!(prepared.dropped, 3, "escape, BEL and nothing else");
+        assert_eq!(prepared.dropped, 2, "escape, BEL and nothing else");
         let sequence = sequence(&prepared).expect("text carries a sequence");
         assert_eq!(sequence.matches('\u{1b}').count(), 1, "model text added an escape");
         assert_eq!(decode(payload(&sequence)), prepared.text.as_bytes());
