@@ -750,6 +750,7 @@ fn a_tool_preview_wraps_under_its_own_column() {
         symbols: crate::theme::Symbols::default(),
         width: 40,
         markdown: false,
+        visual_blocks: true,
     };
     let call = crate::transcript::ToolCall {
         call_id: "c1".to_string(),

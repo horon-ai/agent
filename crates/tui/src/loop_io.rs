@@ -202,7 +202,7 @@ where
         return Ok(());
     };
     app.motion_frame = frame;
-    crate::draw(terminal, app)
+    crate::draw(terminal, app).map_err(|error| error.to_string())
 }
 
 /// Schedule automatic frames without delaying input or advancing the spinner

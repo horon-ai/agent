@@ -264,16 +264,15 @@ impl LaunchFlag {
         mode: &mut Option<MotionMode>,
         spinner_interval: &mut Option<i64>,
         max_fps: &mut Option<i64>,
-    ) -> Result<bool, String> {
+    ) -> Result<bool, BadArgument> {
         let Some((flag, inline)) = Self::split(argument) else {
             return Ok(false);
         };
         let value = match inline {
             Some(value) => std::borrow::Cow::Borrowed(value),
-            None => std::borrow::Cow::Owned(rest.next().ok_or_else(|| flag.missing().to_string())?),
+            None => std::borrow::Cow::Owned(rest.next().ok_or_else(|| BadArgument(flag.missing().into()))?),
         };
-        flag.apply(&value, mode, spinner_interval, max_fps)
-            .map_err(String::from)?;
+        flag.apply(&value, mode, spinner_interval, max_fps)?;
         Ok(true)
     }
 
