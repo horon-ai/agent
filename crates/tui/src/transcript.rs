@@ -277,30 +277,13 @@ impl Transcript {
         Some(&self.streaming.text)
     }
 
-    /// The text of the newest committed assistant messages, oldest first.
-    ///
-    /// A reader asks for what the model actually said, so only
-    /// [`Item::Assistant`] counts: a user message, a tool call's output and a
-    /// notice are not answers, and a link mentioned in one of them is not
-    /// something this client offered. The answer still streaming is appended as
-    /// the newest, because the reader reaches `/links` while it is still
-    /// arriving.
-    pub fn recent_assistant_text(&self, messages: usize) -> Vec<&str> {
-        let mut texts: Vec<&str> = self
-            .items
-            .iter()
-            .rev()
-            .filter_map(|item| match item {
-                Item::Assistant(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .take(messages)
-            .collect();
-        texts.reverse();
-        if let Some(streaming) = self.open_text() {
-            texts.push(streaming);
-        }
-        texts
+    /// The newest assistant answers, including any text still streaming.
+    pub(crate) fn recent_assistant_text(&self, messages: usize) -> impl Iterator<Item = &str> {
+        let committed = self.items.iter().rev().filter_map(|item| match item {
+            Item::Assistant(text) => Some(text.as_str()),
+            _ => None,
+        });
+        self.open_text().into_iter().chain(committed).take(messages)
     }
 
     /// Record a user message, closing any partly streamed reply first.
@@ -912,11 +895,10 @@ mod tests {
         transcript.push_assistant("second https://two.example/");
         transcript.text_delta(Some("m9"), "streaming https://three.example/");
         assert_eq!(
-            transcript.recent_assistant_text(1),
-            vec!["second https://two.example/", "streaming https://three.example/"],
-            "a user line or an older answer was read as the newest answer"
+            transcript.recent_assistant_text(2).collect::<Vec<_>>(),
+            vec!["streaming https://three.example/", "second https://two.example/"]
         );
-        assert_eq!(transcript.recent_assistant_text(8).len(), 2);
+        assert_eq!(transcript.recent_assistant_text(8).count(), 3);
     }
 
     #[test]

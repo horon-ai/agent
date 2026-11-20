@@ -108,7 +108,7 @@ impl App {
         let urls: Vec<String> = {
             let answers = self.transcript.recent_assistant_text(LINK_ANSWERS);
             let mut urls: Vec<String> = Vec::new();
-            for text in answers.iter().rev() {
+            for text in answers {
                 for url in links::extract(text) {
                     if !urls.contains(&url) {
                         urls.push(url);

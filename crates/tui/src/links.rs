@@ -12,6 +12,7 @@
 //! again before the opener runs, because a row can outlive the answer it came
 //! from.
 
+use std::io;
 use std::process::{Command, Stdio};
 
 use url::Url;
@@ -117,14 +118,17 @@ pub(crate) fn normalized(url: &str) -> Option<String> {
 /// the list may outlive the answer that supplied it. Windows takes its own path
 /// because the shared opener would hand the URL to `cmd /c start`; everywhere
 /// else the opener is the one the login flow already uses.
-pub(crate) fn launch(url: &str) -> Result<(), String> {
+pub(crate) fn launch(url: &str) -> io::Result<()> {
     let Some(url) = normalized(url) else {
-        return Err("refused a URL that is not an http(s) link".to_string());
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "refused a URL that is not an http(s) link",
+        ));
     };
     if std::env::consts::OS == "windows" {
         return launch_windows(&url);
     }
-    open::that_detached(url).map_err(|error| format!("the platform opener failed: {error}"))
+    open::that_detached(url)
 }
 
 /// The Windows handler, with the URL as its own argument.
@@ -140,14 +144,13 @@ fn windows_handler(url: &str) -> Command {
 }
 
 /// Start the Windows handler without waiting for the browser.
-fn launch_windows(url: &str) -> Result<(), String> {
+fn launch_windows(url: &str) -> io::Result<()> {
     windows_handler(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .map(|_| ())
-        .map_err(|error| format!("rundll32.exe: {error}"))
 }
 
 /// The target of the markdown link whose `[` is at `start`, and where the link
