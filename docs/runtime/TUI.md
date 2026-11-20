@@ -185,7 +185,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
 | `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
-| `app.copy_code` | `alt+c` | Choose a code block from the latest answer and copy it |
+| `app.copy_code` | `alt+c` | Copy the newest code block in the latest answer |
 | `app.copy_last` | `alt+l` | Copy the latest answer |
 | `app.copy_draft` | `alt+d` | Copy the whole draft |
 | `app.copy_line` | `alt+k` | Copy the line under the cursor |
@@ -362,7 +362,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 
 The table lists the commands the client handles (`Local` in `crates/tui/src/commands/mod.rs`).
 
-Copy uses the OSC 52 clipboard request on terminals that declare support. Set `HORON_TUI_OSC52=0` to turn it off. When the terminal cannot accept the request, the text stays available for manual selection.
+Copy uses an OSC 52 clipboard request. Set `HORON_TUI_OSC52=0` to turn it off, or set `HORON_TUI_OSC52=1` if your terminal forwards these requests through a multiplexer or SSH. When the terminal cannot accept the request, the text stays available for manual selection.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 

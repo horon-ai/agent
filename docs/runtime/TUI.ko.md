@@ -185,7 +185,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_down` | `shift+down` | 트랜스크립트를 한 줄 끝 쪽으로 옮긴다 |
 | `app.scroll_bottom` | `ctrl+end` | 다시 대화의 끝을 따라간다 |
 | `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
-| `app.copy_code` | `alt+c` | 최근 답변에서 코드 블록을 골라 복사한다 |
+| `app.copy_code` | `alt+c` | 최근 답변의 마지막 코드 블록을 복사한다 |
 | `app.copy_last` | `alt+l` | 최근 답변을 복사한다 |
 | `app.copy_draft` | `alt+d` | 초안 전체를 복사한다 |
 | `app.copy_line` | `alt+k` | 커서가 있는 줄을 복사한다 |
@@ -362,7 +362,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 이 표에는 클라이언트가 처리하는 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 적었습니다.
 
-지원하는 터미널에서는 OSC 52로 복사를 요청합니다. `HORON_TUI_OSC52=0`으로 이 동작을 끌 수 있습니다. 터미널에서 복사 요청을 받을 수 없으면 화면에서 텍스트를 직접 선택할 수 있습니다.
+터미널에는 OSC 52로 복사를 요청합니다. `HORON_TUI_OSC52=0`으로 끌 수 있습니다. 멀티플렉서나 SSH에서 터미널로 복사 요청을 전달하도록 설정했다면 `HORON_TUI_OSC52=1`로 사용할 수 있습니다. 터미널이 요청을 처리할 수 없으면 화면에서 텍스트를 직접 선택할 수 있습니다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 

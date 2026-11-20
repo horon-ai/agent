@@ -27,7 +27,10 @@
 //! and `screen` only pass OSC 52 through when configured for it, and a terminal
 //! reached over `ssh` may drop the sequence too, so the client asks only where
 //! the terminal has declared it can take it and otherwise says so and leaves the
-//! text on screen. `HORON_TUI_OSC52=0` turns the emission off entirely.
+//! text on screen. `HORON_TUI_OSC52=0` turns the emission off entirely, and
+//! `HORON_TUI_OSC52=1` sends it regardless of that gate for the one case the
+//! environment cannot show: a multiplexer or a session that was configured to
+//! forward it.
 
 use std::io::{self, Write};
 
@@ -73,10 +76,15 @@ impl Refusal {
 /// told apart from the user's keys. A terminal that is not named here is treated
 /// as unable: writing the sequence to it is harmless, but promising a copy that
 /// never arrives is not, so an unlisted terminal gets the sentence and the
-/// selectable text instead.
+/// selectable text instead. `HORON_TUI_OSC52=1` is the way past that, for the
+/// one case this module cannot see: a multiplexer that was configured to
+/// forward the sequence, or a terminal reached through `ssh` that passes it on.
 pub fn support(env: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
-    if env(ENV).is_some_and(|value| is_off(&value)) {
-        return Err(Refusal::Disabled);
+    match env(ENV) {
+        Some(value) if is_off(&value) => return Err(Refusal::Disabled),
+        // The user knows something about their terminal this gate cannot read.
+        Some(value) if is_on(&value) => return Ok(()),
+        _ => {}
     }
     // A multiplexer owns the screen in front of the terminal and only forwards
     // OSC 52 when it was told to, so the program behind it says nothing about
@@ -89,7 +97,7 @@ pub fn support(env: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
     if env("STY").is_some_and(|value| !value.is_empty()) {
         return Err(Refusal::Unsupported("screen forwards no OSC 52"));
     }
-    let program = env("TERM_PROGRAM").unwrap_or_default().to_ascii_lowercase();
+    let program = variable(&env, "TERM_PROGRAM").to_ascii_lowercase();
     if !program.is_empty() {
         return match program.as_str() {
             "iterm.app" | "wezterm" | "vscode" | "ghostty" | "kitty" | "alacritty" | "rio" => Ok(()),
@@ -98,7 +106,7 @@ pub fn support(env: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
     }
     // `TERM_PROGRAM` is a macOS convention; other terminals declare themselves
     // in `TERM` alone.
-    let term = env("TERM").unwrap_or_default().to_ascii_lowercase();
+    let term = variable(&env, "TERM").to_ascii_lowercase();
     const DECLARING: &[&str] = &[
         "xterm-kitty",
         "xterm-ghostty",
@@ -114,12 +122,39 @@ pub fn support(env: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
     Err(Refusal::Unsupported("this terminal has not declared OSC 52 support"))
 }
 
+/// One variable's value, or an empty string when it is not set.
+///
+/// A terminal sets only some of the names this module reads, so an unset one is
+/// the ordinary case rather than a failure to report.
+fn variable(env: &impl Fn(&str) -> Option<String>, name: &str) -> String {
+    env(name).unwrap_or_else(String::new)
+}
+
+/// The environment the running client reads the terminal's declarations from.
+///
+/// A variable that is not set is the ordinary case here: most terminals set two
+/// or three of the names [`support`] reads, and an absent one means "did not
+/// declare", not "could not be read". A value that is not UTF-8 is read through
+/// `OsString::to_string_lossy`, because no terminal name this gate matches
+/// contains a byte that would need replacing.
+pub fn environment() -> impl Fn(&str) -> Option<String> {
+    |name| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
+}
+
 /// Whether an environment value asks for the emission to stop.
 ///
 /// Only an explicit no counts: a value the client does not understand keeps the
 /// default, so a typo in a shell profile does not silently disable the feature.
 fn is_off(value: &str) -> bool {
     matches!(value.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no")
+}
+
+/// Whether an environment value asks for the emission regardless of the gate.
+///
+/// Only an explicit yes counts, for the same reason as [`is_off`]: a typo must
+/// not change what the client does with the clipboard.
+fn is_on(value: &str) -> bool {
+    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "on" | "yes")
 }
 
 /// One copy's text after the limits are applied.
@@ -361,6 +396,22 @@ mod tests {
             support(env(&[("TERM_PROGRAM", "iTerm.app"), (ENV, "0")])),
             Err(Refusal::Disabled)
         );
-        assert_eq!(support(env(&[("TERM_PROGRAM", "iTerm.app"), (ENV, "yes")])), Ok(()));
+        // The same variable is the way past the gate for a terminal it cannot
+        // see: a multiplexer told to forward, or an `ssh` session that passes
+        // the sequence on.
+        assert_eq!(
+            support(env(&[("TERM_PROGRAM", "Apple_Terminal"), (ENV, "yes")])),
+            Ok(())
+        );
+        assert_eq!(
+            support(env(&[
+                ("TERM_PROGRAM", "iTerm.app"),
+                ("TMUX", "/tmp/tmux-501,1,0"),
+                (ENV, "1")
+            ])),
+            Ok(())
+        );
+        // A value the client does not understand is not an override either.
+        assert!(support(env(&[("TERM_PROGRAM", "Apple_Terminal"), (ENV, "maybe")])).is_err());
     }
 }

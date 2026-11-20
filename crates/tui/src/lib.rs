@@ -154,7 +154,9 @@ Keys:
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force. Copying uses the terminal's OSC 52 sequence: a
   terminal or a multiplexer that does not take it keeps the text on
-  screen for selection, and HORON_TUI_OSC52=0 turns copying off.
+  screen for selection. HORON_TUI_OSC52=0 turns copying off, and
+  HORON_TUI_OSC52=1 sends it anyway for a multiplexer or ssh session that
+  was configured to forward it.
 
 Commands:
   /help          list the commands (built-in, harness, command files),
@@ -553,7 +555,7 @@ where
         // The one place a copy reaches standard output: the app decided what it
         // carries, and the terminal is asked here, after the frame is measured
         // and before it is drawn.
-        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), |name| std::env::var(name).ok()) {
+        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment()) {
             changed = true;
         }
         let minute = statusline::local_minute();
