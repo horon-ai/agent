@@ -19,20 +19,30 @@
 # Tools that fail to install are omitted from that line and the reason goes to
 # stderr and to <dest_dir>/failures.txt (one `name<TAB>reason` line each), which
 # bench_compare.py reads through --install-failures so the report names the real
-# reason. A missing competitor degrades the report instead of failing CI.
+# reason. A missing npm competitor degrades the report instead of failing CI.
 #
-# jcode comes from its GitHub release: the download URL is retried on transient
-# errors, then the same asset is fetched by id through the release API, and the
-# bytes are accepted only when they match the release SHA256SUMS.
+# jcode is different: its release is resolved and verified, so a jcode failure
+# is a failed run. `scripts/perf/jcode_release.py` resolves the newest stable
+# GitHub release (or the JCODE_VERSION pin), requires this platform's exact
+# asset, verifies SHA-256 against the release SHA256SUMS with the same
+# download-URL-then-asset-id fallback as before, and runs `--version` once to
+# require the resolved tag. It writes <dest_dir>/jcode-release.json with the
+# tag, peeled tag commit, asset, download URL and SHA-256. `resolve` picks the
+# release once per benchmark round; the workflows pass that tag and commit here
+# so every OS measures the same release.
 #
 # On Windows (Git Bash) jcode comes as a release `.exe`, npm tools are recorded
 # by their `.cmd` shim, and every path is written in `C:/...` form so the Python
 # benchmark can open it.
 #
-# Versions are pinned so a workflow rerun measures the same tools:
-#   JCODE_VERSION, CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION,
+# The npm tools stay pinned so a workflow rerun measures the same packages:
+#   CLAUDE_VERSION, CODEX_VERSION, OPENCODE_VERSION, PI_VERSION,
 #   OMP_VERSION, OMO_VERSION, BUN_VERSION
-# Override any of them through the environment.
+# Override any of them, or JCODE_VERSION to pin jcode, through the environment.
+# JCODE_RELEASE_COMMIT refuses a release whose tag moved; JCODE_RELEASE_SOURCE
+# records whether the tag came from the newest-release lookup or a manual pin;
+# JCODE_VERIFY_VERSION=0 skips the `--version` execution so the install suite's
+# timed first call is the executable's first run.
 set -uo pipefail
 
 DEST="${1:-}"
@@ -49,7 +59,20 @@ FAILURES="$DEST/failures.txt"
 : >"$BINS_ARGS"
 : >"$FAILURES"
 
-JCODE_VERSION="${JCODE_VERSION:-v0.99.1}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Empty means "newest stable release"; the resolver validates a pin before use.
+JCODE_VERSION="${JCODE_VERSION:-}"
+# The peeled tag commit resolved once for the whole benchmark round. When set,
+# the installer refuses a tag that now points at another commit.
+JCODE_RELEASE_COMMIT="${JCODE_RELEASE_COMMIT:-}"
+# The workflows pass "latest" when the tag came from their one resolve step, so
+# the record separates that choice from a manual pin. Empty lets the resolver
+# classify a tag-only invocation as a pin.
+JCODE_RELEASE_SOURCE="${JCODE_RELEASE_SOURCE:-}"
+# 0 leaves the first `--version` execution to the install suite's timed call.
+JCODE_VERIFY_VERSION="${JCODE_VERIFY_VERSION:-1}"
+JCODE_METADATA="${JCODE_METADATA:-$DEST/jcode-release.json}"
+JCODE_LOG="$DEST/jcode-release.log"
 CLAUDE_VERSION="${CLAUDE_VERSION:-2.1.317}"
 CODEX_VERSION="${CODEX_VERSION:-0.166.0}"
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.19.5}"
@@ -66,7 +89,6 @@ OMO_VERSION="${OMO_VERSION:-5.1.64}"
 BUN_VERSION="${BUN_VERSION:-1.4.4}"
 
 OS="$(uname -s)"
-ARCH="$(uname -m)"
 case "$OS" in
   MINGW* | MSYS* | CYGWIN*) WINDOWS=1 ;;
   *) WINDOWS=0 ;;
@@ -106,98 +128,14 @@ record_bin() {
   return 1
 }
 
-JCODE_BASE="https://github.com/1jehuang/jcode/releases/download/${JCODE_VERSION}"
-JCODE_API="https://api.github.com/repos/1jehuang/jcode/releases"
-
-curl_get() {
-  curl --fail --location --silent --show-error --retry 5 --retry-delay 2 "$@"
-}
-
-jcode_api_auth=()
-jcode_token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-[ -z "$jcode_token" ] || jcode_api_auth=(--header "Authorization: Bearer $jcode_token")
-
-jcode_fetch() {
-  # jcode_fetch <asset name> <out>: the download URL first, then the same asset by
-  # its release API id. JCODE_FETCH_ERROR holds the reason when both fail.
-  local name="$1" out="$2" release id
-  if curl_get --output "$out" "$JCODE_BASE/$name"; then
-    return 0
-  fi
-  echo "install_competitors: jcode: $name download failed, trying the release API" >&2
-  release="$(mktemp)"
-  if ! curl_get ${jcode_api_auth[@]+"${jcode_api_auth[@]}"} --header 'Accept: application/vnd.github+json' \
-    --output "$release" "$JCODE_API/tags/$JCODE_VERSION"; then
-    rm -f "$release"
-    JCODE_FETCH_ERROR="download failed: $JCODE_BASE/$name and release API $JCODE_API/tags/$JCODE_VERSION"
-    return 1
-  fi
-  # Each asset object lists its "url" before its "name". Tokenize so the JSON
-  # layout does not matter, and accept only a numeric asset id of this repository.
-  id="$(grep -oE '"(url|name)"[[:space:]]*:[[:space:]]*"[^"]*"' "$release" | awk -F'"' -v want="$name" '
-    $2 == "url" { last = "" }
-    $2 == "url" && $4 ~ /^https:\/\/api\.github\.com\/repos\/1jehuang\/jcode\/releases\/assets\/[0-9]+$/ {
-      last = $4; sub(/.*\//, "", last) }
-    $2 == "name" && $4 == want && last != "" { print last; exit }')"
-  rm -f "$release"
-  if ! [[ "$id" =~ ^[0-9]+$ ]]; then
-    JCODE_FETCH_ERROR="download failed: $JCODE_BASE/$name; release API lists no asset named $name"
-    return 1
-  fi
-  if ! curl_get ${jcode_api_auth[@]+"${jcode_api_auth[@]}"} --header 'Accept: application/octet-stream' \
-    --output "$out" "$JCODE_API/assets/$id"; then
-    JCODE_FETCH_ERROR="download failed: $JCODE_BASE/$name and release API asset $id"
-    return 1
-  fi
-}
-
-sha256_of() {
-  # Hash stdin: with a path argument, GNU sha256sum on Git Bash prefixes the line
-  # with `\` when the path holds a backslash, which breaks the comparison.
-  local digest
-  if have sha256sum; then
-    digest="$(sha256sum <"$1")" || return 1
-  elif have shasum; then
-    digest="$(shasum -a 256 <"$1")" || return 1
-  elif have sha256; then
-    digest="$(sha256 -q <"$1")" || return 1
+jcode_python() {
+  # The resolver is Python; every benchmark runner (including the FreeBSD guest)
+  # already installs it for bench_compare/bench_install.
+  if have python3; then
+    command -v python3
+  elif have python; then
+    command -v python
   else
-    return 1
-  fi
-  printf '%s' "${digest%% *}" | tr '[:upper:]' '[:lower:]'
-}
-
-jcode_fetch_verified() {
-  # jcode_fetch_verified <asset name> <out>: fetch the asset and SHA256SUMS, and
-  # keep the asset only when its digest matches the SHA256SUMS line for its name.
-  local name="$1" out="$2" sums expected actual
-  JCODE_FETCH_ERROR=""
-  if ! jcode_fetch "$name" "$out"; then
-    note_fail jcode "$JCODE_FETCH_ERROR"
-    return 1
-  fi
-  sums="$(mktemp)"
-  if ! jcode_fetch SHA256SUMS "$sums"; then
-    rm -f "$sums" "$out"
-    note_fail jcode "checksum $JCODE_FETCH_ERROR"
-    return 1
-  fi
-  # Read only the digest of the exact asset name; the manifest never picks a path.
-  expected="$(awk -v want="$name" '$2 == want || $2 == "*" want { print tolower($1); exit }' "$sums")"
-  rm -f "$sums"
-  if ! [[ "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-    rm -f "$out"
-    note_fail jcode "SHA256SUMS has no digest for $name"
-    return 1
-  fi
-  if ! actual="$(sha256_of "$out")"; then
-    rm -f "$out"
-    note_fail jcode "sha256sum or shasum required to verify $name"
-    return 1
-  fi
-  if [ "$actual" != "$expected" ]; then
-    rm -f "$out"
-    note_fail jcode "SHA256 mismatch for $name: got $actual, SHA256SUMS lists $expected"
     return 1
   fi
 }
@@ -264,61 +202,34 @@ ensure_bun() {
   return 0
 }
 
-install_jcode_windows() {
-  local asset
-  case "$ARCH" in
-    x86_64) asset="jcode-windows-x86_64.exe" ;;
-    aarch64 | arm64) asset="jcode-windows-aarch64.exe" ;;
-    *)
-      note_fail jcode "unsupported platform $OS/$ARCH"
-      return 1
-      ;;
-  esac
-  local dist="$DEST/jcode-dist"
-  rm -rf "$dist"
-  mkdir -p "$dist"
-  jcode_fetch_verified "$asset" "$dist/jcode.exe" || return 1
-  record_bin jcode "$dist/jcode.exe"
-}
-
 install_jcode() {
-  if [ "$WINDOWS" = 1 ]; then
-    install_jcode_windows
-    return
-  fi
-  local asset
-  case "$OS/$ARCH" in
-    Darwin/arm64 | Darwin/aarch64) asset="jcode-macos-aarch64.tar.gz" ;;
-    Darwin/x86_64) asset="jcode-macos-x86_64.tar.gz" ;;
-    Linux/aarch64 | Linux/arm64) asset="jcode-linux-aarch64.tar.gz" ;;
-    Linux/x86_64) asset="jcode-linux-x86_64.tar.gz" ;;
-    FreeBSD/amd64 | FreeBSD/x86_64) asset="jcode-freebsd-x86_64.tar.gz" ;;
-    *) asset="" ;;
-  esac
-  if [ -z "$asset" ]; then
-    note_fail jcode "unsupported platform $OS/$ARCH"
+  local py binary args
+  if ! py="$(jcode_python)"; then
+    note_fail jcode "python3 is required to resolve the jcode release"
     return 1
   fi
-  local tarball="$DEST/jcode-${JCODE_VERSION}.tar.gz"
-  jcode_fetch_verified "$asset" "$tarball" || return 1
-  # Extract into its own directory: the Linux archive is a sh launcher plus a
-  # `<name>.bin` payload it execs from its own directory, so both must stay together.
-  local dist="$DEST/jcode-dist"
-  rm -rf "$dist"
-  mkdir -p "$dist"
-  if ! tar xzf "$tarball" -C "$dist"; then
-    note_fail jcode "unpack failed: $tarball"
+  if ! command -v curl >/dev/null 2>&1; then
+    note_fail jcode "curl is required to reach the jcode release"
     return 1
   fi
-  rm -f "$tarball"
-  local extracted
-  extracted="$(find "$dist" -maxdepth 1 -type f -name 'jcode-*' ! -name '*.bin' | head -n1)"
-  if [ -z "$extracted" ]; then
-    note_fail jcode "release archive contained no binary"
+  # The Python resolver owns resolution, the checkout-free download, the
+  # SHA256SUMS check, extraction and (unless the caller hands that to the
+  # timed first --version) the version check. Everything it logs goes to both
+  # the caller's stderr and <dest>/jcode-release.log so the run artifact keeps
+  # the real installer output.
+  : >"$JCODE_LOG"
+  args=(materialize --dest "$DEST/jcode-dist" --metadata "$JCODE_METADATA")
+  [ -z "$JCODE_VERSION" ] || args+=(--tag "$JCODE_VERSION")
+  [ -z "$JCODE_RELEASE_COMMIT" ] || args+=(--expected-commit "$JCODE_RELEASE_COMMIT")
+  [ -z "$JCODE_RELEASE_SOURCE" ] || args+=(--selection "$JCODE_RELEASE_SOURCE")
+  [ "$JCODE_VERIFY_VERSION" = "0" ] && args+=(--skip-version-exec)
+  if ! binary="$("$py" "$SCRIPT_DIR/jcode_release.py" "${args[@]}" 2>"$JCODE_LOG")"; then
+    cat "$JCODE_LOG" >&2
+    note_fail jcode "$(tail -n 1 "$JCODE_LOG" | sed 's/^jcode_release: //')"
     return 1
   fi
-  chmod +x "$dist"/jcode-*
-  record_bin jcode "$extracted"
+  cat "$JCODE_LOG" >&2
+  record_bin jcode "$binary"
 }
 
 install_node_tool() {
@@ -376,11 +287,13 @@ install_omo() {
 }
 
 IFS=',' read -r -a wanted <<<"$TOOLS"
+JCODE_REQUESTED=0
+JCODE_FAILED=0
 for tool in "${wanted[@]}"; do
   tool="$(echo "$tool" | tr -d '[:space:]')"
   [ -z "$tool" ] && continue
   case "$tool" in
-    jcode) install_jcode || true ;;
+    jcode) JCODE_REQUESTED=1; install_jcode || JCODE_FAILED=1 ;;
     claude_code | claude) install_claude || true ;;
     codex) install_codex || true ;;
     opencode) install_opencode || true ;;
@@ -393,6 +306,14 @@ for tool in "${wanted[@]}"; do
       ;;
   esac
 done
+
+if [ "$JCODE_REQUESTED" = 1 ] && [ "$JCODE_FAILED" = 1 ]; then
+  # Resolution, checksum or version verification is a measurement precondition:
+  # falling back to an older release or a source build would change what the
+  # comparison claims, so the run fails and the reason stays in failures.txt.
+  echo "install_competitors: jcode release verification failed; see $FAILURES and $JCODE_LOG" >&2
+  exit 1
+fi
 
 echo "install_competitors: wrote $BINS_ARGS" >&2
 # Echo the resolved flags on stdout too so `... | tee competitors.txt` in the

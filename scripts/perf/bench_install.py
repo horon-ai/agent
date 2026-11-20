@@ -41,6 +41,15 @@ def child_env(root, tag):
                HORON_AGENT_VERSION=tag, HORON_AGENT_SKIP_SERVER_RELOAD='1',
                HORON_AGENT_NO_AUTO_UPDATE='1', npm_config_cache=str(root / 'npm-cache'),
                npm_config_update_notifier='false', CI='1', NO_COLOR='1')
+    # The one jcode release this round resolved, so every platform installs and
+    # later reports the same identity. JCODE_VERIFY_VERSION keeps the resolver
+    # from executing the binary: the timed first `--version` below must be its
+    # first run, and it checks the value from that same call.
+    for key in ('JCODE_VERSION', 'JCODE_RELEASE_COMMIT', 'JCODE_RELEASE_SOURCE'):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    env['JCODE_VERIFY_VERSION'] = '0'
+    env['JCODE_METADATA'] = str(root / 'jcode-release.json')
     if WINDOWS:
         # The runner starts Python from pwsh 7. powershell.exe uses its own
         # inbox modules (including the Get-FileHash cmdlet), even on ARM64.
@@ -146,6 +155,15 @@ def version_summary(values):
             'mad': round(statistics.median(abs(x - mid) for x in values), 3)}
 
 
+def read_release(path: Path) -> dict | None:
+    """The release record install_competitors.sh wrote, or None when absent."""
+    try:
+        data = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def run_sample(tool, checkout, root, env, tag):
     dest = root / 'installed'
     horon = tool in ('horon', 'horon-base')
@@ -164,8 +182,16 @@ def run_sample(tool, checkout, root, env, tag):
                 if candidate.is_file():
                     bash = str(candidate)
         cmd = [bash or 'bash', str(ROOT / 'scripts/perf/install_competitors.sh'), str(dest), tool]
+    # Resolving and verifying a competitor asks GitHub's API once per sample.
+    # Keep the job token on the installer process, never on the measured binary:
+    # the timed `--version` below runs with `env`, which has no credential.
+    install_env = env
+    if not horon:
+        tokens = {key: os.environ[key] for key in ('GH_TOKEN', 'GITHUB_TOKEN') if key in os.environ}
+        if tokens:
+            install_env = {**env, **tokens}
     start = time.perf_counter_ns()
-    result = subprocess.run(cmd, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    result = subprocess.run(cmd, cwd=root, env=install_env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, timeout=420)
     installed = time.perf_counter_ns()
     if result.returncode:
@@ -189,9 +215,25 @@ def run_sample(tool, checkout, root, env, tag):
     text = version.stdout.decode(errors='replace').strip()
     if version.returncode or not text or (horon and not re.search(r'\bv?' + re.escape(tag[1:]) + r'(?![\w.\-])', text)):
         raise ValueError(f'first --version failed ({version.returncode}): {text[-300:]}')
-    return {'install_ms': round((installed - start) / 1e6, 3),
-            'first_version_ms': round((end - launched) / 1e6, 3),
-            'total_ms': round((end - start) / 1e6, 3), 'version': text[:200]}
+    row = {'install_ms': round((installed - start) / 1e6, 3),
+           'first_version_ms': round((end - launched) / 1e6, 3),
+           'total_ms': round((end - start) / 1e6, 3), 'version': text[:200]}
+    if not horon:
+        # The release identity is read after the timed call so the file read never
+        # lands inside install_ms or first_version_ms. For jcode this same first
+        # call must name the resolved release: the installer was told not to run
+        # the binary earlier, so nothing warmed it.
+        release = read_release(Path(env.get('JCODE_METADATA') or ''))
+        if tool == 'jcode':
+            expected = (release or {}).get('version')
+            if not expected:
+                raise ValueError('installer did not record jcode-release.json')
+            if not re.search(r'(?<![\w.])v?' + re.escape(expected) + r'(?![\w.\-])', text):
+                raise ValueError(f'first --version reports {text[:160]!r}, expected {expected}')
+        if release:
+            row['release'] = {key: release.get(key) for key in
+                              ('tag', 'version', 'commit', 'asset', 'sha256', 'download_url', 'source')}
+    return row
 
 
 def checkout_revision(path):
@@ -248,6 +290,7 @@ def main():
     rows, cleanup_errors = [], []
     report = {'suite': 'install', 'tag': args.tag, 'system': platform.system(), 'arch': platform.machine(),
               'release': platform.release(), 'runs': args.runs, 'samples': rows, 'summary_ms': {},
+              'releases': {},
               'candidate_head': os.environ.get('INSTALL_CANDIDATE_HEAD') or checkout_revision(candidate_dir),
               'baseline_head': os.environ.get('INSTALL_BASELINE_HEAD') or (checkout_revision(baseline_dir) if baseline_dir else None),
               'cleanup_errors': cleanup_errors}
@@ -269,6 +312,8 @@ def main():
                             except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                                 row['error'] = str(exc)[:700]
                                 cold_ok = False
+                            if row.get('release') and name == 'jcode':
+                                report['releases']['jcode'] = row['release']
                         else:
                             row['error'] = 'cold install failed; no warm destination'
                             row['skipped'] = True
@@ -280,7 +325,12 @@ def main():
         report['summary_ms'] = summarise(tools, rows, args.runs)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-    failed = bool(cleanup_errors) or any('error' in r for r in rows if r['tool'] in ('horon', 'horon-base'))
+    # jcode is a resolved, verified release rather than a best-effort competitor:
+    # a failed resolution, checksum or version check fails the job after the
+    # report is written. Other competitors only degrade the table.
+    failed = (bool(cleanup_errors)
+              or any('error' in r for r in rows if r['tool'] in ('horon', 'horon-base'))
+              or any('error' in r for r in rows if r['tool'] == 'jcode'))
     return int(failed)
 
 
