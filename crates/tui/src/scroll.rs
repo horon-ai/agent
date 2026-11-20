@@ -97,6 +97,13 @@ pub struct Scroll {
     /// other kind of change: the same content, wrapped differently, and the top
     /// row the reader is on must not slide.
     anchor: bool,
+    /// The next frame must measure every block again.
+    ///
+    /// Kept apart from [`anchor`](Self::anchor) because the anchor lasts only
+    /// until the next frame, while the recount can be needed even when that
+    /// frame follows the end and clears the anchor: the block the caller changed
+    /// has to be measured before a held frame reads the tally.
+    recount: bool,
 }
 
 impl Scroll {
@@ -122,12 +129,22 @@ impl Scroll {
 
     /// The row heights of the last measurement, for a pane that has to find the
     /// rows a held view shows without wrapping the conversation again.
+    ///
+    /// `None` while a recount is pending: the heights describe content the caller
+    /// has already changed, and a pane that matched them against the new items
+    /// would place the view on the wrong row.
     pub fn heights(&self) -> Option<&[usize]> {
+        if self.recount {
+            return None;
+        }
         self.tally.as_ref().map(|tally| tally.items.as_slice())
     }
 
     /// The wrapped height of the two open buffers, as last measured.
     pub fn open_heights(&self) -> [usize; 2] {
+        if self.recount {
+            return [0, 0];
+        }
         self.tally.as_ref().map_or([0, 0], |tally| tally.open)
     }
 
@@ -148,12 +165,16 @@ impl Scroll {
     /// Recount the content after a block changed height on its own.
     ///
     /// A tool call opened or closed, or the tool lines were hidden: no output
-    /// arrived, so the rows below the view did not grow by themselves, but the
-    /// block the reader is on wraps differently now. The next held frame
-    /// recounts and moves the offset by the difference, which is what keeps the
-    /// top row where it was instead of jumping to the end of the conversation.
+    /// arrived, so the rows below the view did not grow by themselves, but some
+    /// block wraps differently now. The next held frame recounts and moves the
+    /// offset by the rows the changed blocks added at or below the view's top
+    /// edge, which is what keeps the rows on screen where they were instead of
+    /// jumping to the end of the conversation.
     pub fn reflow(&mut self) {
-        self.tally = None;
+        // The tally is kept: the next frame compares it with what it measures
+        // to learn how many rows the changed block added above or below the
+        // view's top edge.
+        self.recount = true;
         self.anchor = true;
     }
 
@@ -263,9 +284,10 @@ impl Scroll {
         // height it found, even though the recount below is a rebuild. The
         // tally it was drawn against is kept for that move.
         let anchored = std::mem::take(&mut self.anchor);
+        let recount = std::mem::take(&mut self.recount);
         let previous_tally = if anchored { self.tally.clone() } else { None };
         let rebuilt = match &self.tally {
-            Some(tally) => tally.width != width || tally.items.len() > items,
+            Some(tally) => recount || tally.width != width || tally.items.len() > items,
             None => true,
         };
         if rebuilt {
