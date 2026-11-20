@@ -304,25 +304,13 @@ fn unnamed_first_call_does_not_block_a_named_call() {
 }
 
 #[test]
-fn recovered_tool_call_uses_its_own_id_while_another_call_is_open() {
+fn tool_call_example_stays_text_while_a_native_call_is_open() {
     let (tx, mut stream) = stream();
     added(&tx, "a", "read");
     assert_start(&mut stream, "a", "read");
-    send(
-        &tx,
-        json!({"type":"response.output_text.delta",
-        "delta":"to=functions.ls {}"}),
-    );
-    let StreamEvent::ToolUseStart { id, name } = next(&mut stream) else {
-        panic!("expected recovered tool start");
-    };
-    assert_eq!(name, "ls");
-    assert!(id.starts_with("fallback_text_call_"));
-    assert!(
-        matches!(next(&mut stream), StreamEvent::ToolInputDeltaFor { id: actual, delta }
-        if actual == id && delta == "{}")
-    );
-    assert!(matches!(next(&mut stream), StreamEvent::ToolUseEndFor { id: actual } if actual == id));
+    let example = "Example: `to=functions.read {\"file_path\":\"example.txt\"}`";
+    send(&tx, json!({"type":"response.output_text.delta", "delta":example}));
+    assert!(matches!(next(&mut stream), StreamEvent::TextDelta(text) if text == example));
     done(&tx, "a", "{}");
     assert_delta(&mut stream, "a", "{}");
     assert_end(&mut stream, "a");

@@ -52,7 +52,6 @@
       "agent::tests::tool_request_bytes",
       "agent::tests::tool_streaming",
       "agent::tests::tool_tiers",
-      "agent::tool_markup_recovery::tests",
       "agent::tool_result_aging::tests",
       "agent::tool_round_tests",
       "agent::tools::image_anchor_tests",

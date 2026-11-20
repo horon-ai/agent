@@ -54,6 +54,10 @@ mod acp {
 
     impl Daemon {
         fn start() -> Self {
+            Self::with_provider("http://127.0.0.1:9/v1")
+        }
+
+        fn with_provider(base_url: &str) -> Self {
             let root = scratch_root("acplife");
             for dir in ["home", "rt", "work"] {
                 std::fs::create_dir_all(root.join(dir)).expect("scratch dirs");
@@ -62,7 +66,7 @@ mod acp {
                 set_mode(&dir, 0o700);
             }
             write_config(&root.join("home"));
-            write_provider_config(&root.join("home"), "http://127.0.0.1:9/v1", MODEL);
+            write_provider_config(&root.join("home"), base_url, MODEL);
             let log = std::fs::File::create(root.join("rt/daemon.log")).expect("daemon log");
             let errors = log.try_clone().expect("daemon log clone");
             let mut command = Command::new(BINARY);

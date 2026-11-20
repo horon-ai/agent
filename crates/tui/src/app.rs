@@ -659,6 +659,11 @@ impl App {
                     self.warn(message.clone());
                 }
             }
+            ApiEvent::SoftInterruptInjected {
+                notice: Some(notice), ..
+            } => {
+                self.transcript.push_notice(notice.clone());
+            }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::BackgroundOutput { session_id, text } => {
                 // Process output belongs to the session that ran the job. The

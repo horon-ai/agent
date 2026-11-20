@@ -1279,6 +1279,7 @@ fn soft_interrupt_injected_closes_open_text_and_carries_ids() {
             client_ids: vec!["f1".into(), "f2".into()],
             point: "D".into(),
             tools_skipped: None,
+            notice: None,
             display_role: None,
         }
     );
@@ -1295,6 +1296,19 @@ fn soft_interrupt_injected_closes_open_text_and_carries_ids() {
         [frame] if matches!(&frame.event, ApiEvent::SoftInterruptInjected {
             client_ids, display_role: Some(role), point, ..
         } if client_ids.is_empty() && role == "background_task" && point == "B")
+    ));
+
+    let frames = state.legacy_event_to_api(&json!({
+        "type": "soft_interrupt_injected",
+        "content": "Requesting a native tool call.",
+        "display_role": "system",
+        "point": "native_tool_retry",
+    }));
+    assert!(matches!(
+        &frames[..],
+        [frame] if matches!(&frame.event, ApiEvent::SoftInterruptInjected {
+            notice: Some(notice), ..
+        } if notice == "Requesting a native tool call.")
     ));
 }
 

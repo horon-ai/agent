@@ -1,4 +1,4 @@
-use super::response_recovery::{MalformedToolCallInfo, TextToolRecovery};
+use super::response_recovery::MalformedToolCallInfo;
 use super::*;
 use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
@@ -1332,9 +1332,6 @@ impl Agent {
                 });
             }
 
-            let had_tool_calls_before = !tool_calls.is_empty();
-            let text_tool_recovery = self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
-
             // Passive text rules never abort the response: their reminders
             // enter this turn's reminder slot, so the next request carries them
             // and the model can correct itself on the following round.
@@ -1343,30 +1340,6 @@ impl Agent {
                 Self::merge_system_reminder(&mut self.current_turn_system_reminder, &reminder);
             }
             stream_rule_state.flush_ledger(&mut self.session.stream_rule_ledger);
-
-            if !had_tool_calls_before && text_tool_recovery == TextToolRecovery::Recovered {
-                let _ = event_tx.send(ServerEvent::TextReplace {
-                    text: text_content.clone(),
-                });
-                // Markup envelopes can carry several calls, so announce each.
-                for tc in tool_calls.iter().filter(|tc| tc.id.starts_with("fallback_text_call_")) {
-                    let _ = event_tx.send(ServerEvent::ToolStart {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                    });
-                    tool_id_to_name.insert(tc.id.clone(), tc.name.clone());
-                    let _ = event_tx.send(ServerEvent::ToolInput {
-                        id: Some(tc.id.clone()),
-                        delta: tc.input.to_string(),
-                    });
-                    // Armed before the announcement, as on the streaming path.
-                    crate::tool_cancel_registry::arm_into(&mut armed, self.session_id(), &tc.id);
-                    let _ = event_tx.send(ServerEvent::ToolExec {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                    });
-                }
-            }
 
             // Add assistant message to history
             let mut content_blocks = Vec::new();
@@ -1467,18 +1440,17 @@ impl Agent {
             // Injecting before tool_results would break the API requirement that
             // tool_use must be immediately followed by tool_result.
             if tool_calls.is_empty() {
-                // The model printed a tool call as markup we could not parse
-                // (issue #1702): say so visibly and ask it to re-issue the
-                // call natively instead of silently ending the turn.
+                // Ask for a native call before retrying a text-only tool attempt.
                 if saw_message_end
                     && !self.is_graceful_shutdown()
+                    && !tools.is_empty()
                     && let Some(notice) =
-                        self.maybe_nudge_unparsed_tool_markup(&text_tool_recovery, stop_reason.as_deref())?
+                        self.maybe_nudge_unparsed_tool_markup(&text_content, stop_reason.as_deref())?
                 {
                     let _ = event_tx.send(ServerEvent::SoftInterruptInjected {
                         content: notice,
                         display_role: Some("system".to_string()),
-                        point: "B".to_string(),
+                        point: "native_tool_retry".to_string(),
                         tools_skipped: None,
                         client_ids: Vec::new(),
                     });
