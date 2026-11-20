@@ -80,6 +80,15 @@ fn args_parse_session_and_cwd() {
 }
 
 #[test]
+fn args_parse_hide_thinking_flag() {
+    let parsed = Args::parse(["--hide-thinking".to_string()]);
+    assert_eq!(parsed.map(|args| args.hide_thinking), Ok(true));
+    // A value after `=` is not part of the flag: the bare form is the only one,
+    // so a script that writes one is told rather than silently obeyed.
+    assert!(Args::parse(["--hide-thinking=maybe".to_string()]).is_err());
+}
+
+#[test]
 fn args_parse_repeated_config_files() {
     let parsed = Args::parse([
         "--config".to_string(),
@@ -447,6 +456,65 @@ fn reasoning_events_are_inert_while_the_setting_is_off() {
 }
 
 #[test]
+fn ctrl_t_hides_later_reasoning_and_the_choice_outlives_an_unrelated_reload() {
+    let mut app = app_with(None);
+    app.reasoning_effort = Some("high".to_string());
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    assert!(
+        app.transcript.show_reasoning(),
+        "the setting did not reach the transcript"
+    );
+
+    assert_eq!(app.on_key(ctrl('t')), None, "the toggle is not submitted as text");
+    assert!(!app.transcript.show_reasoning(), "ctrl+t did not hide reasoning");
+    assert_eq!(
+        app.reasoning_effort.as_deref(),
+        Some("high"),
+        "hiding the display changed the effort the model is asked for"
+    );
+    let notice = format!("{:?}", app.transcript.items().last());
+    assert!(notice.contains("reasoning hidden for this session"), "{notice}");
+
+    // The same setting resolved again: another file's edit, not a newer choice
+    // than the key, so the session toggle stays in force.
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    assert!(
+        !app.transcript.show_reasoning(),
+        "an unrelated reload put the setting back over the session toggle"
+    );
+
+    // Changing the setting itself is the newer choice and ends the toggle.
+    app.refresh_settings(&settings_with(&[]));
+    assert!(!app.transcript.show_reasoning(), "the new setting did not apply");
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    assert!(
+        app.transcript.show_reasoning(),
+        "a changed setting did not end the toggle"
+    );
+}
+
+#[test]
+fn the_settings_screen_keeps_the_toggle_key_to_itself() {
+    let mut app = app_with(None);
+    app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
+    app.open_settings();
+
+    assert_eq!(app.on_key(ctrl('t')), None);
+    assert!(
+        app.transcript.show_reasoning(),
+        "the toggle ran underneath the settings screen"
+    );
+    assert!(app.overlay.is_some(), "the settings screen closed on the toggle key");
+    app.on_key(key(crossterm::event::KeyCode::Char('x')));
+    assert!(
+        app.input.text().is_empty(),
+        "a letter went past the settings screen into the draft"
+    );
+    app.on_key(key(crossterm::event::KeyCode::Esc));
+    assert!(app.overlay.is_none(), "esc did not close the settings screen");
+}
+
+#[test]
 fn ask_prompt_collects_one_answer_per_question() {
     let mut app = app_with(None);
     let questions = vec![
@@ -520,6 +588,13 @@ fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves() {
 
 fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
     crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+}
+
+fn ctrl(character: char) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char(character),
+        crossterm::event::KeyModifiers::CONTROL,
+    )
 }
 
 fn draw_at(app: &mut App, width: u16, height: u16) -> String {

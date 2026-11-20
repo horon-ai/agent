@@ -23,7 +23,7 @@
 클라이언트는 자체 인자를 받는다.
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
 ```
 
 | 플래그 | 뜻 |
@@ -32,6 +32,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | 새 세션을 만들지 않고 기존 세션에 붙는다 |
 | `--cwd <dir>` | 이 클라이언트가 만드는 세션의 작업 디렉터리 |
 | `--config <file>` | 설정 파일을 하나 더 읽는다. 여러 번 쓸 수 있다 |
+| `--hide-thinking` | `transcript.show_reasoning`과 무관하게 이 세션에서 모델 추론을 숨긴 채 시작한다. `ctrl+t`(기본값)로 다시 켜고 끌 수 있다 |
 | `-V`, `--version` | 버전을 출력하고 끝낸다 |
 | `-h`, `--help` | 사용법을 출력하고 끝낸다 |
 
@@ -83,6 +84,8 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
+
+`ctrl+t`(`app.toggle_thinking`, 기본 바인딩)는 파일을 쓰지 않고 프로세스가 끝날 때까지 같은 스위치를 뒤집고, `--hide-thinking`은 그 선택을 숨김으로 시작한다. 세션 선택은 설정보다 우선한다. 다른 키를 고친 설정 재적용이나 테마 변경은 이 선택을 그대로 두고, `transcript.show_reasoning` 자체가 바뀌면 그것이 더 새로운 선택이므로 세션 선택을 끝낸다. 숨기면 아직 도착 중인 생각은 버리지만 이미 확정된 생각은 화면에 남기고, 다시 보이게 하면 다음 조각부터 남긴다. 숨겨 둔 동안 버린 조각은 애초에 남기지 않았으므로 되살리지 않는다. 어느 방향이든 모델에 요청하는 추론 노력 값은 건드리지 않는다. 토글할 때마다 어느 쪽으로 바뀌었는지 트랜스크립트에 한 줄 남는다.
 
 프로젝트 파일은 `<cwd>/.horon/tui.toml`이다. 작업 디렉터리를 읽을 수 없으면 건너뛴다. 파일의 크기나 수정 시각이 바뀐 뒤 1초가 지나면 다시 읽으므로, 손으로 고친 값이 재시작 없이 적용된다.
 
@@ -187,6 +190,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
+| `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
 | `editor.delete` | `delete` | 커서 자리 글자를 지운다 |
 | `editor.left` | `left`, `ctrl+b` | 커서를 한 글자 왼쪽으로 옮긴다 |
@@ -209,7 +213,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | 대기 중인 호출을 거절한다. 질문 프롬프트는 연 채로 둔다 |
 | `prompt.confirm` | `enter` | 여러 선택지 질문을 확정한다 |
 
-이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 서른세 동작에 각각이 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
+이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 서른네 동작에 각각이 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
 
 대부분의 터미널은 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 믿을 만한 새 줄 키는 `alt+enter`와 `ctrl+j`이고, `shift+enter`는 터미널이 시프트 붙은 형태를 보고할 때만 응답한다.
 
@@ -446,4 +450,4 @@ harness commands:
 - 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
 - 스킬은 `skill://<name>`을 읽어 달라는 요청으로 보내므로 세션이 그 주소를 읽을 수 있을 때만 동작한다.
 - `esc`는 화면에 제 힌트를 두지 않는다. 그 키와 하는 일은 `/keys`에 적혀 있다.
-- `editor.submit_on_enter`는 전송 키 처리가, `transcript.show_reasoning`은 트랜스크립트가 읽는다. 둘 다 바꾼 뒤 다음 키 입력과 다음 추론 조각부터 적용된다. 나머지 트랜스크립트 설정과 상태 줄은 파일이 다시 적용되는 즉시, 곧 화면을 다시 그리면서 효력을 낸다.
+- `editor.submit_on_enter`는 전송 키 처리가, `transcript.show_reasoning`은 트랜스크립트가 읽는다. 둘 다 바꾼 뒤 다음 키 입력과 다음 추론 조각부터 적용된다. `--hide-thinking`이나 `ctrl+t`로 만든 세션 선택은 그 설정 값 자체가 바뀔 때까지 설정보다 우선하므로, `tui.toml`의 다른 키를 고쳐도 설정이 세션 선택을 되돌리지 않는다. 나머지 트랜스크립트 설정과 상태 줄은 파일이 다시 적용되는 즉시, 곧 화면을 다시 그리면서 효력을 낸다.

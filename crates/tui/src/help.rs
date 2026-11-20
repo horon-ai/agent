@@ -63,6 +63,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (
+        ids::APP_TOGGLE_THINKING,
+        "show or hide the model's reasoning for this session",
+    ),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
