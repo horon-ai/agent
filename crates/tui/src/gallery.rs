@@ -286,7 +286,7 @@ fn tools(app: &mut App) {
     app.transcript.tool_done(
         "call-read",
         "read",
-        Some("fn block_source<'a>(\n    block: &Block<'_>,\n    look: &item_lines::Look<'_>,\n) -> wrap::Source<'a> {\n    todo!()\n}\n"),
+        Some("fn label(prefix: &str, name: &str) -> String {\n    format!(\"{prefix}: {name}\")\n}\n"),
         None,
     );
     app.transcript.tool_done(
