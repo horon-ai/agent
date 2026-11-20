@@ -1,10 +1,9 @@
-//! Release the derived caches of an idle session.
+//! Release derived caches and opt-in Python kernels of idle sessions.
 //!
-//! Only allocations that are reproducible from the canonical transcript are
-//! released: the provider projection and the tool-output index. Frozen prompts,
+//! The provider projection and tool-output index rebuild from the transcript.
+//! An idle Python kernel starts fresh on the next eval call. Frozen prompts,
 //! the locked tool surface, rewind undo state and provider handles stay
-//! resident, so waking is the next turn rebuilding those two caches with no
-//! disk dependency, no lifecycle hook and no environment resnapshot.
+//! resident. The sweep has no disk dependency and runs no lifecycle hook.
 
 use super::*;
 
@@ -85,6 +84,7 @@ impl Agent {
         self.tool_call_ids = HashSet::new();
         self.tool_result_ids = HashSet::new();
         self.tool_output_scan_index = 0;
+        crate::tool::eval::release_idle_kernel(self.session_id());
         Some(released)
     }
 

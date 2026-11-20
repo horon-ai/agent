@@ -224,6 +224,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "editor.suggestions",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_EDITOR_SUGGESTIONS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Suggestions",
+            label: "Local suggestions",
+            description: "Offer a ghost completion of the draft from drafts sent before this one; nothing leaves the client.",
+        },
+    },
+    SettingSpec {
         id: "transcript.tool_output_lines",
         kind: SettingKind::Number,
         env: "HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES",

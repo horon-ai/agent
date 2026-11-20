@@ -50,6 +50,8 @@ pub mod ids {
     pub const APP_CYCLE_MODEL: &str = "app.cycle_model";
     /// Step backward to the previous model in `models.shortlist`, wrapping.
     pub const APP_CYCLE_MODEL_BACK: &str = "app.cycle_model_back";
+    /// Paint the whole screen again, discarding the frame the terminal holds.
+    pub const APP_REPAINT: &str = "app.repaint";
     /// Show or hide the model's reasoning for the rest of the session.
     pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
     /// Delete the character before the cursor.
@@ -82,6 +84,8 @@ pub mod ids {
     pub const EDITOR_HISTORY_NEXT: &str = "editor.history_next";
     /// Complete the slash command being typed.
     pub const EDITOR_COMPLETE: &str = "editor.complete";
+    /// Fill the draft with the local suggestion shown after the caret.
+    pub const EDITOR_ACCEPT_SUGGESTION: &str = "editor.accept_suggestion";
     /// Search the drafts sent before this one.
     pub const EDITOR_HISTORY_SEARCH: &str = "editor.history_search";
     /// Approve a parked tool call once.
@@ -164,6 +168,12 @@ pub const ACTIONS: &[ActionSpec] = &[
     // `ctrl+p`; either can be rebound in `keybindings.toml`.
     ActionSpec::new(ids::APP_CYCLE_MODEL, Scope::App, &["ctrl+p"]),
     ActionSpec::new(ids::APP_CYCLE_MODEL_BACK, Scope::App, &["ctrl+alt+p"]),
+    // The one key that changes nothing: it throws away the frame Ratatui kept,
+    // so a screen another program wrote over is drawn again in full. It answers
+    // before every surface and takes no key from one, because only the frames
+    // are discarded, not the state they show. `ctrl+l` is the key a shell uses
+    // for the same repair.
+    ActionSpec::new(ids::APP_REPAINT, Scope::App, &["ctrl+l"]),
     // Reasoning display for this session: the draft keeps every letter, so the
     // toggle has to be a control key.
     ActionSpec::new(ids::APP_TOGGLE_THINKING, Scope::App, &["ctrl+t"]),
@@ -191,6 +201,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     // and the other clients send for the same intent.
     ActionSpec::new(ids::EDITOR_DELETE_WORD, Scope::Editor, &["ctrl+w", "alt+backspace"]),
     ActionSpec::new(ids::EDITOR_COMPLETE, Scope::Editor, &["tab"]),
+    // The one key that puts a ghost suggestion into the draft. It is a
+    // modifier on the arrow that already moves by a character, so it cannot be
+    // reached by a slip while typing.
+    ActionSpec::new(ids::EDITOR_ACCEPT_SUGGESTION, Scope::Editor, &["ctrl+right"]),
     ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
