@@ -72,6 +72,28 @@ except EOFError:
         self.assertEqual([(f["id"], f["ok"]) for f in frames if f["type"] == "done"], [(1, False), (2, True)])
         self.assertEqual(text(frames, 2, "stdout"), "'ready'\n")
 
+    def test_cancelling_a_python_task_preserves_the_kernel(self):
+        result = run_wire(
+            request(1, "import asyncio\nmarker = 17")
+            + request(2, "task = asyncio.create_task(asyncio.sleep(1))\ntask.cancel()\nawait task")
+            + request(3, "marker")
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        frames = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertIn("CancelledError", text(frames, 2, "error"))
+        self.assertEqual([(f["id"], f["ok"]) for f in frames if f["type"] == "done"], [(1, True), (2, False), (3, True)])
+        self.assertEqual(text(frames, 3, "stdout"), "17\n")
+
+    def test_cached_log_stream_uses_the_current_cell(self):
+        result = run_wire(
+            request(1, "import logging\nlogging.basicConfig()")
+            + request(2, "logging.warning('second cell')")
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        frames = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(text(frames, 1, "stderr"), "")
+        self.assertEqual(text(frames, 2, "stderr"), "WARNING:root:second cell\n")
+
     def test_large_output_is_split_into_bounded_frames(self):
         result = run_wire(request(1, "print('🧪' * 50000 + chr(0xd800), end='')"))
         self.assertEqual(result.returncode, 0, result.stderr)
