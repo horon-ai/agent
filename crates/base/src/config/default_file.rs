@@ -212,6 +212,9 @@ mcp_tools_token_threshold = 8000
 # parallelize calls, and keep intermediate results out of the conversation.
 # Env override: HORON_AGENT_CODEMODE=1.
 codemode = false
+# Experimental Python cells. Requires full or an explicit enabled list,
+# Python 3.10 or later, and explicit approval before each cell.
+eval = false
 # On by default: when `read` returns a file, append the `AGENTS.md` of the
 # directories above it (up to the session working directory) so the rules of the
 # component being read arrive with the file. Capped at 16 KiB per file and 32 KiB

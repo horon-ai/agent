@@ -67,6 +67,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
     (
+        ids::APP_REPAINT,
+        "paint the whole screen again, keeping the draft, the selection and the view",
+    ),
+    (
         ids::APP_TOGGLE_THINKING,
         "show or hide the model's reasoning for this session",
     ),
@@ -96,6 +100,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         ids::EDITOR_COMPLETE,
         "fill the popup's selected command, or complete the prefix",
+    ),
+    (
+        ids::EDITOR_ACCEPT_SUGGESTION,
+        "fill the draft with the local suggestion shown after the caret",
     ),
     (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),

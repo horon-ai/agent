@@ -7,6 +7,7 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
+use std::time::Instant;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
@@ -21,6 +22,7 @@ use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
+use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::CacheMiss;
 use crate::transcript::Decision;
@@ -184,6 +186,14 @@ pub struct App {
     pub resend_held: bool,
     /// Rows the transcript pane got last frame, used to keep the newest lines.
     pub viewport_height: Option<u16>,
+    /// Whether the user asked for the screen to be painted again in full.
+    ///
+    /// A repaint is display-only: the draw that answers it discards the frame
+    /// Ratatui kept, so every cell is written again, while the draft, the
+    /// selection and the view stay exactly as the key found them. The request
+    /// travels as a flag because the app never touches a terminal; the draw
+    /// that owns one takes it.
+    repaint_requested: bool,
     /// Where the transcript view sits: at the newest rows, or held above them.
     pub scroll: Scroll,
     /// Whether `transcript.mouse_scroll` hands the wheel to the transcript.
@@ -275,6 +285,9 @@ pub struct App {
     pub bindings: Bindings,
     /// The slash command popup: the commands the draft offers, and its row.
     pub slash: crate::help::SlashPopup,
+    /// The local draft suggestion: a ghost suffix offered from drafts already
+    /// in memory, shown only for the exact text it was computed from.
+    pub(crate) suggestions: Suggestions,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
     /// The skills the harness reported for the session in force.
@@ -317,6 +330,7 @@ impl App {
             disconnected: false,
             resend_held: false,
             viewport_height: None,
+            repaint_requested: false,
             scroll: Scroll::new(),
             // Placeholder until the settings resolve: the terminal is not
             // captured yet, and `refresh_settings` decides from the registry's
@@ -347,6 +361,7 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
@@ -377,6 +392,7 @@ impl App {
             disconnected: true,
             resend_held: false,
             viewport_height: None,
+            repaint_requested: false,
             scroll: Scroll::new(),
             // Placeholder until the settings resolve: the terminal is not
             // captured yet, and `refresh_settings` decides from the registry's
@@ -407,6 +423,7 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
@@ -415,6 +432,24 @@ impl App {
             picker: None,
             pending_change: None,
         }
+    }
+
+    /// Ask for the screen to be painted again in full.
+    ///
+    /// Nothing else changes: the request says the terminal's picture cannot be
+    /// trusted, not that the session moved. The draw that owns a terminal
+    /// consumes it and writes every cell once, so a held view, an open settings
+    /// screen and the draft under it stay where they were.
+    fn request_repaint(&mut self) {
+        self.repaint_requested = true;
+    }
+
+    /// Take the pending repaint request, leaving none behind.
+    ///
+    /// One draw answers one request, which is what keeps the key from turning
+    /// the idle loop into a loop that repaints.
+    pub(crate) fn take_repaint_request(&mut self) -> bool {
+        std::mem::take(&mut self.repaint_requested)
     }
 
     /// Add a warning line to the transcript.
@@ -828,6 +863,84 @@ impl App {
         }
         let text = self.input.text();
         self.slash.sync(&self.commands, &text);
+    }
+
+    /// Bring the local draft suggestion in line with the draft and the setting.
+    ///
+    /// A changed draft starts a new generation and asks the local provider
+    /// again; an unchanged one keeps the answer it has, so a dismiss or an
+    /// accepted line stays put until the next edit. The provider reads only the
+    /// drafts this editor already holds, and the answer is dropped unless it
+    /// names the generation and the exact text it was asked about.
+    pub fn sync_suggestions(&mut self) {
+        if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
+            self.suggestions.withdraw();
+            return;
+        }
+        let fingerprint = self.input.fingerprint();
+        if self.suggestions.is_synced(fingerprint) {
+            return;
+        }
+        // The cap is checked before the text is built, so a huge draft costs a
+        // length read rather than a copy.
+        if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
+            self.suggestions.skip(fingerprint);
+            return;
+        }
+        let text = self.input.text();
+        let App {
+            history, suggestions, ..
+        } = self;
+        let Some(request) = suggestions.begin(fingerprint, &text) else {
+            return;
+        };
+        let started = Instant::now();
+        let suffix = crate::suggestions::local_suffix(&text, history.drafts());
+        let elapsed = started.elapsed();
+        if let Some(suffix) = suffix {
+            suggestions.finish(&request, &suffix, elapsed);
+        }
+    }
+
+    /// The ghost suffix the editor draws after the caret, when one applies.
+    ///
+    /// The suffix belongs to the exact draft it completes, so it is looked up
+    /// against the text on screen rather than trusted from the last answer.
+    pub fn suggestion_text(&self) -> Option<String> {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
+            return None;
+        }
+        if !self.suggestions.pending() || !self.input.is_at_end() {
+            return None;
+        }
+        let text = self.input.text();
+        self.suggestions.visible(&text).map(str::to_string)
+    }
+
+    /// Accept the suggestion for the draft on screen.
+    ///
+    /// This is the only place the suffix reaches the input: until here the
+    /// draft is exactly what the user typed, and nothing is sent or queued.
+    fn accept_suggestion(&mut self) -> bool {
+        if !self.input.is_at_end() {
+            return false;
+        }
+        let text = self.input.text();
+        let Some(full) = self.suggestions.accept(&text) else {
+            return false;
+        };
+        self.history.reset();
+        self.input.set_text(&full);
+        true
+    }
+
+    /// Whether a suggestion for the draft on screen can take the next key.
+    fn suggestion_available(&self) -> bool {
+        if !self.suggestions.pending() || !self.input.is_at_end() {
+            return false;
+        }
+        let text = self.input.text();
+        self.suggestions.visible(&text).is_some()
     }
 
     /// Fill the draft from the command the popup has selected.

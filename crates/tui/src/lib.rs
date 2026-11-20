@@ -30,6 +30,7 @@ pub mod scroll;
 pub mod sdk_bridge;
 pub mod settings;
 pub mod statusline;
+mod suggestions;
 mod terminal;
 pub mod theme;
 mod title;
@@ -158,6 +159,7 @@ Keys:
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
@@ -642,11 +644,19 @@ where
 }
 
 /// Render one frame.
+///
+/// A pending repaint request is answered first: `clear` erases the screen and
+/// resets the frame Ratatui keeps, so the draw below writes every cell instead
+/// of only the rows that differ. That is what recovers a screen something else
+/// has overwritten, and it is the whole of what the repaint key does.
 pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    if app.take_repaint_request() {
+        terminal.clear().map_err(|error| error.to_string())?;
+    }
     terminal
         .draw(|frame| render(frame, app))
         .map(|_| ())
@@ -660,9 +670,11 @@ const MIN_TRANSCRIPT_ROWS: u16 = 3;
 const MAX_INPUT_ROWS: u16 = 8;
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
-    // The popup is read from the draft on screen, before anything borrows the
-    // app to draw.
+    // The popup and the local suggestion are read from the draft on screen,
+    // before anything borrows the app to draw.
     app.sync_slash();
+    app.sync_suggestions();
+    let ghost = app.suggestion_text();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -823,16 +835,29 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // itself instead of under the marker.
     let marker = format!("{} ", symbols.prompt_marker);
     let padding = " ".repeat(usize::from(marker_width) + 1);
+    // The ghost suffix is drawn after the caret on the row the caret is on.
+    // The offer was checked against the exact draft before this frame, so what
+    // is drawn here is a suffix of the text already on screen.
     let rows: Vec<Line<'static>> = view
         .rows
         .iter()
         .enumerate()
         .map(|(row, text)| {
             let lead = if row == 0 { marker.clone() } else { padding.clone() };
-            Line::from(vec![
+            let mut spans = vec![
                 Span::styled(lead, Style::default().fg(theme.core.accent)),
                 Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
-            ])
+            ];
+            if row == view.cursor_row
+                && let Some(ghost) = ghost.as_deref()
+            {
+                let room = text_width.saturating_sub(crate::input::text_cells(text));
+                let tail = crate::input::clip_cells(ghost, room);
+                if !tail.is_empty() {
+                    spans.push(Span::styled(tail, Style::default().fg(theme.core.muted)));
+                }
+            }
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(Paragraph::new(rows), input_area);
