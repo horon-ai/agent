@@ -277,6 +277,32 @@ impl Transcript {
         Some(&self.streaming.text)
     }
 
+    /// The text of the newest committed assistant messages, oldest first.
+    ///
+    /// A reader asks for what the model actually said, so only
+    /// [`Item::Assistant`] counts: a user message, a tool call's output and a
+    /// notice are not answers, and a link mentioned in one of them is not
+    /// something this client offered. The answer still streaming is appended as
+    /// the newest, because the reader reaches `/links` while it is still
+    /// arriving.
+    pub fn recent_assistant_text(&self, messages: usize) -> Vec<&str> {
+        let mut texts: Vec<&str> = self
+            .items
+            .iter()
+            .rev()
+            .filter_map(|item| match item {
+                Item::Assistant(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .take(messages)
+            .collect();
+        texts.reverse();
+        if let Some(streaming) = self.open_text() {
+            texts.push(streaming);
+        }
+        texts
+    }
+
     /// Record a user message, closing any partly streamed reply first.
     pub fn push_user(&mut self, text: impl Into<String>) {
         self.finish_stream();
@@ -876,6 +902,21 @@ mod tests {
         transcript.text_replace(Some("m1"), "");
         transcript.finish_stream();
         assert!(transcript.items().is_empty());
+    }
+
+    #[test]
+    fn recent_assistant_text_keeps_answers_only() {
+        let mut transcript = Transcript::new();
+        transcript.push_user("look at https://user.example/");
+        transcript.push_assistant("first https://one.example/");
+        transcript.push_assistant("second https://two.example/");
+        transcript.text_delta(Some("m9"), "streaming https://three.example/");
+        assert_eq!(
+            transcript.recent_assistant_text(1),
+            vec!["second https://two.example/", "streaming https://three.example/"],
+            "a user line or an older answer was read as the newest answer"
+        );
+        assert_eq!(transcript.recent_assistant_text(8).len(), 2);
     }
 
     #[test]

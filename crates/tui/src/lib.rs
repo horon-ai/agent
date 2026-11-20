@@ -18,6 +18,7 @@ pub mod history;
 pub mod input;
 mod item_lines;
 pub mod keys;
+mod links;
 mod loop_io;
 mod markdown;
 pub mod overlays;
@@ -157,6 +158,7 @@ Commands:
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
+  /links         list the http(s) links in recent answers and open one
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
