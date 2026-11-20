@@ -412,9 +412,11 @@ mod tests {
         let env: BTreeMap<&str, &str> = BTreeMap::from([("HORON_AGENT_TOOL_PROFILE", "")]);
         let mut config = distinctive_config();
         config.tools.profile = String::new();
-        let rows = report(&config, Some(&file("[tools]\nprofile = \"full\"\n")), |name| {
-            env.get(name).map(|value| (*value).to_string())
-        });
+        let rows = report(
+            &config,
+            Some(&file("[tools]\nprofile = \"full\"\n")),
+            |name| env.get(name).map(|value| (*value).to_string()),
+        );
         let row = pick(&rows, "tools.profile");
         assert_eq!(row.source, SettingSource::Env);
         assert_eq!(row.origin.as_deref(), Some("HORON_AGENT_TOOL_PROFILE"));
