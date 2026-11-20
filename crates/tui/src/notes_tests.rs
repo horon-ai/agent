@@ -107,8 +107,8 @@ fn a_removed_note_is_gone_from_the_file() {
         .expect("a note");
     store.save().expect("saved");
 
-    assert!(store.remove("s", assistant("one")));
-    assert!(!store.remove("s", assistant("one")));
+    assert!(store.remove("s", assistant("one"), None));
+    assert!(!store.remove("s", assistant("one"), None));
     store.save().expect("saved");
 
     let mut read = NoteStore::at(&path);
@@ -270,9 +270,10 @@ fn a_note_names_the_stored_message_it_was_written_on() {
 
     let mut read = NoteStore::at(&path);
     read.ensure_loaded();
-    let note = read.note_record("s", assistant("hi")).expect("the note");
-    assert_eq!(note.stored_id.as_deref(), Some("message_2"));
-    // An older file has no such field, and its note keeps matching by text.
+    let note = read
+        .note_record("s", assistant("hi"), Some("message_2"))
+        .expect("the note");
+    assert_eq!(note.text, "on the second");
     let value = stored(&path);
     assert_eq!(value["sessions"]["s"]["items"].as_object().expect("items").len(), 1);
 }
@@ -280,26 +281,48 @@ fn a_note_names_the_stored_message_it_was_written_on() {
 #[test]
 fn a_note_follows_its_stored_message_and_never_an_identical_answer() {
     let directory = tempfile::tempdir().expect("a directory");
-    let mut store = NoteStore::at(&notes_path(&directory));
+    let path = notes_path(&directory);
+    let mut store = NoteStore::at(&path);
     store.ensure_loaded();
-    let key = assistant("same words");
+    let first = assistant("same words");
+    let second = assistant_text("same words", 2);
     store
-        .set_stored("s", key, at(Role::Assistant, 1), Some("message_a"), "about A")
+        .set_stored("s", first, at(Role::Assistant, 1), Some("message_a"), "about A")
         .expect("a note");
-    let note = store.note_record("s", key).expect("the note");
+    assert!(store.note_record("s", first, Some("message_b")).is_none());
+    assert_eq!(store.note("s", first), Some("about A"));
+    store
+        .set_stored("s", first, at(Role::Assistant, 1), Some("message_b"), "about B")
+        .expect("a note");
+    store.save().expect("saved");
 
-    assert!(note_matches(&note, Some("message_a")), "the same message keeps it");
-    assert!(!note_matches(&note, Some("message_b")), "an identical answer is not it");
-    // A row from a harness that names none cannot disprove the match, so the
-    // text key still decides, as it did before stored ids existed.
-    assert!(note_matches(&note, None));
+    let mut replay = NoteStore::at(&path);
+    replay.ensure_loaded();
+    assert_eq!(
+        replay
+            .note_record("s", second, Some("message_a"))
+            .map(|note| note.text.as_str()),
+        Some("about A")
+    );
+    assert_eq!(
+        replay
+            .note_record("s", first, Some("message_b"))
+            .map(|note| note.text.as_str()),
+        Some("about B")
+    );
+    assert_eq!(replay.note("s", first), None, "ambiguous without either ID");
+    assert!(replay.remove("s", second, Some("message_a")));
+    assert_eq!(replay.note("s", first), Some("about B"));
 
-    // A note written before the field existed has no id and matches its text.
-    let mut legacy = NoteStore::memory();
-    legacy.set("s", key, at(Role::Assistant, 1), "about A").expect("a note");
-    let legacy_note = legacy.note_record("s", key).expect("the note");
-    assert!(legacy_note.stored_id.is_none());
-    assert!(note_matches(&legacy_note, Some("message_b")));
+    replay
+        .set("legacy", first, at(Role::Assistant, 1), "old note")
+        .expect("a note");
+    assert_eq!(
+        replay
+            .note_record("legacy", first, Some("message_a"))
+            .map(|note| note.text.as_str()),
+        Some("old note")
+    );
 }
 
 /// A key whose text is normalised the same way the store does.

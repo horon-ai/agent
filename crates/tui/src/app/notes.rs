@@ -96,13 +96,14 @@ impl App {
             ));
             return;
         }
-        if must_exist && self.notes.note(session, key).is_none() {
+        let existing = self.notes.note_record(session, key, stored_id.as_deref());
+        if must_exist && existing.is_none() {
             self.warn(format!(
                 "notes: {address} has no note to edit; /note add {address} <text> adds one"
             ));
             return;
         }
-        let existed = self.notes.note(session, key).is_some();
+        let existed = existing.is_some();
         match self
             .notes
             .set_stored(session, key, address, stored_id.as_deref(), &text)
@@ -123,7 +124,7 @@ impl App {
         let trimmed = raw.trim();
         let (address, key) = if trimmed.is_empty() {
             match newest(self) {
-                Ok(target) => (Some(target.address), Some(target.key)),
+                Ok(target) => (Some(target.address), Some(target)),
                 Err(message) => {
                     self.warn(format!("notes: {message}"));
                     return;
@@ -132,7 +133,7 @@ impl App {
         } else {
             let word = trimmed.split_whitespace().next().unwrap_or(trimmed);
             match address(word) {
-                Ok(Some(address)) => (Some(address), key_at(self, address).map(|target| target.key)),
+                Ok(Some(address)) => (Some(address), key_at(self, address)),
                 Ok(None) => {
                     self.warn(format!(
                         "notes: `{word}` is not a message address; use u1, a1 and so on"
@@ -145,15 +146,13 @@ impl App {
                 }
             }
         };
-        let mut removed = false;
-        if let Some(key) = key {
-            removed = self.notes.remove(session, key);
-        }
-        // A note whose message the conversation no longer has cannot be found
-        // by content; the address it was stored at is the only handle left.
-        if !removed && let Some(address) = address {
-            removed = self.notes.remove_at(session, address);
-        }
+        let removed = if let Some(target) = key {
+            self.notes.remove(session, target.key, target.stored_id.as_deref())
+        } else if let Some(address) = address {
+            self.notes.remove_at(session, address)
+        } else {
+            false
+        };
         if !removed {
             let named = address.map_or_else(|| "the newest message".to_string(), |address| address.to_string());
             self.transcript
@@ -181,14 +180,10 @@ impl App {
             let Some(entry) = entry else {
                 continue;
             };
-            let Some(note) = self.notes.note_record(session, entry.key) else {
+            let Some(note) = self.notes.note_record(session, entry.key, entry.stored_id.as_deref()) else {
                 continue;
             };
-            live.push(entry.key);
-            if !notes::note_matches(note, entry.stored_id.as_deref()) {
-                live.pop();
-                continue;
-            }
+            live.push(note);
             let quote = notes::excerpt(item).map_or_else(String::new, |text| {
                 format!("\"{}\"  ", notes::summary(text.trim(), EXCERPT_CHARS))
             });
@@ -198,8 +193,8 @@ impl App {
         // A note whose message this transcript no longer holds is still the
         // reader's text; hiding it would look like the note was lost.
         if shown < count {
-            for (key, note) in self.notes.notes(session) {
-                if !live.contains(&key) {
+            for (_, note) in self.notes.notes(session) {
+                if !live.iter().any(|shown| std::ptr::eq(*shown, note)) {
                     rows.push(format!(
                         "  {}  (message not in this transcript)  — {}",
                         note.address, note.text

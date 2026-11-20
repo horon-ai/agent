@@ -6,19 +6,10 @@
 //! in a file this client owns and why the note is drawn beside the message
 //! rather than pushed into it.
 //!
-//! A note is stored under the session id and the message's content: a
-//! fingerprint of its text, plus which occurrence of that text it is when the
-//! conversation repeats itself. A place in the conversation is what the reader
-//! types (`u1`, `a3`), but it is not the identity: the daemon's history API
-//! reports no stored message ids, and a place moves when an earlier message is
-//! retracted or a session is compacted. Content does not move, so a note is
-//! drawn only under the message that still has the text it was written about,
-//! and a different text in the same place never inherits it. A replayed
-//! assistant row is split at the daemon's reasoning markup first
-//! ([`crate::transcript::Transcript::split_rendered_assistant`]), so the
-//! answer's text is what the fingerprint names. If the harness ever exposes a
-//! stored message id, it belongs in [`MessageKey`] beside the fingerprint as
-//! the stronger identity; today it does not cross the API.
+//! A note belongs to a session and, when the harness provides it, a stored
+//! message id. Live rows and older daemons can lack that id. For those rows
+//! the fallback is the visible answer's text fingerprint and its occurrence.
+//! Addresses such as `a3` are how readers select a row in the current view.
 //!
 //! The file is `$HORON_HOME/tui-notes.json`, written by this client alone. It is
 //! created owner-only, a file found wider is narrowed, and a save is a
@@ -243,8 +234,42 @@ impl fmt::Display for NoteFault {
     }
 }
 
-/// The notes of one session, keyed by message content.
-type SessionNotes = BTreeMap<MessageKey, Note>;
+#[derive(Debug, Clone, Default)]
+struct SessionNotes {
+    legacy: BTreeMap<MessageKey, Note>,
+    stored: BTreeMap<String, (MessageKey, Note)>,
+}
+
+impl SessionNotes {
+    fn len(&self) -> usize {
+        self.legacy.len() + self.stored.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn insert(&mut self, key: MessageKey, note: Note) {
+        if let Some(id) = &note.stored_id {
+            self.stored.insert(id.clone(), (key, note));
+        } else {
+            self.legacy.insert(key, note);
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (MessageKey, &Note)> {
+        self.legacy
+            .iter()
+            .map(|(key, note)| (*key, note))
+            .chain(self.stored.values().map(|(key, note)| (*key, note)))
+    }
+
+    fn stored_fallback(&self, key: MessageKey) -> Option<(&str, &Note)> {
+        let mut candidates = self.stored.iter().filter(|(_, (text, _))| *text == key);
+        let (id, (_, note)) = candidates.next()?;
+        candidates.next().is_none().then_some((id.as_str(), note))
+    }
+}
 
 /// Every session's notes, in the shape the file holds them.
 type AllNotes = BTreeMap<String, SessionNotes>;
@@ -356,22 +381,29 @@ impl NoteStore {
 
     /// The note on one message, if any.
     pub fn note(&self, session: &str, key: MessageKey) -> Option<&str> {
-        self.note_record(session, key).map(|note| note.text.as_str())
+        self.note_record(session, key, None).map(|note| note.text.as_str())
     }
 
     /// The whole note record on one message, with the stored message it was
     /// written on.
-    pub fn note_record(&self, session: &str, key: MessageKey) -> Option<&Note> {
-        self.sessions.get(session).and_then(|notes| notes.get(&key))
+    pub fn note_record(&self, session: &str, key: MessageKey, id: Option<&str>) -> Option<&Note> {
+        let notes = self.sessions.get(session)?;
+        if let Some(id) = id {
+            return notes
+                .stored
+                .get(id)
+                .map(|(_, note)| note)
+                .or_else(|| notes.legacy.get(&key));
+        }
+        notes
+            .legacy
+            .get(&key)
+            .or_else(|| notes.stored_fallback(key).map(|(_, note)| note))
     }
 
     /// Every note of one session, ordered by content identity.
     pub fn notes(&self, session: &str) -> impl Iterator<Item = (MessageKey, &Note)> {
-        self.sessions
-            .get(session)
-            .into_iter()
-            .flat_map(|notes| notes.iter())
-            .map(|(key, note)| (*key, note))
+        self.sessions.get(session).into_iter().flat_map(|notes| notes.iter())
     }
 
     /// The sessions holding at least one note.
@@ -415,13 +447,22 @@ impl NoteStore {
             return Err(NoteError::Empty);
         }
         let notes = self.sessions.entry(session.to_string()).or_default();
+        if stored_id.is_some() {
+            notes.legacy.remove(&key);
+        }
+        let stored_id = stored_id.map(str::to_owned).or_else(|| {
+            if notes.legacy.contains_key(&key) {
+                return None;
+            }
+            notes.stored_fallback(key).map(|(id, _)| id.to_owned())
+        });
         notes.insert(
             key,
             Note {
                 text,
                 address,
                 updated_ms: now_ms(),
-                stored_id: stored_id.map(str::to_string),
+                stored_id,
             },
         );
         self.dirty.insert(session.to_string());
@@ -429,10 +470,19 @@ impl NoteStore {
     }
 
     /// Remove the note on one message, answering whether there was one.
-    pub fn remove(&mut self, session: &str, key: MessageKey) -> bool {
-        let removed = match self.sessions.get_mut(session) {
-            Some(notes) => notes.remove(&key).is_some(),
-            None => false,
+    pub fn remove(&mut self, session: &str, key: MessageKey, id: Option<&str>) -> bool {
+        let Some(notes) = self.sessions.get_mut(session) else {
+            return false;
+        };
+        let removed = if let Some(id) = id {
+            notes.stored.remove(id).is_some() || notes.legacy.remove(&key).is_some()
+        } else if notes.legacy.remove(&key).is_some() {
+            true
+        } else if let Some((id, _)) = notes.stored_fallback(key) {
+            let id = id.to_owned();
+            notes.stored.remove(&id).is_some()
+        } else {
+            false
         };
         if !removed {
             return false;
@@ -450,14 +500,18 @@ impl NoteStore {
         let Some(notes) = self.sessions.get_mut(session) else {
             return false;
         };
-        let found = notes
+        let Some((key, id)) = notes
             .iter()
             .find(|(_, note)| note.address == address)
-            .map(|(key, _)| *key);
-        let Some(key) = found else {
+            .map(|(key, note)| (key, note.stored_id.clone()))
+        else {
             return false;
         };
-        let removed = notes.remove(&key).is_some();
+        let removed = if let Some(id) = id {
+            notes.stored.remove(&id).is_some()
+        } else {
+            notes.legacy.remove(&key).is_some()
+        };
         if removed {
             self.tidy(session);
         }
@@ -656,21 +710,8 @@ pub(crate) fn note_at<'a>(
 ) -> Option<&'a str> {
     let session = session?;
     let key = keys?.get(index).copied().flatten()?;
-    let note = store.note_record(session, key)?;
-    let current = ids?.get(index).and_then(|id| id.as_deref());
-    note_matches(note, current).then_some(note.text.as_str())
-}
-
-/// Whether a note may be drawn under a row naming `current`.
-///
-/// True when either side names no stored message: a note written from the live
-/// stream, or read by a harness that reports no ids, still belongs to its text.
-/// When both name one, they have to be the same message.
-pub(crate) fn note_matches(note: &Note, current: Option<&str>) -> bool {
-    match (note.stored_id.as_deref(), current) {
-        (Some(recorded), Some(current)) => recorded == current,
-        _ => true,
-    }
+    let current = ids.and_then(|ids| ids.get(index)).and_then(Option::as_deref);
+    store.note_record(session, key, current).map(|note| note.text.as_str())
 }
 
 /// The notes one frame can hang under the blocks it draws.
@@ -851,8 +892,9 @@ fn parse(text: &str) -> Result<Parsed, NoteFault> {
             malformed += 1;
             continue;
         };
-        let mut notes = BTreeMap::new();
-        for (key, entry) in items {
+        let mut notes = SessionNotes::default();
+        for (token, entry) in items {
+            let key = entry.get("fingerprint").and_then(Value::as_str).unwrap_or(token);
             let Some(key) = MessageKey::parse_token(key) else {
                 malformed += 1;
                 continue;
@@ -891,15 +933,19 @@ fn to_value(sessions: &AllNotes) -> Value {
     let mut stored = Map::new();
     for (session, notes) in sessions {
         let mut items = Map::new();
-        for (key, note) in notes {
+        for (key, note) in notes.iter() {
             let mut entry = Map::new();
             entry.insert("text".to_string(), Value::String(note.text.clone()));
             entry.insert("address".to_string(), Value::String(note.address.to_string()));
             entry.insert("updated_ms".to_string(), Value::from(note.updated_ms));
-            if let Some(stored_id) = &note.stored_id {
+            let token = if let Some(stored_id) = &note.stored_id {
                 entry.insert("stored_id".to_string(), Value::String(stored_id.clone()));
-            }
-            items.insert(key.token(), Value::Object(entry));
+                entry.insert("fingerprint".to_string(), Value::String(key.token()));
+                format!("id:{stored_id}")
+            } else {
+                key.token()
+            };
+            items.insert(token, Value::Object(entry));
         }
         let mut holding = Map::new();
         holding.insert("items".to_string(), Value::Object(items));
