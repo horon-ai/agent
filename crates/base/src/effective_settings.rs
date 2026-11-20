@@ -52,6 +52,8 @@ pub struct EffectiveSettingRow {
     pub origin: Option<String>,
 }
 
+type EnvCheck = (&'static str, fn(&str) -> bool);
+
 /// One allow-listed key, with the row a settings screen prints for it.
 ///
 /// `env` names the environment variable that overrides the key and how a value
@@ -63,7 +65,7 @@ pub struct EffectiveSettingRow {
 struct Spec {
     key: &'static str,
     label: &'static str,
-    env: Option<(&'static str, fn(&str) -> bool)>,
+    env: Option<EnvCheck>,
     file_value: fn(&toml::Value) -> bool,
     value: fn(&Config) -> String,
 }

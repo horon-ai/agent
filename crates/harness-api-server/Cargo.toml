@@ -22,10 +22,6 @@ horon-agent-session-store = { path = "../session-store" }
 horon-agent-transport = { path = "../transport" }
 serde = "1"
 serde_json = "1"
-# `effective_settings` reads the daemon's config file to name the layer that
-# supplied each value. The same `toml` version the daemon parses with, so a file
-# this crate can read is a file the daemon read too.
-toml = "0.8"
 horon-agent-time = { path = "../time-types" }
 tokio = { version = "1", features = ["net", "io-util", "io-std", "rt-multi-thread", "macros", "sync", "time"] }
 
