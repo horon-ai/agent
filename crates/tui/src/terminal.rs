@@ -19,6 +19,10 @@ use crate::{paste, scroll, title};
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
 pub(crate) fn restore() {
+    // A local shell command still running when the client leaves or takes a
+    // signal goes with it: the command belongs to this terminal, and a
+    // detached copy would keep writing after the client is gone.
+    crate::commands::shell::kill_active_group();
     paste::disable();
     // The stack entry goes back with the screen: the title the shell set is the
     // one the next prompt should be in.

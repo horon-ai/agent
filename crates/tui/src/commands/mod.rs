@@ -23,6 +23,13 @@
 //! that starts with a slash. A line that starts with a slash and names nothing
 //! becomes an error line instead of a message, so a typo never reaches the
 //! model as prose.
+//!
+//! `!command` and `!!command` are the local shell. They are resolved before the
+//! slash forms, because they begin with a different character, and they run in
+//! the client's own working directory instead of the agent session: the
+//! command text comes from the submitted line and from nowhere else, and
+//! neither form sends anything to the harness. `!` keeps the output in the
+//! transcript; `!!` keeps neither the command nor its output.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -32,8 +39,13 @@ use horon_agent_sdk::RuntimeCommand;
 
 mod parse;
 
+pub(crate) mod shell;
+
 #[cfg(test)]
 mod builtin_tests;
+
+#[cfg(test)]
+mod shell_tests;
 
 #[cfg(test)]
 mod skills_tests;
@@ -70,6 +82,10 @@ pub enum Local {
     Skills,
     /// Switch to another session, by id or from the list.
     Switch,
+    /// Run `!command` in this client, keeping its output in the transcript.
+    Shell,
+    /// Run `!!command` in this client, keeping neither the command nor its output.
+    ShellExcluded,
 }
 
 impl Local {
@@ -107,6 +123,11 @@ impl Local {
             Self::Resume => "resume",
             Self::Skills => "skills",
             Self::Switch => "switch",
+            // The shell forms are typed with a `!` prefix, not a slash, so
+            // these names are only what a listing would call them. They are
+            // deliberately absent from `LOCAL_NAMES`.
+            Self::Shell => "shell",
+            Self::ShellExcluded => "shell",
         }
     }
 }
@@ -384,8 +405,19 @@ impl Registry {
     }
 
     /// Resolve one typed line.
+    ///
+    /// The local shell is read first: `!!name` is excluded from the transcript,
+    /// `!name` keeps its output, and either with no command is an error rather
+    /// than prose. Only the submitted line is read here; the command text is
+    /// never taken from a transcript item, a tool result or a model message.
     pub fn resolve(&self, text: &str) -> Invocation {
         let trimmed = text.trim();
+        if let Some(rest) = trimmed.strip_prefix("!!") {
+            return shell_invocation(rest, Local::ShellExcluded);
+        }
+        if let Some(rest) = trimmed.strip_prefix('!') {
+            return shell_invocation(rest, Local::Shell);
+        }
         let Some(rest) = trimmed.strip_prefix('/') else {
             return Invocation::Message(text.to_string());
         };
@@ -686,6 +718,23 @@ fn expand_skill(skill: &Skill, display: &str, arguments: &str) -> Invocation {
 /// The line shown for `/skill:<name>` when the harness listed no such skill.
 fn unknown_skill(name: &str) -> String {
     format!("unknown skill `{name}`; /skills lists them")
+}
+
+/// The invocation a `!` line asks for, or the error an empty one earns.
+fn shell_invocation(command: &str, form: Local) -> Invocation {
+    let command = command.trim();
+    if command.is_empty() {
+        return Invocation::Error(shell_usage());
+    }
+    Invocation::Local {
+        command: form,
+        arguments: command.to_string(),
+    }
+}
+
+/// The line an empty `!` or `!!` leaves instead of running anything.
+pub(crate) fn shell_usage() -> String {
+    "a local shell command needs text: `!command` runs it, `!!command` runs it without keeping the command or its output".to_string()
 }
 
 /// Whether a name can be a skill's bare address.

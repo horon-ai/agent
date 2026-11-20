@@ -166,6 +166,12 @@ Commands:
                  draft
   /switch [id]   move to another stored session, or pick one from the list
   //text         send the literal message /text
+
+Local shell (runs in this terminal, in the client's working directory; never
+sent to the model, the session or the daemon):
+  !command       run command and keep its output in the transcript
+  !!command      run command without keeping the command or its output
+                 (exit status is still shown); a command is stopped after 10s
 ";
 
 /// Parsed command line.
@@ -490,6 +496,9 @@ where
     let mut clock = statusline::local_minute();
     loop {
         let mut changed = loop_io::drain_events(app);
+        // A local command runs on a worker thread; its result joins the same
+        // redraw decision as an event from the bridge.
+        changed |= crate::commands::shell::drain(app);
         if !app.running {
             break;
         }
@@ -554,6 +563,10 @@ where
             }
             redraw = false;
         }
+        // The header has been drawn, so the command may start. This is after
+        // the frame, not inside the key handler, which is what makes the
+        // target visible before the command can print anything.
+        crate::commands::shell::start_pending();
         match crossterm::event::poll(Duration::from_millis(50)) {
             Ok(true) => {}
             Ok(false) => continue,
