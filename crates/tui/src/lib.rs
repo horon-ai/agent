@@ -607,8 +607,9 @@ where
                 app.on_paste(&text);
                 flush_setting_change(app, reloader, themes);
             }
-            // Only the wheel is acted on, and only while the setting holds the
-            // capture that makes the terminal report it at all.
+            // The wheel and a click in the draft are acted on, and only while
+            // the setting holds the capture that makes the terminal report
+            // them at all.
             Ok(crossterm::event::Event::Mouse(mouse)) => app.on_mouse(mouse),
             Ok(_) => {}
             Err(error) => {
@@ -808,6 +809,18 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 
     let input_area = areas[index];
+    // The mouse click is read against the same cells the frame used, so the
+    // pane's position and the character each row starts at are recorded once
+    // the layout is final. An edit drops them; the next frame records them
+    // again.
+    app.input.note_view(
+        crate::input::Placement {
+            x: input_area.x,
+            y: input_area.y,
+            lead: marker_width.saturating_add(1),
+        },
+        &view,
+    );
     // One row per visible line of the draft. Only the first carries the prompt
     // marker; the rest are padded to the same column so the text lines up under
     // itself instead of under the marker.

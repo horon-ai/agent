@@ -201,10 +201,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
-| `editor.backspace` | `backspace` | Delete the character before the cursor |
-| `editor.delete` | `delete` | Delete the character at the cursor |
-| `editor.left` | `left`, `ctrl+b` | Move the cursor one character left |
-| `editor.right` | `right`, `ctrl+f` | Move the cursor one character right |
+| `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
+| `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
+| `editor.left` | `left`, `ctrl+b` | Move the cursor one grapheme cluster left |
+| `editor.right` | `right`, `ctrl+f` | Move the cursor one grapheme cluster right |
 | `editor.home` | `home`, `ctrl+a` | Move the cursor to the start of its line |
 | `editor.end` | `end`, `ctrl+e` | Move the cursor to the end of its line |
 | `editor.word_left` | `alt+left` | Move to the start of the word before the cursor |
@@ -246,7 +246,7 @@ The last hundred drafts are kept for `up` and `down`. A walk starts from the new
 
 `ctrl+r` opens those drafts as a list, newest first, for reaching a draft that is too many `up` presses back. Each row is the draft's first line, with its line count when it has more than one, and the whole draft in the preview pane. The list is the same picker the model and session commands use, so typing filters it and `enter` puts the chosen draft back in the editor without sending it; `esc` closes the list and keeps the draft that was there. The drafts are the client's own, so the list is complete the moment it opens.
 
-The cursor is placed in display cells rather than bytes, so a wide character counts for two. Text before the cursor is dropped from the left once the draft is wider than the pane, leaving one cell free so the caret stays visible at the right edge.
+The cursor moves between grapheme clusters, so a flag emoji or a syllable made of combining characters stays together. The editor measures these clusters in display cells. With mouse capture enabled, clicking in the editor moves the cursor to the cluster at that cell. When a line exceeds the pane, the editor scrolls horizontally to keep the caret visible.
 
 ## The transcript
 
