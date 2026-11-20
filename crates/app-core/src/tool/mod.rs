@@ -2186,7 +2186,8 @@ impl Registry {
             let gate_cwd = working_dir.clone();
             let gate_tool = resolved_name.to_string();
             let (execution_input, decision) = if is_eval {
-                let decision = run_gated_pre_tool_hook(&gate_session, gate_cwd.as_deref(), &gate_tool, &input).await;
+                let payload = serde_json::to_string(&input)?;
+                let decision = run_gated_pre_tool_hook(&gate_session, gate_cwd.as_deref(), &gate_tool, &payload).await;
                 (input, decision)
             } else {
                 crate::secrets::restore_then_gate(input, &ctx.session_id, move |payload| async move {
