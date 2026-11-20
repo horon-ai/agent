@@ -1,8 +1,17 @@
 //! Getting a submitted line to the harness, and what happens when it
 //! cannot be sent: the queue, the in-flight slot, refusals and the turn start.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use super::{Action, App, Message, PendingSteer};
 use crate::commands::Invocation;
+use crate::overlays::picker::{Kind, Outcome, Picker, Row};
+
+/// The title the queue list is drawn with.
+const QUEUE_TITLE: &str = "Queued messages";
+
+/// What the queue list says when it holds nothing.
+const QUEUE_EMPTY: &str = "no messages are waiting for the turn to end";
 
 impl App {
     /// A message the bridge could not deliver.
@@ -80,7 +89,202 @@ impl App {
         self.queue.remove(0);
         self.transcript.promote_queued(&message.display);
         self.in_flight = Some(message.clone());
+        // The open list loses the row that just left; with nothing behind it
+        // the list closes rather than swallowing the next key.
+        self.refresh_queue_panel(0);
         Some(self.start_turn(message.text))
+    }
+
+    /// Open the list of messages waiting for the running turn to end.
+    ///
+    /// The list holds only the queue: the message the bridge already has, the
+    /// messages a steer handed to the running turn, and the prompts asking for
+    /// a decision are not waiting for this turn, and editing them would break
+    /// an answer the harness is still going to give.
+    pub(crate) fn open_queue(&mut self) -> Option<Action> {
+        if self.queue.is_empty() {
+            self.transcript.push_notice(QUEUE_EMPTY);
+            return None;
+        }
+        self.picker = Some(Picker::new(Kind::Queue, QUEUE_TITLE, self.queue_rows(), QUEUE_EMPTY));
+        None
+    }
+
+    /// One keystroke inside the queue list.
+    ///
+    /// The list is the generic one with three keys of its own: `enter` takes
+    /// the row back into the editor, `delete` drops it, and `alt+up` or
+    /// `alt+down` moves it past its neighbour. Everything else — the filter,
+    /// the arrows, the pages — is the list's own, and `esc` closes without
+    /// changing the queue.
+    pub(crate) fn queue_panel_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A turn boundary or a refused send can change the queue between keys:
+        // the rows are read again first, and the list closes when the last
+        // message has left it.
+        self.sync_queue_panel();
+        if !self.queue_panel_open() {
+            return None;
+        }
+        match key.code {
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Enter => self.edit_queued(),
+            KeyCode::Delete => self.remove_queued(),
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => self.move_queued(-1),
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::ALT) => self.move_queued(1),
+            _ => {
+                // `enter` and `esc` never reach the list: the rows are edited
+                // here rather than chosen, and closing means "change nothing".
+                let Some(mut picker) = self.picker.take() else {
+                    return None;
+                };
+                if picker.on_key(key) == Outcome::Handled {
+                    self.picker = Some(picker);
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether the open list is the queue's.
+    fn queue_panel_open(&self) -> bool {
+        self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue)
+    }
+
+    /// The row under the cursor, as an index into the queue.
+    fn selected_queue_index(&self) -> Option<usize> {
+        let index = self.picker.as_ref()?.selected_index()?;
+        (index < self.queue.len()).then_some(index)
+    }
+
+    /// One row per queued message, in the order the messages will be sent.
+    ///
+    /// The row's value is its place in the queue rather than its text: two
+    /// messages can say the same thing, and the one the user selected is the
+    /// one they must be able to take back. Its second column counts the row in
+    /// that order, so a moved message says where it now sits.
+    fn queue_rows(&self) -> Vec<Row> {
+        let total = self.queue.len();
+        self.queue
+            .iter()
+            .enumerate()
+            .map(|(index, message)| {
+                let lines: Vec<String> = message.display.split('\n').map(str::to_string).collect();
+                let label = lines.first().cloned().unwrap_or_default();
+                Row::new(label, index.to_string())
+                    .with_detail(format!("{}/{}", index + 1, total))
+                    .with_preview(lines)
+                    .with_search(vec![message.display.clone()])
+            })
+            .collect()
+    }
+
+    /// Read the queue again into the open list, keeping `keep` selected.
+    ///
+    /// The list closes once the queue is empty: an empty panel would swallow
+    /// every key and say nothing about the session underneath it.
+    fn refresh_queue_panel(&mut self, keep: usize) {
+        if !self.queue_panel_open() {
+            return;
+        }
+        if self.queue.is_empty() {
+            self.picker = None;
+            return;
+        }
+        let rows = self.queue_rows();
+        let keep = keep.min(self.queue.len() - 1);
+        if let Some(picker) = self.picker.as_mut() {
+            picker.replace_rows(rows, keep);
+        }
+    }
+
+    /// Bring the open list in line with the queue, cursor and all.
+    fn sync_queue_panel(&mut self) {
+        let keep = self.selected_queue_index().unwrap_or(0);
+        self.refresh_queue_panel(keep);
+    }
+
+    /// Take the row under the cursor out of the queue and back into the editor.
+    ///
+    /// The message was never sent, so its row is taken back and no action
+    /// leaves: the user edits the text and submits it when it is ready. The
+    /// editor is the only place that holds a message, so a draft already there
+    /// is not overwritten; the message stays queued until that draft is sent or
+    /// cleared, and the warning says so.
+    fn edit_queued(&mut self) {
+        if !self.input.is_empty() {
+            // The list covers the transcript, so the only way the reason can
+            // be read is with the list closed; the queue itself is unchanged.
+            self.picker = None;
+            self.warn("the editor already holds a draft; send or clear it before editing the queue");
+            return;
+        }
+        let Some(index) = self.selected_queue_index() else {
+            return;
+        };
+        let occurrence = self.queued_occurrence(index);
+        let message = self.queue.remove(index);
+        self.transcript.retract_queued(&message.display, occurrence);
+        // The line the user typed goes back, not the body a command file
+        // expands to: an edit has to show what they wrote, and submitting it
+        // again resolves the same line.
+        self.input.set_text(&message.display);
+        self.picker = None;
+    }
+
+    /// How many messages ahead of `index` carry the same line.
+    ///
+    /// A queued row holds the text rather than an identity, so two messages
+    /// saying the same thing are told apart by their place: the second `same`
+    /// owns the second `same` row.
+    fn queued_occurrence(&self, index: usize) -> usize {
+        let Some(message) = self.queue.get(index) else {
+            return 0;
+        };
+        self.queue[..index]
+            .iter()
+            .filter(|earlier| earlier.display == message.display)
+            .count()
+    }
+
+    /// Drop the row under the cursor from the queue.
+    ///
+    /// Only that message goes, and only its own waiting row: two messages with
+    /// the same text are still two queue entries, each with the row that
+    /// announced it.
+    fn remove_queued(&mut self) {
+        let Some(index) = self.selected_queue_index() else {
+            return;
+        };
+        let occurrence = self.queued_occurrence(index);
+        let message = self.queue.remove(index);
+        self.transcript.retract_queued(&message.display, occurrence);
+        // The cursor stays on the row that took its place, or on the last row
+        // when the removed one was the last; an emptied queue closes the list.
+        self.refresh_queue_panel(index);
+    }
+
+    /// Move the row under the cursor one place earlier or later.
+    ///
+    /// The message travels past the row drawn next to it, which is not the
+    /// next index when a filter hides rows between them: it is taken out and
+    /// put back beside that neighbour, so the hidden messages keep their own
+    /// order. Only the queue changes — a waiting row in the conversation keeps
+    /// the place it was typed in, and each is promoted there when its message
+    /// is sent, so moving a message never draws it twice. The message under the
+    /// cursor is the one that moved, and the cursor stays on it.
+    fn move_queued(&mut self, steps: isize) {
+        let Some(index) = self.selected_queue_index() else {
+            return;
+        };
+        let Some(neighbour) = self.picker.as_ref().and_then(|picker| picker.neighbour_index(steps)) else {
+            return;
+        };
+        if neighbour >= self.queue.len() {
+            return;
+        }
+        let message = self.queue.remove(index);
+        self.queue.insert(neighbour, message);
+        self.refresh_queue_panel(neighbour);
     }
 
     /// Put a message that was not sent back where the user can see it.
@@ -95,6 +299,9 @@ impl App {
         }
         self.transcript.push_queued(text);
         self.queue.push(Message::new(text.to_string(), None));
+        // The open list gains the message the refusal put back, in the place
+        // it will be sent from.
+        self.sync_queue_panel();
     }
 
     /// Resolve one submitted line and turn it into an action.
@@ -191,6 +398,9 @@ impl App {
             session_id: self.session_id.clone(),
             messages: std::mem::take(&mut self.queue),
         });
+        // The queue went with the steer: the open list closes rather than
+        // offering rows whose messages the running turn may already have.
+        self.refresh_queue_panel(0);
         Some(Action::Steer(text))
     }
 
@@ -289,6 +499,9 @@ impl App {
         let mut restored = pending.messages;
         restored.append(&mut self.queue);
         self.queue = restored;
+        // The messages are in front again, in their own order: an open list
+        // reads them from the top so the refusal and the queue agree.
+        self.refresh_queue_panel(0);
     }
 
     /// Put a steer the connection lost back in front of the queue.
@@ -317,6 +530,7 @@ impl App {
         }
         restored.append(&mut self.queue);
         self.queue = restored;
+        self.refresh_queue_panel(0);
     }
 
     /// Say that a message went nowhere, and put it back in front of the user.

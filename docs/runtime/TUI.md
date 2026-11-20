@@ -349,13 +349,16 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/keys` | List the keys in force and what each does |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
+| `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twelve commands the client answers itself, in name order.
+The table lists the built-in commands the client handles (`Local` in `crates/tui/src/commands/mod.rs`).
+
+In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 

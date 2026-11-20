@@ -125,6 +125,10 @@ impl App {
                     self.draft_skill(&value);
                     None
                 }
+                // The queue answers its own keys before this list sees them, so
+                // no row is ever chosen from here; a value that arrives anyway
+                // changes nothing rather than acting as some other kind of row.
+                Kind::Queue => None,
             },
         }
     }

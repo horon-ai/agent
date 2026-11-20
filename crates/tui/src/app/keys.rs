@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 
 use super::{Action, App};
 use crate::keys::{self, Key};
+use crate::overlays::picker::Kind;
 use crate::overlays::settings::Outcome;
 use crate::prompts::{Prompt, Response};
 use crate::scroll;
@@ -29,6 +30,12 @@ impl App {
 
     /// What one keystroke does, with the popup already in line with the draft.
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The queue list is a list whose rows are edited rather than chosen,
+        // so it is answered before the generic picker that would read `enter`
+        // as a choice. It still owns every key while it is open.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue) {
+            return self.queue_panel_key(key);
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.
