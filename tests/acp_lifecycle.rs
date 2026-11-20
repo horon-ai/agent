@@ -767,9 +767,29 @@ mod acp {
             "<invoke name=\"read\"><parameter name=\"file_path\">fixture.txt</parameter></invoke>"
         );
         provider.script("show an example", lifecycle::Script::Text(example.into()));
-        let output = run_text_tool_turn(&provider, "show an example");
+        let daemon = Daemon::with_provider(provider.base_url());
+        let mut adapter = Adapter::spawn(&daemon);
+        let session_id = adapter.new_session(&daemon.work());
+        let (before, result) = adapter.call(
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "show an example"}],
+            }),
+        );
+        assert!(result.is_ok(), "{result:?}\n{}", daemon.logs());
+        let output: String = before
+            .iter()
+            .filter_map(|event| {
+                let update = &event["params"]["update"];
+                (update["sessionUpdate"] == "agent_message_chunk")
+                    .then(|| update["content"]["text"].as_str())
+                    .flatten()
+            })
+            .collect();
         assert!(output.contains(example), "{output}");
         assert!(!output.contains("[tool-call recovery]"), "{output}");
+        adapter.finish();
         assert_eq!(provider.request_count(), 1);
     }
 

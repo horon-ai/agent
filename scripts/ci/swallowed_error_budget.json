@@ -108,7 +108,7 @@
     },
     "crates/app-core/src/agent/turn_streaming_mpsc.rs": {
       "dot_ok": 0,
-      "let_underscore": 72,
+      "let_underscore": 71,
       "unwrap_or_default": 2
     },
     "crates/app-core/src/agent/utils.rs": {

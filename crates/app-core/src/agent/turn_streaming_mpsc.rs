@@ -4,7 +4,6 @@ use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
-use super::streaming::find_wrap_marker_incremental;
 
 mod tool_wait;
 
@@ -398,7 +397,6 @@ impl Agent {
             );
 
             let mut text_content = String::new();
-            let mut text_wrapped_detected = false;
             // Inline swarm worker output tap: publish a throttled tail of the
             // in-progress assistant text to the bus so a coordinator can render
             // a live inline gallery viewport.
@@ -775,18 +773,7 @@ impl Agent {
                                 }
                             }
                         }
-                        if !text_wrapped_detected {
-                            // Scan only the new delta (plus a short overlap for
-                            // markers straddling the boundary) instead of the
-                            // whole accumulated response on every token.
-                            if let Some(marker_idx) = find_wrap_marker_incremental(&text_content, text.len()) {
-                                text_wrapped_detected = true;
-                                let clean_prefix = text_content[..marker_idx].trim_end().to_string();
-                                let _ = event_tx.send(ServerEvent::TextReplace { text: clean_prefix });
-                            } else {
-                                let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
-                            }
-                        }
+                        let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
                         if self.is_graceful_shutdown() {
                             logging::info("Graceful shutdown during streaming - checkpointing partial response");
                             let _ = event_tx.send(ServerEvent::TextDelta {
@@ -995,7 +982,6 @@ impl Agent {
                             // discarded partial from the live tail too.
                             self.inline_tail.clear_live();
                         }
-                        text_wrapped_detected = false;
                         tool_calls.clear();
                         // A retry re-announces its calls; stale entries would
                         // answer a cancel for an id the client no longer sees.

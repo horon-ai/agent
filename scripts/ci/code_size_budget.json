@@ -6,7 +6,7 @@
     "crates/app-core/src/agent/failover_budget.rs": 1202,
     "crates/app-core/src/agent/turn_execution.rs": 1842,
     "crates/app-core/src/agent/turn_loops.rs": 2216,
-    "crates/app-core/src/agent/turn_streaming_mpsc.rs": 2789,
+    "crates/app-core/src/agent/turn_streaming_mpsc.rs": 2775,
     "crates/app-core/src/ambient/persistence.rs": 1252,
     "crates/app-core/src/server.rs": 2491,
     "crates/app-core/src/server/client_lifecycle.rs": 4486,
