@@ -134,9 +134,7 @@ impl App {
             _ => {
                 // `enter` and `esc` never reach the list: the rows are edited
                 // here rather than chosen, and closing means "change nothing".
-                let Some(mut picker) = self.picker.take() else {
-                    return None;
-                };
+                let mut picker = self.picker.take()?;
                 if picker.on_key(key) == Outcome::Handled {
                     self.picker = Some(picker);
                 }
@@ -169,8 +167,11 @@ impl App {
             .enumerate()
             .map(|(index, message)| {
                 let lines: Vec<String> = message.display.split('\n').map(str::to_string).collect();
-                let label = lines.first().cloned().unwrap_or_default();
-                Row::new(label, index.to_string())
+                let label = message
+                    .display
+                    .split_once('\n')
+                    .map_or(message.display.as_str(), |(first, _)| first);
+                Row::new(label.to_owned(), index.to_string())
                     .with_detail(format!("{}/{}", index + 1, total))
                     .with_preview(lines)
                     .with_search(vec![message.display.clone()])
