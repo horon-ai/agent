@@ -318,10 +318,13 @@ where
         // A process with no readable working directory has no directory to
         // fall back to, which is the same absence as not asking for one: the
         // daemon's own directory is shown and nothing else is reported.
-        None => match std::env::current_dir() {
-            Ok(dir) => Some(dir),
-            Err(_) => None,
-        },
+        None => {
+            let mut dir = None;
+            if let Ok(current) = std::env::current_dir() {
+                dir = Some(current);
+            }
+            dir
+        }
     };
     match sdk_bridge::connect(
         connect_options(args.socket),

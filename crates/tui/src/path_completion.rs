@@ -262,10 +262,8 @@ impl<'a> Form<'a> {
 /// instead of a guess. That choice is made here once, rather than at each
 /// call, so no call can drop a failure by accident.
 fn reachable<T>(result: std::io::Result<T>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(_) => None,
-    }
+    let Ok(value) = result else { return None };
+    Some(value)
 }
 
 /// The workspace as this machine resolves it, or nothing when it is not here.
