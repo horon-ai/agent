@@ -201,6 +201,98 @@ impl From<BadArgument> for String {
     }
 }
 
+/// A motion flag as the argument parser sees it, with the option it fills.
+///
+/// The three flags describe one setting family and each takes both spellings,
+/// `--flag value` and `--flag=value`. Both reach the flag through [`split`], so
+/// the rule for a value is written once instead of once per spelling.
+///
+/// [`split`]: LaunchFlag::split
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaunchFlag {
+    /// `--motion`
+    Mode,
+    /// `--spinner-interval`
+    SpinnerInterval,
+    /// `--max-fps`
+    MaxFps,
+}
+
+impl LaunchFlag {
+    /// The flag `name` names, without the leading `--` and without a value.
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "motion" => Some(Self::Mode),
+            "spinner-interval" => Some(Self::SpinnerInterval),
+            "max-fps" => Some(Self::MaxFps),
+            _ => None,
+        }
+    }
+
+    /// The flag `argument` names, and the value it carries after `=`, or `None`
+    /// when the argument names some other option.
+    pub fn split(argument: &str) -> Option<(Self, Option<&str>)> {
+        let name = argument.strip_prefix("--")?;
+        let (name, inline) = match name.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (name, None),
+        };
+        Some((Self::named(name)?, inline))
+    }
+
+    /// What an argument naming the flag with no value is refused with.
+    pub fn missing(self) -> &'static str {
+        match self {
+            Self::Mode => "--motion needs full, reduced or static",
+            Self::SpinnerInterval => "--spinner-interval needs milliseconds",
+            Self::MaxFps => "--max-fps needs frames a second",
+        }
+    }
+
+    /// Read the value of a launch argument when it names one of these flags.
+    ///
+    /// `Ok(false)` means `argument` is some other option and the parser carries
+    /// on with its own names. A flag whose value is missing or refused ends the
+    /// parse with the sentence to show.
+    pub fn read(
+        argument: &str,
+        rest: &mut impl Iterator<Item = String>,
+        mode: &mut Option<MotionMode>,
+        spinner_interval: &mut Option<i64>,
+        max_fps: &mut Option<i64>,
+    ) -> Result<bool, String> {
+        let Some((flag, inline)) = Self::split(argument) else {
+            return Ok(false);
+        };
+        let value = match inline {
+            Some(value) => std::borrow::Cow::Borrowed(value),
+            None => std::borrow::Cow::Owned(rest.next().ok_or_else(|| flag.missing().to_string())?),
+        };
+        flag.apply(&value, mode, spinner_interval, max_fps)
+            .map_err(String::from)?;
+        Ok(true)
+    }
+
+    /// Set the launch option this flag fills from `value`.
+    ///
+    /// A value outside the flag's range is refused rather than dropped, so the
+    /// parser stops with the sentence naming what the flag wanted.
+    pub fn apply(
+        self,
+        value: &str,
+        mode: &mut Option<MotionMode>,
+        spinner_interval: &mut Option<i64>,
+        max_fps: &mut Option<i64>,
+    ) -> Result<(), BadArgument> {
+        match self {
+            Self::Mode => *mode = Some(parse_mode(value)?),
+            Self::SpinnerInterval => *spinner_interval = Some(parse_spinner_interval(value)?),
+            Self::MaxFps => *max_fps = Some(parse_max_fps(value)?),
+        }
+        Ok(())
+    }
+}
+
 /// A `--motion` value, or why it cannot be used.
 pub fn parse_mode(value: &str) -> Result<MotionMode, BadArgument> {
     MotionMode::parse(value)

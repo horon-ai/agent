@@ -104,6 +104,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
+use crate::terminal::{show_failure, window_label, window_state};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -217,6 +218,18 @@ impl Args {
         let mut parsed = Self::default();
         let mut arguments = args.into_iter();
         while let Some(argument) = arguments.next() {
+            // The motion flags share one setting family and take both spellings,
+            // so they are read and converted together instead of one arm per
+            // flag per spelling.
+            if settings::motion::LaunchFlag::read(
+                &argument,
+                &mut arguments,
+                &mut parsed.motion,
+                &mut parsed.spinner_interval,
+                &mut parsed.max_fps,
+            )? {
+                continue;
+            }
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
@@ -237,23 +250,6 @@ impl Args {
                     Some(path) if !path.is_empty() => parsed.config.push(path.into()),
                     _ => return Err("--config needs a file".to_string()),
                 },
-                "--motion" => match arguments.next() {
-                    Some(value) => parsed.motion = Some(settings::motion::parse_mode(&value).map_err(String::from)?),
-                    None => return Err("--motion needs full, reduced or static".to_string()),
-                },
-                "--spinner-interval" => match arguments.next() {
-                    Some(value) => {
-                        parsed.spinner_interval =
-                            Some(settings::motion::parse_spinner_interval(&value).map_err(String::from)?);
-                    }
-                    None => return Err("--spinner-interval needs milliseconds".to_string()),
-                },
-                "--max-fps" => match arguments.next() {
-                    Some(value) => {
-                        parsed.max_fps = Some(settings::motion::parse_max_fps(&value).map_err(String::from)?)
-                    }
-                    None => return Err("--max-fps needs frames a second".to_string()),
-                },
                 other => match other.split_once('=') {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
@@ -262,16 +258,6 @@ impl Args {
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
                     Some(("--config", path)) => parsed.config.push(path.into()),
-                    Some(("--motion", value)) => {
-                        parsed.motion = Some(settings::motion::parse_mode(value).map_err(String::from)?);
-                    }
-                    Some(("--spinner-interval", value)) => {
-                        parsed.spinner_interval =
-                            Some(settings::motion::parse_spinner_interval(value).map_err(String::from)?);
-                    }
-                    Some(("--max-fps", value)) => {
-                        parsed.max_fps = Some(settings::motion::parse_max_fps(value).map_err(String::from)?);
-                    }
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
@@ -361,53 +347,6 @@ where
             1
         }
     }
-}
-
-/// Draw the connection-failure banner once, when there is a terminal to draw it
-/// on, then restore it.
-fn show_failure(message: &str) {
-    eprintln!("horon-tui: {message}");
-    let mut app = App::failure(message);
-    match ratatui::try_init() {
-        Ok(mut terminal) => {
-            let failure = draw(&mut terminal, &mut app).err();
-            paste::disable();
-            ratatui::restore();
-            if let Some(message) = failure {
-                eprintln!("horon-tui: {message}");
-            }
-        }
-        Err(error) => {
-            paste::disable();
-            ratatui::restore();
-            eprintln!("horon-tui: cannot open a terminal: {error}");
-        }
-    }
-}
-
-/// The name the window carries for the app's state.
-///
-/// The session's own title wins and the working directory names a session the
-/// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is. With `title.state` on,
-/// the turn state follows the name as a fixed word, so a window seen from
-/// another one says whether its session is busy without being switched to.
-fn window_label(app: &App, state_supported: bool) -> String {
-    let label = title::label(app.session_title.as_deref(), app.cwd.as_deref());
-    title::with_state(label, window_state(app, state_supported))
-}
-
-/// The state the title names, or none when the setting is off or the terminal
-/// keeps no title worth adding to.
-fn window_state(app: &App, state_supported: bool) -> Option<title::RunState> {
-    if !state_supported || !app.title_state {
-        return None;
-    }
-    Some(title::RunState::of(
-        app.prompt.is_some(),
-        app.pending_turn,
-        app.session_status.as_deref(),
-    ))
 }
 
 /// Drive the real terminal until the user leaves.
@@ -651,23 +590,12 @@ where
             clock = minute;
             changed = true;
         }
-        // A settings file, the settings screen and a flag all end in one
-        // applied snapshot; adopting its cadence here is what makes a changed
-        // preset take effect without waiting for the next event.
-        frames.retune(app.motion);
-        // One frame is drawn when something changed, when the scheduler says
-        // the spinner is due, or when its first pass has not drawn yet. An idle
-        // screen reaches none of those and is left untouched, which is the
-        // behaviour the client had before the animation existed.
-        if changed {
-            frames.request();
-        }
-        if let Some(frame) = frames.due(app.animating()) {
-            app.motion_frame = frame;
-            if let Err(message) = draw(terminal, app) {
-                failure = Some(message);
-                break;
-            }
+        // The frame this pass owes: one for a screen that changed, one the
+        // spinner scheduler says is due, and the first after the loop starts.
+        // An idle screen reaches none of those and is left untouched.
+        if let Err(message) = loop_io::draw_due(terminal, app, &mut frames, changed) {
+            failure = Some(message);
+            break;
         }
         match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}

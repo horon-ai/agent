@@ -3,13 +3,17 @@
 //! Deliveries from the bridge become app state, a keystroke's action goes out to
 //! the bridge thread, and the terminal's mouse capture follows the setting that
 //! asks for it. None of it draws, which is what keeps it out of the renderer and
-//! testable on its own.
+//! testable on its own; the one exception is the frame the loop has already
+//! decided is due, handed straight back to the client's `draw`.
 //!
 //! The last piece is [`Frames`]: the one thing that decides whether a frame is
 //! due, so an idle screen stays untouched and a streaming one animates at the
 //! cadence the motion settings allow.
 
 use std::time::{Duration, Instant};
+
+use ratatui::Terminal;
+use ratatui::backend::Backend;
 
 use crate::app::{Action, App};
 use crate::scroll;
@@ -162,6 +166,34 @@ pub(crate) fn sync_mouse_capture(app: &mut App, captured: &mut bool) -> bool {
     }
     *captured = false;
     true
+}
+
+/// Draw the one frame this pass owes, if any.
+///
+/// A settings file, the settings screen and a launch flag all end in one
+/// applied snapshot, so the cadence is adopted here and a changed preset takes
+/// effect without waiting for the next event. A frame is due when something
+/// changed, when the scheduler says the spinner is due, or on its first pass;
+/// an idle screen reaches none of those and is left untouched.
+pub(crate) fn draw_due<B>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    frames: &mut Frames,
+    changed: bool,
+) -> Result<(), String>
+where
+    B: Backend,
+    B::Error: std::fmt::Display,
+{
+    frames.retune(app.motion);
+    if changed {
+        frames.request();
+    }
+    let Some(frame) = frames.due(app.animating()) else {
+        return Ok(());
+    };
+    app.motion_frame = frame;
+    crate::draw(terminal, app)
 }
 
 /// When a frame is due, and which animation frame it draws.
