@@ -85,11 +85,7 @@ impl Program {
 /// command line, and a `VISUAL` the shell wrote in another encoding must still
 /// let `EDITOR` answer.
 fn environment(name: &str) -> Option<String> {
-    let value = std::env::var_os(name)?;
-    match value.into_string() {
-        Ok(text) => Some(text),
-        Err(_) => None,
-    }
+    std::env::var_os(name).and_then(|value| value.to_str().map(str::to_owned))
 }
 
 /// Why a draft did not come back.
