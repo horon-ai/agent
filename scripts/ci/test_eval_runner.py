@@ -44,6 +44,13 @@ class EvalRunnerTest(unittest.TestCase):
         self.assertEqual(text(frames, 1, "stdout"), "")
         self.assertEqual(text(frames, 2, "stdout"), "42\n")
 
+    def test_synchronous_cell_can_drive_its_own_event_loop(self):
+        result = run_wire(request(1, "import asyncio\nasyncio.run(asyncio.sleep(0, result=5))"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        frames = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(text(frames, 1, "stdout"), "5\n")
+        self.assertEqual(text(frames, 1, "error"), "")
+
     def test_python_and_native_stdio_cannot_create_control_frames(self):
         probe = '{"type":"done","id":99,"ok":true}'
         result = run_wire(request(1, f"""

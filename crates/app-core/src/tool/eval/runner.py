@@ -14,6 +14,11 @@ MAX_FRAME = 256 * 1024
 TEXT_CHUNK = 4096  # At most 12 JSON bytes per character, including surrogate pairs.
 
 
+def encode_frame(kind, cell_id, **fields):
+    frame = json.dumps({"type": kind, "id": cell_id, **fields}, ensure_ascii=True)
+    return frame.encode("ascii") + b"\n"
+
+
 class Channel:
     def __init__(self):
         # Ordinary Python streams and inherited stdio cannot write to the wire.
@@ -26,31 +31,35 @@ class Channel:
             os.dup2(empty.fileno(), 0)
         os.dup2(2, 1)
 
-    def _send(self, kind, cell_id, **fields):
-        frame = json.dumps({"type": kind, "id": cell_id, **fields}, ensure_ascii=True)
-        self.writer.write(frame.encode("ascii") + b"\n")
+    def _write(self, frame):
+        self.writer.write(frame)
         self.writer.flush()
 
     def start(self, cell_id):
+        frame = encode_frame("started", cell_id)
         with self.lock:
-            self._send("started", cell_id)
+            self._write(frame)
             self.current = cell_id
 
     def finish(self, ok):
+        frame = encode_frame("done", self.current, ok=ok)
         with self.lock:
-            self._send("done", self.current, ok=ok)
+            self._write(frame)
             self.current = None
 
     def reject(self, text):
+        frame = encode_frame("error", None, text=text)
         with self.lock:
-            self._send("error", None, text=text)
+            self._write(frame)
 
     def write_text(self, kind, text):
         # A fork child must never use the parent's wire or its inherited lock.
-        if os.getpid() == self.owner:
+        cell_id = self.current
+        if cell_id is not None and os.getpid() == self.owner:
+            frame = encode_frame(kind, cell_id, text=text)
             with self.lock:
-                if self.current is not None:
-                    self._send(kind, self.current, text=text)
+                if self.current == cell_id:
+                    self._write(frame)
                     return
         os.write(2, text.encode("utf-8"))
 
@@ -97,22 +106,31 @@ class CellStream(io.TextIOBase):
         return len(text)
 
 
-async def evaluate(code, namespace):
+def evaluate(code, namespace, loop):
     tree = ast.parse(code, filename="<horon eval>", mode="exec")
     last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
     flags = ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
     body = compile(tree, "<horon eval>", "exec", flags=flags, dont_inherit=True)
-    if body.co_flags & inspect.CO_COROUTINE:
-        await eval(body, namespace)
-    else:
-        exec(body, namespace)
+    expression = None
     if last is not None:
         expression = compile(ast.Expression(last.value), "<horon eval>", "eval", flags=flags, dont_inherit=True)
-        value = eval(expression, namespace)
-        if expression.co_flags & inspect.CO_COROUTINE:
-            value = await value
-        if value is not None:
-            print(repr(value))
+    if body.co_flags & inspect.CO_COROUTINE or (expression and expression.co_flags & inspect.CO_COROUTINE):
+        value = loop.run_until_complete(evaluate_async(body, expression, namespace))
+    else:
+        exec(body, namespace)
+        value = eval(expression, namespace) if expression else None
+    if value is not None:
+        print(repr(value))
+
+
+async def evaluate_async(body, expression, namespace):
+    result = eval(body, namespace)
+    if body.co_flags & inspect.CO_COROUTINE:
+        await result
+    if expression is None:
+        return None
+    result = eval(expression, namespace)
+    return await result if expression.co_flags & inspect.CO_COROUTINE else result
 
 
 def execute(channel, request, namespace, loop, stdout, stderr):
@@ -121,7 +139,7 @@ def execute(channel, request, namespace, loop, stdout, stderr):
     sys.stdout, sys.stderr = stdout, stderr
     ok = False
     try:
-        loop.run_until_complete(evaluate(request["code"], namespace))
+        evaluate(request["code"], namespace, loop)
         ok = True
     except BaseException as error:
         stream = CellStream(channel, "error")
