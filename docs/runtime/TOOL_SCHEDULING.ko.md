@@ -55,6 +55,7 @@
 | `webfetch` | `crates/app-core/src/tool/webfetch.rs:61` `effects` |
 | `websearch` | `crates/app-core/src/tool/websearch.rs:64` `effects` |
 | `bash` | `crates/app-core/src/tool/bash.rs:1589` `effects` |
+| `eval` | `crates/app-core/src/tool/eval.rs` `effects` |
 
 나머지는 기본값인 장벽에 남는데, `write`, `edit`, `replace`, `apply_patch`,
 `batch`, `mcp`, `skill_manage`가 그렇습니다. 레지스트리

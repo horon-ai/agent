@@ -223,6 +223,7 @@ Boundaries, each with the gate that enforces it:
 |`[tools] bash_pty`|`auto`|`off`, `always`|
 |`[tools] irc`|`false`|`true`; `HORON_AGENT_IRC` overrides it for one process|
 |`[irc] mailbox_cap`, `max_body_bytes`, `wait_max_secs`, `broadcast_concurrency`|`100`, `65536`, `300`, `16`|any value ≥ 1|
+|`[tools] eval`|`false`|`true` with Python 3.10+, a profile that permits `eval`, and explicit cell approval|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
 |`[features] foreign_rules`, `stream_rules`|`false`|`true`|
@@ -241,10 +242,11 @@ Originals are confirmed with it and derived caches are rebuilt instead, which
 keeps a one-shot run off the network; a catalog already on disk is still read.
 
 `[server] idle_hibernation_secs` is the idle window before the daemon releases
-a session's derived caches. It drops the provider projection and the tool-output
-index and writes nothing, so the next turn rebuilds both from resident state
-without a disk read; `docs/performance/MEMORY.md` lists what is released and
-what stays. `0` disables the sweep, and the daemon checks every ten seconds, so
+a session's derived caches and any opt-in Python kernel. The provider
+projection and tool-output index rebuild from resident state without a disk
+read. The next Python cell starts with fresh state. `docs/performance/MEMORY.md` lists
+what is released and what stays.
+`0` disables the sweep, and the daemon checks every ten seconds, so
 the release lands up to one tick after the threshold passes.
 
 Tools outside the core set (memory, irc) stay in the tree but off.

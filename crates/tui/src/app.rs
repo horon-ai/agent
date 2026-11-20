@@ -7,6 +7,7 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
+use std::time::Instant;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
@@ -21,6 +22,7 @@ use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
+use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::CacheMiss;
 use crate::transcript::Decision;
@@ -275,6 +277,9 @@ pub struct App {
     pub bindings: Bindings,
     /// The slash command popup: the commands the draft offers, and its row.
     pub slash: crate::help::SlashPopup,
+    /// The local draft suggestion: a ghost suffix offered from drafts already
+    /// in memory, shown only for the exact text it was computed from.
+    pub(crate) suggestions: Suggestions,
     /// The slash commands in force, re-read when a command directory changes.
     pub commands: Registry,
     /// The skills the harness reported for the session in force.
@@ -347,6 +352,7 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
@@ -407,6 +413,7 @@ impl App {
             symbols: Symbols::default(),
             bindings: Bindings::default(),
             slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
@@ -843,6 +850,84 @@ impl App {
         self.slash.sync(&self.commands, &text);
     }
 
+    /// Bring the local draft suggestion in line with the draft and the setting.
+    ///
+    /// A changed draft starts a new generation and asks the local provider
+    /// again; an unchanged one keeps the answer it has, so a dismiss or an
+    /// accepted line stays put until the next edit. The provider reads only the
+    /// drafts this editor already holds, and the answer is dropped unless it
+    /// names the generation and the exact text it was asked about.
+    pub fn sync_suggestions(&mut self) {
+        if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
+            self.suggestions.withdraw();
+            return;
+        }
+        let fingerprint = self.input.fingerprint();
+        if self.suggestions.is_synced(fingerprint) {
+            return;
+        }
+        // The cap is checked before the text is built, so a huge draft costs a
+        // length read rather than a copy.
+        if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
+            self.suggestions.skip(fingerprint);
+            return;
+        }
+        let text = self.input.text();
+        let App {
+            history, suggestions, ..
+        } = self;
+        let Some(request) = suggestions.begin(fingerprint, &text) else {
+            return;
+        };
+        let started = Instant::now();
+        let suffix = crate::suggestions::local_suffix(&text, history.drafts());
+        let elapsed = started.elapsed();
+        if let Some(suffix) = suffix {
+            suggestions.finish(&request, &suffix, elapsed);
+        }
+    }
+
+    /// The ghost suffix the editor draws after the caret, when one applies.
+    ///
+    /// The suffix belongs to the exact draft it completes, so it is looked up
+    /// against the text on screen rather than trusted from the last answer.
+    pub fn suggestion_text(&self) -> Option<String> {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
+            return None;
+        }
+        if !self.suggestions.pending() || !self.input.is_at_end() {
+            return None;
+        }
+        let text = self.input.text();
+        self.suggestions.visible(&text).map(str::to_string)
+    }
+
+    /// Accept the suggestion for the draft on screen.
+    ///
+    /// This is the only place the suffix reaches the input: until here the
+    /// draft is exactly what the user typed, and nothing is sent or queued.
+    fn accept_suggestion(&mut self) -> bool {
+        if !self.input.is_at_end() {
+            return false;
+        }
+        let text = self.input.text();
+        let Some(full) = self.suggestions.accept(&text) else {
+            return false;
+        };
+        self.history.reset();
+        self.input.set_text(&full);
+        true
+    }
+
+    /// Whether a suggestion for the draft on screen can take the next key.
+    fn suggestion_available(&self) -> bool {
+        if !self.suggestions.pending() || !self.input.is_at_end() {
+            return false;
+        }
+        let text = self.input.text();
+        self.suggestions.visible(&text).is_some()
+    }
+
     /// Fill the draft from the command the popup has selected.
     ///
     /// The whole line is the command, so nothing of the old prefix survives to
@@ -900,289 +985,5 @@ fn optional_count(value: &Option<u64>) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn app() -> App {
-        let (_sender, receiver) = mpsc::channel();
-        App::new("socket · session".to_string(), receiver)
-    }
-
-    #[test]
-    fn status_line_shows_model_and_state() {
-        let mut app = app();
-        app.apply_event(&ApiEvent::ModelInfo {
-            session_id: "s1".into(),
-            provider: Some("anthropic".into()),
-            model: Some("claude-sonnet-4".into()),
-            reasoning_effort: None,
-            auth_method: None,
-        });
-        assert_eq!(
-            app.status_line(),
-            "socket · session · claude-sonnet-4 · anthropic · idle".to_string()
-        );
-        app.pending_turn = true;
-        assert!(app.status_line().ends_with("running"));
-    }
-
-    #[test]
-    fn approval_resolves_only_for_its_own_request() {
-        let mut app = app();
-        app.apply_event(&ApiEvent::ApprovalPending {
-            session_id: "s1".into(),
-            request_id: "r1".into(),
-            action: "bash".into(),
-            expires_at: None,
-        });
-        app.apply_event(&ApiEvent::ApprovalResolved {
-            session_id: "s1".into(),
-            request_id: "other".into(),
-            approved: true,
-            via: "file".into(),
-            resolved_by: "tool".into(),
-        });
-        assert!(app.prompt.is_some(), "an unrelated resolution closed the prompt");
-        app.apply_event(&ApiEvent::ApprovalResolved {
-            session_id: "s1".into(),
-            request_id: "r1".into(),
-            approved: false,
-            via: "inline".into(),
-            resolved_by: "tool".into(),
-        });
-        assert!(app.prompt.is_none());
-    }
-
-    #[test]
-    fn turn_stopped_clears_the_pending_flag() {
-        let mut app = app();
-        app.pending_turn = true;
-        app.apply_event(&ApiEvent::TurnStopped {
-            session_id: "s1".into(),
-            reason: horon_agent_sdk::api::TurnStopReason::Failure,
-            message: "provider failed".into(),
-            provider_stop_reason: None,
-        });
-        assert!(!app.pending_turn);
-        assert!(
-            app.transcript
-                .items()
-                .iter()
-                .any(|item| item == &crate::transcript::Item::Warning("provider failed".to_string()))
-        );
-    }
-
-    /// The settings a global `tui.toml` holding `text` resolves to.
-    fn settings_with(text: &str) -> crate::settings::Settings {
-        let dir = tempfile::tempdir().expect("temporary directory");
-        let global = dir.path().join("tui.toml");
-        std::fs::write(&global, text).expect("write the fixture settings file");
-        let sources = crate::settings::Sources {
-            global,
-            project: None,
-            configs: Vec::new(),
-        };
-        let mut warnings = Vec::new();
-        let mut layers = crate::settings::layers::LayerSet::new(&sources);
-        layers.refresh(&mut warnings);
-        let (settings, resolve_warnings) = layers.resolve(|_: &str| None);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert!(resolve_warnings.is_empty(), "{resolve_warnings:?}");
-        settings
-    }
-
-    fn turn_usage_on(app: &mut App) {
-        app.refresh_settings(&settings_with("[transcript]\nturn_usage = true\n"));
-    }
-
-    fn report_usage(app: &mut App, input: u64, output: u64) {
-        app.apply_event(&ApiEvent::TokenUsage {
-            session_id: "s1".into(),
-            input,
-            output,
-            cache_read_input: None,
-            cache_creation_input: None,
-        });
-    }
-
-    fn end_turn(app: &mut App) {
-        app.apply_event(&ApiEvent::TurnDone {
-            session_id: "s1".into(),
-            pending_soft_interrupts: None,
-        });
-    }
-
-    /// The footers in the transcript, oldest first.
-    fn footers(app: &App) -> Vec<crate::transcript::TurnMetrics> {
-        app.transcript
-            .items()
-            .iter()
-            .filter_map(|item| match item {
-                crate::transcript::Item::TurnUsage(metrics) => Some(*metrics),
-                _ => None,
-            })
-            .collect()
-    }
-
-    /// The text one drawn row carries.
-    fn line_text(line: &ratatui::text::Line<'static>) -> String {
-        line.spans.iter().map(|span| span.content.as_ref()).collect()
-    }
-
-    /// The rows the pane draws for the footer at `index`.
-    fn footer_text(app: &App, index: usize) -> String {
-        let look = crate::item_lines::Look::new(app, 80);
-        let item = app
-            .transcript
-            .items()
-            .iter()
-            .filter(|item| matches!(item, crate::transcript::Item::TurnUsage(_)))
-            .nth(index)
-            .expect("the turn footer is in the transcript");
-        let rows = crate::item_lines::lines(item, &look, None);
-        rows.iter()
-            .map(|row| line_text(row.line()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    #[test]
-    fn completed_turns_draw_their_own_time_and_usage_once_enabled() {
-        let mut app = app();
-        turn_usage_on(&mut app);
-        for (index, (input, output)) in [(100, 10), (200, 20)].into_iter().enumerate() {
-            app.transcript.begin_turn();
-            app.apply_event(&ApiEvent::TextDelta {
-                session_id: "s1".into(),
-                text: format!("answer {index}"),
-                message_id: Some(format!("m{index}")),
-            });
-            report_usage(&mut app, input, output);
-            end_turn(&mut app);
-        }
-
-        let shape: Vec<&str> = app
-            .transcript
-            .items()
-            .iter()
-            .map(|item| match item {
-                crate::transcript::Item::Assistant(_) => "answer",
-                crate::transcript::Item::TurnUsage(_) => "footer",
-                _ => "other",
-            })
-            .collect();
-        assert_eq!(shape, ["answer", "footer", "answer", "footer"]);
-        let footers = footers(&app);
-        assert_eq!(footers.len(), 2, "each turn draws its own footer");
-        assert_eq!(footers[0].tokens, Some((100, 10)));
-        assert_eq!(footers[1].tokens, Some((200, 20)));
-        assert!(
-            footers.iter().all(|footer| footer.elapsed_ms < 60_000),
-            "a test turn does not run for a minute"
-        );
-        assert_eq!(
-            footer_text(&app, 0),
-            format!("{} · ↑100 ↓10", short_time(footers[0].elapsed_ms))
-        );
-        assert_eq!(
-            footer_text(&app, 1),
-            format!("{} · ↑200 ↓20", short_time(footers[1].elapsed_ms))
-        );
-    }
-
-    /// The seconds form `format_elapsed` uses below one minute.
-    fn short_time(millis: u64) -> String {
-        format!("{:.1}s", millis as f64 / 1000.0)
-    }
-
-    #[test]
-    fn turn_usage_is_off_until_the_setting_enables_it() {
-        let mut app = app();
-        app.refresh_settings(&crate::settings::Settings::defaults());
-        app.transcript.begin_turn();
-        report_usage(&mut app, 100, 10);
-        end_turn(&mut app);
-
-        assert!(footers(&app).is_empty(), "the footer is off by default");
-    }
-
-    #[test]
-    fn a_turn_without_reported_usage_draws_only_its_time() {
-        let mut app = app();
-        turn_usage_on(&mut app);
-        app.transcript.begin_turn();
-        end_turn(&mut app);
-
-        let footers = footers(&app);
-        assert_eq!(footers.len(), 1);
-        assert_eq!(footers[0].tokens, None, "no call reported usage");
-        let text = footer_text(&app, 0);
-        assert!(!text.contains('↑') && !text.contains('↓'), "{text}");
-        assert!(
-            !text.contains("·"),
-            "a missing count leaves no separator behind: {text}"
-        );
-    }
-
-    #[test]
-    fn usage_that_moves_backwards_never_subtracts() {
-        let mut app = app();
-        turn_usage_on(&mut app);
-        app.transcript.begin_turn();
-        report_usage(&mut app, 500, 100);
-        report_usage(&mut app, 200, 50);
-        end_turn(&mut app);
-        assert_eq!(
-            footers(&app)[0].tokens,
-            Some((700, 150)),
-            "a smaller second call is added, never subtracted"
-        );
-
-        // A provider that reports the largest possible count twice saturates
-        // rather than wrapping to a smaller number.
-        app.transcript.begin_turn();
-        report_usage(&mut app, u64::MAX, u64::MAX);
-        report_usage(&mut app, 1, 1);
-        end_turn(&mut app);
-        assert_eq!(footers(&app)[1].tokens, Some((u64::MAX, u64::MAX)));
-    }
-
-    #[test]
-    fn a_turn_the_client_did_not_start_draws_no_footer() {
-        let mut app = app();
-        turn_usage_on(&mut app);
-        end_turn(&mut app);
-
-        assert!(
-            footers(&app).is_empty(),
-            "a turn another client ran has no start this client measured"
-        );
-    }
-
-    #[test]
-    fn clearing_the_conversation_drops_the_turn_in_progress() {
-        let mut app = app();
-        turn_usage_on(&mut app);
-        app.transcript.begin_turn();
-        app.transcript.clear();
-        end_turn(&mut app);
-
-        assert!(
-            footers(&app).is_empty(),
-            "the turn's footer would sit under a conversation that is gone"
-        );
-    }
-
-    #[test]
-    fn a_long_turn_draws_minutes_and_short_counts() {
-        let app = app();
-        let item = crate::transcript::Item::TurnUsage(crate::transcript::TurnMetrics {
-            elapsed_ms: 65_500,
-            tokens: Some((1_234, 56)),
-        });
-        let look = crate::item_lines::Look::new(&app, 80);
-        let rows = crate::item_lines::lines(&item, &look, None);
-        let text = rows.iter().map(|row| line_text(row.line())).collect::<String>();
-        assert_eq!(text, "1m 05s · ↑1.2k ↓56");
-    }
-}
+#[path = "app/app_tests.rs"]
+mod tests;
