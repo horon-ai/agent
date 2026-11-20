@@ -52,6 +52,9 @@ pub enum ApiRequest {
         /// and answer them with `ask_response`.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         supports_ask_requests: bool,
+        /// Optional event capabilities this client handles.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        event_capabilities: Vec<String>,
     },
 
     /// List sessions visible to this client.

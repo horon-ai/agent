@@ -88,6 +88,27 @@ fn streamed_text_keeps_its_place_as_the_newest_entry() {
 }
 
 #[test]
+fn background_output_is_visible_without_splitting_an_open_answer() {
+    let mut app = app();
+    app.session_id = Some("s1".into());
+    app.apply_event(&delta("Partial"));
+    for (session, text) in [("s1", "LIVE-OUTPUT"), ("s2", "OTHER-OUTPUT")] {
+        app.apply_event(&ApiEvent::BackgroundOutput {
+            session_id: session.into(),
+            text: text.into(),
+        });
+    }
+    let live = draw_screen(&mut app);
+    assert!(live.contains("LIVE-OUTPUT"), "{live}");
+    assert!(!live.contains("OTHER-OUTPUT"), "{live}");
+    app.apply_event(&delta(" answer"));
+    app.apply_event(&turn_done());
+    let completed = draw_screen(&mut app);
+    assert!(completed.contains("Partial answer"), "{completed}");
+    assert_eq!(completed.matches("LIVE-OUTPUT").count(), 1, "{completed}");
+}
+
+#[test]
 fn a_committed_message_is_drawn_exactly_once() {
     let mut app = app();
     app.apply_event(&delta("ONLYONCE"));

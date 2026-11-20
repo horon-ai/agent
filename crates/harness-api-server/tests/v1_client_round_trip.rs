@@ -129,6 +129,7 @@ async fn v1_client_negotiates_and_lists_a_session_recorded_by_v0_1_x() {
                 client: "v1-round-trip-test".into(),
                 supports_user_response: false,
                 supports_ask_requests: false,
+                event_capabilities: Vec::new(),
             },
         ),
     )

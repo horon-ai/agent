@@ -36,6 +36,18 @@ impl BackgroundProgress {
     }
 }
 
+/// Translate live process output for the session still attached to this connection.
+pub(crate) fn output_notice(event: &serde_json::Value, attached: Option<&str>) -> Option<ApiEvent> {
+    let owner = event["from_session"].as_str()?;
+    if Some(owner) != attached || event["from_name"] != "bash" || event["notification_type"]["kind"] != "message" {
+        return None;
+    }
+    Some(ApiEvent::BackgroundOutput {
+        session_id: owner.to_owned(),
+        text: event["message"].as_str()?.to_owned(),
+    })
+}
+
 /// Read a background-task progress tick or completion out of a notification
 /// body, or `None` when the notification is about something else (a DM, a file
 /// conflict, shared context).

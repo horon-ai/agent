@@ -842,6 +842,10 @@ impl HoronAgentClient {
                 client: options.client_name.clone(),
                 supports_user_response: options.supports_user_response,
                 supports_ask_requests: options.supports_ask_requests,
+                // The reference client renders live background output as its
+                // own notice kind, so it opts in on every connection. A client
+                // without that branch simply omits the name and receives none.
+                event_capabilities: vec![horon_agent_harness_api::CAPABILITY_BACKGROUND_OUTPUT_V1.to_string()],
             },
             hello_timeout,
         )?;
@@ -2639,6 +2643,7 @@ fn event_session(event: &ApiEvent) -> Option<&str> {
         | SoftInterruptInjected { session_id, .. }
         | TurnStopped { session_id, .. }
         | BackgroundProgress { session_id, .. }
+        | BackgroundOutput { session_id, .. }
         | MessageAccepted { session_id, .. }
         | PermissionRequest { session_id, .. }
         | SessionStatus { session_id, .. }

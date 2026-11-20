@@ -26,6 +26,7 @@ from .framing import NdjsonDecoder, encode_frame
 from .launch import LaunchedInstance, LaunchOptions, launch_instance
 from .protocol import (
     API_VERSION_MAJOR,
+    EVENT_CAPABILITIES,
     MAX_REPLICATION_WIRE_BYTES,
     REPLICATION_PROTOCOL_VERSION,
     ApprovalAckReceipt,
@@ -1126,6 +1127,7 @@ class HoronAgentClient:
             "client": resolved.client_name,
             "supports_user_response": resolved.supports_user_response,
             "supports_ask_requests": resolved.supports_ask_requests,
+            "event_capabilities": EVENT_CAPABILITIES,
         }
         frame = await client.request(hello)
         if frame.get("ev") != "hello_ok":

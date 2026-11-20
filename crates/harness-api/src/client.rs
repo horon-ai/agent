@@ -120,6 +120,7 @@ impl<R: BufRead, W: Write> HarnessClient<R, W> {
             client: client_name.to_string(),
             supports_user_response: false,
             supports_ask_requests: false,
+            event_capabilities: Vec::new(),
         })?;
         self.recv()
     }

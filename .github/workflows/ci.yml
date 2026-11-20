@@ -1054,6 +1054,22 @@ jobs:
             --timeout 600 \
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
+      - name: Run background output notice cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 7 \
+            -- tool::bash::notify_tests:: --test-threads=1
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- stdio_tests::background_output_requires_opt_in_on_the_attached_session
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::background_tasks::tests::live_output_reaches_only_the_owning_session
+
       - name: Run skill_manage cohort
         shell: bash
         # The `horon-agent-app-core` lib suite only ever runs through filtered
