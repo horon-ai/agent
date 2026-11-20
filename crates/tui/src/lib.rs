@@ -341,9 +341,25 @@ fn show_failure(message: &str) {
 ///
 /// The session's own title wins and the working directory names a session the
 /// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is.
-fn window_label(app: &App) -> String {
-    title::label(app.session_title.as_deref(), app.cwd.as_deref())
+/// session and a fresh window still says where it is. With `title.state` on,
+/// the turn state follows the name as a fixed word, so a window seen from
+/// another one says whether its session is busy without being switched to.
+fn window_label(app: &App, state_supported: bool) -> String {
+    let label = title::label(app.session_title.as_deref(), app.cwd.as_deref());
+    title::with_state(label, window_state(app, state_supported))
+}
+
+/// The state the title names, or none when the setting is off or the terminal
+/// keeps no title worth adding to.
+fn window_state(app: &App, state_supported: bool) -> Option<title::RunState> {
+    if !state_supported || !app.title_state {
+        return None;
+    }
+    Some(title::RunState::of(
+        app.prompt.is_some(),
+        app.pending_turn,
+        app.session_status.as_deref(),
+    ))
 }
 
 /// Drive the real terminal until the user leaves.
@@ -408,7 +424,11 @@ fn run_interactive(
         app.warn(format!("paste: {error}"));
     }
     let mut title = title::WindowTitle::stdout();
-    if let Err(error) = title.start(&window_label(&app)) {
+    // Decided once: the terminal's answer about its own title handling does not
+    // change while the client runs, and a terminal that has none is left as it
+    // was before `title.state` existed.
+    let state_supported = title.state_supported();
+    if let Err(error) = title.start(&window_label(&app, state_supported)) {
         app.warn(format!("title: {error}"));
     }
     // Installed once the modes it restores are on: a signal before this point
@@ -514,6 +534,12 @@ where
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
     let mut clock = statusline::local_minute();
+    // Whether the terminal keeps a title worth adding the state to; asked once,
+    // because the answer is the terminal's and does not change while it runs.
+    let state_supported = title.state_supported();
+    // The state the window title already carries: `title.start` wrote it, and
+    // the first frame must not write it again.
+    let mut shown_state = window_state(app, state_supported);
     loop {
         let mut changed = loop_io::drain_events(app);
         if !app.running {
@@ -526,10 +552,15 @@ where
             changed = true;
         }
         // The session and the working directory can change while the client
-        // runs; the window is renamed only when the label on it is not the one
-        // the app now names.
-        if changed {
-            let label = window_label(app);
+        // runs, and a key can start a turn, answer a prompt or leave one
+        // without any event arriving; the window is renamed only when the name
+        // it would carry is not the one on it. The state is one fixed word, so
+        // comparing it every frame costs nothing and a repeated state writes
+        // nothing.
+        let state = window_state(app, state_supported);
+        if changed || state != shown_state {
+            shown_state = state;
+            let label = window_label(app, state_supported);
             if let Err(error) = title.show(&label) {
                 app.warn(format!("title: {error}"));
                 changed = true;
