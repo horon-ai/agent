@@ -105,6 +105,10 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
                 "type": "boolean",
                 "description": "Notify on completion."
             },
+            "notify_pattern": {
+                "type": "string",
+                "description": "Regex; each matching output line arrives live while a finite run_in_background job runs (not with `name`)."
+            },
             "wake": {
                 "type": "boolean",
                 "description": "Wake on completion."

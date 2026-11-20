@@ -2371,6 +2371,12 @@ impl BridgeState {
             // that matter (a progress tick and a task finishing) are parsed
             // into one typed event and everything else is dropped.
             "notification" => {
+                if event["notification_type"]["scope"] == "background_output" {
+                    return crate::background_progress::output_notice(event, self.session_id.as_deref())
+                        .map(ServerFrame::event)
+                        .into_iter()
+                        .collect();
+                }
                 let message = event["message"].as_str().unwrap_or("");
                 match parse_background_notification(message) {
                     Some(mut progress) => {

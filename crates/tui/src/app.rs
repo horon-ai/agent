@@ -610,6 +610,18 @@ impl App {
                 }
             }
             ApiEvent::MessageAccepted { .. } => {}
+            ApiEvent::BackgroundOutput { session_id, text } => {
+                // Process output belongs to the session that ran the job. The
+                // SDK stream and this filter both check the session, because a
+                // frame already queued when the client reattached can still
+                // arrive: showing it would put one job's output under the
+                // conversation that replaced it.
+                if self.session_id.as_deref() == Some(session_id.as_str()) {
+                    // Keep process notices distinct from the answer and let
+                    // the current model message continue streaming below.
+                    self.transcript.push_live_notice(text.clone());
+                }
+            }
             ApiEvent::ApprovalPending { request_id, action, .. } => {
                 // The event names the tool only. The prompt pairs with a line
                 // when it is drawn, using the request id the refusal wrote into

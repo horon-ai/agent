@@ -52,6 +52,7 @@ pub(super) async fn connection_presence_pong(
             // capability only when this is present, because the work is done
             // here and not in the bridge.
             "cancellable_work_api".into(),
+            "background_output_v1".into(),
             "live_todo_v1".into(),
         ],
         user_connected_session_ids: Some(user_connected_session_ids),

@@ -185,6 +185,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | SoftInterruptInjected { session_id, .. }
         | WakeRequested { session_id, .. }
         | BackgroundProgress { session_id, .. }
+        | BackgroundOutput { session_id, .. }
         | MessageAccepted { session_id }
         | PermissionRequest { session_id, .. }
         | ApprovalPending { session_id, .. }

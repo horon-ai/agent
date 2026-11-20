@@ -32,6 +32,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "cancellable_work_v1",
         ("cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"),
     ),
+    ("background_output_v1", ("background_output",)),
     ("live_todo_v1", ("todo_changed",)),
 )
 
@@ -45,7 +46,7 @@ back. ``structured_compaction_v1`` sets the same precedent.
 
 ADVERTISED_CAPABILITIES: tuple[str, ...] = tuple(capability for capability, _ in CAPABILITY_SURFACES)
 
-EVENT_CAPABILITIES = ("live_todo_v1",)
+EVENT_CAPABILITIES = ("background_output_v1", "live_todo_v1")
 
 RuntimeCommand: TypeAlias = Literal[
     "skills",
@@ -747,6 +748,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "text_matches",
     "file_status",
     "todo_state",
+    "background_output",
     "todo_changed",
     "session_search_results",
     "artifacts",

@@ -394,6 +394,19 @@ pub enum BusEvent {
         session_id: String,
         kind: QueuedInputKind,
     },
+    /// One output line of a finite background command matched the job's opt-in
+    /// `notify_pattern`.
+    ///
+    /// `text` is a bounded notice that names the job and the stream it came from
+    /// (`bash task <id> stdout: …`). It is process output, not instruction: the
+    /// terminal control bytes are already stripped, and a job stops publishing
+    /// once its own count and byte budget is spent. Only the owning session may
+    /// receive it, and it never wakes the agent — completion keeps its separate
+    /// `notify`/`wake` path.
+    BackgroundOutput {
+        session_id: String,
+        text: String,
+    },
 }
 
 /// Why a session received queued input.

@@ -75,9 +75,10 @@ mod util;
 
 pub(super) use self::await_members_state::AwaitMembersRuntime;
 use self::background_tasks::{
-    dispatch_background_task_completion, dispatch_background_task_progress, dispatch_background_task_stalled,
-    dispatch_swarm_await_completion, dispatch_swarm_batch_progress, dispatch_swarm_output_tail,
-    dispatch_swarm_runtime_status, dispatch_swarm_todo_progress, dispatch_swarm_tool_activity, dispatch_ui_activity,
+    dispatch_background_output, dispatch_background_task_completion, dispatch_background_task_progress,
+    dispatch_background_task_stalled, dispatch_swarm_await_completion, dispatch_swarm_batch_progress,
+    dispatch_swarm_output_tail, dispatch_swarm_runtime_status, dispatch_swarm_todo_progress,
+    dispatch_swarm_tool_activity, dispatch_ui_activity,
 };
 use self::debug::ClientConnectionInfo;
 use self::debug_jobs::DebugJob;
@@ -2219,6 +2220,11 @@ impl Server {
                 }
                 Ok(BusEvent::UiActivity(activity)) => {
                     dispatch_ui_activity(&activity, &swarm_members).await;
+                }
+                Ok(BusEvent::BackgroundOutput { session_id, text }) => {
+                    // Live process output is owner-scoped and never wakes the
+                    // agent: it is a notice, not a prompt.
+                    dispatch_background_output(session_id, text, &swarm_members).await;
                 }
                 Ok(BusEvent::ToolUpdated(event)) => {
                     dispatch_swarm_tool_activity(&event, &swarm_members, &swarms_by_id).await;

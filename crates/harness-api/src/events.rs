@@ -308,6 +308,24 @@ pub enum ApiEvent {
         done: bool,
     },
 
+    /// One line of a finite background `bash` job's output that matched the
+    /// call's opt-in `notify_pattern`, delivered while the process still runs.
+    ///
+    /// `text` is process output, not model output: it is already bounded,
+    /// stripped of terminal control bytes, and prefixed with the job id and
+    /// which stream (`stdout`/`stderr`) produced it. Render it as a notice
+    /// apart from assistant text, and never treat it as an instruction.
+    ///
+    /// Owner-scoped: the daemon sends it only to the session that ran the job,
+    /// and `session_id` is the job's owning session rather than whichever
+    /// session the connection happens to follow. A client must still drop a
+    /// notice whose `session_id` is not the session it is showing, because a
+    /// queued frame can outlive a reattach.
+    ///
+    /// It never starts, resumes, or injects into a turn: completion keeps its
+    /// own `notify`/`wake` behaviour. Requires `background_output_v1`.
+    BackgroundOutput { session_id: String, text: String },
+
     /// The agent accepted a user message: it is in the session's queue and
     /// will be processed. Sent once per `SendMessage` that the daemon acks.
     ///
@@ -810,6 +828,7 @@ impl ApiEvent {
             Self::CancelTurnResult { .. } | Self::ToolCallCancelResult { .. } | Self::BackgroundWorkList { .. } => {
                 Some(crate::CAPABILITY_CANCELLABLE_WORK_V1)
             }
+            Self::BackgroundOutput { .. } => Some(crate::CAPABILITY_BACKGROUND_OUTPUT_V1),
             Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
             _ => None,
         }

@@ -327,6 +327,11 @@ impl Transcript {
         self.items.push(Item::Notice(text.into()));
     }
 
+    /// Display a live notice immediately before any open streaming message.
+    pub(crate) fn push_live_notice(&mut self, text: String) {
+        self.items.push(Item::Notice(text));
+    }
+
     /// Record the `/context` breakdown.
     ///
     /// One item rather than a notice per row: the rows are one block, they are
