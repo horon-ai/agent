@@ -65,39 +65,39 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
             },
             "cwd": {
                 "type": "string",
-                "description": "Directory for this call only; default: where the last call ended."
+                "description": "Call directory; defaults to the previous call's directory."
             },
             "timeout": {
                 "type": "integer",
-                "description": "MILLISECONDS, not seconds; default 120000, 0 disables, max 600000."
+                "description": "Timeout in ms (default 120000, max 600000, 0 disables)."
             },
             "run_in_background": {
                 "type": "boolean",
-                "description": "Run in background; `HORON_AGENT_PROGRESS {json}` lines report progress."
+                "description": "Run asynchronously; `HORON_AGENT_PROGRESS {json}` reports progress."
             },
             "name": {
                 "type": "string",
-                "description": "Background service name (1-48 chars: letters, digits, ._-); also its `bg` task_id."
+                "description": "Service and bg task ID (1-48 chars: letters, digits, ._-)."
             },
             "ready": {
                 "type": "object",
-                "description": "With `name`: wait for `log` and/or `port`.",
+                "description": "Named service readiness (log and/or port).",
                 "properties": {
                     "log": {
                         "type": "string",
-                        "description": "Regex over the last 64 KiB of output."
+                        "description": "Regex over the last 64 KiB."
                     },
                     "port": {
                         "type": "integer",
-                        "description": "TCP port that must accept connections."
+                        "description": "TCP port to probe."
                     },
                     "host": {
                         "type": "string",
-                        "description": "Port check host (default 127.0.0.1)."
+                        "description": "Probe host (default 127.0.0.1)."
                     },
                     "timeout_secs": {
                         "type": "number",
-                        "description": "Seconds to wait (default 30, max 3600)."
+                        "description": "Wait seconds (default 30, max 3600)."
                     }
                 }
             },
@@ -107,7 +107,7 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
             },
             "notify_pattern": {
                 "type": "string",
-                "description": "Regex; each matching output line arrives live while a finite run_in_background job runs (not with `name`)."
+                "description": "Live line regex for unnamed background jobs."
             },
             "wake": {
                 "type": "boolean",
@@ -115,16 +115,16 @@ pub(super) fn bash_parameters_schema() -> serde_json::Value {
             },
             "stall_wake_seconds": {
                 "type": "integer",
-                "description": "With run_in_background: wake after N seconds (min 30) with no output or progress."
+                "description": "Wake a background job after N idle seconds (min 30)."
             },
             "justification": {
                 "type": "string",
-                "description": "Only to re-run a command the destructive gate refused: the user request it serves."
+                "description": "After a destructive refusal, state the user request served by this command."
             },
             "pty": {
                 "type": "string",
                 "enum": ["off", "auto", "always"],
-                "description": "`auto`: terminal if interactive; `always`: terminal; `off`: pipes."
+                "description": "Terminal: auto if interactive, always, or off (pipes)."
             }
         }
     })
