@@ -483,5 +483,163 @@ class Charts(unittest.TestCase):
 
 
 
+def summary_result(name: str, version: str, oneshot: float, rss: float, skill: float, mcp: float,
+                   per_session: float, install: float, body: int = 3699, tools: int = 2358) -> dict:
+    def stat(value: float) -> dict:
+        return {"median": value, "min": value - 1, "max": value + 1, "samples": 5}
+    return {
+        "name": name, "label": name, "version": version, "error": None,
+        "version_ms": {"summary": stat(3.3)},
+        "oneshot": {"ms": oneshot, "peak_rss_bytes": rss, "tool_roundtrip": True, "summary": stat(oneshot),
+                    "runs": [{"request_bytes": [{"body_bytes": body, "tools_bytes": tools, "tool_count": 1}]}]},
+        "skill": {"ms": skill, "summary": stat(skill)},
+        "mcp": {"ms": mcp, "summary": stat(mcp)},
+        "install_size_bytes": install,
+        "sessions_memory": {"points": [{"sessions": 1, "post_turn_rss_bytes": 40e6},
+                                       {"sessions": 10, "post_turn_rss_bytes": 45e6}],
+                            "each_additional_post_turn_rss_bytes": per_session},
+    }
+
+
+RELEASE = {
+    "tool": "jcode", "selection": "latest", "tag": "v1.0.1", "version": "1.0.1",
+    "commit": "10114429c", "asset": "jcode-linux-x86_64.tar.gz",
+    "sha256": "ab" * 32, "download_url": "https://github.com/1jehuang/jcode/releases/download/v1.0.1/jcode-linux-x86_64.tar.gz",
+    "served_url": "https://github.com/1jehuang/jcode/releases/download/v1.0.1/jcode-linux-x86_64.tar.gz",
+    "served_by": "release-download", "version_output": "jcode v1.0.1 (10114429c)",
+}
+
+
+def summary_results(results: Path, with_release: bool = True) -> None:
+    job_dir(results, "benchmark-linux-1", "linux", files={
+        "runner.txt": "ubuntu-24.04\n",
+        "compare.json": json.dumps({
+            "suite": "compare", "started_at": "2026-11-10T00:03:56Z",
+            "results": [
+                summary_result("jcode", "jcode v0.99.1 (7206efd0c)", 150.0, 38.6e6, 57.0, 179.0, 160.0e3, 163.4e6,
+                               body=3245, tools=1433),
+                summary_result("horon", "horon-agent v0.1.0-dev (50d24d7)", 60.0, 38.4e6, 36.0, 62.0, 80.0e3, 112.1e6),
+            ],
+            "skipped": [],
+        }),
+    })
+    if with_release:
+        (results / "benchmark-linux-1" / "jcode-release.json").write_text(json.dumps(RELEASE), encoding="utf-8")
+
+
+README_DOC = (
+    "# Numbers\n\nHand-written headline stays.\n\n"
+    "## Benchmarks\n\n<!-- bench-summary:start -->\n\nold summary\n\n<!-- bench-summary:end -->\n\n"
+    "Hand-written tail stays.\n"
+)
+
+
+class MeasuredSummary(unittest.TestCase):
+    """README and RESULTS blocks are generated from the run's own compare.json.
+
+    The contract is that no number is carried over from an earlier measurement:
+    the values in the table are the values in the artifact, the version label is
+    the binary that run installed, and a missing artifact produces a stated gap.
+    """
+
+    def test_summary_table_comes_from_compare_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            summary_results(results)
+            dirs = bench_docs.find_platform_dirs(results)
+            summary = bench_docs.summary_body(dirs, "abc1234")
+        self.assertIn("| Linux (`ubuntu-24.04`) | horon | jcode |", summary)
+        self.assertIn("| One-shot prompt time | 60.0 ms | 150.0 ms |", summary)
+        self.assertIn("| Skill invocation time | 36.0 ms | 57.0 ms |", summary)
+        self.assertIn("| Memory per additional session | 80.0 KB | 160.0 KB |", summary)
+        self.assertIn("| Install size | 112.1 MB | 163.4 MB |", summary)
+        self.assertIn("| First model request, body / tool catalog bytes | 3,699 / 2,358 | 3,245 / 1,433 |", summary)
+        # The release label is the installed binary and its recorded identity.
+        self.assertIn("jcode v1.0.1 (release `v1.0.1`, commit `10114429c`", summary)
+        # Only measured values appear: nothing is derived that the artifact does not hold.
+        self.assertNotIn("42.5", summary)
+        self.assertNotIn("138.0", summary)
+
+    def test_versions_table_records_the_measured_release_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            summary_results(results)
+            body = bench_docs.versions_body(bench_docs.find_platform_dirs(results), "abc1234")
+        self.assertIn("| jcode | `jcode v0.99.1 (7206efd0c)` |", body)
+        self.assertIn("| horon | `horon-agent v0.1.0-dev (50d24d7)` |", body)
+        self.assertIn(f"| Linux | `v1.0.1` | `{RELEASE['commit']}` | `jcode-linux-x86_64.tar.gz` |", body)
+        self.assertIn("`" + "ab" * 32 + "`", body)
+        self.assertIn("release-download", body)
+        self.assertRegex(body, r"\| macOS \| — \|")
+
+    def test_no_artifact_is_stated_not_invented(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            job_dir(results, "benchmark-linux-1", "linux")
+            dirs = bench_docs.find_platform_dirs(results)
+            self.assertIn("No competitor comparison artifact", bench_docs.summary_body(dirs, "abc1234"))
+            self.assertIn("No comparison artifact", bench_docs.versions_body(dirs, "abc1234"))
+
+    def test_readme_blocks_are_rewritten_and_the_tail_is_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "bench-results"
+            results.mkdir()
+            summary_results(results)
+            doc = root / "README.md"
+            doc.write_text(README_DOC, encoding="utf-8")
+            for _ in range(2):
+                code = bench_docs.main(["render", "--doc", str(doc), "--results", str(results),
+                                        "--commit", "abc1234"])
+                self.assertEqual(code, 0)
+            text = doc.read_text(encoding="utf-8")
+        self.assertNotIn("old summary", text)
+        self.assertIn("Hand-written headline stays.", text)
+        self.assertIn("Hand-written tail stays.", text)
+        self.assertIn("| One-shot prompt time | 60.0 ms | 150.0 ms |", text)
+        self.assertEqual(text.count("bench-summary:start"), 1)
+
+
+class PartialRuns(unittest.TestCase):
+    """A compare-only round must not overwrite the recorded full-run block."""
+
+    def all_fragments(self, directory: Path) -> None:
+        for name in ("compare.md", "startup.txt", "loading-cold.txt", "loading-warm.txt",
+                     "tools.md", "reload.md", "compile.md", "tui.md"):
+            (directory / name).write_text("# measured\n", encoding="utf-8")
+
+    def test_compare_only_refuses_to_replace_the_recorded_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "bench-results"
+            results.mkdir()
+            directory = job_dir(results, "benchmark-linux-1", "linux", files={"compare.md": "# c\n"})
+            (directory / "compare.json").write_text(compare_json(
+                compare_result("horon", "horon", 60.0, 37e6), compare_result("jcode", "jcode", 150.0, 38e6)),
+                encoding="utf-8")
+            doc = root / "RESULTS.md"
+            doc.write_text(DOC, encoding="utf-8")
+            code = bench_docs.main(["render", "--doc", str(doc), "--results", str(results),
+                                    "--commit", "abc1234", "--require-complete"])
+            self.assertEqual(code, 1)
+            self.assertEqual(doc.read_text(encoding="utf-8"), DOC)
+            self.assertEqual(bench_docs.missing_suite_groups(bench_docs.find_platform_dirs(results)),
+                             ["startup", "loading", "tools", "reload", "compile", "tui"])
+
+    def test_a_full_run_replaces_the_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = root / "bench-results"
+            results.mkdir()
+            directory = job_dir(results, "benchmark-linux-1", "linux")
+            self.all_fragments(directory)
+            doc = root / "RESULTS.md"
+            doc.write_text(DOC, encoding="utf-8")
+            code = bench_docs.main(["render", "--doc", str(doc), "--results", str(results),
+                                    "--commit", "abc1234", "--require-complete"])
+            self.assertEqual(code, 0)
+            self.assertEqual(bench_docs.last_commit(doc.read_text(encoding="utf-8")), "abc1234")
+
+
 if __name__ == "__main__":
     unittest.main()

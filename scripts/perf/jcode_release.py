@@ -157,7 +157,10 @@ def _api_headers() -> list[str]:
 
 
 def fetch_json(url: str) -> dict:
-    body = _curl([*_api_headers(), url], timeout=120)
+    try:
+        body = _curl([*_api_headers(), url], timeout=120)
+    except ReleaseError as exc:
+        raise ReleaseError(f"could not read GitHub release metadata at {url}: {exc}") from exc
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError as exc:

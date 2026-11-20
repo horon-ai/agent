@@ -232,7 +232,8 @@ def run_sample(tool, checkout, root, env, tag):
                 raise ValueError(f'first --version reports {text[:160]!r}, expected {expected}')
         if release:
             row['release'] = {key: release.get(key) for key in
-                              ('tag', 'version', 'commit', 'asset', 'sha256', 'download_url', 'source')}
+                              ('tag', 'version', 'commit', 'asset', 'sha256', 'download_url',
+                               'served_url', 'served_by', 'selection')}
     return row
 
 
