@@ -727,4 +727,101 @@ mod acp {
         );
         second.finish();
     }
+
+    fn run_text_tool_turn(provider: &lifecycle::ScriptedProvider, input: &str) -> String {
+        let root = tempfile::Builder::new()
+            .prefix("text-tool-")
+            .tempdir_in("/tmp")
+            .expect("fixture root");
+        let root = root.path();
+        for dir in ["home", "rt", "work"] {
+            std::fs::create_dir(root.join(dir)).expect("fixture directory");
+            set_mode(&root.join(dir), 0o700);
+        }
+        write_provider_config(&root.join("home"), provider.base_url(), "scripted-model");
+        std::fs::write(root.join("work/fixture.txt"), "text-tool-read-sentinel\n").expect("read fixture");
+        let mut command = Command::new(BINARY);
+        isolate(&mut command, root);
+        let output = command
+            .current_dir(root.join("work"))
+            .args([
+                "--no-update",
+                "run",
+                "--provider-profile",
+                "scripted",
+                "--tools",
+                "read",
+                input,
+            ])
+            .output()
+            .expect("run agent");
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8(output.stdout).expect("UTF-8 output")
+    }
+
+    #[test]
+    fn text_tool_examples_stay_in_the_answer() {
+        let provider = lifecycle::ScriptedProvider::start();
+        let example = concat!(
+            "Example: `to=functions.read {\"file_path\":\"fixture.txt\",\"intent\":\"Read example\"}`\n",
+            "<invoke name=\"read\"><parameter name=\"file_path\">fixture.txt</parameter></invoke>"
+        );
+        provider.script("show an example", lifecycle::Script::Text(example.into()));
+        let output = run_text_tool_turn(&provider, "show an example");
+        assert!(output.contains(example), "{output}");
+        assert!(!output.contains("[tool-call recovery]"), "{output}");
+        assert_eq!(provider.request_count(), 1);
+    }
+
+    #[test]
+    fn text_tool_attempt_waits_for_a_native_call() {
+        let provider = lifecycle::ScriptedProvider::start();
+        provider.script(
+            "read the test fixture",
+            lifecycle::Script::Text("<calls><parameter name=\"file_path\">fixture.txt</parameter></calls>".into()),
+        );
+        provider.script(
+            "using the native tool-calling interface",
+            lifecycle::Script::ToolCall {
+                name: "read".into(),
+                arguments_json: json!({"file_path":"fixture.txt", "intent":"Read fixture"}).to_string(),
+                follow_up: "The fixture was read.".into(),
+            },
+        );
+        let daemon = Daemon::with_provider(provider.base_url());
+        std::fs::write(daemon.root.join("work/fixture.txt"), "text-tool-read-sentinel\n").expect("read fixture");
+        let mut adapter = Adapter::spawn(&daemon);
+        let session_id = adapter.new_session(&daemon.work());
+        let (before, result) = adapter.call(
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "read the test fixture"}],
+            }),
+        );
+        assert!(result.is_ok(), "{result:?}\n{}", daemon.logs());
+        let notices = serde_json::to_string(&before).expect("ACP notifications");
+        assert!(
+            notices.contains("[tool-call recovery]") && notices.contains("The fixture was read."),
+            "{notices}"
+        );
+        adapter.finish();
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert!(!requests[1].contains("\"role\":\"tool\""));
+        assert!(requests[2].contains("text-tool-read-sentinel"));
+    }
+
+    #[test]
+    fn text_tool_attempt_stops_after_two_retries() {
+        let provider = lifecycle::ScriptedProvider::start();
+        let attempt = lifecycle::Script::Text("to=functions.read {\"file_path\":".into());
+        provider.script("repeat the attempt", attempt.clone());
+        provider.script("using the native tool-calling interface", attempt);
+        let output = run_text_tool_turn(&provider, "repeat the attempt");
+        assert_eq!(output.matches("[tool-call recovery]").count(), 2, "{output}");
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 3);
+        assert!(requests.iter().all(|request| !request.contains("\"role\":\"tool\"")));
+    }
 }
