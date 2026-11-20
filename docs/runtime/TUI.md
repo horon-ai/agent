@@ -68,6 +68,7 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | array of segment names | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
@@ -91,6 +92,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`appearance.changes = "accessible"` gives additions and deletions distinct colours in tool diffs and preserves their `+` and `-` marks. It also adjusts positive and negative status colours. Select `theme` to restore the theme's own colours.
 
 `transcript.show_reasoning` is the thinking-block control, labelled `Show thinking` in the settings screen: `true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being stored, so turning it off hides the thinking blocks of every later turn.
 
