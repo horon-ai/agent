@@ -75,8 +75,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.turn_usage` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열두 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
@@ -242,6 +243,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
 
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시합니다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시됩니다.
+
+`transcript.turn_usage = true`로 설정하면 이 클라이언트에서 시작한 턴이 끝날 때 소요 시간을 표시합니다. 프로바이더가 사용량을 보고하면 입력과 출력 토큰의 합계도 표시합니다.
 
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
 

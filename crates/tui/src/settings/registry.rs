@@ -259,6 +259,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             description: "Render the model's Markdown; off draws its text with the markers as typed.",
         },
     },
+    SettingSpec {
+        id: "transcript.turn_usage",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_TURN_USAGE",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Turn usage",
+            description: "Show each completed turn's elapsed time and token usage under it; off hides the footer.",
+        },
+    },
 ];
 
 /// The spec for `id`, or `None` when the key is not declared.
