@@ -110,6 +110,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::progress::Channels;
 use crate::sdk_bridge::{Command, Runtime};
 use crate::terminal::{show_failure, window_label, window_state};
 use crate::theme::{Theme, ThemeLoader};
@@ -153,6 +154,7 @@ Keys:
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
@@ -483,16 +485,6 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
     }
 }
 
-/// The channels the loop keeps in step with the app state.
-///
-/// Both are escape sequences out to the terminal — the window title and the
-/// progress and status signals — and both deduplicate against what they last
-/// sent, so the loop can call them every frame.
-struct Channels<'a> {
-    title: &'a mut title::WindowTitle,
-    signals: &'a mut progress::Signals<std::io::Stdout>,
-}
-
 /// The main loop: drain SDK events, redraw, then read at most one keystroke.
 ///
 /// A failure that ends the loop is returned instead of printed: the alternate
@@ -654,11 +646,19 @@ where
 }
 
 /// Render one frame.
+///
+/// A pending repaint request is answered first: `clear` erases the screen and
+/// resets the frame Ratatui keeps, so the draw below writes every cell instead
+/// of only the rows that differ. That is what recovers a screen something else
+/// has overwritten, and it is the whole of what the repaint key does.
 pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    if app.take_repaint_request() {
+        terminal.clear().map_err(|error| error.to_string())?;
+    }
     terminal
         .draw(|frame| render(frame, app))
         .map(|_| ())

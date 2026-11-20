@@ -550,6 +550,16 @@ fn write_clear<W: Write>(output: &mut W, sequence: &str) -> bool {
     output.write_all(sequence.as_bytes()).is_ok()
 }
 
+/// The channels the loop keeps in step with the app state.
+///
+/// Both are escape sequences out to the terminal — the window title and the
+/// progress and status signals — and both deduplicate against what they last
+/// sent, so the loop can call them every frame.
+pub(crate) struct Channels<'a> {
+    pub(crate) title: &'a mut crate::title::WindowTitle,
+    pub(crate) signals: &'a mut Signals<std::io::Stdout>,
+}
+
 /// Clear the signals before a panic unwinds, then let the installed hook run.
 ///
 /// Installed after `try_init`, so the hook it chains is the one that restores
