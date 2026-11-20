@@ -4,10 +4,13 @@
 //! deadline, so a stalled stream fails the test instead of hanging the suite.
 
 use super::*;
-use crate::chat::request::{build_chat_completions_request, responses_input_to_chat_messages};
+use crate::chat::request::{
+    build_chat_completions_request, build_chat_completions_request_reporting, responses_input_to_chat_messages,
+};
 use crate::chat::stream::{ChatStreamState, parse_chat_chunk};
 use crate::chat::transport::{HttpErrorKind, classify_http_status, http_response_error};
 use crate::test_support::{DEADLINE, MockServer, Reply, TEST_KEY, collect, sse_frame};
+use horon_agent_message_types::degradation::{DegradationKind, DegradationReceipt};
 use horon_agent_message_types::{ContentBlock, Message, Role, StreamEvent, ToolDefinition};
 use horon_agent_provider_core::Provider;
 use serde_json::{Value, json};
@@ -196,6 +199,169 @@ fn deferred_tool_definitions_are_not_sent_to_a_chat_endpoint() {
         .map(|tool| tool["function"]["name"].as_str().expect("name"))
         .collect();
     assert_eq!(names, vec!["read"]);
+}
+
+// ---------------------------------------------------------------------------
+// (b') one function-parameters root for a multi-action tool (#596)
+
+/// The schema shape a multi-action tool such as `swarm` declares: a root object
+/// whose per-action requirement ("`label` only for `spawn`") lives in a root
+/// `anyOf`, because the root `required` array applies to every action.
+///
+/// It is otherwise strict-eligible — closed object, every property typed,
+/// `additionalProperties: false` — so a `strict: false` below can only come from
+/// collapsing the alternatives.
+fn multi_action_tool() -> ToolDefinition {
+    ToolDefinition::new(
+        "swarm",
+        "Run one swarm action",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["spawn", "list", "message"],
+                    "description": "what to do"
+                },
+                "to_session": { "type": "string", "description": "who to address" },
+                "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Required for spawn"
+                },
+                "filter": { "anyOf": [{ "type": "string" }, { "type": "integer" }] }
+            },
+            "required": ["action"],
+            "anyOf": [
+                {
+                    "type": "object",
+                    "required": ["action", "label"],
+                    "properties": {
+                        "action": { "type": "string", "enum": ["spawn"] },
+                        "label": { "type": "string", "minLength": 1 },
+                        "mode": { "type": "string", "enum": ["fast"] }
+                    }
+                },
+                {
+                    "type": "object",
+                    "required": ["action"],
+                    "properties": {
+                        "action": { "type": "string", "enum": ["list", "message"] },
+                        "mode": { "type": "string", "enum": ["safe"] }
+                    }
+                }
+            ]
+        }),
+    )
+}
+
+#[test]
+fn a_root_alternative_becomes_one_object_schema_for_chat_tools() {
+    let tools = [multi_action_tool()];
+
+    let body = build_chat_completions_request("m", &[], &tools, "", None);
+    let function = &body["tools"][0]["function"];
+    let parameters = &function["parameters"];
+
+    // A root combiner is not part of the function-parameters contract.
+    assert!(parameters.get("anyOf").is_none(), "{parameters}");
+    assert!(parameters.get("oneOf").is_none(), "{parameters}");
+    assert_eq!(parameters["type"], json!("object"));
+    // The requirement every alternative shares stays; the spawn-only one is not
+    // forced onto the other actions.
+    assert_eq!(parameters["required"], json!(["action"]));
+
+    // Every alternative's parameters are still advertised, and a shared name
+    // keeps the root description.
+    for name in ["action", "to_session", "label", "mode"] {
+        assert!(
+            parameters["properties"].get(name).is_some(),
+            "`{name}` was dropped: {parameters}"
+        );
+    }
+    assert_eq!(
+        parameters["properties"]["label"]["description"],
+        json!("Required for spawn")
+    );
+    assert_eq!(parameters["properties"]["label"]["minLength"], json!(1));
+
+    // The same property declared differently by different alternatives keeps
+    // each alternative's own schema instead of picking one.
+    let alternatives = parameters["properties"]["mode"]["anyOf"]
+        .as_array()
+        .expect("mode alternatives");
+    let mut declared_values: Vec<Value> = Vec::new();
+    for alternative in alternatives {
+        declared_values.extend(alternative["enum"].as_array().cloned().unwrap_or_default());
+    }
+    for value in ["fast", "safe"] {
+        assert!(
+            declared_values.contains(&json!(value)),
+            "`{value}` was dropped from the alternatives: {parameters}"
+        );
+    }
+
+    // Only the root is widened; a nested alternative stays as declared.
+    assert_eq!(
+        parameters["properties"]["filter"]["anyOf"],
+        json!([{ "type": "string" }, { "type": "integer" }])
+    );
+
+    // Collapsing alternatives widens what a call may omit, so structured output
+    // is not guaranteed for this tool.
+    assert_eq!(function["strict"], json!(false), "{function}");
+}
+
+#[test]
+fn a_widened_root_alternative_is_reported_as_a_dropped_combiner() {
+    let tools = [multi_action_tool()];
+    let mut receipts: Vec<DegradationReceipt> = Vec::new();
+
+    let reported = build_chat_completions_request_reporting("m", &[], &tools, "", None, Some(&mut receipts));
+
+    assert!(
+        receipts.contains(&DegradationReceipt::new(
+            DegradationKind::SchemaKeywordDropped,
+            "swarm",
+            "anyOf"
+        )),
+        "{receipts:?}"
+    );
+    assert!(
+        receipts.contains(&DegradationReceipt::new(
+            DegradationKind::StrictDisabled,
+            "swarm",
+            "strict"
+        )),
+        "{receipts:?}"
+    );
+    // Reporting never changes what is sent.
+    assert_eq!(reported, build_chat_completions_request("m", &[], &tools, "", None));
+}
+
+#[test]
+fn a_tool_without_root_alternatives_keeps_its_declaration() {
+    // The boundary the collapse must not cross: a schema with local `$ref`/`allOf`
+    // and no root combiner is sent exactly as the dialect normalized it.
+    let tools = [ToolDefinition::new(
+        "lookup",
+        "Look something up",
+        json!({
+            "type": "object",
+            "$defs": { "name": { "type": "string" } },
+            "properties": { "name": { "$ref": "#/$defs/name" } },
+            "required": ["name"]
+        }),
+    )];
+
+    let body = build_chat_completions_request("m", &[], &tools, "", None);
+    let function = &body["tools"][0]["function"];
+    let parameters = &function["parameters"];
+
+    assert_eq!(function["strict"], json!(true), "{function}");
+    assert_eq!(parameters["properties"]["name"]["type"], json!("string"));
+    assert_eq!(parameters["required"], json!(["name"]));
 }
 
 // ---------------------------------------------------------------------------

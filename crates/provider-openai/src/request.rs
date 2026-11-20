@@ -6,7 +6,7 @@ use horon_agent_provider_core::openai_schema::{
     openai_compatible_schema, openai_compatible_schema_reporting, prepare_strict_schema, schema_supports_strict,
     strict_normalize_schema,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -78,9 +78,15 @@ pub fn build_tool_reporting(t: &ToolDefinition, sink: Option<&mut Vec<Degradatio
     // Inline `$ref`s, collapse single-branch `allOf` and expand union types
     // first: each is expressible in the strict subset, so giving up on strict
     // mode for them would cost the structured-output guarantee for nothing.
-    let strict_schema = prepare_strict_schema(&compatible_schema);
-    let supports_strict = schema_supports_strict(&strict_schema);
-    let parameters = if supports_strict {
+    let mut strict_schema = prepare_strict_schema(&compatible_schema);
+    let flattened = flatten_parameter_alternatives(&mut strict_schema);
+    let supports_strict = !flattened && schema_supports_strict(&strict_schema);
+    let parameters = if flattened {
+        if sink.is_some() {
+            dropped.push("anyOf".to_string());
+        }
+        strict_schema
+    } else if supports_strict {
         strict_normalize_schema(&strict_schema)
     } else {
         compatible_schema
@@ -112,6 +118,79 @@ pub fn build_tool_reporting(t: &ToolDefinition, sink: Option<&mut Vec<Degradatio
         "strict": supports_strict,
         "parameters": parameters,
     })
+}
+
+/// OpenAI accepts alternatives inside properties. The function parameters
+/// themselves must be an object. Keep the shared requirements and advertise
+/// each branch's properties while the tool enforces the original schema.
+fn flatten_parameter_alternatives(schema: &mut Value) -> bool {
+    let Some(root) = schema.as_object_mut() else {
+        return false;
+    };
+    // The dialect has already normalized oneOf and merged allOf.
+    let Some(alternatives) = root.remove("anyOf") else {
+        return false;
+    };
+    let mut properties = root
+        .remove("properties")
+        .and_then(|value| match value {
+            Value::Object(properties) => Some(properties),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let mut required = root
+        .remove("required")
+        .and_then(|value| match value {
+            Value::Array(required) => Some(required),
+            _ => None,
+        })
+        .unwrap_or_default();
+    if let Value::Array(branches) = alternatives {
+        let mut branch_properties = HashMap::<String, Vec<Value>>::new();
+        if let Some(common) = branches.first().and_then(|branch| branch["required"].as_array()) {
+            for name in common {
+                if !required.contains(name)
+                    && name.is_string()
+                    && branches[1..]
+                        .iter()
+                        .all(|branch| branch["required"].as_array().is_some_and(|names| names.contains(name)))
+                {
+                    required.push(name.clone());
+                }
+            }
+        }
+        for branch in branches {
+            let Value::Object(mut branch) = branch else { continue };
+            if let Some(Value::Object(fields)) = branch.remove("properties") {
+                for (name, field) in fields {
+                    if !properties.contains_key(&name) {
+                        let variants = branch_properties.entry(name).or_default();
+                        if !variants.contains(&field) {
+                            variants.push(field);
+                        }
+                    }
+                }
+            }
+        }
+        let promoted: Map<_, _> = branch_properties
+            .into_iter()
+            .map(|(name, variants)| {
+                let field = if variants.len() == 1 {
+                    variants.into_iter().next().unwrap_or(Value::Null)
+                } else {
+                    serde_json::json!({"anyOf": variants})
+                };
+                (name, field)
+            })
+            .collect();
+        properties.extend(promoted);
+    }
+    root.insert("type".into(), Value::String("object".into()));
+    root.insert("properties".into(), Value::Object(properties));
+    if !required.is_empty() {
+        root.insert("required".into(), Value::Array(required));
+    }
+    true
 }
 
 /// Insert Responses `additional_tools` items for `ContentBlock::ToolReference`
@@ -1014,7 +1093,14 @@ mod tests {
                 }],
             ),
         ];
-        let tools = vec![deferred_def("mcp__weather__forecast")];
+        let tools = vec![ToolDefinition::new(
+            "mcp__weather__forecast",
+            "Find the forecast by date or offset",
+            json!({"anyOf": [
+                {"type": "object", "properties": {"city": {"type": "string"}, "date": {"type": "string"}}, "required": ["city", "date"]},
+                {"type": "object", "properties": {"city": {"type": "string"}, "offset": {"type": "integer"}}, "required": ["city", "offset"]}
+            ]}),
+        ).deferred()];
         let mut input = build_responses_input(&messages);
         let before = input.clone();
         insert_additional_tools(&mut input, &messages, &tools);
@@ -1033,6 +1119,15 @@ mod tests {
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         assert_eq!(loaded, vec!["mcp__weather__forecast"]);
+        let definition = &input[pos]["tools"][0];
+        assert_eq!(definition["strict"], false);
+        assert_eq!(
+            definition["parameters"],
+            json!({
+                "type": "object", "required": ["city"],
+                "properties": {"city": {"type": "string"}, "date": {"type": "string"}, "offset": {"type": "integer"}}
+            })
+        );
         // Everything before the insertion point is unchanged (cache prefix).
         assert_eq!(&input[..pos], &before[..pos]);
     }
