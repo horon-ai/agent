@@ -140,6 +140,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "title.state",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TITLE_STATE",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Window",
+            label: "Title state",
+            description: "Append running, waiting or idle to the window title; off keeps the session name alone.",
+        },
+    },
+    SettingSpec {
         id: "statusline.preset",
         kind: SettingKind::Enum(STATUSLINE_PRESETS),
         env: "HORON_TUI_STATUSLINE_PRESET",
@@ -233,6 +245,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Keys",
             label: "Enter sends",
             description: "Send the typed message with Enter; off makes Enter insert a newline.",
+        },
+    },
+    SettingSpec {
+        id: "editor.suggestions",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_EDITOR_SUGGESTIONS",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Suggestions",
+            label: "Local suggestions",
+            description: "Offer a ghost completion of the draft from drafts sent before this one; nothing leaves the client.",
         },
     },
     SettingSpec {

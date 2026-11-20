@@ -26,7 +26,7 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
 ```
 
 | Flag | Meaning |
@@ -35,6 +35,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
+| `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
 
@@ -43,6 +44,8 @@ A connection that never opened ends the client. The banner carries the sentence 
 A connection lost while the client runs is handled differently: the screen stays up so the failure and the conversation can be read. The status line says `disconnected`, a submit is refused with one warning line and the text stays in the input line, nothing remaining in the queue is sent, and prompts for the turn that was running are withdrawn. Ctrl-C leaves, and the process still exits with code 1 because the session failed.
 
 The client names the terminal window `horon · <label>`, so a stack of terminals says which one belongs to which session. The label is the session's own title, and the last component of the working directory for a session the daemon never titled; control characters are dropped and the label stops at eighty characters. The title the shell set is pushed onto the terminal's title stack first and comes back on every way out — the normal exit, the error path and the panic hook — because the shell still owns the window afterwards. The stack pair (`CSI 22 ; 2 t` to push, `CSI 23 ; 2 t` to pop) is an extension, so it is written only where the terminal keeps a stack: an xterm-like terminal (`TERM` other than `dumb`), Windows Terminal (`WT_SESSION`) and ConEmu (`ConEmuANSI`) restore the title, while a Windows console without either marker and any terminal that calls itself `dumb` get the title without the pair and keep `horon · <label>` after the client exits. Nothing is written when standard output is not a terminal.
+
+Set `title.state = true` to append `running`, `waiting` or `idle` to the title on terminals with a title stack. The marker changes with the turn or the pending prompt. Exit restores the previous title.
 
 ## User files
 
@@ -68,6 +71,7 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | array of segment names | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
 | `statusline.right` | array of segment names | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
@@ -76,6 +80,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `terminal.progress` | boolean | `false` | `HORON_TUI_TERMINAL_PROGRESS` |
 | `terminal.program_status` | boolean | `false` | `HORON_TUI_TERMINAL_PROGRAM_STATUS` |
+| `editor.suggestions` | boolean | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
@@ -90,6 +95,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 Set `terminal.progress = true` to report progress to terminals that support OSC 9;4. The indicator shows a percentage when available and an indeterminate state otherwise. Set `terminal.program_status = true` to send OSC 7501 updates on terminals that support that protocol. Horon sends changes as they occur and clears its signals on exit.
 
 `transcript.show_reasoning` is the thinking-block control, labelled `Show thinking` in the settings screen: `true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being stored, so turning it off hides the thinking blocks of every later turn.
+
+`ctrl+t` (`app.toggle_thinking`, the default binding) flips the same switch for the rest of the process without writing the file, and `--hide-thinking` starts it off hidden that way. The session choice outranks the setting: an unrelated reload or a theme change keeps it, while a change of `transcript.show_reasoning` itself is the newer choice and ends it. Hiding drops the thought still arriving but keeps the thoughts already committed on screen; showing begins at the next delta, because the deltas dropped meanwhile were never kept and are not recovered. Neither direction touches the reasoning effort the model is asked for. Each toggle leaves one notice in the transcript saying which way it went.
 
 The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working directory cannot be read. The file is read again a second after it changes in size or modification time, so a hand edit applies without a restart.
 
@@ -185,7 +192,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | Send the typed message |
 | `app.cancel` | `ctrl+c` | Cancel the running turn, or leave when nothing is running |
 | `app.interrupt` | `esc` | Send the queued messages into the running turn; with nothing queued, interrupt it. No action when idle |
-| `app.quit` | `ctrl+d` | Leave |
+| `app.quit` | `ctrl+d` | Delete at the cursor while the draft has text, or leave when the draft is empty and the editor is idle |
 | `app.scroll_page_up` | `pageup` | Hold the transcript one page higher |
 | `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
@@ -194,6 +201,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
+| `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
 | `editor.backspace` | `backspace` | Delete the character before the cursor |
 | `editor.delete` | `delete` | Delete the character at the cursor |
 | `editor.left` | `left`, `ctrl+b` | Move the cursor one character left |
@@ -207,22 +215,25 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.newline` | `shift+enter`, `alt+enter`, `ctrl+j` | Start a new line without sending the draft |
 | `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
-| `editor.delete_word` | `ctrl+w` | Delete the word before the cursor |
+| `editor.delete_word` | `ctrl+w`, `alt+backspace` | Delete the word before the cursor |
 | `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
 | `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
+| `editor.accept_suggestion` | `ctrl+right` | Add the visible suggestion to the draft |
 | `prompt.allow` | `y` | Approve the parked tool call once |
 | `prompt.allow_always` | `a` | Approve this call and every later call like it |
 | `prompt.deny` | `n` | Deny the parked tool call |
 | `prompt.dismiss` | `esc` | Deny the parked call; a question stays open |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
-The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: thirty-three actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
+The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`: thirty-four actions, each with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
 `up` and `down` move between the lines of a draft first and reach the input history only at its first and last line, which is why the transcript view moved to `shift+up`, `shift+down` and the page keys. `shift+tab` steps the reasoning effort and plain `tab` still completes the draft, because a binding that names shift answers before the one that does not. While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
 
 ## The editor
+
+With `editor.suggestions = true`, the composer can show a continuation from messages you already sent in the current session. Ctrl+Right adds it to the draft and Esc dismisses it. Editing the prefix withdraws a stale suggestion. The suggestion provider runs locally and sends no request.
 
 The input line grows with the draft: one row per line, up to eight rows, and a taller draft scrolls inside its own pane. The conversation keeps at least three rows while the draft grows, so a long message never takes the whole screen.
 
@@ -249,6 +260,8 @@ The marker of the newest call whose preview hides something names the key that s
 A call the approval gate refused is drawn with one short label rather than the daemon's whole sentence, because the prompt beside it already asks the question, and the label follows the request: while the decision is pending the head row says `◐ needs approval`; once it is answered the row states the answer, `• allowed`, `• allowed always`, `✕ denied` for `n` or `esc`, or `✕ not answered` for a prompt that went away unanswered (a lost connection, a cancelled turn). None of those three says `failed`, because the call never ran: the gate held it and the model has to issue it again. Answering that prompt does not run the call: the decision is recorded and the model has to call the tool again, and the transcript says so.
 
 A `bash` job with `notify_pattern` displays live process-output notices in the launching session's transcript. Each notice identifies the job and its stdout or stderr stream.
+
+The client marks avoidable prompt cache misses after the request that caused them. A marker shows the cause and the approximate number of tokens resent, without prompt text or cache identifiers. A model or provider switch, expiry, or a documented invalidation leaves no marker. Set `[features] kv_cache_miss_notices = false` in the daemon's `config.toml` to turn off the reports.
 
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
 
@@ -296,7 +309,7 @@ Typing `/` opens a list of the commands the typed letters match: the same comman
 
 ## Pickers
 
-Five lists are the same screen: the model list (`/model` with no argument, or `alt+p`), the reasoning-effort ladder (`/effort` with no argument), the stored sessions (`/switch` and `/resume`), the skills the harness reports (`/skills`), and the drafts sent before this one (`ctrl+r`). Each is a panel over the conversation with a title, a filter line that reads `type to filter` until something is typed, one row per choice, and a footer with the selected row's place and the count, then `enter select`, `esc close`, `↑↓ move` and `type to filter`. `esc` closes the panel, `enter` reports the selected row, `up`, `down`, `pageup` and `pagedown` move, and `backspace` edits the filter. Every key goes to the panel while it is open, a plain letter included, because a filter that let characters through would type into the draft underneath.
+The model, effort, session, skill, link and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
 
 The filter is the subsequence match the slash popup uses, over a row's name and its second column and, for a session, over the conversation lines its preview carries. Those lines are searchable and a preview's header line is not, because the header names the directory and the time every row of one directory shares. Matches are ranked, and rows that rank the same keep the order the list gave them, so an empty filter shows the list in its own order. A filter that leaves nothing says `nothing matches that filter`.
 
@@ -313,6 +326,8 @@ The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medi
 Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, and the daemon also accepts a unique prefix of six or more characters. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds `started a new session <id>` or `resumed <id>`, and takes the model, provider, effort and title from the new session's identity, so the status line keeps showing `provider/model`. `/new` asks for a session in this directory and moves to it the same way; the session that was left stays stored, and the client drops the events of every session it has left, so neither conversation's rows reach the other. A session change waits while a turn runs or a model or effort change is still being applied, and a new session left without a message cannot be resumed, because the daemon does not keep it.
 
 `/skills` lists the skills the harness reported for this session: the name, the harness's description in the second column, and a preview naming the file the skill was read from and the tools it may use, ending with the line that says `enter` puts the invocation in the draft. Choosing a row writes `/skill:<name>` and a trailing space into the editor without sending it, so the request after it is the user's to type.
+
+`/links` lists HTTP and HTTPS links from the eight most recent assistant answers, newest first. Choose a row with Enter to open the displayed URL in the system browser. Esc closes the list. The picker skips malformed URLs, local files and links with embedded credentials.
 
 In a window too small for an overlay, the lists and the settings screen draw one line instead of the panel: `list hidden: window too small, esc closes` or `settings hidden: window too small, esc closes`. The overlay still owns every key, so `esc` closes it.
 
@@ -354,6 +369,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/keys` | List the keys in force and what each does |
+| `/links` | List links from recent assistant answers and open the selected URL |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
 | `/quit` | Leave |
@@ -362,7 +378,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twelve commands the client answers itself, in name order.
+The table lists the client commands (`Local` in `crates/tui/src/commands/mod.rs`) in name order.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
@@ -373,6 +389,7 @@ built-in commands:
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
   /keys                list the keys in force and what each does
+  /links               list the http(s) links in recent answers and open one
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /quit                leave
@@ -404,13 +421,16 @@ Every other harness command prints the message the daemon wrote, except one whos
 
 `/settings` is generated from the settings registry: one row per key, grouped into the Appearance, Status line, Editor and Transcript tabs, with the label and description the registry declares. Each row also shows the layer the value came from.
 
+Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone.
+
 | Key | Effect |
 | --- | --- |
+| `/` | Search settings across tabs or edit the current query |
 | `up`, `down` | Move between rows |
 | `left`, `tab` | Move to the previous tab |
 | `right`, `shift+tab` | Move to the next tab |
 | `enter` | Open the editor or the pick list of the row, or confirm |
-| `esc` | Close the editor or pick list, then the screen |
+| `esc` | Close the editor or pick list, then clear the search, then close the screen |
 
 A value that the key's type rejects is shown as an inline error and nothing is written. A save goes to the global `tui.toml` only; the project and `--config` layers are never rewritten.
 
@@ -453,4 +473,4 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - A new session left without a message cannot be resumed, because the daemon does not keep it.
 - A skill is sent as a request to read `skill://<name>`, so it works only where the session can read that address.
 - `esc` has no hint on screen of its own: `/keys` is where the key and what it does are written.
-- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript; both apply from the next keystroke and the next reasoning delta once changed. The other transcript settings and the status line take effect as soon as the file reloads, which redraws the screen.
+- `editor.submit_on_enter` is read by the send-key handling and `transcript.show_reasoning` by the transcript; both apply from the next keystroke and the next reasoning delta once changed. A session choice made with `--hide-thinking` or `ctrl+t` outranks that setting until the setting value itself changes, so editing another key in `tui.toml` does not put the setting back. The other transcript settings and the status line take effect as soon as the file reloads, which redraws the screen.
