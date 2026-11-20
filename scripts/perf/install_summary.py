@@ -43,6 +43,35 @@ def write_platform(report, platform, tools, runs):
     return complete
 
 
+def release_identity(report):
+    """The jcode release record the platform installed, or the reason it is absent."""
+    released = (report.get('releases') or {}).get('jcode')
+    if released:
+        return released
+    for row in report.get('samples', []):
+        if row.get('tool') == 'jcode' and row.get('release'):
+            return row['release']
+    for row in report.get('samples', []):
+        if row.get('tool') == 'jcode' and row.get('error'):
+            return {'error': row['error']}
+    return None
+
+
+def write_release(report, platform):
+    released = release_identity(report)
+    if not released:
+        print(f'| {platform} | – | – | – | – | no jcode sample |')
+        return
+    if released.get('error'):
+        print(f'| {platform} | – | – | – | – | {table_cell(released["error"])} |')
+        return
+    digest = released.get('sha256') or '–'
+    print('|', ' | '.join([platform, released.get('tag') or '–', released.get('commit') or '–',
+                            released.get('asset') or '–',
+                            f'<code>{html.escape(str(digest))}</code>',
+                            released.get('download_url') or '–']), '|')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--matrix', required=True, type=json.loads)
@@ -62,17 +91,31 @@ def main():
           'Total median | Total MAD | Total range | Notes |')
     print('|---|---|---|---:|---:|---:|---:|---:|---:|---|')
     complete = True
+    reports = {}
     for entry in args.matrix['include']:
         platform = entry['platform']
         path = args.reports / f'install-{platform}.json'
         try:
             report = json.loads(path.read_text(encoding='utf-8'))
+            reports[platform] = report
             if not write_platform(report, platform, tools, args.runs):
                 complete = False
         except (OSError, ValueError, KeyError, TypeError) as error:
             reason = 'Missing platform report' if isinstance(error, FileNotFoundError) else f'Unreadable platform report: {error}'
             print(f'| {platform} | – | – | unknown | – | – | – | – | – | {table_cell(reason)} |')
             complete = False
+    if 'jcode' in tools:
+        # The tag, commit, asset and digest are read from the sample's own record:
+        # nothing here is inferred from this file or from the flag that pinned it.
+        print('\n### jcode release identity\n')
+        print('| Platform | Tag | Commit | Asset | SHA-256 | Download URL |')
+        print('|---|---|---|---|---|---|')
+        for entry in args.matrix['include']:
+            platform = entry['platform']
+            if platform in reports:
+                write_release(reports[platform], platform)
+            else:
+                print(f'| {platform} | – | – | – | – | missing platform report |')
     return 0 if complete else 1
 
 
