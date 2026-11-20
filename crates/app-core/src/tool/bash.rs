@@ -1054,6 +1054,34 @@ fn exit_status_metadata(status: &std::process::ExitStatus) -> serde_json::Value 
     json!({ "exit_status": { "exit_code": status.code(), "signal": signal } })
 }
 
+/// Owns a bridged process until it exits or the calling cell is dropped.
+struct ForegroundChild {
+    child: Option<tokio::process::Child>,
+    bridged: bool,
+}
+
+impl ForegroundChild {
+    async fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        let child = self
+            .child
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("foreground child already reaped"))?;
+        let status = child.wait().await?;
+        self.child = None;
+        Ok(status)
+    }
+}
+
+impl Drop for ForegroundChild {
+    fn drop(&mut self) {
+        if self.bridged
+            && let Some(child) = self.child.take()
+        {
+            drop(tokio::task::spawn_blocking(move || super::eval::stop_child(child)));
+        }
+    }
+}
+
 /// Render a finished command's output for the transcript.
 ///
 /// The head, the error/warning lines of the omitted middle, and the tail stay
@@ -1444,6 +1472,10 @@ impl Tool for BashTool {
         // A named service is a background task by definition; `run_in_background`
         // only adds the same mode for an unnamed command.
         let run_in_background = params.run_in_background.unwrap_or(false) || params.name.is_some();
+        let bridged = super::eval::owns_subcall();
+        if bridged && run_in_background {
+            anyhow::bail!("Python tool calls cannot start background shell commands or services");
+        }
         if let Some(name) = params.name.as_deref() {
             validate_service_name(name)?;
         }
@@ -1524,7 +1556,7 @@ impl Tool for BashTool {
 
         // Foreground execution with stdin detection
         let hint = file_edit_hint(&params.command);
-        let mut output = self.execute_foreground(&params, &ctx).await?;
+        let mut output = self.execute_foreground(&params, &ctx, bridged).await?;
         if let Some(note) = interceptor_note {
             output.output = format!("[Note: {note}]\n{}", output.output);
         }
@@ -1605,8 +1637,12 @@ mod file_edit_hint_tests {
 }
 
 impl BashTool {
-    async fn execute_foreground(&self, params: &BashInput, ctx: &ToolContext) -> Result<ToolOutput> {
-        let pty_mode = params.pty.unwrap_or_else(|| crate::config::config().tools.bash_pty);
+    async fn execute_foreground(&self, params: &BashInput, ctx: &ToolContext, bridged: bool) -> Result<ToolOutput> {
+        let pty_mode = if bridged {
+            crate::config::BashPtyMode::Off
+        } else {
+            params.pty.unwrap_or_else(|| crate::config::config().tools.bash_pty)
+        };
         let wants_terminal = match pty_mode {
             crate::config::BashPtyMode::Always => true,
             crate::config::BashPtyMode::Off => false,
@@ -1615,13 +1651,13 @@ impl BashTool {
 
         // A terminal's master descriptor lives in this process, so a command that
         // is handed to the detached reload-persistable path would lose it.
-        if !wants_terminal && self.supports_reload_persistence(ctx) {
+        if !bridged && !wants_terminal && self.supports_reload_persistence(ctx) {
             return self.execute_reload_persistable_foreground(params, ctx).await;
         }
 
         let timeout = resolve_bash_timeout(params.timeout);
 
-        let has_stdin_channel = ctx.stdin_request_tx.is_some();
+        let has_stdin_channel = !bridged && ctx.stdin_request_tx.is_some();
 
         let session_cwd = bash_session_cwd_enabled();
         let start_dir = resolve_bash_start_dir(params.cwd.as_deref(), ctx, session_cwd);
@@ -1638,6 +1674,7 @@ impl BashTool {
         // reaches here, and a client terminal is always given a deadline.
         if let Some(timeout_duration) = timeout.duration
             && !wants_terminal
+            && !bridged
             && let Some(bridge) = super::client_bridge::for_session(&ctx.session_id)
             && bridge.caps().terminal
         {
@@ -1693,6 +1730,8 @@ impl BashTool {
                 command.stdout(Stdio::piped()).stderr(Stdio::piped());
                 if has_stdin_channel {
                     command.stdin(Stdio::piped());
+                } else if bridged {
+                    command.stdin(Stdio::null());
                 }
                 (None, note)
             }
@@ -1751,16 +1790,14 @@ impl BashTool {
         // Run the command (read stdout/stderr, service stdin, wait for exit) in a
         // dedicated task so that, if it exceeds the foreground timeout, we can hand
         // the still-running task off to the background manager instead of killing it.
+        // Arm the process-tree cleanup before the worker can be cancelled.
+        let mut process_group_guard =
+            horon_agent_platform::process::ProcessGroupGuard::new((!has_terminal && !bridged).then_some(child_pid));
+        let mut child = ForegroundChild {
+            child: Some(child),
+            bridged,
+        };
         let mut work_handle: tokio::task::JoinHandle<Result<ToolOutput>> = tokio::spawn(async move {
-            // If this future is dropped before the child exits — a cancelled
-            // call, a panicking sibling task — stop the whole process tree
-            // instead of leaving the shell's children running. A terminal child
-            // leads its own session already.
-            let mut process_group_guard = if has_terminal {
-                horon_agent_platform::process::ProcessGroupGuard::new(None)
-            } else {
-                horon_agent_platform::process::ProcessGroupGuard::new(Some(child_pid))
-            };
             let stdout_task = tokio::spawn(stream::collect_output(stdout_handle, stdout_progress, stdout_stream));
 
             let stderr_task = tokio::spawn(stream::collect_output(stderr_handle, stderr_progress, stderr_stream));
@@ -1847,10 +1884,15 @@ impl BashTool {
                 Some(note) => format!("{output}\n{note}"),
                 None => output,
             };
-            Ok(ToolOutput::new(output)
+            let mut result = ToolOutput::new(output)
                 .with_title(title_for_work)
-                .with_metadata(exit_status_metadata(&status)))
+                .with_metadata(exit_status_metadata(&status));
+            if bridged && !status.success() {
+                result = result.with_verdict(horon_agent_tool_types::ToolVerdict::Failed);
+            }
+            Ok(result)
         });
+        let _bridge_command = bridged.then(|| super::eval::AbortCommandOnDrop(work_handle.abort_handle()));
 
         // `None` from this expression means the deadline passed while the
         // command kept running: promote it rather than kill it. A `timeout: 0`
@@ -1872,6 +1914,7 @@ impl BashTool {
             }
             Some(Ok(Err(e))) => Err(anyhow::anyhow!("Command failed: {}", e)),
             Some(Err(join_err)) => Err(anyhow::anyhow!("Command task panicked: {}", join_err)),
+            None if bridged => anyhow::bail!("Python bridge shell command reached its foreground timeout"),
             None => {
                 // Timed out, but the command is still running. Instead of killing
                 // it, promote it to a background task so it keeps running, renders

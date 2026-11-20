@@ -333,6 +333,10 @@ Each cell needs explicit approval before it runs, including in `yolo` and `off`.
 
 Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
 
+Inside a cell, use `await tool.read(file_path="notes.txt")` to get a tool's text, or `await tool.bash(command="echo ready")` to run an allowed foreground command. A refusal or failure raises `RuntimeError` in the cell. Calls run serially, with up to 64 per cell and a 256 KiB frame limit. The cell's deadline includes time spent waiting for a tool or its approval.
+
+The session's usual tool restrictions and audit trail apply. Dispatchers and recursive `eval` calls are unavailable through the bridge. Bridge shell calls use a foreground process with closed input and end on cancellation or timeout. If an approval is queued, rerunning the cell after granting it can repeat earlier side effects.
+
 ## `generate_image`
 
 The one tool whose model does not speak Chat Completions. Registered only when

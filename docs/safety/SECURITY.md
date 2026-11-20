@@ -62,6 +62,8 @@ The environment variable is case-insensitive and recognizes only `trust` and `de
 
 A Python cell needs explicit approval for its code and working directory. A directory grant cannot authorize it. The kernel inherits only selected environment variables. Approved Python runs with the user's filesystem, network and process access, which includes any credential files the user can read. The opt-in setting and approval control when execution starts.
 
+`tool.<name>` sends requests to the current session's tool registry through the kernel's child-process pipes. The agent verifies the active cell and request number, applies the session allow-list and load modes, and runs the named tool's own approvals and hooks. These tool rules govern bridge requests. Python's direct filesystem and process access still follows the OS permissions of the agent user.
+
 ## Crash bundles
 
 When a process panics, horon agent leaves a local diagnostic bundle. The bundle is written to disk only and sent nowhere. This document explains the location, contents, redaction, and the no-transmission guarantee in the current tree.
