@@ -181,7 +181,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | 입력한 메시지를 보낸다 |
 | `app.cancel` | `ctrl+c` | 실행 중인 턴을 취소하고, 아무것도 돌지 않으면 나간다 |
 | `app.interrupt` | `esc` | 대기 중인 메시지를 도는 턴으로 보낸다. 대기 중인 메시지가 없으면 턴을 멈춘다. 놀고 있을 때는 아무것도 하지 않는다 |
-| `app.quit` | `ctrl+d` | 나간다 |
+| `app.quit` | `ctrl+d` | 초안에 글자가 있으면 커서 위치의 글자를 지운다. 편집기가 대기 중이고 초안이 비어 있으면 나간다 |
 | `app.scroll_page_up` | `pageup` | 트랜스크립트를 한 페이지 위에 붙잡아 둔다 |
 | `app.scroll_page_down` | `pagedown` | 트랜스크립트를 한 페이지 끝 쪽으로 옮긴다 |
 | `app.scroll_up` | `shift+up` | 트랜스크립트를 한 줄 위에 붙잡아 둔다 |
@@ -203,7 +203,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.newline` | `shift+enter`, `alt+enter`, `ctrl+j` | 초안을 보내지 않고 새 줄을 시작한다 |
 | `editor.kill_to_start` | `ctrl+u` | 그 줄 맨 앞부터 커서까지 지운다 |
 | `editor.kill_to_end` | `ctrl+k` | 커서부터 그 줄 맨 끝까지 지운다 |
-| `editor.delete_word` | `ctrl+w` | 커서 앞 낱말을 지운다 |
+| `editor.delete_word` | `ctrl+w`, `alt+backspace` | 커서 앞 낱말을 지운다 |
 | `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
 | `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |

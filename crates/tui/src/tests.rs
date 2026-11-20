@@ -502,7 +502,7 @@ fn ask_prompt_collects_one_answer_per_question() {
 }
 
 #[test]
-fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves() {
+fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves_once_it_stops() {
     let mut app = app_with(None);
     app.pending_turn = true;
     let cancel = crossterm::event::KeyEvent::new(
@@ -515,6 +515,17 @@ fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves() {
         crossterm::event::KeyCode::Char('d'),
         crossterm::event::KeyModifiers::CONTROL,
     );
+    // The cancel is a request: the harness has not stopped the turn yet, so
+    // `ctrl+d` must not drop the session from under it.
+    assert_eq!(app.on_key(quit), None);
+    assert!(app.pending_turn);
+
+    app.apply_event(&ApiEvent::TurnStopped {
+        session_id: "s1".into(),
+        reason: horon_agent_sdk::api::TurnStopReason::Interrupted,
+        message: "the turn was interrupted".into(),
+        provider_stop_reason: None,
+    });
     assert_eq!(app.on_key(quit), Some(Action::Quit));
 }
 

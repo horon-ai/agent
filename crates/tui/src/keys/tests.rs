@@ -135,6 +135,7 @@ fn keys_defaults_reproduce_the_shipped_keys() {
         (ids::EDITOR_KILL_TO_START, "ctrl+u"),
         (ids::EDITOR_KILL_TO_END, "ctrl+k"),
         (ids::EDITOR_DELETE_WORD, "ctrl+w"),
+        (ids::EDITOR_DELETE_WORD, "alt+backspace"),
         (ids::EDITOR_WORD_LEFT, "alt+left"),
         (ids::EDITOR_WORD_RIGHT, "alt+right"),
         (ids::EDITOR_HISTORY_PREV, "up"),
@@ -224,6 +225,78 @@ fn keys_empty_array_disables_an_action() {
     assert!(app.running);
     // The other actions are untouched.
     assert_eq!(app.on_key(control('c')), Some(Action::Quit));
+}
+
+#[test]
+fn ctrl_d_edits_the_draft_before_it_leaves() {
+    let mut app = app();
+    for character in "ab".chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+    app.on_key(key(KeyCode::Left));
+    // The cursor sits on `b`, so the press takes that character; the draft
+    // stays and the client keeps running.
+    assert_eq!(app.on_key(control('d')), None);
+    assert_eq!(app.input.text(), "a");
+    assert_eq!(app.input.cursor(), 1);
+    assert!(app.running);
+    // At the end there is nothing to delete, and the draft is still kept
+    // rather than thrown away.
+    assert_eq!(app.on_key(control('d')), None);
+    assert_eq!(app.input.text(), "a");
+    // An empty draft with nothing running is the key that leaves.
+    app.on_key(key(KeyCode::Backspace));
+    assert!(app.input.is_empty());
+    assert_eq!(app.on_key(control('d')), Some(Action::Quit));
+}
+
+#[test]
+fn word_delete_keys_take_the_word_before_the_cursor() {
+    let mut app = app();
+    for character in "안녕하세요 세계".chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+    // Both spellings of the action walk the same word boundaries, which is
+    // what keeps a Korean word from being cut in the middle of a syllable.
+    assert_eq!(app.on_key(control('w')), None);
+    assert_eq!(app.input.text(), "안녕하세요 ");
+    assert_eq!(app.on_key(modified(KeyCode::Backspace, KeyModifiers::ALT)), None);
+    assert_eq!(app.input.text(), "");
+}
+
+#[test]
+fn a_remapped_quit_key_keeps_plain_leaving() {
+    let (_directory, loader) = loader_with("\"app.quit\" = [\"ctrl+q\"]\n");
+    assert!(loader.warnings().is_empty(), "{:?}", loader.warnings());
+    let mut app = app();
+    app.bindings = loader.bindings().clone();
+    for character in "ab".chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+    // `ctrl+d` no longer answers `app.quit`: it edits nothing, leaves nothing,
+    // and the draft is untouched.
+    assert_eq!(app.on_key(control('d')), None);
+    assert_eq!(app.input.text(), "ab");
+    // The key the file gave the action leaves even with a draft in front of it.
+    assert_eq!(app.on_key(control('q')), Some(Action::Quit));
+}
+
+#[test]
+fn a_file_that_takes_ctrl_d_for_another_action_keeps_that_action() {
+    let (_directory, loader) = loader_with("\"app.quit\" = []\n\"editor.delete\" = [\"ctrl+d\"]\n");
+    assert!(loader.warnings().is_empty(), "{:?}", loader.warnings());
+    let mut app = app();
+    app.bindings = loader.bindings().clone();
+    // With nothing under the cursor the delete action does nothing at all; the
+    // key must not fall back to leaving.
+    assert_eq!(app.on_key(control('d')), None);
+    assert!(app.running);
+    for character in "ab".chars() {
+        app.on_key(key(KeyCode::Char(character)));
+    }
+    app.on_key(key(KeyCode::Home));
+    assert_eq!(app.on_key(control('d')), None);
+    assert_eq!(app.input.text(), "b");
 }
 
 #[test]
