@@ -148,6 +148,7 @@ Keys:
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
@@ -615,11 +616,19 @@ where
 }
 
 /// Render one frame.
+///
+/// A pending repaint request is answered first: `clear` erases the screen and
+/// resets the frame Ratatui keeps, so the draw below writes every cell instead
+/// of only the rows that differ. That is what recovers a screen something else
+/// has overwritten, and it is the whole of what the repaint key does.
 pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    if app.take_repaint_request() {
+        terminal.clear().map_err(|error| error.to_string())?;
+    }
     terminal
         .draw(|frame| render(frame, app))
         .map(|_| ())

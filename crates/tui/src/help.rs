@@ -67,6 +67,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
     (
+        ids::APP_REPAINT,
+        "paint the whole screen again, keeping the draft, the selection and the view",
+    ),
+    (
         ids::APP_TOGGLE_THINKING,
         "show or hide the model's reasoning for this session",
     ),
