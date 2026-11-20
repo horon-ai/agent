@@ -1,10 +1,8 @@
 //! Motion presets, the bounded numbers behind them, and the frame scheduler.
 //!
-//! The tests read a settings snapshot from a temporary file, and the one that
-//! needs a real gap between frames waits for the shortest cadence the settings
-//! allow rather than for the default.
+//! Timing tests use explicit timestamps so a busy runner cannot change the result.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{
     DEFAULT_MAX_FPS, DEFAULT_SPINNER_INTERVAL, Motion, MotionMode, launch_overrides, parse_max_fps, parse_mode,
@@ -162,41 +160,52 @@ fn flag_values_are_bounded_and_reported() {
 }
 
 #[test]
-fn an_idle_screen_is_never_due_and_a_request_draws_at_once() {
-    let mut frames = Frames::new(Motion::default());
-    assert_eq!(frames.due(false), Some(0), "the first pass must draw");
-    assert_eq!(frames.due(false), None, "an idle app was redrawn with no event");
-    assert_eq!(frames.due(false), None);
-
+fn an_idle_screen_waits_and_input_draws_immediately() {
+    let now = Instant::now();
+    let mut frames = Frames::new(Motion::default(), now);
+    assert_eq!(frames.due(false, now), Some(0));
+    assert_eq!(frames.due(false, now + Duration::from_secs(1)), None);
     frames.request();
-    assert_eq!(frames.due(false), Some(1), "a requested frame waited for the cadence");
-    assert_eq!(frames.due(false), None);
+    assert_eq!(frames.due(false, now + Duration::from_secs(1)), Some(0));
 }
 
 #[test]
-fn a_turn_in_flight_draws_on_its_interval_and_advances_the_spinner() {
-    // The fastest cadence the settings allow, so the wait stays short.
-    let (motion, warnings) = Motion::from_settings(&settings("[motion]\nspinner_interval = 40\nmax_fps = 240\n"));
-    assert!(warnings.is_empty(), "{warnings:?}");
-    assert_eq!(motion.frame_interval(), Some(Duration::from_millis(40)));
-    let mut frames = Frames::new(motion);
-    assert_eq!(frames.due(true), Some(0));
-    // The same instant is not due again: the cadence has a floor.
-    assert_eq!(frames.due(true), None);
-    std::thread::sleep(Duration::from_millis(45));
-    assert_eq!(frames.due(true), Some(1), "a busy turn stopped animating");
+fn input_repaints_keep_the_current_spinner_until_its_deadline() {
+    let (motion, _) = Motion::from_settings(&settings("[motion]\nspinner_interval = 2000\nmax_fps = 240\n"));
+    let now = Instant::now();
+    let mut frames = Frames::new(motion, now);
+    assert_eq!(frames.due(true, now), Some(0));
+    frames.request();
+    assert_eq!(frames.due(true, now + Duration::from_millis(500)), Some(0));
+    assert_eq!(frames.due(true, now + Duration::from_millis(1999)), None);
+    assert_eq!(frames.due(true, now + Duration::from_secs(2)), Some(1));
 }
 
 #[test]
-fn a_static_preset_asks_for_no_frame_of_its_own() {
+fn all_presets_cap_automatic_stream_draws_but_allow_input_between_them() {
+    for preset in ["full", "reduced", "static"] {
+        let (motion, _) = Motion::from_settings(&settings(&format!("[motion]\npreset = {preset:?}\nmax_fps = 1\n")));
+        let now = Instant::now();
+        let mut frames = Frames::new(motion, now);
+        assert!(frames.due(true, now).is_some());
+        frames.request_stream();
+        assert_eq!(frames.due(true, now + Duration::from_millis(400)), None, "{preset}");
+        frames.request();
+        assert!(frames.due(true, now + Duration::from_millis(500)).is_some(), "{preset}");
+        frames.request_stream();
+        assert_eq!(frames.due(true, now + Duration::from_millis(1499)), None, "{preset}");
+        assert!(
+            frames.due(true, now + Duration::from_millis(1500)).is_some(),
+            "{preset}"
+        );
+    }
+}
+
+#[test]
+fn a_static_turn_draws_no_frame_without_an_event() {
     let (motion, _) = Motion::from_settings(&settings("[motion]\npreset = \"static\"\n"));
-    let mut frames = Frames::new(motion);
-    assert_eq!(frames.due(true), Some(0), "the first pass draws the screen once");
-    assert_eq!(frames.due(true), None, "a static preset drew a frame with no event");
-    frames.request();
-    assert_eq!(
-        frames.due(true),
-        Some(1),
-        "a static preset suppressed the frame an event asked for"
-    );
+    let now = Instant::now();
+    let mut frames = Frames::new(motion, now);
+    assert_eq!(frames.due(true, now), Some(0));
+    assert_eq!(frames.due(true, now + Duration::from_secs(10)), None);
 }

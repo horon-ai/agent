@@ -12,6 +12,7 @@
 
 use std::time::{Duration, Instant};
 
+use horon_agent_sdk::api::ApiEvent;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 
@@ -25,15 +26,16 @@ use crate::sdk_bridge::{Command, Incoming};
 /// stays short whatever the motion settings say.
 pub(crate) const POLL: Duration = Duration::from_millis(50);
 
-/// Move every buffered SDK delivery into the app state, reporting whether
-/// anything arrived.
-///
-/// The report is what drives the redraw: an empty queue leaves the screen as it
-/// is. A closed bridge is a real end of the session, not an empty queue: the
-/// channel only reports it once, so treating it as "nothing yet" would leave the
-/// interface showing a dead connection forever.
-pub(crate) fn drain_events(app: &mut App) -> bool {
-    let mut changed = false;
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Redraw {
+    None,
+    Stream,
+    Immediate,
+}
+
+/// Apply buffered events, keeping text-only updates on the stream cadence.
+pub(crate) fn drain_events(app: &mut App) -> Redraw {
+    let mut changed = Redraw::None;
     loop {
         let delivery = match app.events.try_recv() {
             Ok(delivery) => delivery,
@@ -43,14 +45,21 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                 // daemon is more use than "the bridge stopped", and the banner
                 // is what the user reads, so it must not change under them.
                 app.disconnect("the harness bridge stopped");
-                changed = true;
+                changed = Redraw::Immediate;
                 break;
             }
         };
         let previously_changed = changed;
-        changed = true;
+        changed = Redraw::Immediate;
         match delivery {
-            Incoming::Event(event) => app.apply_event(&event),
+            Incoming::Event(event) => {
+                if matches!(&*event, ApiEvent::TextDelta { .. } | ApiEvent::ReasoningDelta { .. })
+                    && previously_changed != Redraw::Immediate
+                {
+                    changed = Redraw::Stream;
+                }
+                app.apply_event(&event);
+            }
             Incoming::Notice(message) => app.warn(message),
             Incoming::SendFailed { text, message, lost } => app.send_failed(&text, &message, lost),
             Incoming::Info(message) => app.transcript.push_notice(message),
@@ -62,7 +71,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                     let panel = crate::todo_panel::TodoPanel::from_items(&items);
                     if app.todos != panel {
                         app.todos = panel;
-                        changed = true;
+                        changed = Redraw::Immediate;
                     }
                 }
             }
@@ -189,85 +198,76 @@ where
     if changed {
         frames.request();
     }
-    let Some(frame) = frames.due(app.animating()) else {
+    let Some(frame) = frames.due(app.animating(), Instant::now()) else {
         return Ok(());
     };
     app.motion_frame = frame;
     crate::draw(terminal, app)
 }
 
-/// When a frame is due, and which animation frame it draws.
-///
-/// Nothing here draws. The loop asks one question per pass — [`Frames::due`] —
-/// and the answer covers the whole screen: a turn in flight is the only state
-/// that animates, so it is the only one that can be due without an event.
-/// An idle app is never due, which is what keeps a quiet screen from being
-/// redrawn at all.
+/// Schedule automatic frames without delaying input or advancing the spinner
+/// on every redraw. The loop supplies one timestamp per scheduling pass.
 pub(crate) struct Frames {
-    /// The interval between frames while a turn runs, or `None` for a preset
-    /// that adds no frame of its own.
-    interval: Option<Duration>,
-    /// A frame asked for by something other than the cadence: the first frame,
-    /// a resized terminal, a reloaded settings file.
+    motion: crate::settings::Motion,
     pending: bool,
-    /// When the last frame was drawn.
-    last: Instant,
-    /// Which animation frame the next drawn frame uses.
+    stream: bool,
+    last_draw: Instant,
+    last_spinner: Option<Instant>,
     frame: usize,
 }
 
 impl Frames {
-    /// A scheduler whose first pass draws.
-    pub fn new(motion: crate::settings::Motion) -> Self {
+    pub fn new(motion: crate::settings::Motion, now: Instant) -> Self {
         Self {
-            interval: motion.frame_interval(),
+            motion,
             pending: true,
-            last: Instant::now(),
+            stream: false,
+            last_draw: now,
+            last_spinner: None,
             frame: 0,
         }
     }
 
-    /// Adopt a new motion preset without losing the frame already due.
-    ///
-    /// A changed cadence counts as a reason to draw once, so the spinner stops
-    /// and restarts where the new preset says rather than at the next event.
+    /// Apply a new cadence immediately and restart the indicator.
     pub fn retune(&mut self, motion: crate::settings::Motion) {
-        let interval = motion.frame_interval();
-        if interval != self.interval {
-            self.interval = interval;
-            self.pending = true;
+        if self.motion != motion {
+            self.motion = motion;
+            self.last_spinner = None;
+            self.frame = 0;
+            self.request();
         }
     }
 
-    /// Ask for a frame at the next pass, whatever the cadence says.
     pub fn request(&mut self) {
         self.pending = true;
     }
 
-    /// The pass count taken when a frame is drawn, so the caller knows which
-    /// spinner frame it used.
-    ///
-    /// `animate` is whether the screen is moving on its own, which is a turn in
-    /// flight under a preset that draws a spinner: `false` makes every pass idle,
-    /// and an idle pass never draws without an event, whatever the interval.
-    pub fn due(&mut self, animate: bool) -> Option<usize> {
-        let due = if self.pending {
-            true
-        } else if animate {
-            match self.interval {
-                Some(interval) => self.last.elapsed() >= interval,
-                None => false,
-            }
+    pub fn request_stream(&mut self) {
+        self.stream = true;
+    }
+
+    pub fn due(&mut self, animate: bool, now: Instant) -> Option<usize> {
+        let mut spinner_due = false;
+        if let Some(interval) = self.motion.frame_interval().filter(|_| animate) {
+            let last = *self.last_spinner.get_or_insert(now);
+            spinner_due = now.duration_since(last) >= interval;
         } else {
-            false
-        };
-        if !due {
+            self.last_spinner = None;
+            self.frame = 0;
+        }
+
+        let automatic =
+            (self.stream || spinner_due) && now.duration_since(self.last_draw) >= self.motion.stream_interval();
+        if !self.pending && !automatic {
             return None;
         }
+        if spinner_due {
+            self.last_spinner = Some(now);
+            self.frame = self.frame.wrapping_add(1);
+        }
         self.pending = false;
-        self.last = Instant::now();
-        let frame = self.frame;
-        self.frame = self.frame.wrapping_add(1);
-        Some(frame)
+        self.stream = false;
+        self.last_draw = now;
+        Some(self.frame)
     }
 }

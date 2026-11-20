@@ -123,7 +123,7 @@ impl Motion {
         // stays, and the limit only adds frames below it. Both callers bound
         // their numbers first, so a zero can only reach here from a constant.
         let fps = u64::try_from(max_fps).unwrap_or(MIN_MAX_FPS as u64).max(1);
-        let fastest_frame = Duration::from_micros(1_000_000 / fps).max(Duration::from_millis(1));
+        let fastest_frame = Duration::from_micros(1_000_000_u64.div_ceil(fps));
         Self {
             mode,
             spinner_interval: Duration::from_millis(u64::try_from(spinner_interval.max(1)).unwrap_or(1)),
@@ -138,6 +138,10 @@ impl Motion {
             MotionMode::Full => Some(self.spinner_interval.max(self.fastest_frame)),
             MotionMode::Reduced | MotionMode::Static => None,
         }
+    }
+
+    pub(crate) fn stream_interval(self) -> Duration {
+        self.fastest_frame
     }
 
     /// Whether the spinner turns frame by frame.

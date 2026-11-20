@@ -518,7 +518,7 @@ where
     // second: a draw walks the visible conversation, and an idle client has
     // nothing new to show. A turn in flight is the one exception, and its
     // cadence is the motion settings'; the scheduler's first pass draws.
-    let mut frames = loop_io::Frames::new(app.motion);
+    let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
     let mut clock = statusline::local_minute();
@@ -529,7 +529,14 @@ where
     // the first frame must not write it again.
     let mut shown_state = window_state(app, state_supported);
     loop {
-        let mut changed = loop_io::drain_events(app);
+        let mut changed = match loop_io::drain_events(app) {
+            loop_io::Redraw::Immediate => true,
+            loop_io::Redraw::None => false,
+            loop_io::Redraw::Stream => {
+                frames.request_stream();
+                false
+            }
+        };
         if !app.running {
             break;
         }
