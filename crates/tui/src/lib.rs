@@ -104,6 +104,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
+use crate::terminal::{show_failure, window_label, window_state};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -314,53 +315,6 @@ where
             1
         }
     }
-}
-
-/// Draw the connection-failure banner once, when there is a terminal to draw it
-/// on, then restore it.
-fn show_failure(message: &str) {
-    eprintln!("horon-tui: {message}");
-    let mut app = App::failure(message);
-    match ratatui::try_init() {
-        Ok(mut terminal) => {
-            let failure = draw(&mut terminal, &mut app).err();
-            paste::disable();
-            ratatui::restore();
-            if let Some(message) = failure {
-                eprintln!("horon-tui: {message}");
-            }
-        }
-        Err(error) => {
-            paste::disable();
-            ratatui::restore();
-            eprintln!("horon-tui: cannot open a terminal: {error}");
-        }
-    }
-}
-
-/// The name the window carries for the app's state.
-///
-/// The session's own title wins and the working directory names a session the
-/// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is. With `title.state` on,
-/// the turn state follows the name as a fixed word, so a window seen from
-/// another one says whether its session is busy without being switched to.
-fn window_label(app: &App, state_supported: bool) -> String {
-    let label = title::label(app.session_title.as_deref(), app.cwd.as_deref());
-    title::with_state(label, window_state(app, state_supported))
-}
-
-/// The state the title names, or none when the setting is off or the terminal
-/// keeps no title worth adding to.
-fn window_state(app: &App, state_supported: bool) -> Option<title::RunState> {
-    if !state_supported || !app.title_state {
-        return None;
-    }
-    Some(title::RunState::of(
-        app.prompt.is_some(),
-        app.pending_turn,
-        app.session_status.as_deref(),
-    ))
 }
 
 /// Drive the real terminal until the user leaves.
