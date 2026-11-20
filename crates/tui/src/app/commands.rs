@@ -3,6 +3,17 @@
 
 use super::{Action, App};
 use crate::commands::Local;
+use crate::links;
+use crate::overlays::picker::{Kind, Picker, Row};
+
+/// Assistant answers `/links` reads back from the transcript.
+const LINK_ANSWERS: usize = 8;
+
+/// The title the link list is drawn with.
+const LINK_TITLE: &str = "Links";
+
+/// What `/links` says, and the list draws, when no answer held a link.
+const NO_LINKS: &str = "no http links in the recent answers";
 
 impl App {
     /// Answer a built-in command that the client owns.
@@ -74,6 +85,13 @@ impl App {
                 self.open_settings();
                 None
             }
+            // `/links` reads the answers already on screen. Opening one is the
+            // reader's own enter in the list, so this arm answers itself and
+            // sends nothing to the harness.
+            Local::Links => {
+                self.open_links();
+                None
+            }
             // `/switch` and `/resume` are one flow under two names: the list
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
@@ -82,6 +100,37 @@ impl App {
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),
         }
+    }
+
+    /// `/links`: the http(s) URLs in the newest assistant answers.
+    ///
+    /// The list is built from what the transcript already holds, so nothing is
+    /// fetched and the model is not asked again. The newest answer comes first,
+    /// because that is the one a reader just read.
+    pub(crate) fn open_links(&mut self) {
+        let urls: Vec<String> = {
+            let answers = self.transcript.recent_assistant_text(LINK_ANSWERS);
+            let mut urls: Vec<String> = Vec::new();
+            for text in answers {
+                for url in links::extract(text) {
+                    if !urls.contains(&url) {
+                        urls.push(url);
+                    }
+                }
+            }
+            urls
+        };
+        if urls.is_empty() {
+            self.transcript.push_notice(NO_LINKS);
+            return;
+        }
+        let rows = urls
+            .into_iter()
+            .map(|url| {
+                Row::new(url.clone(), url).with_preview(vec!["enter opens this in the default browser".to_string()])
+            })
+            .collect();
+        self.picker = Some(Picker::new(Kind::Links, LINK_TITLE, rows, NO_LINKS));
     }
 
     /// Point the command registry at the working directory and read the files.

@@ -150,6 +150,110 @@ pub enum Item {
     /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
     /// large, and most items carry a message instead.
     Report(Box<crate::report::Report>),
+    /// A request boundary the provider had to serve without its cached prefix.
+    ///
+    /// Drawn under the request it belongs to, and only for an avoidable miss:
+    /// see [`CacheMiss::from_report`] for what counts as one.
+    CacheMiss(CacheMiss),
+}
+
+/// Which part of the cached prompt prefix the harness changed.
+///
+/// The three are exactly the reasons the daemon classifies as harness-caused
+/// (`MissReason::harness_caused` in `crates/base/src/kv_cache_monitor.rs`): the
+/// prompt is the harness's to build, so a change to it there was avoidable. A
+/// provider switch, an expiry or a documented reload is not, and never reaches
+/// this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheCause {
+    /// The system prompt's static part.
+    System,
+    /// The tool definitions sent with the request.
+    Tools,
+    /// A message that was already part of the prefix.
+    Prefix,
+}
+
+impl CacheCause {
+    /// The cause the daemon's stable reason id names, `None` for any other id.
+    ///
+    /// The ids mirror `MissReason::id`; one this client does not know is left
+    /// unclassified rather than drawn as an alarm, because the marker would
+    /// then claim a cause the client cannot check.
+    fn from_reason(reason: &str) -> Option<Self> {
+        match reason {
+            "system_changed" => Some(Self::System),
+            "tools_changed" => Some(Self::Tools),
+            "prefix_changed" => Some(Self::Prefix),
+            _ => None,
+        }
+    }
+
+    /// How the marker names the cause.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "the system prompt changed",
+            Self::Tools => "the tool set changed",
+            Self::Prefix => "an earlier message changed",
+        }
+    }
+}
+
+/// An avoidable prompt-cache miss, as the transcript marks it.
+///
+/// Only the classification and the size of the resend are kept. The prompt text
+/// and the cache's identity never reach the client, and nothing here could hold
+/// them: a mark is the reader's summary of one request boundary, not a record
+/// of what was sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheMiss {
+    /// Which part of the request prefix the harness changed.
+    pub cause: CacheCause,
+    /// Tokens the provider had to be sent again.
+    pub missed_tokens: u64,
+}
+
+impl CacheMiss {
+    /// The mark for one daemon report, or `None` when the report is not an
+    /// avoidable, classified miss.
+    ///
+    /// `harness_caused` and the reason id are both required: the daemon derives
+    /// one from the other, so a report where they disagree cannot be trusted to
+    /// describe an avoidable miss. A documented cause is an intentional
+    /// invalidation (a config or skill reload) and is not an alarm either.
+    pub fn from_report(
+        reason: &str,
+        harness_caused: bool,
+        documented_cause: Option<&str>,
+        missed_tokens: u64,
+    ) -> Option<Self> {
+        let cause = CacheCause::from_reason(reason)?;
+        if !harness_caused || documented_cause.is_some_and(|cause| !cause.trim().is_empty()) {
+            return None;
+        }
+        Some(Self { cause, missed_tokens })
+    }
+
+    /// The one line the marker draws.
+    pub fn summary(&self) -> String {
+        format!(
+            "{}, ~{} tokens resent",
+            self.cause.label(),
+            compact_tokens(self.missed_tokens)
+        )
+    }
+}
+
+/// A token count at the width the marker can spare, as the daemon's own summary
+/// writes it.
+fn compact_tokens(value: u64) -> String {
+    if value >= 1_000_000 {
+        format!("{:.1}M", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        format!("{}K", value / 1_000)
+    } else {
+        value.to_string()
+    }
 }
 
 /// The streaming message being assembled.
@@ -178,9 +282,16 @@ pub struct Transcript {
     items: Vec<Item>,
     streaming: Streaming,
     reasoned: Reasoned,
-    /// Whether reasoning is kept. Off by default, as
-    /// `transcript.show_reasoning` resolves; the option is read at the event,
-    /// so flipping it affects the next delta rather than only the next turn.
+    /// The value `transcript.show_reasoning` last resolved to.
+    setting_show_reasoning: bool,
+    /// A choice made for this session, by `--hide-thinking` or the toggle key.
+    ///
+    /// It outranks the setting until that setting itself changes, so an
+    /// unrelated settings reload does not undo the toggle.
+    session_show_reasoning: Option<bool>,
+    /// Whether reasoning is kept, as the setting and the session choice
+    /// resolve. Off by default; the option is read at the event, so flipping
+    /// it affects the next delta rather than only the next turn.
     show_reasoning: bool,
     /// Rows of a finished call's output kept for the preview, as
     /// `transcript.tool_output_lines` resolves. Zero hides the preview.
@@ -213,6 +324,8 @@ impl Default for Transcript {
             items: Vec::new(),
             streaming: Streaming::default(),
             reasoned: Reasoned::default(),
+            setting_show_reasoning: false,
+            session_show_reasoning: None,
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
@@ -241,21 +354,47 @@ impl Transcript {
         self.tool_output_lines
     }
 
-    /// Keep, or stop keeping, the model's reasoning.
+    /// Apply the value `transcript.show_reasoning` resolves to.
     ///
-    /// Turning it off drops reasoning already being assembled, because a
-    /// setting the user just switched off must not leave half a thought on
-    /// screen; turning it on keeps what the answer has shown so far.
-    pub fn set_show_reasoning(&mut self, show: bool) {
-        self.show_reasoning = show;
-        if !show {
-            self.reasoned = Reasoned::default();
+    /// A session choice outranks it, so an unrelated settings reload does not
+    /// undo the toggle; a change of the setting itself is a newer choice and
+    /// ends the session choice.
+    pub fn apply_settings_show_reasoning(&mut self, show: bool) {
+        if self.setting_show_reasoning != show {
+            self.setting_show_reasoning = show;
+            self.session_show_reasoning = None;
         }
+        self.reconcile_show_reasoning();
+    }
+
+    /// Keep, or stop keeping, the model's reasoning for the rest of the session.
+    ///
+    /// The choice outranks `transcript.show_reasoning` until that setting
+    /// value changes. Turning reasoning off drops the thought already being
+    /// assembled, because a switch the user just flipped off must not leave
+    /// half a thought on screen; turning it on starts from the next delta,
+    /// because the deltas dropped meanwhile were never kept. The reasoning
+    /// effort the model is asked for is not touched.
+    pub fn set_show_reasoning(&mut self, show: bool) {
+        self.session_show_reasoning = Some(show);
+        self.reconcile_show_reasoning();
     }
 
     /// Whether reasoning is being kept.
     pub fn show_reasoning(&self) -> bool {
         self.show_reasoning
+    }
+
+    /// Apply the setting and the session choice to what the transcript keeps.
+    fn reconcile_show_reasoning(&mut self) {
+        let show = self.session_show_reasoning.unwrap_or(self.setting_show_reasoning);
+        if self.show_reasoning == show {
+            return;
+        }
+        self.show_reasoning = show;
+        if !show {
+            self.reasoned = Reasoned::default();
+        }
     }
 
     /// Every item in display order.
@@ -275,6 +414,15 @@ impl Transcript {
             return None;
         }
         Some(&self.streaming.text)
+    }
+
+    /// The newest assistant answers, including any text still streaming.
+    pub(crate) fn recent_assistant_text(&self, messages: usize) -> impl Iterator<Item = &str> {
+        let committed = self.items.iter().rev().filter_map(|item| match item {
+            Item::Assistant(text) => Some(text.as_str()),
+            _ => None,
+        });
+        self.open_text().into_iter().chain(committed).take(messages)
     }
 
     /// Record a user message, closing any partly streamed reply first.
@@ -354,6 +502,27 @@ impl Transcript {
     pub fn push_warning(&mut self, text: impl Into<String>) {
         self.finish_stream();
         self.items.push(Item::Warning(text.into()));
+    }
+
+    /// Record an avoidable cache miss at the boundary of the request it belongs
+    /// to.
+    ///
+    /// The daemon reports the miss immediately after the usage of the request
+    /// that missed, so the caller hands it over while that request's output is
+    /// the newest thing drawn; committing the open stream first is what puts the
+    /// mark under the answer that cost the resend rather than over it.
+    ///
+    /// The same mark twice in a row is one event delivered twice — a replayed
+    /// tail after a reconnect — not two requests: a request that misses always
+    /// draws its own output in between, so nothing in between means nothing
+    /// happened.
+    pub fn push_cache_miss(&mut self, miss: CacheMiss) {
+        self.finish_stream();
+        let item = Item::CacheMiss(miss);
+        if self.items.last() == Some(&item) {
+            return;
+        }
+        self.items.push(item);
     }
 
     /// Record a message waiting for the running turn to end.
@@ -898,6 +1067,20 @@ mod tests {
         transcript.text_replace(Some("m1"), "");
         transcript.finish_stream();
         assert!(transcript.items().is_empty());
+    }
+
+    #[test]
+    fn recent_assistant_text_keeps_answers_only() {
+        let mut transcript = Transcript::new();
+        transcript.push_user("look at https://user.example/");
+        transcript.push_assistant("first https://one.example/");
+        transcript.push_assistant("second https://two.example/");
+        transcript.text_delta(Some("m9"), "streaming https://three.example/");
+        assert_eq!(
+            transcript.recent_assistant_text(2).collect::<Vec<_>>(),
+            vec!["streaming https://three.example/", "second https://two.example/"]
+        );
+        assert_eq!(transcript.recent_assistant_text(8).count(), 3);
     }
 
     #[test]

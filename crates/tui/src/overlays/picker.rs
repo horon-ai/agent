@@ -1,11 +1,11 @@
 //! A filterable list drawn over the conversation.
 //!
-//! `/model`, `/effort`, `/resume`, `/skills` and the history search all ask the
-//! user to pick one row out of a list, so this screen knows nothing about
-//! models, efforts, sessions, skills or drafts: it holds rows, the filter the
-//! user typed, and the row the selection is on. `/queue` uses the same screen
-//! for rows that are changed instead of chosen; its keys are answered before
-//! this module sees them.
+//! `/model`, `/effort`, `/resume`, `/skills`, `/links` and the history search
+//! all ask the user to pick one row out of a list, so this screen knows nothing
+//! about models, efforts, sessions, skills, links or drafts: it holds rows, the
+//! filter the user typed, and the row the selection is on. `/queue` uses the
+//! same screen for rows that are changed instead of chosen; its keys are
+//! answered before this module sees them.
 //! The caller decides what a chosen row means, which is what keeps the keys and
 //! the drawing identical for every list.
 //!
@@ -42,6 +42,8 @@ pub enum Kind {
     Skills,
     /// The drafts sent before this one.
     History,
+    /// The http(s) links in the newest assistant answers.
+    Links,
     /// The messages waiting for the running turn to end.
     ///
     /// This list is not a choice among values: each row is a message the user

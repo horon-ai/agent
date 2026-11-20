@@ -129,7 +129,26 @@ impl App {
                 // no row is ever chosen from here; a value that arrives anyway
                 // changes nothing rather than acting as some other kind of row.
                 Kind::Queue => None,
+                // A link is the one row that leaves the client: the reader
+                // pressed enter on it, so it goes to the platform handler and
+                // the list closes without an action for the bridge.
+                Kind::Links => {
+                    self.open_link(&value);
+                    None
+                }
             },
+        }
+    }
+
+    /// Open one chosen link through the platform's own handler.
+    ///
+    /// Only an explicit enter on a row reaches this, and the URL is checked
+    /// again inside: a row keeps the string it was built from, and the list may
+    /// outlive the answer that supplied it.
+    pub(crate) fn open_link(&mut self, url: &str) {
+        match crate::links::launch(url) {
+            Ok(()) => self.transcript.push_notice(format!("opening {url}")),
+            Err(error) => self.warn(format!("links: {error}")),
         }
     }
 

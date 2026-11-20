@@ -593,16 +593,15 @@ fn an_answer_line_never_claims_the_call_ran() {
 }
 
 #[test]
-fn a_prompt_does_not_swallow_the_key_that_leaves() {
+fn a_parked_prompt_keeps_ctrl_d_and_accepts_ctrl_c() {
     let mut app = app();
     app.apply_event(&approval_pending("r1", "bash"));
-    // The prompt takes every other key, but a client whose only exit is
-    // swallowed is a client the user cannot leave.
+    // The default draft shortcut keeps the parked prompt open.
     assert_eq!(
         app.on_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
-        Some(Action::Quit)
+        None
     );
-    assert!(app.prompt.is_some(), "leaving the client answered the prompt");
+    assert!(app.prompt.is_some(), "ctrl-d dismissed the prompt");
 
     app.pending_turn = true;
     assert_eq!(

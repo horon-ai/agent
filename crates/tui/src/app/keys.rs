@@ -23,8 +23,10 @@ impl App {
         // changes it, and brought up to date again after it: a key that moved
         // the draft leaves a list that belongs to the text it left behind.
         self.sync_slash();
+        self.sync_suggestions();
         let action = self.handle_key(key);
         self.sync_slash();
+        self.sync_suggestions();
         action
     }
 
@@ -90,17 +92,18 @@ impl App {
                     return Some(Action::Ask { ask_id, answers });
                 }
                 None => {
-                    // A prompt owns every key, but not the two that end the
-                    // session. An approval outlives its turn, so a swallowed
-                    // Ctrl-C would leave a prompt on screen with no way out of
-                    // the client; the prompt still answers its own keys first,
-                    // which is what keeps `esc` on the approval.
-                    let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+                    // The prompt handles its own keys first. Ctrl+C and an
+                    // explicit quit binding can still leave the parked prompt.
+                    let pressed = Key::from_event(key);
+                    let bound = pressed
+                        .as_ref()
+                        .and_then(|pressed| self.bindings.resolve_editing(pressed));
                     match bound {
                         Some(keys::ids::APP_CANCEL) if self.pending_turn => {
                             self.withdraw_prompts("the turn was cancelled");
                             return self.cancel_turn();
                         }
+                        Some(keys::ids::APP_QUIT) if pressed.is_some_and(is_ctrl_d) => return None,
                         Some(keys::ids::APP_CANCEL | keys::ids::APP_QUIT) => return Some(Action::Quit),
                         // The transcript still scrolls while a prompt waits:
                         // reading further back neither answers the prompt nor
@@ -117,7 +120,8 @@ impl App {
         }
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        let bound = Key::from_event(key).and_then(|pressed| self.bindings.resolve_editing(&pressed));
+        let pressed = Key::from_event(key);
+        let bound = pressed.and_then(|pressed| self.bindings.resolve_editing(&pressed));
         // The popup sits above the editor and below the prompt, so while it is
         // open the keys that pick a row are its own: `up` and `down` move the
         // selection instead of the history, `esc` closes the list rather than
@@ -153,6 +157,21 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+        }
+        // A ghost suggestion sits above the editor and below the popup: the
+        // accept key fills the rest of the draft, and `esc` puts the offer away
+        // instead of interrupting the turn. Every other key reaches the editor,
+        // and the sync after this key withdraws an offer the changed draft no
+        // longer matches.
+        if self.suggestion_available() {
+            if key.code == KeyCode::Esc || bound == Some(keys::ids::APP_INTERRUPT) {
+                self.suggestions.dismiss();
+                return None;
+            }
+            if bound == Some(keys::ids::EDITOR_ACCEPT_SUGGESTION) {
+                self.accept_suggestion();
+                return None;
             }
         }
         match bound {
@@ -210,13 +229,37 @@ impl App {
                 }
                 return None;
             }
-            Some(keys::ids::APP_QUIT) => return Some(Action::Quit),
+            Some(keys::ids::APP_QUIT) => {
+                // `ctrl+d` on this key answers the draft before the session:
+                // with text in front of it, the cursor eats the character it
+                // sits on, and at the end of the draft there is nothing to eat,
+                // so the draft is kept. Only an empty draft leaves, and only
+                // while no turn is running: a key meant for the draft must not
+                // end work in progress. A file that moves `app.quit` to another
+                // key keeps the plain leave there, since this branch then
+                // answers a key that is not `ctrl+d`.
+                if pressed.is_some_and(is_ctrl_d) {
+                    if !self.input.is_empty() {
+                        self.history.reset();
+                        self.input.delete();
+                        return None;
+                    }
+                    if self.pending_turn {
+                        return None;
+                    }
+                }
+                return Some(Action::Quit);
+            }
             Some(keys::ids::APP_EXPAND_TOOL) => {
                 self.expand_tool();
                 return None;
             }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
+            Some(keys::ids::APP_TOGGLE_THINKING) => {
+                self.toggle_thinking();
+                return None;
+            }
             // Every edit ends a walk through the history: the draft on screen
             // is being changed, and a later `down` must not replace the change
             // with the entry the walk started from.
@@ -368,6 +411,16 @@ impl App {
             self.input.set_text(&entry);
         }
     }
+}
+
+/// Whether a keystroke is the shipped `ctrl+d`.
+///
+/// Only this spelling carries the draft-aware meaning; `app.quit` on any other
+/// key leaves exactly as it always did. Shift on a character never reaches
+/// [`Key`] (the terminal sends the character itself), and alt makes it another
+/// key, which keeps `alt+ctrl+d` out of the draft branch.
+fn is_ctrl_d(key: Key) -> bool {
+    key.code == keys::Code::Char('d') && key.ctrl && !key.alt
 }
 
 /// The draft with the backslash that asks for another line taken off.
