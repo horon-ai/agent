@@ -719,14 +719,13 @@ fn overwrite_screen(terminal: &mut Terminal<TestBackend>, glyph: &'static str) {
         .expect("the test backend takes cells");
 }
 
-/// Press the repaint key and require that it asked for exactly that.
+/// Press the repaint key without handing an action to the harness.
 fn press_repaint(app: &mut App) {
     assert_eq!(
         app.on_key(control(crossterm::event::KeyCode::Char('l'))),
         None,
         "the repaint key handed an action to the harness"
     );
-    assert!(app.take_repaint_request(), "the repaint key asked for no draw");
 }
 
 #[test]
@@ -795,6 +794,7 @@ fn the_repaint_key_asks_for_one_draw_and_leaves_the_session_alone() {
     assert!(!app.take_repaint_request(), "a fresh app asked for a repaint");
 
     press_repaint(&mut app);
+    assert!(app.take_repaint_request(), "the repaint key asked for no draw");
     assert!(!app.take_repaint_request(), "one press asked for two draws");
     assert_eq!(app.input.text(), "keep me", "the repaint key edited the draft");
     assert_eq!(app.input.cursor(), 7, "the repaint key moved the caret");

@@ -400,7 +400,6 @@ fn keys_the_repaint_key_can_be_moved_off_ctrl_l() {
 
     // Turning the action off leaves the key doing nothing at all.
     let (_directory, loader) = loader_with("\"app.repaint\" = []\n");
-    let mut app = app();
     app.bindings = loader.bindings().clone();
     assert_eq!(app.on_key(control('l')), None);
     assert!(!app.take_repaint_request(), "an unbound `ctrl+l` asked for a draw");
