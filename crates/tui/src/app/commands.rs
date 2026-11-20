@@ -106,6 +106,9 @@ impl App {
                 self.run_local_shell(arguments, true);
                 None
             }
+            // `/queue` opens the list of messages waiting for the running turn
+            // to end; nothing about them is sent from here.
+            Local::Queue => self.open_queue(),
         }
     }
 
