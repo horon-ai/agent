@@ -601,7 +601,21 @@ print('shell returned')
                 .parse()
                 .expect("valid pid");
             tokio::time::timeout(Duration::from_secs(5), async {
-                while horon_agent_platform::is_process_running(descendant) {
+                // Linux can keep an exited orphan's PID until init reaps it.
+                // Check whether the child can still execute, not just whether
+                // the kernel still has a process table entry for it.
+                loop {
+                    let status = tokio::process::Command::new("ps")
+                        .args(["-o", "stat=", "-p", &descendant.to_string()])
+                        .output()
+                        .await
+                        .expect("read descendant process status");
+                    let state = String::from_utf8_lossy(&status.stdout);
+                    let state = state.trim();
+                    if state.starts_with('Z') || (status.status.code() == Some(1) && state.is_empty()) {
+                        break;
+                    }
+                    assert!(status.status.success() && !state.is_empty(), "{status:?}");
                     tokio::time::sleep(Duration::from_millis(25)).await;
                 }
             })
