@@ -519,7 +519,7 @@ for call in [tool.read(file_path='no-access'), tool.eval(code='42'), tool.toolbo
 fn eval_bridge_limits_calls_and_keeps_the_next_cell_usable() {
     isolated(async |home| {
         home.config("profile = 'full'\neval = true");
-        std::fs::write(home.cwd.join("small.txt"), "ok\n").expect("write fixture");
+        std::fs::write(home.cwd.join("small.txt"), "bridge fixture contents\n").expect("write fixture");
         let registry = Registry::new(Arc::new(OfflineProvider)).await;
         let session = TestSession::new("eval-tool-limit", &home.cwd);
         let output = session
@@ -537,13 +537,25 @@ except RuntimeError as error:
             )
             .await;
         assert_eq!(output.output, "64 Python eval allows at most 64 tool calls per cell\n");
+        let direct = registry
+            .execute(
+                "read",
+                json!({"file_path": "small.txt"}),
+                session.context("direct-read"),
+            )
+            .await
+            .expect("read from the model context");
+        assert!(direct.output.contains("bridge fixture contents"), "{}", direct.output);
         let next = session
             .approved(
                 &registry,
-                json!({"code": "'ok' in (await tool.read(file_path='small.txt'))"}),
+                json!({"code": r#"
+text = await tool.read(file_path='small.txt')
+print('read verified' if 'bridge fixture contents' in text else text)
+"#}),
             )
             .await;
-        assert_eq!(next.output, "True\n");
+        assert_eq!(next.output, "read verified\n");
     });
 }
 

@@ -771,6 +771,7 @@ Reading a file that was already read in the same session compares content hashes
 - When the content changed, the earlier read covered the whole file, and this read also covers the whole file, a unified diff against the earlier read is returned. If the diff is larger than 40% of the file, the whole file is sent. The baseline snapshot is kept only for files up to 1 MiB and is not readable through `artifact://`.
 - `full: true` always sends the body. When the `hashline` format differs from the earlier read, it is rendered again.
 - Applying compaction, rewinding or editing the conversation, urgent truncation, aging old results, and ending the session all drop that session's records. The deduplication is only correct while the earlier output is still in the context.
+- Python cell reads bypass these records. Python receives the result directly and decides what to print into the model context.
 
 The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
 
