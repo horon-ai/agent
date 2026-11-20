@@ -1579,7 +1579,7 @@ jobs:
             -- request::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
-            --timeout 600 --min-passed 1 \
+            --timeout 600 --min-passed 2 \
             -- stream::stream_tool_tests::tool_call_example_stays_text --nocapture
 
       - name: Run swarm plan proposal and lightweight comm cohort

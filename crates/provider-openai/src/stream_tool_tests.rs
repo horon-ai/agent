@@ -317,6 +317,21 @@ fn tool_call_example_stays_text_while_a_native_call_is_open() {
     idle(&mut stream);
 }
 
+#[test]
+fn tool_call_example_stays_text_in_a_completed_message() {
+    let (tx, mut stream) = stream();
+    let example = "Example: `to=functions.read {\"file_path\":\"example.txt\"}`";
+    send(
+        &tx,
+        json!({"type":"response.output_item.done", "item":{
+            "id":"m1", "type":"message", "role":"assistant",
+            "content":[{"type":"output_text", "text":example}]
+        }}),
+    );
+    assert!(matches!(next(&mut stream), StreamEvent::TextDelta(text) if text == example));
+    idle(&mut stream);
+}
+
 // Match the Copilot Responses shape: every event has a fresh item ID, while
 // output_index is stable and call_id is supplied only on item events.
 fn assert_any_delta(stream: &mut OpenAIResponsesStream, expected: &str) {

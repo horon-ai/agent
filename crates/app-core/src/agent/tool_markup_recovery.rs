@@ -21,13 +21,13 @@ pub(super) fn text_tool_attempt(text: &str) -> Option<&'static str> {
         if args.len() < call.len() {
             let args = args.trim_start();
             if args.is_empty() {
-                return Some("legacy tool marker");
+                return Some("to=functions marker");
             }
             if args.starts_with('{') {
                 let mut json = serde_json::Deserializer::from_str(args).into_iter::<serde::de::IgnoredAny>();
                 match json.next() {
-                    Some(Ok(_)) if args[json.byte_offset()..].trim().is_empty() => return Some("legacy tool marker"),
-                    Some(Err(error)) if error.is_eof() => return Some("legacy tool marker"),
+                    Some(Ok(_)) if args[json.byte_offset()..].trim().is_empty() => return Some("to=functions marker"),
+                    Some(Err(error)) if error.is_eof() => return Some("to=functions marker"),
                     _ => {}
                 }
             }
