@@ -33,16 +33,21 @@ pub(crate) fn flatten_content(content: &Value) -> String {
 /// This walks the typed blocks again and joins only visible text, answering
 /// `None` when the row carries no reasoning block so every other row keeps
 /// reading its `content`. Only the concrete `text` kind is a visible answer;
-/// every other kind contributes nothing. The reasoning kinds are listed
-/// explicitly, with both spellings serde can produce for the provider-native
-/// variant, so an unknown block type can never make a row look answerless.
+/// every other kind contributes nothing, so an unknown block type can never
+/// make a row look answerless.
+///
+/// The kinds are the stored tags of `ContentBlock`'s reasoning variants, which
+/// are their serde `snake_case` names because the record is written and read
+/// through that enum. `OpenAIReasoning` therefore stores as
+/// `open_a_i_reasoning`: serde breaks `snake_case` before every capital, so the
+/// acronym keeps its underscores. That spelling is what sessions on disk hold,
+/// and it is not a typo to "fix" to `openai_reasoning`.
 pub(crate) fn answer_without_reasoning(content: &Value) -> Option<String> {
-    const REASONING_KINDS: [&str; 5] = [
+    const REASONING_KINDS: [&str; 4] = [
         "reasoning",
         "reasoning_trace",
         "anthropic_thinking",
-        "open_ai_reasoning",
-        "openai_reasoning",
+        "open_a_i_reasoning",
     ];
     let blocks = content.as_array()?;
     let mut reasoning = false;
@@ -91,13 +96,57 @@ mod tests {
         ]);
         assert_eq!(answer_without_reasoning(&content), Some("the answer".to_string()));
 
-        // The serde spelling of the provider-native reasoning kinds is not
-        // part of this match; any kind naming reasoning or thinking counts.
+        // `open_a_i_reasoning` is the tag serde writes for
+        // `ContentBlock::OpenAIReasoning`, and the one stored sessions already
+        // hold; a row that spells it any other way was never written.
         let native = json!([
             {"type": "open_a_i_reasoning", "summary": ["hidden"]},
             {"type": "text", "text": "the answer"},
         ]);
         assert_eq!(answer_without_reasoning(&native), Some("the answer".to_string()));
+    }
+
+    /// The tags above are the serde names of the enum's variants, so a rename
+    /// there has to reach the match instead of quietly leaving every stored
+    /// reasoning row without an answer.
+    #[test]
+    fn every_reasoning_variant_stores_a_tag_the_match_reads() {
+        use horon_agent_base::message::ContentBlock;
+
+        let answer = ContentBlock::Text {
+            text: "the answer".to_string(),
+            cache_control: None,
+        };
+        let stored = |block: &ContentBlock| {
+            json!([
+                serde_json::to_value(block).expect("a stored block"),
+                serde_json::to_value(&answer).expect("a stored block"),
+            ])
+        };
+        for block in [
+            ContentBlock::Reasoning {
+                text: "thinking".to_string(),
+            },
+            ContentBlock::ReasoningTrace {
+                text: "thinking".to_string(),
+            },
+            ContentBlock::AnthropicThinking {
+                thinking: "thinking".to_string(),
+                signature: "signature".to_string(),
+            },
+            ContentBlock::OpenAIReasoning {
+                id: "rs_1".to_string(),
+                summary: vec!["hidden".to_string()],
+                encrypted_content: None,
+                status: None,
+            },
+        ] {
+            assert_eq!(
+                answer_without_reasoning(&stored(&block)),
+                Some("the answer".to_string()),
+                "{block:?} is stored as a tag this match must read"
+            );
+        }
     }
 
     #[test]
