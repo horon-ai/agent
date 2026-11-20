@@ -368,16 +368,24 @@ fn the_popup_offers_the_commands_a_prefix_matches() {
     assert!(app.slash.is_open(), "the popup is closed for a matching prefix");
     let names: Vec<String> = app.slash.matches().iter().map(|entry| entry.name.clone()).collect();
     assert_eq!(
-        names.iter().take(5).cloned().collect::<Vec<_>>(),
-        vec!["refresh_model_list", "remote", "resume", "resume_all", "review"],
+        names.iter().take(7).map(String::as_str).collect::<Vec<_>>(),
+        vec![
+            "record",
+            "refresh_model_list",
+            "remote",
+            "replay",
+            "resume",
+            "resume_all",
+            "review"
+        ],
         "the prefix hits keep their order and come first: {names:?}"
     );
     assert!(
-        names.iter().skip(5).all(|name| !name.starts_with("re")),
+        names.iter().skip(7).all(|name| !name.starts_with("re")),
         "a prefix match was ranked below a fuzzy one: {names:?}"
     );
     assert!(
-        names.len() > 5,
+        names.len() > 7,
         "the letters `re` appear inside a command, so a fuzzy row was expected: {names:?}"
     );
     // A slash that matches nothing offers nothing.
@@ -419,13 +427,13 @@ fn the_selection_stops_at_both_ends_and_tab_fills_it() {
     }
     assert_eq!(app.slash.selected(), 4, "down stopped before the last row");
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/review");
+    assert_eq!(app.input.text(), "/resume");
     assert!(!app.slash.is_open(), "the popup stayed open after the fill");
     app.input.set_text("/re");
     app.sync_slash();
     assert!(app.slash.is_open(), "editing the draft did not bring the popup back");
     press(&mut app, KeyCode::Tab);
-    assert_eq!(app.input.text(), "/refresh_model_list", "the first row is the default");
+    assert_eq!(app.input.text(), "/record", "the first row is the default");
 }
 
 #[test]
