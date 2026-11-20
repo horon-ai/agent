@@ -20,7 +20,7 @@ use crate::prompts::Prompt;
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
-use crate::statusline::{Layout, StatusData, TokenTotals};
+use crate::statusline::{Layout, StatusData, TokenTotals, UsageSnapshot, UsageTotals};
 use crate::theme::{Symbols, Theme};
 use crate::transcript::Decision;
 use crate::transcript::Transcript;
@@ -255,6 +255,12 @@ pub struct App {
     pub home: Option<String>,
     /// Latest token totals the daemon reported.
     pub tokens: Option<TokenTotals>,
+    /// Context window of the route in force, from the runtime's own report.
+    pub capacity: Option<u64>,
+    /// Cumulative token totals of the session, when the runtime reported them.
+    pub usage: Option<UsageTotals>,
+    /// The daemon's own spend estimate, when it publishes one.
+    pub cost: Option<f64>,
     /// How the bottom line is arranged, replaced when `tui.toml` changes.
     pub statusline: Layout,
     /// Colours the renderer uses, replaced when the theme loader resolves a
@@ -330,6 +336,9 @@ impl App {
             cwd: None,
             home: home_directory(),
             tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
             statusline: Layout::default(),
             theme: Theme::default(),
             symbols: Symbols::default(),
@@ -387,6 +396,9 @@ impl App {
             cwd: None,
             home: home_directory(),
             tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
             statusline: Layout::default(),
             theme: Theme::default(),
             symbols: Symbols::default(),
@@ -497,7 +509,27 @@ impl App {
             cwd: self.cwd.as_deref(),
             home: self.home.as_deref(),
             tokens: self.tokens,
+            capacity: self.capacity,
+            usage: self.usage,
+            cost: self.cost,
             now: None,
+        }
+    }
+
+    /// Fold one usage report into the state the status line reads.
+    ///
+    /// The window and the estimate replace what was there, including with
+    /// `None`: a report that names no window or no price is saying the daemon
+    /// knows neither for the route in force, and an old figure would describe a
+    /// model the client already left. The totals replace the running sum the
+    /// token-usage events maintain whenever the report has any, because that
+    /// report is the daemon's own accounting of the same calls; a report with
+    /// none keeps the sum, since it is the newer of the two readings.
+    pub fn usage(&mut self, snapshot: UsageSnapshot) {
+        self.capacity = snapshot.context_window;
+        self.cost = snapshot.cost;
+        if snapshot.totals.is_some() {
+            self.usage = snapshot.totals;
         }
     }
 
@@ -716,6 +748,20 @@ impl App {
                     output: *output,
                     cache_read: optional_count(cache_read_input),
                     cache_creation: optional_count(cache_creation_input),
+                });
+                // The event is one provider call, so the cumulative figure
+                // moves with it. The running total is kept here rather than
+                // read again: a request per call would be a request per tool
+                // round, and a requested report replaces this baseline with the
+                // daemon's own totals whenever the session or model moves.
+                self.usage = Some(match self.usage {
+                    Some(total) => total.plus(*input, *output, *cache_read_input, *cache_creation_input),
+                    None => UsageTotals {
+                        input: Some(*input),
+                        output: Some(*output),
+                        cache_read: *cache_read_input,
+                        cache_creation: *cache_creation_input,
+                    },
                 });
             }
             ApiEvent::Error { message, .. } => {

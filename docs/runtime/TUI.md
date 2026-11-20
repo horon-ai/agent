@@ -76,9 +76,9 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-The table is the settings registry (`crates/tui/src/settings/registry.rs`), twelve keys in its order, and it is what the settings screen draws.
+The table is the settings registry (`crates/tui/src/settings/registry.rs`), twelve keys in its order, and it is what the settings screen draws. The two opt-in status-line segments are chosen with `statusline.left` and `statusline.right` rather than by a key of their own, so the registry stays the same size.
 
-`statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
+`statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is a manual override of the token count the `context_pct` segment divides by. Left at `0` the segment divides by the window the runtime reported for the route in force, so switching models refreshes the denominator without a restart; a value above zero wins over the report, for a user who knows their route better than the daemon's catalog does. Neither known hides the segment.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
 
@@ -320,7 +320,9 @@ The bottom line is assembled from named segments. A segment with no data draws n
 | `session` | The session id, shortened |
 | `path` | The working directory, with the home directory shortened to `~` and long paths cut at a segment boundary |
 | `tokens` | Input and output tokens of the last request, as `↑in ↓out` |
-| `context_pct` | Share of `statusline.context_window` used; hidden when the setting is `0` |
+| `context_pct` | Share of the context window used, where `statusline.context_window` overrides the window the runtime reports; hidden when neither is known |
+| `usage` | Tokens the whole session has spent, as `Σ↑in ↓out`; opt-in, and only the metrics the runtime recorded are drawn |
+| `cost` | The daemon's own spend estimate as `$0.00`; opt-in, and hidden when the daemon publishes none |
 | `time` | Local wall-clock time as `HH:MM` |
 | `pending` | A parked approval or question |
 
@@ -334,7 +336,11 @@ The bottom line is assembled from named segments. A segment with no data draws n
 | `minimal` | `model` | `status` |
 | `custom` | Whatever `statusline.left` names | Whatever `statusline.right` names |
 
-The `model` segment carries the reasoning effort the daemon reported for the model, joined by the preset's separator (`·` unless the preset draws another of its own): `provider/model · high`. A missing or blank effort draws nothing, and an effort with no model name beside it is not drawn at all. The client asks the harness what the session is running before the first keystroke, so the first frame already names the model and its effort; a report the daemon refuses leaves both unknown and prints one warning, `could not read the runtime info: <error>`, and the identity event that follows every attach or new session fills the same two fields. When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `context_pct`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
+The `model` segment carries the reasoning effort the daemon reported for the model, joined by the preset's separator (`·` unless the preset draws another of its own): `provider/model · high`. A missing or blank effort draws nothing, and an effort with no model name beside it is not drawn at all. The client asks the harness what the session is running before the first keystroke, so the first frame already names the model and its effort; a report the daemon refuses leaves both unknown and prints one warning, `could not read the runtime info: <error>`, and the identity event that follows every attach or new session fills the same two fields.
+
+`usage` and `cost` are opt-in: no preset draws them, and only a custom `statusline.left` or `statusline.right` array can. Both read what the runtime reported, so a metric nobody recorded draws nothing rather than a zero: a provider that omitted cache accounting gets `Σ↑in ↓out` with no cache column, and a daemon without a price table publishes no estimate, which is why `cost` is hidden on this build. Neither one causes a request per frame: the report is read when the client moves to a session and again when the model moves.
+
+When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
 
 ## Commands
 

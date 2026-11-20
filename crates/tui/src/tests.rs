@@ -325,6 +325,88 @@ fn statusline_custom_preset_draws_left_then_right() {
 }
 
 #[test]
+fn a_usage_report_fills_the_opt_in_segments_and_the_runtime_window() {
+    let mut app = app_with(None);
+    app.apply_event(&ApiEvent::ModelInfo {
+        session_id: "s1".into(),
+        provider: Some("anthropic".into()),
+        model: Some("claude-sonnet-4".into()),
+        reasoning_effort: None,
+        auth_method: None,
+    });
+    app.apply_event(&ApiEvent::TokenUsage {
+        session_id: "s1".into(),
+        input: 250,
+        output: 50,
+        cache_read_input: None,
+        cache_creation_input: None,
+    });
+    app.statusline = statusline::Layout {
+        preset: statusline::Preset::Custom,
+        left: vec![statusline::SegmentId::Model],
+        right: vec![statusline::SegmentId::ContextPct, statusline::SegmentId::Usage],
+        path_max: 40,
+        // No override: the segment divides by what the runtime reported, so a
+        // model switch can move the denominator without a restart.
+        context_window: 0,
+    };
+    app.usage(statusline::UsageSnapshot {
+        totals: Some(statusline::UsageTotals {
+            input: Some(1_000),
+            output: Some(20),
+            cache_read: None,
+            cache_creation: None,
+        }),
+        context_window: Some(1_000),
+        cost: None,
+    });
+    let row = last_row(&mut app);
+    assert!(row.contains("30%"), "the runtime window was not used: {row:?}");
+    assert!(row.contains("Σ↑1.0k ↓20"), "the totals are missing: {row:?}");
+
+    // A report that measured nothing does not erase what the token events
+    // already summed: the running total is the newer reading of the two.
+    app.usage(statusline::UsageSnapshot::default());
+    let kept = last_row(&mut app);
+    assert!(kept.contains("Σ↑1.0k ↓20"), "the running totals were cleared: {kept:?}");
+    assert!(!kept.contains("%"), "an unknown window drew a percentage: {kept:?}");
+
+    // A second report for another route moves the denominator and the totals:
+    // this is the shape a model switch answers with.
+    app.usage(statusline::UsageSnapshot {
+        totals: Some(statusline::UsageTotals {
+            input: Some(1_960),
+            output: Some(40),
+            cache_read: None,
+            cache_creation: None,
+        }),
+        context_window: Some(4_000),
+        cost: None,
+    });
+    // The last request still occupies 300 tokens, now of a 4 000-token route:
+    // the percentage moved because the denominator did, which is the whole
+    // point of reading the window from the runtime.
+    let moved = last_row(&mut app);
+    assert!(moved.contains("7%"), "the refreshed window was not used: {moved:?}");
+    assert!(
+        moved.contains("Σ↑2.0k ↓40"),
+        "the refreshed totals are missing: {moved:?}"
+    );
+}
+
+/// The bottom row of the drawn screen, without `TestBackend`'s quotes.
+fn last_row(app: &mut App) -> String {
+    let screen = draw_to_string(app);
+    screen
+        .lines()
+        .nth(22)
+        .unwrap_or_default()
+        .trim_matches('"')
+        .trim_end()
+        .to_string()
+}
+
+#[test]
 fn submit_sends_and_quit_leaves() {
     let mut app = app_with(None);
     for character in "hi".chars() {

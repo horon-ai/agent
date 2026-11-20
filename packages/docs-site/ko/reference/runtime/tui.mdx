@@ -79,9 +79,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열두 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열두 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다. 상태줄의 선택 세그먼트 둘은 따로 키를 두지 않고 `statusline.left`와 `statusline.right`로 고르므로 레지스트리 크기는 그대로다.
 
-`statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
+`statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수를 손으로 덮어쓰는 값이다. `0`으로 두면 지금 라우트에 대해 런타임이 보고한 창으로 나누므로 모델을 바꾸면 재시작 없이 분모가 갱신된다. 0보다 큰 값은 그 보고를 이기며, 데몬의 카탈로그보다 자기 라우트를 더 잘 아는 사용자를 위한 것이다. 둘 다 모르면 세그먼트를 숨긴다.
 
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
@@ -323,7 +323,9 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `session` | 세션 아이디를 줄인 것 |
 | `path` | 작업 디렉터리. 홈 디렉터리는 `~`로 줄이고, 긴 경로는 세그먼트 경계에서 자른다 |
 | `tokens` | 마지막 요청의 입력·출력 토큰. `↑in ↓out` |
-| `context_pct` | `statusline.context_window`에서 쓴 비율. 설정이 `0`이면 숨긴다 |
+| `context_pct` | 문맥 창에서 쓴 비율. `statusline.context_window`가 있으면 런타임이 보고한 창 대신 그 값을 쓰고, 둘 다 모르면 숨긴다 |
+| `usage` | 세션이 지금까지 쓴 토큰, `Σ↑in ↓out`. 선택 항목이고 런타임이 기록한 지표만 그린다 |
+| `cost` | 데몬 자신의 지출 추정, `$0.00`. 선택 항목이고 데몬이 발행하지 않으면 숨긴다 |
 | `time` | 현지 시각 `HH:MM` |
 | `pending` | 대기 중인 승인이나 질문 |
 
@@ -337,7 +339,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `minimal` | `model` | `status` |
 | `custom` | `statusline.left`가 이름한 것 | `statusline.right`가 이름한 것 |
 
-`model` 세그먼트는 데몬이 그 모델의 값으로 보고한 추론 노력 단계를 프리셋의 구분자로 이어 붙인다. 구분자는 프리셋이 따로 그리지 않으면 `·`이고, 예를 들어 `provider/model · high`다. 노력 단계가 없거나 비어 있으면 아무것도 붙이지 않고, 모델 이름 없이 노력 단계만 있으면 그리지 않는다. 클라이언트는 첫 키 입력 전에 하네스에 이 세션이 무엇으로 도는지 묻기 때문에 첫 화면이 이미 모델과 노력 단계를 적는다. 데몬이 보고를 거절하면 둘 다 모르는 채로 남고 `could not read the runtime info: <error>` 경고 한 줄이 붙으며, 세션에 붙거나 새 세션을 시작한 뒤 오는 정체성 이벤트가 같은 두 값을 채운다. 줄이 터미널에 들어가지 않으면 중요도가 낮은 세그먼트부터 버린다. 우선순위는 `time`(가장 먼저 버림), `session`, `tokens`, `context_pct`, `path`, `pending`, `status`, `model`(가장 나중에 버림) 순이다. 마지막으로 남은 세그먼트는 화면보다 넓어도 남긴다. 잘린 모델 이름이 빈 줄보다 쓸모 있기 때문이고, 그 자리에서 가장 먼저 포기하는 것이 노력 단계라서 잘리는 자리는 뒤에 아무것도 없는 구분자 다음이 아니라 모델 이름 안이다.
+`model` 세그먼트는 데몬이 그 모델의 값으로 보고한 추론 노력 단계를 프리셋의 구분자로 이어 붙인다. 구분자는 프리셋이 따로 그리지 않으면 `·`이고, 예를 들어 `provider/model · high`다. 노력 단계가 없거나 비어 있으면 아무것도 붙이지 않고, 모델 이름 없이 노력 단계만 있으면 그리지 않는다. 클라이언트는 첫 키 입력 전에 하네스에 이 세션이 무엇으로 도는지 묻기 때문에 첫 화면이 이미 모델과 노력 단계를 적는다. 데몬이 보고를 거절하면 둘 다 모르는 채로 남고 `could not read the runtime info: <error>` 경고 한 줄이 붙으며, 세션에 붙거나 새 세션을 시작한 뒤 오는 정체성 이벤트가 같은 두 값을 채운다. `usage`와 `cost`는 선택 항목이다. 어떤 프리셋도 그리지 않고, `statusline.left`나 `statusline.right`를 직접 적은 `custom`만 그릴 수 있다. 둘 다 런타임이 보고한 값만 읽으므로 기록되지 않은 지표는 0이 아니라 아무것도 그리지 않는다. 캐시 집계를 보고하지 않은 제공자는 캐시 열 없이 `Σ↑in ↓out`만 남고, 가격표가 없는 데몬은 추정을 발행하지 않으므로 이 빌드에서 `cost`는 숨는다. 프레임마다 요청하지도 않는다. 보고는 세션으로 옮길 때와 모델이 바뀔 때 한 번씩 읽는다. 줄이 터미널에 들어가지 않으면 중요도가 낮은 세그먼트부터 버린다. 우선순위는 `time`(가장 먼저 버림), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, `model`(가장 나중에 버림) 순이다. 마지막으로 남은 세그먼트는 화면보다 넓어도 남긴다. 잘린 모델 이름이 빈 줄보다 쓸모 있기 때문이고, 그 자리에서 가장 먼저 포기하는 것이 노력 단계라서 잘리는 자리는 뒤에 아무것도 없는 구분자 다음이 아니라 모델 이름 안이다.
 
 ## 명령
 

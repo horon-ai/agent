@@ -177,6 +177,13 @@ impl App {
         // this session's `esc`, which reads the ids instead of clearing it.
         self.provider = None;
         self.tokens = None;
+        // The spending belongs to the session left behind: its totals, its
+        // route's window, and the estimate for it would all describe a
+        // conversation the client is no longer following. The bridge reads the
+        // new session's report as soon as it has moved.
+        self.capacity = None;
+        self.usage = None;
+        self.cost = None;
         self.scroll = Scroll::new();
         self.slash.dismiss();
         self.transcript.clear();

@@ -246,9 +246,15 @@ fn run_worker(
     // A failure is one notice and nothing else: the identity event that follows
     // the connect fills the same fields, and a status line that stays blank is
     // better than a client that cannot start.
+    // The model the first report names is kept: an identity event that names it
+    // again says nothing about the route, so it costs no second report.
+    let mut usage_model = None;
     match runtime::read(&client, &session_id) {
         Ok(None) => {}
         Ok(Some(incoming)) => {
+            if let Incoming::RuntimeInfo { model, .. } = &incoming {
+                usage_model = model.clone();
+            }
             if events.send(incoming).is_err() {
                 return;
             }
@@ -268,24 +274,55 @@ fn run_worker(
     if !report_todos(&events, &client, &session_id) {
         return;
     }
+    // The cumulative totals, the route's window and the spend estimate, read
+    // once here rather than per frame. A harness that does not serve the report
+    // is skipped before the request, so a segment it cannot fill stays empty
+    // instead of warning on every start.
+    if !report_usage(&events, &client, &session_id) {
+        return;
+    }
     loop {
         // The connection flag is read by the pump so a dead transport is
         // reported even while the client sits idle with nothing to send.
         let mut refresh_todos = false;
+        let mut refresh_usage = false;
         let step = pump(
             &events,
             |timeout| {
                 stream.next_result_timeout(timeout).inspect(|event| {
-                    refresh_todos |=
-                        matches!(event, Some(ApiEvent::TodoChanged { session_id: owner }) if owner == &session_id);
+                    match event {
+                        Some(ApiEvent::TodoChanged { session_id: owner }) if owner == &session_id => {
+                            refresh_todos = true
+                        }
+                        // A model change moves the route, and with it the
+                        // window the percentage divides by and the price the
+                        // estimate was made at. The event reaches the UI on its
+                        // own; this is the one place the reading is refreshed.
+                        // An identity event that names the model already read
+                        // (an effort change, a repeat after an attach) says
+                        // nothing new about the route, so it costs no request.
+                        Some(ApiEvent::ModelInfo {
+                            session_id: owner,
+                            model,
+                            ..
+                        }) if owner == &session_id && *model != usage_model => {
+                            usage_model = model.clone();
+                            refresh_usage = true
+                        }
+                        Some(_) | None => {}
+                    }
                 })
             },
             || client.is_closed(),
             &session_id,
         );
-        if !matches!(step, Step::UiGone | Step::Closed) && refresh_todos && !report_todos(&events, &client, &session_id)
-        {
-            return;
+        if !matches!(step, Step::UiGone | Step::Closed) {
+            if refresh_todos && !report_todos(&events, &client, &session_id) {
+                return;
+            }
+            if refresh_usage && !report_usage(&events, &client, &session_id) {
+                return;
+            }
         }
         match step {
             Step::UiGone | Step::Closed => return,
@@ -346,6 +383,13 @@ fn run_worker(
                     match served {
                         Ok(None) => {}
                         Ok(Some(incoming)) => {
+                            // The attach answer carries the model the new
+                            // session runs, so the identity event that follows
+                            // it names a model already known and costs no
+                            // second report.
+                            if let Incoming::Attached(session) = &incoming {
+                                usage_model = session.model.clone();
+                            }
                             if events.send(incoming).is_err() {
                                 return;
                             }
@@ -353,9 +397,12 @@ fn run_worker(
                             // holds now, never the ones captured before the
                             // request: a create replaced the client, and an
                             // attach moved the id.
+                            if resets_session && !report_skills(&events, skills::read(&client, &session_id, false)) {
+                                return;
+                            }
                             if resets_session
-                                && (!report_skills(&events, skills::read(&client, &session_id, false))
-                                    || !report_todos(&events, &client, &session_id))
+                                && (!report_todos(&events, &client, &session_id)
+                                    || !report_usage(&events, &client, &session_id))
                             {
                                 return;
                             }
@@ -477,6 +524,21 @@ fn report_todos(events: &Sender<Incoming>, client: &HoronAgentClient, session_id
         Err(error) => Incoming::Notice(format!("could not read the todo list: {error}")),
     };
     events.send(incoming).is_ok()
+}
+
+/// Send the spending the runtime reported, reporting whether the UI is still
+/// listening.
+///
+/// A harness that does not serve the report is silent rather than warning: the
+/// read happens on the client's own behalf, not because the user asked, and a
+/// status segment that cannot be filled is no reason to put a line in the
+/// transcript. A daemon that answers with a value nobody recorded sends an
+/// empty snapshot, which the segment hides.
+fn report_usage(events: &Sender<Incoming>, client: &HoronAgentClient, session_id: &str) -> bool {
+    match runtime::usage(client, session_id) {
+        Some(snapshot) => events.send(Incoming::Usage(snapshot)).is_ok(),
+        None => true,
+    }
 }
 
 /// Send the skill list the client did not ask for, reporting whether the UI is
