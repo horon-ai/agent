@@ -1057,7 +1057,7 @@ fn exit_status_metadata(status: &std::process::ExitStatus) -> serde_json::Value 
 /// Owns a bridged process until it exits or the calling cell is dropped.
 struct ForegroundChild {
     child: Option<tokio::process::Child>,
-    bridged: bool,
+    bridge_pid: Option<u32>,
 }
 
 impl ForegroundChild {
@@ -1074,10 +1074,13 @@ impl ForegroundChild {
 
 impl Drop for ForegroundChild {
     fn drop(&mut self) {
-        if self.bridged
-            && let Some(child) = self.child.take()
-        {
-            drop(tokio::task::spawn_blocking(move || super::eval::stop_child(child)));
+        if let Some(pid) = self.bridge_pid {
+            if horon_agent_platform::process::process_groups_supported() {
+                // The group can still have live children after its leader exits.
+                horon_agent_platform::process::kill_process_group(pid);
+            } else if let Some(child) = self.child.take() {
+                drop(tokio::task::spawn_blocking(move || super::eval::stop_child(child)));
+            }
         }
     }
 }
@@ -1792,10 +1795,10 @@ impl BashTool {
         // the still-running task off to the background manager instead of killing it.
         // Arm the process-tree cleanup before the worker can be cancelled.
         let mut process_group_guard =
-            horon_agent_platform::process::ProcessGroupGuard::new((!has_terminal).then_some(child_pid));
+            horon_agent_platform::process::ProcessGroupGuard::new((!bridged && !has_terminal).then_some(child_pid));
         let mut child = ForegroundChild {
             child: Some(child),
-            bridged: bridged && !horon_agent_platform::process::process_groups_supported(),
+            bridge_pid: bridged.then_some(child_pid),
         };
         let mut work_handle: tokio::task::JoinHandle<Result<ToolOutput>> = tokio::spawn(async move {
             let stdout_task = tokio::spawn(stream::collect_output(stdout_handle, stdout_progress, stdout_stream));
@@ -1860,9 +1863,8 @@ impl BashTool {
             };
 
             let status = child.wait().await?;
-            if !bridged {
-                process_group_guard.disarm();
-            }
+            drop(child);
+            process_group_guard.disarm();
             drop(process_group_guard);
 
             if let Some(task) = stdin_task {
