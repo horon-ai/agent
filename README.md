@@ -19,7 +19,7 @@
 
 horon agent is one agent with two equal modes on one engine. In headless mode a program drives a session: a one-shot command, an SDK, an editor over ACP, or a host program over stdio RPC. In TUI mode a person drives it from the terminal through the `horon-tui` client. Both modes attach to the same daemon and share its sessions, tools, MCP servers and configuration. They differ only in who is on the other end, and neither is a reduced form of the other.
 
-Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. The agent POSTs straight to your endpoint, with no router process and no plugin host in between.
+Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. One provider runtime posts directly to the configured endpoint.
 
 Each release ships two binaries built from the same tag. The agent binary `horon-agent` serves headless mode and runs the daemon both modes attach to; it never draws a full-screen terminal UI. The TUI binary `horon-tui` is a separate package built on the agent SDK and published beside it as its own archive.
 

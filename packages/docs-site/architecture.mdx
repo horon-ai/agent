@@ -26,8 +26,8 @@ server re-execs.
 
 ## The model path
 
-Model requests leave through one path: one provider runtime, no router process,
-no plugin host. The profile's `type` picks the wire, and four are accepted.
+One provider runtime sends model requests directly to the configured endpoint.
+The profile's `type` picks one of four wires.
 
 | `type` | Endpoint | `api_method` |
 | --- | --- | --- |

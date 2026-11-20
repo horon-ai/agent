@@ -19,7 +19,7 @@
 
 horon agent는 엔진 하나 위에 동등한 모드 두 개를 둔 에이전트다. 헤드리스 모드에서는 프로그램이 세션을 움직인다. 한 번만 실행하는 명령, SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램이 여기에 속한다. TUI 모드에서는 사람이 터미널 클라이언트 `horon-tui`로 직접 움직인다. 두 모드는 같은 데몬에 붙어 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 반대편에 누가 있느냐뿐이고, 어느 쪽도 다른 쪽의 축소판이 아니다.
 
-모델은 프로파일의 `type`이 고르는 네 가지 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 부른다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다.
+모델은 프로파일의 `type`이 고르는 네 가지 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 부른다. 공급자 런타임 하나가 설정된 엔드포인트로 직접 POST한다.
 
 릴리스마다 같은 태그에서 빌드한 바이너리 두 개가 나온다. 에이전트 바이너리 `horon-agent`는 헤드리스 모드를 맡고 두 모드가 붙는 데몬을 돌리며, 전체 화면 터미널 UI를 그리지 않는다. TUI 바이너리 `horon-tui`는 에이전트 SDK 위에 만든 별도 패키지이고, 에이전트 옆에 자체 압축 파일로 나온다.
 
