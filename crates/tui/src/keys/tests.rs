@@ -151,6 +151,7 @@ fn keys_defaults_reproduce_the_shipped_keys() {
         (ids::APP_SCROLL_UP, "shift+up"),
         (ids::APP_SCROLL_DOWN, "shift+down"),
         (ids::APP_SCROLL_BOTTOM, "ctrl+end"),
+        (ids::APP_REPAINT, "ctrl+l"),
     ] {
         assert_eq!(editing(name), Some(id), "`{name}` is not bound to `{id}`");
         assert!(
@@ -454,6 +455,29 @@ fn keys_editor_keys_can_be_remapped() {
     app.on_key(key(KeyCode::Char('X')));
     assert_eq!(app.input.text(), "Xab");
     assert_eq!(app.input.cursor(), 1);
+}
+
+#[test]
+fn keys_the_repaint_key_can_be_moved_off_ctrl_l() {
+    let (_directory, loader) = loader_with("\"app.repaint\" = [\"f5\"]\n");
+    assert!(loader.warnings().is_empty(), "{:?}", loader.warnings());
+    let mut app = app();
+    app.bindings = loader.bindings().clone();
+    assert!(!app.take_repaint_request());
+    assert_eq!(app.on_key(key(KeyCode::F(5))), None);
+    assert!(app.take_repaint_request(), "the remapped key did not ask for a draw");
+
+    // The key it moved off belongs to nobody now: it must not repaint, type
+    // into the draft, or reach the harness.
+    assert_eq!(app.on_key(control('l')), None);
+    assert!(!app.take_repaint_request(), "`ctrl+l` still repainted after the move");
+    assert!(app.input.text().is_empty(), "`ctrl+l` typed into the draft");
+
+    // Turning the action off leaves the key doing nothing at all.
+    let (_directory, loader) = loader_with("\"app.repaint\" = []\n");
+    app.bindings = loader.bindings().clone();
+    assert_eq!(app.on_key(control('l')), None);
+    assert!(!app.take_repaint_request(), "an unbound `ctrl+l` asked for a draw");
 }
 
 fn typed(app: &mut App, text: &str) {
