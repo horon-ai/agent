@@ -312,6 +312,15 @@ impl Transcript {
         Some(&self.streaming.text)
     }
 
+    /// The newest assistant answers, including any text still streaming.
+    pub(crate) fn recent_assistant_text(&self, messages: usize) -> impl Iterator<Item = &str> {
+        let committed = self.items.iter().rev().filter_map(|item| match item {
+            Item::Assistant(text) => Some(text.as_str()),
+            _ => None,
+        });
+        self.open_text().into_iter().chain(committed).take(messages)
+    }
+
     /// Record a user message, closing any partly streamed reply first.
     pub fn push_user(&mut self, text: impl Into<String>) {
         self.finish_stream();
@@ -911,6 +920,20 @@ mod tests {
         transcript.text_replace(Some("m1"), "");
         transcript.finish_stream();
         assert!(transcript.items().is_empty());
+    }
+
+    #[test]
+    fn recent_assistant_text_keeps_answers_only() {
+        let mut transcript = Transcript::new();
+        transcript.push_user("look at https://user.example/");
+        transcript.push_assistant("first https://one.example/");
+        transcript.push_assistant("second https://two.example/");
+        transcript.text_delta(Some("m9"), "streaming https://three.example/");
+        assert_eq!(
+            transcript.recent_assistant_text(2).collect::<Vec<_>>(),
+            vec!["streaming https://three.example/", "second https://two.example/"]
+        );
+        assert_eq!(transcript.recent_assistant_text(8).count(), 3);
     }
 
     #[test]

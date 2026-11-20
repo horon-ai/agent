@@ -116,6 +116,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
+        "links" => "list the http(s) links in recent answers and open one",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "quit" => "leave",
