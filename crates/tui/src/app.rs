@@ -97,6 +97,11 @@ pub enum Action {
     /// Hand the draft to the user's editor; the loop answers this one itself,
     /// because the editor needs the terminal the loop is drawing on.
     EditDraft,
+    /// Open a retained artifact of this session as a private copy in the
+    /// editor. The path is resolved before the action leaves the app, so only a
+    /// file this session's store holds can arrive here; like `EditDraft`, the
+    /// loop answers it because the editor needs the terminal.
+    OpenArtifact(std::path::PathBuf),
     /// Leave.
     Quit,
 }
@@ -281,6 +286,22 @@ pub struct App {
     pub settings: Settings,
     /// Where user theme files are read from, offered by the settings screen.
     pub themes_dir: std::path::PathBuf,
+    /// The artifact store root (`$HORON_HOME/artifacts`), read by `/artifact`.
+    ///
+    /// Held apart from the session id so a test can point the command at a
+    /// temporary store instead of the user's own, exactly as `themes_dir` does
+    /// for the theme loader.
+    pub artifacts_dir: std::path::PathBuf,
+    /// Whether the attached session runs on this client's own harness.
+    ///
+    /// Set from the connection itself, not from an address a line carries: an
+    /// explicit `--socket` or a `HORON_AGENT_API_SOCKET` override may point at
+    /// an SSH forward or a remote bridge, where a session id can coincide with a
+    /// local id while naming another conversation. Anything that reads this
+    /// machine's disk for the session is offered only while this is true; the
+    /// artifact store is the first such read, and #500 gates path completion on
+    /// the same evidence.
+    pub workspace_is_local: bool,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
     /// The open list of models or sessions, if one is showing.
@@ -342,6 +363,8 @@ impl App {
             skills: Vec::new(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
+            workspace_is_local: false,
             overlay: None,
             picker: None,
             pending_change: None,
@@ -399,6 +422,8 @@ impl App {
             skills: Vec::new(),
             settings: Settings::defaults(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
+            workspace_is_local: false,
             overlay: None,
             picker: None,
             pending_change: None,

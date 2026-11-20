@@ -10,6 +10,7 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+mod artifact;
 pub mod commands;
 pub mod context;
 mod editor;
@@ -91,6 +92,10 @@ mod markdown_tests;
 mod help_tests;
 
 #[cfg(test)]
+#[path = "artifact_tests.rs"]
+mod artifact_tests;
+
+#[cfg(test)]
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
 
@@ -154,6 +159,8 @@ Commands:
   /help          list the commands (built-in, harness, command files),
                  the skills and the keys in force; /help <command>
                  describes one of them
+  /artifact [id] open a retained artifact of this session in $VISUAL or
+                 $EDITOR, as a private copy; with no id, list them
   /clear         clear the transcript pane
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
@@ -344,7 +351,12 @@ pub(crate) fn window_label(app: &App) -> String {
 /// Drive the real terminal until the user leaves.
 fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
     let mut themes = ThemeLoader::new();
+    // Read before the events travel with the app: whether the session runs on
+    // this machine decides what may read this machine's disk for it, and the
+    // artifact store is the first such read.
+    let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
+    app.workspace_is_local = local;
     // The stderr copy of these warnings is wiped by the alternate screen, so
     // the transcript carries them for the person using the interface.
     for warning in reloader.warnings() {
@@ -588,6 +600,18 @@ where
                                 // frame can be drawn and no key can be read:
                                 // the loop ends and the caller restores and
                                 // reports on the shell's screen.
+                                failure = Some(message);
+                                app.running = false;
+                                app.exit_code = 1;
+                                break;
+                            }
+                        }
+                        // The artifact was resolved before the action left
+                        // the app; only the screen is lent to the editor here.
+                        crate::app::Action::OpenArtifact(path) => {
+                            if let Some(message) =
+                                loop_io::hand_over_artifact(terminal, app, title, &mut mouse_captured, &path)
+                            {
                                 failure = Some(message);
                                 app.running = false;
                                 app.exit_code = 1;

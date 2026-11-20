@@ -6,6 +6,10 @@
 //! live under `~/.horon/artifacts/<session>/` and are bounded twice: one
 //! file is cut to its first and last 8 MiB, and a session's total is capped so
 //! a runaway command cannot fill the disk.
+//!
+//! The TUI reads this layout for its `/artifact` command
+//! (`crates/tui/src/artifact.rs`) and never writes it. A change to the file
+//! names here is a change there.
 
 use anyhow::{Context, Result};
 use std::fs;

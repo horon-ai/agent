@@ -395,6 +395,7 @@ fn builtin_help_lists_every_built_in_command() {
     assert_eq!(type_line(&mut app, "/help"), None);
     let listing = last_line(&app);
     for name in [
+        "/artifact",
         "/clear",
         "/exit",
         "/help",
@@ -451,5 +452,133 @@ fn builtin_help_names_what_new_and_switch_do() {
     assert!(
         detail.contains("stored session"),
         "the detail did not say what /switch does:\n{detail}"
+    );
+}
+
+/// An app attached to `session` on this client's own harness, with
+/// `/artifact` pointed at a temporary store.
+fn artifact_app(session: &str) -> (tempfile::TempDir, App) {
+    let (_user, _project, mut app) = app_fixture();
+    let root = tempfile::tempdir().expect("an artifact root");
+    app.artifacts_dir = root.path().to_path_buf();
+    app.session_id = Some(session.to_string());
+    app.workspace_is_local = true;
+    (root, app)
+}
+
+/// Write one artifact into the store under `root`, as the harness does.
+fn write_artifact(root: &Path, session: &str, name: &str, text: &str) -> std::path::PathBuf {
+    let directory = root.join(session);
+    std::fs::create_dir_all(&directory).expect("a session store");
+    let path = directory.join(name);
+    std::fs::write(&path, text).expect("an artifact");
+    path
+}
+
+#[test]
+fn builtin_artifact_opens_a_copy_of_the_attached_sessions_artifact() {
+    let (root, mut app) = artifact_app("session_a");
+    let path = write_artifact(root.path(), "session_a", "3.bash.log", "output");
+    assert_eq!(
+        type_line(&mut app, "/artifact 3"),
+        Some(Action::OpenArtifact(path.clone())),
+        "a retained artifact did not produce the open action"
+    );
+    // The pointer the transcript prints names the same artifact.
+    assert_eq!(
+        type_line(&mut app, "/artifact artifact://3"),
+        Some(Action::OpenArtifact(path))
+    );
+}
+
+#[test]
+fn builtin_artifact_refuses_another_sessions_remote_paths_and_stale_ids() {
+    let (root, mut app) = artifact_app("session_a");
+    write_artifact(root.path(), "session_b", "3.bash.log", "not this session");
+
+    // The id exists, but only in the other session's store.
+    assert_eq!(type_line(&mut app, "/artifact artifact://3"), None);
+    assert!(
+        last_line(&app).contains("not in this session's store"),
+        "a foreign id resolved: {}",
+        last_line(&app)
+    );
+
+    // A session prefix is not part of an address this client reads.
+    assert_eq!(type_line(&mut app, "/artifact session_b:3"), None);
+    assert!(
+        last_line(&app).contains("not an artifact id"),
+        "a session-qualified id was not refused: {}",
+        last_line(&app)
+    );
+
+    assert_eq!(type_line(&mut app, "/artifact https://example.com/output.log"), None);
+    assert!(
+        last_line(&app).contains("not an artifact address"),
+        "a remote address was not refused: {}",
+        last_line(&app)
+    );
+
+    assert_eq!(type_line(&mut app, "/artifact /etc/passwd"), None);
+    assert!(
+        last_line(&app).contains("not an artifact address"),
+        "a path was not refused: {}",
+        last_line(&app)
+    );
+}
+
+#[test]
+fn builtin_artifact_needs_an_attached_session() {
+    let (_user, _project, mut app) = app_fixture();
+    app.workspace_is_local = true;
+    assert_eq!(type_line(&mut app, "/artifact 0"), None);
+    assert!(
+        last_line(&app).contains("no session is attached"),
+        "the missing session was not reported: {}",
+        last_line(&app)
+    );
+}
+
+#[test]
+fn builtin_artifact_is_refused_when_the_connection_is_not_this_harness() {
+    let (root, mut app) = artifact_app("session_a");
+    // The store holds a file under the very id the remote session reported;
+    // without the connection gate this would open a stranger's artifact.
+    write_artifact(root.path(), "session_a", "3.bash.log", "a local session's output");
+    app.workspace_is_local = false;
+
+    assert_eq!(type_line(&mut app, "/artifact 3"), None);
+    assert!(
+        last_line(&app).contains("explicit socket or a remote bridge"),
+        "an explicit or remote connection was not refused: {}",
+        last_line(&app)
+    );
+    // The listing reads the same local disk, so it is refused too.
+    assert_eq!(type_line(&mut app, "/artifact"), None);
+    assert!(
+        last_line(&app).contains("explicit socket or a remote bridge"),
+        "the listing was not refused for a remote session: {}",
+        last_line(&app)
+    );
+}
+
+#[test]
+fn builtin_artifact_lists_the_store_when_no_id_is_given() {
+    let (root, mut app) = artifact_app("session_a");
+    write_artifact(root.path(), "session_a", "0.read.log", "first");
+    write_artifact(root.path(), "session_a", "2.bash.log", "later output");
+    assert_eq!(type_line(&mut app, "/artifact"), None);
+    let listing = last_line(&app);
+    assert!(
+        listing.starts_with("artifacts:"),
+        "`/artifact` did not print the store section:\n{listing}"
+    );
+    assert!(
+        listing.contains("   0") && listing.contains("read"),
+        "the first artifact is missing from the listing:\n{listing}"
+    );
+    assert!(
+        listing.contains("   2") && listing.contains("bash"),
+        "the second artifact is missing from the listing:\n{listing}"
     );
 }

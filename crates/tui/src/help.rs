@@ -108,6 +108,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 /// The line that explains one built-in UI command.
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
+        "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
         "clear" => "clear the transcript",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",

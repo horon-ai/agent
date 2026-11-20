@@ -4,8 +4,8 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
-//!    `/exit`, `/help`, `/keys`, `/clear`, `/model`, `/effort`, `/new`,
-//!    `/settings`, `/resume`, `/skills` and `/switch`.
+//!    `/exit`, `/help`, `/artifact`, `/keys`, `/clear`, `/model`, `/effort`,
+//!    `/new`, `/settings`, `/resume`, `/skills` and `/switch`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -52,6 +52,8 @@ pub enum Local {
     Exit,
     /// List every command.
     Help,
+    /// Open a retained artifact of this session in the editor.
+    Artifact,
     /// List the keys in force and what each does.
     Keys,
     /// Clear the transcript pane.
@@ -79,6 +81,7 @@ impl Local {
             "quit" => Some(Self::Quit),
             "exit" => Some(Self::Exit),
             "help" => Some(Self::Help),
+            "artifact" => Some(Self::Artifact),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
             "model" => Some(Self::Model),
@@ -98,6 +101,7 @@ impl Local {
             Self::Quit => "quit",
             Self::Exit => "exit",
             Self::Help => "help",
+            Self::Artifact => "artifact",
             Self::Keys => "keys",
             Self::Clear => "clear",
             Self::Model => "model",
@@ -588,8 +592,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 12] = [
-    "clear", "effort", "exit", "help", "keys", "model", "new", "quit", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 13] = [
+    "artifact", "clear", "effort", "exit", "help", "keys", "model", "new", "quit", "resume", "settings", "skills",
+    "switch",
 ];
 
 /// Every runtime command, in declaration order.

@@ -1,9 +1,9 @@
 //! Editing the draft in the user's own editor.
 //!
-//! `VISUAL`, then `EDITOR`, names the program. The draft goes into a 0600 file
-//! inside a private temporary directory, the program runs on that file, and what
-//! it saved comes back as the draft: nothing is sent, and a program that is
-//! missing or exits non-zero leaves the draft exactly as it was.
+//! `VISUAL`, then `EDITOR`, names the program. The draft goes into a private
+//! temporary file, the program runs on that file, and what it saved comes back
+//! as the draft: nothing is sent, and a program that is missing or exits
+//! non-zero leaves the draft exactly as it was.
 //!
 //! The value is split by `shlex`, which is POSIX word syntax and nothing else: a
 //! quoted path stays one word, `$HOME` stays seven characters, and no value can
@@ -11,10 +11,21 @@
 //! start of a comment, as a shell would; a program or path with a `#` in it is
 //! written quoted.
 //!
-//! What the editor left is read back only when it is the regular file this user
-//! wrote: a link, a pipe or a directory put in its place is refused, and so is a
-//! file past the size limit. The screen is not this module's business: the
-//! caller hands the terminal over before [`edit`] and takes it back after.
+//! The file is `tempfile`'s own contract: an unpredictable name, mode 0600, and
+//! removal on drop. What the editor left is read back only when it is still a
+//! regular file and no larger than [`MAX_DRAFT_BYTES`]: a link, a pipe or a
+//! directory put in its place is refused. The platform crate's no-follow open is
+//! not reachable from this client, so the entry is inspected before it is opened
+//! and the opened handle's own metadata decides afterwards; the editor has
+//! finished by then, so the only writer that could race that check is another
+//! process of the same user.
+//!
+//! The screen is not this module's business: the caller hands the terminal over
+//! before [`edit`] and takes it back after.
+//!
+//! [`open_copy`] hands the program a private copy of a retained artifact and
+//! reads nothing back: the source is only read, so an edit lands in the copy
+//! that is removed with it.
 
 use std::fmt;
 use std::io::{Read, Write};
@@ -29,6 +40,17 @@ const MAX_DRAFT_MIB: u64 = 4;
 
 /// The same limit in bytes.
 const MAX_DRAFT_BYTES: u64 = MAX_DRAFT_MIB * 1024 * 1024;
+
+/// The most an artifact copy may read from the store before it is refused.
+///
+/// A retained artifact is at most 16 MiB, because the store keeps a head and a
+/// tail of 8 MiB each, so this is a ceiling on the copy rather than on the
+/// artifact. It is checked before the bytes are read and again on the count the
+/// read saw.
+const MAX_COPY_MIB: u64 = 32;
+
+/// The copy limit in bytes.
+const MAX_COPY_BYTES: u64 = MAX_COPY_MIB * 1024 * 1024;
 
 /// The program that edits a draft, already split into words.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +100,7 @@ pub(crate) enum Problem {
     Missing,
     /// The value cannot be read as a command line.
     Unusable(String),
-    /// The private directory or the draft file in it could not be prepared.
+    /// The temporary file could not be prepared or written.
     TempFile(String),
     /// The program could not be started.
     Start(String),
@@ -92,6 +114,14 @@ pub(crate) enum Problem {
     TooLarge,
     /// The saved draft is not UTF-8, so the draft on screen is kept.
     NotText,
+    /// The retained artifact could not be inspected or read.
+    Source(String),
+    /// The retained artifact is a link, a directory or another non-file.
+    SourceReplaced,
+    /// The retained artifact is past the copy limit.
+    SourceTooLarge,
+    /// The editor ran on an artifact copy and failed; the copy is discarded.
+    SourceExit(String),
 }
 
 impl fmt::Display for Problem {
@@ -111,18 +141,21 @@ impl fmt::Display for Problem {
                 "the editor saved more than {MAX_DRAFT_MIB} MiB; the draft is unchanged"
             ),
             Self::NotText => formatter.write_str("the editor saved text that is not UTF-8; the draft is unchanged"),
+            Self::Source(error) => write!(formatter, "cannot read the artifact: {error}"),
+            Self::SourceReplaced => formatter.write_str("the artifact is a link or another kind of file; not opened"),
+            Self::SourceTooLarge => write!(formatter, "the artifact is larger than {MAX_COPY_MIB} MiB; not opened"),
+            Self::SourceExit(status) => write!(formatter, "the editor {status}; the artifact copy was discarded"),
         }
     }
 }
 
 /// Run `program` over `draft` and return the text it saved.
 ///
-/// The file is private to this user, holds the draft before the program starts,
-/// and is removed with its directory on every path out, including the failing
-/// ones. A failed exit is not read back: editing text a program half wrote is
-/// how a draft gets replaced by a file that was never saved.
+/// The file is removed on every path out, including the failing ones. A failed
+/// exit is not read back: editing text a program half wrote is how a draft gets
+/// replaced by a file that was never saved.
 pub(crate) fn edit(draft: &str, program: &Program) -> Result<String, Problem> {
-    let file = Draft::create(draft)?;
+    let file = prepare(draft)?;
     let outcome = std::process::Command::new(&program.program)
         .args(&program.arguments)
         .arg(file.path())
@@ -135,6 +168,78 @@ pub(crate) fn edit(draft: &str, program: &Program) -> Result<String, Problem> {
         return Err(Problem::Exit(describe(status)));
     }
     read_saved(file.path())
+}
+
+/// Write `draft` into the temporary file the editor is given.
+///
+/// `tempfile` owns the name, the mode and the removal: the name carries enough
+/// randomness that it cannot be guessed, the file is created with `create_new`
+/// as mode 0600, and dropping the handle removes whatever is at that path.
+fn prepare(draft: &str) -> Result<tempfile::NamedTempFile, Problem> {
+    let mut file = tempfile::Builder::new()
+        .prefix("horon-draft-")
+        .suffix(".md")
+        .tempfile()
+        .map_err(|error| Problem::TempFile(error.to_string()))?;
+    file.write_all(draft.as_bytes())
+        .map_err(|error| Problem::TempFile(error.to_string()))?;
+    Ok(file)
+}
+
+/// Run `program` over a private copy of the artifact at `source`.
+///
+/// The store's file is only read: the editor is never handed that path, and
+/// what it saves is not read back, so an edit lands in the copy and nowhere the
+/// transcript can see. The copy is `tempfile`'s own 0600 file and is removed
+/// when the program exits, including a failing one. A source that is a link, a
+/// pipe or a directory, or one past the copy limit, is refused before a byte is
+/// copied.
+pub(crate) fn open_copy(source: &Path, program: &Program) -> Result<(), Problem> {
+    let copy = prepare_copy(source)?;
+    let outcome = std::process::Command::new(&program.program)
+        .args(&program.arguments)
+        .arg(copy.path())
+        .status();
+    match outcome {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(Problem::SourceExit(describe(status))),
+        Err(error) => Err(Problem::Start(format!("`{}`: {error}", program.program))),
+    }
+}
+
+/// Copy the artifact at `source` into the temporary file the editor is given.
+///
+/// The store's file is inspected before it is opened and the opened handle's
+/// metadata again after, exactly as [`read_saved`] checks a saved draft, so a
+/// link or a directory in its place is refused. The size limit is checked on the
+/// metadata and again on the count the copy actually moved, because the artifact
+/// can grow between the two.
+fn prepare_copy(source: &Path) -> Result<tempfile::NamedTempFile, Problem> {
+    let entry = std::fs::symlink_metadata(source).map_err(|error| Problem::Source(error.to_string()))?;
+    if !entry.file_type().is_file() {
+        return Err(Problem::SourceReplaced);
+    }
+    let file = std::fs::File::open(source).map_err(|error| Problem::Source(error.to_string()))?;
+    let metadata = file.metadata().map_err(|error| Problem::Source(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(Problem::SourceReplaced);
+    }
+    if metadata.len() > MAX_COPY_BYTES {
+        return Err(Problem::SourceTooLarge);
+    }
+    let mut copy = tempfile::Builder::new()
+        .prefix("horon-artifact-")
+        .suffix(".log")
+        .tempfile()
+        .map_err(|error| Problem::TempFile(error.to_string()))?;
+    let mut reader = file.take(MAX_COPY_BYTES + 1);
+    let copied = std::io::copy(&mut reader, copy.as_file_mut()).map_err(|error| Problem::Source(error.to_string()))?;
+    // The artifact can grow between the metadata and the read, so the count that
+    // decides is the one the copy actually saw.
+    if copied > MAX_COPY_BYTES {
+        return Err(Problem::SourceTooLarge);
+    }
+    Ok(copy)
 }
 
 /// How a finished process failed, for the line the transcript keeps.
@@ -153,7 +258,7 @@ fn read_saved(path: &Path) -> Result<String, Problem> {
     if !entry.file_type().is_file() {
         return Err(Problem::Replaced);
     }
-    let file = open_saved(path)?;
+    let file = std::fs::File::open(path).map_err(|error| Problem::Read(error.to_string()))?;
     // The handle is what the read comes from, so its own metadata decides: a
     // swap between the check above and the open cannot change this answer.
     let metadata = file.metadata().map_err(|error| Problem::Read(error.to_string()))?;
@@ -176,102 +281,15 @@ fn read_saved(path: &Path) -> Result<String, Problem> {
     String::from_utf8(saved).map_err(|_| Problem::NotText)
 }
 
-/// Open the saved draft without following a link.
-///
-/// `O_NOFOLLOW` is the Unix half: the open fails when the path is a link, so a
-/// link that appeared after the check in [`read_saved`] is still refused.
-/// Windows has no equivalent flag, where that check before the open is the whole
-/// guard.
-fn open_saved(path: &Path) -> Result<std::fs::File, Problem> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    match options.open(path) {
-        Ok(file) => Ok(file),
-        Err(error) => Err(open_problem(error)),
-    }
-}
-
-/// Why the open in [`open_saved`] failed.
-fn open_problem(error: std::io::Error) -> Problem {
-    #[cfg(unix)]
-    {
-        if error.raw_os_error() == Some(libc::ELOOP) {
-            return Problem::Replaced;
-        }
-    }
-    Problem::Read(error.to_string())
-}
-
-/// The file the editor is given, and the private directory it lives in.
-///
-/// `tempfile` creates the directory readable only by this user and the file with
-/// mode 0600, so the name cannot be guessed into an existing file and no other
-/// account can open the draft. Both are removed when the edit ends, file first;
-/// the removal is by path, so a file an editor renamed into place is cleaned up
-/// with the one it replaced.
-struct Draft {
-    file: tempfile::NamedTempFile,
-    _directory: tempfile::TempDir,
-}
-
-impl Draft {
-    /// Write `text` into a new private file.
-    fn create(text: &str) -> Result<Self, Problem> {
-        let mut builder = tempfile::Builder::new();
-        builder.prefix("horon-draft-");
-        // The file inside is 0600 either way; a directory only this user may
-        // enter also keeps its name, and the draft, out of sight.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            builder.permissions(std::fs::Permissions::from_mode(0o700));
-        }
-        let directory = builder
-            .tempdir()
-            .map_err(|error| Problem::TempFile(error.to_string()))?;
-        let mut file = tempfile::Builder::new()
-            .prefix("draft-")
-            .suffix(".md")
-            .tempfile_in(directory.path())
-            .map_err(|error| Problem::TempFile(error.to_string()))?;
-        file.write_all(text.as_bytes())
-            .map_err(|error| Problem::TempFile(error.to_string()))?;
-        Ok(Self {
-            file,
-            _directory: directory,
-        })
-    }
-
-    /// The file the editor is given.
-    fn path(&self) -> &Path {
-        self.file.path()
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Problem, Program};
+    use super::{Problem, Program, prepare, read_saved};
 
     fn program(program: &str, arguments: &[&str]) -> Program {
         Program {
             program: program.to_string(),
             arguments: arguments.iter().map(|word| word.to_string()).collect(),
         }
-    }
-
-    /// An executable script the editor tests run as the editor.
-    #[cfg(unix)]
-    fn script(directory: &std::path::Path, body: &str) -> Program {
-        use std::os::unix::fs::PermissionsExt;
-        let path = directory.join("editor.sh");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("a script");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("exec bit");
-        program(&path.display().to_string(), &[])
     }
 
     #[test]
@@ -301,97 +319,113 @@ mod tests {
         assert!(matches!(broken, Err(Problem::Unusable(_))));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn a_draft_file_is_private_to_this_user() {
-        use std::os::unix::fs::PermissionsExt;
-        let draft = super::Draft::create("secret").expect("a draft");
-        let metadata = std::fs::metadata(draft.path()).expect("the file");
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_draft_file_lives_only_as_long_as_the_edit() {
+    fn the_draft_reaches_the_file_and_leaves_with_it() {
+        let draft = "line one\nline two\n";
         let path = {
-            let draft = super::Draft::create("kept").expect("a draft");
-            let path = draft.path().to_path_buf();
-            assert!(path.exists());
+            let file = prepare(draft).expect("a draft file");
+            let path = file.path().to_path_buf();
+            assert_eq!(std::fs::read_to_string(&path).expect("the draft"), draft);
             path
         };
         assert!(!path.exists(), "the draft outlived its edit");
     }
 
-    #[cfg(unix)]
     #[test]
-    fn a_test_editor_round_trips_a_multiline_draft() {
+    fn a_saved_draft_is_read_back_whole() {
         let directory = tempfile::tempdir().expect("a temporary directory");
-        // Reads what the client wrote and adds a line: the saved text proves the
-        // editor was handed the draft, not only the file name.
-        let editor = script(directory.path(), "printf 'line three\\n' >> \"$1\"");
-        let saved = super::edit("line one\nline two\n", &editor).expect("the saved draft");
-        assert_eq!(saved, "line one\nline two\nline three\n");
+        let path = directory.path().join("saved.md");
+        std::fs::write(&path, "line one\nline two\n").expect("the saved draft");
+        assert_eq!(read_saved(&path).expect("the draft"), "line one\nline two\n");
     }
 
-    #[cfg(unix)]
     #[test]
-    fn bytes_that_are_not_text_keep_the_draft() {
+    fn a_directory_is_not_a_saved_draft() {
         let directory = tempfile::tempdir().expect("a temporary directory");
-        let editor = script(directory.path(), "printf '\\377' > \"$1\"");
-        assert_eq!(super::edit("typed", &editor), Err(Problem::NotText));
+        assert_eq!(read_saved(directory.path()), Err(Problem::Replaced));
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn a_link_the_editor_left_is_not_read() {
-        let directory = tempfile::tempdir().expect("a temporary directory");
-        let target = directory.path().join("target.md");
-        std::fs::write(&target, "not the draft").expect("a target file");
-        let editor = script(
-            directory.path(),
-            &format!("rm -f \"$1\"; ln -s '{}' \"$1\"", target.display()),
-        );
-        assert_eq!(super::edit("typed", &editor), Err(Problem::Replaced));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_pipe_the_editor_left_is_not_opened() {
-        let directory = tempfile::tempdir().expect("a temporary directory");
-        let editor = script(directory.path(), "rm -f \"$1\"; mkfifo \"$1\"");
-        assert_eq!(super::edit("typed", &editor), Err(Problem::Replaced));
-    }
-
-    #[cfg(unix)]
     #[test]
     fn a_save_past_the_size_limit_is_refused() {
         let directory = tempfile::tempdir().expect("a temporary directory");
-        // Zero bytes are valid UTF-8, so only the limit can refuse this one.
-        let editor = script(
-            directory.path(),
-            "dd if=/dev/zero of=\"$1\" bs=1048576 count=5 2>/dev/null",
-        );
-        assert_eq!(super::edit("typed", &editor), Err(Problem::TooLarge));
+        let path = directory.path().join("huge.md");
+        // Text, so only the limit can refuse this one.
+        let text = vec![b'x'; super::MAX_DRAFT_BYTES as usize + 1];
+        std::fs::write(&path, text).expect("the oversized draft");
+        assert_eq!(read_saved(&path), Err(Problem::TooLarge));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn a_failed_editor_yields_no_text_and_leaves_nothing_behind() {
+    fn bytes_that_are_not_text_keep_the_draft() {
         let directory = tempfile::tempdir().expect("a temporary directory");
-        let recorded = directory.path().join("seen");
-        let editor = script(
-            directory.path(),
-            &format!("printf '%s' \"$1\" > '{}'; exit 3", recorded.display()),
+        let path = directory.path().join("saved.md");
+        std::fs::write(&path, [0xFFu8]).expect("the saved bytes");
+        assert_eq!(read_saved(&path), Err(Problem::NotText));
+    }
+
+    #[test]
+    fn an_artifact_is_copied_whole_and_the_source_is_left_alone() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let source = directory.path().join("12.bash.log");
+        std::fs::write(&source, "original output").expect("the artifact");
+        let copy = super::prepare_copy(&source).expect("the copy");
+        assert_ne!(
+            copy.path(),
+            source.as_path(),
+            "the editor would have been handed the retained file"
         );
-        let outcome = super::edit("typed", &editor);
-        match outcome {
-            Err(Problem::Exit(status)) => assert!(status.contains('3'), "status: {status}"),
-            other => panic!("expected a failed exit, got {other:?}"),
+        assert_eq!(
+            std::fs::read_to_string(copy.path()).expect("the copy is readable"),
+            "original output",
+            "the copy does not hold the artifact"
+        );
+        let copy_path = copy.path().to_path_buf();
+        drop(copy);
+        assert!(!copy_path.exists(), "the artifact copy outlived the open");
+        assert_eq!(
+            std::fs::read_to_string(&source).expect("the artifact is still there"),
+            "original output",
+            "the retained artifact was written to"
+        );
+    }
+
+    #[test]
+    fn a_directory_in_place_of_an_artifact_is_not_copied() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        // A link is refused by the same regular-file check; creating one is the
+        // platform's business and is covered by the PTY receipt.
+        assert_eq!(super::prepare_copy(directory.path()), Err(Problem::SourceReplaced));
+    }
+
+    #[test]
+    fn an_artifact_past_the_copy_limit_is_refused_before_it_is_read() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let source = directory.path().join("12.bash.log");
+        let file = std::fs::File::create(&source).expect("an artifact");
+        // Sparse, so the limit is tested without writing 32 MiB.
+        file.set_len(super::MAX_COPY_BYTES + 1).expect("a large artifact");
+        drop(file);
+        assert_eq!(super::prepare_copy(&source), Err(Problem::SourceTooLarge));
+    }
+
+    #[test]
+    fn an_editor_that_cannot_start_is_reported_and_the_source_is_kept() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let source = directory.path().join("12.bash.log");
+        std::fs::write(&source, "original output").expect("the artifact");
+        // A program no platform has: the failure is the start, not the exit, so
+        // nothing has to exist to run it.
+        let editor = program("horon-tui-test-no-such-editor", &[]);
+        match super::open_copy(&source, &editor) {
+            Err(Problem::Start(message)) => {
+                assert!(message.contains("horon-tui-test-no-such-editor"), "message: {message}");
+            }
+            other => panic!("expected an editor that could not be started, got {other:?}"),
         }
-        let seen = std::fs::read_to_string(&recorded).expect("the path the editor saw");
-        assert!(
-            !std::path::Path::new(&seen).exists(),
-            "the draft file survived the failure"
+        assert_eq!(
+            std::fs::read_to_string(&source).expect("the artifact is still there"),
+            "original output",
+            "a failed editor reached the retained artifact"
         );
     }
 }

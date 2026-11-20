@@ -131,6 +131,17 @@ pub struct Runtime {
     pub events: Receiver<Incoming>,
     /// One-line description of what the client is attached to.
     pub description: String,
+    /// Whether the session runs on the client's own harness.
+    ///
+    /// True only when the connection used the default resolution: `--socket`
+    /// unset and `HORON_AGENT_API_SOCKET` unset, so `HoronAgentClient::connect`
+    /// resolved this user's runtime socket and `ensure_runtime` started that
+    /// daemon here. An explicit socket, or one the environment names, may be an
+    /// SSH forward or a remote bridge; a session id from it can coincide with a
+    /// local id without naming the same conversation, so nothing that reads this
+    /// machine's own files for the session may run for it. The artifact store is
+    /// the first such read; #500 gates local workspace paths on the same evidence.
+    pub local: bool,
 }
 
 /// Connect, attach to or create a session, and start the bridge thread.
@@ -147,6 +158,11 @@ pub struct Runtime {
 /// client and daemon built against different protocol versions, and a session
 /// id the daemon does not have.
 pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Option<&str>) -> Result<Runtime, String> {
+    // Read before the options are consumed by the connection: an explicit
+    // socket names an endpoint this client did not start, and a forwarded one
+    // speaks for a harness on another machine. Only the default resolution is
+    // this user's own daemon, because `ensure_runtime` launches it here.
+    let local = options.socket_path.is_none() && std::env::var_os("HORON_AGENT_API_SOCKET").is_none();
     let socket = options
         .socket_path
         .clone()
@@ -188,6 +204,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         commands: command_tx,
         events: event_rx,
         description,
+        local,
     })
 }
 
