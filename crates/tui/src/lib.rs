@@ -37,6 +37,7 @@ mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
+mod visual_blocks;
 mod wrap;
 
 #[cfg(test)]
@@ -1022,6 +1023,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         symbols: *symbols,
         width,
         markdown: item_lines::markdown_enabled(settings),
+        visual_blocks: item_lines::visual_blocks_enabled(settings),
     };
     let open = [
         open_rows(transcript.open_reasoning(), &look, true),
