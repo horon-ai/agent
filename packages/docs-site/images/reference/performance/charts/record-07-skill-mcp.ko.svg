@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="306" viewBox="0 0 960 306" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', 'Apple SD Gothic Neo', Helvetica, Arial, sans-serif" role="img">
+<title>스킬·MCP 로딩: 같은 잡에서 기준선과 후보</title>
+<rect x="0.5" y="0.5" width="959" height="305" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="32" y="20" width="5" height="26" rx="1" fill="#0b84de"/>
+<text x="46.0" y="42.0" font-size="21" fill="#1f2328" text-anchor="start" font-weight="bold">스킬·MCP 로딩: 같은 잡에서 기준선과 후보</text>
+<text x="32.0" y="72.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">실행 42461323656, `ubuntu-24.04`, 양쪽 3회 워밍업 뒤 30회 측정.</text>
+<text x="305.6" y="115.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">skill_request_overlay, 스킬 200</text>
+<rect x="317.6" y="102.0" width="458.3" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="317.6" y="102.0" width="77.6" height="18" rx="3" fill="#0b84de"/>
+<text x="789.9" y="115.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">28.30 → 4.79 ms</text>
+<text x="305.6" y="145.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">skill_request_overlay, 스킬 1000</text>
+<rect x="317.6" y="132.0" width="458.3" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="317.6" y="132.0" width="81.4" height="18" rx="3" fill="#0b84de"/>
+<text x="789.9" y="145.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">149.03 → 26.46 ms</text>
+<text x="305.6" y="175.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">skill_catalog, 스킬 200</text>
+<rect x="317.6" y="162.0" width="458.3" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="317.6" y="162.0" width="311.8" height="18" rx="3" fill="#0b84de"/>
+<text x="789.9" y="175.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">4.41 → 3.00 ms</text>
+<text x="305.6" y="205.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">skill_catalog, 스킬 1000</text>
+<rect x="317.6" y="192.0" width="458.3" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="317.6" y="192.0" width="314.2" height="18" rx="3" fill="#0b84de"/>
+<text x="789.9" y="205.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">21.88 → 15.00 ms</text>
+<text x="305.6" y="235.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">mcp_config_load, 300 KB 파일</text>
+<rect x="317.6" y="222.0" width="458.3" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="317.6" y="222.0" width="29.1" height="18" rx="3" fill="#0b84de"/>
+<text x="789.9" y="235.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">3.46 → 0.22 ms</text>
+<text x="32.0" y="262.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">행마다 이전 값을 기준으로 크기를 맞췄습니다. 막대 길이가 아니라 수치를 읽습니다.</text>
+<text x="32.0" y="288.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">출처: docs/performance/RESULTS.md · `skill-mcp-loading-omp` 계획 측정</text>
+</svg>

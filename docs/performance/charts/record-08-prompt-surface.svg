@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="276" viewBox="0 0 960 276" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', 'Apple SD Gothic Neo', Helvetica, Arial, sans-serif" role="img">
+<title>What one turn sends before the model is called</title>
+<rect x="0.5" y="0.5" width="959" height="275" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="32" y="20" width="5" height="26" rx="1" fill="#0b84de"/>
+<text x="46.0" y="42.0" font-size="21" fill="#1f2328" text-anchor="start" font-weight="bold">What one turn sends before the model is called</text>
+<text x="32.0" y="72.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">Request bytes from the mock server, one measurement per surface.</text>
+<text x="352.0" y="115.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Eager core tool catalog (8 schemas)</text>
+<rect x="364.0" y="102.0" width="427.9" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="364.0" y="102.0" width="403.1" height="18" rx="3" fill="#0b84de"/>
+<text x="805.9" y="115.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">9,714 → 9,151 B</text>
+<text x="352.0" y="145.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Core one-shot first request `tools`</text>
+<rect x="364.0" y="132.0" width="427.9" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="364.0" y="132.0" width="403.4" height="18" rx="3" fill="#0b84de"/>
+<text x="805.9" y="145.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">9,818 → 9,255 B</text>
+<text x="352.0" y="175.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">Static prompt (core, no prompt files)</text>
+<rect x="364.0" y="162.0" width="427.9" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="364.0" y="162.0" width="413.9" height="18" rx="3" fill="#0b84de"/>
+<text x="805.9" y="175.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">1,367 → 1,322 B</text>
+<text x="352.0" y="205.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">`# Additional tools` index</text>
+<rect x="364.0" y="192.0" width="427.9" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="364.0" y="192.0" width="398.0" height="18" rx="3" fill="#0b84de"/>
+<text x="805.9" y="205.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">629 → 585 B</text>
+<text x="32.0" y="232.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each row is scaled to its own before value; read the numbers, not the bar lengths.</text>
+<text x="32.0" y="258.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: docs/performance/RESULTS.md · Prompt surface and session context</text>
+</svg>

@@ -128,6 +128,10 @@ HTML_COMMENT_LINE = re.compile(r"^\s*<!--.*-->\s*$")
 EXTERNAL = re.compile(r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|//)")
 MASK = "\x00{}\x00"
 MASKED = re.compile(r"\x00(\d+)\x00")
+# A line that is only a block HTML tag is MDX-rendered as HTML, so it is the one
+# form of `<` that must survive: `<details>`/`<summary>` fold a long table on
+# GitHub and on the site. Anything else that looks like a tag is escaped.
+BLOCK_TAG = re.compile(r"^(?:</?(?:details|summary)(?:\s[^<>]*)?>|<summary>[^<>]*</summary>)$")
 
 
 def source_pages() -> list[PurePosixPath]:
@@ -254,6 +258,8 @@ def escape_text(text: str) -> str:
 
 
 def convert_line(line: str, origin: PurePosixPath, pages: set[PurePosixPath], lang: str) -> str:
+    if BLOCK_TAG.match(line.strip()):
+        return line
     masked: list[str] = []
     in_table = line.lstrip().startswith("|")
 
