@@ -138,6 +138,7 @@ pub(crate) struct PendingSteer {
 pub struct App {
     /// The conversation so far.
     pub transcript: Transcript,
+    pub(crate) todos: crate::todo_panel::TodoPanel,
     /// The line being edited.
     pub input: Input,
     /// Drafts sent before this one, for `up` and `down`.
@@ -293,6 +294,7 @@ impl App {
     pub fn new(description: String, events: Receiver<Incoming>) -> Self {
         Self {
             transcript: Transcript::new(),
+            todos: Default::default(),
             input: Input::new(),
             history: History::new(),
             prompt: None,
@@ -349,6 +351,7 @@ impl App {
         let (_sender, receiver) = mpsc::channel();
         Self {
             transcript: Transcript::new(),
+            todos: Default::default(),
             input: Input::new(),
             history: History::new(),
             prompt: None,

@@ -828,7 +828,10 @@ fn request_roundtrip() {
             client: "test/0".into(),
             supports_user_response: false,
             supports_ask_requests: false,
-            event_capabilities: vec![crate::CAPABILITY_BACKGROUND_OUTPUT_V1.into()],
+            event_capabilities: vec![
+                crate::CAPABILITY_BACKGROUND_OUTPUT_V1.into(),
+                crate::CAPABILITY_LIVE_TODO_V1.into(),
+            ],
         },
         ApiRequest::ListSessions {
             include_archived: false,

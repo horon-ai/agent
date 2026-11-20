@@ -50,7 +50,8 @@ pub(crate) use bridge::{run_bridge_with_deadline, run_bridge_with_lifecycle, sin
 
 use anyhow::{Context, Result};
 use horon_agent_harness_api::{
-    API_VERSION_MAJOR, ApiEvent, CAPABILITY_BACKGROUND_OUTPUT_V1, ErrorCode, OPT_IN_EVENT_CAPABILITIES, ServerFrame,
+    API_VERSION_MAJOR, ApiEvent, CAPABILITY_BACKGROUND_OUTPUT_V1, CAPABILITY_LIVE_TODO_V1, ErrorCode,
+    OPT_IN_EVENT_CAPABILITIES, ServerFrame,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -125,6 +126,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // forwarded a frame it would silently drop.
     horon_agent_harness_api::CAPABILITY_CANCELLABLE_WORK_V1,
     CAPABILITY_BACKGROUND_OUTPUT_V1,
+    CAPABILITY_LIVE_TODO_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when

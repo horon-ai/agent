@@ -63,6 +63,72 @@ fn created(session_id: &str, title: Option<&str>) -> AttachedSession {
     }
 }
 
+#[test]
+fn todo_panel_updates_and_clears_when_the_session_changes() {
+    use crate::sdk_bridge::Incoming;
+    use horon_agent_sdk::todo::TodoItem;
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let mut app = App::new("socket · session_a".to_string(), receiver);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    let mut screen = |app: &mut App| {
+        crate::loop_io::drain_events(app);
+        crate::draw(&mut terminal, app).unwrap();
+        terminal.backend().to_string()
+    };
+    let active = TodoItem {
+        content: "Check the build".into(),
+        status: "in_progress".into(),
+        group: Some("Release".into()),
+        ..TodoItem::default()
+    };
+    let blocked = TodoItem {
+        content: "Deploy".into(),
+        status: "blocked".into(),
+        blocker: Some("Waiting for approval".into()),
+        ..TodoItem::default()
+    };
+    sender
+        .send(Incoming::Todos {
+            session_id: "session_a".into(),
+            items: vec![active.clone(), blocked.clone()],
+        })
+        .unwrap();
+    let initial = screen(&mut app);
+    assert!(initial.contains("0/2 complete"), "{initial}");
+    assert!(initial.contains("Release / Check the build"), "{initial}");
+    assert!(initial.contains("Waiting for approval"), "{initial}");
+
+    sender
+        .send(Incoming::Todos {
+            session_id: "session_a".into(),
+            items: vec![
+                TodoItem {
+                    status: "completed".into(),
+                    ..active
+                },
+                blocked.clone(),
+            ],
+        })
+        .unwrap();
+    let updated = screen(&mut app);
+    assert!(updated.contains("1/2 complete"), "{updated}");
+    assert!(!updated.contains("Check the build"), "{updated}");
+
+    sender
+        .send(Incoming::Attached(Box::new(created("session_b", None))))
+        .unwrap();
+    sender
+        .send(Incoming::Todos {
+            session_id: "session_a".into(),
+            items: vec![blocked],
+        })
+        .unwrap();
+    let switched = screen(&mut app);
+    assert!(!switched.contains("Waiting for approval"), "{switched}");
+    assert!(!switched.contains("Todos"), "{switched}");
+}
+
 /// The notices and warnings on screen, from the newest one back.
 fn said(app: &App) -> Vec<String> {
     app.transcript

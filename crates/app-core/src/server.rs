@@ -2239,6 +2239,14 @@ impl Server {
                 // Compact todo names and progress are surfaced on the inline
                 // swarm strip so a coordinator can see each managed agent's work.
                 Ok(BusEvent::TodoUpdated(event)) => {
+                    fanout_session_event(
+                        &swarm_members,
+                        &event.session_id,
+                        ServerEvent::TodoChanged {
+                            session_id: event.session_id.clone(),
+                        },
+                    )
+                    .await;
                     dispatch_swarm_todo_progress(&event, &swarm_members, &swarms_by_id).await;
                 }
                 Ok(BusEvent::SwarmOutputTail(tail)) => {

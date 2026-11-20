@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 23;
+export const API_VERSION_MINOR = 24;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -28,12 +28,13 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
     ["cancel_turn", "cancel_tool_call", "cancel_background_terminal", "list_background_work"],
   ],
   ["background_output_v1", ["background_output"]],
+  ["live_todo_v1", ["todo_changed"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
 export const ADVERTISED_CAPABILITIES: readonly string[] = CAPABILITY_SURFACES.map(([capability]) => capability);
 
-export const EVENT_CAPABILITIES = ["background_output_v1"] as const;
+export const EVENT_CAPABILITIES = ["background_output_v1", "live_todo_v1"] as const;
 
 export type RuntimeCommand =
   | "skills"
@@ -999,6 +1000,7 @@ export type ApiEvent =
     }
   | { ev: "todo_state"; session_id: string; state: TodoSnapshot }
   | { ev: "background_output"; session_id: string; text: string }
+  | { ev: "todo_changed"; session_id: string }
   | { ev: "session_search_results"; query: string; results: SessionSearchHit[] }
   | { ev: "artifacts"; session_id: string; artifacts: ArtifactEntry[] }
   /** Reply to `usage_report`; see {@link UsageReport} for what the counts mean. */
@@ -1168,6 +1170,7 @@ export const KNOWN_EVENT_KINDS = [
   "file_status",
   "todo_state",
   "background_output",
+  "todo_changed",
   "session_search_results",
   "artifacts",
   "usage_report",
