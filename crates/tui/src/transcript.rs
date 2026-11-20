@@ -178,9 +178,16 @@ pub struct Transcript {
     items: Vec<Item>,
     streaming: Streaming,
     reasoned: Reasoned,
-    /// Whether reasoning is kept. Off by default, as
-    /// `transcript.show_reasoning` resolves; the option is read at the event,
-    /// so flipping it affects the next delta rather than only the next turn.
+    /// The value `transcript.show_reasoning` last resolved to.
+    setting_show_reasoning: bool,
+    /// A choice made for this session, by `--hide-thinking` or the toggle key.
+    ///
+    /// It outranks the setting until that setting itself changes, so an
+    /// unrelated settings reload does not undo the toggle.
+    session_show_reasoning: Option<bool>,
+    /// Whether reasoning is kept, as the setting and the session choice
+    /// resolve. Off by default; the option is read at the event, so flipping
+    /// it affects the next delta rather than only the next turn.
     show_reasoning: bool,
     /// Rows of a finished call's output kept for the preview, as
     /// `transcript.tool_output_lines` resolves. Zero hides the preview.
@@ -213,6 +220,8 @@ impl Default for Transcript {
             items: Vec::new(),
             streaming: Streaming::default(),
             reasoned: Reasoned::default(),
+            setting_show_reasoning: false,
+            session_show_reasoning: None,
             show_reasoning: false,
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
@@ -241,21 +250,47 @@ impl Transcript {
         self.tool_output_lines
     }
 
-    /// Keep, or stop keeping, the model's reasoning.
+    /// Apply the value `transcript.show_reasoning` resolves to.
     ///
-    /// Turning it off drops reasoning already being assembled, because a
-    /// setting the user just switched off must not leave half a thought on
-    /// screen; turning it on keeps what the answer has shown so far.
-    pub fn set_show_reasoning(&mut self, show: bool) {
-        self.show_reasoning = show;
-        if !show {
-            self.reasoned = Reasoned::default();
+    /// A session choice outranks it, so an unrelated settings reload does not
+    /// undo the toggle; a change of the setting itself is a newer choice and
+    /// ends the session choice.
+    pub fn apply_settings_show_reasoning(&mut self, show: bool) {
+        if self.setting_show_reasoning != show {
+            self.setting_show_reasoning = show;
+            self.session_show_reasoning = None;
         }
+        self.reconcile_show_reasoning();
+    }
+
+    /// Keep, or stop keeping, the model's reasoning for the rest of the session.
+    ///
+    /// The choice outranks `transcript.show_reasoning` until that setting
+    /// value changes. Turning reasoning off drops the thought already being
+    /// assembled, because a switch the user just flipped off must not leave
+    /// half a thought on screen; turning it on starts from the next delta,
+    /// because the deltas dropped meanwhile were never kept. The reasoning
+    /// effort the model is asked for is not touched.
+    pub fn set_show_reasoning(&mut self, show: bool) {
+        self.session_show_reasoning = Some(show);
+        self.reconcile_show_reasoning();
     }
 
     /// Whether reasoning is being kept.
     pub fn show_reasoning(&self) -> bool {
         self.show_reasoning
+    }
+
+    /// Apply the setting and the session choice to what the transcript keeps.
+    fn reconcile_show_reasoning(&mut self) {
+        let show = self.session_show_reasoning.unwrap_or(self.setting_show_reasoning);
+        if self.show_reasoning == show {
+            return;
+        }
+        self.show_reasoning = show;
+        if !show {
+            self.reasoned = Reasoned::default();
+        }
     }
 
     /// Every item in display order.
