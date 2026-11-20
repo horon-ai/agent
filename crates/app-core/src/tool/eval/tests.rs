@@ -245,7 +245,7 @@ fn eval_bounds_inline_output_and_keeps_a_session_artifact() {
         let _vault = crate::secrets::register_session_vault(first.id);
         let secret = concat!("sk-", "proj-", "abcdefghijklmnopqrstuvwxyz012345");
         let result = first
-            .approved(&registry, json!({"code": format!("import os\nprint(os.getenv('HORON_HOME', 'not-inherited'))\nprint('x' * 50000)\nprint('only-in-the-middle')\nprint('OPENAI_API_KEY={secret}')\nprint('y' * 50000')")}))
+            .approved(&registry, json!({"code": format!("import os\nprint(os.getenv('HORON_HOME', 'not-inherited'))\nprint('x' * 50000)\nprint('only-in-the-middle')\nprint('OPENAI_API_KEY={secret}')\nprint('y' * 50000)")}))
             .await;
         assert_eq!(result.verdict, Some(ToolVerdict::Truncated));
         assert!(result.output.len() <= 50 * 1024);
