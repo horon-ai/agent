@@ -186,6 +186,14 @@ pub struct App {
     pub resend_held: bool,
     /// Rows the transcript pane got last frame, used to keep the newest lines.
     pub viewport_height: Option<u16>,
+    /// Whether the user asked for the screen to be painted again in full.
+    ///
+    /// A repaint is display-only: the draw that answers it discards the frame
+    /// Ratatui kept, so every cell is written again, while the draft, the
+    /// selection and the view stay exactly as the key found them. The request
+    /// travels as a flag because the app never touches a terminal; the draw
+    /// that owns one takes it.
+    repaint_requested: bool,
     /// Where the transcript view sits: at the newest rows, or held above them.
     pub scroll: Scroll,
     /// Whether `transcript.mouse_scroll` hands the wheel to the transcript.
@@ -328,6 +336,7 @@ impl App {
             disconnected: false,
             resend_held: false,
             viewport_height: None,
+            repaint_requested: false,
             scroll: Scroll::new(),
             // Placeholder until the settings resolve: the terminal is not
             // captured yet, and `refresh_settings` decides from the registry's
@@ -392,6 +401,7 @@ impl App {
             disconnected: true,
             resend_held: false,
             viewport_height: None,
+            repaint_requested: false,
             scroll: Scroll::new(),
             // Placeholder until the settings resolve: the terminal is not
             // captured yet, and `refresh_settings` decides from the registry's
@@ -434,6 +444,24 @@ impl App {
             picker: None,
             pending_change: None,
         }
+    }
+
+    /// Ask for the screen to be painted again in full.
+    ///
+    /// Nothing else changes: the request says the terminal's picture cannot be
+    /// trusted, not that the session moved. The draw that owns a terminal
+    /// consumes it and writes every cell once, so a held view, an open settings
+    /// screen and the draft under it stay where they were.
+    fn request_repaint(&mut self) {
+        self.repaint_requested = true;
+    }
+
+    /// Take the pending repaint request, leaving none behind.
+    ///
+    /// One draw answers one request, which is what keeps the key from turning
+    /// the idle loop into a loop that repaints.
+    pub(crate) fn take_repaint_request(&mut self) -> bool {
+        std::mem::take(&mut self.repaint_requested)
     }
 
     /// Add a warning line to the transcript.
