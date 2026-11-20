@@ -45,7 +45,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_INTERRUPT,
         "interrupt the running turn, or send queued messages into it",
     ),
-    (ids::APP_QUIT, "leave"),
+    (
+        ids::APP_QUIT,
+        "leave; ctrl+d deletes at the cursor while the draft has text",
+    ),
     (ids::APP_SCROLL_PAGE_UP, "hold the transcript one page higher"),
     (
         ids::APP_SCROLL_PAGE_DOWN,
@@ -72,6 +75,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         ids::APP_COPY_CODE,
         "copy the newest code block to the terminal clipboard",
+    ),
+    (
+        ids::APP_TOGGLE_THINKING,
+        "show or hide the model's reasoning for this session",
     ),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
@@ -120,6 +127,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
+        "links" => "list the http(s) links in recent answers and open one",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "quit" => "leave",

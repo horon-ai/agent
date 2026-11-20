@@ -205,6 +205,28 @@ fn settings_mouse_scroll_is_on_until_a_layer_turns_it_off() {
 }
 
 #[test]
+fn settings_title_state_is_off_until_a_layer_turns_it_on() {
+    let fixture = Fixture::new();
+    let (settings, warnings) = fixture.resolve(&fixture.sources(), &[]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    // A window named after its session is what every existing setup sees; the
+    // turn state is a decoration a reader asks for, so it stays off by default.
+    assert_eq!(settings.boolean("title.state"), Some(false));
+
+    fixture.write(&fixture.global(), "[title]\nstate = true\n");
+    let (settings, warnings) = fixture.resolve(&fixture.sources(), &[]);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(settings.boolean("title.state"), Some(true));
+
+    let (settings, _) = fixture.resolve(&fixture.sources(), &[("HORON_TUI_TITLE_STATE", "off")]);
+    assert_eq!(settings.boolean("title.state"), Some(false));
+    assert_eq!(
+        settings.provenance("title.state").map(Provenance::label).as_deref(),
+        Some("env HORON_TUI_TITLE_STATE")
+    );
+}
+
+#[test]
 fn settings_unknown_key_warns_and_is_ignored() {
     let fixture = Fixture::new();
     fixture.write(

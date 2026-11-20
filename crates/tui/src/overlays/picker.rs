@@ -1,9 +1,9 @@
 //! A filterable list drawn over the conversation.
 //!
-//! `/model`, `/effort`, `/resume`, `/skills` and the history search all ask the
-//! user to pick one row out of a list, so this screen knows nothing about
-//! models, efforts, sessions, skills or drafts: it holds rows, the filter the
-//! user typed, and the row the selection is on.
+//! `/model`, `/effort`, `/resume`, `/skills`, `/links` and the history search
+//! all ask the user to pick one row out of a list, so this screen knows nothing
+//! about models, efforts, sessions, skills, links or drafts: it holds rows, the
+//! filter the user typed, and the row the selection is on.
 //! The caller decides what a chosen row means, which is what keeps the keys and
 //! the drawing identical for every list.
 //!
@@ -42,6 +42,8 @@ pub enum Kind {
     History,
     /// The text this session can copy: the draft, answers, code blocks.
     Copies,
+    /// The http(s) links in the newest assistant answers.
+    Links,
 }
 
 /// One row of the list.
