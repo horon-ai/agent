@@ -157,6 +157,7 @@ Keys:
   PgUp, PgDn     scroll the transcript one page
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
+  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
@@ -511,13 +512,8 @@ where
     B::Error: std::fmt::Display,
 {
     let mut failure = None;
-    // Whether the terminal is currently reporting the mouse, which follows the
-    // `transcript.mouse_scroll` setting rather than being decided once.
     let mut mouse_captured = false;
-    // The screen is redrawn when something on it changed, not twenty times a
-    // second: a draw walks the visible conversation, and an idle client has
-    // nothing new to show. A turn in flight is the one exception, and its
-    // cadence is the motion settings'; the scheduler's first pass draws.
+    // The scheduler draws the first frame and sets the cadence after that.
     let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
@@ -546,12 +542,7 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
-        // The session and the working directory can change while the client
-        // runs, and a key can start a turn, answer a prompt or leave one
-        // without any event arriving; the window is renamed only when the name
-        // it would carry is not the one on it. The state is one fixed word, so
-        // comparing it every frame costs nothing and a repeated state writes
-        // nothing.
+        // Titles can change on either a daemon event or local input.
         let state = window_state(app, state_supported);
         if changed || state != shown_state {
             shown_state = state;
@@ -653,11 +644,19 @@ where
 }
 
 /// Render one frame.
+///
+/// A pending repaint request is answered first: `clear` erases the screen and
+/// resets the frame Ratatui keeps, so the draw below writes every cell instead
+/// of only the rows that differ. That is what recovers a screen something else
+/// has overwritten, and it is the whole of what the repaint key does.
 pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
 where
     B: Backend,
     B::Error: std::fmt::Display,
 {
+    if app.take_repaint_request() {
+        terminal.clear().map_err(|error| error.to_string())?;
+    }
     terminal
         .draw(|frame| render(frame, app))
         .map(|_| ())

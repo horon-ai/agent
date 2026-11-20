@@ -31,7 +31,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="238" y="172" font-size="11" class="m">behind toolbox, and</text>
 <text x="238" y="188" font-size="11" class="m">the 7 + toolbox stay</text>
 <text x="238" y="204" font-size="11" class="m">eager</text>
-<text x="238" y="228" font-size="10.5" class="m">irc joins a full session</text>
+<text x="238" y="220" font-size="10.5" class="m">irc joins a full session</text>
+<text x="238" y="235" font-size="10.5" class="m">eval requires explicit opt-in</text>
 
 <rect x="414" y="48" width="176" height="196" rx="10" fill="var(--panel)" stroke="var(--line)"/>
 <text x="430" y="72" font-size="12.5" class="mono" font-weight="600">acp</text>
