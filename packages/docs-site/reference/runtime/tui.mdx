@@ -58,6 +58,8 @@ Five files shape the client. Four live under `$HORON_HOME` (`~/.horon` unless `H
 
 All five are read at startup and re-read while the client runs: the settings files are checked once a second, and the theme and key files follow the same cadence.
 
+`/info` shows the daemon's `approval mode` for TUI calls. It defaults to `yolo`; change `[tools] approval_mode` in the daemon's `config.toml`.
+
 ### Settings: `tui.toml`
 
 The settings of one process are the registry defaults, then the global file, then the project file, then every `--config` file in the order given, then the environment. A higher layer wins per key; a key a layer does not name keeps the value from below. The settings screen shows the winning layer for every key, as `default`, `global <path>`, `project <path>`, `config <path>` or `env <name>`.

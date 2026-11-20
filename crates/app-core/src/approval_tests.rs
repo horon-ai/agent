@@ -10,7 +10,7 @@ fn named() -> Vec<std::path::PathBuf> {
 }
 
 #[test]
-fn off_mode_never_asks() {
+fn yolo_mode_auto_approves_ordinary_calls() {
     for effects in [
         ToolEffects::read(),
         ToolEffects::write(),
@@ -20,7 +20,7 @@ fn off_mode_never_asks() {
         let evaluation = evaluate(ApprovalCall {
             tool: "bash",
             effects,
-            mode: ApprovalMode::Off,
+            mode: ApprovalMode::Yolo,
             dual_confirm: &no_dual(),
             danger: None,
             bash_pattern: None,
@@ -174,7 +174,12 @@ fn all_mode_asks_about_execution() {
 
 #[test]
 fn read_only_calls_never_ask_in_any_mode() {
-    for mode in [ApprovalMode::Off, ApprovalMode::Write, ApprovalMode::All] {
+    for mode in [
+        ApprovalMode::Yolo,
+        ApprovalMode::Off,
+        ApprovalMode::Write,
+        ApprovalMode::All,
+    ] {
         let evaluation = evaluate(ApprovalCall {
             tool: "read",
             effects: ToolEffects::read(),
@@ -212,7 +217,12 @@ fn network_only_call_asks_in_write_mode() {
 
 #[test]
 fn a_restricted_path_asks_in_every_mode() {
-    for mode in [ApprovalMode::Off, ApprovalMode::Write, ApprovalMode::All] {
+    for mode in [
+        ApprovalMode::Yolo,
+        ApprovalMode::Off,
+        ApprovalMode::Write,
+        ApprovalMode::All,
+    ] {
         let evaluation = evaluate(ApprovalCall {
             tool: "write",
             effects: ToolEffects::write(),
@@ -260,7 +270,12 @@ fn a_restricted_path_outranks_an_allow_pattern() {
 fn dual_confirm_wins_over_every_mode() {
     let dual = vec![DESTRUCTIVE_SHELL.to_string()];
 
-    for mode in [ApprovalMode::Off, ApprovalMode::Write, ApprovalMode::All] {
+    for mode in [
+        ApprovalMode::Yolo,
+        ApprovalMode::Off,
+        ApprovalMode::Write,
+        ApprovalMode::All,
+    ] {
         let evaluation = evaluate(ApprovalCall {
             tool: "bash",
             effects: ToolEffects::read(),

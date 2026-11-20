@@ -1007,7 +1007,7 @@ fn test_generated_default_config_has_expected_user_defaults() {
         "bash_interceptor = \"off\"",
         "bash_patterns",
         "git_guard = false",
-        "approval_mode = \"off\"",
+        "approval_mode",
         "aux_completion = false",
         "secrets_mode = \"off\"",
         "dual_confirm_classes",
@@ -1027,6 +1027,7 @@ fn test_generated_default_config_has_expected_user_defaults() {
 
     // The generated file must always be valid TOML for the current Config schema.
     let parsed: Config = toml::from_str(&content).expect("generated default config should parse as Config");
+    assert_eq!(parsed.tools.approval_mode.as_str(), "yolo");
     assert_eq!(parsed.agents.swarm_spawn_mode, SwarmSpawnMode::Inline);
     assert!(
         parsed.display.show_thinking,
@@ -1177,7 +1178,7 @@ fn cached_external_auth_trust_observes_manual_revocation() {
 fn tool_config_defaults_keep_todays_behavior() {
     let tools = ToolConfig::default();
     assert!(!tools.plan_mode, "plan mode must start off");
-    assert_eq!(tools.approval_mode, ApprovalMode::Off, "no call may start asking");
+    assert_eq!(tools.approval_mode.as_str(), "yolo");
     assert!(!tools.aux_completion, "aux completion stays opt-in");
     assert_eq!(tools.secrets_mode, SecretsMode::Off, "outbound text stays untouched");
     assert!(
@@ -1191,13 +1192,13 @@ fn tool_config_defaults_keep_todays_behavior() {
 }
 
 #[test]
-fn approval_mode_parses_kebab_case() {
-    assert_eq!(ApprovalMode::parse("off"), Some(ApprovalMode::Off));
-    assert_eq!(ApprovalMode::parse("write"), Some(ApprovalMode::Write));
-    assert_eq!(ApprovalMode::parse("all"), Some(ApprovalMode::All));
-    assert_eq!(ApprovalMode::parse(" Write "), Some(ApprovalMode::Write));
-    assert_eq!(ApprovalMode::parse("ask"), None);
-    assert_eq!(ApprovalMode::Write.as_str(), "write");
+fn approval_mode_config_retains_explicit_values() {
+    let config: Config = toml::from_str("[tools]").unwrap();
+    assert_eq!(config.tools.approval_mode.as_str(), "yolo");
+    for value in ["off", "write", "all", "yolo"] {
+        let config: Config = toml::from_str(&format!("[tools]\napproval_mode = '{value}'")).unwrap();
+        assert_eq!(config.tools.approval_mode.as_str(), value);
+    }
 }
 
 #[test]
@@ -1211,9 +1212,9 @@ fn secrets_mode_parses_and_defaults_to_off() {
 }
 
 #[test]
-fn unknown_approval_mode_falls_back_to_off() {
+fn unknown_approval_mode_falls_back_to_yolo() {
     let parsed: ToolConfig = toml::from_str("approval_mode = 'always-ask'\nsecrets_mode = 'scrub'").unwrap();
-    assert_eq!(parsed.approval_mode, ApprovalMode::Off);
+    assert_eq!(parsed.approval_mode.as_str(), "yolo");
     assert_eq!(parsed.secrets_mode, SecretsMode::Off);
 }
 

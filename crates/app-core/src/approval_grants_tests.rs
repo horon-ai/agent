@@ -205,26 +205,20 @@ fn an_append_grant_does_not_authorise_a_write() {
     let sandbox = Sandbox::new();
     let workspace = sandbox.workspace();
     let file = sandbox.write("log.txt");
+    let input = serde_json::json!({ "file_path": file });
 
     let grant = grant_from_request_at(
-        &request("append", serde_json::json!({ "file_path": file }), &workspace, "append"),
+        &request("write", input.clone(), &workspace, "append"),
         GrantScope::Path,
         Timestamp::now(),
         7,
     )
     .expect("grant");
 
-    let target = canonical_target(&file).expect("target");
-    let now = Timestamp::now();
-    assert!(covered_by(
-        std::slice::from_ref(&grant),
-        &workspace,
-        std::slice::from_ref(&target),
-        GrantCapability::Append,
-        now
-    ));
+    store(grant).expect("store the append-only grant");
+    assert!(covered("write", &input, Some(&workspace), ToolEffects::append()));
     assert!(
-        !covered_by(&[grant], &workspace, &[target], GrantCapability::Write, now),
+        !covered("write", &input, Some(&workspace), ToolEffects::write()),
         "an append answer must not authorise replacing the file"
     );
 }

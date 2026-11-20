@@ -107,6 +107,7 @@ pub(super) async fn execute(
                 "provider": agent.provider_name(), "model": agent.provider_model(),
                 "reasoning_effort": agent.provider_reasoning_effort(),
                 "context_window": agent.provider_context_window(),
+                "approval_mode": config.tools.approval_mode.as_str(),
                 "last_usage": agent.last_usage(), "token_usage_totals": agent.token_usage_totals(),
                 "memory_enabled": agent.memory_enabled(), "swarm_enabled": swarm_enabled,
                 "autoreview_enabled": agent.autoreview_enabled().unwrap_or(config.autoreview.enabled),
@@ -409,6 +410,9 @@ mod tests {
             if command == RuntimeCommand::Skills {
                 assert!(data["endorsed"].as_array().is_some_and(|skills| !skills.is_empty()));
                 assert!(message.contains("Endorsed skills"));
+            }
+            if command == RuntimeCommand::Info {
+                assert_eq!(data["approval_mode"], "yolo");
             }
             if command == RuntimeCommand::Context {
                 assert!(data.get("messages").is_some());
