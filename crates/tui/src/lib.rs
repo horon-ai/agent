@@ -524,7 +524,7 @@ where
     let mut clock = statusline::local_minute();
     // Whether the terminal keeps a title worth adding the state to; asked once,
     // because the answer is the terminal's and does not change while it runs.
-    let state_supported = title.state_supported();
+    let state_supported = channels.title.state_supported();
     // The state the window title already carries: `title.start` wrote it, and
     // the first frame must not write it again.
     let mut shown_state = window_state(app, state_supported);
