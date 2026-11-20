@@ -1,7 +1,11 @@
+//! Settings that change behavior as they are applied rather than on the next
+//! drawing call.
+//!
 //! `transcript.tool_output_lines` is a number, so a settings file can hold a
 //! `-1` that is not a row count. A value that cannot be used falls back to the
 //! default instead of reading as "hide the preview", and a usable one is
-//! applied as written.
+//! applied as written. `title.state` follows the same path into the app, where
+//! the event loop reads it before it writes the window title.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -49,4 +53,15 @@ fn a_countable_tool_output_lines_is_applied() {
     let mut app = app();
     app.refresh_settings(&settings_with(dir.path(), "[transcript]\ntool_output_lines = 6\n"));
     assert_eq!(app.transcript.tool_output_lines(), 6);
+}
+
+#[test]
+fn the_title_state_setting_reaches_the_app() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), ""));
+    assert!(!app.title_state, "the title state is on before anything asked for it");
+
+    app.refresh_settings(&settings_with(dir.path(), "[title]\nstate = true\n"));
+    assert!(app.title_state, "the setting did not reach the window title");
 }
