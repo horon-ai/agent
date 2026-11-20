@@ -36,6 +36,10 @@ effort는 방식마다 다르게 실린다. `openai-compatible`은 `reasoning_ef
 
 `prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열에서 오고, 어떤 방식도 엔드포인트에 목록을 묻지 않는다.
 
+### 도구 파라미터 스키마
+
+도구의 `parameters`는 선택한 요청 형식의 JSON Schema 규격에 맞춰 보낸다. 지원하지 않는 키워드는 `schema_keyword_dropped`로 기록한다. OpenAI의 두 형식은 루트에 객체 하나를 요구한다. 루트 `anyOf`나 `oneOf`의 객체 대안은 속성을 모으고 모든 객체 대안에 공통인 필수 항목을 올려 객체 하나로 보낸다. 루트에 이미 선언한 속성은 그 선언을 유지한다. 대안에만 선언한 속성의 규칙이 서로 다르면 속성 안의 `anyOf`에 모은다. 요청은 `strict: false`로 보내고 제거한 루트 결합 규칙을 기록한다. `swarm`의 `spawn`에 필요한 `label`처럼 동작별 필수 항목은 실행할 때 도구가 검사한다.
+
 ```toml
 # Chat Completions, 기본값
 [providers.my-chat]
