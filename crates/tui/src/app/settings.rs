@@ -53,7 +53,9 @@ impl App {
         // The list the model cycle keys walk belongs to the settings, not to a
         // session, so every refresh replaces it; the cycle itself reads it on
         // the press, which keeps a file edit one keypress away from the walk.
-        let shortlist = settings.list("models.shortlist").unwrap_or_default();
+        // A missing list is the same as an empty one: the press reports it,
+        // and a reload must not leave the previous file's names in the walk.
+        let shortlist = settings.list("models.shortlist").unwrap_or(&[]);
         self.apply_model_shortlist(shortlist);
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
