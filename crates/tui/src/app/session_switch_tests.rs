@@ -116,7 +116,10 @@ fn todo_panel_updates_and_clears_when_the_session_changes() {
     assert!(!updated.contains("Check the build"), "{updated}");
 
     sender
-        .send(Incoming::Attached(Box::new(created("session_b", None))))
+        .send(Incoming::Attached {
+            session: Box::new(created("session_b", None)),
+            working_dir: None,
+        })
         .unwrap();
     sender
         .send(Incoming::Todos {

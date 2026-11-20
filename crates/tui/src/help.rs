@@ -88,7 +88,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::EDITOR_DELETE_WORD, "delete the word before the cursor"),
     (
         ids::EDITOR_COMPLETE,
-        "fill the popup's selected command, or complete the prefix",
+        "fill the popup's selected command, complete the prefix, or fill a workspace path",
     ),
     (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),

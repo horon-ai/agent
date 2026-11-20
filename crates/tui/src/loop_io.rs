@@ -63,11 +63,16 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
             // longer holds is dropped rather than restored into another turn.
             Incoming::Steered { text } => app.steered(&text),
             Incoming::SteerFailed { text, message } => app.steer_failed(&text, &message),
-            Incoming::Attached(session) => {
+            Incoming::Attached { session, working_dir } => {
                 // Read before the attach so the notice names what happened: the
                 // same answer covers a resumed session and one just created.
                 let started = app.take_pending_new_session();
                 app.attach_session(*session, started);
+                // The directory travels with the answer: the session's own
+                // folder becomes the completion root, and an answer that names
+                // none turns path completion off rather than keeping the
+                // folder the client was launched in.
+                app.apply_session_directory(working_dir.as_deref());
             }
             Incoming::RequestFailed(message) => app.request_failed(&message),
             Incoming::Closed(message) => app.disconnect(&message),

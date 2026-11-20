@@ -22,6 +22,7 @@ mod loop_io;
 mod markdown;
 pub mod overlays;
 pub mod paste;
+mod path_completion;
 pub mod prompts;
 pub mod report;
 pub mod scroll;
@@ -92,6 +93,10 @@ mod help_tests;
 #[cfg(test)]
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
+
+#[cfg(test)]
+#[path = "path_completion_tests.rs"]
+mod path_completion_tests;
 
 use std::time::Duration;
 
@@ -293,12 +298,17 @@ where
         eprintln!("horon-tui: keys: {warning}");
     }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
+    // The directory the run starts in, with `--cwd` first: it is the path the
+    // session is created with, so the client's own idea of the workspace and
+    // the session's cannot disagree. Only a daemon that reports no directory
+    // of its own falls back to it.
+    let launch_dir = args.cwd.clone().or_else(|| std::env::current_dir().ok());
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -341,8 +351,20 @@ fn window_label(app: &App) -> String {
 }
 
 /// Drive the real terminal until the user leaves.
-fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &mut keys::Loader) -> i32 {
+///
+/// `launch_dir` is the directory the session was asked for, used only when the
+/// daemon's answer names none, so `--cwd` and the session keep one workspace.
+fn run_interactive(
+    runtime: Runtime,
+    reloader: &mut settings::Reloader,
+    keys: &mut keys::Loader,
+    launch_dir: Option<std::path::PathBuf>,
+) -> i32 {
     let mut themes = ThemeLoader::new();
+    let workspace = runtime.workspace.clone();
+    // Read before the events travel with the app: the flag decides whether a
+    // keystroke may read this machine's disk for the session.
+    let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
     // The stderr copy of these warnings is wiped by the alternate screen, so
     // the transcript carries them for the person using the interface.
@@ -354,10 +376,20 @@ fn run_interactive(runtime: Runtime, reloader: &mut settings::Reloader, keys: &m
     }
     app.bindings = keys.bindings().clone();
     apply_settings(&mut app, reloader.settings(), &mut themes);
-    match std::env::current_dir() {
-        Ok(directory) => app.cwd = Some(directory.display().to_string()),
-        Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+    // The session's own directory names the workspace: `--cwd` is what the
+    // create was asked for, and a resumed session reports the directory it
+    // already has. A daemon that names none still gets the launch directory on
+    // screen, but path completion stays off, because where the session works
+    // is then only a guess.
+    app.workspace_known = workspace.is_some();
+    app.cwd = workspace.or_else(|| launch_dir.map(|dir| dir.display().to_string()));
+    if app.cwd.is_none() {
+        match std::env::current_dir() {
+            Ok(directory) => app.cwd = Some(directory.display().to_string()),
+            Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+        }
     }
+    app.workspace_is_local = local;
     app.reload_commands();
     // `try_init` installs the restoring panic hook itself, so a panic inside
     // the alternate screen still leaves the terminal usable.

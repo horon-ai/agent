@@ -201,7 +201,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
 | `editor.delete_word` | `ctrl+w` | Delete the word before the cursor |
-| `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
+| `editor.complete` | `tab` | Complete a command or a workspace path |
 | `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
 | `prompt.allow` | `y` | Approve the parked tool call once |
 | `prompt.allow_always` | `a` | Approve this call and every later call like it |
@@ -216,6 +216,8 @@ Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and
 `up` and `down` move between the lines of a draft first and reach the input history only at its first and last line, which is why the transcript view moved to `shift+up`, `shift+down` and the page keys. `shift+tab` steps the reasoning effort and plain `tab` still completes the draft, because a binding that names shift answers before the one that does not. While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
 
 ## The editor
+
+With the default local endpoint, Tab completes paths relative to the session's working directory. Add `@` to insert a file mention. Names with spaces are quoted, and repeated Tab cycles matching filenames. Slash commands take priority. An explicit socket disables this local lookup.
 
 The input line grows with the draft: one row per line, up to eight rows, and a taller draft scrolls inside its own pane. The conversation keeps at least three rows while the draft grows, so a long message never takes the whole screen.
 

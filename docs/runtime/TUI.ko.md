@@ -201,7 +201,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_start` | `ctrl+u` | 그 줄 맨 앞부터 커서까지 지운다 |
 | `editor.kill_to_end` | `ctrl+k` | 커서부터 그 줄 맨 끝까지 지운다 |
 | `editor.delete_word` | `ctrl+w` | 커서 앞 낱말을 지운다 |
-| `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
+| `editor.complete` | `tab` | 명령이나 작업공간에 있는 경로를 완성한다 |
 | `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |
 | `prompt.allow_always` | `a` | 이 호출과 이후 같은 호출을 승인한다 |
@@ -216,6 +216,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 `up`과 `down`은 먼저 초안의 줄 사이를 오르내리고, 초안의 첫 줄과 마지막 줄에서만 입력 기록에 닿는다. 그래서 트랜스크립트 보기는 `shift+up`, `shift+down`, 페이지 키로 옮겼다. `shift+tab`은 추론 노력 단계를 옮기고 평범한 `tab`은 여전히 초안을 완성한다. 시프트가 들어간 바인딩이 시프트가 없는 바인딩보다 먼저 답하기 때문이다. 프롬프트가 열려 있으면 모든 키를 프롬프트가 받으므로, 프롬프트에 쓰려던 글자가 입력 줄에 닿지 않는다. 탭은 슬래시 명령 이름만 완성한다. 줄에 공백이 들어가면 인자 자리는 사용자의 몫이다.
 
 ## 편집기
+
+기본 로컬 연결에서 Tab을 누르면 세션 작업 디렉터리를 기준으로 경로를 완성합니다. `@`를 붙이면 파일을 언급합니다. 공백이 있는 이름은 따옴표로 감싸며 Tab을 여러 번 누르면 일치하는 파일을 순서대로 선택합니다. 슬래시 명령 완성이 우선하며 소켓을 직접 지정하면 로컬 경로를 조회하지 않습니다.
 
 입력 줄은 초안을 따라 자란다. 줄마다 한 행이고 최대 여덟 행까지 자라며, 그보다 긴 초안은 제 안에서 스크롤한다. 초안이 자라는 동안에도 대화는 최소 세 행을 지키므로 긴 메시지가 화면 전체를 가져가지 않는다.
 

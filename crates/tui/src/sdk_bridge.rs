@@ -131,6 +131,24 @@ pub struct Runtime {
     pub events: Receiver<Incoming>,
     /// One-line description of what the client is attached to.
     pub description: String,
+    /// The directory the session was opened in, as the daemon reports it.
+    ///
+    /// A create answers with the directory it was asked for, so `--cwd` and
+    /// the session keep one workspace; a resume answers with the directory the
+    /// session already has. `None` when the daemon names none, and the launch
+    /// directory is used instead.
+    pub workspace: Option<String>,
+    /// Whether the session runs on this machine.
+    ///
+    /// True only for the client's own daemon. `connect_options` in
+    /// [`crate::run`] leaves `--socket` unset, so `HoronAgentClient::connect`
+    /// resolves `api_socket_path()` — this user's runtime directory
+    /// (`crates/harness-api/src/sockets.rs`) — and its `ensure_runtime` starts
+    /// that daemon here. An explicit socket, or one the
+    /// `HORON_AGENT_API_SOCKET` override names, may be an SSH forward or a
+    /// remote bridge instead, and the paths in that session's report belong to
+    /// the other machine.
+    pub local: bool,
 }
 
 /// Connect, attach to or create a session, and start the bridge thread.
@@ -147,6 +165,11 @@ pub struct Runtime {
 /// client and daemon built against different protocol versions, and a session
 /// id the daemon does not have.
 pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Option<&str>) -> Result<Runtime, String> {
+    // Read before the options are consumed by the connection: an explicit
+    // socket names an endpoint the client did not start, and a forwarded one
+    // speaks for a harness on another machine. Only the default resolution is
+    // this user's own daemon, because `ensure_runtime` launches it here.
+    let local = options.socket_path.is_none() && std::env::var_os("HORON_AGENT_API_SOCKET").is_none();
     let socket = options
         .socket_path
         .clone()
@@ -175,6 +198,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
             .map_err(|error| format!("the harness refused a new session: {error}"))?,
     };
     let session_id = session.session_id.clone();
+    let workspace = session.working_dir.clone();
     let (command_tx, command_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     let description = format!("{} · {}", socket.display(), session_id);
@@ -188,6 +212,8 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         commands: command_tx,
         events: event_rx,
         description,
+        workspace,
+        local,
     })
 }
 
@@ -318,10 +344,13 @@ fn run_worker(
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
-                                Ok((fresh, next, attached)) => {
+                                Ok((fresh, next, attached, working_dir)) => {
                                     client = fresh;
                                     sessions::follow(&attached, next, &mut session_id, &mut stream);
-                                    Ok(Some(Incoming::Attached(Box::new(attached))))
+                                    Ok(Some(Incoming::Attached {
+                                        session: Box::new(attached),
+                                        working_dir,
+                                    }))
                                 }
                                 Err(error) => Err(error),
                             }
@@ -334,9 +363,12 @@ fn run_worker(
                             // output. `pump` keeps only the answer's session.
                             let next = client.events(None);
                             match sessions::resumed(&client, &id, &socket) {
-                                Ok(attached) => {
+                                Ok((attached, working_dir)) => {
                                     sessions::follow(&attached, next, &mut session_id, &mut stream);
-                                    Ok(Some(Incoming::Attached(Box::new(attached))))
+                                    Ok(Some(Incoming::Attached {
+                                        session: Box::new(attached),
+                                        working_dir,
+                                    }))
                                 }
                                 Err(error) => Err(error),
                             }

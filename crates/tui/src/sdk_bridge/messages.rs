@@ -123,8 +123,16 @@ pub enum Incoming {
     /// saying why, so the client can put the messages back in front of the
     /// user instead of losing them.
     SteerFailed { text: String, message: String },
-    /// The bridge moved to another session, with its stored conversation.
-    Attached(Box<AttachedSession>),
+    /// The bridge moved to another session, with its stored conversation and
+    /// the directory the harness reports for it.
+    ///
+    /// The directory travels beside the session record rather than inside it:
+    /// it decides which folder a draft completes, and the client applies it in
+    /// the handler that receives the switch.
+    Attached {
+        session: Box<AttachedSession>,
+        working_dir: Option<String>,
+    },
     /// A request the harness answered with an error; the client stops waiting.
     RequestFailed(String),
     /// The connection ended; the string says why.
