@@ -13,6 +13,7 @@ pub mod app;
 pub mod commands;
 pub mod context;
 mod fuzzy;
+pub mod gallery;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -116,7 +117,7 @@ pub const USAGE: &str = "\
 horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
-                 [--config <file>]...
+                 [--config <file>]... [--gallery[=<scene>]]
 
 Options:
   --socket <path>  Harness API socket to connect to (default: the resolved
@@ -125,8 +126,18 @@ Options:
   --cwd <dir>      Working directory for a newly created session
   --config <file>  Extra settings file, read after the global and project
                    files and before the environment (repeatable)
+  --gallery[=<scene>]
+                   Draw the built-in fixtures through the renderer and leave;
+                   no socket is opened and no session is read. Scenes:
+                   conversation, tools, error, prompt, unicode
+                   (default: conversation)
   -V, --version    Print the version and exit
   -h, --help       Print this help and exit
+
+Gallery keys:
+  n, Right, Tab     show the next fixture
+  p, Left, BackTab  show the previous fixture
+  q, Esc, Ctrl-C    leave
 
 Keys:
   Enter          send the typed message
@@ -179,6 +190,11 @@ pub struct Args {
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Gallery scene to preview instead of connecting, if the flag was given.
+    ///
+    /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
+    /// the scene either way and `run` has one branch to take.
+    pub gallery: Option<String>,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -197,6 +213,7 @@ impl Args {
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
+                "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
                     None => return Err("--socket needs a path".to_string()),
@@ -217,6 +234,10 @@ impl Args {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
+                    Some(("--gallery", "")) => {
+                        return Err("--gallery needs a scene name after '='".to_string());
+                    }
+                    Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
@@ -277,6 +298,13 @@ where
     if args.help {
         print!("{USAGE}");
         return 0;
+    }
+    // The gallery is a viewer over built-in fixtures, so it runs before
+    // settings are read and before a socket is opened: a frame must not depend
+    // on a file on the machine, and a broken settings file is not a reason to
+    // hide the renderer.
+    if let Some(scene) = args.gallery.as_deref() {
+        return gallery::run(scene);
     }
     // Settings load before the connection so a broken settings file is
     // reported even when the daemon is unreachable.
