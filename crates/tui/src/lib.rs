@@ -115,66 +115,7 @@ use crate::theme::{Theme, ThemeLoader};
 use crate::theme::Symbols;
 use crate::transcript::Item;
 
-/// Program usage, printed by `--help` and after an argument error.
-pub const USAGE: &str = "\
-horon-tui - terminal client for the horon-agent harness
-
-Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
-                 [--config <file>]...
-
-Options:
-  --socket <path>  Harness API socket to connect to (default: the resolved
-                   harness socket for this user)
-  --session <id>   Attach to an existing session instead of creating one
-  --cwd <dir>      Working directory for a newly created session
-  --config <file>  Extra settings file, read after the global and project
-                   files and before the environment (repeatable)
-  --hide-thinking  Hide the model's reasoning for this session, whatever
-                   transcript.show_reasoning says; ctrl+t toggles it again
-  -V, --version    Print the version and exit
-  -h, --help       Print this help and exit
-
-Keys:
-  Enter          send the typed message
-  Alt-Enter      start a new line (Ctrl-J does the same; most terminals
-                 send Shift-Enter as a plain Enter, which sends)
-  Tab            complete the slash command being typed
-  Esc            send the queued messages into the running turn, or
-                 interrupt it when nothing is queued
-  Ctrl-C         cancel a running turn, or leave when nothing is running
-  Ctrl-D         delete at the cursor, or leave with an empty idle draft
-  Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
-  Ctrl-W, Alt-Backspace  delete the word before the cursor
-  Ctrl-R         search the drafts sent before this one
-  PgUp, PgDn     scroll the transcript one page
-  Shift-Up/Down  scroll the transcript one row
-  Ctrl-End       follow the end of the conversation again
-  Ctrl-O         show or hide the whole output of the newest cut tool call
-  Shift-Tab      step to the next reasoning effort
-  Ctrl-T         show or hide the model's reasoning for this session
-  Alt-P          pick the model this session uses
-  Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
-  the keys in force.
-
-Commands:
-  /help          list the commands (built-in, harness, command files),
-                 the skills and the keys in force; /help <command>
-                 describes one of them
-  /clear         clear the transcript pane
-  /effort        set the reasoning effort, or pick one from the ladder
-  /exit          leave, the same as /quit
-  /keys          list the keys in force and what each does
-  /links         list the http(s) links in recent answers and open one
-  /model [name]  pick a model from a list, or switch to the one named
-  /new           start a new session in this directory
-  /quit          leave
-  /resume [id]   replay a stored session, or pick one from the list
-  /settings      open the settings screen, generated from the registry
-  /skills        list the skills the harness reports, and put one in the
-                 draft
-  /switch [id]   move to another stored session, or pick one from the list
-  //text         send the literal message /text
-";
+pub use help::USAGE;
 
 /// Parsed command line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
