@@ -104,6 +104,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Context(report) => crate::context::lines(report, look),
         Item::Report(report) => crate::report::lines(report, look),
         Item::TurnUsage(metrics) => turn_usage(metrics, look),
+        Item::CacheMiss(miss) => cache_miss(miss, look),
     }
 }
 
@@ -129,6 +130,23 @@ fn turn_usage(metrics: &TurnMetrics, look: &Look<'_>) -> Vec<Indented> {
     let text = parts.join(&format!(" {separator} "));
     let style = Style::default().fg(look.theme.transcript.notice);
     vec![Indented::plain(Line::from(Span::styled(text, style)))]
+}
+
+/// The marker a request leaves when the provider had to serve it without its
+/// cached prefix.
+///
+/// Drawn as one dim row: it belongs to the request above it and says what the
+/// resend cost, and it is neither the model's answer nor an error the reader can
+/// act on. The wording is the client's own, so it names the cause in words
+/// rather than echoing the daemon's reason id, and it carries no part of the
+/// prompt: the daemon never sends one.
+fn cache_miss(miss: &crate::transcript::CacheMiss, look: &Look<'_>) -> Vec<Indented> {
+    let style = Style::default().fg(look.theme.transcript.notice);
+    prefixed(
+        Span::styled(format!("{} cache miss: ", look.symbols.bullet), style),
+        &miss.summary(),
+        style,
+    )
 }
 
 /// The lines of one item, keeping a call's whole output as the text it came

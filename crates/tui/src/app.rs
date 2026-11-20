@@ -22,6 +22,7 @@ use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::Settings;
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::theme::{Symbols, Theme};
+use crate::transcript::CacheMiss;
 use crate::transcript::Decision;
 use crate::transcript::Transcript;
 
@@ -38,6 +39,9 @@ mod skills;
 
 #[cfg(test)]
 mod boundary_tests;
+
+#[cfg(test)]
+mod cache_miss_tests;
 
 #[cfg(test)]
 mod effort_cmd_tests;
@@ -188,6 +192,11 @@ pub struct App {
     /// takes the terminal's own text selection away, so it is on only while the
     /// setting says so.
     pub mouse_scroll: bool,
+    /// Whether `title.state` appends the turn state to the window title.
+    ///
+    /// Read here and acted on where the title is written, which also knows
+    /// whether the terminal keeps a title worth adding to.
+    pub title_state: bool,
     /// What the client is attached to, for the status line.
     pub description: String,
     /// Events from the bridge thread.
@@ -313,6 +322,9 @@ impl App {
             // captured yet, and `refresh_settings` decides from the registry's
             // default once the files are read.
             mouse_scroll: false,
+            // Off unless a settings layer asks for it: a window named after its
+            // session is what every setup saw before the key existed.
+            title_state: false,
             description,
             events,
             model: None,
@@ -370,6 +382,9 @@ impl App {
             // captured yet, and `refresh_settings` decides from the registry's
             // default once the files are read.
             mouse_scroll: false,
+            // Off unless a settings layer asks for it: a window named after its
+            // session is what every setup saw before the key existed.
+            title_state: false,
             description: "not connected".to_string(),
             events: receiver,
             model: None,
@@ -730,6 +745,34 @@ impl App {
                 // adds each request of the turn together, so a tool loop's
                 // several provider calls are all counted.
                 self.transcript.note_usage(*input, *output);
+            }
+            // The daemon classifies one miss per completed provider request and
+            // reports it right after that request's usage, so the mark lands
+            // under the answer that cost the resend. Only an avoidable miss is
+            // kept: a provider or model switch, an expiry, a documented reload,
+            // or a reason id this client does not know is not something the
+            // reader can act on, and `CacheMiss::from_report` says which.
+            ApiEvent::KvCacheMiss {
+                session_id,
+                reason,
+                harness_caused,
+                missed_tokens,
+                documented_cause,
+                ..
+            } => {
+                // A frame already queued when the client reattached can still
+                // arrive: showing it would put one conversation's miss under the
+                // one that replaced it, the same rule `BackgroundOutput` follows.
+                let follows = self
+                    .session_id
+                    .as_deref()
+                    .is_none_or(|current| current == session_id.as_str());
+                if follows
+                    && let Some(miss) =
+                        CacheMiss::from_report(reason, *harness_caused, documented_cause.as_deref(), *missed_tokens)
+                {
+                    self.transcript.push_cache_miss(miss);
+                }
             }
             ApiEvent::Error { message, .. } => {
                 // The turn is not over: the daemon follows a failed turn's
