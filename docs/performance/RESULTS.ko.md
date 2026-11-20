@@ -55,26 +55,23 @@
 
 <!-- bench-versions:start -->
 
-최근 자동 측정이 기록한 버전입니다. 표는 OS별 `compare.json`에서 만들므로, 러너 셋이 같은 버전을 설치했으면 한 번만 나옵니다.
+`e7b81ddfd166f2609b77ddb0d2080831adab4c34`의 비교 측정을 2026-11-20 18:54 UTC에 실행해 기록한 버전입니다. 여러 러너에서 같은 버전을 기록했으면 한 번만 표시합니다.
 
 | 도구 | 버전 |
 | --- | --- |
-| horon | `horon-agent v0.1.0-dev (50d24d7)` |
-| jcode | `jcode v0.99.1 (7206efd0c)` |
-| Claude Code | `2.1.317 (Claude Code)` |
-| Codex CLI | `codex-cli 0.166.0` |
-| OpenCode | `1.19.5` |
-| pi | `1.5.0` |
-| oh-my-pi (omp) | `omp/18.18.0` |
-| oh-my-openagent (omo) | `omo 5.1.64 (engine: senpi 2026.11.5-1)` |
+| horon | `horon-agent v0.1.0-dev (e7b81dd)` |
+| horon-base | `horon-agent v0.1.0-dev (4972eac)` |
+| jcode | `jcode v1.0.1 (10114429c)` |
 
 러너별 jcode 릴리스 신원입니다. 각 작업이 내려받아 검증한 `jcode-release.json`에서 읽습니다.
 
 | OS | 태그 | 커밋 | 자산 | SHA-256 | 제공 경로 |
 | --- | --- | --- | --- | --- | --- |
-| Linux | — | — | — | — | 기록 없음 |
-| macOS | — | — | — | — | 기록 없음 |
-| Windows | — | — | — | — | 기록 없음 |
+| Linux | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-linux-x86_64.tar.gz` | `f44a54978b503e5dd27fa8781c43ec4916ebe9c4a94d42aab50fc868bf4fbe86` | release-download |
+| macOS | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-macos-aarch64.tar.gz` | `7b11788a52b534183bf70949dbab686c47def7e1df20e912176227f3049af7fa` | release-download |
+| Windows | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-windows-x86_64.exe` | `c43a8c5a8489ecb1e52767a4f7c21982eb7f71b343de2f51d5b4b65c6197aec0` | release-download |
+
+[실행](https://github.com/horon-ai/agent/actions/runs/44792005623)
 
 <!-- bench-versions:end -->
 
