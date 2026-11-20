@@ -315,11 +315,11 @@ fn a_note_follows_its_stored_message_and_never_an_identical_answer() {
     assert_eq!(replay.note("s", first), Some("about B"));
 
     replay
-        .set("legacy", first, at(Role::Assistant, 1), "old note")
+        .set("by_text", first, at(Role::Assistant, 1), "old note")
         .expect("a note");
     assert_eq!(
         replay
-            .note_record("legacy", first, Some("message_a"))
+            .note_record("by_text", first, Some("message_a"))
             .map(|note| note.text.as_str()),
         Some("old note")
     );

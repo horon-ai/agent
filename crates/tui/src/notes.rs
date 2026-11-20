@@ -236,13 +236,13 @@ impl fmt::Display for NoteFault {
 
 #[derive(Debug, Clone, Default)]
 struct SessionNotes {
-    legacy: BTreeMap<MessageKey, Note>,
+    by_text: BTreeMap<MessageKey, Note>,
     stored: BTreeMap<String, (MessageKey, Note)>,
 }
 
 impl SessionNotes {
     fn len(&self) -> usize {
-        self.legacy.len() + self.stored.len()
+        self.by_text.len() + self.stored.len()
     }
 
     fn is_empty(&self) -> bool {
@@ -253,12 +253,12 @@ impl SessionNotes {
         if let Some(id) = &note.stored_id {
             self.stored.insert(id.clone(), (key, note));
         } else {
-            self.legacy.insert(key, note);
+            self.by_text.insert(key, note);
         }
     }
 
     fn iter(&self) -> impl Iterator<Item = (MessageKey, &Note)> {
-        self.legacy
+        self.by_text
             .iter()
             .map(|(key, note)| (*key, note))
             .chain(self.stored.values().map(|(key, note)| (*key, note)))
@@ -393,10 +393,10 @@ impl NoteStore {
                 .stored
                 .get(id)
                 .map(|(_, note)| note)
-                .or_else(|| notes.legacy.get(&key));
+                .or_else(|| notes.by_text.get(&key));
         }
         notes
-            .legacy
+            .by_text
             .get(&key)
             .or_else(|| notes.stored_fallback(key).map(|(_, note)| note))
     }
@@ -448,10 +448,10 @@ impl NoteStore {
         }
         let notes = self.sessions.entry(session.to_string()).or_default();
         if stored_id.is_some() {
-            notes.legacy.remove(&key);
+            notes.by_text.remove(&key);
         }
         let stored_id = stored_id.map(str::to_owned).or_else(|| {
-            if notes.legacy.contains_key(&key) {
+            if notes.by_text.contains_key(&key) {
                 return None;
             }
             notes.stored_fallback(key).map(|(id, _)| id.to_owned())
@@ -475,8 +475,8 @@ impl NoteStore {
             return false;
         };
         let removed = if let Some(id) = id {
-            notes.stored.remove(id).is_some() || notes.legacy.remove(&key).is_some()
-        } else if notes.legacy.remove(&key).is_some() {
+            notes.stored.remove(id).is_some() || notes.by_text.remove(&key).is_some()
+        } else if notes.by_text.remove(&key).is_some() {
             true
         } else if let Some((id, _)) = notes.stored_fallback(key) {
             let id = id.to_owned();
@@ -510,7 +510,7 @@ impl NoteStore {
         let removed = if let Some(id) = id {
             notes.stored.remove(&id).is_some()
         } else {
-            notes.legacy.remove(&key).is_some()
+            notes.by_text.remove(&key).is_some()
         };
         if removed {
             self.tidy(session);
