@@ -395,6 +395,7 @@ fn history_page(
             role: value["role"].as_str().unwrap_or_default().to_owned(),
             content: flatten_content(&value["content"]),
             answer: answer_without_reasoning(&value["content"]),
+            message_id: Some(message.message.id.clone()),
         });
     }
     let event = ApiEvent::SessionHistoryPage {

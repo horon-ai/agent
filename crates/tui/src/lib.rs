@@ -1040,7 +1040,12 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
     // height measured here has to know about the expansion: a view held above
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
-    let frame = notes::Frame::from_parts(note_store, session_id.as_deref(), transcript.items());
+    let frame = notes::Frame::from_parts(
+        note_store,
+        session_id.as_deref(),
+        transcript.items(),
+        transcript.stored_ids(),
+    );
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
         // Counted, not built: the rows of a block that stays off screen are not
         // made to measure it.

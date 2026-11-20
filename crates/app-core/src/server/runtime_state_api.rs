@@ -64,6 +64,7 @@ pub(super) async fn snapshot(
                     role: message.role,
                     content: message.content,
                     answer,
+                    message_id: None,
                 }
             })
             .collect(),

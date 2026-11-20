@@ -172,7 +172,7 @@ async fn handle_get_history_busy_fresh_session_returns_empty_without_waiting() {
             "test-server",
             "test",
             None,
-            false,
+            super::HistoryIds::default(),
         )
     };
     for processing in [false, true] {
@@ -291,7 +291,7 @@ async fn handle_get_history_busy_session_without_store_root_stays_connected() {
             "test-server",
             "test",
             None,
-            false,
+            super::HistoryIds::default(),
         ),
     )
     .await
@@ -431,7 +431,7 @@ async fn assert_history_service_tier(tier: Option<&'static str>, busy: bool, rac
             None,
             super::HistoryPayloadMode::Full,
             true,
-            false,
+            super::HistoryIds::default(),
         );
         tokio::pin!(history);
         assert!(futures::poll!(&mut history).is_pending());
@@ -461,7 +461,7 @@ async fn assert_history_service_tier(tier: Option<&'static str>, busy: bool, rac
                 "server-name",
                 "🔥",
                 None,
-                false,
+                super::HistoryIds::default(),
             ),
         )
         .await
@@ -814,7 +814,7 @@ async fn run_history_request(
         "test-server",
         "test",
         None,
-        false,
+        super::HistoryIds::default(),
     )
     .await
     .expect("write history event");

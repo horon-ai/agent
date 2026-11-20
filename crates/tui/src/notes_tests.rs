@@ -202,22 +202,25 @@ fn keys_count_only_the_rows_a_replay_restores_and_follow_content() {
         Item::Assistant("again".to_string()),
         Item::Assistant("hi".to_string()),
     ];
-    let entries = keyed(&items);
-    assert_eq!(entries[0].expect("user").address, at(Role::User, 1));
-    assert_eq!(entries[1].expect("assistant").address, at(Role::Assistant, 1));
+    let entries = keyed(&items, &[]);
+    assert_eq!(entries[0].as_ref().expect("user").address, at(Role::User, 1));
+    assert_eq!(entries[1].as_ref().expect("assistant").address, at(Role::Assistant, 1));
     assert_eq!(entries[2], None);
     assert_eq!(entries[3], None);
-    assert_eq!(entries[4].expect("assistant").address, at(Role::Assistant, 2));
+    assert_eq!(entries[4].as_ref().expect("assistant").address, at(Role::Assistant, 2));
     // A repeated text is a second occurrence, not the same message.
-    assert_eq!(entries[5].expect("assistant").address, at(Role::Assistant, 3));
-    assert_eq!(entries[1].expect("assistant").key, assistant("hi"));
-    assert_eq!(entries[5].expect("assistant").key, key(Role::Assistant, "hi", 2));
+    assert_eq!(entries[5].as_ref().expect("assistant").address, at(Role::Assistant, 3));
+    assert_eq!(entries[1].as_ref().expect("assistant").key, assistant("hi"));
+    assert_eq!(
+        entries[5].as_ref().expect("assistant").key,
+        key(Role::Assistant, "hi", 2)
+    );
 
     // The same place with different content holds a different identity.
-    let replaced = keyed(&[Item::Assistant("different answer".to_string())]);
-    assert_ne!(replaced[0].expect("assistant").key, assistant("hi"));
+    let replaced = keyed(&[Item::Assistant("different answer".to_string())], &[]);
+    assert_ne!(replaced[0].as_ref().expect("assistant").key, assistant("hi"));
     assert_eq!(
-        keyed(&items).into_iter().flatten().last().expect("newest").address,
+        keyed(&items, &[]).into_iter().flatten().last().expect("newest").address,
         at(Role::Assistant, 3)
     );
 }
@@ -244,6 +247,59 @@ fn a_stored_key_survives_the_file_round_trip() {
     let note = items.values().next().expect("one note");
     assert_eq!(note["address"], Value::from("a4"));
     assert_eq!(note["text"], Value::from("round trip"));
+    // No stored message was named, so the file holds no id for it.
+    assert!(note.get("stored_id").is_none(), "{note}");
+}
+
+#[test]
+fn a_note_names_the_stored_message_it_was_written_on() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = notes_path(&directory);
+    let mut store = NoteStore::at(&path);
+    store.ensure_loaded();
+    store
+        .set_stored(
+            "s",
+            assistant("hi"),
+            at(Role::Assistant, 1),
+            Some("message_2"),
+            "on the second",
+        )
+        .expect("a note");
+    store.save().expect("saved");
+
+    let mut read = NoteStore::at(&path);
+    read.ensure_loaded();
+    let note = read.note_record("s", assistant("hi")).expect("the note");
+    assert_eq!(note.stored_id.as_deref(), Some("message_2"));
+    // An older file has no such field, and its note keeps matching by text.
+    let value = stored(&path);
+    assert_eq!(value["sessions"]["s"]["items"].as_object().expect("items").len(), 1);
+}
+
+#[test]
+fn a_note_follows_its_stored_message_and_never_an_identical_answer() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let mut store = NoteStore::at(&notes_path(&directory));
+    store.ensure_loaded();
+    let key = assistant("same words");
+    store
+        .set_stored("s", key, at(Role::Assistant, 1), Some("message_a"), "about A")
+        .expect("a note");
+    let note = store.note_record("s", key).expect("the note");
+
+    assert!(note_matches(&note, Some("message_a")), "the same message keeps it");
+    assert!(!note_matches(&note, Some("message_b")), "an identical answer is not it");
+    // A row from a harness that names none cannot disprove the match, so the
+    // text key still decides, as it did before stored ids existed.
+    assert!(note_matches(&note, None));
+
+    // A note written before the field existed has no id and matches its text.
+    let mut legacy = NoteStore::memory();
+    legacy.set("s", key, at(Role::Assistant, 1), "about A").expect("a note");
+    let legacy_note = legacy.note_record("s", key).expect("the note");
+    assert!(legacy_note.stored_id.is_none());
+    assert!(note_matches(&legacy_note, Some("message_b")));
 }
 
 /// A key whose text is normalised the same way the store does.

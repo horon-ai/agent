@@ -148,6 +148,7 @@ fn bridge_wiring_snapshot_is_preceded_by_one_matching_marker() {
             answer: None,
             role: "assistant".into(),
             content: "hello".into(),
+            message_id: None,
         }],
         next_history_cursor: None,
         truncated: false,

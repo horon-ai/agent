@@ -232,6 +232,12 @@ export interface HistoryMessage {
    * `answer` joins only `text` blocks and is absent on other rows.
    */
   answer?: string;
+  /**
+   * The session's stored id for the message this row shows, when the client
+   * asked for stored message ids and the daemon rendered the row from one.
+   * Absent on rows from a daemon that reports none, and on synthetic rows.
+   */
+  message_id?: string;
 }
 
 /** Durable token usage for one session. A metric no request recorded is `null`. */

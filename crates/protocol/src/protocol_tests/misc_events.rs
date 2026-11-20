@@ -27,14 +27,9 @@ fn test_memory_activity_event_roundtrip() -> Result<()> {
     let ServerEvent::MemoryActivity { activity } = decoded else {
         return Err(anyhow!("expected MemoryActivity event"));
     };
-    assert_eq!(
-        activity.state,
-        MemoryStateSnapshot::SidecarChecking { count: 3 }
-    );
+    assert_eq!(activity.state, MemoryStateSnapshot::SidecarChecking { count: 3 });
     assert_eq!(activity.state_age_ms, 275);
-    let pipeline = activity
-        .pipeline
-        .ok_or_else(|| anyhow!("pipeline snapshot"))?;
+    let pipeline = activity.pipeline.ok_or_else(|| anyhow!("pipeline snapshot"))?;
     assert_eq!(pipeline.search, MemoryStepStatusSnapshot::Done);
     assert_eq!(pipeline.verify, MemoryStepStatusSnapshot::Running);
     assert_eq!(pipeline.verify_progress, Some((1, 3)));
@@ -77,9 +72,7 @@ fn test_set_route_deserializes_as_set_model_compat_alias() -> Result<()> {
     // `set_route` tag. `decode_request` (not raw serde) normalizes it.
     let decoded = decode_request(r#"{"type":"set_route","id":42,"model":"claude-opus-4-5"}"#)?;
     let Request::SetModel { id, model } = decoded else {
-        return Err(anyhow!(
-            "expected set_route compatibility alias to decode as SetModel"
-        ));
+        return Err(anyhow!("expected set_route compatibility alias to decode as SetModel"));
     };
     assert_eq!(id, 42);
     assert_eq!(model, "claude-opus-4-5");
@@ -102,6 +95,7 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         continue_on_disconnect: true,
         terminal_env: vec![("ZELLIJ_SESSION_NAME".to_string(), "sessionB".to_string())],
         acp: None,
+        history_message_ids: false,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"subscribe\""));
@@ -120,6 +114,7 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         continue_on_disconnect,
         terminal_env,
         acp: _,
+        history_message_ids: _,
     } = decoded
     else {
         return Err(anyhow!("expected Subscribe"));
@@ -159,6 +154,7 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         continue_on_disconnect,
         terminal_env,
         acp: _,
+        history_message_ids: _,
     } = decoded
     else {
         return Err(anyhow!("expected Subscribe"));
@@ -275,11 +271,7 @@ fn test_provider_guardrail_event_roundtrip() -> Result<()> {
     let json = encode_event(&event);
     assert!(json.contains("\"type\":\"provider_guardrail\""));
     let decoded = parse_event_json(json.trim())?;
-    let ServerEvent::ProviderGuardrail {
-        stop_reason,
-        message,
-    } = decoded
-    else {
+    let ServerEvent::ProviderGuardrail { stop_reason, message } = decoded else {
         return Err(anyhow!("expected ProviderGuardrail event"));
     };
     assert_eq!(stop_reason.as_deref(), Some("refusal"));
@@ -352,11 +344,7 @@ fn test_native_ssh_pong_capability_is_backward_compatible() -> Result<()> {
             ..
         }
     ));
-    assert!(
-        serde_json::to_value(&legacy)?
-            .get("native_ssh_protocol")
-            .is_none()
-    );
+    assert!(serde_json::to_value(&legacy)?.get("native_ssh_protocol").is_none());
     Ok(())
 }
 
@@ -369,9 +357,7 @@ fn tool_input_optional_id_preserves_legacy_wire_format() -> Result<()> {
         serde_json::json!({"type":"tool_input","delta":"{"})
     );
     let keyed = parse_event_json(r#"{"type":"tool_input","id":"a","delta":"{}"}"#)?;
-    assert!(
-        matches!(&keyed, ServerEvent::ToolInput { id: Some(id), delta } if id == "a" && delta == "{}")
-    );
+    assert!(matches!(&keyed, ServerEvent::ToolInput { id: Some(id), delta } if id == "a" && delta == "{}"));
     assert_eq!(
         serde_json::to_value(keyed)?,
         serde_json::json!({"type":"tool_input","id":"a","delta":"{}"})
@@ -388,7 +374,11 @@ fn assert_v2_event_roundtrip(event: ServerEvent, wire_type: &str, fields: &[&str
         assert!(wire.get(*field).is_some(), "missing field {field}: {wire}");
     }
     let decoded = parse_event_json(&serde_json::to_string(&event)?)?;
-    assert_eq!(serde_json::to_value(&decoded)?, wire, "round trip must preserve {wire_type}");
+    assert_eq!(
+        serde_json::to_value(&decoded)?,
+        wire,
+        "round trip must preserve {wire_type}"
+    );
     Ok(wire)
 }
 
@@ -425,7 +415,10 @@ fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
         &["id", "call_id", "accepted"],
     )?;
     assert_eq!(cancel["accepted"], true);
-    assert!(cancel.get("reason").is_none(), "an accepted cancel names no reason: {cancel}");
+    assert!(
+        cancel.get("reason").is_none(),
+        "an accepted cancel names no reason: {cancel}"
+    );
 
     let refused = assert_v2_event_roundtrip(
         ServerEvent::ToolCallCancelResult {
@@ -473,8 +466,14 @@ fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
         &["call_id", "task_id", "kind", "state", "command", "cwd"],
     )?;
     assert_eq!(started["state"], "started");
-    assert!(started.get("output").is_none(), "started work carries no output: {started}");
-    assert!(started.get("exit_code").is_none(), "started work carries no exit code: {started}");
+    assert!(
+        started.get("output").is_none(),
+        "started work carries no output: {started}"
+    );
+    assert!(
+        started.get("exit_code").is_none(),
+        "started work carries no exit code: {started}"
+    );
 
     let finished = assert_v2_event_roundtrip(
         ServerEvent::BackgroundWork(BackgroundWorkEvent {
@@ -521,7 +520,10 @@ fn acp_v2_side_channel_events_roundtrip_with_their_wire_tags() -> Result<()> {
     )?;
     assert_eq!(list["items"][0]["call_id"], "call-1");
     assert_eq!(list["items"][0]["output"], "YQ==");
-    assert!(list["items"][1].get("command").is_none(), "absent command stays off the wire");
+    assert!(
+        list["items"][1].get("command").is_none(),
+        "absent command stays off the wire"
+    );
 
     assert_v2_event_roundtrip(
         ServerEvent::AskToolCall {

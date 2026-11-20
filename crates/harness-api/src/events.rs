@@ -947,6 +947,14 @@ pub struct HistoryMessage {
     /// reasoning markup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// The session's stored id for the message this row shows.
+    ///
+    /// Present only when the client asked for stored message ids and the row
+    /// was rendered from a stored message, so it names the exact original a
+    /// reader can key an annotation by. Rows from a daemon that predates the
+    /// request, and synthetic rows, omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

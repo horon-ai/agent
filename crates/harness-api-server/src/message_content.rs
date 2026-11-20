@@ -70,7 +70,8 @@ pub(crate) fn answer_without_reasoning(content: &Value) -> Option<String> {
 ///
 /// The daemon already has the reasoning markup applied, so the row's `content`
 /// is forwarded as it is and `answer` is derived with the same helper the
-/// daemon used to write it.
+/// daemon used to write it. `message_id` is forwarded only when the daemon put
+/// one on the row, which it does for this bridge's subscription alone.
 pub(crate) fn history_message(message: &Value) -> HistoryMessage {
     let content = message["content"].as_str().unwrap_or("").to_string();
     let answer = horon_agent_base::session::split_rendered_reasoning(&content).map(|(_, answer)| answer);
@@ -80,6 +81,7 @@ pub(crate) fn history_message(message: &Value) -> HistoryMessage {
         role: message["role"].as_str().unwrap_or("").to_string(),
         content,
         answer,
+        message_id: message["message_id"].as_str().map(str::to_string),
     }
 }
 

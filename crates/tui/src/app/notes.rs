@@ -13,7 +13,7 @@
 //! place.
 
 use super::{Action, App};
-use crate::notes::{self, Address, MessageKey, NoteFault};
+use crate::notes::{self, Address, NoteFault};
 
 /// The line a listing shows per note, before the note's own text.
 const EXCERPT_CHARS: usize = 60;
@@ -84,7 +84,12 @@ impl App {
                 return;
             }
         };
-        let (key, address, text) = target;
+        let (target, text) = target;
+        let notes::Keyed {
+            key,
+            address,
+            stored_id,
+        } = target;
         if text.trim().is_empty() {
             self.warn(format!(
                 "notes: the note for {address} has no text; /note add {address} <text>"
@@ -98,7 +103,10 @@ impl App {
             return;
         }
         let existed = self.notes.note(session, key).is_some();
-        match self.notes.set(session, key, address, &text) {
+        match self
+            .notes
+            .set_stored(session, key, address, stored_id.as_deref(), &text)
+        {
             Ok(()) => {}
             Err(error) => {
                 self.warn(format!("notes: {error}"));
@@ -124,7 +132,7 @@ impl App {
         } else {
             let word = trimmed.split_whitespace().next().unwrap_or(trimmed);
             match address(word) {
-                Ok(Some(address)) => (Some(address), key_at(self, address)),
+                Ok(Some(address)) => (Some(address), key_at(self, address).map(|target| target.key)),
                 Ok(None) => {
                     self.warn(format!(
                         "notes: `{word}` is not a message address; use u1, a1 and so on"
@@ -165,26 +173,31 @@ impl App {
                 .push_notice("notes: this session has none; /note add <text> notes the newest message");
             return;
         }
-        let keyed = notes::keyed(self.transcript.items());
+        let keyed = notes::keyed(self.transcript.items(), self.transcript.stored_ids());
         let mut rows = vec![format!("notes in this session ({count}):")];
         let mut shown = 0;
+        let mut live = Vec::new();
         for (item, entry) in self.transcript.items().iter().zip(&keyed) {
             let Some(entry) = entry else {
                 continue;
             };
-            let Some(note) = self.notes.note(session, entry.key) else {
+            let Some(note) = self.notes.note_record(session, entry.key) else {
                 continue;
             };
+            live.push(entry.key);
+            if !notes::note_matches(note, entry.stored_id.as_deref()) {
+                live.pop();
+                continue;
+            }
             let quote = notes::excerpt(item).map_or_else(String::new, |text| {
                 format!("\"{}\"  ", notes::summary(text.trim(), EXCERPT_CHARS))
             });
-            rows.push(format!("  {}  {quote}— {note}", entry.address));
+            rows.push(format!("  {}  {quote}— {}", entry.address, note.text));
             shown += 1;
         }
         // A note whose message this transcript no longer holds is still the
         // reader's text; hiding it would look like the note was lost.
         if shown < count {
-            let live: Vec<MessageKey> = keyed.iter().flatten().map(|entry| entry.key).collect();
             for (key, note) in self.notes.notes(session) {
                 if !live.contains(&key) {
                     rows.push(format!(
@@ -240,37 +253,36 @@ impl App {
 ///
 /// The first word is an address when it parses as one; otherwise the whole
 /// line is the note's text and the newest message is the target.
-fn target(app: &App, raw: &str) -> Result<(MessageKey, Address, String), NoteFault> {
+fn target(app: &App, raw: &str) -> Result<(notes::Keyed, String), NoteFault> {
     let raw = raw.trim();
     let (first, rest) = match raw.split_once(char::is_whitespace) {
         Some((first, rest)) => (first, rest.trim()),
         None => (raw, ""),
     };
     if let Some(address) = address(first)? {
-        let key =
+        let keyed =
             key_at(app, address).ok_or_else(|| NoteFault::new(format!("this session has no message {address}")))?;
-        return Ok((key, address, rest.to_string()));
+        return Ok((keyed, rest.to_string()));
     }
     let newest = newest(app)?;
-    Ok((newest.key, newest.address, raw.to_string()))
+    Ok((newest, raw.to_string()))
 }
 
 /// The keyed message the newest addressable row of `app` holds.
 fn newest(app: &App) -> Result<notes::Keyed, NoteFault> {
-    notes::keyed(app.transcript.items())
+    notes::keyed(app.transcript.items(), app.transcript.stored_ids())
         .into_iter()
         .flatten()
         .next_back()
         .ok_or_else(|| NoteFault::new("this session has no user or assistant message to note"))
 }
 
-/// The current content identity of `address`, when the transcript holds it.
-fn key_at(app: &App, address: Address) -> Option<MessageKey> {
-    notes::keyed(app.transcript.items())
+/// The current identity of `address`, when the transcript holds it.
+fn key_at(app: &App, address: Address) -> Option<notes::Keyed> {
+    notes::keyed(app.transcript.items(), app.transcript.stored_ids())
         .into_iter()
         .flatten()
         .find(|entry| entry.address == address)
-        .map(|entry| entry.key)
 }
 
 /// Read a word as an address.

@@ -616,6 +616,11 @@ impl BridgeState {
                     "id": id,
                     "supports_user_response": self.supports_user_response,
                     "supports_ask_requests": self.supports_ask_requests,
+                    // The transcript this bridge serves keys annotations by the
+                    // stored message each row came from. Ask for the ids alone:
+                    // negotiating ACP would also switch on the v2-only event
+                    // surface and the ACP tool bridges, which this client is not.
+                    "history_message_ids": true,
                 });
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
@@ -3640,6 +3645,7 @@ impl BridgeState {
                     role: role.to_string(),
                     content,
                     answer: answer_without_reasoning(&message["content"]),
+                    message_id: message["id"].as_str().map(str::to_string),
                 })
             })
             .take(limit)

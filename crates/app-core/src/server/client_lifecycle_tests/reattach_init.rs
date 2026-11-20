@@ -353,6 +353,7 @@ async fn target_aware_reattach_serves_history_without_a_placeholder_prewarm() {
             continue_on_disconnect: false,
             terminal_env: Vec::new(),
             acp: None,
+            history_message_ids: false,
         },
     )
     .await;

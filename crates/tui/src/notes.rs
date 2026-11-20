@@ -198,6 +198,14 @@ pub struct Note {
     pub address: Address,
     /// Milliseconds since the Unix epoch, when the text was written.
     pub updated_ms: u64,
+    /// The stored message the note was written on, when the harness named one.
+    ///
+    /// Two messages can read the same and still be different answers: a replay,
+    /// a compaction, or a repeated sentence. Once both the note and the row name
+    /// a stored message, the note is drawn only under the one it was written on.
+    /// A note written before this field existed, or on a row from a harness that
+    /// reports no ids, has none and keeps matching by text alone.
+    pub stored_id: Option<String>,
 }
 
 /// Why a note could not be written.
@@ -348,10 +356,13 @@ impl NoteStore {
 
     /// The note on one message, if any.
     pub fn note(&self, session: &str, key: MessageKey) -> Option<&str> {
-        self.sessions
-            .get(session)
-            .and_then(|notes| notes.get(&key))
-            .map(|note| note.text.as_str())
+        self.note_record(session, key).map(|note| note.text.as_str())
+    }
+
+    /// The whole note record on one message, with the stored message it was
+    /// written on.
+    pub fn note_record(&self, session: &str, key: MessageKey) -> Option<&Note> {
+        self.sessions.get(session).and_then(|notes| notes.get(&key))
     }
 
     /// Every note of one session, ordered by content identity.
@@ -383,6 +394,18 @@ impl NoteStore {
     /// note is drawn beside a message, so a multi-paragraph note would push
     /// the conversation it is about off the screen.
     pub fn set(&mut self, session: &str, key: MessageKey, address: Address, text: &str) -> Result<(), NoteError> {
+        self.set_stored(session, key, address, None, text)
+    }
+
+    /// [`Self::set`], also recording the stored message the note was written on.
+    pub fn set_stored(
+        &mut self,
+        session: &str,
+        key: MessageKey,
+        address: Address,
+        stored_id: Option<&str>,
+        text: &str,
+    ) -> Result<(), NoteError> {
         let session = session.trim();
         if session.is_empty() {
             return Err(NoteError::NoSession);
@@ -398,6 +421,7 @@ impl NoteStore {
                 text,
                 address,
                 updated_ms: now_ms(),
+                stored_id: stored_id.map(str::to_string),
             },
         );
         self.dirty.insert(session.to_string());
@@ -561,24 +585,28 @@ impl NoteStore {
 }
 
 /// One message that can hold a note, with both of its names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Keyed {
     /// What the note is stored under.
     pub(crate) key: MessageKey,
     /// What the reader types to reach it.
     pub(crate) address: Address,
+    /// The stored message the row came from, when the harness named one.
+    pub(crate) stored_id: Option<String>,
 }
 
 /// The message identity and address of each item that can hold a note.
 ///
 /// Only committed user and assistant messages are addressable: they are the
 /// rows a replay restores, so both names describe a message the reader can
-/// still reach after a reattach.
-pub(crate) fn keyed(items: &[Item]) -> Vec<Option<Keyed>> {
+/// still reach after a reattach. `stored` holds the harness's stored message id
+/// per item, aligned with `items`; it is empty or short whenever the caller has
+/// none, and a row without one is keyed exactly as before.
+pub(crate) fn keyed(items: &[Item], stored: &[Option<String>]) -> Vec<Option<Keyed>> {
     let mut ordinals = [0usize; 2];
     let mut occurrences: BTreeMap<(Role, u64), usize> = BTreeMap::new();
     let mut out = Vec::with_capacity(items.len());
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
         let Some((role, text)) = addressable(item) else {
             out.push(None);
             continue;
@@ -597,6 +625,7 @@ pub(crate) fn keyed(items: &[Item]) -> Vec<Option<Keyed>> {
                 role,
                 ordinal: ordinals[role.index()],
             },
+            stored_id: stored.get(index).cloned().flatten(),
         }));
     }
     out
@@ -612,15 +641,36 @@ fn addressable(item: &Item) -> Option<(Role, &str)> {
 }
 
 /// The note of the block at `index`, if the session and message have one.
+///
+/// A note that records a stored message is drawn only under a row that names
+/// the same one: the text key alone would also match an identical answer in
+/// another place, and a note belongs to the answer it was written on. When
+/// either side has no id the text key decides, which is the whole rule for a
+/// harness that reports none.
 pub(crate) fn note_at<'a>(
     store: &'a NoteStore,
     session: Option<&str>,
     keys: Option<&[Option<MessageKey>]>,
+    ids: Option<&[Option<String>]>,
     index: usize,
 ) -> Option<&'a str> {
     let session = session?;
     let key = keys?.get(index).copied().flatten()?;
-    store.note(session, key)
+    let note = store.note_record(session, key)?;
+    let current = ids?.get(index).and_then(|id| id.as_deref());
+    note_matches(note, current).then_some(note.text.as_str())
+}
+
+/// Whether a note may be drawn under a row naming `current`.
+///
+/// True when either side names no stored message: a note written from the live
+/// stream, or read by a harness that reports no ids, still belongs to its text.
+/// When both name one, they have to be the same message.
+pub(crate) fn note_matches(note: &Note, current: Option<&str>) -> bool {
+    match (note.stored_id.as_deref(), current) {
+        (Some(recorded), Some(current)) => recorded == current,
+        _ => true,
+    }
 }
 
 /// The notes one frame can hang under the blocks it draws.
@@ -635,12 +685,18 @@ pub(crate) struct Frame<'a> {
     store: &'a NoteStore,
     session: Option<&'a str>,
     keys: Option<Vec<Option<MessageKey>>>,
+    ids: &'a [Option<String>],
 }
 
 impl<'a> Frame<'a> {
     /// The notes of the app's current session.
     pub(crate) fn new(app: &'a App) -> Self {
-        Self::from_parts(&app.notes, app.session_id.as_deref(), app.transcript.items())
+        Self::from_parts(
+            &app.notes,
+            app.session_id.as_deref(),
+            app.transcript.items(),
+            app.transcript.stored_ids(),
+        )
     }
 
     /// The notes of `session` over `items`.
@@ -648,21 +704,31 @@ impl<'a> Frame<'a> {
     /// The measuring walk has the store, the session and the items apart rather
     /// than through an `App`, because it holds those fields of one borrowed
     /// across the scroll's own mutable borrow.
-    pub(crate) fn from_parts(store: &'a NoteStore, session: Option<&'a str>, items: &[Item]) -> Self {
+    pub(crate) fn from_parts(
+        store: &'a NoteStore,
+        session: Option<&'a str>,
+        items: &[Item],
+        ids: &'a [Option<String>],
+    ) -> Self {
         let keys = session
             .filter(|session| store.count(session) > 0)
-            .map(|_| message_keys(items));
-        Self { store, session, keys }
+            .map(|_| message_keys(items, ids));
+        Self {
+            store,
+            session,
+            keys,
+            ids,
+        }
     }
 
     /// The note of the block at `index`, if its message has one.
     pub(crate) fn at(&self, index: usize) -> Option<&'a str> {
-        note_at(self.store, self.session, self.keys.as_deref(), index)
+        note_at(self.store, self.session, self.keys.as_deref(), Some(self.ids), index)
     }
 }
 
-pub(crate) fn message_keys(items: &[Item]) -> Vec<Option<MessageKey>> {
-    keyed(items)
+pub(crate) fn message_keys(items: &[Item], ids: &[Option<String>]) -> Vec<Option<MessageKey>> {
+    keyed(items, ids)
         .into_iter()
         .map(|entry| entry.map(|entry| entry.key))
         .collect()
@@ -800,12 +866,16 @@ fn parse(text: &str) -> Result<Parsed, NoteFault> {
                 continue;
             };
             let updated_ms = entry.get("updated_ms").and_then(Value::as_u64).unwrap_or(0);
+            // Absent on every note written before stored ids were recorded,
+            // and on notes written from a harness that reports none.
+            let stored_id = entry.get("stored_id").and_then(Value::as_str).map(str::to_string);
             notes.insert(
                 key,
                 Note {
                     text: text.to_string(),
                     address,
                     updated_ms,
+                    stored_id,
                 },
             );
         }
@@ -826,6 +896,9 @@ fn to_value(sessions: &AllNotes) -> Value {
             entry.insert("text".to_string(), Value::String(note.text.clone()));
             entry.insert("address".to_string(), Value::String(note.address.to_string()));
             entry.insert("updated_ms".to_string(), Value::from(note.updated_ms));
+            if let Some(stored_id) = &note.stored_id {
+                entry.insert("stored_id".to_string(), Value::String(stored_id.clone()));
+            }
             items.insert(key.token(), Value::Object(entry));
         }
         let mut holding = Map::new();

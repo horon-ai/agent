@@ -1416,6 +1416,7 @@ impl RawClient {
             continue_on_disconnect: false,
             terminal_env: Vec::new(),
             acp: None,
+            history_message_ids: false,
         })
         .await?;
         self.read_until(
@@ -1425,7 +1426,6 @@ impl RawClient {
         .await?;
         Ok(())
     }
-
     async fn session_id(&mut self) -> Result<String> {
         let id = self.next_id;
         self.next_id += 1;

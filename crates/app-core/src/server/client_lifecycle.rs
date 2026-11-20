@@ -29,6 +29,7 @@ use super::comm_sync::{
     CommResyncPlanContext, handle_comm_plan_status, handle_comm_read_context, handle_comm_resync_plan,
     handle_comm_status, handle_comm_summary,
 };
+use super::foreground_state::HistoryIds;
 use super::provider_control::{
     handle_invalidate_openai_usage, handle_notify_auth_changed, handle_set_model, handle_set_reasoning_effort,
     try_available_models_catalog,
@@ -591,6 +592,10 @@ pub(super) async fn handle_client(
     // forwarder reads it for every event, so a re-subscribe that drops v2 stops
     // the v2-only events at once.
     let acp_v2 = Arc::new(AtomicBool::new(false));
+    // Set by a Subscribe that asked for stored message ids on history rows
+    // without negotiating ACP. Independent of `acp_v2`: it changes nothing but
+    // whether a row names the stored message it came from.
+    let history_message_ids = Arc::new(AtomicBool::new(false));
     // The latest v2 `message` request, kept after its turn ends so a late
     // withdrawal is answered "already inserted" rather than "unknown".
     let mut last_v2_message: Option<AcpV2Message> = None;
@@ -1603,7 +1608,10 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            acp_v2.load(Ordering::Acquire),
+                            HistoryIds::for_connection(
+                                acp_v2.load(Ordering::Acquire),
+                                history_message_ids.load(Ordering::Acquire),
+                            ),
                         )
                         .await
                         .is_err()
@@ -1664,7 +1672,10 @@ pub(super) async fn handle_client(
                             &server_name,
                             &server_icon,
                             None,
-                            acp_v2.load(Ordering::Acquire),
+                            HistoryIds::for_connection(
+                                acp_v2.load(Ordering::Acquire),
+                                history_message_ids.load(Ordering::Acquire),
+                            ),
                         )
                         .await
                         .is_err()
@@ -1738,6 +1749,7 @@ pub(super) async fn handle_client(
                 continue_on_disconnect: requested_continuation,
                 terminal_env,
                 acp: acp_options,
+                history_message_ids: requested_history_message_ids,
             } => {
                 if let Err(message) =
                     validated_subscribe_working_dir(
@@ -1774,11 +1786,12 @@ pub(super) async fn handle_client(
                 supports_user_response = requested_user_response;
                 supports_ask_requests = requested_ask_requests;
                 // Read before the attach below writes History, which carries
-                // stored message ids only for a v2 connection.
+                // stored message ids only for a connection that asked for them.
                 acp_v2.store(
                     acp_options.as_ref().is_some_and(|options| options.protocol_version == Some(2)),
                     Ordering::Release,
                 );
+                history_message_ids.store(requested_history_message_ids, Ordering::Release);
                 active_terminal_env = terminal_env;
                 current_client_instance_id = client_instance_id.clone();
                 {
@@ -1833,7 +1846,10 @@ pub(super) async fn handle_client(
                                 &event_history,
                                 &event_counter,
                                 &swarm_event_tx,
-                                acp_v2.load(Ordering::Acquire),
+                                HistoryIds::for_connection(
+                                    acp_v2.load(Ordering::Acquire),
+                                    history_message_ids.load(Ordering::Acquire),
+                                ),
                             ),
                         )
                         .await?;
@@ -2030,7 +2046,10 @@ pub(super) async fn handle_client(
                     &server_name,
                     &server_icon,
                     None,
-                    acp_v2.load(Ordering::Acquire),
+                    HistoryIds::for_connection(
+                        acp_v2.load(Ordering::Acquire),
+                        history_message_ids.load(Ordering::Acquire),
+                    ),
                 )
                 .await
                 .is_err()
@@ -2134,7 +2153,10 @@ pub(super) async fn handle_client(
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
-                        acp_v2.load(Ordering::Acquire),
+                        HistoryIds::for_connection(
+                            acp_v2.load(Ordering::Acquire),
+                            history_message_ids.load(Ordering::Acquire),
+                        ),
                     ),
                 )
                 .await?;

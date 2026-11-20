@@ -121,6 +121,7 @@ mod tests {
             role: "assistant".into(),
             content: "answer".into(),
             stored_index: Some(index),
+            stored_id: None,
             tool_calls: vec![],
             tool_data: None,
             response_stats: None,

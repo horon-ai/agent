@@ -201,7 +201,9 @@ impl App {
         self.transcript.clear();
         for message in &session.history {
             match message.role.as_str() {
-                "user" => self.transcript.push_user(message.content.clone()),
+                "user" => self
+                    .transcript
+                    .push_user_stored(message.content.clone(), message.message_id.clone()),
                 // A stored assistant row carries the reasoning the daemon
                 // re-rendered before the answer. Reading it back with the
                 // daemon's own markup helper keeps the answer row identical to
@@ -219,7 +221,8 @@ impl App {
                     // historical value for clients that do not know the field.
                     let answer = message.answer.clone().unwrap_or(split);
                     if !answer.is_empty() {
-                        self.transcript.push_assistant(answer);
+                        self.transcript
+                            .push_assistant_stored(answer, message.message_id.clone());
                     }
                 }
                 // Tool rows are the daemon's record of what ran, not the

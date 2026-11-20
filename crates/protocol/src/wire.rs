@@ -318,6 +318,13 @@ pub enum Request {
         /// field never appears on their wire and their behaviour is unchanged.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         acp: Option<AcpSubscribeOptions>,
+        /// Ask for the stored message id on each history row.
+        ///
+        /// Independent of `acp`: a client that wants the ids without the ACP
+        /// bridge (and its v2-only event surface) sets this alone. Absent on
+        /// every other client, so their history rows keep the bytes they had.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        history_message_ids: bool,
     },
 
     /// Declare that this client is intentionally detaching before its transport
