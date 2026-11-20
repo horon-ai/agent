@@ -196,6 +196,11 @@ pub struct App {
     /// takes the terminal's own text selection away, so it is on only while the
     /// setting says so.
     pub mouse_scroll: bool,
+    /// Whether `title.state` appends the turn state to the window title.
+    ///
+    /// Read here and acted on where the title is written, which also knows
+    /// whether the terminal keeps a title worth adding to.
+    pub title_state: bool,
     /// What the client is attached to, for the status line.
     pub description: String,
     /// Events from the bridge thread.
@@ -322,6 +327,9 @@ impl App {
             // captured yet, and `refresh_settings` decides from the registry's
             // default once the files are read.
             mouse_scroll: false,
+            // Off unless a settings layer asks for it: a window named after its
+            // session is what every setup saw before the key existed.
+            title_state: false,
             description,
             events,
             model: None,
@@ -380,6 +388,9 @@ impl App {
             // captured yet, and `refresh_settings` decides from the registry's
             // default once the files are read.
             mouse_scroll: false,
+            // Off unless a settings layer asks for it: a window named after its
+            // session is what every setup saw before the key existed.
+            title_state: false,
             description: "not connected".to_string(),
             events: receiver,
             model: None,
