@@ -768,27 +768,25 @@ fn cells_u16(cells: usize) -> u16 {
 /// The renderer uses it to find the room left on a row after the draft, so a
 /// suffix cannot paint past the pane.
 pub fn text_cells(text: &str) -> u16 {
-    let cells: usize = text.chars().map(char_width).sum();
-    u16::try_from(cells).unwrap_or(u16::MAX)
+    cells_u16(text.graphemes(true).map(UnicodeWidthStr::width).sum())
 }
 
 /// The longest prefix of `text` that fits in `cells` cells.
 ///
-/// A wide character that would cross the edge is left out rather than counted
-/// as one, which is what keeps the drawn row the width the pane reserved.
+/// Keep whole graphemes so a wide or joined character never crosses the edge.
 pub fn clip_cells(text: &str, cells: u16) -> String {
     let room = usize::from(cells);
     let mut used = 0;
-    let mut clipped = String::new();
-    for character in text.chars() {
-        let width = char_width(character);
+    let mut end = 0;
+    for grapheme in text.graphemes(true) {
+        let width = UnicodeWidthStr::width(grapheme);
         if used + width > room {
             break;
         }
         used += width;
-        clipped.push(character);
+        end += grapheme.len();
     }
-    clipped
+    text[..end].to_owned()
 }
 
 /// Characters hashed before the scan stops.
