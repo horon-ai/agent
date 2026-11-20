@@ -190,6 +190,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
+        "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
