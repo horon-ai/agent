@@ -302,6 +302,9 @@ impl Agent {
     ) -> Option<ServerEvent> {
         let effective = self.effective_context_tokens_from_usage(input, cache_read, cache_creation);
         let miss = self.kv_cache_monitor.finish_request(effective, cache_read)?;
+        if !crate::config::config().features.kv_cache_miss_notices {
+            return None;
+        }
         logging::warn(&format!(
             "KV_CACHE_MISS session={} reason={} harness_caused={} missed={} expected={} read={} documented={:?}",
             self.session.id,

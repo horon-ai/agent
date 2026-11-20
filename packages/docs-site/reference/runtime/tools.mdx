@@ -333,6 +333,24 @@ Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{bod
 
 The crate never reads the file system, so it cannot detect outside changes by itself. Detection happens when the caller compares current bytes with the recorded state through `BlobId::of`. History never leaves the process and is not shared with another process or a restarted session.
 
+## `eval`
+
+`eval` runs one Python cell in a child process. A session reuses its Python state while the kernel is alive and the working directory stays the same. Python 3.10 or later must be available on an absolute `PATH` entry outside the session working directory.
+
+```toml
+[tools]
+profile = "full"
+eval = true
+```
+
+The default is `eval = false`. With an explicit `enabled` list, include `eval` and keep `eval = true`. The closed `core`, `acp` and `minimal` profiles do not add it automatically. The session's tool load mode and allow-list still apply.
+
+Send `code` as a Python string. `timeout` accepts 1 to 3600 seconds and defaults to 30. Use `reset = true` to discard the previous kernel before executing the cell. Top-level `await`, stdout, stderr and the last expression's value are supported. A timeout, cancellation, directory change, session close or idle sweep discards the kernel. The next cell in that session starts with fresh state.
+
+Each cell needs explicit approval before it runs, including in `yolo` and `off`. Approved Python can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](/reference/safety/security#python-eval) for the execution boundary.
+
+Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
+
 ## `generate_image`
 
 The one tool whose model does not speak Chat Completions. Registered only when
