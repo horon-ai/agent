@@ -131,6 +131,10 @@ impl App {
                     self.copy_selection(&value);
                     None
                 }
+                // The queue answers its own keys before this list sees them, so
+                // no row is ever chosen from here; a value that arrives anyway
+                // changes nothing rather than acting as some other kind of row.
+                Kind::Queue => None,
                 // A link is the one row that leaves the client: the reader
                 // pressed enter on it, so it goes to the platform handler and
                 // the list closes without an action for the bridge.

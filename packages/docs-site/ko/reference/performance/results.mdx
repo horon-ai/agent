@@ -53,6 +53,28 @@ description: "측정 결과와 측정 방법, 그 결과가 보여 주는 것의
 | TUI 메모리와 크기 | [tui-02-memory.ko.svg](/images/reference/performance/charts/tui-02-memory.ko.svg) |
 
 
+## 최근 자동 측정의 버전
+
+
+`e7b81ddfd166f2609b77ddb0d2080831adab4c34`의 비교 측정을 2026-11-20 18:54 UTC에 실행해 기록한 버전입니다. 여러 러너에서 같은 버전을 기록했으면 한 번만 표시합니다.
+
+| 도구 | 버전 |
+| --- | --- |
+| horon | `horon-agent v0.1.0-dev (e7b81dd)` |
+| horon-base | `horon-agent v0.1.0-dev (4972eac)` |
+| jcode | `jcode v1.0.1 (10114429c)` |
+
+러너별 jcode 릴리스 신원입니다. 각 작업이 내려받아 검증한 `jcode-release.json`에서 읽습니다.
+
+| OS | 태그 | 커밋 | 자산 | SHA-256 | 제공 경로 |
+| --- | --- | --- | --- | --- | --- |
+| Linux | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-linux-x86_64.tar.gz` | `f44a54978b503e5dd27fa8781c43ec4916ebe9c4a94d42aab50fc868bf4fbe86` | release-download |
+| macOS | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-macos-aarch64.tar.gz` | `7b11788a52b534183bf70949dbab686c47def7e1df20e912176227f3049af7fa` | release-download |
+| Windows | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-windows-x86_64.exe` | `c43a8c5a8489ecb1e52767a4f7c21982eb7f71b343de2f51d5b4b65c6197aec0` | release-download |
+
+[실행](https://github.com/horon-ai/agent/actions/runs/44792005623)
+
+
 ## 측정 결과
 
 차원 표기는 다음 규칙을 따른다. `MEMORY` 는 할당과 메모리, `TIME` 은 벽시계 시간, `WORK` 는 반복 횟수와 바이트량, `RESOURCES` 는 파일 서술자·스레드·태스크 수다. 한 차원의 개선을 다른 차원의 개선으로 읽지 않기 위해 차원을 따로 적는다.

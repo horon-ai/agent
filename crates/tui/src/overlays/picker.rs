@@ -3,7 +3,9 @@
 //! `/model`, `/effort`, `/resume`, `/skills`, `/links` and the history search
 //! all ask the user to pick one row out of a list, so this screen knows nothing
 //! about models, efforts, sessions, skills, links or drafts: it holds rows, the
-//! filter the user typed, and the row the selection is on.
+//! filter the user typed, and the row the selection is on. `/queue` uses the
+//! same screen for rows that are changed instead of chosen; its keys are
+//! answered before this module sees them.
 //! The caller decides what a chosen row means, which is what keeps the keys and
 //! the drawing identical for every list.
 //!
@@ -44,6 +46,12 @@ pub enum Kind {
     Copies,
     /// The http(s) links in the newest assistant answers.
     Links,
+    /// The messages waiting for the running turn to end.
+    ///
+    /// This list is not a choice among values: each row is a message the user
+    /// can take back, delete or move, and its keys are answered before the
+    /// generic list sees them.
+    Queue,
 }
 
 /// One row of the list.
@@ -221,6 +229,41 @@ impl Picker {
     /// The row drawn for the selection, as one line of text.
     pub fn selected_label(&self) -> Option<&str> {
         self.selected_row().map(|row| row.label.as_str())
+    }
+
+    /// The index, in the full list, of the row under the cursor.
+    ///
+    /// A caller that keeps its own list beside the rows — the queue does —
+    /// reads the row this way: its position in `rows` is its position there.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.visible.get(self.selected).copied()
+    }
+
+    /// The full-list index of the row `steps` away in the drawn order.
+    ///
+    /// Used to move a row past its neighbour: the neighbour is the row drawn
+    /// next to this one, which is not the next index when a filter hides rows
+    /// between them.
+    pub fn neighbour_index(&self, steps: isize) -> Option<usize> {
+        let at = self.selected.checked_add_signed(steps)?;
+        self.visible.get(at).copied()
+    }
+
+    /// Replace the rows, keeping the row at full-list index `keep` under the
+    /// cursor.
+    ///
+    /// [`fill`](Self::fill) sends the cursor back to the top, which is right
+    /// for rows the harness just answered with and wrong for a list being
+    /// edited: after a move or a delete the user is still looking at the same
+    /// row, and it has to stay selected even when a filter hides it — then the
+    /// top of the result is the closest thing to it.
+    pub fn replace_rows(&mut self, rows: Vec<Row>, keep: usize) {
+        self.rows = rows;
+        self.selected = 0;
+        self.refilter();
+        if let Some(position) = self.visible.iter().position(|index| *index == keep) {
+            self.selected = position;
+        }
     }
 
     /// Replace the rows with the ones the harness reported.

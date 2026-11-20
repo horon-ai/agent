@@ -51,6 +51,30 @@ The interactive client is a second binary; these charts are drawn from the `tui`
 
 <!-- bench-charts:end -->
 
+## Versions in the latest automatic measurement
+
+<!-- bench-versions:start -->
+
+Versions recorded by the comparison of `e7b81ddfd166f2609b77ddb0d2080831adab4c34` at 2026-11-20 18:54 UTC. Each version is listed once across the runner artifacts.
+
+| Tool | Version |
+| --- | --- |
+| horon | `horon-agent v0.1.0-dev (e7b81dd)` |
+| horon-base | `horon-agent v0.1.0-dev (4972eac)` |
+| jcode | `jcode v1.0.1 (10114429c)` |
+
+jcode release identity per runner, from the `jcode-release.json` each job downloaded and verified.
+
+| OS | Tag | Commit | Asset | SHA-256 | Served by |
+| --- | --- | --- | --- | --- | --- |
+| Linux | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-linux-x86_64.tar.gz` | `f44a54978b503e5dd27fa8781c43ec4916ebe9c4a94d42aab50fc868bf4fbe86` | release-download |
+| macOS | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-macos-aarch64.tar.gz` | `7b11788a52b534183bf70949dbab686c47def7e1df20e912176227f3049af7fa` | release-download |
+| Windows | `v1.0.1` | `10114429c8133994861d6c915a2483d397c0f7c2` | `jcode-windows-x86_64.exe` | `c43a8c5a8489ecb1e52767a4f7c21982eb7f71b343de2f51d5b4b65c6197aec0` | release-download |
+
+[Run](https://github.com/horon-ai/agent/actions/runs/44792005623)
+
+<!-- bench-versions:end -->
+
 ## Measured results
 
 Dimension labels follow this rule. `MEMORY` is allocation and memory, `TIME` is wall-clock time, `WORK` is iteration counts and byte volumes, and `RESOURCES` is file descriptor, thread and task counts. Dimensions are listed separately so that an improvement in one is not read as an improvement in another.

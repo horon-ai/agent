@@ -50,6 +50,21 @@ on:
         type: string
         required: false
         default: ""
+      jcode_version:
+        description: "Published jcode tag resolved once for this benchmark round; empty lets the installer resolve the newest stable release"
+        type: string
+        required: false
+        default: ""
+      jcode_release_commit:
+        description: "Commit the resolved jcode tag peeled to; the installer refuses a tag that has moved"
+        type: string
+        required: false
+        default: ""
+      jcode_release_source:
+        description: "How benchmark.yml chose the tag: latest (newest stable release) or pin (explicit jcode_version)"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -378,6 +393,11 @@ jobs:
       SESSIONS: ${{ inputs.sessions }}
       TURNS: ${{ inputs.turns }}
       ONESHOT_RUNS: ${{ inputs.oneshot_runs }}
+      # Resolved once by benchmark.yml; the installer verifies this exact release
+      # for this platform and refuses a tag that has moved since.
+      JCODE_VERSION: ${{ inputs.jcode_version }}
+      JCODE_RELEASE_COMMIT: ${{ inputs.jcode_release_commit }}
+      JCODE_RELEASE_SOURCE: ${{ inputs.jcode_release_source }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -484,9 +504,20 @@ jobs:
         shell: bash
         env:
           # The jcode fallback calls the release API; a token avoids the shared
-          # anonymous rate limit of the runner's IP.
+          # anonymous rate limit of the runner's IP. The resolver never passes it
+          # to the release binary.
           GH_TOKEN: ${{ github.token }}
-        run: bash scripts/perf/install_competitors.sh "$RUNNER_TEMP/bench-tools" "$COMPETITORS" | tee "$RESULTS/competitors.txt"
+        run: |
+          set -o pipefail
+          mkdir -p "$RESULTS"
+          rc=0
+          # stderr carries the resolver's resolution and verification lines, so
+          # the artifact keeps the real installer log beside competitors.txt.
+          bash scripts/perf/install_competitors.sh "$RUNNER_TEMP/bench-tools" "$COMPETITORS" 2>&1 \
+            | tee "$RESULTS/competitors.txt" || rc=$?
+          cp "$RUNNER_TEMP/bench-tools/jcode-release.json" "$RESULTS/jcode-release.json" 2>/dev/null || true
+          cp "$RUNNER_TEMP/bench-tools/jcode-release.log" "$RESULTS/jcode-release.log" 2>/dev/null || true
+          exit "$rc"
 
       - name: "Suite: compare (horon vs other agents)"
         if: ${{ matrix.unit == 'compare' }}
@@ -505,6 +536,10 @@ jobs:
           fi
           install_failures=()
           [[ -f "$RUNNER_TEMP/bench-tools/failures.txt" ]] && install_failures=(--install-failures "$RUNNER_TEMP/bench-tools/failures.txt")
+          # The same release record the artifact and install report keep; the
+          # comparison JSON carries it so one file names the measured binary.
+          provenance=()
+          [[ -f "$RESULTS/jcode-release.json" ]] && provenance=(--jcode-release "$RESULTS/jcode-release.json")
           # The dispatched list decides what is measured. Without --tools the
           # script's default set would skip a competitor whose binary is
           # installed but whose name is not a default.
@@ -523,7 +558,7 @@ jobs:
           # shellcheck disable=SC2086
           python scripts/perf/bench_compare.py \
             --bin "horon=$HORON_BIN" ${baseline_args[@]+"${baseline_args[@]}"} $bins_args --tools $tools \
-            ${install_failures[@]+"${install_failures[@]}"} \
+            ${install_failures[@]+"${install_failures[@]}"} ${provenance[@]+"${provenance[@]}"} \
             --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
 
