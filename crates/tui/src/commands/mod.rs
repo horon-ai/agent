@@ -5,7 +5,8 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/keys`, `/clear`, `/model`, `/effort`, `/new`,
-//!    `/settings`, `/resume`, `/skills`, `/switch`, `/record` and `/replay`.
+//!    `/settings`, `/resume`, `/skills`, `/switch`, `/links`, `/record` and
+//!    `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -70,6 +71,8 @@ pub enum Local {
     Skills,
     /// Switch to another session, by id or from the list.
     Switch,
+    /// List the http(s) links in the newest assistant answers and open one.
+    Links,
     /// Record the visible conversation to a local file, or stop.
     Record,
     /// Replay a recorded conversation, or stop the replay.
@@ -92,6 +95,7 @@ impl Local {
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
+            "links" => Some(Self::Links),
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             _ => None,
@@ -113,6 +117,7 @@ impl Local {
             Self::Resume => "resume",
             Self::Skills => "skills",
             Self::Switch => "switch",
+            Self::Links => "links",
             Self::Record => "record",
             Self::Replay => "replay",
         }
@@ -596,9 +601,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 14] = [
-    "clear", "effort", "exit", "help", "keys", "model", "new", "quit", "record", "replay", "resume", "settings",
-    "skills", "switch",
+const LOCAL_NAMES: [&str; 15] = [
+    "clear", "effort", "exit", "help", "keys", "links", "model", "new", "quit", "record", "replay", "resume",
+    "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
