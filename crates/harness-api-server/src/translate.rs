@@ -4,6 +4,7 @@
 mod cancellable_work;
 mod compact_handoff;
 mod credentials;
+pub(crate) mod effective_settings;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
@@ -1476,6 +1477,7 @@ impl BridgeState {
                     "operation_id": operation_id,
                 }))]
             }
+            "get_effective_settings" => return effective_settings::request(self, request, api_id, req),
             "get_snapshot" => {
                 let Some(session_id) = Self::request_session(request, api_id) else {
                     return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");
@@ -2379,6 +2381,7 @@ impl BridgeState {
                     None => vec![],
                 }
             }
+            "effective_settings" => return effective_settings::reply(self, event),
             "runtime_state" => {
                 let id = event["id"].as_u64().unwrap_or(0);
                 let Some(api_id) = self.take_simple(id, SimpleKind::RuntimeState) else {

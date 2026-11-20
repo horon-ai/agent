@@ -5,8 +5,10 @@
 //! capability was never advertised. Both mean the same thing to the screen —
 //! this daemon does not report its settings — so they become
 //! [`DaemonSettings::Unavailable`] and the rest of the panel keeps working.
-//! Any other failure is an error the caller reports, because a broken
-//! connection must not be presented as "this daemon has no settings".
+//! Any other failure becomes [`DaemonSettings::Failed`]: it is reported to the
+//! screen as a broken read rather than as "this daemon has no settings", and
+//! turning it into an error would leave the tab saying it is still reading a
+//! request that already came back.
 
 use horon_agent_sdk::api::ErrorCode;
 use horon_agent_sdk::{Error, ErrorKind, HoronAgentClient};
@@ -26,7 +28,11 @@ pub(super) fn read(client: &HoronAgentClient, session_id: &str) -> Result<Option
         Err(error) if unsupported(&error) => Ok(Some(Incoming::DaemonSettings(DaemonSettings::Unavailable(
             "the daemon does not report daemon settings".to_string(),
         )))),
-        Err(error) => Err(error),
+        // Every other failure settles the tab instead of leaving it on the
+        // reading state a request that has already finished would keep.
+        Err(error) => Ok(Some(Incoming::DaemonSettings(DaemonSettings::Failed(
+            error.to_string(),
+        )))),
     }
 }
 

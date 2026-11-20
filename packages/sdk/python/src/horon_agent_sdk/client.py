@@ -1941,10 +1941,12 @@ class HoronAgentClient:
     async def get_effective_settings(self, session_id: str) -> list[EffectiveSetting]:
         """The allow-listed daemon values a settings screen displays.
 
+        The daemon behind the bridge answers from its own configuration, so the
+        values and their sources describe the process the session runs with.
         Requires ``effective_settings_v1``; an older bridge does not advertise
-        it, so this raises ``unsupported`` naming the capability instead of
-        leaving the caller to guess whether the daemon has no settings or the
-        request never landed.
+        it, and a daemon that predates the request is refused with
+        ``unsupported`` naming the capability, so the caller never has to guess
+        whether the daemon has no settings or the request never landed.
         """
         self._require_capability("effective_settings_v1", "get_effective_settings")
         frame = await self._expect_reply(

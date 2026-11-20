@@ -67,6 +67,9 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("DebugCommand", ClientInternal),
     ("FailoverAck", Covered),
     ("GetControlReceipt", Covered),
+    // The daemon owns the configuration, its environment overrides and the
+    // launch record, so only it can answer truthfully; the bridge forwards.
+    ("GetEffectiveSettings", Covered),
     ("GetHistory", Covered),
     ("GetModelCatalog", Covered),
     ("GetRuntimeState", Covered),

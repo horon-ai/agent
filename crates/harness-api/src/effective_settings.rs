@@ -11,21 +11,29 @@
 //! screen can print, the value in force as text, and the layer that supplied
 //! it. Nothing outside the list can travel: there is no "other keys" field and
 //! no field carrying raw file text, so a credential cannot reach a client even
-//! when the config file holds one. [`CAPABILITY_EFFECTIVE_SETTINGS_V1`](crate::CAPABILITY_EFFECTIVE_SETTINGS_V1)
-//! gates the request, which keeps an old bridge from having to answer it.
+//! when the config file holds one.
+//!
+//! The daemon answers from its own loaded configuration: it, not the bridge, is
+//! the process whose environment, launch flags and config file the session
+//! actually runs with. The bridge translates the reply and advertises
+//! [`CAPABILITY_EFFECTIVE_SETTINGS_V1`](crate::CAPABILITY_EFFECTIVE_SETTINGS_V1);
+//! against a daemon that predates the request it answers `unsupported` naming
+//! the capability, so a client sees the gap instead of waiting out a timeout.
 
 use serde::{Deserialize, Serialize};
 
 /// Where one reported value came from.
 ///
 /// The spellings are stable identifiers rather than prose: a client maps them
-/// to its own words, and `origin` carries the file path or the variable name
-/// so a screen can be specific without the server writing a sentence.
+/// to its own words, and `origin` carries the file path, the variable name or
+/// the flag so a screen can be specific without the server writing a sentence.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSource {
-    /// No file or environment set it; the shipped default is in force.
+    /// No file, variable or flag set it; the shipped default is in force.
     Default,
+    /// A command-line flag supplied it. `origin` names the flag.
+    Cli,
     /// A settings file supplied it.
     File,
     /// An environment variable overrode everything else.
@@ -37,6 +45,7 @@ impl SettingSource {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Default => "default",
+            Self::Cli => "cli",
             Self::File => "file",
             Self::Env => "env",
         }
@@ -58,7 +67,7 @@ pub struct EffectiveSetting {
     pub value: String,
     /// The layer that supplied it.
     pub source: SettingSource,
-    /// The file path or environment variable name `source` points at.
+    /// The file path, environment variable name or flag `source` points at.
     ///
     /// Absent for [`SettingSource::Default`], which names no origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]

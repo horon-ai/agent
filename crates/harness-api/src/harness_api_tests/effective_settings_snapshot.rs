@@ -90,3 +90,20 @@ fn the_reply_needs_the_capability_and_an_older_peer_is_refused_by_name() {
         None
     );
 }
+
+#[test]
+fn a_flag_supplied_value_travels_as_cli_with_the_flag_as_its_origin() {
+    let reply = ServerFrame::reply(
+        1,
+        ApiEvent::EffectiveSettings {
+            session_id: "s1".into(),
+            settings: vec![row("tools.profile", SettingSource::Cli, Some("--tool-profile"))],
+        },
+    );
+
+    let wire = serde_json::to_value(&reply).unwrap();
+    assert_eq!(wire["settings"][0]["source"], "cli");
+    assert_eq!(wire["settings"][0]["origin"], "--tool-profile");
+    let back: ServerFrame = serde_json::from_value(wire).unwrap();
+    assert_eq!(back.event, reply.event, "a flag source round-trips");
+}

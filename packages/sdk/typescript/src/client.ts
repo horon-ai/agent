@@ -862,9 +862,12 @@ export class HoronAgentClient extends EventEmitter {
   }
 
   /**
-   * The allow-listed daemon values a settings screen displays. Requires
-   * `effective_settings_v1`; an older bridge does not advertise it, so this
-   * throws `unsupported` naming the capability rather than timing out.
+   * The allow-listed daemon values a settings screen displays. The daemon
+   * behind the bridge answers from its own configuration, so the values and
+   * their sources describe the process the session runs with. Requires
+   * `effective_settings_v1`; an older bridge does not advertise it, and a
+   * daemon that predates the request answers `unsupported` naming the
+   * capability rather than timing out.
    */
   async getEffectiveSettings(sessionId: string): Promise<EffectiveSetting[]> {
     this.requireCapability("effective_settings_v1", "getEffectiveSettings");

@@ -811,7 +811,9 @@ pub enum ApiEvent {
     ///
     /// Requires `effective_settings_v1`. The report names only keys the
     /// allow-list holds, so a client that shows it cannot display a value the
-    /// server did not choose to report.
+    /// server did not choose to report. The daemon behind the bridge produced
+    /// the rows from its own configuration; a bridge that cannot get them
+    /// answers `unsupported` instead of reporting its own environment.
     EffectiveSettings {
         session_id: String,
         settings: Vec<crate::EffectiveSetting>,

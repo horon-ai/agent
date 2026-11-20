@@ -11,8 +11,15 @@ impl App {
     /// The daemon's own values are asked for at the same moment: the screen
     /// opens on the local tabs without waiting, and the daemon tab fills in
     /// when the answer lands. A connection that is already gone skips the ask
-    /// rather than reporting a failure the user cannot act on.
+    /// rather than reporting a failure the user cannot act on, and the tab says
+    /// the read cannot happen instead of waiting for a request that never left.
     pub fn open_settings(&mut self) -> Option<Action> {
+        // Read before the overlay is built so the tab is seeded with the state
+        // it will keep. A previous answer stays as it is: it was true then, and
+        // the next connection may make it true again.
+        if self.disconnected && matches!(self.daemon_settings, DaemonSettings::Unknown) {
+            self.daemon_settings = DaemonSettings::Failed("the connection is closed".to_string());
+        }
         let mut overlay = SettingsOverlay::new(self.themes_dir.clone());
         overlay.refresh(&self.settings);
         overlay.set_daemon(self.daemon_settings.clone());

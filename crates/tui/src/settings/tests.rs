@@ -538,3 +538,42 @@ fn settings_defaults_cover_the_registry() {
     }
     assert_eq!(settings.iter().count(), REGISTRY.len());
 }
+
+#[test]
+fn a_daemon_row_names_the_layer_that_supplied_its_value() {
+    let row = |source, origin: Option<&str>| DaemonRow {
+        key: "tools.profile".into(),
+        label: "Tool profile".into(),
+        value: "full".into(),
+        source,
+        origin: origin.map(str::to_string),
+    };
+    assert_eq!(
+        row(horon_agent_sdk::api::SettingSource::Cli, Some("--tool-profile")).source_label(),
+        "cli --tool-profile",
+        "a flag is named as the user typed it, not as the variable it becomes"
+    );
+    assert_eq!(
+        row(
+            horon_agent_sdk::api::SettingSource::Env,
+            Some("HORON_AGENT_TOOL_PROFILE")
+        )
+        .source_label(),
+        "env HORON_AGENT_TOOL_PROFILE"
+    );
+    assert_eq!(
+        row(horon_agent_sdk::api::SettingSource::Default, None).source_label(),
+        "daemon default"
+    );
+}
+
+#[test]
+fn a_daemon_read_that_failed_reports_no_rows_and_no_reading_state() {
+    let failed = DaemonSettings::Failed("broken pipe".into());
+    assert!(failed.rows().is_empty(), "a failed read has no rows to show");
+    assert_ne!(
+        failed.notice(),
+        DaemonSettings::Unknown.notice(),
+        "a finished read must not read as one still in flight"
+    );
+}

@@ -343,9 +343,9 @@ export interface MessageModes {
  * Where one effective-setting value came from.
  *
  * Stable spellings, not prose: a client maps them to its own words and prints
- * `origin` (a file path or a variable name) beside them.
+ * `origin` (a flag, a file path or a variable name) beside them.
  */
-export type SettingSource = "default" | "file" | "env";
+export type SettingSource = "default" | "cli" | "file" | "env";
 
 /** One daemon value a settings screen may display. */
 export interface EffectiveSetting {

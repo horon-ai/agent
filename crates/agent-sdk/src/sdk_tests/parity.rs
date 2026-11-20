@@ -331,6 +331,7 @@ fn rust_client_source() -> String {
         "export.rs",
         "message_modes.rs",
         "cancellable_work.rs",
+        "effective_settings.rs",
         "reports.rs",
     ]
     .into_iter()

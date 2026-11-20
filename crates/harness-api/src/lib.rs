@@ -118,11 +118,13 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// displays, each with the layer that supplied it. Gates
 /// `get_effective_settings`.
 ///
-/// The gate is what makes the read-only promise enforceable: a server that
-/// predates the request answers `unknown_request`, and a client that checks
-/// before sending sees the capability missing instead of guessing. The reply
-/// never carries a value outside the allow-list, so no credential and no raw
-/// file text can travel however the config file is written.
+/// The bridge advertises this unconditionally and forwards the request to the
+/// daemon, which owns the configuration the session runs with. A daemon that
+/// predates the request is answered `unsupported` with this capability named,
+/// which the client turns into "this daemon does not report its settings" — the
+/// same state an older bridge produces by not advertising the capability at
+/// all. The reply never carries a value outside the allow-list, so no credential
+/// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each

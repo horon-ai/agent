@@ -360,14 +360,15 @@ class MessageModes(TypedDict):
     interrupt_mode: str
 
 
-SettingSource: TypeAlias = Literal["default", "file", "env"]
+SettingSource: TypeAlias = Literal["default", "cli", "file", "env"]
 
 
 class EffectiveSetting(TypedDict, total=False):
     """One daemon value a settings screen may display.
 
     ``key``, ``label``, ``value`` and ``source`` are always present; ``origin``
-    is absent when the shipped default supplied the value.
+    names the flag, variable or file path behind the source and is absent when
+    the shipped default supplied the value.
     """
 
     key: str

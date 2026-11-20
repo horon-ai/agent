@@ -680,8 +680,8 @@ fn a_daemon_value_is_not_editable_and_enter_changes_nothing() {
     let (mut app, _themes) = fixture.app(&reloader);
     open(&mut app);
     app.show_daemon_settings(daemon_tab_listing());
-    let overlay = app.overlay.as_mut().expect("the settings screen is open");
-    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+    let screen = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(screen.select_tab(super::settings::DAEMON_TAB));
 
     press(&mut app, KeyCode::Enter);
     assert!(!overlay(&app).is_editing(), "a daemon value opens no editor");
@@ -703,6 +703,67 @@ fn r_on_the_daemon_tab_asks_for_the_values_again_and_keeps_the_screen_open() {
     assert!(
         app.overlay.is_some(),
         "the screen stays open while the answer is in flight"
+    );
+}
+
+#[test]
+fn a_daemon_row_keeps_a_space_between_a_long_label_and_its_value() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    app.show_daemon_settings(daemon_tab_listing());
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+
+    let buffer = draw_screen(&mut app, 100, 30);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("Stream idle timeout (seconds) 240"),
+        "the label is wider than its column and must not run into the value: {text}"
+    );
+}
+
+#[test]
+fn a_daemon_read_that_failed_says_so_and_does_not_stay_on_reading() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    open(&mut app);
+    app.show_daemon_settings(crate::settings::DaemonSettings::Failed(
+        "the harness bridge stopped: broken pipe".into(),
+    ));
+    let overlay = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+
+    let buffer = draw_screen(&mut app, 100, 30);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("could not be read"),
+        "the tab says the read failed: {text}"
+    );
+    assert!(
+        !text.contains("reading the daemon settings"),
+        "a finished read must not still say it is reading: {text}"
+    );
+    assert!(
+        text.contains("broken pipe"),
+        "the reason is on the footer, so the user can act on it: {text}"
+    );
+}
+
+#[test]
+fn opening_settings_on_a_closed_connection_says_the_read_cannot_happen() {
+    let fixture = Fixture::new();
+    let reloader = fixture.reloader();
+    let (mut app, _themes) = fixture.app(&reloader);
+    app.disconnected = true;
+
+    assert_eq!(app.open_settings(), None, "a closed connection has nothing to ask");
+    assert_eq!(
+        app.daemon_settings,
+        crate::settings::DaemonSettings::Failed("the connection is closed".into()),
+        "the tab must not wait for a request that never left"
     );
 }
 
@@ -910,8 +971,8 @@ fn overlays_search_from_the_daemon_tab_lands_on_a_registry_row() {
     let (mut app, _themes) = fixture.app(&reloader);
     open(&mut app);
     app.show_daemon_settings(daemon_tab_listing());
-    let overlay = app.overlay.as_mut().expect("the settings screen is open");
-    assert!(overlay.select_tab(super::settings::DAEMON_TAB));
+    let screen = app.overlay.as_mut().expect("the settings screen is open");
+    assert!(screen.select_tab(super::settings::DAEMON_TAB));
     assert!(overlay(&app).rows().is_empty(), "the daemon tab lists no registry row");
 
     search(&mut app, "path_max");

@@ -40,6 +40,13 @@ const THEME_ID: &str = "theme";
 /// The tab listing the daemon's own values, which this client only reads.
 pub const DAEMON_TAB: &str = "Daemon";
 
+/// Width of the label column on the daemon tab.
+///
+/// The separator after it is printed whatever the label's length: a label
+/// wider than the column must not run into the value, or a row would read as
+/// one word ("Stream idle timeout (seconds)240").
+const DAEMON_LABEL_WIDTH: usize = 28;
+
 /// A confirmed change the event loop must write and re-apply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingChange {
@@ -810,7 +817,7 @@ fn daemon_lines(overlay: &SettingsOverlay, theme: &Theme) -> Vec<Line<'static>> 
                 Style::default().fg(theme.core.muted)
             };
             Line::from(vec![
-                Span::styled(format!("  {:<28}", row.label), base),
+                Span::styled(format!("  {:<width$} ", row.label, width = DAEMON_LABEL_WIDTH), base),
                 Span::styled(row.value.clone(), base),
                 Span::styled(format!("  {}", row.source_label()), origin),
             ])
@@ -821,7 +828,7 @@ fn daemon_lines(overlay: &SettingsOverlay, theme: &Theme) -> Vec<Line<'static>> 
 /// The daemon tab's footer: what the row is, and the two keys it answers to.
 fn draw_daemon_footer(frame: &mut Frame<'_>, area: Rect, overlay: &SettingsOverlay, theme: &Theme) {
     let description = match overlay.daemon() {
-        DaemonSettings::Unavailable(reason) => reason.clone(),
+        DaemonSettings::Unavailable(reason) | DaemonSettings::Failed(reason) => reason.clone(),
         DaemonSettings::Unknown | DaemonSettings::Loaded(_) => overlay
             .selected_daemon()
             .map(|row| format!("{} — read-only, from the daemon", row.key))

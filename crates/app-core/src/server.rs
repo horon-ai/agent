@@ -29,6 +29,7 @@ mod comm_session;
 mod comm_sync;
 mod comm_worktree;
 mod configured_name;
+mod effective_settings;
 mod plan_proposals;
 mod session_connections;
 mod session_forget;

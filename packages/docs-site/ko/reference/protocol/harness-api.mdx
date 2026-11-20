@@ -580,20 +580,29 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 | `key` | 문자열 | 설정 경로. 예: `provider.stream_idle_timeout_secs` |
 | `label` | 문자열 | 행에 보일 사람이 읽는 이름 |
 | `value` | 문자열 | 유효 값. 화면이 인쇄하는 그대로 |
-| `source` | `default`, `file`, `env` | 값을 공급한 계층 |
-| `origin` | 문자열, `default`면 없음 | `source`가 가리키는 파일 경로나 변수 이름 |
+| `source` | `default`, `cli`, `file`, `env` | 값을 공급한 계층 |
+| `origin` | 문자열, `default`면 없음 | `source`가 가리키는 플래그, 파일 경로, 변수 이름 |
 
 `value`가 문자열인 이유는 화면이 그대로 인쇄하기 때문입니다. 클라이언트가 숫자를 직접 렌더링하면 어느 키가 숫자인지 알아야 하고, 그 지식은 모든 클라이언트가 아니라 허용 목록 옆에 있어야 합니다.
 
 ### 허용 목록
 
-행은 `provider.openai_reasoning_effort`, `provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`, `provider.max_retries`, `tools.profile`, `tools.mcp_tools`, `tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`, `compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`입니다. 서버의 `SPECS` 표에 키를 넣는 것만이 행을 만드는 방법이고, 그 밖의 값은 보고될 수 없습니다.
+행은 `provider.openai_reasoning_effort`, `provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`, `provider.max_retries`, `tools.profile`, `tools.mcp_tools`, `tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`, `compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`입니다. 데몬의 표에 키를 넣는 것만이 행을 만드는 방법이고, 그 밖의 값은 보고될 수 없습니다.
 
 ### 동작
 
-값은 데몬 설정이며, 데몬이 파싱한 것과 같은 파일에서 읽습니다. 브리지는 `crates/harness-api-server/src/effective_settings.rs`에서 데몬 왕복 없이, 세션 존재 확인 없이 답합니다. `get_message_modes`와 같은 형태입니다. 이 요청을 모르는 데몬 릴리스에서도 읽기가 동작하는 이유가 이것입니다. 요청이 데몬에 닿지 않습니다.
+답하는 쪽은 **데몬**입니다. 데몬이 실제로 불러온 설정으로 답합니다. 세션이 실제로 도는 프로세스는 데몬이고, 그 프로세스의 환경, 실행 플래그, 설정 파일이 곧 유효 값과 출처입니다. 브리지는 번역만 합니다. 내부 프로토콜로 `get_effective_settings`를 전달하고 돌아온 행을 그대로 넘깁니다. 표와 출처 판정은 `crates/base/src/effective_settings.rs`에 있고, `crates/app-core/src/server/effective_settings.rs`가 그 행을 이 응답으로 옮깁니다.
 
-계층은 환경 변수를 먼저 보고 파일을 다음에 보아 정합니다. 데몬이 적용하는 순서가 그것이기 때문입니다. 데몬이 무시할 변수(0인 타임아웃, 파싱되지 않는 재시도 횟수, 모르는 모드)는 유효 값의 출처로 보고하지 않습니다. 파싱되지 않는 파일은 아무것도 공급하지 않았으므로 그 행은 `default`로 읽힙니다.
+데몬은 ping에서 `effective_settings_api`를 광고합니다. 브리지는 `effective_settings_v1`을 항상 광고하고, 뒤에 있는 데몬이 그 요청을 광고하지 않으면 그 기능 이름을 담은 구조화된 `unsupported`로 거부합니다. 옛 데몬은 모르는 요청에 id 없는 프레임으로 답하므로, 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다리게 됩니다. 옛 브리지(기능 자체를 광고하지 않음)와 옛 데몬(이름을 붙여 거부됨)은 클라이언트에게 같은 "이 데몬은 설정을 보고하지 않는다" 상태로 보입니다.
+
+계층은 근거가 강한 순서로 정합니다.
+
+1. `cli` — 실행기가 기록한 플래그입니다. 실행기는 `--tool-profile`, `--mcp-tools` 같은 플래그를 환경 변수로 바꾸므로, 환경만 보아서는 플래그와 사용자가 내보낸 변수를 구분할 수 없습니다. 아무것도 선택하지 않아 실행기가 고른 기본값은 아예 보고하지 않습니다. 변수는 존재하지만 사용자가 설정한 것이 아닙니다.
+2. `env` — 이 프로세스가 읽었고 데몬이 적용하는 변수입니다. 데몬이 무시하는 변수(0인 타임아웃, 파싱되지 않는 재시도 횟수, 모르는 모드)는 유효 값의 출처로 보고하지 않습니다.
+3. `file` — 유효 설정 파일입니다. 데몬이 하는 것과 같은 엄격한 파싱으로 한 번에 읽은 문서이고, 파일이 선언한 값이 데몬이 적용하는 값이며 유효 값과 같을 때만 출처가 됩니다. 파싱되지 않는 파일은 아무것도 공급하지 않았으므로 그 행은 `default`로 읽힙니다. 데몬이 거부하는 형식의 값도 마찬가지입니다. 예를 들어 `approval_mode = "nonsense"`는 기본값으로 떨어지고, 파일은 그 기본값의 출처가 되지 않습니다.
+4. `default` — 함께 배포된 값입니다.
+
+행은 데몬 자체 설정을 설명합니다. 세션이 실행 중에 자기 값만 바꾼 경우(예: `set_session_approval_mode`)는 여기에 반영되지 않습니다. 이 행은 데몬이 불러온 값을 보고하고, 한 세션이 나중에 덮어쓴 값은 보고하지 않습니다.
 
 쓰기는 없습니다. 요청은 구조상 읽기 전용이고, 읽지 못하는 클라이언트는 데몬 기본값으로 계속 동작합니다. SDK는 이 호출을 `get_effective_settings`(Rust, Python)와 `getEffectiveSettings`(TypeScript)로 노출하고, 기능이 광고되지 않았으면 보내기 전에 거부합니다. TUI의 `Daemon` 탭이 배포되는 소비자입니다.
 
