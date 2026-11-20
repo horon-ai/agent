@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="276" viewBox="0 0 960 276" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', 'Apple SD Gothic Neo', Helvetica, Arial, sans-serif" role="img">
+<title>Start path on macOS and Linux: before and after</title>
+<rect x="0.5" y="0.5" width="959" height="275" rx="12" fill="#ffffff" stroke="#d0d7de"/>
+<rect x="32" y="20" width="5" height="26" rx="1" fill="#0b84de"/>
+<text x="46.0" y="42.0" font-size="21" fill="#1f2328" text-anchor="start" font-weight="bold">Start path on macOS and Linux: before and after</text>
+<text x="32.0" y="72.0" font-size="13" fill="#59636e" text-anchor="start" font-weight="normal">Same-machine alternation, release profile. jcode's one-shot is shown for scale only.</text>
+<text x="336.5" y="115.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">one-shot median, macOS</text>
+<rect x="348.5" y="102.0" width="299.4" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="348.5" y="102.0" width="99.7" height="18" rx="3" fill="#0b84de"/>
+<text x="661.9" y="115.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">872.4 → 290.4 ms (jcode 294.8 ms)</text>
+<text x="336.5" y="145.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">one-shot median, Linux (Docker)</text>
+<rect x="348.5" y="132.0" width="299.4" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="348.5" y="132.0" width="241.9" height="18" rx="3" fill="#0b84de"/>
+<text x="661.9" y="145.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">207.9 → 168.0 ms (jcode 146.3 ms)</text>
+<text x="336.5" y="175.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">start→first request, macOS</text>
+<rect x="348.5" y="162.0" width="299.4" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="348.5" y="162.0" width="99.7" height="18" rx="3" fill="#0b84de"/>
+<text x="661.9" y="175.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">236.4 → 78.7 ms</text>
+<text x="336.5" y="205.0" font-size="12.5" fill="#1f2328" text-anchor="end" font-weight="normal">start→first request, Linux (Docker)</text>
+<rect x="348.5" y="192.0" width="299.4" height="18" rx="3" fill="#d3d9e1"/>
+<rect x="348.5" y="192.0" width="299.4" height="18" rx="3" fill="#0b84de"/>
+<text x="661.9" y="205.0" font-size="11.5" fill="#59636e" text-anchor="start" font-weight="normal">57.0 → 57.0 ms</text>
+<text x="32.0" y="232.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Each row is scaled to its own before value; read the numbers, not the bar lengths.</text>
+<text x="32.0" y="258.0" font-size="12" fill="#59636e" text-anchor="start" font-weight="normal">Source: docs/performance/RESULTS.md · Before and after across three environments</text>
+</svg>

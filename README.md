@@ -28,6 +28,18 @@ Each release ships two binaries built from the same tag. The agent binary `horon
 | Headless | A program | `run`, `serve`, `api-bridge`, `acp`, `rpc` |
 | TUI | A person at a terminal | bare `horon`, which replaces itself with `horon-tui` |
 
+## Numbers
+
+![Benchmark summary: horon against seven tools](docs/performance/charts/00-summary.svg)
+
+- Linux one-shot median 42.5 ms against jcode's 138.0 ms, and macOS 88.1 ms against 377.1 ms. Windows is the exception: 141.8 ms against 128.4 ms, inside overlapping ranges.
+- One history page from a 100k-event session reads 18,554 B instead of 62,169,922 B and takes 5.9 ms instead of 26.2 s; a 200 MiB source hash peaks at 65,600 B instead of 268,435,520 B.
+- Memory per additional session is still jcode's win: 151.0 KB against 98.1 KB on Linux.
+
+![Session store: one request, before and after the plan](docs/performance/charts/record-01-session-store.svg)
+
+Every number above is a measured value with its run recorded in [docs/performance/RESULTS.md](docs/performance/RESULTS.md); the method and its limits are in [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md). [Install](#install) takes one command.
+
 ## Install
 
 **macOS · Linux**
@@ -149,6 +161,9 @@ Both talk the harness API (protocol v1) over the `api-bridge` socket and can sta
 
 ## Features
 
+<details>
+<summary>All features</summary>
+
 | Feature | What it does |
 | --- | --- |
 | A core tool set of 18 | `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search` and `swarm`. A core session sends seven of them up front plus `toolbox`, names the other eleven in the system prompt, and reaches them through `toolbox`, which keeps the first request small. Profiles: `core` (default), `full`, `acp`, `minimal`, `none` ([docs](docs/runtime/TOOLS.md)). |
@@ -160,6 +175,8 @@ Both talk the harness API (protocol v1) over the `api-bridge` socket and can sta
 | Agent-to-agent messaging | An opt-in `irc` mailbox bus (`[tools] irc = true`) lets agents in one daemon `send`, `wait`, `inbox` and `list` ([docs](docs/runtime/IRC.md)). |
 | Workspace trust | Project-local MCP config is skipped until its digest is trusted, and `--trust-workspace` records the decision ([docs](docs/safety/SECURITY.md)). |
 | TLS without OpenSSL | rustls with the union of bundled webpki roots and the OS trust store; the Linux binary needs only glibc, libm and libgcc_s ([docs](docs/release/INSTALL.md)). |
+
+</details>
 
 ## Architecture
 
@@ -193,6 +210,9 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 
 ## Configuration defaults
 
+<details>
+<summary>All defaults</summary>
+
 | Setting | Default | Other values |
 | --- | --- | --- |
 | Tool profile (`--tool-profile`, `[tools] profile`) | `core` | `full`, `acp`, `minimal`, `none` |
@@ -203,6 +223,8 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0` disables |
 | Update check on `serve` | not run | `--no-update` skips it everywhere |
+
+</details>
 
 [`AGENTS.md`](AGENTS.md) carries the complete set of defaults that are part of the contract.
 

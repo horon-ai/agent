@@ -23,6 +23,7 @@ mod markdown;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
+pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
 pub mod settings;
@@ -74,6 +75,10 @@ mod scroll_tests;
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "report_tests.rs"]
+mod report_tests;
 
 #[cfg(test)]
 #[path = "markdown_tests.rs"]

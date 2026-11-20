@@ -28,6 +28,18 @@ horon agent는 엔진 하나 위에 동등한 모드 두 개를 둔 에이전트
 | 헤드리스 | 프로그램 | `run`, `serve`, `api-bridge`, `acp`, `rpc` |
 | TUI | 터미널 앞의 사람 | 인자 없는 `horon`(자기 프로세스를 `horon-tui`로 넘긴다) |
 
+## 숫자
+
+![벤치마크 요약: horon 대 도구 일곱 개](docs/performance/charts/00-summary.ko.svg)
+
+- Linux 원샷 중앙값은 42.5 ms로 jcode의 138.0 ms보다 빠르고, macOS는 88.1 ms 대 377.1 ms입니다. Windows는 예외로, 141.8 ms 대 128.4 ms이며 두 범위가 겹칩니다.
+- 이벤트 10만 개 세션의 이력 페이지 한 장은 62,169,922 B 대신 18,554 B를 읽고, 26.2 s 대신 5.9 ms가 걸립니다. 200 MiB 소스 해시의 최고 할당은 268,435,520 B 대신 65,600 B입니다.
+- 세션 하나당 메모리는 여전히 jcode가 낮습니다. Linux에서 151.0 KB 대 98.1 KB입니다.
+
+![세션 저장소: 요청 하나의 이전과 이후](docs/performance/charts/record-01-session-store.ko.svg)
+
+위 수치는 모두 측정값이고 실행 기록은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)에 있습니다. 방법과 한계는 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있습니다. [설치](#설치)는 명령 한 줄입니다.
+
 ## 설치
 
 **macOS · Linux**
@@ -149,6 +161,9 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 
 ## 기능
 
+<details>
+<summary>기능 전체</summary>
+
 | 기능 | 설명 |
 | --- | --- |
 | 핵심 도구 18개 | `bash`, `read`, `write`, `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`, `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`. core 세션은 이 중 일곱 개와 `toolbox`를 처음부터 보내고, 나머지 열한 개는 시스템 프롬프트에 이름만 적어 `toolbox`로 부르게 하므로 첫 요청이 작다. 프로필은 `core`(기본), `full`, `acp`, `minimal`, `none`이다([문서](docs/runtime/TOOLS.ko.md)). |
@@ -160,6 +175,8 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 | 에이전트 간 메시지 | 켜야 쓰는 `irc` 메일박스 버스(`[tools] irc = true`)로 한 데몬 안의 에이전트가 `send`, `wait`, `inbox`, `list`를 쓴다([문서](docs/runtime/IRC.ko.md)). |
 | 워크스페이스 신뢰 | 프로젝트 안의 MCP 설정은 다이제스트를 신뢰하기 전까지 건너뛰고, `--trust-workspace`가 그 결정을 기록한다([문서](docs/safety/SECURITY.ko.md)). |
 | OpenSSL 없는 TLS | 내장 webpki 루트와 OS 신뢰 저장소를 합쳐 쓰는 rustls다. Linux 바이너리는 glibc, libm, libgcc_s만 있으면 뜬다([문서](docs/release/INSTALL.ko.md)). |
+
+</details>
 
 ## 구조
 
@@ -193,6 +210,9 @@ Linux에서는 시간 항목 셋과 한 턴 최대 메모리를 모두 horon이 
 
 ## 설정 기본값
 
+<details>
+<summary>기본값 전체</summary>
+
 | 설정 | 기본값 | 다른 값 |
 | --- | --- | --- |
 | 도구 프로필(`--tool-profile`, `[tools] profile`) | `core` | `full`, `acp`, `minimal`, `none` |
@@ -203,6 +223,8 @@ Linux에서는 시간 항목 셋과 한 턴 최대 메모리를 모두 horon이 
 | `[storage] sync` | `full`(정전에도 기록이 남는다) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0`이면 끈다 |
 | `serve`의 업데이트 확인 | 실행하지 않음 | `--no-update`가 어디서든 건너뛴다 |
+
+</details>
 
 계약에 속하는 기본값 전체는 [`AGENTS.md`](AGENTS.md)에 있다.
 
