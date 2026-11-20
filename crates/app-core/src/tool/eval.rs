@@ -67,6 +67,11 @@ pub(crate) fn forget_session(session_id: &str) {
         .remove(session_id);
     if let Some(session) = session {
         session.retired.cancel();
+        if let Ok(mut slot) = session.slot.try_lock()
+            && let Some((_, kernel)) = slot.kernel.take()
+        {
+            drop(kernel.begin_stop());
+        }
     }
 }
 

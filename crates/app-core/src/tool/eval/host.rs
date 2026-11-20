@@ -172,11 +172,18 @@ impl Kernel {
     }
 
     pub(super) fn begin_stop(mut self) -> Option<tokio::task::JoinHandle<()>> {
-        // Own the Child inside the task so aborting the caller cannot kill
-        // the leader before the process tree receives its stop request.
-        self.child
-            .take()
-            .map(|child| tokio::task::spawn_blocking(move || stop_child(child)))
+        let child = self.child.take()?;
+        // EOF could let the leader exit before Windows walks its children.
+        let stop = move || {
+            stop_child(child);
+            drop(self);
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            Some(runtime.spawn_blocking(stop))
+        } else {
+            stop();
+            None
+        }
     }
 }
 
