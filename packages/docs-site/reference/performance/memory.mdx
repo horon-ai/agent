@@ -196,17 +196,18 @@ per-session idle window state is cleared too.
 
 ### What is released
 
-`hibernate_idle_caches` drops only these two things.
+`hibernate_idle_caches` releases the following.
 
 - **provider projection**: through `release_provider_messages_cache()` it clears `provider_messages_cache`,
   the prefix hash cache, the cache length, and their memory profile counters. It resets the cache mode to `Full`, so the
   next `provider_messages()` rebuilds them instead of sending an empty transcript.
 - **the tool output index**: it replaces `tool_call_ids` and `tool_result_ids` with new `HashSet`s instead of `clear()` so the
   allocation itself is released, and resets `tool_output_scan_index` to 0.
+- **The Python eval kernel**, if the session started one. The next cell starts with fresh state.
 
 ### What is kept
 
-Release touches only derived caches and never persistent or original state.
+Release keeps persistent and original session state.
 
 - The original transcript and event originals (`events.jsonl`, `blobs/`), and the resident active context
 - The frozen system prompt and the locked tool surface (`listed_tools_index`). The next turn does not renegotiate the tool list.
