@@ -62,7 +62,7 @@ const SPECS: &[Spec] = &[
     Spec {
         key: "tools.profile",
         label: "Tool profile",
-        env: Some(("HORON_AGENT_TOOL_PROFILE", non_empty)),
+        env: Some(("HORON_AGENT_TOOL_PROFILE", any_text)),
         value: |config| optional_text(Some(config.tools.profile.as_str())),
     },
     Spec {
@@ -132,7 +132,7 @@ pub(crate) fn reply(request: &Value) -> Option<ServerFrame> {
     let config = horon_agent_base::config::config();
     let file = Config::path().as_deref().map(FileLayer::read);
     // `var_os` keeps a non-UTF-8 value from being read as "unset", and
-    // `to_str` returns `Option` so no `.ok()` swallows an error the gate counts.
+    // `to_str` returns `Option`, so no fallible conversion is swallowed here.
     let settings = report(&config, file.as_ref(), |name| {
         std::env::var_os(name).and_then(|value| value.to_str().map(str::to_owned))
     });
@@ -193,14 +193,12 @@ impl FileLayer {
     ///
     /// A file that does not parse had no effect on the daemon either, so every
     /// row falls through to the default rather than naming a file that was
-    /// ignored.
+    /// ignored. A file that is not there reads the same way: no document, so
+    /// nothing it never held can be named as a source.
     fn read(path: &Path) -> Self {
-        let document = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| toml::from_str::<toml::Value>(&text).ok());
         Self {
             path: path.display().to_string(),
-            document,
+            document: read_document(path),
         }
     }
 
@@ -220,6 +218,22 @@ impl FileLayer {
     }
 }
 
+/// The TOML `path` holds, or `None` when it is missing or malformed.
+///
+/// Both failures are dropped instead of logged on purpose. A TOML error quotes
+/// the offending line, and that line is exactly where a credential would sit,
+/// so the text must not reach a log or a client; the daemon ignored a file it
+/// could not parse, and this answers the same way.
+fn read_document(path: &Path) -> Option<toml::Value> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return None;
+    };
+    let Ok(document) = toml::from_str::<toml::Value>(&text) else {
+        return None;
+    };
+    Some(document)
+}
+
 /// A value's text, with an unset key said out loud rather than left blank.
 fn optional_text(value: Option<&str>) -> String {
     match value.map(str::trim) {
@@ -228,9 +242,19 @@ fn optional_text(value: Option<&str>) -> String {
     }
 }
 
-/// An environment value the daemon would apply as a string.
+/// An environment value the daemon applies as a string when it is not blank.
 fn non_empty(raw: &str) -> bool {
     !raw.trim().is_empty()
+}
+
+/// An environment value the daemon assigns without a blank check.
+///
+/// `HORON_AGENT_TOOL_PROFILE` overwrites `tools.profile` verbatim, so an empty
+/// value clears the profile instead of leaving it alone. Naming the variable is
+/// then the only truthful source for the value in force, and treating it as
+/// unset would blame a file or the default for a value it never supplied.
+fn any_text(_: &str) -> bool {
+    true
 }
 
 /// An environment value the daemon would accept as a whole number above zero.
@@ -283,7 +307,12 @@ mod tests {
 
     #[test]
     fn an_unset_key_reports_the_default_with_no_origin() {
-        let rows = report(&Config::default(), None, empty_env);
+        // The shipped default names an effort ("low"), so the fixture clears it
+        // to reach the unset case: the row must say the value is absent instead
+        // of printing a default the daemon never had to invent.
+        let mut config = Config::default();
+        config.provider.openai_reasoning_effort = None;
+        let rows = report(&config, None, empty_env);
         let row = pick(&rows, "provider.openai_reasoning_effort");
         assert_eq!(row.source, SettingSource::Default);
         assert_eq!(row.origin, None);
@@ -359,6 +388,37 @@ mod tests {
             rows.iter().all(|row| row.source == SettingSource::Default),
             "a file the daemon ignored cannot be the source of anything"
         );
+    }
+
+    #[test]
+    fn a_missing_file_records_no_document_so_no_row_names_it() {
+        // The path is kept for a file that exists, but a file that is not there
+        // supplied nothing: every row reads as the default instead of naming a
+        // path the daemon never read.
+        let missing = FileLayer::read(Path::new("/nonexistent/horon-agent/effective-settings/config.toml"));
+        assert!(!missing.holds("provider.stream_idle_timeout_secs"));
+        let rows = report(&distinctive_config(), Some(&missing), empty_env);
+        assert!(
+            rows.iter().all(|row| row.source == SettingSource::Default),
+            "a file that was never read cannot be the source of anything"
+        );
+    }
+
+    #[test]
+    fn a_blank_tool_profile_variable_is_the_source_the_daemon_applied() {
+        // `HORON_AGENT_TOOL_PROFILE` is assigned without a blank check, so an
+        // empty value clears the profile rather than leaving the file's value
+        // in force. Naming the file, or the default, would be wrong.
+        let env: BTreeMap<&str, &str> = BTreeMap::from([("HORON_AGENT_TOOL_PROFILE", "")]);
+        let mut config = distinctive_config();
+        config.tools.profile = String::new();
+        let rows = report(&config, Some(&file("[tools]\nprofile = \"full\"\n")), |name| {
+            env.get(name).map(|value| (*value).to_string())
+        });
+        let row = pick(&rows, "tools.profile");
+        assert_eq!(row.source, SettingSource::Env);
+        assert_eq!(row.origin.as_deref(), Some("HORON_AGENT_TOOL_PROFILE"));
+        assert_eq!(row.value, "(unset)", "a cleared profile is said out loud");
     }
 
     #[test]
