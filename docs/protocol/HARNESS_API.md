@@ -558,6 +558,10 @@ client that cannot read it.
 - Capability constants: `CAPABILITY_CANCELLABLE_WORK_V1` in `crates/harness-api/src/lib.rs`, `cancellable_work_api` in `crates/app-core/src/server/session_connections.rs`
 - Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
 
+## Live todo updates
+
+An attached session can emit `todo_changed` with its `session_id` after a todo write is saved. The event is an invalidation and carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot, then read again on an invalidation for the attached session. Multiple invalidations can share one read because the response holds the latest list. Older clients skip the event and older bridges can continue serving snapshots if they advertise `todo_state`.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.

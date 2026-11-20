@@ -744,6 +744,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "text_matches",
     "file_status",
     "todo_state",
+    "todo_changed",
     "session_search_results",
     "artifacts",
     "usage_report",

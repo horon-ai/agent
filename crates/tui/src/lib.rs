@@ -31,6 +31,7 @@ pub mod statusline;
 mod terminal;
 pub mod theme;
 mod title;
+mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
@@ -667,10 +668,17 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             .min(frame.area().height.saturating_sub(fixed)),
         None => 0,
     };
+    let todo_rows = app.todos.height(
+        frame
+            .area()
+            .height
+            .saturating_sub(fixed.saturating_add(popup_rows).saturating_add(1)),
+    );
     let reserved = u16::from(app.banner.is_some())
         .saturating_add(u16::try_from(prompt_rows.len()).unwrap_or(u16::MAX))
         .saturating_add(u16::from(hint.is_some()))
         .saturating_add(popup_rows)
+        .saturating_add(todo_rows)
         .saturating_add(1);
     let input_rows = frame
         .area()
@@ -688,6 +696,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
     if !prompt_rows.is_empty() {
         constraints.insert(1, Constraint::Length(prompt_rows.len() as u16));
+    }
+    if todo_rows > 0 {
+        constraints.insert(1, Constraint::Length(todo_rows));
     }
     if app.banner.is_some() {
         constraints.insert(0, Constraint::Length(1));
@@ -728,6 +739,12 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
         frame.render_widget(Paragraph::new(indicator), indicator_area);
     }
     index += 1;
+
+    if todo_rows > 0 {
+        let lines: Vec<_> = app.todos.lines(todo_rows, theme).collect();
+        frame.render_widget(Paragraph::new(lines), areas[index]);
+        index += 1;
+    }
 
     if !prompt_rows.is_empty() {
         frame.render_widget(Paragraph::new(prompt_rows), areas[index]);

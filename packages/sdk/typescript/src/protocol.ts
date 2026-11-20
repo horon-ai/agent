@@ -987,6 +987,7 @@ export type ApiEvent =
       modified_ms?: number;
     }
   | { ev: "todo_state"; session_id: string; state: TodoSnapshot }
+  | { ev: "todo_changed"; session_id: string }
   | { ev: "session_search_results"; query: string; results: SessionSearchHit[] }
   | { ev: "artifacts"; session_id: string; artifacts: ArtifactEntry[] }
   /** Reply to `usage_report`; see {@link UsageReport} for what the counts mean. */
@@ -1155,6 +1156,7 @@ export const KNOWN_EVENT_KINDS = [
   "text_matches",
   "file_status",
   "todo_state",
+  "todo_changed",
   "session_search_results",
   "artifacts",
   "usage_report",

@@ -539,6 +539,10 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 - 능력 상수: `crates/harness-api/src/lib.rs`의 `CAPABILITY_CANCELLABLE_WORK_V1`, `crates/app-core/src/server/session_connections.rs`의 `cancellable_work_api`
 - 프로토콜 버전: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
 
+## 실시간 할 일 갱신
+
+연결한 세션은 할 일 변경을 저장한 뒤 `session_id`가 담긴 `todo_changed`를 보낼 수 있습니다. 이 이벤트는 목록 갱신 사실만 알립니다. 최초 `get_todo_state` 조회 전에 구독하고 연결 중인 세션의 알림을 받으면 다시 읽습니다. 응답에는 최신 목록이 들어 있으므로 여러 알림에 한 번만 조회해도 됩니다. 예전 클라이언트는 이 이벤트를 건너뛰고 예전 브리지는 `todo_state`를 지원하는 경우 목록 조회에 계속 응답합니다.
+
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 11에서 12로 옮겼다. 아래 내용은 모두

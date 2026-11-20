@@ -245,6 +245,12 @@ Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, 
 
 `transcript.markdown = false` turns the rendering off and draws the same text with its markers as typed.
 
+## Session todos
+
+The `Todos` panel shows the attached session's saved tasks, starting with the active item and then blocked items. A label shows each item's group and a blocked item includes its reason. The heading counts completed items and reports how many open items are outside the visible rows. On a short terminal the panel yields space to the conversation and input.
+
+The client loads the list when you attach and reads it again after a saved change. Switching sessions clears the old list. A bridge without `todo_state` leaves the panel hidden.
+
 ## Turn state
 
 One turn runs at a time. Enter during a running turn queues the text instead of sending it: the transcript shows it as a `queued: <text>` row, and the message is sent when the running turn ends, in the order the messages were typed. Cancelling the turn keeps the queue, because the queue belongs to the next turn rather than to the one that stopped.

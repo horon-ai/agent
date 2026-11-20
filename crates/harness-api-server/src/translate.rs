@@ -2355,6 +2355,15 @@ impl BridgeState {
                     ServerFrame::event(self.runtime_info()),
                 ]
             }
+            "todo_changed" => event["session_id"]
+                .as_str()
+                .map(|id| {
+                    ServerFrame::event(ApiEvent::TodoChanged {
+                        session_id: id.to_owned(),
+                    })
+                })
+                .into_iter()
+                .collect(),
             // Background-task traffic reaches clients as a notification whose
             // body is the markdown the TUI renders. The API refuses to make
             // clients re-derive a progress bar from prose, so the two shapes

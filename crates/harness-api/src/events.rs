@@ -535,6 +535,10 @@ pub enum ApiEvent {
         state: horon_agent_todo_policy::TodoSnapshot,
     },
 
+    /// The session's committed todo list changed. Read its current snapshot
+    /// with `GetTodoState`.
+    TodoChanged { session_id: String },
+
     /// Reply to `SearchSessions`: transcript hits across every stored session.
     /// `query` is echoed so a client that fired several searches can match the
     /// answer to the one still on screen.
