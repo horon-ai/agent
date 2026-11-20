@@ -39,6 +39,7 @@ mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
+mod visual_blocks;
 mod window;
 mod wrap;
 
@@ -523,12 +524,7 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
-        // The session and the working directory can change while the client
-        // runs, and a key can start a turn, answer a prompt or leave one
-        // without any event arriving; the window is renamed only when the name
-        // it would carry is not the one on it. The state is one fixed word, so
-        // comparing it every frame costs nothing and a repeated state writes
-        // nothing.
+        // Daemon events and local input can both change the window title.
         let state = window::state(app, state_supported);
         if changed || state != shown_state {
             shown_state = state;
@@ -1054,6 +1050,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         symbols: *symbols,
         width,
         markdown: item_lines::markdown_enabled(settings),
+        visual_blocks: item_lines::visual_blocks_enabled(settings),
     };
     let open = [
         open_rows(transcript.open_reasoning(), &look, true),

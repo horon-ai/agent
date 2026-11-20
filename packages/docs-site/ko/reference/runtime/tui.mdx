@@ -83,6 +83,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 
 이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
 
@@ -266,6 +267,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
 
 어시스턴트 글은 마크다운으로 그린다. 제목, 강조, 인라인 코드, 목록, 인용, 펜스 코드, 가로줄을 다룬다. 목록은 최대 여섯 단계까지 중첩되고, 단계마다 두 칸 또는 탭 하나를 쓰며, 모델이 적은 들여쓰기에서 중첩을 그린다. 펜스 코드는 적힌 글자를 그대로 두고, 여는 펜스 줄이 완성되면 그 첫 낱말을 언어 표시로 그리므로, 절반만 도착한 ` ```ru `가 잠깐 표시를 띄웠다가 바뀌지 않는다. 표, 링크, 렌더러가 다루지 않는 문법은 모델이 적은 원문 그대로 남는다. 글을 지우면 모델이 한 말을 잃기 때문이다. 줄바꿈된 행은 이어지는 행의 들여쓰기를 지키므로, 중첩된 항목은 줄이 바뀐 뒤에도 중첩으로 읽힌다. 새 턴은 앞 턴에서 한 행 비운 아래에서 시작한다.
+
+`diagram` 코드 블록은 `load -> parse -> render`처럼 한 줄 흐름을 그립니다. 이름을 최대 8개까지 넣을 수 있고 이름 하나는 24글자와 표시 칸 24개 이하여야 합니다. 원문이 4 KiB를 넘거나 흐름이 창 너비를 넘으면 원문을 표시합니다. 미완성 블록과 잘못된 문법도 원문으로 남습니다. `transcript.visual_blocks = false`를 지정하면 모든 흐름을 원문으로 표시합니다.
 
 `transcript.markdown = false`는 이 렌더링을 끄고 같은 글을 표시까지 그대로 그린다.
 
