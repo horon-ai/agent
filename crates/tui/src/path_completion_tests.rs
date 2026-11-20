@@ -145,7 +145,7 @@ fn tab_reads_only_the_sessions_confirmed_local_directory() {
     // A switch answer names the session's own directory: the received handler
     // moves the root, so the names filled are the ones that session has rather
     // than the ones of the session being left.
-    let elsewhere = workspace();
+    let elsewhere = self::workspace();
     std::fs::write(elsewhere.path().join("elsewhere.md"), "").expect("a file");
     let (sender, receiver) = mpsc::channel();
     let mut moved = App::new("socket · session".to_string(), receiver);
@@ -191,7 +191,8 @@ fn tab_reads_only_the_sessions_confirmed_local_directory() {
     assert_eq!(fill("../notes", &workspace), None);
     // A workspace this machine does not have is not read under a same-named
     // directory.
-    assert_eq!(complete("read", Some("/no/such/horon-tui-workspace"), None), None);
+    let missing = workspace.path().join("missing-workspace");
+    assert!(complete("read", Some(missing.to_str().expect("UTF-8 fixture path")), None).is_none());
 
     // The editor can only replace the whole text, so a cursor in the middle is
     // left where the user put it.
