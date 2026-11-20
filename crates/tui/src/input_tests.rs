@@ -5,7 +5,7 @@
 //! about keys and the render tests about rows on screen.
 
 use crate::history::History;
-use crate::input::Input;
+use crate::input::{Input, Placement};
 
 fn typed(text: &str) -> Input {
     let mut input = Input::new();
@@ -308,6 +308,224 @@ fn set_text_replaces_every_line() {
     input.set_text("");
     assert!(input.is_empty());
     assert_eq!(input.line_count(), 1);
+}
+
+#[test]
+fn a_combining_mark_is_one_cursor_stop() {
+    let mut input = typed("e\u{301}x");
+    assert_eq!(input.cursor_column(), 2);
+    input.left();
+    assert_eq!(input.cursor(), 2, "the stop before `x` is a character boundary");
+    input.left();
+    assert_eq!(input.cursor(), 0, "and the accented letter is one whole stop");
+    input.right();
+    assert_eq!(input.cursor(), 2);
+    input.right();
+    assert_eq!(input.cursor(), 3);
+}
+
+#[test]
+fn deleting_takes_the_whole_cluster() {
+    let mut input = typed("e\u{301}");
+    input.backspace();
+    assert!(input.is_empty(), "the letter and its mark go together");
+    let mut input = typed("e\u{301}x");
+    input.home();
+    input.delete();
+    assert_eq!(input.text(), "x");
+}
+
+#[test]
+fn decomposed_hangul_is_one_stop() {
+    // `한` as a leading consonant, a medial vowel and a trailing consonant.
+    let jamo = "\u{1112}\u{1161}\u{11ab}";
+    let mut input = typed(jamo);
+    assert_eq!(input.cursor_column(), 2, "the terminal composes it into one syllable");
+    input.left();
+    assert_eq!(input.cursor(), 0);
+    input.right();
+    assert_eq!(input.cursor(), 3);
+    input.backspace();
+    assert!(input.is_empty(), "one press takes the composed syllable");
+}
+
+#[test]
+fn a_click_places_the_caret_on_the_cell_it_covered() {
+    let mut input = typed("한글\nab");
+    let view = input.view(10, 8);
+    assert_eq!(view.rows.len(), 2);
+    let pane = Placement { x: 2, y: 5, lead: 2 };
+    input.note_view(pane, &view);
+    // The text starts at column 4, the pane's column 2 plus the two-cell
+    // marker: cells 4 and 5 are `한`, cells 6 and 7 are `글`. A cell inside the
+    // wide syllable answers with the boundary before it, the only stop the
+    // cursor can occupy.
+    assert!(input.place_caret(5, 5));
+    assert_eq!(input.cursor(), 0);
+    assert!(input.place_caret(8, 5));
+    assert_eq!(input.cursor(), 1);
+    assert!(input.place_caret(9, 5));
+    assert_eq!(input.cursor(), 2, "past the last cell is the end of the line");
+    // The second row is its own line, and a click on the marker before the
+    // text starts that line.
+    assert!(input.place_caret(4, 6));
+    assert_eq!((input.line_of_cursor(), input.cursor()), (1, 3));
+    assert!(input.place_caret(2, 6));
+    assert_eq!(input.cursor(), 3);
+}
+
+#[test]
+fn a_click_outside_the_drawn_rows_does_nothing() {
+    let mut input = typed("text");
+    let view = input.view(20, 8);
+    let pane = Placement { x: 0, y: 4, lead: 2 };
+    input.note_view(pane, &view);
+    assert!(!input.place_caret(3, 3), "above the pane");
+    assert!(!input.place_caret(3, 5), "below its one row");
+}
+
+#[test]
+fn a_click_needs_the_frame_that_drew_the_text() {
+    let mut input = typed("text");
+    let view = input.view(20, 8);
+    let pane = Placement { x: 0, y: 4, lead: 2 };
+    input.note_view(pane, &view);
+    input.insert('!');
+    assert!(
+        !input.place_caret(4, 4),
+        "the edit has not been drawn, so its cells are unknown"
+    );
+    let view = input.view(20, 8);
+    input.note_view(pane, &view);
+    assert!(input.place_caret(4, 4));
+    assert_eq!(input.cursor(), 2);
+}
+
+#[test]
+fn a_narrow_pane_never_shows_or_hits_half_a_cluster() {
+    // Three cells of text in a two-cell pane scroll under the caret: whole
+    // clusters leave the row, so the mark is not drawn without its letter.
+    let mut input = typed("e\u{301}fg");
+    let view = input.view(2, 8);
+    assert_eq!(view.rows, vec!["g".to_string()]);
+    assert_eq!(view.cursor_cell, 1);
+    let pane = Placement { x: 0, y: 0, lead: 1 };
+    input.note_view(pane, &view);
+    assert!(input.place_caret(1, 0));
+    assert_eq!(input.cursor(), 3, "the row starts at `g`");
+    assert!(input.place_caret(2, 0));
+    assert_eq!(input.cursor(), 4, "and a click past it ends the line");
+    // A wide syllable that does not fit is not drawn either.
+    let input = typed("한");
+    assert_eq!(input.view(1, 8).rows, vec![String::new()]);
+}
+
+#[test]
+fn a_resize_keeps_the_caret_on_the_same_cluster() {
+    let mut input = typed("한글");
+    let narrow = input.view(3, 8);
+    assert_eq!(narrow.rows, vec!["글".to_string()]);
+    assert_eq!((narrow.cursor_row, narrow.cursor_cell), (0, 2));
+    let pane = Placement { x: 0, y: 0, lead: 1 };
+    input.note_view(pane, &narrow);
+    // Cells 1 and 2 are `글` in the narrow pane.
+    assert!(input.place_caret(2, 0));
+    assert_eq!(input.cursor(), 1);
+    // The same draft in a wider pane draws both syllables and answers a click
+    // on `한` with the boundary before it.
+    let wide = input.view(10, 8);
+    assert_eq!(wide.rows, vec!["한글".to_string()]);
+    assert_eq!(wide.cursor_cell, 2, "the caret moved between the syllables");
+    input.note_view(pane, &wide);
+    assert!(input.place_caret(1, 0));
+    assert_eq!(input.cursor(), 0);
+    assert!(input.place_caret(4, 0));
+    assert_eq!(input.cursor(), 1);
+}
+
+#[test]
+fn a_flag_is_one_cursor_stop() {
+    // Two regional indicators draw one flag, and four pair into two flags.
+    let mut input = typed("🇰🇷🇺🇸");
+    assert_eq!(input.cursor_column(), 4, "each flag draws two cells");
+    input.left();
+    assert_eq!(input.cursor(), 2, "the second flag is one stop");
+    input.left();
+    assert_eq!(input.cursor(), 0);
+    input.right();
+    assert_eq!(input.cursor(), 2);
+    input.backspace();
+    assert_eq!(input.text(), "🇺🇸", "one press takes the flag before the cursor");
+    // The delete key takes the whole flag rather than half of it.
+    let mut input = typed("🇰🇷!");
+    input.home();
+    input.delete();
+    assert_eq!(input.text(), "!");
+}
+
+#[test]
+fn an_indic_conjunct_is_one_cursor_stop() {
+    // `क्ष`: the consonant, the virama linker and the second consonant are one
+    // cluster under the Indic conjunct rule (GB9c).
+    let mut input = typed("क्ष");
+    assert_eq!(input.cursor(), 3);
+    input.left();
+    assert_eq!(input.cursor(), 0);
+    input.right();
+    assert_eq!(input.cursor(), 3);
+    input.backspace();
+    assert!(input.is_empty());
+    // A spacing mark also joins the letter before it (GB9a).
+    let mut input = typed("किx");
+    input.left();
+    assert_eq!(input.cursor(), 2);
+    input.left();
+    assert_eq!(input.cursor(), 0, "the vowel sign is not a stop of its own");
+}
+
+#[test]
+fn a_flag_and_decomposed_hangul_keep_their_boundaries() {
+    let jamo = "\u{1112}\u{1161}\u{11ab}";
+    let mut input = typed("🇰🇷");
+    input.insert_text(jamo);
+    assert_eq!(input.cursor(), 5);
+    input.left();
+    assert_eq!(input.cursor(), 2, "the composed syllable is one stop");
+    input.left();
+    assert_eq!(input.cursor(), 0, "and the flag before it is one");
+    input.right();
+    assert_eq!(input.cursor(), 2);
+    input.backspace();
+    assert_eq!(input.text(), jamo);
+}
+
+#[test]
+fn vertical_motion_keeps_its_cell_over_wide_text() {
+    let mut input = typed("한글\nabcd");
+    assert!(input.up());
+    assert_eq!(input.cursor(), 2, "the caret keeps cell four, after both syllables");
+    assert!(input.down());
+    assert_eq!(input.cursor(), 7);
+    // Cell one is inside `한`, and the only stop near it is its start.
+    let mut input = typed("한\nabc");
+    input.home();
+    input.right();
+    assert_eq!(input.cursor(), 3, "between `a` and `b`");
+    assert!(input.up());
+    assert_eq!(input.cursor(), 0, "a cell inside the syllable answers with its start");
+    assert!(input.down());
+    assert_eq!(input.cursor(), 2, "the line below starts at cell zero");
+}
+
+#[test]
+fn a_paste_keeps_combining_text_whole_across_line_breaks() {
+    let mut input = Input::new();
+    input.insert_text("한\r\ne\u{301}\r\n\u{1112}\u{1161}\u{11ab}");
+    assert_eq!(input.text(), "한\ne\u{301}\n\u{1112}\u{1161}\u{11ab}");
+    assert_eq!(input.line_count(), 3);
+    assert_eq!(input.cursor_column(), 2);
+    let view = input.view(20, 8);
+    assert_eq!(view.rows, vec!["한", "e\u{301}", "\u{1112}\u{1161}\u{11ab}"]);
 }
 
 #[test]
