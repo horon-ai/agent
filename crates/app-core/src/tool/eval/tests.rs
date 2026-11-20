@@ -392,6 +392,7 @@ fn eval_editor_approves_one_cell_without_releasing_another() {
         let session = TestSession::new("eval-editor", &home.cwd);
         let connection = "eval-test-editor";
         let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
+        let acp_token = acp_session::install(session.id, connection, tx.clone());
         let token = permission_bridge::install(session.id, connection, tx);
         let _turn = acp_session::claim_turn(session.id, Some(connection));
         let bridge = permission_bridge::bridge_for_connection(session.id, connection).expect("editor bridge");
@@ -427,6 +428,7 @@ fn eval_editor_approves_one_cell_without_releasing_another() {
             .filter_map(Result::ok)
             .collect();
         permission_bridge::clear(session.id, token);
+        acp_session::clear(session.id, acp_token);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].output, "one editor approval\n");
     });
