@@ -3,7 +3,7 @@
 
 use super::App;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
-use crate::settings::Settings;
+use crate::settings::{Motion, Settings};
 
 impl App {
     /// Show the settings screen, seeded from the settings in force.
@@ -48,6 +48,15 @@ impl App {
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
         self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
+        // The preset decides what the spinner draws and how often a quiet turn
+        // redraws; both are read here so the loop and the renderer agree on one
+        // snapshot. A refused number is reported once, naming the default that
+        // took its place.
+        let (motion, motion_warnings) = Motion::from_settings(settings);
+        self.motion = motion;
+        for warning in motion_warnings {
+            self.warn(format!("motion: {warning}"));
+        }
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

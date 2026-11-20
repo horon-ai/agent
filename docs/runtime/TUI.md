@@ -24,7 +24,10 @@ The client takes its own arguments:
 
 ```text
 horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>]
 ```
+
+The three motion flags are per-launch overrides: they outrank every settings file and the environment, are shown as `command line` in the settings screen, and survive a reload of the files under them. A flag outside its range is an argument error, not a warning: `--max-fps 0` prints the expected range and exits with code 2.
 
 | Flag | Meaning |
 | --- | --- |
@@ -32,6 +35,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
+| `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |
+| `--spinner-interval <ms>` | Spinner frame length for this launch, `40` to `2000` |
+| `--max-fps <n>` | Stream frame limit for this launch, `1` to `240` |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
 
@@ -65,6 +71,9 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
+| `motion.spinner_interval` | number | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
+| `motion.max_fps` | number | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | array of segment names | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
 | `statusline.right` | array of segment names | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
@@ -76,11 +85,13 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-The table is the settings registry (`crates/tui/src/settings/registry.rs`), twelve keys in its order, and it is what the settings screen draws.
+The table is the settings registry (`crates/tui/src/settings/registry.rs`), fifteen keys in its order, and it is what the settings screen draws.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`motion.preset` is what the screen is allowed to animate. A turn in flight is the only state that moves on its own: its spinner beside the `running` word, and the rows of text still arriving. `full` turns the spinner and redraws a quiet turn on `motion.spinner_interval`; `reduced` keeps the spinner's first frame, so the mark still says a turn is running but nothing moves; `static` draws no spinner and adds no frame of its own, so the screen changes only when an event does. Keystrokes are unaffected either way: the loop waits at most `--spinner-interval` milliseconds for one and reads it immediately, so a slow cadence lowers the redraw rate without making the keyboard late. `motion.spinner_interval` is milliseconds, `40` to `2000`; `motion.max_fps` is frames a second, `1` to `240`, and it places a floor under the redraw gap, so `max_fps = 4` redraws a busy stream four times a second even with a `50` ms spinner. A number outside its range is refused, one warning line names the default that took its place, and an idle screen stays untouched whatever the values.
 
 `transcript.show_reasoning` is the thinking-block control, labelled `Show thinking` in the settings screen: `true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being stored, so turning it off hides the thinking blocks of every later turn.
 
@@ -90,6 +101,11 @@ The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working dire
 # ~/.horon/tui.toml
 theme = "dark"
 symbols = "nerd"
+
+[motion]
+preset = "reduced"
+spinner_interval = 120
+max_fps = 20
 
 [statusline]
 preset = "custom"

@@ -93,8 +93,6 @@ mod help_tests;
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
 
-use std::time::Duration;
-
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -117,16 +115,25 @@ horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]...
+                 [--motion <full|reduced|static>]
+                 [--spinner-interval <ms>] [--max-fps <n>]
 
 Options:
-  --socket <path>  Harness API socket to connect to (default: the resolved
-                   harness socket for this user)
-  --session <id>   Attach to an existing session instead of creating one
-  --cwd <dir>      Working directory for a newly created session
-  --config <file>  Extra settings file, read after the global and project
-                   files and before the environment (repeatable)
-  -V, --version    Print the version and exit
-  -h, --help       Print this help and exit
+  --socket <path>           Harness API socket to connect to (default: the
+                            resolved harness socket for this user)
+  --session <id>            Attach to an existing session instead of creating one
+  --cwd <dir>               Working directory for a newly created session
+  --config <file>           Extra settings file, read after the global and
+                            project files and before the environment
+                            (repeatable)
+  --motion <mode>           full, reduced or static; overrides the `motion`
+                            setting for this launch
+  --spinner-interval <ms>   Milliseconds one spinner frame stays, 40 to 2000;
+                            overrides `motion.spinner_interval`
+  --max-fps <n>             Most frames a second a streaming turn draws, 1 to
+                            240; overrides `motion.max_fps`
+  -V, --version             Print the version and exit
+  -h, --help                Print this help and exit
 
 Keys:
   Enter          send the typed message
@@ -179,6 +186,12 @@ pub struct Args {
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Motion preset for this launch, over every settings file.
+    pub motion: Option<settings::MotionMode>,
+    /// Spinner interval for this launch, in milliseconds.
+    pub spinner_interval: Option<i64>,
+    /// Frame limit for this launch, in frames a second.
+    pub max_fps: Option<i64>,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -213,6 +226,23 @@ impl Args {
                     Some(path) if !path.is_empty() => parsed.config.push(path.into()),
                     _ => return Err("--config needs a file".to_string()),
                 },
+                "--motion" => match arguments.next() {
+                    Some(value) => parsed.motion = Some(settings::motion::parse_mode(&value).map_err(String::from)?),
+                    None => return Err("--motion needs full, reduced or static".to_string()),
+                },
+                "--spinner-interval" => match arguments.next() {
+                    Some(value) => {
+                        parsed.spinner_interval =
+                            Some(settings::motion::parse_spinner_interval(&value).map_err(String::from)?);
+                    }
+                    None => return Err("--spinner-interval needs milliseconds".to_string()),
+                },
+                "--max-fps" => match arguments.next() {
+                    Some(value) => {
+                        parsed.max_fps = Some(settings::motion::parse_max_fps(&value).map_err(String::from)?)
+                    }
+                    None => return Err("--max-fps needs frames a second".to_string()),
+                },
                 other => match other.split_once('=') {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
@@ -221,6 +251,16 @@ impl Args {
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
                     Some(("--config", path)) => parsed.config.push(path.into()),
+                    Some(("--motion", value)) => {
+                        parsed.motion = Some(settings::motion::parse_mode(value).map_err(String::from)?);
+                    }
+                    Some(("--spinner-interval", value)) => {
+                        parsed.spinner_interval =
+                            Some(settings::motion::parse_spinner_interval(value).map_err(String::from)?);
+                    }
+                    Some(("--max-fps", value)) => {
+                        parsed.max_fps = Some(settings::motion::parse_max_fps(value).map_err(String::from)?);
+                    }
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
@@ -284,7 +324,10 @@ where
     if let Some(note) = note {
         eprintln!("horon-tui: {note}");
     }
-    let mut reloader = settings::Reloader::new(sources);
+    // A launch flag outranks every file, so it rides with the reloader and is
+    // reapplied after each resolve instead of being written anywhere.
+    let overrides = settings::motion::launch_overrides(args.motion, args.spinner_interval, args.max_fps);
+    let mut reloader = settings::Reloader::with_overrides(sources, std::time::Duration::from_secs(1), overrides);
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
     }
@@ -483,8 +526,9 @@ where
     let mut mouse_captured = false;
     // The screen is redrawn when something on it changed, not twenty times a
     // second: a draw walks the visible conversation, and an idle client has
-    // nothing new to show. The frame below is the first one.
-    let mut redraw = true;
+    // nothing new to show. A turn in flight is the one exception, and its
+    // cadence is the motion settings'; the scheduler's first pass draws.
+    let mut frames = loop_io::Frames::new(app.motion);
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
     let mut clock = statusline::local_minute();
@@ -545,16 +589,25 @@ where
             clock = minute;
             changed = true;
         }
-        // A turn in flight keeps drawing even while its events are quiet: its
-        // rows are where the elapsed time and the streaming text land.
-        if redraw || changed || app.pending_turn {
+        // A settings file, the settings screen and a flag all end in one
+        // applied snapshot; adopting its cadence here is what makes a changed
+        // preset take effect without waiting for the next event.
+        frames.retune(app.motion);
+        // One frame is drawn when something changed, when the scheduler says
+        // the spinner is due, or when its first pass has not drawn yet. An idle
+        // screen reaches none of those and is left untouched, which is the
+        // behaviour the client had before the animation existed.
+        if changed {
+            frames.request();
+        }
+        if let Some(frame) = frames.due(app.pending_turn) {
+            app.motion_frame = frame;
             if let Err(message) = draw(terminal, app) {
                 failure = Some(message);
                 break;
             }
-            redraw = false;
         }
-        match crossterm::event::poll(Duration::from_millis(50)) {
+        match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
@@ -567,7 +620,6 @@ where
         // Every input event can change what is on screen: a key edits the
         // draft or moves the selection, a paste inserts, the wheel scrolls and a
         // resize remakes the whole layout.
-        redraw = true;
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting
@@ -596,6 +648,9 @@ where
                 app.exit_code = 1;
             }
         }
+        // Asked for after the event was acted on, so one keystroke costs one
+        // frame rather than one per pass.
+        frames.request();
     }
     (if failure.is_some() { 1 } else { app.exit_code }, failure)
 }

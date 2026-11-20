@@ -24,7 +24,10 @@
 
 ```text
 horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>]
 ```
+
+모션 플래그 셋은 실행 단위 재정의다. 모든 설정 파일과 환경 변수보다 우선하고, 설정 화면에는 `command line`으로 나오며, 그 아래 파일을 다시 읽어도 유지된다. 범위를 벗어난 플래그는 경고가 아니라 인자 오류다. `--max-fps 0`은 기대 범위를 출력하고 종료 코드 2로 끝난다.
 
 | 플래그 | 뜻 |
 | --- | --- |
@@ -32,6 +35,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | 새 세션을 만들지 않고 기존 세션에 붙는다 |
 | `--cwd <dir>` | 이 클라이언트가 만드는 세션의 작업 디렉터리 |
 | `--config <file>` | 설정 파일을 하나 더 읽는다. 여러 번 쓸 수 있다 |
+| `--motion <mode>` | 이번 실행에서 `motion.preset` 대신 쓸 `full`, `reduced`, `static` |
+| `--spinner-interval <ms>` | 이번 실행의 스피너 프레임 길이, `40`부터 `2000`까지 |
+| `--max-fps <n>` | 이번 실행의 스트림 프레임 상한, `1`부터 `240`까지 |
 | `-V`, `--version` | 버전을 출력하고 끝낸다 |
 | `-h`, `--help` | 사용법을 출력하고 끝낸다 |
 
@@ -65,6 +71,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | --- | --- | --- | --- |
 | `theme` | 문자열 | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
+| `motion.spinner_interval` | 숫자 | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
+| `motion.max_fps` | 숫자 | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | 세그먼트 이름 배열 | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
 | `statusline.right` | 세그먼트 이름 배열 | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
@@ -76,11 +85,13 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열두 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열다섯 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
+
+`motion.preset`은 화면이 무엇을 움직일 수 있는지 정한다. 스스로 움직이는 상태는 돌고 있는 턴 하나뿐이다. `running` 글자 옆의 스피너와 아직 도착하는 본문 행이 그것이다. `full`은 스피너를 돌리고 조용한 턴도 `motion.spinner_interval`마다 다시 그린다. `reduced`는 스피너의 첫 프레임을 그대로 두므로 턴이 도는 중이라는 표시는 남고 움직임은 없다. `static`은 스피너를 그리지 않고 자체 프레임도 만들지 않으므로, 화면은 이벤트가 있을 때만 바뀐다. 어느 쪽이든 키 입력은 늦어지지 않는다. 루프는 키를 `--spinner-interval`밀리초까지만 기다렸다가 즉시 읽으므로, 느린 주기는 다시 그리는 횟수만 줄인다. `motion.spinner_interval`은 밀리초이고 `40`부터 `2000`까지, `motion.max_fps`는 초당 프레임이고 `1`부터 `240`까지이며, 다시 그리는 간격의 하한을 정한다. 따라서 `max_fps = 4`이면 스피너가 50밀리초여도 바쁜 스트림은 초당 네 번만 다시 그린다. 범위를 벗어난 숫자는 거부되고, 대신 적용한 기본값을 경고 한 줄이 알리며, 유휴 화면은 값과 관계없이 그대로 둔다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
 
@@ -90,6 +101,11 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 # ~/.horon/tui.toml
 theme = "dark"
 symbols = "nerd"
+
+[motion]
+preset = "reduced"
+spinner_interval = 120
+max_fps = 20
 
 [statusline]
 preset = "custom"

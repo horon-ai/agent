@@ -1,13 +1,25 @@
-//! What the frame loop hands over between frames.
+//! What the frame loop hands over between frames, and when the next frame is due.
 //!
 //! Deliveries from the bridge become app state, a keystroke's action goes out to
 //! the bridge thread, and the terminal's mouse capture follows the setting that
 //! asks for it. None of it draws, which is what keeps it out of the renderer and
 //! testable on its own.
+//!
+//! The last piece is [`Frames`]: the one thing that decides whether a frame is
+//! due, so an idle screen stays untouched and a streaming one animates at the
+//! cadence the motion settings allow.
+
+use std::time::{Duration, Instant};
 
 use crate::app::{Action, App};
 use crate::scroll;
 use crate::sdk_bridge::{Command, Incoming};
+
+/// How long the loop waits for a keystroke before looking at the screen again.
+///
+/// This is a bound on input latency, not a frame rate: a key waits for it, so it
+/// stays short whatever the motion settings say.
+pub(crate) const POLL: Duration = Duration::from_millis(50);
 
 /// Move every buffered SDK delivery into the app state, reporting whether
 /// anything arrived.
@@ -150,4 +162,79 @@ pub(crate) fn sync_mouse_capture(app: &mut App, captured: &mut bool) -> bool {
     }
     *captured = false;
     true
+}
+
+/// When a frame is due, and which animation frame it draws.
+///
+/// Nothing here draws. The loop asks one question per pass — [`Frames::due`] —
+/// and the answer covers the whole screen: a turn in flight is the only state
+/// that animates, so it is the only one that can be due without an event.
+/// An idle app is never due, which is what keeps a quiet screen from being
+/// redrawn at all.
+pub(crate) struct Frames {
+    /// The interval between frames while a turn runs, or `None` for a preset
+    /// that adds no frame of its own.
+    interval: Option<Duration>,
+    /// A frame asked for by something other than the cadence: the first frame,
+    /// a resized terminal, a reloaded settings file.
+    pending: bool,
+    /// When the last frame was drawn.
+    last: Instant,
+    /// Which animation frame the next drawn frame uses.
+    frame: usize,
+}
+
+impl Frames {
+    /// A scheduler whose first pass draws.
+    pub fn new(motion: crate::settings::Motion) -> Self {
+        Self {
+            interval: motion.frame_interval(),
+            pending: true,
+            last: Instant::now(),
+            frame: 0,
+        }
+    }
+
+    /// Adopt a new motion preset without losing the frame already due.
+    ///
+    /// A changed cadence counts as a reason to draw once, so the spinner stops
+    /// and restarts where the new preset says rather than at the next event.
+    pub fn retune(&mut self, motion: crate::settings::Motion) {
+        let interval = motion.frame_interval();
+        if interval != self.interval {
+            self.interval = interval;
+            self.pending = true;
+        }
+    }
+
+    /// Ask for a frame at the next pass, whatever the cadence says.
+    pub fn request(&mut self) {
+        self.pending = true;
+    }
+
+    /// The pass count taken when a frame is drawn, so the caller knows which
+    /// spinner frame it used.
+    ///
+    /// `animate` is whether a turn is in flight: `false` makes every pass idle,
+    /// and an idle pass never draws without an event, whatever the interval.
+    pub fn due(&mut self, animate: bool) -> Option<usize> {
+        let due = if self.pending {
+            true
+        } else if animate {
+            match self.interval {
+                Some(interval) => self.last.elapsed() >= interval,
+                None => false,
+            }
+        } else {
+            false
+        };
+        if !due {
+            return None;
+        }
+        self.pending = false;
+        self.last = Instant::now();
+        let frame = self.frame;
+        self.frame = self.frame.wrapping_add(1);
+        Some(frame)
+    }
 }
