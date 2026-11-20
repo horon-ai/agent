@@ -75,6 +75,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `statusline.path_max` | 숫자 | `40` | `HORON_TUI_STATUSLINE_PATH_MAX` |
 | `statusline.context_window` | 숫자 | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
+| `editor.suggestions` | 참·거짓 | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
@@ -210,6 +211,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | 커서 앞 낱말을 지운다 |
 | `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
 | `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
+| `editor.accept_suggestion` | `ctrl+right` | 화면에 보이는 제안을 초안에 넣는다 |
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |
 | `prompt.allow_always` | `a` | 이 호출과 이후 같은 호출을 승인한다 |
 | `prompt.deny` | `n` | 대기 중인 도구 호출을 거절한다 |
@@ -223,6 +225,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 `up`과 `down`은 먼저 초안의 줄 사이를 오르내리고, 초안의 첫 줄과 마지막 줄에서만 입력 기록에 닿는다. 그래서 트랜스크립트 보기는 `shift+up`, `shift+down`, 페이지 키로 옮겼다. `shift+tab`은 추론 노력 단계를 옮기고 평범한 `tab`은 여전히 초안을 완성한다. 시프트가 들어간 바인딩이 시프트가 없는 바인딩보다 먼저 답하기 때문이다. 프롬프트가 열려 있으면 모든 키를 프롬프트가 받으므로, 프롬프트에 쓰려던 글자가 입력 줄에 닿지 않는다. 탭은 슬래시 명령 이름만 완성한다. 줄에 공백이 들어가면 인자 자리는 사용자의 몫이다.
 
 ## 편집기
+
+`editor.suggestions = true`로 지정하면 현재 세션에서 이미 보낸 글을 참고해 초안에 이어 쓸 내용을 표시합니다. Ctrl+Right로 제안을 초안에 넣고 Esc로 닫습니다. 초안이 바뀌면 이전 제안은 사라집니다. 제안은 로컬에서 만들며 네트워크 요청은 보내지 않습니다.
 
 입력 줄은 초안을 따라 자란다. 줄마다 한 행이고 최대 여덟 행까지 자라며, 그보다 긴 초안은 제 안에서 스크롤한다. 초안이 자라는 동안에도 대화는 최소 세 행을 지키므로 긴 메시지가 화면 전체를 가져가지 않는다.
 
