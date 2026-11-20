@@ -40,17 +40,37 @@ When it is present, `render` draws the per-OS `compare.json` files as SVG charts
 block with the summary chart and links to the per-metric charts. A document
 without that block gets no charts, so an older branch keeps working unchanged.
 The workflow copies `bench_charts.py` next to this script.
+
+Two more blocks are optional and are written only when the document has them:
+
+    <!-- bench-summary:start -->  ... <!-- bench-summary:end -->  (README.md)
+    <!-- bench-versions:start --> ... <!-- bench-versions:end --> (RESULTS.md)
+
+`bench-summary` builds the headline comparison table from each OS's
+`compare.json`: the version label is the binary that run installed, and the
+medians come from the same metric readers the charts use. `bench-versions` lists
+the measured tool versions and each runner's `jcode-release.json` identity (tag,
+peeled tag commit, asset, SHA-256, served by). Nothing is carried over from an
+earlier measurement: a run without a `compare.json` writes an explicit "not
+available" line.
+
+`render --require-complete` refuses to replace the recorded `bench-auto` block
+unless the results hold at least one artifact from every suite group. A
+compare-only run still updates the README blocks, but cannot overwrite the
+startup, loading, tools, reload, compile and TUI record with "not measured".
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import json
 import re
 import sys
 from pathlib import Path
 
 import bench_charts
+import bench_request_bytes as brb
 
 START_RE = re.compile(r"^<!-- bench-auto:start(?: commit=([0-9a-f]{7,40}))? -->$", re.MULTILINE)
 END = "<!-- bench-auto:end -->"
@@ -85,6 +105,30 @@ LANGS = ("en", "ko")
 HEADLESS_LEVEL = 2
 TUI_FRAGMENT = "tui.md"
 
+# Optional generated blocks. A document carries whichever it wants: RESULTS.md
+# has the charts block, README.md has the summary block, and RESULTS has the
+# version table. A missing block is not an error, so an older branch or a
+# document that does not want a summary keeps working unchanged.
+SUMMARY_START = "<!-- bench-summary:start -->"
+SUMMARY_END = "<!-- bench-summary:end -->"
+VERSIONS_START = "<!-- bench-versions:start -->"
+VERSIONS_END = "<!-- bench-versions:end -->"
+
+# The README rows. The order is the order a reader compares them in, and every
+# value comes from the run's compare.json through bench_charts' metric readers.
+SUMMARY_METRICS = ("03-oneshot-time", "05-skill-time", "06-mcp-time",
+                   "04-oneshot-memory", "08-per-session-memory", "02-install-size")
+# Groups that must all have at least one artifact before RESULTS.md's recorded
+# block may be replaced: a compare-only run must not overwrite startup, loading
+# and TUI records from an earlier full run with "not measured".
+REQUIRED_SUITES = (("compare", ("compare.md",)),
+                   ("startup", ("startup.txt",)),
+                   ("loading", ("loading-cold.txt", "loading-warm.txt")),
+                   ("tools", ("tools.md",)),
+                   ("reload", ("reload.md",)),
+                   ("compile", ("compile.md",)),
+                   ("tui", ("tui.md",)))
+
 TEXT = {
     "en": {
         "compare": "Competitor comparison",
@@ -113,6 +157,25 @@ TEXT = {
         "tui_intro": "The interactive client is a second binary and is measured on its own. These numbers come from the `tui` suite and are never compared with the headless tables above: `first_frame_ms` and `direct_first_frame_ms` are two launches of two different programs, and the handoff is the difference between them.",
         "tui_missing": "This run did not produce `tui.md` for {title}, so the TUI was not measured on this OS.",
         "tui_no_platform": "This run has no {title} TUI result. The job did not start or did not upload its result files.",
+        "summary_intro": "`.github/workflows/benchmark-docs.yml` rewrites this summary from the run's own `compare.json`; the version label is the binary each runner installed, not a hand-written constant.",
+        "summary_none": "No competitor comparison artifact was available for this run, so this summary is left empty rather than filled from an earlier measurement.",
+        "summary_measured": "Measured commit `{commit}`, {when} UTC. Each OS runs on a different machine, so compare inside a row.",
+        "summary_release": "jcode {version} (release `{tag}`, commit `{commit}`).",
+        "summary_version_only": "jcode {version} (its release identity was not recorded for this run).",
+        "summary_release_unknown": "jcode's release identity was not recorded for this run.",
+        "request_bytes": "First model request, body / tool catalog bytes",
+        "versions_intro": "Versions recorded by the comparison of `{commit}` at {when} UTC. Each version is listed once across the runner artifacts.",
+        "versions_none": "No comparison artifact was available, so no measured version table is written.",
+        "version_tool": "Tool",
+        "version_value": "Version",
+        "release_intro": "jcode release identity per runner, from the `jcode-release.json` each job downloaded and verified.",
+        "release_os": "OS",
+        "release_tag": "Tag",
+        "release_commit": "Commit",
+        "release_asset": "Asset",
+        "release_sha": "SHA-256",
+        "release_served": "Served by",
+        "release_missing": "not recorded",
     },
     "ko": {
         "compare": "경쟁 도구 비교",
@@ -141,6 +204,25 @@ TEXT = {
         "tui_intro": "대화형 클라이언트는 별도 바이너리이고 따로 잽니다. 이 수치는 `tui` 묶음에서 나오며 위의 헤드리스 표와 비교하지 않습니다. `first_frame_ms` 와 `direct_first_frame_ms` 는 서로 다른 두 프로그램을 각각 띄운 값이고, 핸드오프는 그 둘의 차이입니다.",
         "tui_missing": "이 실행에서 {title} 의 `tui.md` 가 만들어지지 않아 그 OS의 TUI를 재지 못했습니다.",
         "tui_no_platform": "이 실행에서 {title} TUI 결과가 없습니다. 작업이 시작되지 못했거나 결과 파일을 올리지 못했습니다.",
+        "summary_intro": "`.github/workflows/benchmark-docs.yml`이 이 요약을 그 실행의 `compare.json`에서 다시 씁니다. 버전 표기는 러너가 실제로 설치한 실행 파일에서 읽은 값이지 손으로 적은 상수가 아닙니다.",
+        "summary_none": "이 실행에는 경쟁 도구 비교 산출물이 없어서, 이전 측정값으로 채우지 않고 요약을 비워 둡니다.",
+        "summary_measured": "측정 커밋 `{commit}`, {when} UTC. OS마다 다른 기계이므로 같은 줄 안에서만 비교합니다.",
+        "summary_release": "jcode {version}(릴리스 `{tag}`, 커밋 `{commit}`).",
+        "summary_version_only": "jcode {version}(이 실행에서는 릴리스 신원을 기록하지 못했습니다).",
+        "summary_release_unknown": "이 실행에서 jcode 릴리스 신원을 기록하지 못했습니다.",
+        "request_bytes": "첫 모델 요청 본문 / 도구 목록 바이트",
+        "versions_intro": "`{commit}`의 비교 측정을 {when} UTC에 실행해 기록한 버전입니다. 여러 러너에서 같은 버전을 기록했으면 한 번만 표시합니다.",
+        "versions_none": "비교 산출물이 없어 측정 버전 표를 쓰지 않습니다.",
+        "version_tool": "도구",
+        "version_value": "버전",
+        "release_intro": "러너별 jcode 릴리스 신원입니다. 각 작업이 내려받아 검증한 `jcode-release.json`에서 읽습니다.",
+        "release_os": "OS",
+        "release_tag": "태그",
+        "release_commit": "커밋",
+        "release_asset": "자산",
+        "release_sha": "SHA-256",
+        "release_served": "제공 경로",
+        "release_missing": "기록 없음",
     },
 }
 
@@ -177,6 +259,27 @@ def replace_block(text: str, commit: str, body: str) -> str:
     start, end = _block_span(text)
     marker = f"<!-- bench-auto:start commit={commit} -->"
     return text[: start.start()] + marker + "\n\n" + body.strip("\n") + "\n\n" + text[end:]
+
+
+def optional_span(text: str, start: str, end: str, label: str) -> tuple[int, int] | None:
+    """Body span of an optional block, or None when the document has none."""
+    starts = [match.start() for match in re.finditer(re.escape(start), text)]
+    ends = [match.start() for match in re.finditer(re.escape(end), text)]
+    if not starts and not ends:
+        return None
+    if len(starts) != 1 or len(ends) != 1:
+        raise DocError(f"expected one {label} start and end marker, found {len(starts)} and {len(ends)}")
+    if ends[0] < starts[0]:
+        raise DocError(f"{label} end marker comes before the start marker")
+    return starts[0], ends[0]
+
+
+def replace_optional(text: str, start: str, end: str, body: str) -> tuple[str, bool]:
+    """Replace an optional block in place; return (text, whether it existed)."""
+    span = optional_span(text, start, end, start)
+    if span is None:
+        return text, False
+    return text[: span[0]] + start + "\n\n" + body.strip("\n") + "\n\n" + text[span[1]:], True
 
 
 def charts_span(text: str) -> tuple[int, int] | None:
@@ -268,6 +371,177 @@ def find_platform_dirs(results: Path) -> dict[str, Path]:
             raise DocError(f"two result directories claim {key}: {found[key].name}, {directory.name}")
         found[key] = directory
     return found
+
+
+def missing_suite_groups(dirs: dict[str, Path]) -> list[str]:
+    """Suite groups with no artifact in any platform directory.
+
+    RESULTS.md's recorded block mixes every suite; replacing it needs at least
+    one artifact from each group, or a compare-only run would overwrite the
+    startup, loading and TUI history with "not measured".
+    """
+    missing = []
+    for name, files in REQUIRED_SUITES:
+        if not any((directory / file_name).is_file()
+                   for directory in dirs.values() for file_name in files):
+            missing.append(name)
+    return missing
+
+
+def _tool_result(run: dict | None, name: str) -> dict | None:
+    for result in (run or {}).get("results", []):
+        if isinstance(result, dict) and result.get("name") == name:
+            return result
+    return None
+
+
+def _values(run: dict | None, metric: bench_charts.Metric) -> tuple[float | None, float | None]:
+    """(horon, jcode) values for one metric; a failed result counts as absent."""
+    out = []
+    for name in ("horon", "jcode"):
+        result = _tool_result(run, name)
+        out.append(None if result is None or result.get("error") else metric.pick(result))
+    return out[0], out[1]
+
+
+def _fmt(metric: bench_charts.Metric, value: float | None, lang: str) -> str:
+    """One decimal for times and sizes, matching the numbers RESULTS.md prints."""
+    if value is None:
+        return "—"
+    if metric.unit == "ms":
+        return f"{value:.1f} ms" if value < 1000 else f"{value / 1000:.2f} s"
+    if metric.unit == "bytes":
+        for limit, unit in ((1_000_000_000, "GB"), (1_000_000, "MB"), (1_000, "KB")):
+            if value >= limit:
+                return f"{value / limit:.1f} {unit}"
+        return f"{value:.0f} B"
+    return f"{value:,.0f} " + ("회" if lang == "ko" else "calls")
+
+
+def _cell(value: str) -> str:
+    return value.replace("|", "&#124;")
+
+
+def _semver(text: str | None) -> str | None:
+    match = re.search(r"(\d+\.\d+\.\d+)", text or "")
+    return f"v{match.group(1)}" if match else None
+
+
+def _release_record(directory: Path | None) -> dict | None:
+    """The `jcode-release.json` the compare job kept, or None when it is absent."""
+    if directory is None:
+        return None
+    content = _read(directory / "jcode-release.json")
+    if content is None:
+        return None
+    try:
+        data = json.loads(content)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _release_sentence(dirs: dict[str, Path], compare: dict[str, dict], lang: str) -> str:
+    text = TEXT[lang]
+    for key, _ in PLATFORMS:
+        version = _semver((_tool_result(compare.get(key), "jcode") or {}).get("version"))
+        record = _release_record(dirs.get(key))
+        if version and record and record.get("tag") == version:
+            return text["summary_release"].format(version=version, tag=record["tag"],
+                                                  commit=record.get("commit") or "—")
+    for run in compare.values():
+        version_text = (_tool_result(run, "jcode") or {}).get("version")
+        if _semver(version_text):
+            return text["summary_version_only"].format(version=_semver(version_text))
+    return text["summary_release_unknown"]
+
+
+def _request_bytes(run: dict | None) -> tuple[str | None, str | None]:
+    def first(name: str) -> str | None:
+        result = _tool_result(run, name)
+        entry = brb.first_request((result or {}).get("oneshot"))
+        if not entry:
+            return None
+        body, tools = entry.get("body_bytes"), entry.get("tools_bytes")
+        if body is None and tools is None:
+            return None
+        if body is None or tools is None:
+            return "—"
+        return f"{body:,} / {tools:,}"
+    return first("horon"), first("jcode")
+
+
+def summary_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
+    """The README benchmark summary: a table and its source, nothing inferred."""
+    text = TEXT[lang]
+    compare = bench_charts.load_compare(dirs)
+    if not compare:
+        return text["summary_none"]
+    metrics = {metric.stem: metric for metric in bench_charts.METRICS}
+    lines = [
+        text["summary_intro"],
+        "",
+        text["summary_measured"].format(commit=commit, when=bench_charts._measured_at(compare)),
+        _release_sentence(dirs, compare, lang),
+        "",
+    ]
+    for key, title in PLATFORMS:
+        run = compare.get(key)
+        directory = dirs.get(key)
+        runner = (_read(directory / "runner.txt") if directory else None) or "—"
+        lines.append(f"| {title} (`{runner}`) | horon | jcode |")
+        lines.append("| --- | --- | --- |")
+        if run is None:
+            lines.append("| — | — | — |")
+            lines.append("")
+            continue
+        for stem in SUMMARY_METRICS:
+            metric = metrics[stem]
+            h, j = _values(run, metric)
+            lines.append(f"| {metric.title[lang]} | {_fmt(metric, h, lang)} | {_fmt(metric, j, lang)} |")
+        hb, jb = _request_bytes(run)
+        if hb or jb:
+            lines.append(f"| {text['request_bytes']} | {hb or '—'} | {jb or '—'} |")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def versions_body(dirs: dict[str, Path], commit: str, lang: str = "en") -> str:
+    """The measured version table, plus each runner's jcode release identity."""
+    text = TEXT[lang]
+    compare = bench_charts.load_compare(dirs)
+    if not compare:
+        return text["versions_none"]
+    lines = [text["versions_intro"].format(commit=commit, when=bench_charts._measured_at(compare)), "",
+             f"| {text['version_tool']} | {text['version_value']} |", "| --- | --- |"]
+    seen: set[tuple[str, str]] = set()
+    for key, _ in PLATFORMS:
+        for result in (compare.get(key) or {}).get("results", []):
+            if not isinstance(result, dict):
+                continue
+            label = str(result.get("label") or result.get("name") or "")
+            version = str(result.get("version") or "—")
+            if label and (label, version) not in seen:
+                seen.add((label, version))
+                lines.append(f"| {_cell(label)} | `{_cell(version)}` |")
+    lines += ["", text["release_intro"], "",
+              f"| {text['release_os']} | {text['release_tag']} | {text['release_commit']} | "
+              f"{text['release_asset']} | {text['release_sha']} | {text['release_served']} |",
+              "| --- | --- | --- | --- | --- | --- |"]
+    for key, title in PLATFORMS:
+        record = _release_record(dirs.get(key))
+        if not record:
+            lines.append(f"| {title} | — | — | — | — | {text['release_missing']} |")
+            continue
+        lines.append("| " + " | ".join([
+            title,
+            f"`{_cell(str(record.get('tag') or '—'))}`",
+            f"`{_cell(str(record.get('commit') or '—'))}`",
+            f"`{_cell(str(record.get('asset') or '—'))}`",
+            f"`{_cell(str(record.get('sha256') or '—'))}`",
+            _cell(str(record.get("served_by") or "—")),
+        ]) + " |")
+    return "\n".join(lines)
 
 
 def _fragment(results: Path, name: str, title: str, lang: str = "en") -> str:
@@ -388,12 +662,17 @@ def render_body(
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-    render = sub.add_parser("render", help="rewrite the generated block in place")
+    render = sub.add_parser("render", help="rewrite the generated blocks in place")
     render.add_argument("--doc", required=True, type=Path)
     render.add_argument("--results", required=True, type=Path)
     render.add_argument("--commit", required=True)
     render.add_argument("--run-url")
     render.add_argument("--lang", choices=LANGS, default="en")
+    mode = render.add_mutually_exclusive_group()
+    mode.add_argument("--require-complete", action="store_true",
+                      help="refuse to replace the full results until each suite group has artifacts")
+    mode.add_argument("--comparison-only", action="store_true",
+                      help="refresh comparison summaries and versions while keeping the full record and charts")
     last = sub.add_parser("last-commit", help="print the commit recorded in the block")
     last.add_argument("--doc", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -405,9 +684,30 @@ def main(argv: list[str]) -> int:
             return 0
         if not args.results.is_dir():
             raise DocError(f"results directory not found: {args.results}")
-        body = render_body(args.results, args.commit, args.run_url, lang=args.lang)
-        text = replace_block(text, args.commit, body)
-        text = write_charts(text, args.doc, args.results, args.commit, args.run_url, args.lang)
+        dirs = find_platform_dirs(args.results)
+        wrote = False
+        has_auto = START_RE.search(text) is not None or END in text
+        if has_auto and not args.comparison_only:
+            missing = missing_suite_groups(dirs) if args.require_complete else []
+            if missing:
+                raise DocError("the results do not contain " + ", ".join(missing) +
+                               "; refusing to replace the recorded block with a partial run")
+            text = replace_block(text, args.commit, render_body(args.results, args.commit, args.run_url,
+                                                                lang=args.lang))
+            wrote = True
+        for start, end, build in ((SUMMARY_START, SUMMARY_END, summary_body),
+                                  (VERSIONS_START, VERSIONS_END, versions_body)):
+            if optional_span(text, start, end, start) is None:
+                continue
+            body = build(dirs, args.commit, args.lang)
+            if args.run_url:
+                body = f"{body.rstrip()}\n\n[{TEXT[args.lang]['run']}]({args.run_url})"
+            text, _ = replace_optional(text, start, end, body)
+            wrote = True
+        if not wrote:
+            raise DocError("no generated block found (bench-auto, bench-summary or bench-versions)")
+        if not args.comparison_only:
+            text = write_charts(text, args.doc, args.results, args.commit, args.run_url, args.lang)
         args.doc.write_text(text, encoding="utf-8")
     except DocError as exc:
         print(f"bench_docs: {args.doc}: {exc}", file=sys.stderr)
