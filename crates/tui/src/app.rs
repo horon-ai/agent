@@ -308,6 +308,7 @@ impl App {
             disconnected: false,
             resend_held: false,
             viewport_height: None,
+            repaint_requested: false,
             scroll: Scroll::new(),
             // Placeholder until the settings resolve: the terminal is not
             // captured yet, and `refresh_settings` decides from the registry's
@@ -365,6 +366,7 @@ impl App {
             disconnected: true,
             resend_held: false,
             viewport_height: None,
+            repaint_requested: false,
             scroll: Scroll::new(),
             // Placeholder until the settings resolve: the terminal is not
             // captured yet, and `refresh_settings` decides from the registry's

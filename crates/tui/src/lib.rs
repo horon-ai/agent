@@ -137,6 +137,7 @@ Keys:
                  interrupt it when nothing is queued
   Ctrl-C         cancel a running turn, or leave when nothing is running
   Ctrl-D         leave
+  Ctrl-L         redraw the screen without changing the draft or selection
   Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
   Ctrl-W         delete the word before the cursor
   Ctrl-R         search the drafts sent before this one
