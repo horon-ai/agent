@@ -111,6 +111,7 @@ Commands:
   /new           start a new session in this directory
   /quit          leave
   /record [path] record the conversation to a local file (stop, status)
+  /rename <title> save a title for the current session
   /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
@@ -272,6 +273,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
+        "rename" => "save a title for the current session",
         "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
