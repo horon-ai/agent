@@ -922,6 +922,16 @@ def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "background job session ready")
         terminal.send("[tui:jobs] start\r")
         terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "both background jobs started")
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("the original background job client did not exit")
+        sessions = [name for name in os.listdir(os.path.join(home, "sessions"))
+                    if os.path.isfile(os.path.join(home, "sessions", name, "events.jsonl"))]
+        if len(sessions) != 1 or launch.tui is None:
+            raise Failure(f"expected a single resumable job session, got {sessions}")
+        terminal.close()
+        terminal = Terminal([launch.tui, "--session", sessions[0], "--cwd", case_root], cwd=case_root, env=env)
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "session reattached with live jobs")
         terminal.send("/jobs\r")
         terminal.read_until("Background jobs", STEP_TIMEOUT, "current session jobs")
         terminal.read_until("job-one", STEP_TIMEOUT, "first job listed")
@@ -935,6 +945,8 @@ def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.send("/jobs\r")
         terminal.send("job-one")
         terminal.read_until("output-one", STEP_TIMEOUT, "other job remains available")
+        terminal.send("\x1b[3~")
+        terminal.read_until("running no background work", STEP_TIMEOUT, "both fixture jobs cleaned up")
         terminal.send("\x1b\x1b/quit\r")
         if terminal.wait(STEP_TIMEOUT) != 0:
             raise Failure(f"background job client did not exit\n--- transcript ---\n{terminal.transcript}")
