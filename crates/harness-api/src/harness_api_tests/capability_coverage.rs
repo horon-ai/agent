@@ -275,6 +275,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "background_output_v1",
         "live_todo_v1",
         "effective_settings_v1",
+        "turn_retry_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(

@@ -76,6 +76,12 @@ struct ProcessingMessage {
     active_skill: Option<String>,
     /// Present when the sending connection negotiated ACP v2.
     v2: Option<AcpV2Message>,
+    /// A run this message continues instead of starting unrelated work.
+    ///
+    /// The turn decides whether the run may still be continued while it holds
+    /// the agent, so the answer is taken at the point that would begin the new
+    /// run rather than when the request was read.
+    expected_run_id: Option<String>,
 }
 
 const V2_MESSAGE_QUEUED: u8 = 0;
@@ -1226,17 +1232,41 @@ pub(super) async fn handle_client(
             continue;
         }
 
-        // Send ack
-        let ack = ServerEvent::Ack { id: request.id() };
-        let json = encode_event(&ack);
-        {
-            let ack_start = Instant::now();
-            let mut w = writer.lock().await;
-            if w.write_all(json.as_bytes()).await.is_err() {
+        // A continuation is acked by the turn that decides it, and a refusal is
+        // answered there with an error, so the generic ack never claims it.
+        if !crate::agent::run_journal::is_continuation_request(&request) {
+            let ack = ServerEvent::Ack { id: request.id() };
+            let json = encode_event(&ack);
+            {
+                let ack_start = Instant::now();
+                let mut w = writer.lock().await;
+                if w.write_all(json.as_bytes()).await.is_err() {
+                    if request_lifecycle_logged {
+                        let mut fields =
+                            server_request_lifecycle_fields(ServerRequestLifecycleFields {
+                                phase: "ack_write_failed",
+                                request_id,
+                                request_kind: &request_kind,
+                                client_session_id: &client_session_id,
+                                client_connection_id: &client_connection_id,
+                                client_instance_id: current_client_instance_id.as_deref(),
+                                client_is_processing,
+                                message_id: processing_message_id,
+                                processing_session_id: processing_session_id.as_deref(),
+                                line_bytes: line.len(),
+                            });
+                        fields.push((
+                            "ack_write_ms".to_string(),
+                            ack_start.elapsed().as_millis().to_string(),
+                        ));
+                        crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
+                    }
+                    break;
+                }
                 if request_lifecycle_logged {
                     let mut fields =
                         server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                            phase: "ack_write_failed",
+                            phase: "acked",
                             request_id,
                             request_kind: &request_kind,
                             client_session_id: &client_session_id,
@@ -1251,32 +1281,12 @@ pub(super) async fn handle_client(
                         "ack_write_ms".to_string(),
                         ack_start.elapsed().as_millis().to_string(),
                     ));
-                    crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
+                    fields.push((
+                        "since_decode_ms".to_string(),
+                        request_decoded_at.elapsed().as_millis().to_string(),
+                    ));
+                    crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
                 }
-                break;
-            }
-            if request_lifecycle_logged {
-                let mut fields = server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                    phase: "acked",
-                    request_id,
-                    request_kind: &request_kind,
-                    client_session_id: &client_session_id,
-                    client_connection_id: &client_connection_id,
-                    client_instance_id: current_client_instance_id.as_deref(),
-                    client_is_processing,
-                    message_id: processing_message_id,
-                    processing_session_id: processing_session_id.as_deref(),
-                    line_bytes: line.len(),
-                });
-                fields.push((
-                    "ack_write_ms".to_string(),
-                    ack_start.elapsed().as_millis().to_string(),
-                ));
-                fields.push((
-                    "since_decode_ms".to_string(),
-                    request_decoded_at.elapsed().as_millis().to_string(),
-                ));
-                crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
             }
         }
 
@@ -1308,6 +1318,7 @@ pub(super) async fn handle_client(
                 system_reminder,
                 active_skill,
                 no_reply,
+                expected_run_id,
             } => {
                 if no_reply {
                     append_context_message(
@@ -1344,6 +1355,7 @@ pub(super) async fn handle_client(
                         system_reminder,
                         active_skill,
                         v2: v2_message.clone(),
+                        expected_run_id,
                     },
                     &client_session_id,
                     Some(&client_connection_id),
@@ -1467,6 +1479,7 @@ pub(super) async fn handle_client(
                             system_reminder: None,
                             active_skill: None,
                             v2: None,
+                            expected_run_id: None,
                         },
                         &client_session_id,
                         Some(&client_connection_id),
@@ -3637,6 +3650,7 @@ async fn start_processing_message(
         system_reminder,
         active_skill,
         v2,
+        expected_run_id,
     } = message;
     if server_reload_starting() {
         crate::logging::info(&format!(
@@ -3750,6 +3764,9 @@ async fn start_processing_message(
             lock
         });
         let locked = &mut agent;
+        let continuation_decision = expected_run_id
+            .as_ref()
+            .map(|_| crate::agent::run_journal::ContinuationDecision::new(rejection_tx.clone(), id));
         let turn = async move {
             let agent = &mut ***locked;
             let (start_message_index, pending_queue) = match prepared {
@@ -3766,13 +3783,24 @@ async fn start_processing_message(
                 }
             };
             agent.arm_effort_keywords(&content);
-            // Ownership is claimed only once this turn holds the agent, and the
-            // guard drops before that lock is released. Claiming earlier left a
-            // window in which a daemon wake turn could take the idle agent and
-            // run its tools under this connection's claim (bridges, approval
-            // override). The guard drops when the turn ends, fails, or is
-            // aborted, so no later turn inherits it.
+            // Claim ownership under the agent lock so a daemon wake turn cannot
+            // inherit this connection's bridges or approval override. The claim
+            // ends before the agent is unlocked, including on failure and abort.
             let _turn_ownership = crate::tool::acp_session::claim_turn(&claim_session_id, turn_owner.as_deref());
+            if let (Some(expected_run_id), Some(decision)) = (expected_run_id.as_deref(), continuation_decision) {
+                // Decide under the agent lock so one failed run starts at most one retry.
+                return match agent
+                    .continue_run(expected_run_id, event_tx, Some(report), decision)
+                    .await
+                {
+                    crate::agent::run_journal::ContinuationOutcome::Continued => TurnBegin::Ran {
+                        result: Ok(()),
+                        start_message_index,
+                        pending_queue,
+                    },
+                    crate::agent::run_journal::ContinuationOutcome::Refused(refusal) => TurnBegin::Rejected(refusal),
+                };
+            }
             let result =
                 process_locked_message_streaming_mpsc(agent, &content, images, system_reminder, event_tx, Some(report))
                     .await;

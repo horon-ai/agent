@@ -229,6 +229,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | Send the typed message |
 | `app.cancel` | `ctrl+c` | Cancel the running turn, or leave when nothing is running |
 | `app.interrupt` | `esc` | Send the queued messages into the running turn; with nothing queued, interrupt it. No action when idle |
+| `app.retry_turn` | `alt+r` | Continue the last failed turn |
 | `app.quit` | `ctrl+d` | Delete at the cursor while the draft has text, or leave when the draft is empty and the editor is idle |
 | `app.scroll_page_up` | `pageup` | Hold the transcript one page higher |
 | `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |
@@ -458,16 +459,19 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/rename <title>` | Save a title for the attached session and update the window title after the daemon confirms |
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
+| `/retry` | Continue the latest eligible failed turn in the attached session |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/voice` | Dictate to the draft or play text on this device |
 
+`/retry` resumes the most recent eligible failed request in the attached session. It keeps one visible user message and uses the work already completed during that request. The daemon refuses to retry if the request was superseded, completed, or already resumed.
+
 Use `/voice consent` in the attached session before recording. Press Ctrl+Space or run `/voice` to start or stop. `/voice cancel` discards the recording and `/voice forget` withdraws consent. Recognized text goes into the draft and only goes to the model if you submit it. `/voice say <text>` and `/voice read` play text on this device.
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -507,6 +511,7 @@ built-in commands:
   /rename              save a title for the current session
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
+  /retry               continue the last failed turn of this session, keeping its one prompt
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list

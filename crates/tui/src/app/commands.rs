@@ -142,6 +142,9 @@ impl App {
             // `/queue` opens the list of messages waiting for the running turn
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),
+            // Nothing is sent from here: the bridge reads which run failed from
+            // the daemon and asks it to continue that run.
+            Local::Retry => self.retry_turn(),
             // `/voice` is entirely local: consent, capture, recognition and
             // playback stay in this client, and recognized text is inserted as
             // a draft rather than sent.

@@ -35,6 +35,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("background_output_v1", ("background_output",)),
     ("live_todo_v1", ("todo_changed",)),
     ("effective_settings_v1", ("get_effective_settings",)),
+    ("turn_retry_v1", ("send_message.expected_run_id",)),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each

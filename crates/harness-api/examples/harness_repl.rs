@@ -61,6 +61,7 @@ fn run_session<R: BufRead, W: Write>(mut client: HarnessClient<R, W>, message: &
             images: vec![],
             system_reminder: None,
             no_reply: false,
+            expected_run_id: None,
         })
         .expect("send message");
 

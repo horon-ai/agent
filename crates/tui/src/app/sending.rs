@@ -340,6 +340,42 @@ impl App {
         }
     }
 
+    /// `/retry` and `alt+r`: ask the daemon to continue its last failed run.
+    pub(crate) fn retry_turn(&mut self) -> Option<Action> {
+        if self.disconnected {
+            self.warn("retry: the connection to the harness is gone, so no turn can be continued");
+            return None;
+        }
+        // A retry that started a turn is already the answer to a second press:
+        // the daemon refuses a continuation for a run that moved on, and asking
+        // it again would only add a refusal the user already saw.
+        if self.pending_turn {
+            self.warn("retry: a turn is running, so there is no failed turn to continue");
+            return None;
+        }
+        // Retrying is an action the user took, so like a sent message it clears
+        // the mark a finished turn left on the tab.
+        self.note_user_attention();
+        self.pending_turn = true;
+        self.transcript.begin_turn();
+        self.session_status = Some("generating".to_string());
+        Some(Action::Retry)
+    }
+
+    /// The retry that was asked for ran nothing.
+    ///
+    /// The press claimed a turn on screen, so the claim is given back: the turn
+    /// is not running, the status returns to idle, and the sentence says which
+    /// requirement the request failed. Without this the client would keep
+    /// drawing a turn that never started, and the next `esc` would try to cancel
+    /// it.
+    pub(crate) fn retry_refused(&mut self, message: &str) {
+        self.pending_turn = false;
+        self.transcript.discard_turn();
+        self.session_status = Some("idle".to_string());
+        self.warn(message);
+    }
+
     /// Send a message now, or queue it while a turn is running.
     ///
     /// Sending during a turn is what the daemon answers with "already
@@ -589,3 +625,7 @@ fn joined_text(messages: &[Message]) -> String {
     }
     body
 }
+
+#[cfg(test)]
+#[path = "retry_tests.rs"]
+mod retry_tests;

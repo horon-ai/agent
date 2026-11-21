@@ -133,6 +133,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // it is refused with a structured `unsupported` naming this capability
     // rather than being sent a frame it would answer with no correlation.
     horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -365,6 +366,8 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    let retry_capability = horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1;
+    let retry_supported = daemon_caps.iter().any(|cap| cap == retry_capability);
     let requested_events = hello["event_capabilities"].as_array();
     let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
         let capability = OPT_IN_EVENT_CAPABILITIES[index];
@@ -381,6 +384,7 @@ where
                 .iter()
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
+                .filter(|cap| retry_supported || *cap != retry_capability)
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
@@ -612,6 +616,21 @@ where
                         // than session state, so the bridge answers them here and
                         // the daemon never sees the request.
                         if let Some(frame) = message_modes::reply(&request) {
+                            send_frame!('translate, frame);
+                            continue;
+                        }
+                        if !retry_supported
+                            && request["req"] == "send_message"
+                            && request["expected_run_id"].as_str().is_some_and(|id| !id.is_empty())
+                        {
+                            let frame = ServerFrame::reply(
+                                request["id"].as_u64().unwrap_or(0),
+                                ApiEvent::Error {
+                                    code: ErrorCode::Unsupported,
+                                    message: format!("the source daemon does not support {retry_capability}"),
+                                    details: None,
+                                },
+                            );
                             send_frame!('translate, frame);
                             continue;
                         }

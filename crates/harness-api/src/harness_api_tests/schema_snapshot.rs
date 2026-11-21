@@ -630,6 +630,7 @@ fn client_frame_wire_shape() {
             images: vec![],
             system_reminder: None,
             no_reply: false,
+            expected_run_id: None,
         },
     );
     let json = serde_json::to_string(&frame).unwrap();
@@ -649,6 +650,7 @@ fn send_message_no_reply_wire_shape_and_legacy_default() {
             images: vec![],
             system_reminder: None,
             no_reply: true,
+            expected_run_id: None,
         },
     );
     let json = serde_json::to_string(&frame).unwrap();
@@ -1206,6 +1208,7 @@ fn hidden_system_reminder_wire_shape_and_legacy_default() {
             system_reminder: Some("continue task".into()),
             images: vec![],
             no_reply: false,
+            expected_run_id: None,
         },
     );
     let wire = serde_json::to_value(&frame).unwrap();

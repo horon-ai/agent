@@ -1185,6 +1185,7 @@ impl HoronAgentClient {
             system_reminder: Some(reminder.to_string()),
             images: Vec::new(),
             no_reply: false,
+            expected_run_id: None,
         })
     }
 
@@ -1202,6 +1203,7 @@ impl HoronAgentClient {
             system_reminder: None,
             images: Vec::new(),
             no_reply: true,
+            expected_run_id: None,
         })
         .map(drop)
     }
@@ -1246,6 +1248,7 @@ impl HoronAgentClient {
                 .map(str::to_owned),
             images,
             no_reply: false,
+            expected_run_id: None,
         })?;
         if let (Some(stream), Some(timeout)) = (stream, wait_for_accept) {
             let deadline = std::time::Instant::now() + timeout;

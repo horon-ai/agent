@@ -30,6 +30,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
+  ["turn_retry_v1", ["send_message.expected_run_id"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -659,6 +660,7 @@ export type ApiRequest =
       images?: ImageAttachment[];
       no_reply?: boolean;
       system_reminder?: string;
+      expected_run_id?: string;
     }
   | { req: "cancel"; session_id: string }
   | {

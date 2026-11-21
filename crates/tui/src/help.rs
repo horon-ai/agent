@@ -164,6 +164,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_INTERRUPT,
         "interrupt the running turn, or send queued messages into it",
     ),
+    (ids::APP_RETRY_TURN, "continue the last failed turn"),
     (
         ids::APP_QUIT,
         "leave; ctrl+d deletes at the cursor while the draft has text",
@@ -287,6 +288,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "rename" => "save a title for the current session",
         "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
+        "retry" => "continue the last failed turn of this session, keeping its one prompt",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",

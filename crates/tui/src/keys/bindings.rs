@@ -64,6 +64,8 @@ pub mod ids {
     pub const APP_REPAINT: &str = "app.repaint";
     /// Show or hide the model's reasoning for the rest of the session.
     pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
+    /// Continue the last failed turn of this session.
+    pub const APP_RETRY_TURN: &str = "app.retry_turn";
     /// Start or finish on-device voice input.
     pub const APP_VOICE: &str = "app.voice";
     /// Delete the character before the cursor.
@@ -206,6 +208,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     // Reasoning display for this session: the draft keeps every letter, so the
     // toggle has to be a control key.
     ActionSpec::new(ids::APP_TOGGLE_THINKING, Scope::App, &["ctrl+t"]),
+    // Continuing the turn that just failed is asked for while reading why it
+    // failed, so it takes a key rather than a command alone. `alt+r` is
+    // unclaimed by the rest of the map and is the letter for a retry.
+    ActionSpec::new(ids::APP_RETRY_TURN, Scope::App, &["alt+r"]),
     // On-device voice input. `ctrl+space` is free in the shipped map; a
     // terminal that does not report it leaves `/voice` as the entry point, and
     // the key can be rebound in `keybindings.toml`.
