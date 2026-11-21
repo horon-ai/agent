@@ -654,12 +654,13 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
 
     terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
     count = request_count()
+    before_consent = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent", since=before_consent)
     terminal.send("/voice consent\r")
-    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    capture_start = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text after consent", since=capture_start)
     if request_count() != count:
         raise Failure("voice input sent a request before the user submitted the draft")
     terminal.send("\x15")
