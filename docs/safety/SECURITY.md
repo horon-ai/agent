@@ -241,10 +241,12 @@ An extension declares a Rust executable and a plugin adds resources to that
 extension. `horon package install <directory>` validates and registers either
 kind in the user catalog. The explicit `--project <root>` option limits the
 installed package to one canonical project root. Installation is consent.
-The inbox reconciler uses the same installer for completed folders under the
-user-owned `$HORON_HOME/packages/inbox/<id>/`. It leaves the source in place
-and skips IDs already recorded, including removed packages. Automatic daemon
-reconciliation, child spawning and session refresh are later steps.
+The daemon reconciles completed folders under the user-owned
+`$HORON_HOME/packages/inbox/<id>/` through the same installer. It leaves the
+source in place and skips IDs already recorded, including removed packages.
+The CLI sends mutations to the daemon when it is running. If a reply is lost
+after sending the request, the CLI returns an error. Session refresh is a
+separate step.
 
 SHA-256 is an internal integrity check. The versioned JSON-RPC handshake
 compares the declaration digest the child reports before any call is dispatched.

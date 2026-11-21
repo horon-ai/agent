@@ -420,6 +420,11 @@ jobs:
         shell: bash
         run: cargo test --locked -p horon-agent-sdk parity -- --nocapture
 
+      - name: Run daemon package control contracts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo test --locked --test harness_roundtrip package_daemon
+
       - name: Run Rust SDK tool verdict tests
         if: ${{ !cancelled() }}
         shell: bash
@@ -941,6 +946,22 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 2 \
             -- cli::startup::stream_rule_preview::tests:: --nocapture
+
+      - name: Run CLI token estimation cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::tokens::tests:: --nocapture
+
+      - name: Run CLI agent catalog cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::startup::agent_catalog::tests:: --nocapture
 
       - name: Run ACP cohort
         shell: bash

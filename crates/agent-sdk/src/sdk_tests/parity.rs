@@ -96,6 +96,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("list_tools", "listTools"),
     cap("get_message_modes", "getMessageModes"),
     cap("get_effective_settings", "getEffectiveSettings"),
+    cap("package_control", "packageControl"),
     cap("submit_tool_result", "submitToolResult"),
     cap("set_reasoning_effort", "setReasoningEffort"),
     cap("compact", "compact"),
@@ -326,6 +327,7 @@ fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
         "client.rs",
+        "client/package_control.rs",
         "handoff.rs",
         "structured.rs",
         "export.rs",

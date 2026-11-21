@@ -73,10 +73,19 @@ mod optional_field_tests;
 #[path = "harness_api_tests/tool_done_verdict.rs"]
 mod tool_done_verdict_tests;
 
+/// The package-management request and receipt a client exchanges with the
+/// daemon's catalog. Defined once, beside the manifest declarations the
+/// installer validates, so the daemon, the bridge, both SDKs and the CLI cannot
+/// drift apart.
+pub use horon_agent_extension_types::control::{
+    PackageControlOperation, PackageControlReceipt, PackageControlRequest, PackageControlScope, PackageControlState,
+    PackageInboxSkip, PackageSummary,
+};
+
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 25;
+pub const API_VERSION_MINOR: u32 = 26;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -126,6 +135,15 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// all. The reply never carries a value outside the allow-list, so no credential
 /// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
+/// A client can manage the daemon's package catalog: install, disable, enable,
+/// remove, sync the inbox and read the published generation. Gates
+/// `package_control` and the `package_control` reply.
+///
+/// Advertised only when the daemon answered its capability probe with
+/// `package_control`, because the daemon owns the catalog: a bridge alone cannot
+/// serve the request, and forwarding it to a daemon that predates the request
+/// would park the client until its own timeout.
+pub const CAPABILITY_PACKAGE_CONTROL_V1: &str = "package_control_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -157,6 +175,7 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
+    (CAPABILITY_PACKAGE_CONTROL_V1, &["package_control"]),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -169,6 +188,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
     CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    CAPABILITY_PACKAGE_CONTROL_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.
