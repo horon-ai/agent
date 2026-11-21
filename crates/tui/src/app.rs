@@ -27,7 +27,10 @@ use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
+use self::copy::CopyRequest;
+
 mod commands;
+mod copy;
 mod effort;
 mod history_search;
 mod keys;
@@ -45,6 +48,9 @@ mod boundary_tests;
 
 #[cfg(test)]
 mod cache_miss_tests;
+
+#[cfg(test)]
+mod copy_tests;
 
 #[cfg(test)]
 mod effort_cmd_tests;
@@ -402,6 +408,12 @@ pub struct App {
     pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
+    /// A copy the app decided on, waiting for the loop to write it.
+    ///
+    /// It sits here rather than being written from the key handler so that the
+    /// app keeps knowing nothing about a terminal: the loop that owns standard
+    /// output is the one place a sequence is written.
+    pending_copy: Option<CopyRequest>,
     /// The recording the user turned on with `/record`.
     ///
     /// Off until asked for: nothing is written to disk unless a recording was
@@ -487,6 +499,7 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            pending_copy: None,
             recorder: None,
             replay: None,
             record_scan: (0, 0),
@@ -564,6 +577,7 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            pending_copy: None,
             recorder: None,
             replay: None,
             record_scan: (0, 0),

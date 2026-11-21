@@ -11,6 +11,7 @@
 
 pub mod app;
 mod artifact;
+mod clipboard;
 pub mod commands;
 pub mod context;
 mod editor;
@@ -559,6 +560,12 @@ where
         // that became due and reports whether the pane changed.
         changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
+            changed = true;
+        }
+        // The one place a copy reaches standard output: the app decided what it
+        // carries, and the terminal is asked here, after the frame is measured
+        // and before it is drawn.
+        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment()) {
             changed = true;
         }
         let minute = statusline::local_minute();

@@ -223,6 +223,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
 | `app.expand_tool` | `ctrl+o` | Expand or fold the selected retained tool result |
 | `app.toggle_tool_activity` | `alt+t` | Show or hide completed tool activity for this session |
+| `app.copy_code` | `alt+c` | Copy the newest code block in the latest answer |
+| `app.copy_last` | `alt+l` | Copy the latest answer |
+| `app.copy_draft` | `alt+d` | Copy the whole draft |
+| `app.copy_line` | `alt+k` | Copy the line under the cursor |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `app.cycle_model` | `ctrl+p` | Move forward through the model shortlist |
@@ -404,6 +408,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | --- | --- |
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
 | `/clear` | Clear the transcript pane |
+| `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
@@ -426,6 +431,8 @@ In `/queue`, Enter moves the selected message into the composer, Delete removes 
 
 `/artifact` lists retained artifacts for the current local session. Enter `/artifact <id>` or paste the `artifact://<id>` pointer to edit a temporary copy with `VISUAL` or `EDITOR`. The retained file stays unchanged and the temporary copy is removed on return. An explicit socket or remote bridge disables local artifact access.
 
+Copy uses an OSC 52 clipboard request. Set `HORON_TUI_OSC52=0` to turn it off, or set `HORON_TUI_OSC52=1` if your terminal forwards these requests through a multiplexer or SSH. When the terminal cannot accept the request, the text stays available for manual selection.
+
 Enter `!command` to run a shell command in the TUI process's working directory. The transcript shows the local directory before the command starts. `!!command` leaves only the directory and exit status in the transcript. Both forms keep the command and output out of the model conversation. The client runs one local command at a time and stops it after ten seconds. Retained output is limited to 200 lines and 32 KiB.
 
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
@@ -436,6 +443,7 @@ The harness commands run in the attached runtime and never reach the model as a 
 built-in commands:
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear the transcript
+  /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
