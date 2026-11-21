@@ -581,13 +581,21 @@ def todo_edit_smoke(terminal: Terminal, home: str) -> None:
               if TOOL_FILE in path.read_text(encoding="utf-8")]
     if len(events) != 1:
         raise Failure(f"expected a single active session, got {len(events)}")
-    todo = Path(home, "todos", f"{events[0].parent.name}.json")
+    session_id = events[0].parent.name
+    todo = Path(home, "todos", f"{session_id}.json")
     todo.parent.mkdir(exist_ok=True)
     rows = [{"id": f"todo-{i}", "content": f"fixture item {i:02}", "status": "pending", "priority": "medium"}
             for i in range(1, 13)]
     todo.write_text(json.dumps(rows), encoding="utf-8")
+    # Writing the fixture out of process does not emit TodoChanged. Attaching
+    # reloads the saved snapshot through the same path as a real reconnect.
+    attach_start = len(terminal.transcript)
+    terminal.send(f"/resume {session_id}\r")
+    terminal.read_until(f"resumed {session_id}", STEP_TIMEOUT, "reloaded the seeded session", since=attach_start)
+    terminal.read_until("0/12 complete", STEP_TIMEOUT, "seeded todo snapshot loaded", since=attach_start)
+    picker_start = len(terminal.transcript)
     terminal.send("/todo\r")
-    terminal.read_until("fixture item 01", STEP_TIMEOUT, "full todo picker is loaded")
+    terminal.read_until("fixture item 01", STEP_TIMEOUT, "full todo picker is loaded", since=picker_start)
     rows[0]["status"] = "in_progress"
     todo.write_text(json.dumps(rows), encoding="utf-8")
     terminal.send("\r")
