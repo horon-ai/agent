@@ -357,6 +357,23 @@ pub(super) fn first_user_text(messages: &[HistoryMessage]) -> Option<String> {
         })
 }
 
+/// The newest thing the assistant said in a stored conversation, on one line.
+///
+/// A worker is asked to close its turn with a short final response after it
+/// reports completion, so this is the summary a client can show for it: the
+/// structured completion report is recorded on the swarm member and reaches no
+/// client API. The answer field is preferred when the row names one, because a
+/// raw stored row can carry reasoning and answer as one string.
+pub(super) fn last_assistant_text(messages: &[HistoryMessage]) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == "assistant")
+        .map(|message| message.answer.as_deref().unwrap_or(&message.content))
+        .map(single_line)
+        .find(|line| !line.is_empty())
+}
+
 /// Whether a stored message is context the daemon injected rather than speech.
 fn injected(message: &HistoryMessage) -> bool {
     message.content.trim_start().starts_with(INJECTED)
