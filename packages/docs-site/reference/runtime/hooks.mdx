@@ -227,7 +227,7 @@ itself robust. The trust boundary is the hook, not horon-agent.
 
 ## Tool input transformers: `pre_tool_transform`
 
-A transformer is a synchronous external plugin that can validate and replace a
+A transformer is a synchronous external program that can validate and replace a
 tool's JSON input before it runs. Configure one or more, in order.
 
 ```toml
@@ -236,9 +236,9 @@ pre_tool_transform = ["~/.horon/plugins/rtk-transform"]
 pre_tool_transform_timeout_ms = 500
 ```
 
-The plugin in this example is an external program run over standard input and
-output, unrelated to the removed native plugin system. Hooks still work by
-spawning a separate process like this.
+This hook starts a program configured under `[hooks]` and exchanges data over
+standard input and output. The planned Rust package system gives package hooks
+observation-only events. Input transformers use the explicit `[hooks]` setting.
 
 Each transformer receives the current full tool input JSON on standard input and
 `HORON_AGENT_HOOK_TOOL_NAME`, `HORON_AGENT_HOOK_SESSION_ID`, and

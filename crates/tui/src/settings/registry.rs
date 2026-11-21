@@ -107,6 +107,7 @@ impl SettingSpec {
 
 const SYMBOLS: &[&str] = &["unicode", "nerd", "ascii"];
 const STATUSLINE_PRESETS: &[&str] = &["default", "minimal", "custom"];
+const CHANGE_PALETTES: &[&str] = &["theme", "accessible"];
 const STATUSLINE_SEPARATORS: &[&str] = &["preset", "dot", "bar"];
 const STATUSLINE_BACKGROUNDS: &[&str] = &["theme", "terminal"];
 
@@ -139,6 +140,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Glyphs",
             label: "Symbol set",
             description: "Unicode, Nerd Font or plain ASCII glyphs.",
+        },
+    },
+    SettingSpec {
+        id: "appearance.changes",
+        kind: SettingKind::Enum(CHANGE_PALETTES),
+        env: "HORON_TUI_CHANGES",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Colour",
+            label: "Change colours",
+            description: "Additions and removals in the theme's own pair, or an accessible pair that stays apart for colour-vision differences.",
         },
     },
     SettingSpec {
