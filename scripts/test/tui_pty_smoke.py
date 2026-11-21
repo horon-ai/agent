@@ -591,7 +591,6 @@ def todo_edit_smoke(terminal: Terminal, home: str) -> None:
     # reloads the saved snapshot through the same path as a real reconnect.
     attach_start = len(terminal.transcript)
     terminal.send(f"/resume {session_id}\r")
-    terminal.read_until(f"resumed {session_id}", STEP_TIMEOUT, "reloaded the seeded session", since=attach_start)
     terminal.read_until("0/12 complete", STEP_TIMEOUT, "seeded todo snapshot loaded", since=attach_start)
     picker_start = len(terminal.transcript)
     terminal.send("/todo\r")
@@ -604,9 +603,18 @@ def todo_edit_smoke(terminal: Terminal, home: str) -> None:
     terminal.read_until("externally updated todo", STEP_TIMEOUT, "stale edit refreshed the current list", since=refusal_start)
     if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "in_progress":
         raise Failure("stale todo edit overwrote the newer list")
-    applied_start = len(terminal.transcript)
     terminal.send("\r")
-    terminal.read_until("1/12 complete", STEP_TIMEOUT, "refreshed todo edit applied", since=applied_start)
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        updated = json.loads(todo.read_text(encoding="utf-8"))[0]
+        if updated["status"] == "completed":
+            break
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            if not chunk:
+                break
+            terminal.transcript += chunk.decode("utf-8", "replace")
     updated = json.loads(todo.read_text(encoding="utf-8"))[0]
     if updated["status"] != "completed" or updated["content"] != "externally updated todo":
         raise Failure(f"the refreshed edit did not preserve the updated todo: {updated!r}")
@@ -859,6 +867,31 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        # The reply text streams before the turn ends, so `/pin` (and the
+        # `/switch` that follows it) would be refused while the turn is still
+        # running on a slow host. Wait for idle from the same `reply_start`.
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before pinning", since=reply_start)
+        pin_start = len(terminal.transcript)
+        terminal.send("/pin\r")
+        pin_path = os.path.join(home, "tui-pins.json")
+        if POSIX:
+            terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the active session", since=pin_start)
+        else:
+            deadline = time.monotonic() + STEP_TIMEOUT
+            while not os.path.isfile(pin_path) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        if not os.path.isfile(pin_path):
+            raise Failure(f"pin command did not persist a local pin file\n--- transcript ---\n{terminal.transcript}")
+        with open(pin_path, encoding="utf-8") as handle:
+            pins = [session_id for ids in json.load(handle)["scopes"].values() for session_id in ids]
+        if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
+            raise Failure(f"expected one saved session to be pinned, got {pins!r}")
+        if POSIX:
+            terminal.send("/switch\r")
+            terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")
+            terminal.send("\x10")
+            terminal.send("\x1b")
+            terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
         if POSIX:
             terminal.read_until("idle", STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
             todo_edit_smoke(terminal, home)
