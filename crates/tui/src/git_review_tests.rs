@@ -223,7 +223,10 @@ fn commit_previews_the_exact_staged_files_and_commits_only_them() {
 
     assert_eq!(type_line(&mut fixture.app, "/commit add the second file"), None);
     let preview = last_line(&fixture.app);
-    assert!(preview.contains("staged, exactly these 2 file(s)"), "the set is counted:\n{preview}");
+    assert!(
+        preview.contains("staged, exactly these 2 file(s)"),
+        "the set is counted:\n{preview}"
+    );
     assert!(preview.contains("M  a.txt"), "the modified path is listed:\n{preview}");
     assert!(preview.contains("A  b.txt"), "the added path is listed:\n{preview}");
     assert!(
@@ -372,7 +375,10 @@ fn a_path_that_reads_like_an_option_is_still_only_a_path() {
 
     assert_eq!(type_line(&mut fixture.app, "/commit name the file"), None);
     let preview = last_line(&fixture.app);
-    assert!(preview.contains("A  --amend me.txt"), "the path is listed as it is:\n{preview}");
+    assert!(
+        preview.contains("A  --amend me.txt"),
+        "the path is listed as it is:\n{preview}"
+    );
     assert_eq!(type_line(&mut fixture.app, "/commit --yes"), None);
     let done = last_line(&fixture.app);
     assert!(done.contains("name the file"), "the message survived the path:\n{done}");
@@ -446,8 +452,14 @@ fn a_commit_without_a_message_reviews_nothing() {
 
     assert_eq!(type_line(&mut fixture.app, "/commit"), None);
     let usage = last_line(&fixture.app);
-    assert!(usage.contains("previews the staged set"), "the usage is shown:\n{usage}");
-    assert!(fixture.app.commit_review.is_none(), "a message-less line opened a review");
+    assert!(
+        usage.contains("previews the staged set"),
+        "the usage is shown:\n{usage}"
+    );
+    assert!(
+        fixture.app.commit_review.is_none(),
+        "a message-less line opened a review"
+    );
     // A flag nobody defined is not a commit message.
     assert_eq!(type_line(&mut fixture.app, "/commit --amend"), None);
     assert!(

@@ -111,7 +111,10 @@ pub(crate) enum Refusal {
     /// The repository configures commit hooks this client does not run.
     Hooked(Vec<String>),
     /// What the review described is no longer what the workspace holds.
-    Stale { reviewed: String, moved: &'static str },
+    Stale {
+        reviewed: String,
+        moved: &'static str,
+    },
 }
 
 impl fmt::Display for Refusal {
@@ -409,10 +412,7 @@ fn git_in(
     let (out, truncated) = output.read(limit)?;
     let (errors, _) = error.read(ERROR_BYTES)?;
     let error = if timed_out {
-        format!(
-            "did not finish within {}s and was stopped",
-            timeout.as_secs()
-        )
+        format!("did not finish within {}s and was stopped", timeout.as_secs())
     } else {
         first_line(&String::from_utf8_lossy(&errors))
     };
@@ -672,10 +672,7 @@ impl Repo {
     /// They are named so an empty unstaged section is not read as "the work
     /// tree is clean" when a new file simply was never added.
     fn untracked(&self) -> Result<(Vec<String>, bool), Refusal> {
-        let captured = self.read(
-            &["ls-files", "--others", "--exclude-standard", "-z"],
-            UNTRACKED_LIMIT,
-        )?;
+        let captured = self.read(&["ls-files", "--others", "--exclude-standard", "-z"], UNTRACKED_LIMIT)?;
         if !captured.ok {
             return Err(Refusal::Git(captured.detail()));
         }
@@ -803,13 +800,7 @@ impl Repo {
     /// The identity is the machine's (`user.name`, `user.email`), and the
     /// signature, when `commit.gpgsign` asks for one, is made by the same
     /// configuration an ordinary commit uses.
-    fn commit_tree(
-        &self,
-        tree: &str,
-        parent: Option<&str>,
-        message: &[u8],
-        sign: bool,
-    ) -> Result<String, Refusal> {
+    fn commit_tree(&self, tree: &str, parent: Option<&str>, message: &[u8], sign: bool) -> Result<String, Refusal> {
         let mut args = vec!["commit-tree", tree];
         if let Some(parent) = parent {
             args.push("-p");
@@ -818,14 +809,7 @@ impl Repo {
         if sign {
             args.push("-S");
         }
-        let captured = git_in(
-            &self.root,
-            &args,
-            &[],
-            Some(message),
-            LIST_LIMIT,
-            COMMIT_TIMEOUT,
-        )?;
+        let captured = git_in(&self.root, &args, &[], Some(message), LIST_LIMIT, COMMIT_TIMEOUT)?;
         if !captured.ok {
             return Err(Refusal::Git(captured.detail()));
         }
@@ -849,7 +833,10 @@ impl Repo {
     /// A reference that did not exist yet is expected at the all-zero object
     /// name, which git accepts only while the reference is still missing.
     fn update_ref(&self, reference: &str, commit: &str, expected: &str) -> Result<(), Refusal> {
-        if reference.chars().any(|character| character.is_whitespace() || character.is_control()) {
+        if reference
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+        {
             return Err(Refusal::Git(format!(
                 "`{reference}` holds a character git cannot take on a transaction line"
             )));
@@ -997,12 +984,7 @@ pub(crate) fn commit(review: &Review) -> Result<Committed, Refusal> {
         return Err(stale(review, "the staged index"));
     }
     let sign = repo.config_bool("commit.gpgsign")?;
-    let written = repo.commit_tree(
-        &review.tree,
-        review.head.as_deref(),
-        review.message.as_bytes(),
-        sign,
-    )?;
+    let written = repo.commit_tree(&review.tree, review.head.as_deref(), review.message.as_bytes(), sign)?;
     // The transaction pins the approved branch only: `HEAD` would name that
     // same reference after dereferencing, and a transaction cannot name one
     // reference twice. So HEAD's symbolic target and commit are read once more
@@ -1138,4 +1120,3 @@ fn fingerprint(index: &[u8], head: Option<&str>, branch: Option<&str>) -> String
 fn short_id(id: &str) -> &str {
     id.get(..12).unwrap_or(id)
 }
-

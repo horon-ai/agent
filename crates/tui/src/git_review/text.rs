@@ -99,8 +99,7 @@ pub(crate) fn review_text(review: &Review) -> String {
     lines.push(format!("message: {}", review.message.replace('\n', " ⏎ ")));
     lines.push("unstaged changes are not in this commit and are left alone.".to_string());
     lines.push(
-        "repository hooks are not run: this commit is written from the tree above with git plumbing."
-            .to_string(),
+        "repository hooks are not run: this commit is written from the tree above with git plumbing.".to_string(),
     );
     lines.push(
         "nothing was committed yet. `/commit --yes` commits exactly these files; `/commit --cancel` discards the review."
