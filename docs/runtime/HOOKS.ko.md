@@ -212,8 +212,8 @@ exit 0
 
 ## 도구 입력 변환기: `pre_tool_transform`
 
-변환기는 도구의 JSON 입력을 검증하고 실행하기 전에 교체할 수 있는 동기 외부
-플러그인이다. 순서대로 하나 이상 설정한다.
+변환기는 도구의 JSON 입력을 검증하고 실행 전에 교체할 수 있는 동기 외부
+프로그램이다. 순서대로 하나 이상 설정한다.
 
 ```toml
 [hooks]
@@ -221,7 +221,7 @@ pre_tool_transform = ["~/.horon/plugins/rtk-transform"]
 pre_tool_transform_timeout_ms = 500
 ```
 
-이 예시의 플러그인은 표준 입출력으로 실행하는 외부 프로그램이며, 제거된 네이티브 플러그인 시스템과는 무관하다. 훅은 지금도 이렇게 별도 프로세스를 띄우는 방식으로 동작한다.
+이 훅은 `[hooks]`에 지정한 프로그램을 띄워 표준 입출력으로 데이터를 주고받는다. 계획 중인 Rust 패키지의 훅은 이벤트 관찰만 맡는다. 입력 변환기는 `[hooks]`에 직접 설정한다.
 
 각 변환기는 표준 입력으로 현재의 전체 도구 입력 JSON을 받고 환경에서
 `HORON_AGENT_HOOK_TOOL_NAME`, `HORON_AGENT_HOOK_SESSION_ID`, `HORON_AGENT_HOOK_CWD`를
