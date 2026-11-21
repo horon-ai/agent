@@ -40,6 +40,11 @@ pub enum Kind {
     Sessions,
     /// The recorded message boundaries this session can fork from.
     Forks,
+    /// The swarm children of the attached session, and the parent it returns to.
+    ///
+    /// Its rows are chosen like a session's: `enter` names a session id for the
+    /// attach request the session list already uses.
+    Swarm,
     /// Archived sessions available to restore for this working directory.
     ArchivedSessions,
     /// The skills the harness reports for this session.

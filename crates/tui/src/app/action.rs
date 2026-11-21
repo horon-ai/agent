@@ -53,6 +53,8 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Ask for the swarm children of the attached session, and its parent row.
+    Swarm,
     /// Ask for the sessions stored for this working directory, archived ones included.
     ArchivedSessions,
     /// Archive the session named.

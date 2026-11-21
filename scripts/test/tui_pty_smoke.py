@@ -574,6 +574,54 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
+    from pathlib import Path
+
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(parents) != 1:
+        raise Failure(f"expected one session containing the approved tool call, found {parents}")
+    parent = parents[0].parent.name
+    child_result = subprocess.run([launch.argv0, "run", "swarm fixture result"], cwd=root,
+                                  env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+                                  capture_output=True, text=True, timeout=STEP_TIMEOUT)
+    children = {path.parent.name for path in Path(home).glob("sessions/*/events.jsonl") if path not in originals}
+    if child_result.returncode != 0 or len(children) != 1:
+        raise Failure(f"expected one recorded child: {child_result.stdout}\n{child_result.stderr}")
+    child = next(iter(children))
+    snapshot = Path(env["HORON_AGENT_RUNTIME_DIR"], "durable-state", "swarm", "smoke.json")
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({"updated_at_unix_ms": int(time.time() * 1000) + 600_000, "members": [{
+        "session_id": child,
+        "report_back_to_session_id": parent,
+        "task_label": "Fixture child",
+        "status": "completed",
+    }]}), encoding="utf-8")
+    terminal.send("/swarm\r")
+    terminal.read_until("Swarm children", STEP_TIMEOUT, "swarm picker opened")
+    terminal.read_until("Fixture child", STEP_TIMEOUT, "completed direct child listed")
+
+    def completed_subscriptions(session_id: str) -> int:
+        marker = f"request_kind=subscribe session_id={session_id} "
+        return sum("phase=handled " in line and marker in line for line in daemon_log_tail(home, limit=5000).splitlines())
+
+    def select_session(session_id: str) -> None:
+        previous = completed_subscriptions(session_id)
+        terminal.send("\r")
+        deadline = time.monotonic() + STEP_TIMEOUT
+        while time.monotonic() < deadline:
+            if completed_subscriptions(session_id) > previous:
+                return
+            time.sleep(0.05)
+        raise Failure(f"the daemon did not attach to session {session_id}\n{daemon_log_tail(home)}")
+
+    select_session(child)
+    picker_start = len(terminal.transcript)
+    terminal.send("/swarm\r")
+    terminal.read_until("parent:", STEP_TIMEOUT, "parent return row", since=picker_start)
+    select_session(parent)
+
+
 def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
     tool_dir = os.path.join(case_root, "voice-bin")
     os.makedirs(tool_dir)
@@ -773,6 +821,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
+            # The swarm smoke finds the parent by the approved tool call, so it
+            # runs before the fork below: a branch inherits that call, and two
+            # sessions holding it would make the parent ambiguous.
+            context_request_smoke(terminal, home, base_url)
+            swarm_picker_smoke(terminal, launch, home, case_root, env)
             boundary_start = len(terminal.transcript)
             terminal.send("tui-fork-boundary-proof\r")
             terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
@@ -792,7 +845,6 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.send("\r")
             terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
             terminal.read_until("resumed ", STEP_TIMEOUT, "parent session reattached", since=parent_start)
-            context_request_smoke(terminal, home, base_url)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         terminal.send("/resume\r")

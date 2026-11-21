@@ -793,6 +793,12 @@ Set `[tools] output_column_cap = 120` to shorten each text preview line to 120 U
 
 A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
 
+Set `[tools] read_default_limit = 300` to change the default page size for `read` without an explicit `limit` or end line. The default is 5,000 lines. Configured values are clamped to 1–5,000. Explicit limits, line ranges, and path selectors keep their own behavior. A partial page reports where to continue.
+
+### Markdown heading outlines
+
+With `[tools] read_summary = true`, an unqualified `read` of a Markdown file over 400 lines and up to 2 MiB shows a heading outline. It lists up to 100 headings with inclusive source ranges. Each range ends before the next heading. Headings inside fenced code are skipped. Use `full: true` or an explicit line range to read the original text within the regular read limits.
+
 ### `agentgrep` match context
 
 In grep mode, set `before` and `after` to show neighboring lines with their original line numbers. Each value defaults to zero and is capped at 20. Overlapping windows share a single copy of each line. An `@` marks matches. `paths_only: true` keeps the path list format.
