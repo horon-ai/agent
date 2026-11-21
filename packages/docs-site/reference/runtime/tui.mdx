@@ -86,6 +86,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.turn_usage` | boolean | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
@@ -265,6 +266,8 @@ The marker of the newest call whose preview hides something names the key that s
 A call the approval gate refused is drawn with one short label rather than the daemon's whole sentence, because the prompt beside it already asks the question, and the label follows the request: while the decision is pending the head row says `◐ needs approval`; once it is answered the row states the answer, `• allowed`, `• allowed always`, `✕ denied` for `n` or `esc`, or `✕ not answered` for a prompt that went away unanswered (a lost connection, a cancelled turn). None of those three says `failed`, because the call never ran: the gate held it and the model has to issue it again. Answering that prompt does not run the call: the decision is recorded and the model has to call the tool again, and the transcript says so.
 
 A `bash` job with `notify_pattern` displays live process-output notices in the launching session's transcript. Each notice identifies the job and its stdout or stderr stream.
+
+Set `transcript.turn_usage = true` to show elapsed time after each turn you start in this client. The footer also shows total input and output tokens when the provider reports them.
 
 The client marks avoidable prompt cache misses after the request that caused them. A marker shows the cause and the approximate number of tokens resent, without prompt text or cache identifiers. A model or provider switch, expiry, or a documented invalidation leaves no marker. Set `[features] kv_cache_miss_notices = false` in the daemon's `config.toml` to turn off the reports.
 

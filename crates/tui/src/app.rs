@@ -481,6 +481,9 @@ impl App {
         self.exit_code = 1;
         self.disconnected = true;
         self.pending_turn = false;
+        // No end-of-turn frame can arrive over a dead socket, so the turn being
+        // measured has no completed turn to describe.
+        self.transcript.discard_turn();
         // A change that was waiting for the turn can never leave: there is no
         // connection left to send it over.
         self.effort_after_turn = None;
@@ -635,6 +638,9 @@ impl App {
                         "the turn ended before reading everything sent into it; the next turn carries the rest",
                     );
                 }
+                // Last, so the footer sits under everything the turn produced
+                // and is not pushed above a notice that arrives with the end.
+                self.transcript.end_turn();
             }
             ApiEvent::TurnStopped { reason, message, .. } => {
                 self.transcript.end_running_tools();
@@ -658,6 +664,9 @@ impl App {
                 } else {
                     self.warn(message.clone());
                 }
+                // A stopped turn is still a turn that ran: the footer says how
+                // long and how much, and comes after the reason it stopped.
+                self.transcript.end_turn();
             }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::BackgroundOutput { session_id, text } => {
@@ -767,6 +776,10 @@ impl App {
                     cache_read: optional_count(cache_read_input),
                     cache_creation: optional_count(cache_creation_input),
                 });
+                // The status line shows this request alone; the turn's footer
+                // adds each request of the turn together, so a tool loop's
+                // several provider calls are all counted.
+                self.transcript.note_usage(*input, *output);
             }
             // The daemon classifies one miss per completed provider request and
             // reports it right after that request's usage, so the mark lands
@@ -1000,75 +1013,5 @@ fn optional_count(value: &Option<u64>) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn app() -> App {
-        let (_sender, receiver) = mpsc::channel();
-        App::new("socket · session".to_string(), receiver)
-    }
-
-    #[test]
-    fn status_line_shows_model_and_state() {
-        let mut app = app();
-        app.apply_event(&ApiEvent::ModelInfo {
-            session_id: "s1".into(),
-            provider: Some("anthropic".into()),
-            model: Some("claude-sonnet-4".into()),
-            reasoning_effort: None,
-            auth_method: None,
-        });
-        assert_eq!(
-            app.status_line(),
-            "socket · session · claude-sonnet-4 · anthropic · idle".to_string()
-        );
-        app.pending_turn = true;
-        assert!(app.status_line().ends_with("running"));
-    }
-
-    #[test]
-    fn approval_resolves_only_for_its_own_request() {
-        let mut app = app();
-        app.apply_event(&ApiEvent::ApprovalPending {
-            session_id: "s1".into(),
-            request_id: "r1".into(),
-            action: "bash".into(),
-            expires_at: None,
-        });
-        app.apply_event(&ApiEvent::ApprovalResolved {
-            session_id: "s1".into(),
-            request_id: "other".into(),
-            approved: true,
-            via: "file".into(),
-            resolved_by: "tool".into(),
-        });
-        assert!(app.prompt.is_some(), "an unrelated resolution closed the prompt");
-        app.apply_event(&ApiEvent::ApprovalResolved {
-            session_id: "s1".into(),
-            request_id: "r1".into(),
-            approved: false,
-            via: "inline".into(),
-            resolved_by: "tool".into(),
-        });
-        assert!(app.prompt.is_none());
-    }
-
-    #[test]
-    fn turn_stopped_clears_the_pending_flag() {
-        let mut app = app();
-        app.pending_turn = true;
-        app.apply_event(&ApiEvent::TurnStopped {
-            session_id: "s1".into(),
-            reason: horon_agent_sdk::api::TurnStopReason::Failure,
-            message: "provider failed".into(),
-            provider_stop_reason: None,
-        });
-        assert!(!app.pending_turn);
-        assert!(
-            app.transcript
-                .items()
-                .iter()
-                .any(|item| item == &crate::transcript::Item::Warning("provider failed".to_string()))
-        );
-    }
-}
+#[path = "app/app_tests.rs"]
+mod tests;
