@@ -376,6 +376,8 @@ The model list has the model in force marked `(current)` and the selected row ca
 
 `/model <name>` switches without the list.
 
+Use `/modelpreset` to list names, `/modelpreset preview <name>` to inspect the choices, or `/modelpreset apply <name>` to apply them to the current session. The [model preset settings](../provider/MODEL.md#session-model-presets) define how to write a preset. If a turn is running, retry the command after it ends.
+
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
 
 Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.

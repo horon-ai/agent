@@ -749,6 +749,7 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Memory,
     RuntimeCommand::Swarm,
     RuntimeCommand::Agents,
+    RuntimeCommand::ModelPreset,
     RuntimeCommand::SubagentModel,
     RuntimeCommand::Autoreview,
     RuntimeCommand::Autojudge,

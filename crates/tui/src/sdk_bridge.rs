@@ -393,6 +393,7 @@ fn run_worker(
                     // which is also when the skills of the one left behind stop
                     // being the client's.
                     let resets_session = matches!(&command, Command::NewSession { .. } | Command::Attach(_));
+                    let applies_preset = matches!(&command, Command::Runtime { command: horon_agent_sdk::RuntimeCommand::ModelPreset, arguments } if arguments.first().is_some_and(|action| action == "apply"));
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
@@ -438,6 +439,12 @@ fn run_worker(
                                 usage_model = session.model.clone();
                             }
                             if events.send(incoming).is_err() {
+                                return;
+                            }
+                            if applies_preset
+                                && let Ok(Some(info)) = runtime::read(&client, &session_id)
+                                && events.send(info).is_err()
+                            {
                                 return;
                             }
                             // Read against the connection and the id the worker

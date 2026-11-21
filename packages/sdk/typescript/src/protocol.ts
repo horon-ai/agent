@@ -44,6 +44,7 @@ export type RuntimeCommand =
   | "memory"
   | "swarm"
   | "agents"
+  | "modelpreset"
   | "subagent_model"
   | "autoreview"
   | "autojudge"

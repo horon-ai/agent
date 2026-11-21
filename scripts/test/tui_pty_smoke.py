@@ -739,6 +739,55 @@ def configure_mcp_probe(home: str, case_root: str) -> str:
     return calls
 
 
+def model_preset_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('''
+[[providers.mock.models]]
+id = "preset-model"
+context_window = 128000
+
+[model_presets.quality]
+model = "preset-model"
+effort = "high"
+roles = { swarm = "preset-model", review = "mock-model", judge = "mock-model", memory = "inherit", ambient = "mock-model" }
+
+[model_presets.rejected]
+model = "mock-model"
+roles = { swarm = "missing-model" }
+
+[model_presets.unknown_role]
+model = "mock-model"
+roles = { unknown = "mock-model" }
+''')
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=horon_env(case_root, home))
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for model presets")
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset preview quality\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "model preset preview", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset apply quality\r")
+        terminal.read_until("Applied model preset 'quality'", STEP_TIMEOUT, "model preset applied", since=start)
+        for name, error in (("rejected", "unavailable in the active provider profile"),
+                            ("unknown_role", "Unknown model preset role")):
+            start = len(terminal.transcript)
+            terminal.send(f"/modelpreset apply {name}\r")
+            terminal.read_until(error, STEP_TIMEOUT, "invalid preset refused", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/info\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "preset model survived refused changes", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/agents\r")
+        terminal.read_until("inherit", STEP_TIMEOUT, "preset role overrides applied", since=start)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("model preset session failed to exit cleanly")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -1153,8 +1202,8 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
 
 # Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
 # client a POSIX signal: only a POSIX host can drive either.
-POSIX_ONLY_CASES = {5, 6, 7, 8}
-ALL_CASES = tuple(range(1, 9))
+POSIX_ONLY_CASES = {5, 6, 7, 8, 9}
+ALL_CASES = tuple(range(1, 10))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
     """A client killed by a signal still gives the terminal back (#431).
@@ -1362,6 +1411,14 @@ def run_build_layout(
         case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
         signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
         log(f"case {index} passed")
+    if 9 in cases:
+        log("case 9: preview and apply a named model preset, then refuse invalid choices")
+        case_root = os.path.join(root, "model-preset")
+        text = model_preset_case(build_launch(case_root, agent, tui), case_root, base_url)
+        if transcript:
+            with open(transcript, "a", encoding="utf-8") as handle:
+                handle.write("\n--- model preset ---\n" + text)
+        log("case 9 passed")
     return 0
 
 

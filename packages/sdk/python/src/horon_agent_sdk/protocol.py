@@ -56,6 +56,7 @@ RuntimeCommand: TypeAlias = Literal[
     "memory",
     "swarm",
     "agents",
+    "modelpreset",
     "subagent_model",
     "autoreview",
     "autojudge",

@@ -399,6 +399,7 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Memory => "memory",
         RuntimeCommand::Swarm => "swarm",
         RuntimeCommand::Agents => "agent models",
+        RuntimeCommand::ModelPreset => "model presets",
         RuntimeCommand::SubagentModel => "subagent model",
         RuntimeCommand::Autoreview => "automatic review",
         RuntimeCommand::Autojudge => "automatic judge",

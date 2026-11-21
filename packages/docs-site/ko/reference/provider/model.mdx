@@ -130,6 +130,19 @@ input = ["text", "image"]
 
 `horon run --thinking <effort>`는 선택한 모델의 추론 강도를 이번 실행에 적용한다. `--service-tier <tier>`는 OpenAI Chat Completions와 Responses에서 쓴다. `priority`(`fast`도 같은 값), 요청에서 등급 필드를 빼는 `off`, 지원 모델에서 쓰는 `ultrafast`를 받는다. 지원하지 않는 값은 프롬프트를 보내기 전에 거절한다. 두 옵션은 프로파일 설정을 바꾸지 않는다.
 
+## 세션 모델 프리셋
+
+`config.toml`에 이름을 붙인 프리셋을 넣는다. `/modelpreset preview focus`로 확인하고 `/modelpreset apply focus`로 현재 세션에 적용한다.
+
+```toml
+[model_presets.focus]
+model = "daily-model"
+effort = "high"
+roles = { swarm = "worker-model", review = "daily-model" }
+```
+
+모든 항목은 생략할 수 있다. `roles`에는 세션 대상 `swarm`, `review`, `judge`, `memory`, `ambient`를 지정한다. 값에 `inherit`를 쓰면 상속을 지원하는 작업이 세션 모델을 쓴다. 모델은 현재 공급자 프로파일에서 쓸 수 있어야 하고 추론 강도는 적용할 세션 모델이 지원해야 한다. 잘못된 프리셋을 적용하면 기존 설정을 유지한다.
+
 ## 모델 역할
 
 모델 역할은 세션 모델이 아닌 모델이 필요한 기능들이 함께 쓰는, 작업 이름과 모델의 대응이다. 역할은 설정에만 존재한다. 역할 표가 없는 파일은 이 빌드와 똑같이 모델을 고른다.

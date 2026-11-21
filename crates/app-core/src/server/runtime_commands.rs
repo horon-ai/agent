@@ -149,6 +149,23 @@ pub(super) async fn execute(
             status_only(args)?;
             json!({"enabled": swarm_enabled, "default_enabled": config.features.swarm, "members": swarm_data})
         }
+        RuntimeCommand::ModelPreset => match args {
+            [] => json!({"presets": config.model_presets.keys().collect::<Vec<_>>()}),
+            [action, name] if matches!(action.as_str(), "preview" | "apply") => {
+                let preset = config
+                    .model_presets
+                    .get(name)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown model preset: {name}"))?;
+                let apply = action == "apply";
+                agent.model_preset(preset, apply)?;
+                let data = json!({"name": name, "applied": apply, "preset": preset});
+                if apply {
+                    return Ok((data, format!("Applied model preset '{name}'.")));
+                }
+                data
+            }
+            _ => bail!("Usage: /modelpreset [preview|apply <name>]"),
+        },
         RuntimeCommand::Agents => {
             let (global, args) = match args.split_first() {
                 Some((scope, rest)) if matches!(scope.as_str(), "global" | "default") => (true, rest),
