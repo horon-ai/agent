@@ -19,7 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use horon_agent_sdk::api::{ApiEvent, PermissionDecision};
-use horon_agent_sdk::{EventStream, HistoryMessage, HoronAgentClient};
+use horon_agent_sdk::{Error, EventStream, HistoryMessage, HoronAgentClient};
 
 use super::Incoming;
 use super::sessions::Dial;
@@ -77,19 +77,120 @@ pub(super) fn fail(events: &Sender<Incoming>, id: u64, message: &str) {
 /// They are separated from their SDK calls so their order can be pinned: the
 /// daemon must have created the narrow child before the question is sent, and
 /// the child's id must not reach the screen before that.
+///
+/// Each step answers with the SDK's own error, so a caller keeps the typed
+/// cause; which step failed, and how it is worded, is decided by [`open_with`],
+/// which is the only place that knows the order.
 pub(super) trait SideLink {
     /// Attach the connection to a session. Called for the parent first and for
     /// the child once it exists.
-    fn attach(&self, session: &str) -> Result<(), String>;
+    fn attach(&self, session: &str) -> Result<(), Error>;
     /// Create the read-only consult child of `parent`, stopping before
     /// `boundary` when one was chosen; answers its id.
-    fn fork(&self, parent: &str, boundary: Option<&str>) -> Result<String, String>;
+    fn fork(&self, parent: &str, boundary: Option<&str>) -> Result<String, Error>;
     /// The child's stored rows before the question. The answer read back at the
     /// end counts only the rows after this, so the forked parent transcript can
     /// never be mistaken for the child's answer.
-    fn baseline(&self, child: &str) -> Result<usize, String>;
-    fn ask(&self, child: &str, question: &str) -> Result<(), String>;
+    fn baseline(&self, child: &str) -> Result<usize, Error>;
+    fn ask(&self, child: &str, question: &str) -> Result<(), Error>;
 }
+
+/// Why a side question stopped without an answer.
+///
+/// The sentence this renders is the one the overlay shows; the SDK cause stays
+/// typed beside it, so a caller can tell a closed socket from a refused fork
+/// without reading the prose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SideFault {
+    kind: Kind,
+    /// The child the daemon stored before the failure, when one existed.
+    child: Option<String>,
+}
+
+/// What went wrong, in a form the sentence is built from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Kind {
+    /// A step failed; `what` names it and the cause is the SDK's.
+    Step { what: &'static str, cause: Error },
+    /// The answer ran past its deadline. `cancel` keeps the cause of a cancel
+    /// that failed, so "could not be cancelled" is still typed.
+    Timeout { cancel: Option<Error> },
+    /// The child's event stream ended with its turn still open.
+    StreamEnded(Error),
+    /// The child's connection closed before it answered.
+    Disconnected,
+}
+
+impl SideFault {
+    /// A step that failed, named by the sentence it is shown with.
+    fn step(what: &'static str, cause: Error) -> Self {
+        Self {
+            kind: Kind::Step { what, cause },
+            child: None,
+        }
+    }
+
+    /// The same failure, naming the child that was stored before it.
+    fn naming(mut self, child: &str) -> Self {
+        self.child = Some(child.to_string());
+        self
+    }
+
+    /// The answer did not finish in time; `cancel` is the failed cancellation.
+    fn timeout(cancel: Option<Error>) -> Self {
+        Self {
+            kind: Kind::Timeout { cancel },
+            child: None,
+        }
+    }
+
+    /// The child's stream ended with its turn still open.
+    fn stream_ended(cause: Error) -> Self {
+        Self {
+            kind: Kind::StreamEnded(cause),
+            child: None,
+        }
+    }
+
+    /// The child's connection closed with its turn still open.
+    fn disconnected() -> Self {
+        Self {
+            kind: Kind::Disconnected,
+            child: None,
+        }
+    }
+}
+
+impl std::fmt::Display for SideFault {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            Kind::Step { what, cause } => write!(formatter, "{what}: {cause}")?,
+            Kind::Timeout { cancel: None } => {
+                formatter.write_str("the side question did not finish in time; press enter to open it later")?
+            }
+            Kind::Timeout { cancel: Some(cause) } => write!(
+                formatter,
+                "the side question did not finish in time and could not be cancelled ({cause}); \
+                 press enter to open it later"
+            )?,
+            Kind::StreamEnded(cause) => {
+                write!(formatter, "the side session's event stream ended: {cause}")?
+            }
+            Kind::Disconnected => formatter.write_str("the side session's connection closed before it answered")?,
+        }
+        match &self.child {
+            Some(child) => write!(formatter, "; the side session is {child}"),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The sentence each failed step is shown with.
+const CONNECT_FAILED: &str = "the side session could not connect";
+const OPEN_FAILED: &str = "the session could not be opened";
+const FORK_FAILED: &str = "the harness refused a side session";
+const BASELINE_FAILED: &str = "the side session's transcript could not be read";
+const ASK_FAILED: &str = "the side question could not be sent";
 
 /// A step that failed, whether the question had already been sent, and the
 /// child when one exists.
@@ -98,9 +199,30 @@ pub(super) trait SideLink {
 /// stored); a failure before the fork names none.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct AskError {
-    pub(super) message: String,
+    fault: SideFault,
     pub(super) asked: bool,
-    pub(super) child: Option<String>,
+}
+
+impl AskError {
+    /// A step refused, before the question was sent and without a child.
+    fn refused(what: &'static str, cause: Error) -> Self {
+        Self {
+            fault: SideFault::step(what, cause),
+            asked: false,
+        }
+    }
+
+    /// The same refusal, naming the child the daemon stored before it failed.
+    fn naming(mut self, child: &str) -> Self {
+        self.fault = self.fault.naming(child);
+        self
+    }
+
+    /// The question had already been sent when this failed.
+    fn after_asking(mut self) -> Self {
+        self.asked = true;
+        self
+    }
 }
 
 /// One side connection's own client, in the [`SideLink`] shape.
@@ -109,34 +231,25 @@ struct LiveLink<'a> {
 }
 
 impl SideLink for LiveLink<'_> {
-    fn attach(&self, session: &str) -> Result<(), String> {
-        self.client
-            .attach_session(session)
-            .map(drop)
-            .map_err(|error| format!("the session could not be opened: {error}"))
+    fn attach(&self, session: &str) -> Result<(), Error> {
+        self.client.attach_session(session).map(drop)
     }
 
-    fn fork(&self, parent: &str, boundary: Option<&str>) -> Result<String, String> {
+    fn fork(&self, parent: &str, boundary: Option<&str>) -> Result<String, Error> {
         let forked = match boundary {
             Some(boundary) => self.client.fork_consult_at(parent, boundary),
             None => self.client.fork_consult(parent),
         };
-        forked
-            .map(|child| child.session_id)
-            .map_err(|error| format!("the harness refused a side session: {error}"))
+        forked.map(|child| child.session_id)
     }
 
-    fn baseline(&self, child: &str) -> Result<usize, String> {
-        self.client
-            .get_history(child)
-            .map(|messages| messages.len())
-            .map_err(|error| format!("the side session's transcript could not be read: {error}"))
+    fn baseline(&self, child: &str) -> Result<usize, Error> {
+        self.client.get_history(child).map(|messages| messages.len())
     }
 
-    fn ask(&self, child: &str, question: &str) -> Result<(), String> {
+    fn ask(&self, child: &str, question: &str) -> Result<(), Error> {
         self.client
             .send_message_with_reminder(child, question, Vec::new(), Some(SIDE_REMINDER), None)
-            .map_err(|error| format!("the side question could not be sent: {error}"))
     }
 }
 
@@ -153,34 +266,21 @@ pub(super) fn open_with(
     question: &str,
     announce: &mut dyn FnMut(&str),
 ) -> Result<(usize, String), AskError> {
-    link.attach(parent).map_err(|message| AskError {
-        message,
-        asked: false,
-        child: None,
-    })?;
-    let child = link.fork(parent, boundary).map_err(|message| AskError {
-        message,
-        asked: false,
-        child: None,
-    })?;
+    link.attach(parent)
+        .map_err(|cause| AskError::refused(OPEN_FAILED, cause))?;
+    let child = link
+        .fork(parent, boundary)
+        .map_err(|cause| AskError::refused(FORK_FAILED, cause))?;
     // The boundary and the question are read on the child, so the connection
     // moves to it now. A failure here leaves the stored child named.
-    link.attach(&child).map_err(|message| AskError {
-        message,
-        asked: false,
-        child: Some(child.clone()),
-    })?;
-    let baseline = link.baseline(&child).map_err(|message| AskError {
-        message,
-        asked: false,
-        child: Some(child.clone()),
-    })?;
+    link.attach(&child)
+        .map_err(|cause| AskError::refused(OPEN_FAILED, cause).naming(&child))?;
+    let baseline = link
+        .baseline(&child)
+        .map_err(|cause| AskError::refused(BASELINE_FAILED, cause).naming(&child))?;
     announce(&child);
-    link.ask(&child, question).map_err(|message| AskError {
-        message,
-        asked: true,
-        child: Some(child.clone()),
-    })?;
+    link.ask(&child, question)
+        .map_err(|cause| AskError::refused(ASK_FAILED, cause).naming(&child).after_asking())?;
     Ok((baseline, child))
 }
 
@@ -217,8 +317,14 @@ pub(super) fn start(
 
 /// The thread body: connect, open, ask, and reduce the answer's events.
 fn follow(id: u64, dial: Dial, parent: String, question: String, boundary: Option<String>, events: Sender<Incoming>) {
-    if let Err(message) = answer(id, &dial, &parent, &question, boundary.as_deref(), &events) {
-        deliver(&events, Incoming::SideFailed { id, message });
+    if let Err(fault) = answer(id, &dial, &parent, &question, boundary.as_deref(), &events) {
+        deliver(
+            &events,
+            Incoming::SideFailed {
+                id,
+                message: fault.to_string(),
+            },
+        );
     }
 }
 
@@ -229,9 +335,9 @@ fn answer(
     question: &str,
     boundary: Option<&str>,
     events: &Sender<Incoming>,
-) -> Result<(), String> {
+) -> Result<(), SideFault> {
     let client = HoronAgentClient::connect(dial.options())
-        .map_err(|error| format!("the side session could not connect: {error}"))?;
+        .map_err(|cause| SideFault::step(CONNECT_FAILED, cause))?;
     // Unfiltered: the child's id is not known until the fork answers, and an
     // attach retargets this connection to the child before the question.
     let stream = client.events(None);
@@ -247,10 +353,7 @@ fn answer(
     };
     match open_with(&link, parent, boundary, question, &mut announce) {
         Ok((baseline, child)) => drain(id, &client, &stream, &child, baseline, events),
-        Err(AskError { message, child, .. }) => Err(match child {
-            Some(child) => format!("{message}; the side session is {child}"),
-            None => message,
-        }),
+        Err(AskError { fault, .. }) => Err(fault),
     }
 }
 
@@ -262,18 +365,12 @@ fn drain(
     child: &str,
     baseline: usize,
     events: &Sender<Incoming>,
-) -> Result<(), String> {
+) -> Result<(), SideFault> {
     let mut preview = Preview::default();
     let started = Instant::now();
     loop {
         if started.elapsed() > ANSWER_DEADLINE {
-            return Err(match client.cancel(child) {
-                Ok(()) => "the side question did not finish in time; press enter to open it later".to_string(),
-                Err(error) => format!(
-                    "the side question did not finish in time and could not be cancelled ({error}); \
-                     press enter to open it later"
-                ),
-            });
+            return Err(SideFault::timeout(client.cancel(child).err()));
         }
         match stream.next_result_timeout(EVENT_POLL) {
             Ok(Some(event)) => {
@@ -310,10 +407,10 @@ fn drain(
             }
             Ok(None) => {
                 if client.is_closed() {
-                    return Err("the side session's connection closed before it answered".to_string());
+                    return Err(SideFault::disconnected());
                 }
             }
-            Err(error) => return Err(format!("the side session's event stream ended: {error}")),
+            Err(cause) => return Err(SideFault::stream_ended(cause)),
         }
     }
 }

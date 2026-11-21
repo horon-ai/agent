@@ -591,6 +591,10 @@ def side_question_smoke(terminal: Terminal, home: str) -> None:
     if len(children) != 1 or question not in children[0].read_text(encoding="utf-8"):
         raise Failure("expected the side question in a saved child session")
     terminal.send("\x1b")
+    time.sleep(0.15)
+    dismissed = len(terminal.transcript)
+    terminal.send("/rename\r")
+    terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "parent composer restored", since=dismissed)
 
 
 def configure_mcp_probe(home: str, case_root: str) -> str:

@@ -9,8 +9,8 @@
 
 use std::cell::RefCell;
 
-use horon_agent_sdk::HistoryMessage;
 use horon_agent_sdk::api::ApiEvent;
+use horon_agent_sdk::{Error, ErrorKind, HistoryMessage};
 
 use super::Incoming;
 use super::side::{Effect, Preview, Progress, SideLink, observe, open_with, stored_answer};
@@ -34,38 +34,43 @@ impl Recorder {
     }
 }
 
+/// A failure the recorder returns, so a refused step carries a typed cause.
+fn refusal() -> Error {
+    Error::new(ErrorKind::Harness(horon_agent_sdk::api::ErrorCode::Internal), "no")
+}
+
 impl SideLink for Recorder {
-    fn attach(&self, session: &str) -> Result<(), String> {
+    fn attach(&self, session: &str) -> Result<(), Error> {
         self.calls.borrow_mut().push(format!("attach {session}"));
         if self.refuse == Some("attach") {
-            return Err("no".to_string());
+            return Err(refusal());
         }
         Ok(())
     }
 
-    fn fork(&self, parent: &str, boundary: Option<&str>) -> Result<String, String> {
+    fn fork(&self, parent: &str, boundary: Option<&str>) -> Result<String, Error> {
         match boundary {
             Some(boundary) => self.calls.borrow_mut().push(format!("fork {parent} at {boundary}")),
             None => self.calls.borrow_mut().push(format!("fork {parent}")),
         }
         if self.refuse == Some("fork") {
-            return Err("no".to_string());
+            return Err(refusal());
         }
         Ok("child".to_string())
     }
 
-    fn baseline(&self, child: &str) -> Result<usize, String> {
+    fn baseline(&self, child: &str) -> Result<usize, Error> {
         self.calls.borrow_mut().push(format!("baseline {child}"));
         if self.refuse == Some("baseline") {
-            return Err("no".to_string());
+            return Err(refusal());
         }
         Ok(3)
     }
 
-    fn ask(&self, child: &str, question: &str) -> Result<(), String> {
+    fn ask(&self, child: &str, question: &str) -> Result<(), Error> {
         self.calls.borrow_mut().push(format!("ask {child} {question}"));
         if self.refuse == Some("ask") {
-            return Err("no".to_string());
+            return Err(refusal());
         }
         Ok(())
     }

@@ -344,11 +344,10 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
         frame.render_widget(Paragraph::new(lines), notice_area);
     }
 
-    let boundary = overlay
-        .boundary
-        .as_deref()
-        .map(|boundary| format!("from {boundary} · "))
-        .unwrap_or_default();
+    let boundary = match overlay.boundary.as_deref() {
+        Some(boundary) => format!("from {boundary} · "),
+        None => String::new(),
+    };
     let footer = match overlay.session_id.as_deref() {
         Some(session_id) => format!(
             "{boundary}enter opens {session_id} · esc returns to the conversation{}",

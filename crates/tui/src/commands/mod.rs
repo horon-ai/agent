@@ -664,8 +664,8 @@ impl Default for Registry {
 
 /// The built-in names, for completion and `/help`.
 const LOCAL_NAMES: [&str; 22] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "mcp", "model", "new", "note",
-    "queue", "quit", "record", "rename", "replay", "resume", "settings", "side", "skills", "switch",
+    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "mcp", "model", "new", "note", "queue",
+    "quit", "record", "rename", "replay", "resume", "settings", "side", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
