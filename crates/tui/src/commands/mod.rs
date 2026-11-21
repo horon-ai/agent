@@ -4,9 +4,9 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
-//!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record` and `/replay`.
+//!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
+//!    `/compact`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
+//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -56,6 +56,22 @@ mod tests;
 
 pub use parse::{ParsedCommand, fallback_description, substitute};
 
+/// Changes to the model context of the current session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCommand {
+    Clear,
+    Compact,
+}
+
+impl ContextCommand {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Clear => "clear-context",
+            Self::Compact => "compact",
+        }
+    }
+}
+
 /// A command the client answers itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Local {
@@ -71,6 +87,8 @@ pub enum Local {
     Keys,
     /// Clear the transcript pane.
     Clear,
+    /// Clear or compact model context on the daemon.
+    Context(ContextCommand),
     /// Copy the draft, an answer or a code block to the terminal clipboard.
     Copy,
     /// Open the model picker, or switch to the model named.
@@ -85,6 +103,8 @@ pub enum Local {
     Rename,
     /// Resume a session stored for this working directory.
     Resume,
+    /// Browse archived sessions in this working directory.
+    Archived,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
     /// List trusted MCP servers or explicitly probe one by name.
@@ -105,6 +125,9 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Record, recognize or speak with on-device programs; nothing leaves the
+    /// client.
+    Voice,
 }
 
 impl Local {
@@ -117,6 +140,8 @@ impl Local {
             "artifact" => Some(Self::Artifact),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
+            "clear-context" => Some(Self::Context(ContextCommand::Clear)),
+            "compact" => Some(Self::Context(ContextCommand::Compact)),
             "copy" => Some(Self::Copy),
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
@@ -124,6 +149,7 @@ impl Local {
             "settings" => Some(Self::Settings),
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
+            "archived" => Some(Self::Archived),
             "skills" => Some(Self::Skills),
             "mcp" => Some(Self::Mcp),
             "switch" => Some(Self::Switch),
@@ -132,6 +158,7 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "voice" => Some(Self::Voice),
             _ => None,
         }
     }
@@ -145,6 +172,7 @@ impl Local {
             Self::Artifact => "artifact",
             Self::Keys => "keys",
             Self::Clear => "clear",
+            Self::Context(command) => command.name(),
             Self::Copy => "copy",
             Self::Model => "model",
             Self::Effort => "effort",
@@ -152,6 +180,7 @@ impl Local {
             Self::Settings => "settings",
             Self::Rename => "rename",
             Self::Resume => "resume",
+            Self::Archived => "archived",
             Self::Skills => "skills",
             Self::Mcp => "mcp",
             Self::Switch => "switch",
@@ -165,6 +194,7 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Voice => "voice",
         }
     }
 }
@@ -657,9 +687,32 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 21] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "mcp", "model", "new", "note", "queue",
-    "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 25] = [
+    "archived",
+    "artifact",
+    "clear",
+    "clear-context",
+    "compact",
+    "copy",
+    "effort",
+    "exit",
+    "help",
+    "keys",
+    "links",
+    "mcp",
+    "model",
+    "new",
+    "note",
+    "queue",
+    "quit",
+    "record",
+    "rename",
+    "replay",
+    "resume",
+    "settings",
+    "skills",
+    "switch",
+    "voice",
 ];
 
 /// Every runtime command, in declaration order.

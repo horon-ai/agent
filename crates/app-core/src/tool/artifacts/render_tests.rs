@@ -19,7 +19,7 @@ fn log_with_panic() -> String {
 fn render_keeps_head_tail_pointer_and_signal_lines_within_budget() {
     let text = log_with_panic();
     assert!(text.len() > 200_000);
-    let out = render_condensed(&text, "bash", BUDGET, Ok("0123456789abcdef"));
+    let out = render_condensed(&text, "bash", BUDGET, Ok("0123456789abcdef"), 0);
 
     assert!(out.len() <= BUDGET, "{} > {BUDGET}", out.len());
     assert!(out.starts_with("1\n2\n"), "head keeps the first lines");
@@ -32,7 +32,7 @@ fn render_keeps_head_tail_pointer_and_signal_lines_within_budget() {
 #[test]
 fn render_counts_omitted_bytes_exactly() {
     let text = log_with_panic();
-    let out = render_condensed(&text, "bash", BUDGET, Ok("0123456789abcdef"));
+    let out = render_condensed(&text, "bash", BUDGET, Ok("0123456789abcdef"), 0);
     let pointer = out
         .lines()
         .find(|line| line.starts_with("[horon: "))
@@ -47,7 +47,7 @@ fn render_counts_omitted_bytes_exactly() {
 #[test]
 fn render_without_signals_omits_the_match_header() {
     let text = "x\n".repeat(100_000);
-    let out = render_condensed(&text, "mcp__fs__dump", 4_096, Ok("0123456789abcdef"));
+    let out = render_condensed(&text, "mcp__fs__dump", 4_096, Ok("0123456789abcdef"), 0);
     assert!(!out.contains("[matching lines"));
     assert!(out.len() <= 4_096);
 }
@@ -56,7 +56,7 @@ fn render_without_signals_omits_the_match_header() {
 fn render_respects_char_boundaries_without_newlines() {
     // One long line of 3-byte characters: neither cut can land on a newline.
     let text = "가".repeat(100_000);
-    let out = render_condensed(&text, "webfetch", 10_000, Ok("0123456789abcdef"));
+    let out = render_condensed(&text, "webfetch", 10_000, Ok("0123456789abcdef"), 0);
     assert!(out.len() <= 10_000);
     let head = out.split('\n').next().unwrap();
     assert!(head.chars().all(|c| c == '가'));
@@ -66,7 +66,7 @@ fn render_respects_char_boundaries_without_newlines() {
 #[test]
 fn render_reports_a_store_failure_instead_of_a_pointer() {
     let text = "line\n".repeat(20_000);
-    let out = render_condensed(&text, "bash", 4_096, Err("disk full"));
+    let out = render_condensed(&text, "bash", 4_096, Err("disk full"), 0);
     assert!(out.contains("lines omitted from `bash` output; the full output could not be saved: disk full]"));
     assert!(!out.contains("artifact://"));
 }
@@ -76,7 +76,7 @@ fn render_caps_each_signal_line() {
     let mut text = "ok\n".repeat(30_000);
     text.push_str(&format!("error: {}\n", "z".repeat(5_000)));
     text.push_str(&"ok\n".repeat(30_000));
-    let out = render_condensed(&text, "bash", BUDGET, Ok("0123456789abcdef"));
+    let out = render_condensed(&text, "bash", BUDGET, Ok("0123456789abcdef"), 0);
     let signal = out
         .lines()
         .find(|line| line.starts_with("L30001: error: "))
@@ -101,4 +101,21 @@ fn condense_saves_the_full_text_and_points_at_it() {
     let start = out.find("artifact://").unwrap() + "artifact://".len();
     let digits: String = out[start..].chars().take_while(char::is_ascii_digit).collect();
     assert_eq!(load("session-a", digits.parse().unwrap()).unwrap(), text);
+}
+
+#[test]
+fn preview_column_cap_keeps_utf8_and_retains_original() {
+    let _home = super::tests::IsolatedHome::new();
+    let text = "가나다라마\r\nok\r\n";
+    let out = preview("width", "bash", text, BUDGET, 4, crate::config::SecretsMode::Off).unwrap();
+    assert!(out.starts_with("가나다…\r\nok\r\n"));
+    let (_, address) = out.split_once("artifact://").unwrap();
+    let (id, _) = address.split_once('"').unwrap();
+    assert_eq!(load("width", id.parse().unwrap()).unwrap(), text);
+}
+
+#[test]
+fn preview_column_cap_leaves_inline_json_parseable() {
+    let text = r#"{"message":"가나다라마"}"#;
+    assert!(preview("width-json", "bash", text, BUDGET, 4, crate::config::SecretsMode::Off).is_none());
 }

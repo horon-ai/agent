@@ -116,10 +116,19 @@ input = ["text", "image"]
 | `extra_body` | A top-level JSON object merged into the top level of every request body on all four wires. Use it for backend-only fields such as `chat_template_kwargs`. |
 | `requires_api_key` | States whether a key is needed. Set it to `false` where there is no key, as with a local endpoint. |
 | `prompt_cache_key` | Decides whether a lineage-stable `prompt_cache_key` goes into the request body. `true` always sends it, `false` never does, and leaving it empty sends it only for `api.openai.com` and `openrouter.ai` hosts. Set it to `false` when a gateway with a strict schema returns 400 for the unknown field. |
+| `stream_first_event_timeout_secs` | Optional positive seconds from sending an attempt to the first meaningful event. The HTTP response-header timeout also applies. |
+| `stream_idle_timeout_secs` | Optional positive seconds without meaningful progress once the stream starts. Each meaningful event restarts the idle timer. |
+| `max_in_flight_requests` | Optional maximum concurrent model and image requests in this process for this named profile, from 1 to 65,535. Leave it unset to allow requests without a profile queue. |
+
+Both limits apply to all four wires. Keepalives and usage-only updates do not start a stream or reset its idle timer. Each setting enables its own timer, and the existing retry limits apply to both timeout errors.
+
+The request limit is shared across sessions and models on one profile. When it is full, a request waits before connecting and can be cancelled while waiting. A streaming request holds its slot until the stream ends or is dropped. Restart the agent process to apply a changed limit.
 
 A single `default_model` line is enough to make calls. The `models` array tells the agent context size and input modalities, which helps model selection and compaction estimates.
 
 A model's `reasoning_effort` is applied when that model becomes active. The session reports the level before the first request and the request carries it, so the status line draws `provider/model · high` without anyone running `/effort`, and the field is filled on whichever wire the profile speaks (the second column of [Wire protocols](#wire-protocols)). An explicit `/effort`, `shift+tab`, or a client `set_reasoning_effort` overrides the configured level and stays in force; a switch to another model then adopts the level that model declares, and a model that declares none keeps the effort already in force. A session restored from storage keeps the effort it recorded even when the configuration names a different level.
+
+`horon run --thinking <effort>` overrides the selected model's effort for the run. `--service-tier <tier>` applies to OpenAI Chat Completions and Responses. Use `priority` (also `fast`), `off` to omit the request field, or `ultrafast` for a supported model. The command rejects unsupported values before sending the prompt. These flags leave the profile configuration unchanged.
 
 ## Model roles
 
@@ -186,7 +195,7 @@ The switch lasts for the rest of the turn and the next turn starts again from th
 
 ### Who implements it
 
-#73 writes the shared type: the `roles` table flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs:150-151` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
+#73 writes the shared type: the `roles` table flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
 
 An unset role configuration behaves exactly as the build does today: no `roles` table, no new key, the model chosen by the existing chain, and no extra attempt.
 

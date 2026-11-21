@@ -70,7 +70,9 @@
                 "pages": [
                   "reference/protocol/acp",
                   "reference/protocol/harness-api",
+                  "reference/protocol/collaboration",
                   "reference/protocol/rpc",
+                  "reference/protocol/sharing",
                   "reference/protocol/session-store"
                 ]
               },
@@ -107,6 +109,7 @@
                 "group": "Performance",
                 "pages": [
                   "reference/performance/benchmark",
+                  "reference/performance/eval",
                   "reference/performance/results",
                   "reference/performance/memory"
                 ]
@@ -177,7 +180,9 @@
                 "pages": [
                   "ko/reference/protocol/acp",
                   "ko/reference/protocol/harness-api",
+                  "ko/reference/protocol/collaboration",
                   "ko/reference/protocol/rpc",
+                  "ko/reference/protocol/sharing",
                   "ko/reference/protocol/session-store"
                 ]
               },
@@ -214,6 +219,7 @@
                 "group": "성능",
                 "pages": [
                   "ko/reference/performance/benchmark",
+                  "ko/reference/performance/eval",
                   "ko/reference/performance/results",
                   "ko/reference/performance/memory"
                 ]

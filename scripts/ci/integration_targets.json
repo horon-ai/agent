@@ -64,7 +64,7 @@
     {
       "package": "horon-agent",
       "target": "openai_compatible_cli",
-      "min_passed": 5
+      "min_passed": 8
     },
     {
       "package": "horon-agent",
@@ -160,6 +160,13 @@
       "package": "horon-agent-base",
       "target": "package_manifest",
       "min_passed": 9
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "package_spawn",
+      "min_passed": 10,
+      "skipped": ["package_child_probe"],
+      "skip_reason": "The installed executable selects this probe as a child process of the package supervisor tests."
     },
     {
       "package": "horon-agent-base",
