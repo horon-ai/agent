@@ -356,9 +356,7 @@ fn a_running_turn_reports_the_todo_share() {
     );
 
     // A cancelled item is work nobody still expects, so it is outside the count.
-    app.todos = crate::todo_panel::TodoPanel::from_snapshot(
-        &[item("one", "completed"), item("two", "cancelled")],
-        None,
-    );
+    app.todos =
+        crate::todo_panel::TodoPanel::from_snapshot(&[item("one", "completed"), item("two", "cancelled")], None);
     assert_eq!(app.terminal_signal().percent, Some(100));
 }
