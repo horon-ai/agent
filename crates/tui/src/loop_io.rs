@@ -221,6 +221,7 @@ fn copy_notice(label: &str, prepared: &Prepared) -> String {
     }
     line.push(')');
     line
+}
 
 /// Draw the one frame this pass owes, if any.
 ///
