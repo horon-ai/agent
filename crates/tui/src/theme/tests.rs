@@ -271,6 +271,8 @@ fn theme_symbol_presets_are_distinct_and_ascii_is_plain() {
         ascii.rule,
         ascii.bar_full,
         ascii.bar_empty,
+        ascii.spinner[0],
+        ascii.spinner[1],
     ] {
         assert!(mark.is_ascii(), "{mark:?} is not ASCII");
     }

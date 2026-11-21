@@ -23,23 +23,33 @@ horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]... [--gallery[=<scene>]]
+                 [--motion <full|reduced|static>]
+                 [--spinner-interval <ms>] [--max-fps <n>]
+                 [--hide-thinking]
 
 Options:
-  --socket <path>  Harness API socket to connect to (default: the resolved
-                   harness socket for this user)
-  --session <id>   Attach to an existing session instead of creating one
-  --cwd <dir>      Working directory for a newly created session
-  --config <file>  Extra settings file, read after the global and project
-                   files and before the environment (repeatable)
-  --gallery[=<scene>]
-                   Draw the built-in fixtures through the renderer and leave;
-                   no socket is opened and no session is read. Scenes:
-                   conversation, tools, error, prompt, unicode
-                   (default: conversation)
-  --hide-thinking  Hide the model's reasoning for this session, whatever
-                   transcript.show_reasoning says; ctrl+t toggles it again
-  -V, --version    Print the version and exit
-  -h, --help       Print this help and exit
+  --socket <path>           Harness API socket to connect to (default: the
+                            resolved harness socket for this user)
+  --session <id>            Attach to an existing session instead of creating one
+  --cwd <dir>               Working directory for a newly created session
+  --config <file>           Extra settings file, read after the global and
+                            project files and before the environment
+                            (repeatable)
+  --gallery[=<scene>]       Draw the built-in fixtures through the renderer and
+                            leave; no socket is opened and no session is read.
+                            Scenes: conversation, tools, error, prompt,
+                            unicode (default: conversation)
+  --motion <mode>           full, reduced or static; overrides the `motion`
+                            setting for this launch
+  --spinner-interval <ms>   Milliseconds one spinner frame stays, 40 to 2000;
+                            overrides `motion.spinner_interval`
+  --max-fps <n>             Most frames a second a streaming turn draws, 1 to
+                            240; overrides `motion.max_fps`
+  --hide-thinking           Hide the model's reasoning for this session,
+                            whatever `transcript.show_reasoning` says; ctrl+t
+                            toggles it again
+  -V, --version             Print the version and exit
+  -h, --help                Print this help and exit
 
 Gallery keys:
   n, Right, Tab     show the next fixture
@@ -137,7 +147,11 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
     (
         ids::APP_EXPAND_TOOL,
-        "show the whole output of the newest cut tool call, or hide it again",
+        "show the whole output of the selected cut tool call, or hide it again",
+    ),
+    (
+        ids::APP_TOGGLE_TOOL_ACTIVITY,
+        "hide or show the record of finished tool calls",
     ),
     (
         ids::APP_CYCLE_EFFORT,
