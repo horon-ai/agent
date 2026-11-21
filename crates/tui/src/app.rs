@@ -71,8 +71,7 @@ mod steer_tests;
 
 /// What the UI asks the bridge to do after a keystroke.
 ///
-/// Not `Eq`: an answer carries protocol selections, which only compare with
-/// `PartialEq`.
+/// Answers carry protocol selections that only implement `PartialEq`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// Send this text as a user message.
