@@ -355,6 +355,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "context" => "show what is filling the context window",
         "continue" => "resume every paused session",
         "fast" => "switch the provider's fast (priority) service tier",
+        "goal" => "attach a goal with /goal <token-budget> <objective>",
         "info" => "show the session, provider and usage details",
         "initiatives" => "list the open initiatives",
         "judge" => "spawn a judge that checks the work against the request",
