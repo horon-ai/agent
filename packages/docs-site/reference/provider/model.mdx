@@ -118,8 +118,11 @@ input = ["text", "image"]
 | `prompt_cache_key` | Decides whether a lineage-stable `prompt_cache_key` goes into the request body. `true` always sends it, `false` never does, and leaving it empty sends it only for `api.openai.com` and `openrouter.ai` hosts. Set it to `false` when a gateway with a strict schema returns 400 for the unknown field. |
 | `stream_first_event_timeout_secs` | Optional positive seconds from sending an attempt to the first meaningful event. The HTTP response-header timeout also applies. |
 | `stream_idle_timeout_secs` | Optional positive seconds without meaningful progress once the stream starts. Each meaningful event restarts the idle timer. |
+| `max_in_flight_requests` | Optional maximum concurrent model and image requests in this process for this named profile, from 1 to 65,535. Leave it unset to allow requests without a profile queue. |
 
 Both limits apply to all four wires. Keepalives and usage-only updates do not start a stream or reset its idle timer. Each setting enables its own timer, and the existing retry limits apply to both timeout errors.
+
+The request limit is shared across sessions and models on one profile. When it is full, a request waits before connecting and can be cancelled while waiting. A streaming request holds its slot until the stream ends or is dropped. Restart the agent process to apply a changed limit.
 
 A single `default_model` line is enough to make calls. The `models` array tells the agent context size and input modalities, which helps model selection and compaction estimates.
 

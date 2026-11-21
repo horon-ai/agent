@@ -63,6 +63,15 @@ pub trait SleepAssertion {
     fn release(&mut self);
 }
 
+/// The error a platform returns when it cannot report a child exit without
+/// reaping the child.
+fn child_exit_unsupported() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "this platform cannot report a child exit without reaping the child",
+    )
+}
+
 /// One operating system's implementation of the primitives core code shares.
 ///
 /// The methods are associated functions: the adapter is a namespace for one
@@ -444,6 +453,11 @@ pub trait PlatformAdapter {
     /// own, so this repeats the tree termination.
     fn force_stop_process_group(pid: u32) -> io::Result<()>;
 
+    /// Sweep the group of a leader that has exited and has not been reaped.
+    fn force_stop_exited_process_group(pid: u32) -> io::Result<()> {
+        Self::force_stop_process_group(pid)
+    }
+
     /// Spawn `cmd` and, where the platform passes descriptors to a child, hand
     /// it a readiness pipe.
     ///
@@ -484,6 +498,21 @@ pub trait PlatformAdapter {
     /// A copy would stop tracking the file the link points at, so a platform
     /// that cannot create a link reports the error rather than copying.
     fn symlink_file(src: &Path, dst: &Path) -> io::Result<()>;
+
+    /// Wait for child process `pid` to exit without reaping it.
+    ///
+    /// With `nonblocking` the call reports whether the child has already exited
+    /// and returns at once. Unix asks `waitid` with `WNOWAIT`, which leaves the
+    /// child waitable: its process-group id stays reserved, so a descendant that
+    /// outlived it can still be signalled before the caller reaps it. A platform
+    /// without that primitive reports `Unsupported`; Windows package children are
+    /// refused until the Job Object supervisor of issue #644 owns them.
+    ///
+    /// The caller must not have reaped the child already: `Child::wait` releases
+    /// the wait state this call reports on.
+    fn wait_child_exit(_pid: u32, _nonblocking: bool) -> io::Result<bool> {
+        Err(child_exit_unsupported())
+    }
 
     /// Stop a child process and reap it.
     ///

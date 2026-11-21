@@ -18,6 +18,8 @@
 
 재개한 세션도 그대로 넘긴다. `horon --resume <id>`는 클라이언트에 `--session <id>`를 전달하므로, 클라이언트는 새 세션을 만들지 않고 그 세션에 붙는다. 소켓은 명령줄로 넘기지 않는다. 이미 `HORON_AGENT_SOCKET`으로 내보내져 있고, 클라이언트가 하네스 API 소켓을 스스로 찾는다.
 
+`horon --continue`는 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 골라 같은 방식으로 클라이언트에 넘긴다.
+
 클라이언트는 하네스 API 브리지를 거쳐 데몬에 닿고, 응답하는 소켓이 없으면 그 브리지를 띄운다. 브리지는 자기를 띄운 터미널을 위해 일하고 그 터미널과 함께 끝난다. 클라이언트가 붙어 있는 동안은 계속 응답하고, 붙은 클라이언트가 없으면 자기를 띄운 프로세스가 끝나는 즉시, 아니면 클라이언트 없이 1분이 지나면 멈춘다. 이때 단일 인스턴스 잠금을 풀고 소켓 파일(`horon-agent-api.sock`)을 지우므로, 다음 실행은 업그레이드 전에 남아 있던 브리지가 아니라 설치된 릴리스의 브리지를 띄운다. 데몬은 그동안 계속 돈다. 강제로 죽은 브리지가 남긴 소켓 파일은 살아 있는 브리지로 여기지 않는다. `horon`과 `horon-tui`는 연결을 열어 소켓을 확인하고, 아무것도 응답하지 않으면 브리지를 다시 띄우며, 새 브리지가 남은 파일을 대체한다. 손으로 정리할 것은 없다.
 
 클라이언트는 자체 인자를 받는다.
@@ -433,7 +435,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | --- | --- |
 | `/archived` | 현재 디렉터리의 보관 목록에서 세션을 복원한다 |
 | `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
-| `/clear` | 트랜스크립트 창을 지운다 |
+| `/clear` | 대화 화면만 비운다 |
+| `/clear-context` | 현재 세션에서 모델에 보낼 문맥을 새로 시작하고 저장한 대화는 보관한다 |
+| `/compact` | 설정한 모델에 이전 문맥의 요약을 요청하고 저장한 대화는 보관한다 |
 | `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
@@ -459,7 +463,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물셋 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물다섯 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -477,7 +481,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 built-in commands:
   /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
