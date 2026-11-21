@@ -116,6 +116,7 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    Tools,
     /// Ask which noted sessions were deleted, including checks for archived sessions.
     CheckSessions(Vec<String>),
     /// Hand the draft to the user's editor; the loop answers this one itself,

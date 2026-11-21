@@ -43,6 +43,8 @@ pub enum Command {
     Models,
     /// List the sessions stored for a working directory.
     Sessions { working_dir: Option<String> },
+    /// List the attached session's enabled tools without running any.
+    Tools,
     /// Ask which of these session ids the harness no longer stores.
     ///
     /// The client asks per id rather than reading one list, because a list
@@ -112,6 +114,8 @@ pub enum Incoming {
         models: Vec<String>,
         current: Option<String>,
     },
+    /// Effective definitions for the attached session.
+    Tools(Vec<horon_agent_sdk::api::SessionToolDefinition>),
     /// What the harness reports about the session it serves.
     ///
     /// `provider`, `model` and `effort` are what the status line shows, and each

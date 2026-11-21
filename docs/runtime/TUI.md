@@ -442,8 +442,9 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/tools` | Browse the current session's enabled tools without running them |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
+The table lists the built-in commands (`Local` in `crates/tui/src/commands/mod.rs`) in name order. `/tools` uses the daemon's effective tool list. It labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -478,6 +479,7 @@ built-in commands:
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
+  /tools               browse the current session's enabled tools without running them
 harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```

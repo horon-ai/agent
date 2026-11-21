@@ -114,6 +114,7 @@ Commands:
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
+  /tools         browse the current session's enabled tools
   //text         send the literal message /text
 
 Local shell (runs in this terminal, in the client's working directory; never
@@ -270,6 +271,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",
+        "tools" => "browse the current session's enabled tools without running them",
         _ => "",
     }
 }

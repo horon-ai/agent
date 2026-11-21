@@ -8,6 +8,7 @@
 //! that was open, so they are cleared before the stored conversation is replayed.
 
 use crossterm::event::KeyEvent;
+use horon_agent_sdk::api::SessionToolDefinition;
 
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
@@ -233,6 +234,32 @@ impl App {
         self.fill(Kind::Sessions, rows);
     }
 
+    pub(crate) fn open_tools(&mut self) -> Option<Action> {
+        self.picker = Some(Picker::loading(
+            Kind::Tools,
+            "Session tools",
+            "no tools are enabled for this session",
+        ));
+        Some(Action::Tools)
+    }
+
+    pub(crate) fn show_tools(&mut self, mut tools: Vec<SessionToolDefinition>) {
+        tools.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        let rows = tools
+            .into_iter()
+            .map(|tool| {
+                let preview = (!tool.description.is_empty())
+                    .then_some(tool.description)
+                    .into_iter()
+                    .collect();
+                Row::new(tool.name, "")
+                    .with_detail("tier unknown")
+                    .with_preview(preview)
+            })
+            .collect();
+        self.fill(Kind::Tools, rows);
+    }
+
     /// Replace the rows of the open list, if it is the one that asked.
     pub(super) fn fill(&mut self, kind: Kind, rows: Vec<Row>) {
         let Some(picker) = self.picker.as_mut() else {
@@ -287,7 +314,7 @@ impl App {
                 // The queue answers its own keys before this list sees them, so
                 // no row is ever chosen from here; a value that arrives anyway
                 // changes nothing rather than acting as some other kind of row.
-                Kind::Queue => None,
+                Kind::Queue | Kind::Tools => None,
                 // A link is the one row that leaves the client: the reader
                 // pressed enter on it, so it goes to the platform handler and
                 // the list closes without an action for the bridge.

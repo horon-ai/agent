@@ -85,6 +85,8 @@ pub enum Local {
     Resume,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
+    /// Browse the tools enabled for the attached session.
+    Tools,
     /// Switch to another session, by id or from the list.
     Switch,
     /// Attach, edit, list or remove a local note on a transcript message.
@@ -120,6 +122,7 @@ impl Local {
             "settings" => Some(Self::Settings),
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
+            "tools" => Some(Self::Tools),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
             "links" => Some(Self::Links),
@@ -146,6 +149,7 @@ impl Local {
             Self::Settings => "settings",
             Self::Resume => "resume",
             Self::Skills => "skills",
+            Self::Tools => "tools",
             Self::Switch => "switch",
             Self::Note => "note",
             // The shell forms are typed with a `!` prefix, not a slash, so
@@ -649,9 +653,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
+const LOCAL_NAMES: [&str; 20] = [
     "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+    "record", "replay", "resume", "settings", "skills", "switch", "tools",
 ];
 
 /// Every runtime command, in declaration order.

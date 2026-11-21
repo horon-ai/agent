@@ -582,6 +582,13 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
+        terminal.send("/tools\r")
+        terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
+        terminal.read_until("tier unknown", STEP_TIMEOUT, "unreported loading tier")
+        terminal.send("bash\r")
+        if contains(terminal.transcript, APPROVAL_PROMPT) or os.path.exists(os.path.join(case_root, TOOL_FILE)):
+            raise Failure(f"browsing tools started a call\n--- transcript ---\n{terminal.transcript}")
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
@@ -913,6 +920,29 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
+    home = write_config(os.path.join(root, "home"), base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('profile = "none"\n')
+    env = horon_env(root, home)
+    env.pop("HORON_AGENT_TOOL_PROFILE", None)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(root), cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "empty-profile session ready")
+        terminal.send("/tools\r")
+        terminal.read_until("no tools are enabled for this session", STEP_TIMEOUT, "empty tool picker")
+        terminal.send("\x1b")
+        terminal.send("\x1b")
+        terminal.send("\x03")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0:
+            raise Failure(f"empty tool picker exited {code}\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def run_build_layout(
     agent: str, tui: str, root: str, base_url: str, transcript: str | None, cases: set[int]
 ) -> int:
@@ -920,6 +950,8 @@ def run_build_layout(
         log("case 1: bare horon hands a terminal over to horon-tui")
         launch = build_launch(os.path.join(root, "happy"), agent, tui)
         text = happy_path(launch, os.path.join(root, "happy"), base_url)
+        if POSIX:
+            text += "\n--- empty tool profile ---\n" + empty_tool_picker(launch, os.path.join(root, "empty-tools"), base_url)
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)

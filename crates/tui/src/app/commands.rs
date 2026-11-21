@@ -87,6 +87,7 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
+            Local::Tools => self.open_tools(),
             Local::Settings => self.open_settings(),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and
