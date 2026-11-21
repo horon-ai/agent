@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
 
-use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
+use horon_agent_sdk::api::{ApiEvent, TurnStopReason};
 
 use crate::commands::Registry;
 use crate::history::History;
@@ -28,6 +28,7 @@ use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
 use self::copy::CopyRequest;
 
+mod action;
 mod commands;
 mod copy;
 mod draft_suggestions;
@@ -69,65 +70,7 @@ mod session_switch_tests;
 #[cfg(test)]
 mod steer_tests;
 
-/// What the UI asks the bridge to do after a keystroke.
-///
-/// Not `Eq`: an answer carries protocol selections, which only compare with
-/// `PartialEq`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Action {
-    /// Send this text as a user message.
-    Send(String),
-    /// Send this text into the running turn as one soft interrupt.
-    /// The harness receives joined text while each queued row stays visible until the reply.
-    Steer(String),
-    /// Cancel the running turn.
-    Cancel,
-    /// Answer a parked approval.
-    Approval {
-        request_id: String,
-        approved: bool,
-        always: bool,
-    },
-    /// Answer a structured question.
-    Ask {
-        ask_id: String,
-        answers: Vec<AskSelection>,
-    },
-    /// Ask the harness to run one of its own commands.
-    Runtime {
-        command: horon_agent_sdk::RuntimeCommand,
-        arguments: Vec<String>,
-    },
-    /// Switch to the model named.
-    Model(String),
-    /// Set the reasoning effort to the level named.
-    Effort(String),
-    /// Request the model catalog used by the picker and shortlist cycling.
-    Models,
-    /// Ask for the sessions stored for this working directory.
-    Sessions,
-    ArchivedSessions,
-    Archive(String),
-    Restore(String),
-    /// Start a new session in this working directory and follow it.
-    NewSession,
-    /// Attach to another session and replay its stored conversation.
-    Attach(String),
-    /// Save a title for the attached session.
-    Rename(String),
-    /// Ask the harness for the skills it reports for the session.
-    Skills,
-    /// Ask which noted sessions were deleted, including checks for archived sessions.
-    CheckSessions(Vec<String>),
-    /// Hand the draft to the user's editor; the loop answers this one itself,
-    /// because the editor needs the terminal the loop is drawing on.
-    EditDraft,
-    /// Give the terminal to the editor with a private copy of a resolved artifact.
-    OpenArtifact(std::path::PathBuf),
-    /// Ask the daemon for the values the settings screen displays.
-    DaemonSettings,
-    Quit,
-}
+pub use action::Action;
 
 /// One message from the user, before the harness has confirmed it.
 ///

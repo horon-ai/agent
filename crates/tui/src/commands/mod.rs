@@ -4,9 +4,9 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
-//!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record`, `/replay`, `/diff` and `/commit`.
+//!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
+//!    `/compact`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
+//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay`, `/diff` and `/commit`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -56,6 +56,22 @@ mod tests;
 
 pub use parse::{ParsedCommand, fallback_description, substitute};
 
+/// Changes to the model context of the current session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCommand {
+    Clear,
+    Compact,
+}
+
+impl ContextCommand {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Clear => "clear-context",
+            Self::Compact => "compact",
+        }
+    }
+}
+
 /// A command the client answers itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Local {
@@ -71,6 +87,8 @@ pub enum Local {
     Keys,
     /// Clear the transcript pane.
     Clear,
+    /// Clear or compact model context on the daemon.
+    Context(ContextCommand),
     /// Copy the draft, an answer or a code block to the terminal clipboard.
     Copy,
     /// Open the model picker, or switch to the model named.
@@ -123,6 +141,8 @@ impl Local {
             "artifact" => Some(Self::Artifact),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
+            "clear-context" => Some(Self::Context(ContextCommand::Clear)),
+            "compact" => Some(Self::Context(ContextCommand::Compact)),
             "copy" => Some(Self::Copy),
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
@@ -154,6 +174,7 @@ impl Local {
             Self::Artifact => "artifact",
             Self::Keys => "keys",
             Self::Clear => "clear",
+            Self::Context(command) => command.name(),
             Self::Copy => "copy",
             Self::Model => "model",
             Self::Effort => "effort",
@@ -669,9 +690,33 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 24] = [
-    "archived", "artifact", "clear", "commit", "copy", "diff", "effort", "exit", "help", "keys", "links", "mcp",
-    "model", "new", "note", "queue", "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 26] = [
+    "archived",
+    "artifact",
+    "clear",
+    "clear-context",
+    "commit",
+    "compact",
+    "copy",
+    "diff",
+    "effort",
+    "exit",
+    "help",
+    "keys",
+    "links",
+    "mcp",
+    "model",
+    "new",
+    "note",
+    "queue",
+    "quit",
+    "record",
+    "rename",
+    "replay",
+    "resume",
+    "settings",
+    "skills",
+    "switch",
 ];
 
 /// Every runtime command, in declaration order.
