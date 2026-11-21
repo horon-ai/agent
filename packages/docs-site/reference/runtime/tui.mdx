@@ -23,6 +23,8 @@ A resumed session is handed over as well. `horon --resume <id>` passes `--sessio
 
 `horon --continue` selects the most recently active saved session in the working directory and hands it to the client the same way.
 
+`horon --goal "Ship a fix" --goal-budget 1200` starts a new session and shows its goal and token ceiling. The flags also work with `horon run` and conflict with `--resume` and `--continue`. In a terminal session, `/goal 1200 Ship a fix` creates and attaches a goal without sending a model prompt. An existing active goal stays attached when reconnecting.
+
 The client reaches the daemon through the harness API bridge, and starts that bridge when no listening socket answers. The bridge serves the terminal that started it and ends with it: while a client is connected it keeps serving, and once none is it stops, as soon as the process that started it exits or after a minute without a client, releasing its single-instance lock and removing the socket file (`horon-agent-api.sock`). The next launch therefore starts a bridge from the installed release instead of reconnecting to one that stayed resident across an upgrade, and the daemon keeps running throughout. A socket file left by a bridge that was killed outright is not taken as a running bridge: `horon` and `horon-tui` check the socket with a connection, and when nothing answers they start the bridge again, which replaces the leftover file. No manual cleanup is needed.
 
 The client takes its own arguments:

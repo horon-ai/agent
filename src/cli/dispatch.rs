@@ -40,6 +40,9 @@ fn arm_debug_client_parent_death_signal() {
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
+    if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
+        anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
+    }
     if args.ssh.is_some() {
         // A remote session ID and working directory belong to the remote host.
         // Do not run local resume lookup or provider bootstrap.
@@ -268,14 +271,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 commands::run_server_stop_command(force, json).await?;
             }
         },
-        Some(Command::Run {
-            ref message,
-            json,
-            ndjson,
-            no_pty,
-            max_time,
-            ref model_overrides,
-        }) => one_shot::run(&args, message, json, ndjson, no_pty, model_overrides, max_time).await?,
+        Some(Command::Run { .. }) => one_shot::run(&args).await?,
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref()).await?;
@@ -600,7 +596,11 @@ async fn run_default_command(args: Args) -> Result<()> {
     // installed beside this executable, this process becomes that client, with
     // a resumed session passed along; every other shape (a pipe, `HORON_NO_TUI`,
     // no sibling) keeps the headless message so scripts and CI still see it.
-    super::tui_handoff::run(super::tui_handoff::decide_for_process(), args.resume.as_deref())
+    super::tui_handoff::run(
+        super::tui_handoff::decide_for_process(),
+        args.resume.as_deref(),
+        args.goal.as_deref().zip(args.goal_budget),
+    )
 }
 
 pub(crate) async fn server_is_running() -> bool {

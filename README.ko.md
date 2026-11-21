@@ -123,6 +123,8 @@ horon run "summarize this repo"
 | `horon completions <bash\|zsh\|fish>` | 데몬을 시작하지 않고 셸 자동완성 스크립트를 출력한다. |
 | `horon stream-rules [TEXT]` | 스트림 규칙을 검사하고 모델 답변 예시에 맞는 규칙을 오프라인에서 확인한다. |
 
+`horon run --wait-async "<메시지>"`는 해당 실행이 시작한 작업을 기다리고 각 작업의 최종 상태를 한 번씩 표시합니다. `--max-time`은 응답과 작업 대기를 합친 시간을 제한합니다. 시간을 넘기면 확인한 작업 상태를 표시하고 0이 아닌 코드로 종료합니다.
+
 `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답하므로 v1 클라이언트와 v2 클라이언트가 모두 붙는다.
 
 ### 터미널 클라이언트
@@ -132,6 +134,8 @@ horon run "summarize this repo"
 터미널에서 `horon`, `hrn`, `horon-agent`를 인자 없이 실행하면 시작한다. 서버가 없으면 띄운 뒤 자기 프로세스를 에이전트 옆의 `horon-tui`로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬다면 세션 번호도 넘긴다. 먼저 조건 셋을 확인한다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션이면 클라이언트 대신 그 문장을 남기므로 스크립트와 CI는 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고, 대화형 클라이언트 설치 명령을 안내한 뒤 0이 아닌 코드로 끝난다.
 
 현재 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 다시 열려면 `horon --continue`를 실행한다. 특정 세션을 고르려면 `--resume <id>`를 사용한다.
+
+`horon --goal "Ship a fix" --goal-budget 1200`으로 새 세션에 목표와 토큰 예산을 설정할 수 있습니다.
 
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 

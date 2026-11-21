@@ -15,6 +15,10 @@ This build has no interactive login flow. The SDK exposes two things about crede
 
 The SDK neither issues nor refreshes OAuth tokens. The launch option `inherit_logins` (on by default) links the user's existing CLI credential files into the instance, and model requests use those files as they are (`crates/agent-sdk/src/launch.rs`). Model calls go only through the OpenAI-compatible profile in `[providers.<name>]`, so this build has no model runtime that authenticates with OAuth. The `openai-oauth:` prefix still exists, but with that runtime gone it fails before the call (`docs/provider/MODEL.md`).
 
+## Session goals
+
+Send `runtime_command` with the command `goal` and arguments `["1200", "Ship a fix"]` to attach a goal to the selected session. The first argument is a positive token ceiling. The response contains the saved goal and a display message. The command leaves an existing active goal in place and returns an error if another is requested.
+
 ## Durable runtime API (protocol 1.14)
 
 The major version stays at `1` and the minor version moved from 13 to 14. Every surface below is additive. The byte representation of existing requests and the shape of their responses are unchanged, and a client that sends none of the new requests behaves exactly as before.

@@ -110,6 +110,14 @@ pub(crate) struct Args {
     #[arg(long = "continue", global = true, conflicts_with_all = ["resume", "ssh"])]
     pub(crate) continue_latest: bool,
 
+    /// Attach an objective to a new session before its first turn.
+    #[arg(long, global = true, requires = "goal_budget", conflicts_with_all = ["resume", "continue_latest", "ssh"])]
+    pub(crate) goal: Option<String>,
+
+    /// Token ceiling for the new session goal.
+    #[arg(long, global = true, requires = "goal", value_parser = clap::value_parser!(u64).range(1..))]
+    pub(crate) goal_budget: Option<u64>,
+
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
     #[allow(dead_code)]
@@ -274,6 +282,10 @@ pub(crate) enum Command {
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
         max_time: Option<std::time::Duration>,
+
+        /// Wait for background jobs started by this invocation before exiting
+        #[arg(long)]
+        wait_async: bool,
 
         #[command(flatten)]
         model_overrides: RunModelOverrides,
