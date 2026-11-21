@@ -34,5 +34,5 @@ fn the_description_names_the_profile_and_a_safe_alias() {
     let profile = resolve("work", base.path(), base.path()).unwrap();
     let text = describe(&profile);
     assert!(text.starts_with("profile: work\n"));
-    assert!(text.ends_with("alias horon-work='horon --profile work'"));
+    assert!(text.ends_with("alias horon-work='horon --isolated-profile work'"));
 }

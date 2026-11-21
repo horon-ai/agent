@@ -54,7 +54,7 @@ async fn run_with_args(args: Args) -> Result<()> {
     if let Some(result) = offline_command(args.command.as_ref()) {
         return result;
     }
-    if let Some(name) = args.profile.as_deref() {
+    if let Some(name) = args.isolated_profile.as_deref() {
         let profile = super::launch_profile::select(name)?;
         super::launch_profile::apply(&profile)?;
         if args.show_profile {

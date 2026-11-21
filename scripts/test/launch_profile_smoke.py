@@ -14,9 +14,9 @@ def run(agent, home, runtime, *args):
 
 
 def show(agent, home, runtime, name):
-    result = run(agent, home, runtime, "--profile", name, "--show-profile")
+    result = run(agent, home, runtime, "--isolated-profile", name, "--show-profile")
     if result.returncode != 0:
-        sys.exit(f"--profile {name} failed: {result.stderr}")
+        sys.exit(f"--isolated-profile {name} failed: {result.stderr}")
     return dict(line.split(": ", 1) for line in result.stdout.splitlines() if ": " in line)
 
 
@@ -32,16 +32,16 @@ def main():
         assert work["home"] != personal["home"], "profiles share a home"
         assert work["runtime"] != personal["runtime"], "profiles share an endpoint directory"
         assert work["home"] == os.path.join(home, "profiles", "work")
-        assert "horon --profile work" in work["alias"]
+        assert "horon --isolated-profile work" in work["alias"]
         for bad in ("../work", "Work", "work/x"):
-            refused = run(agent, home, runtime, "--profile", bad, "--show-profile")
+            refused = run(agent, home, runtime, "--isolated-profile", bad, "--show-profile")
             assert refused.returncode != 0, f"{bad!r} accepted"
-        assert run(agent, home, runtime, "--profile", "work", "--socket", "/tmp/x.sock", "--show-profile").returncode != 0
+        assert run(agent, home, runtime, "--isolated-profile", "work", "--socket", "/tmp/x.sock", "--show-profile").returncode != 0
         legacy = run(agent, home, runtime, "--show-profile")
         assert legacy.returncode == 0 and "profile: none" in legacy.stdout, legacy.stdout
         os.makedirs(os.path.join(home, "profiles"), exist_ok=True)
         os.symlink(root, os.path.join(home, "profiles", "linked"))
-        linked = run(agent, home, runtime, "--profile", "linked", "--show-profile")
+        linked = run(agent, home, runtime, "--isolated-profile", "linked", "--show-profile")
         assert linked.returncode != 0, "a linked profile directory was accepted"
         print("launch profiles are isolated")
 

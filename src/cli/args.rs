@@ -134,8 +134,8 @@ pub(crate) struct Args {
     pub(crate) socket: Option<String>,
 
     /// Isolated local profile: separate config, sessions, credentials and daemon sockets.
-    #[arg(long, global = true, value_name = "NAME", conflicts_with_all = ["socket", "ssh"])]
-    pub(crate) profile: Option<String>,
+    #[arg(long = "isolated-profile", global = true, value_name = "NAME", conflicts_with_all = ["socket", "ssh"])]
+    pub(crate) isolated_profile: Option<String>,
 
     /// Print the active profile, its paths and a shell alias example, then exit.
     #[arg(long, global = true)]

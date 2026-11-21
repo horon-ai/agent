@@ -66,7 +66,7 @@ pub(crate) fn apply(profile: &Profile) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the profile selected by `--profile`, from the current base paths.
+/// Resolve the profile selected by `--isolated-profile`, from the current base paths.
 pub(crate) fn select(name: &str) -> Result<Profile> {
     resolve(
         name,
@@ -77,7 +77,7 @@ pub(crate) fn select(name: &str) -> Result<Profile> {
 
 pub(crate) fn describe(profile: &Profile) -> String {
     format!(
-        "profile: {name}\nhome: {home}\nruntime: {runtime}\nalias: alias horon-{name}='horon --profile {name}'",
+        "profile: {name}\nhome: {home}\nruntime: {runtime}\nalias: alias horon-{name}='horon --isolated-profile {name}'",
         name = profile.name,
         home = profile.home.display(),
         runtime = profile.runtime_dir.display(),
