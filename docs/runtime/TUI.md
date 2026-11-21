@@ -226,6 +226,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | Send the typed message |
 | `app.cancel` | `ctrl+c` | Cancel the running turn, or leave when nothing is running |
 | `app.interrupt` | `esc` | Send the queued messages into the running turn; with nothing queued, interrupt it. No action when idle |
+| `app.retry_turn` | `alt+r` | Continue the last failed turn |
 | `app.quit` | `ctrl+d` | Delete at the cursor while the draft has text, or leave when the draft is empty and the editor is idle |
 | `app.scroll_page_up` | `pageup` | Hold the transcript one page higher |
 | `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |

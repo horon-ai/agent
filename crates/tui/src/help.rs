@@ -157,6 +157,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_INTERRUPT,
         "interrupt the running turn, or send queued messages into it",
     ),
+    (ids::APP_RETRY_TURN, "continue the last failed turn"),
     (
         ids::APP_QUIT,
         "leave; ctrl+d deletes at the cursor while the draft has text",
