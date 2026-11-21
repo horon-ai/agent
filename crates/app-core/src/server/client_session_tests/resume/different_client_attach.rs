@@ -113,7 +113,7 @@ async fn handle_resume_session_allows_attach_from_different_client_instance() ->
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
@@ -125,9 +125,7 @@ async fn handle_resume_session_allows_attach_from_different_client_instance() ->
         "expected Done event for live attach, got {events:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, ServerEvent::Error { .. })),
+        !events.iter().any(|event| matches!(event, ServerEvent::Error { .. })),
         "attach should not emit error events: {events:?}"
     );
 

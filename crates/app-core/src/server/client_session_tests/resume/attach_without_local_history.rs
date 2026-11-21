@@ -113,7 +113,7 @@ async fn handle_resume_session_allows_attach_without_local_history() -> Result<(
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
@@ -125,9 +125,7 @@ async fn handle_resume_session_allows_attach_without_local_history() -> Result<(
         "expected Done event for live attach, got {events:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, ServerEvent::Error { .. })),
+        !events.iter().any(|event| matches!(event, ServerEvent::Error { .. })),
         "attach should not emit error events: {events:?}"
     );
 
@@ -139,9 +137,7 @@ async fn handle_resume_session_allows_attach_without_local_history() -> Result<(
     let connections = client_connections.read().await;
     assert!(connections.contains_key("conn_existing"));
     assert_eq!(
-        connections
-            .get("conn_new")
-            .map(|info| info.session_id.as_str()),
+        connections.get("conn_new").map(|info| info.session_id.as_str()),
         Some(target_session_id)
     );
     drop(connections);
