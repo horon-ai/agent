@@ -788,6 +788,17 @@ Set `[tools] output_column_cap = 120` to shorten each text preview line to 120 U
 | PDF text from `read` | 64 KiB |
 | Other tools (MCP, `agentgrep`, and the rest) | 48 KiB, applied in `Registry::execute` just before the context guard |
 
+Use `[tools.artifact_output]` to lower the shared budgets above. Unset keys keep their defaults.
+
+| Key | Effect |
+| --- | --- |
+| `spill_threshold_kib` | Start retaining text as an artifact above this threshold. The minimum is 1 KiB and the tool's existing limit remains the maximum. |
+| `head_kib` / `tail_kib` | Limit each preview segment to this size, at most 40% of the effective budget. Zero omits that segment. |
+| `tail_lines` | Also limit the tail by line count. Zero omits the tail. |
+| `file_cap_mib` | Limit each retained shared preview artifact to 1–16 MiB, including its truncation notice. |
+
+Lowering the spill threshold keeps valid inline JSON intact when it fits the tool's original budget. These settings apply to the shared text condenser. Other artifact writers keep their existing storage limits.
+
 A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
 
 Set `[tools] read_default_limit = 300` to change the default page size for `read` without an explicit `limit` or end line. The default is 5,000 lines. Configured values are clamped to 1–5,000. Explicit limits, line ranges, and path selectors keep their own behavior. A partial page reports where to continue.

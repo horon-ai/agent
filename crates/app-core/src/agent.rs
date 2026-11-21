@@ -68,7 +68,7 @@ pub(crate) use turn_failover::active_profile_fallback_models;
 #[path = "agent/soft_interrupt_commit_tests.rs"]
 mod soft_interrupt_commit_tests;
 mod status;
-mod stream_rules;
+pub mod stream_rules;
 mod streaming;
 #[cfg(test)]
 mod streaming_clone_compaction_tests;

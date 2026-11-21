@@ -186,8 +186,26 @@ impl Args {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Print shell completions for horon
+    Completions { shell: CompletionShell },
+
+    /// Validate stream rules and optionally preview one assistant-text sample
+    #[command(name = "stream-rules")]
+    StreamRules {
+        /// Assistant text to check, or '-' to read UTF-8 text from stdin
+        #[arg(value_name = "TEXT")]
+        sample: Option<String>,
+    },
+
     /// List configured MCP servers or manage remote-server OAuth credentials
     Mcp {
         #[command(subcommand)]

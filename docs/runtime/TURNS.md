@@ -266,6 +266,8 @@ Nothing is injected when the user cancels a turn. `inject_soft_interrupts` retur
 
 With `[features] stream_rules` on, a rule violation detected mid-stream injects a message over the same event channel. That path uses the point name `S` (`crates/app-core/src/agent/stream_rules.rs:42`, `crates/app-core/src/agent/turn_streaming_mpsc.rs:738-780`). It is separate from the user input queue, and when the switch is off the matcher is never created (`crates/app-core/src/agent/stream_rules.rs:83-90`).
 
+Run `horon stream-rules` to validate configured rule IDs, patterns, scopes, and path globs offline. `horon stream-rules 'sample response'` previews which text rules match and shows their delivery modes. Pass `-` to read up to 64 KiB of UTF-8 from stdin. The preview uses the runtime's rolling text window and an empty turn history. It runs even with `[features] stream_rules` off, applies no deliveries, and leaves sessions untouched.
+
 ### User experience
 
 The daemon opens no screen of its own; the feedback a client can use is three protocol events.

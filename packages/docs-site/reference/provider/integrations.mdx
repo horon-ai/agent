@@ -208,6 +208,35 @@ Use HTTPS for remote servers that require authentication. Loopback HTTP is
 acceptable for local development and integration tests. OAuth endpoint discovery and callback
 validation enforce secure URLs, resource binding, PKCE, and state validation.
 
+## Proposed isolated browser connector
+
+Status: design for #576. Horon already connects to configured MCP servers, and `webfetch` retrieves page content. A separate browser MCP connector would let a user explicitly open a page and request its accessibility snapshot or screenshot. [Tool reference](/reference/runtime/tools)
+
+| Option | Consequence |
+| --- | --- |
+| Extend `webfetch` with a browser engine | Adds browser lifecycle and dependencies to the core fetch path. |
+| Attach to the user's existing browser | Gives access to existing authentication and unrelated tabs. |
+| Use a user-configured local stdio MCP connector | Keeps browser dependencies outside the agent, makes each inspection disposable, and reuses the existing configuration boundary. Selected. |
+
+The user installs and explicitly enables the connector with existing trusted MCP configuration. The connector starts one temporary browser context for one selected page and never imports an existing profile, cookies or local storage. Keep the initial surface to user-initiated navigation, accessibility snapshots and screenshots. Tool output has no authority to open another page. Require a new user selection for a different origin. Enforce the selected origin on main navigation, redirects and resource requests. Reject unsupported schemes and ambient local targets. Allow loopback only when the operator explicitly selects the exact loopback origin for a fixture. No background navigation, arbitrary script execution, downloads, form submission or remote debugging attachment is part of this design.
+
+Each navigation defaults to a 15-second deadline. A snapshot returns up to 500 accessibility nodes and 64 KiB of text, with an explicit truncation marker. A screenshot is limited to one viewport of at most 1280 by 720 pixels and 2 MiB of encoded data. A disabled, disconnected or failed connector returns an ordinary, bounded MCP error. On disconnect, timeout during startup or browser failure, cancel pending work and close the context, browser process and temporary profile. Use process ownership to avoid closing a browser the connector did not launch. Do not persist captured content or include it in diagnostic logs by default. Treat page content and returned metadata as untrusted data.
+
+### Implementation boundaries
+
+1. Define the external connector's local stdio contract and verify installation under the existing MCP trust model. Keep browser dependencies, processes and profile cleanup in the external connector.
+2. Document setup in this guide and `docs/runtime/TOOLS.md`. Exercise discovery and calls through `crates/app-core/src/tool/mcp.rs`. Use the existing MCP manager and lifecycle unless a demonstrated failure calls for a narrow change there.
+3. Validate a selected local fixture and disconnect in GitHub Actions. Record bounded response metadata and process and profile removal. Review consent, origin isolation and artifact handling before offering the connector.
+
+| Fixture action | Expected observation |
+| --- | --- |
+| Explicitly select the local fixture origin and open a page containing one heading and one labelled control | An existing MCP configuration reaches the connector and receives a snapshot containing both nodes. |
+| Request a snapshot of a page with 600 nodes | At most 500 nodes and 64 KiB of text are returned and the result says it is truncated. |
+| The fixture redirects to a different origin without a user selection | The connector refuses and sends no navigation to that origin. |
+| Disconnect with a pending capture | The capture is cancelled and the connector-owned browser and temporary profile are gone. |
+
+Run `cargo test --locked -p horon-agent --lib cli::` for compatibility. The focused fixture uses loopback and no real authentication, external traffic or existing browser profile. For any terminal control added later, capture a PTY receipt for explicit selection and disconnect.
+
 ## Custom HTTP JSON web search
 
 Any HTTP endpoint that returns JSON is configured in `~/.horon/config.toml`.

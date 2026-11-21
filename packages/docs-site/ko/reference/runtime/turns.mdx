@@ -265,6 +265,8 @@ CancelSoftInterrupts {
 
 `[features] stream_rules`가 켜져 있으면 스트리밍 중간에 규칙 위반을 잡아 같은 이벤트 채널로 메시지를 넣는다. 이 경로는 지점 이름 `S`를 쓴다(`crates/app-core/src/agent/stream_rules.rs:42`, `crates/app-core/src/agent/turn_streaming_mpsc.rs:738-780`). 사용자 입력 대기열과 별개이며, 켜지 않으면 매처 자체가 만들어지지 않는다(`crates/app-core/src/agent/stream_rules.rs:83-90`).
 
+`horon stream-rules`는 설정에 적힌 규칙 ID, 정규식, 적용 범위와 경로 패턴을 오프라인에서 검사합니다. `horon stream-rules '답변 예시'`는 예시에 맞는 텍스트 규칙과 적용 방식을 표시합니다. `-`를 지정하면 표준 입력에서 UTF-8 텍스트를 최대 64 KiB까지 읽습니다. 실제 실행과 같은 최근 텍스트 범위를 빈 턴 기록에 적용합니다. `[features] stream_rules`가 꺼져 있어도 검사할 수 있으며 규칙을 실행하거나 세션을 바꾸지 않습니다.
+
 ### 사용자 경험
 
 데몬은 스스로 화면을 열지 않는다. 클라이언트가 쓸 수 있는 피드백은 프로토콜 이벤트 세 가지다.

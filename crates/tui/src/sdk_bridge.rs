@@ -158,6 +158,12 @@ pub struct Runtime {
     /// remote bridge instead, and the paths in that session's report belong to
     /// the other machine.
     pub local: bool,
+    /// The endpoint this connection reached, which scopes client-local state.
+    ///
+    /// Session ids need only be unique inside one daemon, so a pin stored for
+    /// one endpoint must never be read as naming a session of another. The
+    /// socket the connection used is that name.
+    pub scope: String,
 }
 
 /// Connect, attach to or create a session, and start the bridge thread.
@@ -223,6 +229,7 @@ pub fn connect(options: ConnectOptions, attach: Option<&str>, working_dir: Optio
         description,
         workspace,
         local,
+        scope: socket.display().to_string(),
     })
 }
 
