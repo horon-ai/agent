@@ -480,16 +480,10 @@ where
 {
     let mut failure = None;
     let mut mouse_captured = false;
-    // The scheduler draws the first frame and sets the cadence after that.
     let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
-    // The minute the status line's clock last showed, so the frame that turns
-    // it over is drawn and no other idle frame is.
+    // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
-    // Whether the terminal keeps a title worth adding the state to; asked once,
-    // because the answer is the terminal's and does not change while it runs.
     let state_supported = title.state_supported();
-    // The state the window title already carries: `title.start` wrote it, and
-    // the first frame must not write it again.
     let mut shown_state = window_state(app, state_supported);
     loop {
         let mut changed = match loop_io::drain_events(app) {
@@ -581,9 +575,6 @@ where
                 break;
             }
         }
-        // Every input event can change what is on screen: a key edits the
-        // draft or moves the selection, a paste inserts, the wheel scrolls and a
-        // resize remakes the whole layout.
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting
