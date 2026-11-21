@@ -607,7 +607,10 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
     terminal.read_until("parent:", STEP_TIMEOUT, "parent return row")
     parent_start = len(terminal.transcript)
     terminal.send("\r")
-    terminal.read_until(f"resumed {parent}", STEP_TIMEOUT, "returned to the original session", since=parent_start)
+    terminal.read_until("attaching to parent:", STEP_TIMEOUT, "selected the original session", since=parent_start)
+    repaint_at = len(terminal.transcript)
+    terminal.send("\x0c")
+    terminal.read_until(f"resumed {parent}", STEP_TIMEOUT, "parent session attached", since=repaint_at)
 
 
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
