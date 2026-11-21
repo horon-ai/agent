@@ -15,8 +15,8 @@ test a package without the engine's internal ABI.
 
 On `dev`, the install command registers both package kinds. A running daemon
 reconciles completed inbox folders and publishes catalog generations. The child
-supervisor runs installed copies on Linux and macOS. Session integration is a
-later step.
+supervisor runs installed copies on Linux, macOS and Windows. Session
+integration is a later step.
 
 | Surface | State | Check |
 | --- | --- | --- |
@@ -27,8 +27,9 @@ later step.
 | Worked example in both layouts | Implemented | `cargo test -p horon-package-example --test extension_layouts` |
 | `horon package install` and the inbox reconciler | Implemented | `cargo test --locked --test package_cli` |
 | Child supervision on Linux and macOS | Implemented | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| Child supervision on Windows | Implemented | `cargo test --locked -p horon-agent-base --test package_spawn_windows` on `.github/workflows/package-windows.yml` (x64 and arm64) |
 | Daemon catalog control and automatic inbox reconciliation | Implemented | `cargo test --locked --test harness_roundtrip package_daemon` |
-| Windows child supervision and session integration | Pending | Follow-up changes on the same launch path |
+| Session integration | Pending | Follow-up changes on the same launch path |
 
 ## Two package kinds
 
@@ -234,18 +235,36 @@ step.
 
 The launcher retains a lease on the installed copy and checks the recorded
 executable immediately before starting it. The child starts from that copy,
-with its absolute package root as the first argument. On Linux and macOS, the
-launcher clears the environment and supplies these values.
+with its absolute package root as the first argument. The launcher clears the
+environment and supplies these values.
 
 | Variable | Value |
 | --- | --- |
 | `HORON_PACKAGE_ROOT`, `HORON_PACKAGE_ID`, `HORON_PACKAGE_KIND` | Installed root, package ID, and package kind |
 | `HORON_PACKAGE_STATE`, `HOME` | The package's owner-private state directory |
-| `TMPDIR` | The `tmp` directory under package state |
-| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` | Inherited when set |
+| `TMPDIR` (Unix) | The `tmp` directory under package state |
+| `USERPROFILE`, `TEMP`, `TMP` (Windows) | The state directory, and `tmp` under it for the two temporary paths |
+| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` (Unix); `PATH`, `PATHEXT`, `SYSTEMROOT`, `SYSTEMDRIVE`, `WINDIR`, `COMSPEC`, `NUMBER_OF_PROCESSORS`, `PROCESSOR_ARCHITECTURE`, `OS` (Windows) | Inherited when set |
 
 Provider keys and other host variables are omitted. The child retains the file
 and network permissions of the user's account.
+
+One value owns the child's lifetime, and every way of letting go of it stops the
+whole tree. On Linux and macOS the child starts in its own process group, and
+the group is signalled while the leader is still unreaped, so a descendant that
+outlived the leader is still reached. On Windows the child starts suspended in a
+dedicated Job Object, is assigned to it, and only then resumes. The job is
+configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and with neither breakaway
+flag, so no package code runs before the job owns it, nothing in the package can
+leave the job, and closing the handle terminates every member, whether it closes
+by cancellation, by dropping the owner, or by the host exiting. Reporting an
+exit means the tree was swept first. A host process that already sits inside a
+Job Object which forbids nesting cannot own a child at all: the launch is
+refused with that diagnostic rather than starting a process the host could not
+stop. While the child starts, the launcher holds the installed executable open
+read-only, which denies any concurrent write, rename or delete of that image on
+Windows. The launch is not a sandbox: the child still runs with the user's
+permissions.
 
 ## The example
 

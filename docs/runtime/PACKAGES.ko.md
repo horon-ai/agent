@@ -11,7 +11,7 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 
 ## 상태
 
-`dev`에서는 설치 명령으로 두 패키지 유형을 등록한다. 실행 중인 데몬은 수신함의 완성 폴더를 처리하고 카탈로그 세대를 게시한다. 자식 프로세스 감독기는 Linux와 macOS에서 설치 사본을 실행한다. 세션 연결은 후속 이슈에서 다룬다.
+`dev`에서는 설치 명령으로 두 패키지 유형을 등록한다. 실행 중인 데몬은 수신함의 완성 폴더를 처리하고 카탈로그 세대를 게시한다. 자식 프로세스 감독기는 Linux, macOS, Windows에서 설치 사본을 실행한다. 세션 연결은 후속 이슈에서 다룬다.
 
 | 영역 | 상태 | 검사 |
 | --- | --- | --- |
@@ -22,8 +22,9 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 | 두 레이아웃의 예제 실행 | 구현됨 | `cargo test -p horon-package-example --test extension_layouts` |
 | `horon package install`과 수신함 동기화 함수 | 구현됨 | `cargo test --locked --test package_cli` |
 | Linux와 macOS의 자식 프로세스 감독 | 구현됨 | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| Windows의 자식 프로세스 감독 | 구현됨 | `.github/workflows/package-windows.yml`(x64·arm64)에서 `cargo test --locked -p horon-agent-base --test package_spawn_windows` |
 | 데몬 카탈로그 제어와 수신함 자동 동기화 | 구현됨 | `cargo test --locked --test harness_roundtrip package_daemon` |
-| Windows의 자식 프로세스 감독과 세션 연결 | 예정 | 같은 실행 경로의 후속 변경 |
+| 세션 연결 | 예정 | 같은 실행 경로의 후속 변경 |
 
 ## 두 패키지 유형
 
@@ -209,16 +210,27 @@ SHA256`). Linux 패키지는 서명하지 않고 카탈로그의 SHA-256이 무�
 
 ## 설치된 실행파일 시작
 
-실행기는 설치 사본의 참조를 잡고 시작 직전에 기록된 실행파일을 검사한다. 자식은 설치 사본을 작업 디렉터리로 쓰고 패키지 루트의 절대 경로를 첫 인자로 받는다. Linux와 macOS에서 실행기는 기존 환경 변수를 비운 뒤 아래 값을 전달한다.
+실행기는 설치 사본의 참조를 잡고 시작 직전에 기록된 실행파일을 검사한다. 자식은 설치 사본을 작업 디렉터리로 쓰고 패키지 루트의 절대 경로를 첫 인자로 받는다. 실행기는 기존 환경 변수를 비운 뒤 아래 값을 전달한다.
 
 | 변수 | 값 |
 | --- | --- |
 | `HORON_PACKAGE_ROOT`, `HORON_PACKAGE_ID`, `HORON_PACKAGE_KIND` | 설치 루트, 패키지 ID, 패키지 유형 |
 | `HORON_PACKAGE_STATE`, `HOME` | 소유자만 접근하는 패키지 상태 디렉터리 |
-| `TMPDIR` | 패키지 상태 디렉터리 아래 `tmp` |
-| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` | 부모에 값이 있으면 상속 |
+| `TMPDIR`(Unix) | 패키지 상태 디렉터리 아래 `tmp` |
+| `USERPROFILE`, `TEMP`, `TMP`(Windows) | 상태 디렉터리, 그리고 그 아래 `tmp`를 가리키는 두 임시 경로 |
+| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`(Unix), `PATH`, `PATHEXT`, `SYSTEMROOT`, `SYSTEMDRIVE`, `WINDIR`, `COMSPEC`, `NUMBER_OF_PROCESSORS`, `PROCESSOR_ARCHITECTURE`, `OS`(Windows) | 부모에 값이 있으면 상속 |
 
 공급자 키와 나머지 부모 환경 변수는 전달하지 않는다. 자식은 사용자 계정의 파일과 네트워크 권한으로 실행된다.
+
+자식의 수명은 값 하나가 소유하며, 그 값을 놓는 모든 경로가 트리 전체를 멈춘다. Linux와 macOS에서는 자식이 자기 프로세스
+그룹에서 시작하고, 리더를 아직 거두지 않은 동안 그룹에 신호를 보내므로 리더보다 오래 산 자손까지 닿는다. Windows에서는 자식을 일시
+중단 상태로 전용 Job Object에서 만들고 그 Job에 넣은 뒤에야 재개한다. Job은
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`로 설정하고 탈출 플래그는 두지 않으므로, Job이 자식을 소유하기 전에
+패키지 코드가 실행되지 않고, 패키지 안의 무엇도 Job을 떠날 수 없으며, 취소, 소유자 해제, 호스트 종료 어느 경우든 핸들이 닫히면
+모든 구성원이 종료된다. 종료 상태를 보고한다는 것은 트리를 먼저 쓸어냈다는 뜻이다. 호스트 프로세스가 이미 중첩을 허용하지 않는 Job
+Object 안에 있으면 자식을 소유할 수 없으므로, 호스트가 멈출 수 없는 프로세스를 시작하는 대신 그 진단과 함께 실행을 거부한다.
+자식을 시작하는 동안 실행기는 설치된 실행 파일을 읽기 전용으로 열어 두므로, Windows에서는 그 사이에 다른 프로세스가 그 이미지를
+쓰거나 이름을 바꾸거나 지울 수 없다. 실행은 샌드박스가 아니며 자식은 여전히 사용자의 권한으로 실행된다.
 
 ## 예제
 
