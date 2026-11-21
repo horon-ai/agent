@@ -41,6 +41,10 @@ impl App {
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
         self.transcript.apply_settings_show_reasoning(show_reasoning);
+        // The footer is drawn when the turn ends, so this value is what the
+        // turn in progress will use: a switch flipped mid-turn applies to it.
+        self.transcript
+            .set_turn_usage(settings.boolean("transcript.turn_usage").unwrap_or(false));
         // The setting is a number, so it can hold a `-1` that is not a row
         // count: anything that does not fit falls back to the default instead
         // of reading as "hide the preview".

@@ -323,6 +323,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.turn_usage",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_TURN_USAGE",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Turn usage",
+            description: "Show each completed turn's elapsed time and token usage under it; off hides the footer.",
+        },
+    },
+    SettingSpec {
         id: "transcript.visual_blocks",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
