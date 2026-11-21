@@ -292,12 +292,8 @@ where
     // The hand-over released the wheel; the frame loop captures it again at the
     // top of the next pass when the setting asks for it.
     *mouse_captured = false;
-    if let Err(error) = resumed {
-        // Nothing on this terminal is trustworthy any more: the screen, its
-        // modes and the keyboard belong to whoever owns it now, so the session
-        // ends here rather than painting escapes over the shell.
-        return Err(error);
-    }
+    // Stop before writing any more terminal state if restoration failed.
+    resumed?;
     // A refusal is a warning, not a reason to stop, exactly as at startup: the
     // paste then arrives as ordinary keystrokes the editor already handles.
     if let Err(error) = crate::paste::enable() {

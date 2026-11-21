@@ -404,7 +404,10 @@ mod tests {
         let directory = tempfile::tempdir().expect("a temporary directory");
         // A link is refused by the same regular-file check; creating one is the
         // platform's business and is covered by the PTY receipt.
-        assert_eq!(super::prepare_copy(directory.path()), Err(Problem::SourceReplaced));
+        assert!(matches!(
+            super::prepare_copy(directory.path()),
+            Err(Problem::SourceReplaced)
+        ));
     }
 
     #[test]
@@ -415,7 +418,7 @@ mod tests {
         // Sparse, so the limit is tested without writing 32 MiB.
         file.set_len(super::MAX_COPY_BYTES + 1).expect("a large artifact");
         drop(file);
-        assert_eq!(super::prepare_copy(&source), Err(Problem::SourceTooLarge));
+        assert!(matches!(super::prepare_copy(&source), Err(Problem::SourceTooLarge)));
     }
 
     #[test]
