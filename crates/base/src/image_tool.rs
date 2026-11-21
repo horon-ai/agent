@@ -129,6 +129,10 @@ pub async fn generate(profile_name: &str, call: &ImageCall) -> Result<Option<Ima
         .build()
         .map_err(|error| anyhow::anyhow!("the image HTTP client could not be built: {error}"))?;
 
+    let permit = match &endpoint.request_slots {
+        Some(slots) => Some(slots.acquire().await?),
+        None => None,
+    };
     let reply = if call.input.is_empty() {
         let request = GenerateRequest {
             model: model.clone(),
@@ -165,6 +169,7 @@ pub async fn generate(profile_name: &str, call: &ImageCall) -> Result<Option<Ima
         )
         .await?
     };
+    drop(permit);
 
     if reply.images.is_empty() {
         return Ok(Some(ImageResult {

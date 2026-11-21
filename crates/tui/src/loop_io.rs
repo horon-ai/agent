@@ -161,6 +161,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             id: request.id,
             status: request.status,
         },
+        Action::Context(command) => Command::Context(command),
         Action::Model(name) => Command::Model(name),
         Action::Effort(level) => Command::Effort(level),
         Action::Models => Command::Models,
