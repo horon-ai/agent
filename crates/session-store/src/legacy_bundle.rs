@@ -19,6 +19,11 @@ pub(crate) fn safe_path(path: &Path) -> Result<(), StoreError> {
             return Err(crate::blobs::unsafe_path(path));
         }
         prefix.push(component);
+        // A Windows volume prefix alone (such as `\\?\C:`) has no directory
+        // metadata. Check the whole root and every path component below it.
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&prefix) {
             Ok(meta) if meta.file_type().is_symlink() => {
                 return Err(crate::blobs::unsafe_path(path));
