@@ -800,6 +800,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
+            terminal.read_until("idle", STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
             todo_edit_smoke(terminal, home)
             context_request_smoke(terminal, home, base_url)
 
