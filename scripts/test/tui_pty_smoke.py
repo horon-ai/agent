@@ -616,6 +616,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         # `approval_mode = "write"` parks that call: the prompt arrives before
         # any reply text, so the answer has to come first.
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
+        reply_start = len(terminal.transcript)
         terminal.send("y")
         terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
@@ -629,16 +630,21 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
 
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before archiving")
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         terminal.send("/resume\r")
         terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
-        terminal.send(f"{archive_label}\x01")
+        filter_start = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
+        terminal.send("\x01")
         terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
         terminal.send("/resume\r")
         terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
         terminal.send(archive_label)
         terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
-        terminal.send("\x1b\x1b/archived\r")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/archived\r")
         terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
         terminal.send(f"{archive_label}\r")
         terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
