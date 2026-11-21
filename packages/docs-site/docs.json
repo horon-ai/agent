@@ -99,6 +99,7 @@
                   "reference/provider/local-helpers",
                   "reference/provider/diagnostics",
                   "reference/provider/sampling",
+                  "reference/provider/quota-fallback",
                   "reference/provider/integrations"
                 ]
               },
@@ -213,6 +214,7 @@
                   "ko/reference/provider/local-helpers",
                   "ko/reference/provider/diagnostics",
                   "ko/reference/provider/sampling",
+                  "ko/reference/provider/quota-fallback",
                   "ko/reference/provider/integrations"
                 ]
               },
