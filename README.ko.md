@@ -19,7 +19,7 @@
 
 horon agent는 엔진 하나 위에 동등한 모드 두 개를 둔 에이전트다. 헤드리스 모드에서는 프로그램이 세션을 움직인다. 한 번만 실행하는 명령, SDK, ACP로 붙는 에디터, 표준 입출력 RPC를 쓰는 호스트 프로그램이 여기에 속한다. TUI 모드에서는 사람이 터미널 클라이언트 `horon-tui`로 직접 움직인다. 두 모드는 같은 데몬에 붙어 세션·도구·MCP 서버·설정을 함께 쓴다. 달라지는 것은 반대편에 누가 있느냐뿐이고, 어느 쪽도 다른 쪽의 축소판이 아니다.
 
-모델은 프로파일의 `type`이 고르는 네 가지 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 부른다. 라우터 프로세스나 플러그인 호스트 없이 엔드포인트로 바로 POST한다.
+모델은 프로파일의 `type`이 고르는 네 가지 방식(OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent) 가운데 하나로 부른다. 공급자 런타임 하나가 설정된 엔드포인트로 직접 POST한다.
 
 릴리스마다 같은 태그에서 빌드한 바이너리 두 개가 나온다. 에이전트 바이너리 `horon-agent`는 헤드리스 모드를 맡고 두 모드가 붙는 데몬을 돌리며, 전체 화면 터미널 UI를 그리지 않는다. TUI 바이너리 `horon-tui`는 에이전트 SDK 위에 만든 별도 패키지이고, 에이전트 옆에 자체 압축 파일로 나온다.
 
@@ -32,9 +32,8 @@ horon agent는 엔진 하나 위에 동등한 모드 두 개를 둔 에이전트
 
 ![벤치마크 요약: horon 대 도구 일곱 개](docs/performance/charts/00-summary.ko.svg)
 
-- Linux 원샷 중앙값은 42.5 ms로 jcode의 138.0 ms보다 빠르고, macOS는 88.1 ms 대 377.1 ms입니다. Windows는 예외로, 141.8 ms 대 128.4 ms이며 두 범위가 겹칩니다.
 - 이벤트 10만 개 세션의 이력 페이지 한 장은 62,169,922 B 대신 18,554 B를 읽고, 26.2 s 대신 5.9 ms가 걸립니다. 200 MiB 소스 해시의 최고 할당은 268,435,520 B 대신 65,600 B입니다.
-- 세션 하나당 메모리는 여전히 jcode가 낮습니다. Linux에서 151.0 KB 대 98.1 KB입니다.
+- jcode와 다른 도구 여섯 개를 비교한 값은 [벤치마크](#벤치마크)의 자동 생성 표에 있습니다. 수치는 개발자 기계가 아니라 GitHub Actions 실행에서 나옵니다.
 
 ![세션 저장소: 요청 하나의 이전과 이후](docs/performance/charts/record-01-session-store.ko.svg)
 
@@ -188,23 +187,46 @@ JetBrains와 다른 ACP 클라이언트도 같은 두 값을 받는다. 표준 �
 
 ## 벤치마크
 
-`.github/workflows/benchmark-docs.yml`이 GitHub 호스티드 러너에서 커밋 `729624b`(2026-11-18 측정)로 다른 에이전트 일곱 개와 비교해 한 턴을 잰 값이다. 결정적 모의 모델을 쓰고 턴마다 `ls` 도구를 한 번 부른다. 아래 표는 가장 가까운 경쟁 도구인 jcode v0.99.1과 비교한다. OS마다 기계가 다르므로 같은 줄 안에서만 비교하고 줄끼리는 비교하지 않는다.
+<!-- bench-summary:start -->
 
-<p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="에이전트 여덟 개의 OS별 한 번 실행 시간 중앙값 막대 그래프. Linux: horon 42.5 ms, jcode 138 ms. macOS: horon 88.1 ms, jcode 377 ms. Windows: horon 142 ms, jcode 128 ms" width="780">
-</p>
+`.github/workflows/benchmark-docs.yml`이 이 요약을 그 실행의 `compare.json`에서 다시 씁니다. 버전 표기는 러너가 실제로 설치한 실행 파일에서 읽은 값이지 손으로 적은 상수가 아닙니다.
+
+측정 커밋 `e7b81ddfd166f2609b77ddb0d2080831adab4c34`, 2026-11-20 18:54 UTC. OS마다 다른 기계이므로 같은 줄 안에서만 비교합니다.
+jcode v1.0.1(릴리스 `v1.0.1`, 커밋 `10114429c8133994861d6c915a2483d397c0f7c2`).
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| 한 턴 실행, 중앙값 | 42.5 ms | 138.0 ms |
-| 스킬 호출, 중앙값 | 38.0 ms | 53.1 ms |
-| MCP 도구 호출, 중앙값 | 58.8 ms | 162.9 ms |
-| 한 턴 최대 프로세스 트리 RSS | 39.4 MB | 42.2 MB |
-| 세션 하나 추가당 메모리(3턴 뒤 유휴) | 151.0 KB | 98.1 KB |
-| 첫 모델 요청, 본문 / 도구 목록 바이트 | 3,756 / 2,368 | 3,292 / 1,433 |
-| 설치 크기 | 110.6 MB | 163.4 MB |
+| 원샷 프롬프트 시간 | 45.0 ms | 148.2 ms |
+| 스킬 호출 시간 | 37.3 ms | 53.9 ms |
+| MCP 도구 호출 시간 | 64.2 ms | 164.8 ms |
+| 원샷 프롬프트 메모리 | 41.1 MB | 80.1 MB |
+| 세션 하나당 늘어나는 메모리 | 379.9 KB | 173.4 KB |
+| 설치 크기 | 117.7 MB | 191.4 MB |
+| 첫 모델 요청 본문 / 도구 목록 바이트 | 3,699 / 2,358 | 2,888 / 1,100 |
 
-Linux에서는 시간 항목 셋과 한 턴 최대 메모리를 모두 horon이 앞섰고 macOS도 같은 모양이었다. 한 턴 88.1 ms 대 377.1 ms, 스킬 64.0 ms 대 357.6 ms, MCP 115.1 ms 대 486.4 ms다. **Windows는 예외다.** 한 턴 실행(128.4 ms 대 141.8 ms)과 스킬 호출(172.6 ms 대 220.0 ms)의 중앙값은 jcode가 낮았다. 두 항목 모두 최솟값·최댓값 범위가 겹치므로 어느 쪽도 뚜렷하게 앞섰다고 보지 않는다. MCP 호출(211.0 ms 대 318.3 ms)은 horon이 앞섰다. 세션 추가당 메모리는 Linux와 Windows에서 jcode가 덜 썼고(98.1 KB 대 151.0 KB, 63.8 KB 대 122.8 KB), Windows 한 턴 최대 메모리도 jcode가 덜 썼으며(26.9 MB 대 36.1 MB), 첫 요청은 모든 OS에서 jcode가 더 작았다.
+| macOS (`macos-latest`) | horon | jcode |
+| --- | --- | --- |
+| 원샷 프롬프트 시간 | 46.6 ms | 271.6 ms |
+| 스킬 호출 시간 | 38.9 ms | 182.4 ms |
+| MCP 도구 호출 시간 | 58.7 ms | 267.9 ms |
+| 원샷 프롬프트 메모리 | 31.6 MB | 37.8 MB |
+| 세션 하나당 늘어나는 메모리 | 410.9 KB | 333.1 KB |
+| 설치 크기 | 99.0 MB | 161.3 MB |
+| 첫 모델 요청 본문 / 도구 목록 바이트 | 3,587 / 2,358 | 2,776 / 1,100 |
+
+| Windows (`windows-latest`) | horon | jcode |
+| --- | --- | --- |
+| 원샷 프롬프트 시간 | 237.1 ms | 177.3 ms |
+| 스킬 호출 시간 | 226.8 ms | 272.0 ms |
+| MCP 도구 호출 시간 | 274.5 ms | 376.4 ms |
+| 원샷 프롬프트 메모리 | 33.1 MB | 30.4 MB |
+| 세션 하나당 늘어나는 메모리 | 358.3 KB | 304.4 KB |
+| 설치 크기 | 100.3 MB | 153.2 MB |
+| 첫 모델 요청 본문 / 도구 목록 바이트 | 3,654 / 2,358 | 2,878 / 1,111 |
+
+[실행](https://github.com/horon-ai/agent/actions/runs/44792005623)
+
+<!-- bench-summary:end -->
 
 이 값은 한 커밋에서 CI로 얻은 표본이며 보장이 아니다. 도구 여덟 개의 전체 표, TUI 측정, 측정 방법, 수치가 말해 주지 않는 것은 [docs/performance/RESULTS.ko.md](docs/performance/RESULTS.ko.md)와 [docs/performance/BENCHMARK.ko.md](docs/performance/BENCHMARK.ko.md)에 있다.
 

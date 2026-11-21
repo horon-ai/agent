@@ -28,7 +28,13 @@ fn text_of(line: &Line<'_>) -> String {
 
 /// The renderer's output for `source` at `width`, in the default theme.
 fn render(source: &str, width: u16) -> Vec<Indented> {
-    markdown::render(source, &Theme::default(), Symbols::default(), width)
+    markdown::render(
+        source,
+        &Theme::default(),
+        Symbols::default(),
+        width,
+        markdown::Options::default(),
+    )
 }
 
 /// The renderer's output for `source`, wrapped to `width` as the pane would.
@@ -158,6 +164,7 @@ fn a_bullet_list_uses_the_glyph_set_and_indents_its_continuation() {
         &Theme::default(),
         crate::theme::SymbolPreset::Ascii.symbols(),
         40,
+        markdown::Options::default(),
     );
     assert_eq!(texts(&ascii), vec!["* first"]);
 }
@@ -197,9 +204,162 @@ fn a_line_of_only_markers_does_not_panic() {
 }
 
 #[test]
-fn a_table_stays_as_typed() {
-    let source = "| Name | Value |\n|------|-------|\n| alpha | 1 |";
-    assert_eq!(texts(&render(source, 40)), source.lines().collect::<Vec<_>>().to_vec());
+fn a_diagram_fence_draws_a_one_line_flow() {
+    let source = "```diagram\nload -> parse -> render\n```";
+    assert_eq!(texts(&render(source, 60)), vec!["[ load ] -> [ parse ] -> [ render ]"]);
+}
+
+#[test]
+fn a_diagram_flow_waits_for_its_closing_fence() {
+    // The flow is held until the fence closes, so a half-received line is never
+    // drawn as a shorter flow; while it is open its source is the fallback.
+    assert_eq!(
+        texts(&render("```diagram\nload -> parse", 60)),
+        vec!["  diagram", "  load -> parse"]
+    );
+    assert_eq!(
+        texts(&render("```diagram\nload -> parse\n```", 60)),
+        vec!["[ load ] -> [ parse ]"]
+    );
+}
+
+#[test]
+fn a_diagram_too_wide_for_the_pane_keeps_the_source() {
+    let source = "```diagram\nload -> parse -> render\n```";
+    assert_eq!(
+        texts(&render(source, 20)),
+        vec!["  diagram", "  load -> parse -> render"]
+    );
+}
+
+#[test]
+fn a_malformed_diagram_keeps_the_source() {
+    // One label is not a flow.
+    assert_eq!(texts(&render("```diagram\nload\n```", 60)), vec!["  diagram", "  load"]);
+    // An empty label on an arrow.
+    assert_eq!(
+        texts(&render("```diagram\nload ->\n```", 60)),
+        vec!["  diagram", "  load ->"]
+    );
+    // Two lines are not the one-line shape.
+    assert_eq!(
+        texts(&render("```diagram\nload -> parse\nrender -> done\n```", 60)),
+        vec!["  diagram", "  load -> parse", "  render -> done"]
+    );
+}
+
+#[test]
+fn a_diagram_past_the_label_limits_keeps_the_source() {
+    let long = "x".repeat(crate::visual_blocks::MAX_LABEL_CHARS + 1);
+    let source = format!("```diagram\na -> {long}\n```");
+    assert_eq!(
+        texts(&render(&source, 200)),
+        vec!["  diagram".to_string(), format!("  a -> {long}")]
+    );
+    let mut many = String::from("```diagram\n");
+    for node in 0..=crate::visual_blocks::MAX_LABELS {
+        if node > 0 {
+            many.push_str(" -> ");
+        }
+        many.push('x');
+    }
+    many.push_str("\n```");
+    let rows = texts(&render(&many, 200));
+    assert_eq!(rows[0], "  diagram", "more labels than the flow limit stay source");
+}
+
+#[test]
+fn a_diagram_body_past_the_byte_limit_keeps_the_source() {
+    let label = "y".repeat(crate::visual_blocks::MAX_SOURCE_BYTES / 2);
+    let source = format!("```diagram\n{label} -> {label}\n```");
+    let rows = texts(&render(&source, 200));
+    assert_eq!(rows[0], "  diagram");
+    assert!(rows[1].starts_with("  yyy"), "{rows:?}");
+}
+
+#[test]
+fn a_diagram_that_holds_a_url_or_a_script_shows_it_as_text() {
+    // The one block syntax is read from the message and drawn from it: a URL in
+    // a label is characters to line up, not something to fetch, and a tag is
+    // characters too, not something to run.
+    let source = "```diagram\n[x](https://example.com) -> <script>\n```";
+    let rows = texts(&render(source, 120));
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].contains("[x](https://example.com)"), "{rows:?}");
+    assert!(rows[0].contains("<script>"), "{rows:?}");
+}
+
+#[test]
+fn the_setting_turns_visual_blocks_off() {
+    let theme = Theme::default();
+    let look = |visual_blocks| item_lines::Look {
+        theme: &theme,
+        symbols: Symbols::default(),
+        width: 40,
+        markdown: true,
+        visual_blocks,
+    };
+    let source = "```diagram\nload -> parse\n```";
+    assert_eq!(
+        texts(&item_lines::answer(source, &look(true))),
+        vec!["[ load ] -> [ parse ]"]
+    );
+    assert_eq!(
+        texts(&item_lines::answer(source, &look(false))),
+        vec!["  diagram", "  load -> parse"]
+    );
+    assert!(!item_lines::visual_blocks_enabled(&settings_with(&[(
+        "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
+        "false"
+    )])));
+}
+
+#[test]
+fn the_other_visual_kinds_stay_as_the_source_they_were() {
+    // A one-line `diagram` flow is the one kind this renderer draws. Another
+    // diagram language, a figure and an embedded page are not interpreted
+    // anywhere: they stay as typed.
+    let image = "![chart](https://example.com/chart.png)";
+    assert_eq!(texts(&render(image, 80)), vec![image]);
+    let svg = "<svg><rect width=\"1\" height=\"1\"/></svg>";
+    assert_eq!(texts(&render(svg, 80)), vec![svg]);
+    let mermaid = "```mermaid\ngraph TD; A-->B\n```";
+    assert_eq!(texts(&render(mermaid, 80)), vec!["  mermaid", "  graph TD; A-->B"]);
+}
+
+#[test]
+fn an_ascii_glyph_set_draws_the_flow_with_ascii_marks() {
+    let symbols = crate::theme::SymbolPreset::Ascii.symbols();
+    let rows = markdown::render(
+        "```diagram\nload -> parse\n```",
+        &Theme::default(),
+        symbols,
+        60,
+        markdown::Options::default(),
+    );
+    assert_eq!(texts(&rows), vec!["[ load ] -> [ parse ]"]);
+}
+
+#[test]
+fn a_wide_character_flow_fits_the_pane() {
+    let source = "```diagram\n불러오기 -> 그리기\n```";
+    let rows = wrapped(source, 26);
+    for row in &rows {
+        assert!(
+            unicode_width::UnicodeWidthStr::width(row.as_str()) <= 26,
+            "row {row:?} is wider than the pane"
+        );
+    }
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].starts_with('['), "{rows:?}");
+}
+
+#[test]
+fn a_diagram_at_a_zero_or_tiny_width_does_not_panic() {
+    for width in 0..=3 {
+        let rows = wrapped("```diagram\nload -> parse\n```\ntext", width);
+        assert!(!rows.is_empty(), "width {width} drew nothing");
+    }
 }
 
 #[test]
@@ -246,6 +406,7 @@ fn the_raw_mode_draws_the_source_as_typed() {
         symbols: Symbols::default(),
         width: 40,
         markdown: false,
+        visual_blocks: true,
     };
     let rows = item_lines::answer("## head with **bold**", &look);
     assert_eq!(texts(&rows), vec!["## head with **bold**"]);
@@ -266,6 +427,7 @@ fn a_user_line_keeps_its_prefix_and_indent() {
         symbols: Symbols::default(),
         width: 40,
         markdown: true,
+        visual_blocks: true,
     };
     let item = Item::User("a **user** line".to_string());
     let rows = item_lines::lines(&item, &look, None);
@@ -331,11 +493,15 @@ fn a_drawn_answer_shows_no_markers() {
 #[test]
 fn the_setting_off_draws_the_source_as_typed() {
     let mut app = app();
-    say(&mut app, "## Head\n\n- one **two**");
+    say(&mut app, "## Head\n\n- one **two**\n\n```diagram\nload -> parse\n```");
     app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_MARKDOWN", "false")]));
     let drawn = screen(&mut app, 40, 20);
     assert!(drawn.contains("## Head"), "{drawn}");
     assert!(drawn.contains("**two**"), "{drawn}");
+    assert!(
+        drawn.contains("load -> parse"),
+        "the diagram is source with Markdown off:\n{drawn}"
+    );
 }
 
 #[test]
@@ -369,6 +535,7 @@ fn the_setting_reaches_the_applied_settings() {
         symbols: Symbols::default(),
         width: 40,
         markdown,
+        visual_blocks: true,
     };
     assert!(item_lines::markdown_enabled(&settings_with(&[])));
     assert!(!item_lines::markdown_enabled(&settings_with(&[(
@@ -384,7 +551,13 @@ fn the_setting_reaches_the_applied_settings() {
 #[test]
 fn a_fence_with_a_language_draws_a_label_row() {
     let theme = Theme::default();
-    let rows = markdown::render("```rust\nfn main() {}\n```", &theme, Symbols::default(), 40);
+    let rows = markdown::render(
+        "```rust\nfn main() {}\n```",
+        &theme,
+        Symbols::default(),
+        40,
+        markdown::Options::default(),
+    );
     assert_eq!(texts(&rows), vec!["  rust", "  fn main() {}"]);
     assert_eq!(
         rows[0].line().spans[1].style.fg,

@@ -24,19 +24,28 @@ impl App {
     /// here rather than in each drawing call: the transcript keeps or drops
     /// reasoning as it streams, the editor asks before it sends, the mouse
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
-    /// says so, and the window title carries the turn state only while
-    /// `title.state` says so. Whether the terminal is actually captured is the
-    /// event loop's decision, because a capture is a terminal mode.
+    /// says so, the window title carries the turn state only while
+    /// `title.state` says so, and the model cycle walks `models.shortlist`.
+    /// Whether the terminal is actually captured is the event loop's decision,
+    /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
-        // Markdown changes how many rows an item takes, and the scrollback keeps
-        // the counts it measured: a view held across the switch would be moved
-        // against heights that no longer describe what is drawn.
-        if crate::item_lines::markdown_enabled(&self.settings) != crate::item_lines::markdown_enabled(settings) {
+        // Markdown and its visual blocks change how many rows an item takes, and
+        // the scrollback keeps the counts it measured: a view held across the
+        // switch would be moved against heights that no longer describe what is
+        // drawn.
+        if crate::item_lines::markdown_enabled(&self.settings) != crate::item_lines::markdown_enabled(settings)
+            || crate::item_lines::visual_blocks_enabled(&self.settings)
+                != crate::item_lines::visual_blocks_enabled(settings)
+        {
             self.scroll.invalidate();
         }
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
         self.transcript.apply_settings_show_reasoning(show_reasoning);
+        // The footer is drawn when the turn ends, so this value is what the
+        // turn in progress will use: a switch flipped mid-turn applies to it.
+        self.transcript
+            .set_turn_usage(settings.boolean("transcript.turn_usage").unwrap_or(false));
         // The setting is a number, so it can hold a `-1` that is not a row
         // count: anything that does not fit falls back to the default instead
         // of reading as "hide the preview".
@@ -49,6 +58,13 @@ impl App {
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
         self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
+        // The list the model cycle keys walk belongs to the settings, not to a
+        // session, so every refresh replaces it; the cycle itself reads it on
+        // the press, which keeps a file edit one keypress away from the walk.
+        // A missing list is the same as an empty one: the press reports it,
+        // and a reload must not leave the previous file's names in the walk.
+        let shortlist = settings.list("models.shortlist").unwrap_or(&[]);
+        self.apply_model_shortlist(shortlist);
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);

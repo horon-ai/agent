@@ -129,6 +129,14 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
     (
+        ids::APP_CYCLE_MODEL,
+        "switch to the next model in models.shortlist, wrapping at the last one",
+    ),
+    (
+        ids::APP_CYCLE_MODEL_BACK,
+        "switch to the previous model in models.shortlist, wrapping at the first one",
+    ),
+    (
         ids::APP_REPAINT,
         "paint the whole screen again, keeping the draft, the selection and the view",
     ),
@@ -189,6 +197,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "links" => "list the http(s) links in recent answers and open one",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
+        "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",

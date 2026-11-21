@@ -38,6 +38,7 @@ mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
+mod visual_blocks;
 mod wrap;
 
 #[cfg(test)]
@@ -112,6 +113,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
 use crate::terminal::{show_failure, window_label, window_state};
+use crate::theme::changes::{self, ChangePalette};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -405,8 +407,15 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    app.theme = themes.theme().clone();
+    // The palette is applied to the copy the renderer reads, never to the
+    // theme file, so clearing the setting restores the selected theme exactly.
+    app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
+    // The status line's own two choices sit on top of the theme and the glyph
+    // preset, so they are applied here where every snapshot arrives rather than
+    // in the drawing call: a save from the settings screen and a hand edit of
+    // `tui.toml` then take effect on the next frame alike.
+    statusline::apply_appearance(settings, &mut app.theme, &mut app.symbols);
 }
 
 /// Write the change the settings screen confirmed, then re-apply it.
@@ -486,6 +495,18 @@ where
             changed = true;
         }
         // Titles can change on either a daemon event or local input.
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
+        // The session and the working directory can change while the client
+        // runs, and a key can start a turn, answer a prompt or leave one
+        // without any event arriving; the window is renamed only when the name
+        // it would carry is not the one on it. The state is one fixed word, so
+        // comparing it every frame costs nothing and a repeated state writes
+        // nothing.
         let state = window_state(app, state_supported);
         if changed || state != shown_state {
             shown_state = state;
@@ -572,8 +593,9 @@ where
                 app.on_paste(&text);
                 flush_setting_change(app, reloader, themes);
             }
-            // Only the wheel is acted on, and only while the setting holds the
-            // capture that makes the terminal report it at all.
+            // The wheel and a click in the draft are acted on, and only while
+            // the setting holds the capture that makes the terminal report
+            // them at all.
             Ok(crossterm::event::Event::Mouse(mouse)) => app.on_mouse(mouse),
             Ok(_) => {}
             Err(error) => {
@@ -773,6 +795,18 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     }
 
     let input_area = areas[index];
+    // The mouse click is read against the same cells the frame used, so the
+    // pane's position and the character each row starts at are recorded once
+    // the layout is final. An edit drops them; the next frame records them
+    // again.
+    app.input.note_view(
+        crate::input::Placement {
+            x: input_area.x,
+            y: input_area.y,
+            lead: marker_width.saturating_add(1),
+        },
+        &view,
+    );
     // One row per visible line of the draft. Only the first carries the prompt
     // marker; the rest are padded to the same column so the text lines up under
     // itself instead of under the marker.
@@ -845,7 +879,8 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 }
 
 /// The bottom line: the segments the status-line layout names, joined by the
-/// theme's separator with the right-hand group aligned to the edge.
+/// separator in force, on the theme's background unless `statusline.background`
+/// leaves the terminal's own showing.
 fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     let mut data = app.status_data();
     data.now = Some(statusline::local_now());
@@ -993,6 +1028,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         symbols: *symbols,
         width,
         markdown: item_lines::markdown_enabled(settings),
+        visual_blocks: item_lines::visual_blocks_enabled(settings),
     };
     let open = [
         open_rows(transcript.open_reasoning(), &look, true),

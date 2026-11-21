@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use ratatui::style::Color;
 use serde_json::Value;
 
+use super::changes::ChangePalette;
 use super::symbols::SymbolPreset;
 
 /// The dark theme shipped with the binary.
@@ -158,6 +159,12 @@ pub struct Theme {
     pub prompt: PromptColors,
     /// The `status` group.
     pub status: StatusColors,
+    /// The change palette the renderer draws with.
+    ///
+    /// Not part of the file: a theme always parses as [`ChangePalette::Theme`],
+    /// and the setting that turns the accessible pair on replaces this field on
+    /// the copy the renderer reads (see [`super::changes`]).
+    pub changes: ChangePalette,
     /// The preset this theme asks for, if any.
     pub symbols: Option<SymbolPreset>,
 }
@@ -171,6 +178,7 @@ impl Default for Theme {
             transcript: TranscriptColors::default(),
             prompt: PromptColors::default(),
             status: StatusColors::default(),
+            changes: ChangePalette::Theme,
             symbols: Some(SymbolPreset::Unicode),
         }
     }
@@ -269,6 +277,7 @@ pub fn parse(text: &str, origin: &str) -> Result<Theme, String> {
         transcript,
         prompt,
         status,
+        changes: ChangePalette::Theme,
         symbols,
     })
 }

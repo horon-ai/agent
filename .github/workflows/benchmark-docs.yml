@@ -170,9 +170,9 @@ jobs:
       - name: Commit the measurement to main and dev
         shell: bash
         run: |
-          # The renderer comes from the measured commit; each branch's own copy
-          # of the script may be older. bench_charts.py is imported by it.
-          cp scripts/perf/bench_docs.py scripts/perf/bench_charts.py "$RUNNER_TEMP/"
+          # Use the renderer and its dependencies from the measured commit,
+          # even when the target branch carries older copies of the scripts.
+          cp scripts/perf/{bench_docs,bench_charts,bench_request_bytes}.py "$RUNNER_TEMP/"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           short=$(git rev-parse --short "$SHA")
@@ -184,11 +184,22 @@ jobs:
               git fetch --quiet origin "$branch"
               git switch --quiet -C "$branch" "origin/$branch"
               rendered=true
+              # RESULTS mixes every suite, so it is replaced only when this run
+              # measured each suite group; the README summary is compare-derived
+              # and is safe to refresh from a compare-only artifact set too.
               for pair in "$DOC:en" "$DOC_KO:ko"; do
                 if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "${pair%:*}" \
                     --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
-                    --run-url "$RUN_URL" --lang "${pair#*:}"; then
+                    --run-url "$RUN_URL" --lang "${pair#*:}" --require-complete; then
                   echo "::error::$branch: ${pair%:*} has no usable bench-auto block"
+                  rendered=false
+                fi
+              done
+              for pair in "README.md:en" "README.ko.md:ko"; do
+                if ! python3 "$RUNNER_TEMP/bench_docs.py" render --doc "${pair%:*}" \
+                    --results "$RUNNER_TEMP/bench-results" --commit "$SHA" \
+                    --run-url "$RUN_URL" --lang "${pair#*:}"; then
+                  echo "::error::$branch: ${pair%:*} has no usable bench-summary block"
                   rendered=false
                 fi
               done
@@ -205,7 +216,7 @@ jobs:
                 }
               fi
               # Stage first so charts drawn for the first time are seen as changes.
-              git add -A -- "$DOC" "$DOC_KO" "$CHARTS"
+              git add -A -- "$DOC" "$DOC_KO" "$CHARTS" README.md README.ko.md
               if [[ "$mirror" == true ]]; then
                 git add -A -- packages/docs-site/reference packages/docs-site/ko/reference \
                   packages/docs-site/images/reference

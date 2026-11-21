@@ -96,6 +96,9 @@ impl App {
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
+            // `/queue` opens the list of messages waiting for the running turn
+            // to end; nothing about them is sent from here.
+            Local::Queue => self.open_queue(),
         }
     }
 

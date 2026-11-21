@@ -20,7 +20,7 @@ use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
 use crate::tool_expand;
 use crate::tool_line;
-use crate::transcript::Item;
+use crate::transcript::{Item, TurnMetrics};
 use crate::wrap::{self, Indented};
 
 /// Columns a wrapped continuation row keeps under a prefixed item.
@@ -36,6 +36,7 @@ pub(crate) struct Look<'a> {
     pub(crate) symbols: Symbols,
     pub(crate) width: u16,
     pub(crate) markdown: bool,
+    pub(crate) visual_blocks: bool,
 }
 
 impl<'a> Look<'a> {
@@ -46,6 +47,7 @@ impl<'a> Look<'a> {
             symbols: app.symbols,
             width,
             markdown: markdown_enabled(&app.settings),
+            visual_blocks: visual_blocks_enabled(&app.settings),
         }
     }
 }
@@ -57,6 +59,15 @@ impl<'a> Look<'a> {
 /// agree with the measurement it just took reads it fresh.
 pub(crate) fn markdown_enabled(settings: &Settings) -> bool {
     settings.boolean("transcript.markdown").unwrap_or(true)
+}
+
+/// Whether a supported visual block is drawn rather than left as source.
+///
+/// Read fresh for the same reason as `markdown_enabled`: the settings screen
+/// flips it while the transcript is on screen, and the frame that draws a block
+/// has to agree with the height the scrollback measured for it.
+pub(crate) fn visual_blocks_enabled(settings: &Settings) -> bool {
+    settings.boolean("transcript.visual_blocks").unwrap_or(true)
 }
 
 /// The lines of one item, in display order.
@@ -103,8 +114,33 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Reasoning(text) => reasoning(text, look),
         Item::Context(report) => crate::context::lines(report, look),
         Item::Report(report) => crate::report::lines(report, look),
+        Item::TurnUsage(metrics) => turn_usage(metrics, look),
         Item::CacheMiss(miss) => cache_miss(miss, look),
     }
+}
+
+/// A completed turn's footer: how long it ran and what it spent.
+///
+/// Only the fields the turn reported are drawn, and the separator appears only
+/// between two parts: a turn whose calls reported no usage shows its time
+/// alone, and a zero never stands in for a missing count.
+fn turn_usage(metrics: &TurnMetrics, look: &Look<'_>) -> Vec<Indented> {
+    let mut parts = vec![tool_line::format_elapsed(metrics.elapsed_ms)];
+    if let Some((input, output)) = metrics.tokens {
+        parts.push(format!(
+            "↑{} ↓{}",
+            crate::statusline::compact(input),
+            crate::statusline::compact(output)
+        ));
+    }
+    let separator = if look.symbols.separator.is_empty() {
+        "·"
+    } else {
+        look.symbols.separator
+    };
+    let text = parts.join(&format!(" {separator} "));
+    let style = Style::default().fg(look.theme.transcript.notice);
+    vec![Indented::plain(Line::from(Span::styled(text, style)))]
 }
 
 /// The marker a request leaves when the provider had to serve it without its
@@ -174,7 +210,10 @@ fn indented(lines: Vec<Line<'static>>) -> Vec<Indented> {
 /// An assistant message, committed or still streaming.
 pub(crate) fn answer(text: &str, look: &Look<'_>) -> Vec<Indented> {
     if look.markdown {
-        return markdown::render(text, look.theme, look.symbols, look.width);
+        let options = markdown::Options {
+            visual_blocks: look.visual_blocks,
+        };
+        return markdown::render(text, look.theme, look.symbols, look.width, options);
     }
     plain_lines(text, Style::default().fg(look.theme.transcript.assistant_text), 0)
 }

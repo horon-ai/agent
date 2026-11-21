@@ -19,7 +19,7 @@
 
 horon agent is one agent with two equal modes on one engine. In headless mode a program drives a session: a one-shot command, an SDK, an editor over ACP, or a host program over stdio RPC. In TUI mode a person drives it from the terminal through the `horon-tui` client. Both modes attach to the same daemon and share its sessions, tools, MCP servers and configuration. They differ only in who is on the other end, and neither is a reduced form of the other.
 
-Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. The agent POSTs straight to your endpoint, with no router process and no plugin host in between.
+Model calls speak one of four wires, picked by the profile's `type`: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages or Gemini generateContent. One provider runtime posts directly to the configured endpoint.
 
 Each release ships two binaries built from the same tag. The agent binary `horon-agent` serves headless mode and runs the daemon both modes attach to; it never draws a full-screen terminal UI. The TUI binary `horon-tui` is a separate package built on the agent SDK and published beside it as its own archive.
 
@@ -32,9 +32,8 @@ Each release ships two binaries built from the same tag. The agent binary `horon
 
 ![Benchmark summary: horon against seven tools](docs/performance/charts/00-summary.svg)
 
-- Linux one-shot median 42.5 ms against jcode's 138.0 ms, and macOS 88.1 ms against 377.1 ms. Windows is the exception: 141.8 ms against 128.4 ms, inside overlapping ranges.
 - One history page from a 100k-event session reads 18,554 B instead of 62,169,922 B and takes 5.9 ms instead of 26.2 s; a 200 MiB source hash peaks at 65,600 B instead of 268,435,520 B.
-- Memory per additional session is still jcode's win: 151.0 KB against 98.1 KB on Linux.
+- The agent comparison against jcode and six other tools is the generated table under [Benchmarks](#benchmarks); its numbers come from a GitHub Actions run, never from a developer machine.
 
 ![Session store: one request, before and after the plan](docs/performance/charts/record-01-session-store.svg)
 
@@ -188,23 +187,46 @@ Crate boundaries and platform adapters are in [docs/architecture/CRATES.md](docs
 
 ## Benchmarks
 
-`.github/workflows/benchmark-docs.yml` runs a one-shot turn on GitHub-hosted runners at commit `729624b` (measured 2026-11-18) against seven other agents, with a deterministic mock model and exactly one `ls` tool call per turn. jcode v0.99.1 is the closest competitor and the one compared below. Each OS runs on a different machine, so compare inside a row and never across rows.
+<!-- bench-summary:start -->
 
-<p align="center">
-  <img src="docs/performance/charts/03-oneshot-time.svg" alt="Bar chart of median one-shot time per OS for eight agents. Linux: horon 42.5 ms, jcode 138 ms. macOS: horon 88.1 ms, jcode 377 ms. Windows: horon 142 ms, jcode 128 ms" width="780">
-</p>
+`.github/workflows/benchmark-docs.yml` rewrites this summary from the run's own `compare.json`; the version label is the binary each runner installed, not a hand-written constant.
+
+Measured commit `e7b81ddfd166f2609b77ddb0d2080831adab4c34`, 2026-11-20 18:54 UTC. Each OS runs on a different machine, so compare inside a row.
+jcode v1.0.1 (release `v1.0.1`, commit `10114429c8133994861d6c915a2483d397c0f7c2`).
 
 | Linux (`ubuntu-24.04`) | horon | jcode |
 | --- | --- | --- |
-| One-shot turn, median | 42.5 ms | 138.0 ms |
-| Skill invocation, median | 38.0 ms | 53.1 ms |
-| MCP tool call, median | 58.8 ms | 162.9 ms |
-| Peak tree RSS, one-shot | 39.4 MB | 42.2 MB |
-| Memory per additional session, idle after 3 turns | 151.0 KB | 98.1 KB |
-| First model request, body / tool catalog bytes | 3,756 / 2,368 | 3,292 / 1,433 |
-| Install size | 110.6 MB | 163.4 MB |
+| One-shot prompt time | 45.0 ms | 148.2 ms |
+| Skill invocation time | 37.3 ms | 53.9 ms |
+| MCP tool call time | 64.2 ms | 164.8 ms |
+| One-shot prompt memory | 41.1 MB | 80.1 MB |
+| Memory per additional session | 379.9 KB | 173.4 KB |
+| Install size | 117.7 MB | 191.4 MB |
+| First model request, body / tool catalog bytes | 3,699 / 2,358 | 2,888 / 1,100 |
 
-horon took all three Linux time rows and the one-shot peak memory, and macOS followed the same shape: one-shot 88.1 ms against 377.1 ms, skill 64.0 ms against 357.6 ms, MCP 115.1 ms against 486.4 ms. **Windows is the exception.** jcode had the lower median on the one-shot (128.4 ms against 141.8 ms) and the skill run (172.6 ms against 220.0 ms). In both cells the min–max ranges overlap, so neither counts as a clear win; horon kept the MCP call (211.0 ms against 318.3 ms). jcode also used less memory per additional session on Linux and Windows (98.1 KB against 151.0 KB, 63.8 KB against 122.8 KB), less peak memory on the Windows one-shot (26.9 MB against 36.1 MB), and a smaller first request on every OS.
+| macOS (`macos-latest`) | horon | jcode |
+| --- | --- | --- |
+| One-shot prompt time | 46.6 ms | 271.6 ms |
+| Skill invocation time | 38.9 ms | 182.4 ms |
+| MCP tool call time | 58.7 ms | 267.9 ms |
+| One-shot prompt memory | 31.6 MB | 37.8 MB |
+| Memory per additional session | 410.9 KB | 333.1 KB |
+| Install size | 99.0 MB | 161.3 MB |
+| First model request, body / tool catalog bytes | 3,587 / 2,358 | 2,776 / 1,100 |
+
+| Windows (`windows-latest`) | horon | jcode |
+| --- | --- | --- |
+| One-shot prompt time | 237.1 ms | 177.3 ms |
+| Skill invocation time | 226.8 ms | 272.0 ms |
+| MCP tool call time | 274.5 ms | 376.4 ms |
+| One-shot prompt memory | 33.1 MB | 30.4 MB |
+| Memory per additional session | 358.3 KB | 304.4 KB |
+| Install size | 100.3 MB | 153.2 MB |
+| First model request, body / tool catalog bytes | 3,654 / 2,358 | 2,878 / 1,111 |
+
+[Run](https://github.com/horon-ai/agent/actions/runs/44792005623)
+
+<!-- bench-summary:end -->
 
 These are single-commit CI samples, not a guarantee. The full tables for eight tools, the TUI suite, the measurement method and what the numbers do not say are in [docs/performance/RESULTS.md](docs/performance/RESULTS.md) and [docs/performance/BENCHMARK.md](docs/performance/BENCHMARK.md).
 

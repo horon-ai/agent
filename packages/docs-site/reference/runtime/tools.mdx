@@ -288,6 +288,21 @@ The journal never touches files itself. It returns the bytes to restore, and the
 - On success it commits that change as a new mutation unit, so it can be undone again.
 - The redo queue lives in per-session module state and disappears when the process ends.
 
+### apply_patch preflight
+
+`apply_patch` accepts its Codex envelope and plain unified diffs (`---`/`+++`), which route to the same applier (`crates/app-core/src/tool/patch.rs`). The unified path reads and validates every file in the request before the first write.
+
+- Hunk headers are parsed as `@@ -start[,count] +start[,count] @@`, and the declared counts must match the supplied lines. The declared new range must match the hunk's position, so an insertion is counted in later `+start` values.
+- Only `--- ` and `+++ ` lines are file headers. A body line whose content starts with `--` stays inside the hunk because parsing follows the declared counts.
+- A hunk with no old lines inserts at `old_start`; `-0,0` inserts before the first line. Hunks must appear in file order and must not overlap.
+- Removed and context lines must match the current text exactly at the declared position. The applier does not shift the hunk or search for a nearby match.
+- A missing final newline is preserved, and the `\ No newline at end of file` marker sets the ending for the new text. The marker is valid only on the last line of its side, and the old-side marker must agree with the original ending. A uniformly CRLF file keeps CRLF; mixed endings fail the context check instead of being converted.
+- Two paths that resolve to the same file are refused, so one operation cannot overwrite what an earlier one produced.
+- Reads go through `client_fs`, so a patch that matches only the stale disk copy is rejected while an editor buffer is served. Deletes still act on disk.
+- Preflight runs under the per-path locks and writes nothing. A failure reports `✗ <path>` and `No files changed`, records no undo unit, and carries the `failed` verdict.
+- A failure after preflight is external I/O: files written before it stay written, and the result states how many changed so it cannot be mistaken for a preflight refusal. That result carries `partial` when at least one file changed and `failed` otherwise.
+- A protected delete path is refused during preflight too, keeping the issue #604 policy on this route.
+
 ### hashline anchors
 
 Passing `hashline: true` to `read` prefixes each line with `{line:>5}#{tag}:{body}` (`crates/app-core/src/tool/read.rs:164`). The tag is the first two bytes of the line's SHA-256 written as four lowercase hex digits (`crates/edit-safety/src/hashline.rs:27` `tag_for`). A 16-bit value is not a cryptographic commitment; it is a cheap marker for the line the model read.
@@ -335,6 +350,10 @@ Send `code` as a Python string. `timeout` accepts 1 to 3600 seconds and defaults
 Each cell needs explicit approval before it runs, including in `yolo` and `off`. Approved Python can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](/reference/safety/security#python-eval) for the execution boundary.
 
 Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
+
+Inside a cell, use `await tool.read(file_path="notes.txt")` to get a tool's text, or `await tool.bash(command="echo ready")` to run an allowed foreground command. A refusal or failure raises `RuntimeError` in the cell. Calls run serially, with up to 64 per cell and a 256 KiB frame limit. The cell's deadline includes time spent waiting for a tool or its approval.
+
+The session's usual tool restrictions and audit trail apply. Dispatchers and recursive `eval` calls are unavailable through the bridge. Bridge shell calls run in the foreground with closed input. Cancellation and timeout stop the running process tree. On Unix, the process group also stops when the shell exits. A process that detaches from the group, or outlives the shell on Windows, can remain running. If an approval is queued, rerunning the cell after granting it can repeat earlier side effects.
 
 ## `generate_image`
 
@@ -770,6 +789,7 @@ Reading a file that was already read in the same session compares content hashes
 - When the content changed, the earlier read covered the whole file, and this read also covers the whole file, a unified diff against the earlier read is returned. If the diff is larger than 40% of the file, the whole file is sent. The baseline snapshot is kept only for files up to 1 MiB and is not readable through `artifact://`.
 - `full: true` always sends the body. When the `hashline` format differs from the earlier read, it is rendered again.
 - Applying compaction, rewinding or editing the conversation, urgent truncation, aging old results, and ending the session all drop that session's records. The deduplication is only correct while the earlier output is still in the context.
+- Python cell reads bypass these records. Python receives the result directly and decides what to print into the model context.
 
 The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
 
