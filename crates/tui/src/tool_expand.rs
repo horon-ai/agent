@@ -3,9 +3,12 @@
 //! A transcript line keeps only the head of a finished call's output, because a
 //! tool may return megabytes and the line outlives the call. The rest of a cut
 //! output is kept here, beside the items rather than inside them, so that a key
-//! can show the whole text of the newest cut call and put the preview back on
-//! the next press. Keeping it apart is what leaves `ToolCall`, `OutputHead` and
-//! the drawing look as they are: a line stays a plain description of a call.
+//! can show the whole text of the selected cut call and put the preview back on
+//! the next press. The selected call follows the view: scrolling to an earlier
+//! result makes that result the one the key acts on, and a call that arrives
+//! while the view follows the end becomes the selection again. Keeping the text
+//! apart is what leaves `ToolCall`, `OutputHead` and the drawing look as they
+//! are: a line stays a plain description of a call.
 //!
 //! The memory is bounded on purpose. One call keeps at most
 //! [`MAX_KEPT_BYTES`], and a cut copy ends with a line saying it was cut, so a
@@ -57,9 +60,34 @@ struct Kept {
 }
 
 /// The kept outputs, oldest first.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct ExpandState {
     kept: Vec<Kept>,
+    /// The call the key acts on, if one is selected.
+    selected: Option<String>,
+    /// Whether a result arriving now becomes the selection.
+    ///
+    /// True while the view follows the end, which is when a new result is the
+    /// one being read. Scrolling to a result stops the following, so a call
+    /// that lands below a held view does not take the selection away from the
+    /// result on screen.
+    follow: bool,
+    /// Whether finished calls are hidden, as `transcript.show_tool_activity`
+    /// says. A call in progress or waiting for approval is always drawn.
+    hide_activity: bool,
+}
+
+impl Default for ExpandState {
+    fn default() -> Self {
+        Self {
+            kept: Vec::new(),
+            selected: None,
+            // A client starts at the end of the conversation, where a new
+            // result is the one being read.
+            follow: true,
+            hide_activity: false,
+        }
+    }
 }
 
 impl ExpandState {
@@ -83,8 +111,8 @@ impl ExpandState {
             return false;
         }
         let redraw = self.kept.iter().any(|kept| kept.expanded);
-        // Only one line is drawn in full at a time, and the newest call is the
-        // one the key is about, so a new call closes the one before it.
+        // Only one line is drawn in full at a time, so a new call closes the
+        // one before it.
         for kept in &mut self.kept {
             kept.expanded = false;
         }
@@ -97,25 +125,88 @@ impl ExpandState {
         if excess > 0 {
             self.kept.drain(..excess);
         }
+        // The selection follows new results while the view follows the end,
+        // and falls back to nothing when a held view's selection was dropped,
+        // so the key never acts on a line the reader cannot see.
+        let kept = self.kept.last().map(|kept| kept.call_id.clone());
+        let stale = self
+            .selected
+            .as_deref()
+            .is_none_or(|id| !self.kept.iter().any(|kept| kept.call_id == id));
+        if self.follow {
+            self.selected = kept;
+        } else if stale {
+            self.selected = None;
+        }
         redraw
     }
 
-    /// Show, or hide again, the whole text of the newest kept call.
+    /// Show, or hide again, the whole text of the selected kept call.
     ///
-    /// Answers whether there was anything to toggle: with nothing kept the key
-    /// has no work to do, and the caller says so instead of doing nothing
-    /// silently.
+    /// Answers whether there was anything to toggle: with nothing kept, or with
+    /// the view showing no call at all, the key has no work to do, and the
+    /// caller says so instead of doing nothing silently.
     pub(crate) fn toggle(&mut self) -> bool {
-        let Some(newest) = self.kept.len().checked_sub(1) else {
+        let Some(index) = self
+            .selected
+            .as_deref()
+            .and_then(|id| self.kept.iter().position(|kept| kept.call_id == id))
+        else {
             return false;
         };
-        // The newest entry decides the direction: whatever the table held, one
-        // press opens the newest call and the next one shuts it again.
-        let expand = self.kept.get(newest).is_none_or(|kept| !kept.expanded);
+        // The selected entry decides the direction: whatever the table held,
+        // one press opens it and the next one shuts it again.
+        let expand = self.kept.get(index).is_none_or(|kept| !kept.expanded);
         for (position, kept) in self.kept.iter_mut().enumerate() {
-            kept.expanded = expand && position == newest;
+            kept.expanded = expand && position == index;
         }
         true
+    }
+
+    /// Make `call_id` the call the key acts on.
+    ///
+    /// Answers whether the call holds kept text. The caller passes the call the
+    /// view shows, so this also stops a result that arrives later from taking
+    /// the selection away from the line on screen.
+    pub(crate) fn select(&mut self, call_id: &str) -> bool {
+        if !self.holds(call_id) {
+            return false;
+        }
+        self.selected = Some(call_id.to_string());
+        self.follow = false;
+        true
+    }
+
+    /// Make the newest kept call the selection and follow new results again.
+    pub(crate) fn follow_newest(&mut self) {
+        self.selected = self.kept.last().map(|kept| kept.call_id.clone());
+        self.follow = true;
+    }
+
+    /// Leave no call selected, as the view showing no result does.
+    pub(crate) fn select_none(&mut self) {
+        self.selected = None;
+        self.follow = false;
+    }
+
+    /// The call the key acts on.
+    pub(crate) fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
+    /// Whether `call_id` is one of the calls holding kept text.
+    pub(crate) fn holds(&self, call_id: &str) -> bool {
+        self.kept.iter().any(|kept| kept.call_id == call_id)
+    }
+
+    /// Draw, or stop drawing, the calls that finished.
+    pub(crate) fn set_activity(&mut self, show: bool) {
+        self.hide_activity = !show;
+    }
+
+    /// Whether finished calls are drawn.
+    pub(crate) fn shows_activity(&self) -> bool {
+        !self.hide_activity
     }
 
     /// Drop the kept text of one call whose line stopped drawing its output.
@@ -125,11 +216,26 @@ impl ExpandState {
     /// nothing the reader can see.
     pub(crate) fn forget(&mut self, call_id: &str) {
         self.kept.retain(|kept| kept.call_id != call_id);
+        let stale = self
+            .selected
+            .as_deref()
+            .is_none_or(|id| !self.kept.iter().any(|kept| kept.call_id == id));
+        if stale {
+            if self.follow {
+                self.follow_newest();
+            } else {
+                self.selected = None;
+            }
+        }
     }
 
     /// Forget every kept output, as leaving the conversation does.
+    ///
+    /// The display preference is not conversation state, so it stays.
     pub(crate) fn clear(&mut self) {
         self.kept.clear();
+        self.selected = None;
+        self.follow = true;
     }
 
     /// The calls holding kept text, oldest first.
@@ -146,28 +252,31 @@ impl ExpandState {
 
     /// What the line of `call_id` draws beyond the preview.
     ///
-    /// The key is named only on the newest kept call, which is the one the key
+    /// The key is named only on the selected call, which is the one the key
     /// expands, and only while that call is not already open: a marker on a call
-    /// the press would not touch is a promise the press does not keep.
+    /// the press would not touch is a promise the press does not keep. The
+    /// marker is also what shows which call scrolling has selected.
     fn retained(&self, call_id: &str, key: Option<Key>) -> Retained<'_> {
-        let Some(index) = self.kept.iter().position(|kept| kept.call_id == call_id) else {
+        if !self.holds(call_id) {
+            return Retained::default();
+        }
+        let Some(kept) = self.kept.iter().find(|kept| kept.call_id == call_id) else {
             return Retained::default();
         };
-        let Some(kept) = self.kept.get(index) else {
-            return Retained::default();
-        };
+        let selected = self.selected.as_deref() == Some(call_id);
         if kept.expanded {
             return Retained {
                 key: None,
                 text: Some(kept.text.as_str()),
                 kept: true,
+                selected,
             };
         }
-        let newest = index + 1 == self.kept.len();
         Retained {
-            key: if newest { key } else { None },
+            key: if selected { key } else { None },
             text: None,
             kept: true,
+            selected,
         }
     }
 }
@@ -223,5 +332,14 @@ impl<'a> Frame<'a> {
     /// build a frame for one draw and hold what it returns.
     pub(crate) fn retained(&self, call_id: &str) -> Retained<'a> {
         self.kept.retained(call_id, self.key)
+    }
+
+    /// Whether a call that finished is left out of the pane.
+    ///
+    /// A call in progress and a call waiting for approval are always drawn: the
+    /// setting hides the record of what ran, not the work the reader has to see
+    /// or answer.
+    pub(crate) fn hides_finished(&self) -> bool {
+        !self.kept.shows_activity()
     }
 }

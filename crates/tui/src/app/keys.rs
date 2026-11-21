@@ -21,12 +21,18 @@ impl App {
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
-        // the draft leaves a list that belongs to the text it left behind.
-        self.sync_slash();
-        self.sync_suggestions();
+        // the draft leaves a list that belongs to the text it left behind. A
+        // replay is not editing that draft — no key reaches it — so the lists
+        // stay closed while the recording is on screen.
+        if !self.replaying() {
+            self.sync_slash();
+            self.sync_suggestions();
+        }
         let action = self.handle_key(key);
-        self.sync_slash();
-        self.sync_suggestions();
+        if !self.replaying() {
+            self.sync_slash();
+            self.sync_suggestions();
+        }
         action
     }
 
@@ -41,6 +47,12 @@ impl App {
             .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
         {
             self.request_repaint();
+            return None;
+        }
+        // A replay owns the keyboard while it plays: its keys move the playback,
+        // and a letter must not reach the draft behind the recording. The two
+        // keys that leave the client still leave it.
+        if self.replaying() && self.replay_key(key) {
             return None;
         }
         // The queue list is a list whose rows are edited rather than chosen,
@@ -88,6 +100,7 @@ impl App {
                         (false, _) => Decision::Denied,
                     };
                     self.transcript.decide_request(&request_id, decision);
+                    self.scroll.reflow();
                     self.transcript
                         .push_notice(approval_answer_line(&covered, approved, always));
                     return Some(Action::Approval {
@@ -269,6 +282,10 @@ impl App {
                 self.expand_tool();
                 return None;
             }
+            Some(keys::ids::APP_TOGGLE_TOOL_ACTIVITY) => {
+                self.toggle_tool_activity();
+                return None;
+            }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
             Some(keys::ids::APP_CYCLE_MODEL) => return self.cycle_model(true),
@@ -358,25 +375,64 @@ impl App {
             keys::ids::APP_SCROLL_BOTTOM => self.scroll.to_bottom(),
             _ => return false,
         }
+        self.select_tool_in_view();
         true
     }
 
-    /// Show the whole output of the newest cut tool call, or the preview again.
+    /// Make the tool call on screen the one the expand key acts on.
+    ///
+    /// The view is the selection: scrolling to an earlier result makes that
+    /// result the one `ctrl+o` opens, and following the end selects the newest
+    /// kept call again. The row arithmetic lives here because the scrollback
+    /// owns the heights and the offset; the transcript owns which item sits at
+    /// a row.
+    fn select_tool_in_view(&mut self) {
+        if self.scroll.is_following() {
+            self.transcript.select_newest_tool();
+            return;
+        }
+        // Without a measurement from a held frame there is no row to map, and
+        // the selection is left where it was rather than guessed.
+        let heights = self.scroll.heights().map(|heights| heights.to_vec());
+        let (Some(heights), Some(view)) = (heights, self.viewport_height) else {
+            return;
+        };
+        let view = usize::from(view.saturating_sub(1).max(1));
+        let open = self.scroll.open_heights();
+        let total = heights.iter().sum::<usize>() + open[0] + open[1];
+        let top = total.saturating_sub(self.scroll.offset()).saturating_sub(view);
+        self.transcript.select_tool_at(&heights, top, view);
+    }
+
+    /// Draw or hide the record of finished tool calls for this session.
+    ///
+    /// The setting is persisted from `/settings`; this key is the quick look
+    /// the conversation needs while a turn runs, so it changes what this client
+    /// draws now and leaves the file alone.
+    fn toggle_tool_activity(&mut self) {
+        let show = !self.transcript.show_tool_activity();
+        self.transcript.set_tool_activity(show);
+        // Rows appeared or went away without output arriving: the held view
+        // keeps the row it was reading instead of jumping.
+        self.scroll.reflow();
+        self.select_tool_in_view();
+    }
+
+    /// Show the whole output of the selected cut tool call, or the preview.
     ///
     /// With nothing to expand the key says so, because a key that silently does
     /// nothing reads as a broken key rather than an empty one.
     fn expand_tool(&mut self) {
+        // The frame just drawn knows where the view sits; a scroll key pressed
+        // before that frame cannot select a result it had no measurement for,
+        // so the press settles the selection again here.
+        self.select_tool_in_view();
         if self.transcript.toggle_expand() {
-            // The height of one block just changed, and a held view keeps its
-            // place from heights counted before the press: they are dropped so
-            // the next held frame recounts instead of trusting them.
-            self.scroll.invalidate();
-            // The view then goes back to the end. The newest kept call is
-            // usually at the end of what has been drawn, but not always: a
-            // message may have arrived after it, so this is a guess that the
-            // changed block is near the bottom, not a guarantee that the next
-            // frames show the expansion in full.
-            self.scroll.to_bottom();
+            // The height of one block just changed without output arriving:
+            // the held view is recounted and moved by the difference, which
+            // keeps the row on screen where it was instead of jumping to the
+            // end of the conversation.
+            self.scroll.reflow();
         } else {
             self.transcript.push_notice(crate::tool_expand::NOTHING_TO_EXPAND);
         }
@@ -406,9 +462,11 @@ impl App {
             MouseEventKind::ScrollDown => self.scroll.down(scroll::WHEEL_ROWS),
             MouseEventKind::Down(MouseButton::Left) => {
                 self.input.place_caret(mouse.column, mouse.row);
+                return;
             }
-            _ => {}
+            _ => return,
         }
+        self.select_tool_in_view();
     }
 
     /// Move up: through the lines of the draft, then back through the history.

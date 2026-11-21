@@ -27,6 +27,7 @@ mod markdown;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
+pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
@@ -83,6 +84,10 @@ mod scroll_tests;
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "recording_tests.rs"]
+mod recording_tests;
 
 #[cfg(test)]
 #[path = "report_tests.rs"]
@@ -314,9 +319,7 @@ fn run_interactive(
     hide_thinking: bool,
 ) -> i32 {
     let mut themes = ThemeLoader::new();
-    // Read before the events travel with the app: whether the session runs on
-    // this machine decides what may read this machine's disk for it, and the
-    // artifact store is the first such read.
+    // Only a local connection may open retained artifacts.
     let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
     app.workspace_is_local = local;
@@ -481,16 +484,10 @@ where
 {
     let mut failure = None;
     let mut mouse_captured = false;
-    // The scheduler draws the first frame and sets the cadence after that.
     let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
-    // The minute the status line's clock last showed, so the frame that turns
-    // it over is drawn and no other idle frame is.
+    // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
-    // Whether the terminal keeps a title worth adding the state to; asked once,
-    // because the answer is the terminal's and does not change while it runs.
     let state_supported = title.state_supported();
-    // The state the window title already carries: `title.start` wrote it, and
-    // the first frame must not write it again.
     let mut shown_state = window::state(app, state_supported);
     loop {
         let mut changed = match loop_io::drain_events(app) {
@@ -526,9 +523,7 @@ where
                 changed = true;
             }
         }
-        // The reloader throttles itself to one file check per second; the
-        // theme loader, the key bindings and the command directories share
-        // that cadence for their own files.
+        // Reloaders check for changes once per second.
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
@@ -554,6 +549,9 @@ where
         // Command directories are only stat-ed here; a file is re-read when its
         // own stamp moved.
         changed |= app.tick_commands();
+        // A replay is a clock over the conversation: each frame plays the events
+        // that became due and reports whether the pane changed.
+        changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }
@@ -579,9 +577,6 @@ where
                 break;
             }
         }
-        // Every input event can change what is on screen: a key edits the
-        // draft or moves the selection, a paste inserts, the wheel scrolls and a
-        // resize remakes the whole layout.
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting
@@ -1178,7 +1173,9 @@ fn indicator_line(app: &App, below: usize) -> Line<'static> {
 
 /// What an empty transcript says instead of nothing.
 fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    if !rows.is_empty() {
+    // A conversation whose only rows are hidden tool calls still has content:
+    // asking the reader to send a message would misread what is on screen.
+    if !rows.is_empty() || !app.transcript.items().is_empty() {
         return rows;
     }
     wrap::wrap_line(
