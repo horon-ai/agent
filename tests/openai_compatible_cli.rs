@@ -960,3 +960,63 @@ api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n"
         "configured"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_output() {
+    let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+    let home = Home::new();
+    std::fs::write(home.path().join("sample.txt"), "alpha\nneedle one\nbeta\nneeedle two\n").unwrap();
+
+    let read = home.run(&["preview", "read", r#"{"file_path":"sample.txt"}"#]).await;
+    assert!(read.status.success(), "{}", text(&read.stderr));
+    assert!(text(&read.stdout).contains("needle one"));
+
+    let grep = home
+        .run(&[
+            "preview",
+            "agentgrep",
+            r#"{"query":"ne+dle","regex":true,"paths_only":false}"#,
+            "--json",
+        ])
+        .await;
+    assert!(grep.status.success(), "{}", text(&grep.stderr));
+    let grep: Value = serde_json::from_slice(&grep.stdout).unwrap();
+    assert_eq!(grep["tool"], "agentgrep");
+    assert!(grep["output"].as_str().unwrap().contains("needle"));
+
+    assert!(
+        !home.path().join("sessions").exists(),
+        "a preview must not create a session"
+    );
+    let refused = home.run(&["preview", "bash", r#"{"command":"true"}"#]).await;
+    assert!(!refused.status.success());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        read_request(&mut socket).await.unwrap();
+        let body = format!(
+            r#"{{"results":[{{"title":"Found","url":"https://example.org/a","content":"OPENAI_API_KEY={secret}"}}]}}"#
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!("{COMPACTION_HEAD}[websearch]\nengine = \"searxng\"\nfallback_engines = []\nsearxng_url = \"http://127.0.0.1:{port}\"\n"),
+    )
+    .unwrap();
+    let search = home
+        .run(&["preview", "websearch", r#"{"query":"anything"}"#, "--json"])
+        .await;
+    assert!(search.status.success(), "{}", text(&search.stderr));
+    server.await.unwrap();
+    let search: Value = serde_json::from_slice(&search.stdout).unwrap();
+    assert_eq!(search["backend"], "searxng");
+    let output = search["output"].as_str().unwrap();
+    assert!(output.contains("Found") && !output.contains(secret), "{output}");
+}

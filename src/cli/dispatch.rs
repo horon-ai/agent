@@ -51,6 +51,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if let Some(Command::Stats { from, through, json }) = &args.command {
         return commands::run_stats_command(from.as_deref(), through.as_deref(), *json);
     }
+    if let Some(Command::Preview { tool, input, json }) = &args.command {
+        return commands::run_preview_command(tool, input, *json).await;
+    }
     // Explicit MCP management is independent of provider profiles, sessions,
     // and the daemon. In particular, list must remain offline and scriptable.
     if let Some(Command::Mcp { action }) = args.command {
@@ -290,7 +293,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Usage { json }) => {
             commands::run_usage_command(json).await?;
         }
-        Some(Command::Stats { .. }) => unreachable!("stats are handled before bootstrap"),
+        Some(Command::Stats { .. } | Command::Preview { .. }) => unreachable!("handled before bootstrap"),
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,
         Some(Command::Debug {
             command,

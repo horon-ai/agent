@@ -1011,3 +1011,7 @@ Tests: `crates/app-core/src/tool/checkpoint_tests.rs` covers the registration
 gate, the refusals and the pending map;
 `crates/app-core/src/agent/rewind_summary_tests.rs` covers the settle path, the
 report that replaces the branch, and undo.
+
+### Preview a read-only tool
+
+`horon preview <read|agentgrep|websearch> '<json input>'` runs one of these three built-ins once, without a model, a session or an approval prompt. The input is the tool's own JSON object, and the tool applies its normal path checks. Output is redacted for credentials and capped at 32 KiB. `--json` returns `tool`, `output`, `truncated` and, for `websearch`, the configured engine order as `backend`; the search endpoint and any key are never shown. Any other tool name is refused.

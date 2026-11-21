@@ -347,6 +347,20 @@ pub(crate) enum Command {
         json: bool,
     },
 
+    /// Run one read-only built-in (read, agentgrep, websearch) without a model or session
+    Preview {
+        /// Built-in to run
+        #[arg(value_parser = ["read", "agentgrep", "websearch"])]
+        tool: String,
+
+        /// Tool input as a JSON object, e.g. '{"file_path":"README.md","limit":20}'
+        input: String,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
