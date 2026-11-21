@@ -94,14 +94,14 @@ fn the_view_lists_every_item_and_an_edit_carries_the_revision_sent() {
 
 #[test]
 fn enter_reopens_a_cancelled_item_and_delete_cancels_an_open_one() {
-    let mut app = app();
+    let mut initial = app();
     list(
-        &mut app,
+        &mut initial,
         &[item("t1", "ship", "cancelled"), item("t2", "review", "in_progress")],
         Some("rev-1"),
     );
-    open(&mut app);
-    let reopened = app.todo_panel_key(key(KeyCode::Enter));
+    open(&mut initial);
+    let reopened = initial.todo_panel_key(key(KeyCode::Enter));
     assert!(matches!(
         reopened,
         Some(Action::TodoStatus(request)) if request.id == "t1" && request.status == "pending"
