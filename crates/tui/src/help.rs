@@ -23,6 +23,7 @@ horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]... [--gallery[=<scene>]]
+                 [--goal <objective> --goal-budget <tokens>]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
                  [--hide-thinking] [--no-title]
@@ -31,6 +32,8 @@ Options:
   --socket <path>           Harness API socket to connect to (default: the
                             resolved harness socket for this user)
   --session <id>            Attach to an existing session instead of creating one
+  --goal <objective>       Attach a goal when creating a new session
+  --goal-budget <tokens>   Set the new goal's token ceiling
   --cwd <dir>               Working directory for a newly created session
   --config <file>           Extra settings file, read after the global and
                             project files and before the environment
@@ -115,6 +118,8 @@ Commands:
   /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
+  /pin [id]      keep a session at the top of the session list, or pin the
+                 one attached
   /quit          leave
   /record [path] record the conversation to a local file (stop, status)
   /rename <title> save a title for the current session
@@ -124,6 +129,7 @@ Commands:
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
+  /unpin [id]    take a session out of the pinned group
   /voice [consent|forget|stop|cancel|say <text>|read|status]
                  on-device speech: consent to capture, dictate into the
                  draft (not sent), or speak text locally
@@ -282,6 +288,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
+        "pin" => "keep a session at the top of the list, or pin the attached one",
+        "unpin" => "take a session out of the pinned group",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
@@ -353,11 +361,13 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "context" => "show what is filling the context window",
         "continue" => "resume every paused session",
         "fast" => "switch the provider's fast (priority) service tier",
+        "goal" => "attach a goal with /goal <token-budget> <objective>",
         "info" => "show the session, provider and usage details",
         "initiatives" => "list the open initiatives",
         "judge" => "spawn a judge that checks the work against the request",
         "logout" => "drop the stored provider credentials",
         "memory" => "show the memory status; `memory extract` schedules an extraction",
+        "modelpreset" => "list, preview or apply a named set of model choices",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
         "productivity" => "generate the productivity report",

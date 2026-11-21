@@ -739,6 +739,55 @@ def configure_mcp_probe(home: str, case_root: str) -> str:
     return calls
 
 
+def model_preset_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('''
+[[providers.mock.models]]
+id = "preset-model"
+context_window = 128000
+
+[model_presets.quality]
+model = "preset-model"
+effort = "high"
+roles = { swarm = "preset-model", review = "mock-model", judge = "mock-model", memory = "inherit", ambient = "mock-model" }
+
+[model_presets.rejected]
+model = "mock-model"
+roles = { swarm = "missing-model" }
+
+[model_presets.unknown_role]
+model = "mock-model"
+roles = { unknown = "mock-model" }
+''')
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=horon_env(case_root, home))
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for model presets")
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset preview quality\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "model preset preview", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset apply quality\r")
+        terminal.read_until("Applied model preset 'quality'", STEP_TIMEOUT, "model preset applied", since=start)
+        for name, error in (("rejected", "unavailable in the active provider profile"),
+                            ("unknown_role", "Unknown model preset role")):
+            start = len(terminal.transcript)
+            terminal.send(f"/modelpreset apply {name}\r")
+            terminal.read_until(error, STEP_TIMEOUT, "invalid preset refused", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/info\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "preset model survived refused changes", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/agents\r")
+        terminal.read_until("inherit", STEP_TIMEOUT, "preset role overrides applied", since=start)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("model preset session failed to exit cleanly")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -825,6 +874,31 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        # The reply text streams before the turn ends, so `/pin` (and the
+        # `/switch` that follows it) would be refused while the turn is still
+        # running on a slow host. Wait for idle from the same `reply_start`.
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before pinning", since=reply_start)
+        pin_start = len(terminal.transcript)
+        terminal.send("/pin\r")
+        pin_path = os.path.join(home, "tui-pins.json")
+        if POSIX:
+            terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the active session", since=pin_start)
+        else:
+            deadline = time.monotonic() + STEP_TIMEOUT
+            while not os.path.isfile(pin_path) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        if not os.path.isfile(pin_path):
+            raise Failure(f"pin command did not persist a local pin file\n--- transcript ---\n{terminal.transcript}")
+        with open(pin_path, encoding="utf-8") as handle:
+            pins = [session_id for ids in json.load(handle)["scopes"].values() for session_id in ids]
+        if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
+            raise Failure(f"expected one saved session to be pinned, got {pins!r}")
+        if POSIX:
+            terminal.send("/switch\r")
+            terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")
+            terminal.send("\x10")
+            terminal.send("\x1b")
+            terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
         if POSIX:
             context_request_smoke(terminal, home, base_url)
             swarm_picker_smoke(terminal, launch, home, case_root, env)
@@ -1133,8 +1207,8 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
 
 # Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
 # client a POSIX signal: only a POSIX host can drive either.
-POSIX_ONLY_CASES = {5, 6, 7, 8}
-ALL_CASES = tuple(range(1, 9))
+POSIX_ONLY_CASES = {5, 6, 7, 8, 9}
+ALL_CASES = tuple(range(1, 10))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
     """A client killed by a signal still gives the terminal back (#431).
@@ -1282,6 +1356,24 @@ def run_build_layout(
             jobs_root = os.path.join(root, "jobs")
             jobs_launch = build_launch(jobs_root, agent, tui)
             text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
+            goal_root = os.path.join(root, "goal")
+            goal_launch = build_launch(goal_root, agent, tui)
+            home = write_config(goal_launch.home, base_url)
+            env = horon_env(goal_root, home)
+            env.pop("HORON_NO_TUI", None)
+            argv = goal_launch.client_argv(goal_root) + ["--goal", "Verify startup objective", "--goal-budget", "1200"]
+            terminal = Terminal(argv, cwd=goal_root, env=env)
+            try:
+                terminal.read_until("Verify startup objective", STARTUP_TIMEOUT, "startup goal appears")
+                terminal.read_until("1200", STEP_TIMEOUT, "startup token ceiling appears")
+                terminal.send("/goal 2400 Reject duplicate objective\r")
+                terminal.read_until("already has an active goal", STEP_TIMEOUT, "startup goal stays attached")
+                terminal.send("/quit\r")
+                if terminal.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"goal client did not exit\n--- transcript ---\n{terminal.transcript}")
+                text += "\n--- startup goal ---\n" + terminal.transcript
+            finally:
+                terminal.close()
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)
@@ -1342,6 +1434,14 @@ def run_build_layout(
         case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
         signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
         log(f"case {index} passed")
+    if 9 in cases:
+        log("case 9: preview and apply a named model preset, then refuse invalid choices")
+        case_root = os.path.join(root, "model-preset")
+        text = model_preset_case(build_launch(case_root, agent, tui), case_root, base_url)
+        if transcript:
+            with open(transcript, "a", encoding="utf-8") as handle:
+                handle.write("\n--- model preset ---\n" + text)
+        log("case 9 passed")
     return 0
 
 

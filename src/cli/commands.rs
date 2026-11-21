@@ -5,7 +5,6 @@ use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use crate::{gateway, memory, storage};
 
@@ -415,6 +414,8 @@ struct RunCommandReport {
     model: String,
     text: String,
     usage: crate::agent::TokenUsage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background_jobs: Option<Vec<run_jobs::JobReport>>,
 }
 
 #[derive(Debug, Default)]
@@ -872,58 +873,8 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
     name.to_string()
 }
 
-pub(super) async fn run_single_message_with_agent(
-    agent: &mut crate::agent::Agent,
-    provider: std::sync::Arc<dyn crate::provider::Provider>,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-    max_time: Option<Duration>,
-) -> Result<()> {
-    let elapsed = AtomicBool::new(false);
-    let deadline = max_time.map(|duration| (duration, agent.graceful_shutdown_signal()));
-    let run = async {
-        if emit_json {
-            let text = run_single_message_command_capture_with_auto_poke(agent, message).await?;
-            if elapsed.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            let report = RunCommandReport {
-                session_id: agent.session_id().to_string(),
-                provider: run_report_provider_name(provider.as_ref(), agent.session_provider_key().as_deref()),
-                model: provider.model(),
-                text,
-                usage: agent.last_usage().clone(),
-            };
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        } else if emit_ndjson {
-            run_single_message_command_ndjson(agent, provider, message, &elapsed).await?;
-        } else {
-            run_single_message_command_plain_with_auto_poke(agent, message).await?;
-        }
-        Ok(())
-    };
-    let result = match deadline {
-        Some((duration, cancel)) => run_deadline::run_with_deadline(duration, &elapsed, || cancel.fire(), run).await,
-        None => run.await,
-    };
-
-    // `Agent::new` and session restore both register this process as the active
-    // owner. Unlike the interactive lifecycle, `horon-agent run` has no later quit
-    // path to close the session. Finalize after output has been emitted, while
-    // returning the original command result unchanged. This prevents a normal
-    // one-shot exit from looking like a stale-PID crash on the next startup
-    // (issue #988).
-    agent.mark_closed();
-    if let Some(error) = result
-        .as_ref()
-        .err()
-        .and_then(|error| error.downcast_ref::<RunDeadlineExceeded>())
-    {
-        error.report(agent.session_id(), emit_json, emit_ndjson)?;
-    }
-    result
-}
+mod run_jobs;
+pub(super) use run_jobs::{RunLimits, run_single_message_with_agent};
 
 fn run_command_auto_poke_enabled() -> bool {
     std::env::var("HORON_AGENT_RUN_AUTO_POKE")
@@ -1327,6 +1278,7 @@ async fn run_single_message_command_ndjson(
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
     deadline_elapsed: &AtomicBool,
+    jobs: Option<&mut run_jobs::OwnedJobs<'_>>,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = agent.session_id().to_string();
@@ -1475,6 +1427,18 @@ async fn run_single_message_command_ndjson(
 
     match result {
         Ok(()) => {
+            if let Some(jobs) = jobs {
+                let statuses = jobs.settle(&session_id).await;
+                if deadline_elapsed.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                for job in statuses {
+                    write_json_line(
+                        &mut stdout,
+                        &serde_json::json!({"type":"background_job", "session_id":session_id, "job":job}),
+                    )?;
+                }
+            }
             write_json_line(
                 &mut stdout,
                 &serde_json::json!({

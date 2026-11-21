@@ -726,6 +726,56 @@ async fn stats_groups_durable_usage_by_date_and_route_without_double_counting() 
 
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
+async fn wait_async_reports_background_status_and_respects_run_deadline() {
+    let home = Home::new();
+    let mock = Mock::start_with_tool("bash", r#"{"command":"exit 0","run_in_background":true}"#).await;
+    home.write_config(&mock.base_url);
+    let result = home
+        .run(&[
+            "run",
+            "finish the background job",
+            "--no-update",
+            "--wait-async",
+            "--ndjson",
+        ])
+        .await;
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let rows: Vec<Value> = text(&result.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let jobs: Vec<_> = rows.iter().filter(|row| row["type"] == "background_job").collect();
+    assert_eq!(jobs.len(), 1, "{rows:?}");
+    assert_eq!(jobs[0]["job"]["exit_code"], 0);
+    assert_eq!(rows.last().unwrap()["type"], "done");
+
+    let mock = Mock::start_with_tool("bash", r#"{"command":"sleep 20","run_in_background":true}"#).await;
+    home.write_config(&mock.base_url);
+    let result = home
+        .run(&[
+            "run",
+            "wait for the long job",
+            "--no-update",
+            "--wait-async",
+            "--max-time",
+            "4",
+            "--json",
+        ])
+        .await;
+    assert_eq!(result.status.code(), Some(124), "{}", text(&result.stderr));
+    let error: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(error["code"], "deadline_exceeded");
+    let stderr = text(&result.stderr);
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("background job ") && line.ends_with(": Running")),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
 async fn no_pty_overrides_shell_allocation_for_one_run() {
     use std::io::Write as _;
 

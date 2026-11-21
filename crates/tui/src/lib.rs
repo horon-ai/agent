@@ -36,6 +36,7 @@ pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
+mod session_pins;
 pub mod settings;
 pub mod statusline;
 mod suggestions;
@@ -157,6 +158,9 @@ pub struct Args {
     pub socket: Option<std::path::PathBuf>,
     /// Existing session to attach to instead of creating one.
     pub session: Option<String>,
+    /// Objective and token ceiling for a new session.
+    pub goal: Option<String>,
+    pub goal_budget: Option<u64>,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
@@ -217,6 +221,22 @@ impl Args {
                     Some(session) if !session.is_empty() => parsed.session = Some(session),
                     _ => return Err("--session needs a session id".to_string()),
                 },
+                "--goal" => match arguments.next() {
+                    Some(title) if !title.trim().is_empty() => parsed.goal = Some(title),
+                    _ => return Err("--goal needs a nonempty objective".into()),
+                },
+                "--goal-budget" => {
+                    let Some(value) = arguments.next() else {
+                        return Err("--goal-budget needs a positive token count".into());
+                    };
+                    let budget = value
+                        .parse::<u64>()
+                        .map_err(|_| "--goal-budget needs a positive token count")?;
+                    if budget == 0 {
+                        return Err("--goal-budget needs a positive token count".into());
+                    }
+                    parsed.goal_budget = Some(budget);
+                }
                 "--cwd" => match arguments.next() {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
@@ -240,6 +260,12 @@ impl Args {
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
+        }
+        if parsed.goal.is_some() != parsed.goal_budget.is_some() {
+            return Err("--goal and --goal-budget must be used together".into());
+        }
+        if parsed.goal.is_some() && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--goal can only be used when starting a new session".into());
         }
         Ok(parsed)
     }
@@ -332,7 +358,18 @@ where
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking),
+        Ok(runtime) => {
+            if let Some((title, budget)) = args.goal.zip(args.goal_budget)
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Goal,
+                    arguments: vec![budget.to_string(), title],
+                })
+            {
+                show_failure(&format!("could not queue the startup goal: {error}"));
+                return 1;
+            }
+            run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking)
+        }
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -356,6 +393,9 @@ fn run_interactive(
 ) -> i32 {
     let mut themes = ThemeLoader::new();
     let workspace = runtime.workspace.clone();
+    // The endpoint names the list of pins this client reads and writes: two
+    // daemons can issue the same session id, so the file keeps them apart.
+    let pin_scope = runtime.scope.clone();
     // Read before the events travel with the app: the flag decides whether a
     // keystroke may read this machine's disk for the session.
     let local = runtime.local;
@@ -365,6 +405,8 @@ fn run_interactive(
     // or an embedded `App` writes to.
     app.notes = notes::NoteStore::owned();
     app.load_notes();
+    app.pins.store = session_pins::PinStore::owned(pin_scope);
+    app.load_pins();
     // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
