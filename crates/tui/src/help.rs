@@ -257,6 +257,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
+        "jobs" => "list the background work this session is running, and cancel a terminal",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
         "model" => "pick a model, or switch with /model <name>",

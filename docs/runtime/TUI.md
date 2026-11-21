@@ -429,6 +429,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
+| `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
@@ -465,6 +466,7 @@ built-in commands:
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
+  /jobs                list this session's background work and cancel a terminal job with Delete
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
   /model               pick a model, or switch with /model <name>

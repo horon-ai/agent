@@ -162,7 +162,7 @@ def start_mock_server(retry_denied: bool) -> tuple[subprocess.Popen, str]:
 # ---------------------------------------------------------------------------
 
 
-def write_config(home: str, base_url: str) -> str:
+def write_config(home: str, base_url: str, approval_mode: str = "write") -> str:
     """An isolated HORON_HOME whose only provider is the mock server.
 
     `approval_mode = "write"` is what makes the first tool call ask: the turn
@@ -186,7 +186,7 @@ id = "mock-model"
 context_window = 128000
 
 [tools]
-approval_mode = "write"
+approval_mode = "{approval_mode}"
 """
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as handle:
         handle.write(config)
@@ -913,6 +913,36 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url, "yolo")
+    env = horon_env(case_root, home)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "background job session ready")
+        terminal.send("[tui:jobs] start\r")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "both background jobs started")
+        terminal.send("/jobs\r")
+        terminal.read_until("Background jobs", STEP_TIMEOUT, "current session jobs")
+        terminal.read_until("job-one", STEP_TIMEOUT, "first job listed")
+        terminal.read_until("job-two", STEP_TIMEOUT, "second job listed")
+        terminal.send("job-two")
+        terminal.read_until("output-two", STEP_TIMEOUT, "bounded output of selected job")
+        terminal.send("\x1b[3~")
+        terminal.read_until("matches that filter", STEP_TIMEOUT, "only the cancelled row was removed")
+        terminal.send("\x1b")
+        terminal.read_until("cancelling background job", STEP_TIMEOUT, "cancel accepted")
+        terminal.send("/jobs\r")
+        terminal.send("job-one")
+        terminal.read_until("output-one", STEP_TIMEOUT, "other job remains available")
+        terminal.send("\x1b\x1b/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure(f"background job client did not exit\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def run_build_layout(
     agent: str, tui: str, root: str, base_url: str, transcript: str | None, cases: set[int]
 ) -> int:
@@ -920,6 +950,10 @@ def run_build_layout(
         log("case 1: bare horon hands a terminal over to horon-tui")
         launch = build_launch(os.path.join(root, "happy"), agent, tui)
         text = happy_path(launch, os.path.join(root, "happy"), base_url)
+        if POSIX:
+            jobs_root = os.path.join(root, "jobs")
+            jobs_launch = build_launch(jobs_root, agent, tui)
+            text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)

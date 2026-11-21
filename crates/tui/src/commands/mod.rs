@@ -6,7 +6,7 @@
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
 //!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record` and `/replay`.
+//!    `/jobs`, `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -95,6 +95,8 @@ pub enum Local {
     ShellExcluded,
     /// List the http(s) links in the newest assistant answers and open one.
     Links,
+    /// List the background work this session is running, and cancel one.
+    Jobs,
     /// Record the visible conversation to a local file, or stop.
     Record,
     /// Replay a recorded conversation, or stop the replay.
@@ -123,6 +125,7 @@ impl Local {
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
             "links" => Some(Self::Links),
+            "jobs" => Some(Self::Jobs),
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
@@ -154,6 +157,7 @@ impl Local {
             Self::Shell => "shell",
             Self::ShellExcluded => "shell",
             Self::Links => "links",
+            Self::Jobs => "jobs",
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
@@ -649,9 +653,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 20] = [
+    "artifact", "clear", "copy", "effort", "exit", "help", "jobs", "keys", "links", "model", "new", "note", "queue",
+    "quit", "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

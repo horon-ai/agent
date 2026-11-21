@@ -429,6 +429,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
+| `/jobs` | 현재 세션의 백그라운드 작업을 보고 선택한 터미널 작업을 취소한다 |
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
@@ -465,6 +466,7 @@ built-in commands:
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
+  /jobs                list this session's background work and cancel a terminal job with Delete
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
   /model               pick a model, or switch with /model <name>

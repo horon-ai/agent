@@ -55,6 +55,14 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// List the background work the attached session is still running.
+    BackgroundJobs,
+    /// Stop one background terminal this session started.
+    ///
+    /// It names the tool call, not the turn: the session and every other job
+    /// keep running, and the daemon answers a job that is not a terminal with
+    /// `not_cancellable` rather than stopping something else.
+    CancelBackgroundTerminal(String),
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one
@@ -135,6 +143,20 @@ pub enum Incoming {
     SessionsChecked { gone: Vec<String>, unverified: usize },
     /// The skills the harness reports for the session it serves.
     Skills(Vec<SkillRow>),
+    /// The background work the session is still running.
+    BackgroundJobs(Vec<super::BackgroundJobRow>),
+    /// One cancellation's verdict, and the list as it stands after it.
+    ///
+    /// The reply to a cancellation only says a stop was started, so the list
+    /// that travels beside it is what says whether the job is gone. A refresh
+    /// that could not be read is `None` rather than an empty list, and the rows
+    /// already on screen stay.
+    BackgroundJobCancelled {
+        call_id: String,
+        accepted: bool,
+        reason: Option<String>,
+        jobs: Option<Vec<super::BackgroundJobRow>>,
+    },
     /// The running turn took the text a steer carried, echoed back so the
     /// client knows which held messages it settles.
     Steered { text: String },

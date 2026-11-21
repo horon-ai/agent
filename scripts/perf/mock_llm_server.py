@@ -53,6 +53,11 @@ SHELL_NAME_HINTS = ("bash", "shell", "exec", "terminal", "run_command", "cmd")
 # stay what they were.
 SKILL_MARKER = "[bench:skill]"
 MCP_MARKER = "[bench:mcp]"
+JOBS_MARKER = "[tui:jobs]"
+JOBS_COMMANDS = (
+    "printf 'output-one\\n'; sleep 120 # job-one",
+    "printf 'output-two\\n'; sleep 120 # job-two",
+)
 SKILL_NAME = "bench-skill"
 # Text inside the fixture SKILL.md; seeing it in a later request proves the skill
 # body actually reached the model.
@@ -533,6 +538,8 @@ def _plan_name(body: dict, prompt: str) -> str:
         return "skill"
     if MCP_MARKER in blob:
         return "mcp"
+    if JOBS_MARKER in blob:
+        return "jobs"
     return "ls"
 
 
@@ -812,6 +819,17 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(read_tool)
                 via = "mcp-route"
                 arguments = {prop: route}
+        elif plan_name == "jobs":
+            shell = find_shell_tool(tools)
+            issued = tool_call_count(kind, body)
+            if shell is not None and issued < len(JOBS_COMMANDS):
+                tool_name = shell[0]
+                arguments = {
+                    shell[1]: JOBS_COMMANDS[issued],
+                    "intent": "qa",
+                    "run_in_background": True,
+                    "notify": False,
+                }
         else:
             shell = find_shell_tool(tools)
             # The refusal text the approval gate returns names the refusal, and
