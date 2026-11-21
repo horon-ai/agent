@@ -681,7 +681,7 @@ impl BridgeState {
             "fork_session" => {
                 let id = self.legacy_id();
                 self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(consult::fork_frame(id, &request))]
+                vec![Outbound::Legacy(consult::fork_frame(id, request))]
             }
             "transfer_session" => {
                 let id = self.legacy_id();

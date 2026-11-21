@@ -45,6 +45,7 @@ mod render;
 mod resume_marker;
 mod storage_paths;
 mod streaming_guard;
+mod visibility;
 pub use crash::{
     CrashedSessionsInfo, detect_crashed_sessions, find_recent_crashed_sessions, find_session_by_name_or_id,
     recover_crashed_sessions, recover_crashed_sessions_by_ids,
@@ -74,6 +75,7 @@ pub use storage_paths::session_journal_path_from_snapshot;
 pub use storage_paths::{discard_session_original, session_exists, session_journal_path, session_path, store_paths};
 use storage_paths::{estimate_json_bytes, persist_vector_mode_label};
 pub use streaming_guard::StreamingGuard;
+pub use visibility::is_scheduled_task_message;
 pub use {horon_agent_session_types::prompt_title, persistence::drain_saves_for_shutdown};
 
 fn stored_messages_to_messages(messages: &[StoredMessage]) -> Vec<Message> {
@@ -102,16 +104,6 @@ fn is_visible_conversation_message(message: &StoredMessage) -> bool {
     message.display_role.is_none()
         && !is_internal_system_reminder_message(message)
         && !is_scheduled_task_message(message)
-}
-
-/// Recognize scheduler prompts persisted before they received an explicit
-/// system display role. This keeps old sessions from treating them as user
-/// prompts after resume.
-pub fn is_scheduled_task_message(message: &StoredMessage) -> bool {
-    message.role == Role::User
-        && message.content.iter().any(|block| {
-            matches!(block, ContentBlock::Text { text, .. } if text.trim_start().starts_with("[Scheduled task]\n"))
-        })
 }
 
 /// Identity of the inputs the cached provider projection was built from.
@@ -270,13 +262,7 @@ pub struct Session {
     /// Last time the session was marked active
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<Timestamp>,
-    /// A read-only consult child.
-    ///
-    /// Every agent built for this session starts on
-    /// [`crate::session_scope::CONSULT_TOOLS`], and a client tool configuration
-    /// cannot widen it. A fork does not inherit the flag: a normal copy of a
-    /// consult is an ordinary session, and a consult fork of a normal session
-    /// is the only way to become one.
+    /// A read-only consult child; see [`crate::session_scope::CONSULT_TOOLS`].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub consult: bool,
     /// Whether this is a debug/test session (created via debug socket)
