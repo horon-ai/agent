@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 25;
+export const API_VERSION_MINOR = 26;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -30,6 +30,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
+  ["package_control_v1", ["package_control"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -352,6 +353,47 @@ export interface MessageModes {
   steering_mode: string;
   /** Whether a queued message waits for the running tool call or stops it. */
   interrupt_mode: string;
+}
+
+/** Where a package is enabled. */
+export type PackageControlScope = { kind: "global" } | { kind: "project"; root: string };
+
+/** What a management client asks the daemon's package catalog to do. */
+export type PackageControlOperation =
+  | { kind: "install"; directory: string; scope: PackageControlScope; replace?: boolean }
+  | { kind: "disable"; id: string }
+  | { kind: "enable"; id: string }
+  | { kind: "remove"; id: string }
+  | { kind: "sync_inbox" }
+  | { kind: "status" };
+
+export type PackageControlState = "installed" | "disabled" | "revoked";
+
+/** One catalog record as a management client sees it. */
+export interface PackageSummary {
+  kind: "extension" | "plugin";
+  id: string;
+  version: string;
+  name: string;
+  scope: PackageControlScope;
+  state: PackageControlState;
+  generation: number;
+}
+
+/** One inbox entry a pass left in place, with the reason. */
+export interface PackageInboxSkip {
+  name: string;
+  reason: string;
+}
+
+/** The authoritative answer to one `package_control` request. */
+export interface PackageControlReceipt {
+  operation_id: string;
+  generation: number;
+  replayed?: boolean;
+  changed?: string[];
+  skipped?: PackageInboxSkip[];
+  catalog: PackageSummary[];
 }
 
 /**
@@ -824,7 +866,13 @@ export type ApiRequest =
    * connection by the matching `snapshot_marker`.
    */
   | { req: "get_snapshot"; session_id: string; tail?: number; max_bytes?: number }
-  | { req: "ping" };
+  | { req: "ping" }
+  /**
+   * Requires `package_control_v1`. Needs no attached session: the catalog belongs
+   * to the daemon. Reusing `operation_id` reports the recorded result instead of
+   * applying the operation twice.
+   */
+  | { req: "package_control"; operation_id: string; operation: PackageControlOperation };
 
 /** What a `compactHandoff` request did. */
 export type CompactHandoffOutcome =
@@ -854,6 +902,7 @@ export type ApiEvent =
   | { ev: "tools"; session_id: string; tools: SessionToolDefinition[] }
   | { ev: "message_modes"; session_id: string; modes: MessageModes }
   | { ev: "effective_settings"; session_id: string; settings: EffectiveSetting[] }
+  | { ev: "package_control"; receipt: PackageControlReceipt }
   | { ev: "tool_call"; session_id: string; call_id: string; name: string; input: unknown }
   | {
       ev: "tool_done";
@@ -1175,6 +1224,7 @@ export const KNOWN_EVENT_KINDS = [
   "tools",
   "message_modes",
   "effective_settings",
+  "package_control",
   "tool_call",
   "tool_input_delta",
   "tool_exec",
@@ -1308,6 +1358,7 @@ export const KNOWN_REQUEST_KINDS = [
   "cancel_background_terminal",
   "list_background_work",
   "ping",
+  "package_control",
   "export_session_markdown",
 ] as const;
 

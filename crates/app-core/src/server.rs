@@ -56,6 +56,7 @@ mod idle_hibernation;
 mod irc;
 mod lifecycle;
 mod live_turn;
+pub mod package_control;
 mod provider_control;
 pub(crate) mod reload;
 pub(crate) mod reload_recovery;
@@ -2296,6 +2297,15 @@ impl Server {
         crate::startup_profile::mark(crate::startup_profile::SOCKET_BOUND);
         crate::startup_profile::report_to_log();
         irc::install(self);
+        // The package catalog belongs to this daemon: validate it, take in the
+        // inbox and publish the first generation management clients and
+        // sessions read. Starting is detached so socket readiness never waits
+        // for a large inbox, and every request awaits the same startup pass.
+        tokio::spawn(async move {
+            if let Err(error) = package_control::shared().await {
+                crate::logging::warn(&format!("package catalog control is unavailable: {error:#}"));
+            }
+        });
 
         // Server reload replaces the process image where the platform supports
         // it. Force the published listener descriptors to close across that

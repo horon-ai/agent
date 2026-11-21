@@ -133,6 +133,11 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // it is refused with a structured `unsupported` naming this capability
     // rather than being sent a frame it would answer with no correlation.
     horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    // The daemon owns the package catalog, so the bridge answers nothing itself:
+    // it forwards when the daemon reported `package_control`, and otherwise
+    // refuses with `unsupported` naming this capability. Advertising it
+    // unconditionally is what lets a client find it before sending.
+    horon_agent_harness_api::CAPABILITY_PACKAGE_CONTROL_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -365,6 +370,12 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    // The daemon owns the package catalog. The bridge advertises the matching
+    // API capability only when the daemon can serve it, and forwards nothing
+    // when it cannot: an older daemon answers an unknown frame with an
+    // uncorrelated error, which a client would read as a timeout.
+    let package_control_supported = daemon_caps.iter().any(|cap| cap == "package_control");
+    translate::package_control::set_supported(package_control_supported);
     let requested_events = hello["event_capabilities"].as_array();
     let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
         let capability = OPT_IN_EVENT_CAPABILITIES[index];

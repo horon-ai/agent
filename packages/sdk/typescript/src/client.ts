@@ -37,6 +37,8 @@ import {
   type ImageAttachment,
   type MessageModes,
   type ModelRouteInfo,
+  type PackageControlOperation,
+  type PackageControlReceipt,
   type PayloadRef,
   type PermissionDecision,
   type RenderedImage,
@@ -873,6 +875,18 @@ export class HoronAgentClient extends EventEmitter {
     this.requireCapability("effective_settings_v1", "getEffectiveSettings");
     return (await this.expectReply({ req: "get_effective_settings", session_id: sessionId }, "effective_settings"))
       .settings;
+  }
+
+  /**
+   * Apply one package-management operation to the daemon's catalog. Requires
+   * `package_control_v1`; the receipt names the generation the daemon published.
+   */
+  async packageControl(request: {
+    operation_id: string;
+    operation: PackageControlOperation;
+  }): Promise<PackageControlReceipt> {
+    this.requireCapability("package_control_v1", "packageControl");
+    return (await this.expectReply({ req: "package_control", ...request }, "package_control")).receipt;
   }
 
   /** Low-level response API for applications handling tool_call events themselves. */
