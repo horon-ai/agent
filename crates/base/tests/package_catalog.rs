@@ -17,6 +17,7 @@ use horon_agent_base::packages::{
     InstallRequest, PackageKind, PackageRecord, PackageScope, PackageState, PackageStore, VerificationReport,
     validate_package,
 };
+use horon_agent_platform::fs::make_owner_writable;
 use horon_agent_platform::set_permissions_executable;
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
@@ -260,10 +261,11 @@ fn thaw(path: &Path) {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return;
     };
-    let mut permissions = metadata.permissions();
-    permissions.set_readonly(false);
-    let _ = fs::set_permissions(path, permissions);
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+    if metadata.file_type().is_symlink() {
+        return;
+    }
+    drop(make_owner_writable(path, metadata.permissions()));
+    if metadata.is_dir() {
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 thaw(&entry.path());
@@ -274,9 +276,7 @@ fn thaw(path: &Path) {
 
 fn make_writable(path: &Path) {
     let metadata = fs::metadata(path).expect("inspect a published file");
-    let mut permissions = metadata.permissions();
-    permissions.set_readonly(false);
-    fs::set_permissions(path, permissions).expect("make a published file writable");
+    make_owner_writable(path, metadata.permissions()).expect("make a published file writable");
 }
 
 fn copy_tree(source: &Path, destination: &Path) {

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail, ensure};
 use horon_agent_extension_types::PackageKind;
 use horon_agent_platform::fs::{
-    is_path_link, package_open_options, request_owner_only_mode, set_dir_permissions_owner_only,
+    is_path_link, make_owner_writable, package_open_options, request_owner_only_mode, set_dir_permissions_owner_only,
 };
 use horon_agent_platform::ipc::{InstanceLock, lock_instance_file};
 use horon_agent_platform::{SyncMode, sync_dir, sync_file};
@@ -519,22 +519,11 @@ pub(super) fn remove_tree(path: &Path) -> Result<()> {
         fs::remove_dir(path).with_context(|| format!("remove {}", path.display()))
     } else {
         if !is_path_link(&metadata) {
-            make_writable(path)?;
+            make_owner_writable(path, metadata.permissions())
+                .with_context(|| format!("restore write access to {}", path.display()))?;
         }
         fs::remove_file(path).with_context(|| format!("remove {}", path.display()))
     }
-}
-
-fn make_writable(path: &Path) -> Result<()> {
-    let mut permissions = fs::metadata(path)
-        .with_context(|| format!("inspect {}", path.display()))?
-        .permissions();
-    if permissions.readonly() {
-        permissions.set_readonly(false);
-        fs::set_permissions(path, permissions)
-            .with_context(|| format!("restore write access to {}", path.display()))?;
-    }
-    Ok(())
 }
 
 /// A pinned set of copy digests, written next to the lock that proves a reader
