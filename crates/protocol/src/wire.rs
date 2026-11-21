@@ -1003,7 +1003,7 @@ pub mod event_types;
 mod events;
 mod model_identity;
 pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
-pub use event_types::{FileDiffWire, PlanEntryWire};
+pub use event_types::{FileDiffWire, PlanEntryWire, TodoEditResultEvent};
 pub use events::ServerEvent;
 pub use model_identity::RuntimeModelIdentity;
 

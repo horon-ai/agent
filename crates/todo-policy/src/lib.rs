@@ -68,6 +68,19 @@ impl TodoEditRefusal {
             Self::InvalidBlocker => "invalid_blocker",
         }
     }
+
+    /// The refusal a wire name names, or none for a word this build does not
+    /// know. Keeping the table here means the daemon and the bridge cannot
+    /// spell one refusal two ways.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "stale_revision" => Self::StaleRevision,
+            "unknown_item" => Self::UnknownItem,
+            "invalid_status" => Self::InvalidStatus,
+            "invalid_blocker" => Self::InvalidBlocker,
+            _ => return None,
+        })
+    }
 }
 
 /// Return the canonical todo status for model-written status vocabulary.

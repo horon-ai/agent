@@ -34,6 +34,19 @@ pub(crate) struct TodoPending {
     pub status: String,
 }
 
+/// One revision-checked status change the todo view asks the bridge to commit.
+///
+/// It is a named value rather than a four-field variant so the action stays one
+/// line in the app's vocabulary and the fields are documented where the todo
+/// state lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoStatusRequest {
+    pub session_id: String,
+    pub revision: String,
+    pub id: String,
+    pub status: String,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct TodoRow {
     status: &'static str,

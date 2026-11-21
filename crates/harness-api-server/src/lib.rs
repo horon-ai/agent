@@ -42,6 +42,8 @@ mod session_presence_tests;
 #[cfg(test)]
 mod stdio_tests;
 #[cfg(test)]
+mod todo_translate_tests;
+#[cfg(test)]
 mod writer_tests;
 
 pub use bridge::run_bridge;

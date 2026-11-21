@@ -15,7 +15,7 @@ use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{AttachedSession, SessionRow};
-use crate::todo_panel::{TodoPanel, TodoPending};
+use crate::todo_panel::{TodoPanel, TodoStatusRequest};
 
 impl App {
     /// Open the model list; the bridge fills it when the catalog answers.
@@ -487,12 +487,7 @@ impl App {
                 .push_notice("todo: this harness does not report a list revision; the list is read-only");
         }
         let rows = todo_rows(self.todos.items());
-        self.picker = Some(Picker::new(
-            Kind::Todos,
-            "Todos",
-            rows,
-            "this session has no todos",
-        ));
+        self.picker = Some(Picker::new(Kind::Todos, "Todos", rows, "this session has no todos"));
         None
     }
 
@@ -557,8 +552,7 @@ impl App {
         };
         self.refresh_todo_picker();
         if applied {
-            self.transcript
-                .push_notice(format!("todo: {label} is now {status}"));
+            self.transcript.push_notice(format!("todo: {label} is now {status}"));
         } else {
             let sentence = match refusal {
                 Some(TodoEditRefusal::StaleRevision) => format!(
@@ -619,16 +613,15 @@ impl App {
     }
 
     /// The item id under the cursor.
-    fn todo_selected_id(&self) -> Option<String> {
-        self.picker
-            .as_ref()?
-            .selected_row()
-            .map(|row| row.value.clone())
-            .filter(|id| !id.is_empty())
-            .or_else(|| {
+    fn todo_selected_id(&mut self) -> Option<String> {
+        let id = self.picker.as_ref()?.selected_row().map(|row| row.value.clone());
+        match id {
+            Some(id) if !id.is_empty() => Some(id),
+            _ => {
                 self.warn("todo: this item has no id, so the harness cannot address it");
                 None
-            })
+            }
+        }
     }
 
     /// The status `enter` asks for on one item.
@@ -661,7 +654,12 @@ impl App {
             self.warn("todo: waiting for the previous change to be answered");
             return None;
         }
-        let Some(revision) = self.todos.revision().map(str::to_string).filter(|text| !text.is_empty()) else {
+        let Some(revision) = self
+            .todos
+            .revision()
+            .map(str::to_string)
+            .filter(|text| !text.is_empty())
+        else {
             self.warn("todo: this harness did not report a list revision; the list is read-only");
             return None;
         };
@@ -678,12 +676,12 @@ impl App {
             self.warn("todo: waiting for the previous change to be answered");
             return None;
         }
-        Some(Action::TodoStatus {
+        Some(Action::TodoStatus(TodoStatusRequest {
             session_id,
             revision,
             id,
             status,
-        })
+        }))
     }
 
     /// Rebuild the open todo list from the panel's current items, keeping the
@@ -804,7 +802,12 @@ fn todo_rows(items: &[TodoItem]) -> Vec<Row> {
             if let Some(blocker) = item.blocker.as_deref().map(str::trim).filter(|note| !note.is_empty()) {
                 preview.push(format!("blocker: {blocker}"));
             }
-            if let Some(owner) = item.assigned_to.as_deref().map(str::trim).filter(|owner| !owner.is_empty()) {
+            if let Some(owner) = item
+                .assigned_to
+                .as_deref()
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+            {
                 preview.push(format!("assigned: {owner}"));
             }
             if !item.blocked_by.is_empty() {

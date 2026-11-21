@@ -14,6 +14,7 @@ use crate::app::{Action, App};
 use crate::commands::Local;
 use crate::overlays::picker::Kind;
 use crate::sdk_bridge::{AttachedSession, Incoming};
+use crate::todo_panel::TodoStatusRequest;
 
 fn app() -> App {
     let (_sender, receiver) = mpsc::channel::<Incoming>();
@@ -73,18 +74,22 @@ fn the_view_lists_every_item_and_an_edit_carries_the_revision_sent() {
     let action = app.todo_panel_key(key(KeyCode::Enter));
     assert_eq!(
         action,
-        Some(Action::TodoStatus {
+        Some(Action::TodoStatus(TodoStatusRequest {
             session_id: "s1".to_string(),
             revision: "rev-1".to_string(),
             id: "t1".to_string(),
             status: "completed".to_string(),
-        })
+        }))
     );
 
     // A second edit before the answer would carry the same revision and be
     // refused after the first lands, so it is not sent at all.
     assert!(app.todo_panel_key(key(KeyCode::Enter)).is_none());
-    assert!(last_line(&app).contains("waiting for the previous change"), "{}", last_line(&app));
+    assert!(
+        last_line(&app).contains("waiting for the previous change"),
+        "{}",
+        last_line(&app)
+    );
 }
 
 #[test]
@@ -99,16 +104,16 @@ fn enter_reopens_a_cancelled_item_and_delete_cancels_an_open_one() {
     let reopened = app.todo_panel_key(key(KeyCode::Enter));
     assert!(matches!(
         reopened,
-        Some(Action::TodoStatus { id, ref status, .. }) if id == "t1" && status == "pending"
+        Some(Action::TodoStatus(request)) if request.id == "t1" && request.status == "pending"
     ));
 
-    let mut app = app();
-    list(&mut app, &[item("t1", "ship", "pending")], Some("rev-1"));
-    open(&mut app);
-    let cancelled = app.todo_panel_key(key(KeyCode::Delete));
+    let mut restart = app();
+    list(&mut restart, &[item("t1", "ship", "pending")], Some("rev-1"));
+    open(&mut restart);
+    let cancelled = restart.todo_panel_key(key(KeyCode::Delete));
     assert!(matches!(
         cancelled,
-        Some(Action::TodoStatus { id, ref status, .. }) if id == "t1" && status == "cancelled"
+        Some(Action::TodoStatus(request)) if request.id == "t1" && request.status == "cancelled"
     ));
 }
 
@@ -136,12 +141,12 @@ fn a_stale_answer_refreshes_the_list_and_the_next_edit_uses_the_new_revision() {
     let action = app.todo_panel_key(key(KeyCode::Enter));
     assert_eq!(
         action,
-        Some(Action::TodoStatus {
+        Some(Action::TodoStatus(TodoStatusRequest {
             session_id: "s1".to_string(),
             revision: "rev-2".to_string(),
             id: "t1".to_string(),
             status: "completed".to_string(),
-        })
+        }))
     );
 }
 

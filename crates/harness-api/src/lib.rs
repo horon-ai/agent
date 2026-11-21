@@ -58,6 +58,10 @@ mod message_modes_snapshot_tests;
 mod schema_snapshot_tests;
 
 #[cfg(test)]
+#[path = "harness_api_tests/todo_edit_snapshot.rs"]
+mod todo_edit_snapshot_tests;
+
+#[cfg(test)]
 #[path = "harness_api_tests/cancellable_work_snapshot.rs"]
 mod cancellable_work_snapshot_tests;
 

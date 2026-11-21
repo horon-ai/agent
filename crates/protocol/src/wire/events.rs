@@ -38,10 +38,9 @@ pub enum ServerEvent {
     /// The session's committed todo list changed.
     #[serde(rename = "todo_changed")]
     TodoChanged { session_id: String },
-    /// Reply to `set_todo_status`: `applied` false means nothing was written,
-    /// `refusal` says why, and `revision` names the list after the attempt.
+    /// Reply to `set_todo_status`.
     #[serde(rename = "todo_edit_result")]
-    TodoEditResult { id: u64, applied: bool, refusal: Option<String>, revision: String },
+    TodoEditResult(TodoEditResultEvent),
     /// Acknowledgment of request
     #[serde(rename = "ack")]
     Ack { id: u64 },

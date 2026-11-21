@@ -312,19 +312,14 @@ pub(super) async fn handle_set_todo_status(
     client_session_id: &str,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
-    let outcome = match crate::todo::apply_todo_status_edit(
-        client_session_id,
-        &expected_revision,
-        &todo_id,
-        &status,
-    ) {
+    let outcome = match crate::todo::apply_todo_status_edit(client_session_id, &expected_revision, &todo_id, &status) {
         Ok(outcome) => outcome,
         Err(error) => {
-            let _ = client_event_tx.send(ServerEvent::Error {
+            drop(client_event_tx.send(ServerEvent::Error {
                 id,
                 message: crate::util::format_error_chain(&error),
                 retry_after_secs: None,
-            });
+            }));
             return;
         }
     };
@@ -334,12 +329,13 @@ pub(super) async fn handle_set_todo_status(
             todos: outcome.todos.clone(),
         }));
     }
-    let _ = client_event_tx.send(ServerEvent::TodoEditResult {
+    let event = crate::protocol::TodoEditResultEvent {
         id,
         applied: outcome.applied,
         refusal: outcome.refusal.map(|refusal| refusal.as_str().to_string()),
         revision: outcome.revision,
-    });
+    };
+    drop(client_event_tx.send(ServerEvent::TodoEditResult(event)));
 }
 
 async fn broadcast_session_renamed(

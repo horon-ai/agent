@@ -126,7 +126,7 @@ pub enum Action {
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Commit one revision-checked todo status change for the attached session.
-    TodoStatus { session_id: String, revision: String, id: String, status: String },
+    TodoStatus(crate::todo_panel::TodoStatusRequest),
     /// Leave.
     Quit,
 }

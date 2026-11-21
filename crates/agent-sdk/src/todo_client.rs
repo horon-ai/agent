@@ -48,10 +48,7 @@ impl HoronAgentClient {
     /// The revision is absent on a server that predates it; such a server also
     /// cannot apply a revision-checked edit, so an editor treats an absent
     /// revision as read-only. Requires the `todo_state` capability.
-    pub fn todo_snapshot(
-        &self,
-        session_id: &str,
-    ) -> Result<(horon_agent_todo_policy::TodoSnapshot, Option<String>)> {
+    pub fn todo_snapshot(&self, session_id: &str) -> Result<(horon_agent_todo_policy::TodoSnapshot, Option<String>)> {
         self.require_capability("todo_state", "todo_snapshot")?;
         match self
             .request_ok(ApiRequest::GetTodoState {
@@ -79,10 +76,7 @@ impl HoronAgentClient {
         id: &str,
         status: &str,
     ) -> Result<TodoEdit> {
-        self.require_capability(
-            horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
-            "set_todo_status",
-        )?;
+        self.require_capability(horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1, "set_todo_status")?;
         match self
             .request_ok(ApiRequest::SetTodoStatus {
                 session_id: session_id.to_string(),

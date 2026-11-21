@@ -142,16 +142,11 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
-        Action::TodoStatus {
-            session_id,
-            revision,
-            id,
-            status,
-        } => Command::SetTodoStatus {
-            session_id,
-            expected_revision: revision,
-            id,
-            status,
+        Action::TodoStatus(request) => Command::SetTodoStatus {
+            session_id: request.session_id,
+            expected_revision: request.revision,
+            id: request.id,
+            status: request.status,
         },
         Action::Model(name) => Command::Model(name),
         Action::Effort(level) => Command::Effort(level),

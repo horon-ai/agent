@@ -20,7 +20,7 @@ pub(super) fn home(session_id: &str) -> Result<std::path::PathBuf, (ErrorCode, S
 
 /// Answer `get_todo_state` from the stored snapshot.
 pub(super) fn get(api_id: u64, request: &Value) -> Vec<Outbound> {
-    let session_id = request["session_id"].as_str().unwrap_or_default();
+    let session_id = request["session_id"].as_str().unwrap_or("");
     match home(session_id) {
         Ok(home) => {
             let (state, revision) = horon_agent_todo_policy::store::load_snapshot_with_revision(&home, session_id);
@@ -43,9 +43,9 @@ pub(super) fn get(api_id: u64, request: &Value) -> Vec<Outbound> {
 /// publishes the `TodoUpdated` event every attached client reads as
 /// `TodoChanged`. A direct file write here would bypass both.
 pub(super) fn set(state: &mut BridgeState, api_id: u64, request: &Value) -> Vec<Outbound> {
-    let expected_revision = request["expected_revision"].as_str().unwrap_or_default();
-    let todo_id = request["id"].as_str().unwrap_or_default();
-    let status = request["status"].as_str().unwrap_or_default();
+    let expected_revision = request["expected_revision"].as_str().unwrap_or("");
+    let todo_id = request["id"].as_str().unwrap_or("");
+    let status = request["status"].as_str().unwrap_or("");
     if expected_revision.trim().is_empty() || todo_id.trim().is_empty() || status.trim().is_empty() {
         return BridgeState::error_reply(
             api_id,
@@ -66,15 +66,11 @@ pub(super) fn set(state: &mut BridgeState, api_id: u64, request: &Value) -> Vec<
 
 /// Apply the persistent effects of one follow-up decision.
 pub(super) fn ack(api_id: u64, request: &Value) -> Vec<Outbound> {
-    let session_id = request["session_id"].as_str().unwrap_or_default();
+    let session_id = request["session_id"].as_str().unwrap_or("");
     let effects: horon_agent_todo_policy::TodoEffects = match serde_json::from_value(request["effects"].clone()) {
         Ok(effects) => effects,
         Err(error) => {
-            return BridgeState::error_reply(
-                api_id,
-                ErrorCode::InvalidRequest,
-                &format!("invalid effects: {error}"),
-            );
+            return BridgeState::error_reply(api_id, ErrorCode::InvalidRequest, &format!("invalid effects: {error}"));
         }
     };
     let result = home(session_id).and_then(|home| {
@@ -96,8 +92,9 @@ pub(super) fn edit_result(state: &mut BridgeState, event: &Value, attached: &str
     let Some(api_id) = state.take_simple(id, SimpleKind::TodoEdit) else {
         return vec![];
     };
-    let refusal: Option<horon_agent_todo_policy::TodoEditRefusal> =
-        event["refusal"].as_str().and_then(|name| serde_json::from_value(json!(name)).ok());
+    let refusal = event["refusal"]
+        .as_str()
+        .and_then(horon_agent_todo_policy::TodoEditRefusal::from_wire_name);
     match home(attached) {
         Ok(home) => {
             let (state, revision) = horon_agent_todo_policy::store::load_snapshot_with_revision(&home, attached);

@@ -84,12 +84,27 @@ pub fn load_snapshot(home: &Path, session_id: &str) -> TodoSnapshot {
 /// empty list and carries the revision of that same empty value, never a
 /// revision of nothing.
 pub fn load_todos_with_revision(home: &Path, session_id: &str) -> (Vec<TodoItem>, String) {
-    let bytes = std::fs::read(todo_file_path(home, session_id, TodoFile::Todos)).ok();
-    let todos = bytes
-        .as_deref()
-        .and_then(|bytes| serde_json::from_slice(bytes).ok())
-        .unwrap_or_default();
+    let bytes = match std::fs::read(todo_file_path(home, session_id, TodoFile::Todos)) {
+        Ok(bytes) => Some(bytes),
+        // A read that fails is the same state a reader has always seen for a
+        // missing list: no todos. Kept explicit rather than hidden behind a
+        // chain so the empty list is a decision, not an accident.
+        Err(_) => None,
+    };
+    let todos = tolerant_todos(bytes.as_deref());
     (todos, revision_of(bytes.as_deref().unwrap_or(b"[]")))
+}
+
+/// The list a tolerant reader sees: parsed when the bytes are JSON, empty
+/// otherwise.
+fn tolerant_todos(bytes: Option<&[u8]>) -> Vec<TodoItem> {
+    match bytes {
+        Some(bytes) => match serde_json::from_slice(bytes) {
+            Ok(todos) => todos,
+            Err(_) => Vec::new(),
+        },
+        None => Vec::new(),
+    }
 }
 
 /// [`load_snapshot`] with the todo list's revision beside it.
@@ -207,10 +222,7 @@ pub fn apply_todo_status_edit_with(
         // A stale caller only needs the current list and revision: a store it
         // cannot parse is reported as the empty list every tolerant reader
         // already sees, not as an error that hides the refresh.
-        let todos = bytes
-            .as_deref()
-            .and_then(|bytes| serde_json::from_slice(bytes).ok())
-            .unwrap_or_default();
+        let todos = tolerant_todos(bytes.as_deref());
         return Ok(TodoEditOutcome::refused(
             TodoEditRefusal::StaleRevision,
             todos,
@@ -234,11 +246,7 @@ pub fn apply_todo_status_edit_with(
         ));
     };
     let Some(index) = todos.iter().position(|todo| todo.id == id) else {
-        return Ok(TodoEditOutcome::refused(
-            TodoEditRefusal::UnknownItem,
-            todos,
-            revision,
-        ));
+        return Ok(TodoEditOutcome::refused(TodoEditRefusal::UnknownItem, todos, revision));
     };
     // The note is read out and validated before the item is borrowed mutably:
     // a `blocked` status without a usable note refuses the whole edit instead
@@ -307,7 +315,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let tmp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
     std::fs::write(&tmp, bytes)?;
     if let Err(error) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
+        // The rename failure is the one the caller needs; the temp file is
+        // best-effort cleanup and must not replace it.
+        std::fs::remove_file(&tmp).unwrap_or(());
         return Err(error);
     }
     Ok(())

@@ -42,7 +42,7 @@ mod suggestions;
 mod terminal;
 pub mod theme;
 mod title;
-mod todo_panel;
+pub mod todo_panel;
 mod tool_expand;
 pub mod tool_line;
 pub mod transcript;

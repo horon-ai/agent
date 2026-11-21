@@ -194,7 +194,7 @@ mod wire;
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
     CompactMethod, FileDiffWire, HandoffCompactionReport, PermissionDecision, PlanEntryWire, Request,
-    RuntimeModelIdentity, ServerEvent, SessionMcpServer,
+    RuntimeModelIdentity, ServerEvent, SessionMcpServer, TodoEditResultEvent,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 

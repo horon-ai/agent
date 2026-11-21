@@ -147,8 +147,8 @@ pub mod process;
 mod reports;
 mod ssh;
 mod structured;
-pub mod turn_retry;
 mod todo_client;
+pub mod turn_retry;
 pub mod worktrees;
 
 #[cfg(test)]
@@ -160,7 +160,6 @@ pub use client::{
     GlobalEventStream, GlobalEventsOptions, HoronAgentClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall,
     Transport, TurnResult, UnixTransport, Usage,
 };
-pub use todo_client::TodoEdit;
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
 pub use horon_agent_harness_api::{
@@ -186,6 +185,7 @@ pub use structured::{
     RunStructuredError, RunStructuredOptions, StructuredEventCallback, StructuredOutputAttempt, StructuredOutputError,
     StructuredOutputSchema, StructuredSchemaError, StructuredTurnResult, StructuredValidationIssue,
 };
+pub use todo_client::TodoEdit;
 pub use turn_retry::{FailureKind, RetryDecision, RetryPolicy, TurnRetry, classify_failure};
 
 /// Filesystem primitives for a file the client owns, re-exported from the
