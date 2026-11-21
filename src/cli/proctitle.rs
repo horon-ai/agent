@@ -25,6 +25,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::InstallRelease { .. }) => "horon-agent install-release".to_string(),
         Some(Command::Version { .. }) => "horon-agent version".to_string(),
         Some(Command::Usage { .. }) => "horon-agent usage".to_string(),
+        Some(Command::Stats { .. }) => "horon-agent stats".to_string(),
         Some(Command::RuntimeState(_)) => "horon-agent runtime-state".to_string(),
         Some(Command::Debug { .. }) => "horon-agent debug".to_string(),
         Some(Command::Provider(_)) => "horon-agent provider".to_string(),
@@ -37,6 +38,8 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Permissions) => "horon-agent permissions".to_string(),
         Some(Command::Approvals { .. }) => "horon-agent approvals".to_string(),
         Some(Command::Model(_)) => "horon-agent model".to_string(),
+        Some(Command::Tokens { .. }) => "horon-agent tokens".to_string(),
+        Some(Command::Agents) => "horon-agent agents".to_string(),
         None => {
             if let Some(resume) = args.resume.as_deref().filter(|resume| !resume.is_empty()) {
                 // The `horon:` colon labels share Linux's 15-char comm budget with

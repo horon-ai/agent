@@ -1,0 +1,29 @@
+# Typed model sampling
+
+Language: **English** | [한국어](SAMPLING.ko.md)
+
+Status: proposed design for #571. Profiles currently accept `extra_body`. This proposal adds typed sampling for models whose specific wire and request shape support it. [Provider models](MODEL.md)
+
+## Decision
+
+| Option | Consequence |
+| --- | --- |
+| Forward one universal sampling dictionary | Sends fields some providers or models reject. |
+| Use a per-wire and per-model capability map | Validates before the request and lets each adapter own its field names. Selected. |
+| Keep only `extra_body` | Preserves provider freedom but gives users no portable validation. |
+
+## Input and outgoing requests
+
+A model entry can explicitly choose supported optional controls. Unknown typed keys are configuration errors. Values must be finite numbers or supported enum members and match the selected model's published bounds. A missing key yields no field. An unknown model has no typed controls unless explicitly listed by a reviewed mapping. Check every route in a fallback plan before sending to it. An incompatible route produces a clear receipt naming the model and setting, with no request to that route. Never silently drop an explicit value or retry with different sampling.
+
+Start with a reviewed OpenAI-compatible Chat Completions fixture model offering `temperature` and `top_p`. The adapter writes these keys once and leaves unset keys absent. Top K, Min P, presence penalty, repetition penalty and verbosity have no typed v1 mapping. Responses, Anthropic Messages and Gemini generateContent likewise have no typed v1 mapping. Each future mapping needs endpoint and model evidence, model-specific range and incompatible-combination rules, and a captured request fixture. Treat compatibility proxies as separate model claims. Keep existing `extra_body` support. Reject a typed control whose mapped wire key already exists in the effective `extra_body`, even if the values match, and report both sources. Ordinary existing requests without typed sampling retain their merged `extra_body` semantics.
+
+## Implementation boundaries
+
+1. In `crates/config-types/src/named_provider.rs`, type the optional fields and reject invalid keys, types and ambiguous overrides.
+2. In `crates/base/src/provider/` and `crates/provider-openai/src/`, derive the capability from the selected route, validate before dispatch, and serialize the reviewed Chat Completions mapping. Keep the neutral interface independent of other wires.
+3. Add per-wire mappings in separate reviews after endpoint and model constraints are verified. Use loopback captures and no real credentials.
+
+## Verification
+
+Run `cargo test --locked -p horon-agent-config-types --lib`. In Actions capture a selected fixture request with `temperature = 0.4` and no `top_p`. Expect one `temperature: 0.4` and no `top_p`. Next select `top_p = 0.8` with no temperature and assert the inverse. Choose `top_k`, an unlisted model, a value outside the fixture's documented range, or a mapped `extra_body` collision. Expect a typed error or incompatible-route receipt before any outbound request. A request with no typed controls must match its existing wire fixture.

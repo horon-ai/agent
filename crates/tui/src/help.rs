@@ -281,6 +281,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
         "jobs" => "list the background work this session is running, and cancel a terminal",
+        "stats" => "show the attached session's recorded token usage",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
         "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",

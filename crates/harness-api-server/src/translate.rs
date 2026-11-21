@@ -12,6 +12,7 @@ mod session_delete;
 mod simple_kind;
 mod support;
 mod usage_report;
+pub use usage_report::local::{LocalUsage, local_usage};
 
 #[cfg(test)]
 pub(crate) use support::horon_agent_home_test_lock;

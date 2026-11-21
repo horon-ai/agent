@@ -332,6 +332,21 @@ pub(crate) enum Command {
         json: bool,
     },
 
+    /// Report stored local token usage by UTC date, provider and model
+    Stats {
+        /// First UTC day to include (YYYY-MM-DD)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Last UTC day to include (YYYY-MM-DD)
+        #[arg(long)]
+        through: Option<String>,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
@@ -396,6 +411,20 @@ pub(crate) enum Command {
     Approvals {
         #[command(subcommand)]
         action: ApprovalsCommand,
+    },
+
+    /// Inspect named agent definitions without starting a session
+    Agents,
+
+    /// Estimate tokens in UTF-8 text without contacting a model provider
+    #[command(alias = "toks")]
+    Tokens {
+        /// Inline UTF-8 text, or '-' to read stdin (also the default)
+        #[arg(conflicts_with = "file", value_name = "TEXT")]
+        text: Option<String>,
+        /// Read UTF-8 text from a local file
+        #[arg(long, value_name = "PATH")]
+        file: Option<std::path::PathBuf>,
     },
 
     /// Model management commands

@@ -34,6 +34,23 @@ pub(super) fn command(
     ))
 }
 
+pub(super) fn stats(client: &HoronAgentClient, session_id: &str) -> Result<Incoming, Error> {
+    let report = client.usage_report(Some(session_id))?;
+    let totals = report.totals;
+    let count = |value: Option<u64>| value.map_or_else(|| "unknown".to_owned(), |value| value.to_string());
+    let cost = report
+        .estimated_cost
+        .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
+    Ok(Incoming::Info(format!(
+        "Session token usage\nInput: {}\nOutput: {}\nCache read: {}\nCache write: {}\nRequests: {}\nEstimated cost: {cost}",
+        count(totals.input),
+        count(totals.output),
+        count(totals.cache_read_input),
+        count(totals.cache_creation_input),
+        totals.requests
+    )))
+}
+
 /// The effort a report names, trimmed, with a blank one read as unknown.
 ///
 /// A provider that does not expose an effort answers with an empty string
