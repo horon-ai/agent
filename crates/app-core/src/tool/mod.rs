@@ -565,7 +565,7 @@ fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
-    if stored.as_ref().is_some_and(consult::is_stored_consult) {
+    if stored.as_deref().is_some_and(consult::is_stored_consult) {
         return stored;
     }
     let Some(config) = sdk::config(session_id) else {
