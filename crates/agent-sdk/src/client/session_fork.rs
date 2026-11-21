@@ -23,7 +23,10 @@ impl HoronAgentClient {
     /// index. A boundary the source no longer records is refused and the
     /// source is left untouched. Requires `session_fork_at_v1`.
     pub fn fork_session_at(&self, session_id: &str, boundary_message_id: &str) -> Result<SessionInfo> {
-        self.require_capability(horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1, "fork_session_at")?;
+        self.require_capability(
+            horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
+            "fork_session_at",
+        )?;
         match self
             .request_ok(ApiRequest::ForkSessionAt {
                 session_id: session_id.to_string(),

@@ -395,8 +395,10 @@ fn run_worker(
                     // Whether the answer moves the worker to another session,
                     // which is also when the skills of the one left behind stop
                     // being the client's.
-                    let resets_session =
-                        matches!(&command, Command::NewSession { .. } | Command::Attach(_) | Command::Fork(_));
+                    let resets_session = matches!(
+                        &command,
+                        Command::NewSession { .. } | Command::Attach(_) | Command::Fork(_)
+                    );
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {

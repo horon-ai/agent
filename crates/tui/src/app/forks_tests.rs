@@ -142,10 +142,7 @@ fn a_refused_fork_leaves_the_session_and_claims_no_origin() {
 
     app.request_failed("the boundary is not in this session");
     assert_eq!(app.session_id.as_deref(), Some("session_a"));
-    assert!(
-        app.take_pending_fork().is_none(),
-        "a refused fork kept its origin"
-    );
+    assert!(app.take_pending_fork().is_none(), "a refused fork kept its origin");
     // No branch origin means the list has no way-back row.
     submit(&mut app, "/fork");
     app.show_forks(vec![fork_row("message_9", "a question")]);

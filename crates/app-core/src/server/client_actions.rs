@@ -590,7 +590,10 @@ pub(super) async fn dispatch_split(
 ) {
     match request {
         Request::Split { id } => handle_split(id, client_session_id, agent, client_event_tx).await,
-        Request::SplitAt { id, boundary_message_id } => {
+        Request::SplitAt {
+            id,
+            boundary_message_id,
+        } => {
             handle_split_at(id, &boundary_message_id, client_session_id, agent, client_event_tx).await;
         }
         _ => unreachable!("dispatch_split is reached only for split requests"),

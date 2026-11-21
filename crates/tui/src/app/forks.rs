@@ -99,8 +99,7 @@ impl App {
             .filter(|title| !title.is_empty())
             .map(str::to_string)
             .unwrap_or_else(|| origin.clone());
-        self.transcript
-            .push_notice(format!("forking before {row_label}"));
+        self.transcript.push_notice(format!("forking before {row_label}"));
         self.fork_pending = Some(ForkOrigin {
             session_id: origin,
             label,
@@ -131,13 +130,16 @@ impl App {
             return None;
         }
         Some(
-            Row::new(format!("back to {}", origin.label), format!("{RETURN_TO}{}", origin.session_id))
-                .with_detail("original")
-                .with_preview(vec![
-                    "return to the session this branch came from".to_string(),
-                    format!("session {}", origin.session_id),
-                    "both this branch and the original stay stored".to_string(),
-                ]),
+            Row::new(
+                format!("back to {}", origin.label),
+                format!("{RETURN_TO}{}", origin.session_id),
+            )
+            .with_detail("original")
+            .with_preview(vec![
+                "return to the session this branch came from".to_string(),
+                format!("session {}", origin.session_id),
+                "both this branch and the original stay stored".to_string(),
+            ]),
         )
     }
 }
