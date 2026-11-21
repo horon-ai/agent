@@ -1998,6 +1998,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "horon-agent-extension-sdk"
+version = "0.1.0"
+dependencies = [
+ "horon-agent-extension-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "horon-agent-extension-types"
 version = "0.1.0"
 dependencies = [
@@ -2471,6 +2483,17 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "horon-package-example"
+version = "0.1.0"
+dependencies = [
+ "horon-agent-extension-sdk",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

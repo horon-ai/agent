@@ -1,9 +1,9 @@
 {
   "version": 1,
   "name": "lockfile-packages",
-  "description": "Resolved dependency count pinned by Cargo.lock. Every [[package]] entry is one crate version the build can install, so the count is the installer size and the supply-chain surface. Adding a dependency re-pins this ceiling in the reviewed commit that adds it; nothing else raises it.",
+  "description": "Counts every [[package]] entry in Cargo.lock. The ceiling includes the local extension author SDK and example from #641, which add no external dependency or dependency of the horon-agent binary. Raise the ceiling only in the reviewed change that adds the counted packages.",
   "counter": {
     "kind": "cargo_lock_packages"
   },
-  "ceiling": 657
+  "ceiling": 659
 }
