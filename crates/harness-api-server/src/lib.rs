@@ -127,6 +127,12 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     horon_agent_harness_api::CAPABILITY_CANCELLABLE_WORK_V1,
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
+    // The daemon answers the settings report from its own configuration. The
+    // bridge advertises the surface unconditionally and forwards, because a
+    // client that checks before sending must find it: a daemon too old to serve
+    // it is refused with a structured `unsupported` naming this capability
+    // rather than being sent a frame it would answer with no correlation.
+    horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -358,6 +364,7 @@ where
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
+    let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
     let requested_events = hello["event_capabilities"].as_array();
     let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
         let capability = OPT_IN_EVENT_CAPABILITIES[index];
@@ -401,6 +408,9 @@ where
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;
     state.cancellable_work_api_supported = cancellable_work_api_supported;
+    // The daemon, and therefore this capability, is one per bridge process, so
+    // the forwarding module records it instead of every `BridgeState` site.
+    translate::effective_settings::set_supported(effective_settings_api_supported);
 
     // 3. Translate both directions in one loop so translation state stays
     //    single-threaded, and never await a write to the client from it: one

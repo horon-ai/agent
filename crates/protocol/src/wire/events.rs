@@ -1093,6 +1093,10 @@ pub enum ServerEvent {
         snapshot: serde_json::Value,
     },
 
+    /// Reply to `get_effective_settings`: the allow-listed values this daemon loaded.
+    #[serde(rename = "effective_settings")]
+    EffectiveSettings { id: u64, settings: serde_json::Value },
+
     /// Answer to `cancel_tool_call` and `cancel_background_terminal`.
     ///
     /// `accepted` says a cancellation was started for the named call. A

@@ -82,6 +82,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 effort,
                 level,
             } => app.runtime_info(provider, model, effort, level),
+            Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
             Incoming::Skills(rows) => app.show_skills(rows),
             // The answer names the text it settles, so a steer the client no
@@ -139,6 +140,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The frame loop answers this one: the editor needs the terminal that
         // loop is drawing on, so the action never reaches the bridge thread.
         Action::EditDraft => return,
+        Action::DaemonSettings => Command::DaemonSettings,
         Action::Quit => {
             app.running = false;
             return;
