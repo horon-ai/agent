@@ -170,12 +170,11 @@ impl App {
             }
             return;
         }
-        if let Some(rest) = value.strip_prefix("code:") {
-            if let Some((back, index)) = rest.split_once(':')
-                && let (Ok(back), Ok(index)) = (back.parse::<usize>(), index.parse::<usize>())
-            {
-                self.copy_answer(back, Some(index));
-            }
+        if let Some(rest) = value.strip_prefix("code:")
+            && let Some((back, index)) = rest.split_once(':')
+            && let (Ok(back), Ok(index)) = (back.parse::<usize>(), index.parse::<usize>())
+        {
+            self.copy_answer(back, Some(index));
         }
     }
 

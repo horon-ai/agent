@@ -127,7 +127,11 @@ pub fn support(env: impl Fn(&str) -> Option<String>) -> Result<(), Refusal> {
 /// A terminal sets only some of the names this module reads, so an unset one is
 /// the ordinary case rather than a failure to report.
 fn variable(env: &impl Fn(&str) -> Option<String>, name: &str) -> String {
-    env(name).unwrap_or_else(String::new)
+    let mut value = String::new();
+    if let Some(configured) = env(name) {
+        value = configured;
+    }
+    value
 }
 
 /// The environment the running client reads the terminal's declarations from.
