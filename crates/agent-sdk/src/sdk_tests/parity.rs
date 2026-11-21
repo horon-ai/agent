@@ -95,6 +95,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("configure_tools", "configureTools"),
     cap("list_tools", "listTools"),
     cap("get_message_modes", "getMessageModes"),
+    cap("get_effective_settings", "getEffectiveSettings"),
     cap("submit_tool_result", "submitToolResult"),
     cap("set_reasoning_effort", "setReasoningEffort"),
     cap("compact", "compact"),
@@ -330,6 +331,7 @@ fn rust_client_source() -> String {
         "export.rs",
         "message_modes.rs",
         "cancellable_work.rs",
+        "effective_settings.rs",
         "reports.rs",
     ]
     .into_iter()

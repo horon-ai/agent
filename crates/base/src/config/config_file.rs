@@ -57,7 +57,17 @@ impl Config {
     }
 
     /// Load config from file only (no env overrides), preserving parse/read errors.
-    fn load_from_file_strict() -> anyhow::Result<Option<Self>> {
+    pub(crate) fn load_from_file_strict() -> anyhow::Result<Option<Self>> {
+        Ok(Self::load_file_layer()?.map(|(config, _)| config))
+    }
+
+    /// The file-only config and the TOML document it came from.
+    ///
+    /// One read of the file yields both, so a caller that names the file as the
+    /// source of a value is describing the same bytes the daemon applied. A file
+    /// that does not parse is an error, and one that is absent is `None`; either
+    /// way it supplied nothing.
+    pub(crate) fn load_file_layer() -> anyhow::Result<Option<(Self, toml::Value)>> {
         let Some(path) = Self::path() else {
             return Ok(None);
         };
@@ -73,9 +83,14 @@ impl Config {
             .prewalk
             .validate()
             .map_err(|e| anyhow::anyhow!("Invalid [prewalk] section in {}: {e}", path.display()))?;
+        // The same text the config came from, kept as a document so a caller can
+        // ask which keys it declared. A failed second parse is impossible after
+        // `Self` parsed, and still reported rather than swallowed.
+        let document = toml::from_str::<toml::Value>(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
         // An explicit discovery opt-out is authoritative. Older saves wrote the
         // default endpoint too, so table shape cannot establish user intent.
-        Ok(Some(config))
+        Ok(Some((config, document)))
     }
 
     /// Save config to file

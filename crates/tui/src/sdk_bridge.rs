@@ -23,6 +23,7 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::context::ContextReport;
 
+mod daemon_settings;
 mod messages;
 mod runtime;
 mod sessions;
@@ -553,6 +554,10 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
         Command::Skills { announce } => skills::read(client, session_id, announce),
+        // The daemon's allow-listed settings, read when the screen asks. A
+        // server too old to answer is a state the screen explains, never an
+        // error the worker reports.
+        Command::DaemonSettings => daemon_settings::read(client, session_id),
         // The effort is answered here rather than in `apply` because the level
         // on the status line comes from the runtime report, not from the set
         // request: the harness stores the level and answers with the state it
@@ -582,6 +587,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Sessions { .. }
         | Command::CheckSessions(_)
         | Command::Skills { .. }
+        | Command::DaemonSettings
         | Command::Steer(_)
         | Command::Runtime { .. }
         | Command::NewSession { .. }
@@ -628,6 +634,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Sessions { .. } => "could not list the sessions",
         Command::CheckSessions(_) => "could not check the noted sessions",
         Command::Skills { .. } => "could not list the skills",
+        Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",

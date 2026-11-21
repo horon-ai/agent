@@ -137,6 +137,7 @@ mod client;
 pub mod collections;
 mod connect_options;
 mod diagnostics;
+mod effective_settings;
 mod errors;
 mod export;
 mod handoff;
@@ -209,8 +210,8 @@ pub mod transcript_text {
 /// The protocol types, re-exported so a client needs one dependency, not two.
 pub use horon_agent_harness_api as api;
 pub use horon_agent_harness_api::{
-    ApiEvent, ApiRequest, AskSelection, BackgroundWorkItem, CanonicalEventRecord, CanonicalRecordRef, HistoryMessage,
-    MessageModes, ModelRouteInfo, PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor,
+    ApiEvent, ApiRequest, AskSelection, BackgroundWorkItem, CanonicalEventRecord, CanonicalRecordRef, EffectiveSetting,
+    HistoryMessage, MessageModes, ModelRouteInfo, PayloadRef, PermissionDecision, RenderedImage, RenderedImageAnchor,
     RenderedImageSource, ResponseStats, SessionBlobChunk, SessionBlobStatus, SessionEventPage, SessionHeads,
     SessionHistoryPage, SessionImportResult, SessionInfo, SessionRecordBlobStatus, SessionToolDefinition,
     StoreErrorDetail, TextMatch, ToolConfiguration, TurnStopReason, api_socket_path,

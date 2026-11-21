@@ -68,6 +68,12 @@ pub enum Command {
     /// reads them mid-turn; the answer echoes the text so the client settles
     /// exactly the messages it held.
     Steer(String),
+    /// Read the daemon values the settings screen displays.
+    ///
+    /// The rows are the daemon's answer to a request this client never composes
+    /// itself, so there is nothing here for a caller to name: the session the
+    /// worker follows is the one asked about.
+    DaemonSettings,
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -120,6 +126,9 @@ pub enum Incoming {
         effort: Option<String>,
         level: Option<String>,
     },
+    /// The daemon values a settings screen may display, or why it could not
+    /// report them.
+    DaemonSettings(crate::settings::DaemonSettings),
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
     /// Noted sessions that no longer exist, and how many could not be checked.
