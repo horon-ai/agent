@@ -385,6 +385,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 `/switch`와 `/resume`은 같은 저장 세션 목록을 다른 제목으로 연다. 최신 순이고, 행마다 세션 제목(없으면 첫 사용자 줄, 그것도 없으면 아이디)과 마지막으로 바뀐 시각을 담으며, 시각은 행 오른쪽 끝에 맞춰 두어 목록 아래로 읽힌다. 둘 다 들어가지 않는 좁은 화면은 이름을 남긴다. 지금 붙어 있는 세션에는 `(current)`가 붙는다. 미리보기는 디렉터리와 시각으로 시작하고 이어서 최신 메시지 여섯 개를 `you: …`와 `assistant: …` 줄로 보여 준다. 저장된 메시지 가운데 최신 스무 개를 읽고, 주입된 `<system-reminder>` 메시지는 사용자가 쓴 것이 아니므로 뺀다. 데몬이 다시 읽어 주지 못하는 세션은 제목을, 제목이 없으면 아이디를 이름표로 두고 머리 줄만 있는 미리보기를 쓴다.
 
+세션 목록에서 Ctrl+P를 누르면 선택한 세션을 고정하거나 해제합니다. 고정 세션이 먼저 나오고 각 그룹 안에서는 최근 세션이 앞에 나옵니다. `/pin [id]`와 `/unpin [id]`에서 아이디를 생략하면 현재 연결된 세션에 적용합니다. 고정 항목은 연결된 데몬마다 로컬에 저장하며 클라이언트를 다시 시작해도 유지됩니다.
+
 행을 고르거나 `/switch <id>`, `/resume <id>`를 입력하면 곧바로 붙고, 데몬은 여섯 글자 이상의 유일한 접두사도 받는다. 붙으면 이전 세션의 화면을 지우고 저장된 대화를 사용자 메시지와 어시스턴트 메시지로 다시 그리며, `started a new session <id>` 또는 `resumed <id>`를 남기고, 새 세션의 정체성에서 모델, 프로바이더, 노력 단계, 제목을 받는다. 그래서 상태 줄은 계속 `provider/model`을 보여 준다. `/new`는 이 디렉터리의 세션을 요청해 같은 방식으로 옮겨 가고, 떠나온 세션은 저장된 채로 남는다. 클라이언트는 떠나온 모든 세션의 이벤트를 버리므로 두 대화의 행이 서로에게 닿지 않는다. 세션 변경은 턴이 돌거나 모델이나 노력 단계 변경이 아직 적용 중이면 기다리고, 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
 
 `/switch`나 `/resume`에서 저장한 세션을 선택하고 Ctrl+A를 누르면 보관합니다. 현재 세션을 보관하려면 먼저 다른 세션으로 이동합니다. `/archived`에는 현재 디렉터리에서 보관한 세션이 나옵니다. 행을 선택하고 Enter를 누르면 최근 목록으로 돌아옵니다.
@@ -452,6 +454,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
 | `/note [add\|edit\|remove\|list\|prune] [주소] [text]` | 전사 메시지의 로컬 메모를 남기거나 나열하거나 지운다 |
+| `/pin [id]` | 연결된 세션이나 지정한 세션을 목록 맨 위에 고정한다 |
 | `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
 | `/record [path\|stop\|status]` | 로컬 대화 기록을 시작하거나 멈추거나 확인한다 |
@@ -463,13 +466,14 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/swarm` | 연결된 세션의 직계 자식을 살펴보고 부모 세션으로 돌아간다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 | `/tools` | 현재 세션에서 사용할 수 있는 도구를 실행 없이 살펴본다 |
+| `/unpin [id]` | 세션 고정을 해제한다 |
 | `/voice` | 받아쓴 내용을 초안에 넣거나 기기에서 텍스트를 재생한다 |
 
 녹음하기 전에 연결된 세션에서 `/voice consent`를 실행합니다. Ctrl+Space나 `/voice`로 녹음을 시작하거나 멈춥니다. `/voice cancel`은 녹음을 버리고 `/voice forget`은 동의를 철회합니다. 받아쓴 내용은 초안에 들어가며 직접 전송할 때만 모델로 전달됩니다. `/voice say <text>`와 `/voice read`는 기기에서 텍스트를 재생합니다.
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물여덟 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -503,6 +507,7 @@ built-in commands:
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /note                note, list or remove a local note on a transcript message
+  /pin                 keep a session at the top of the list, or pin the attached one
   /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
@@ -514,6 +519,7 @@ built-in commands:
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
   /tools               browse the current session's enabled tools without running them
+  /unpin               take a session out of the pinned group
   /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

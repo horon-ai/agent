@@ -115,6 +115,8 @@ Commands:
   /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
+  /pin [id]      keep a session at the top of the session list, or pin the
+                 one attached
   /quit          leave
   /record [path] record the conversation to a local file (stop, status)
   /rename <title> save a title for the current session
@@ -125,6 +127,7 @@ Commands:
                  draft
   /switch [id]   move to another stored session, or pick one from the list
   /tools         browse the current session's enabled tools
+  /unpin [id]    take a session out of the pinned group
   /voice [consent|forget|stop|cancel|say <text>|read|status]
                  on-device speech: consent to capture, dictate into the
                  draft (not sent), or speak text locally
@@ -282,6 +285,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
+        "pin" => "keep a session at the top of the list, or pin the attached one",
+        "unpin" => "take a session out of the pinned group",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
