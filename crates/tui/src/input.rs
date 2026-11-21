@@ -385,11 +385,18 @@ impl Input {
     /// edit drops it: a click between an edit and the next frame is ignored
     /// rather than mapped through cells that no longer describe the draft.
     pub fn note_view(&mut self, placement: Placement, view: &View) {
-        self.drawn = Some(Drawn {
+        // The records are overwritten in place and the row list is copied over
+        // the one already there: `clone_from` keeps that list's allocation, so a
+        // frame that draws the same draft again does not buy a new one for a
+        // click that may never come.
+        let drawn = self.drawn.get_or_insert_with(|| Drawn {
             placement,
             first_line: view.first_line,
-            row_starts: view.row_starts.clone(),
+            row_starts: Vec::new(),
         });
+        drawn.placement = placement;
+        drawn.first_line = view.first_line;
+        drawn.row_starts.clone_from(&view.row_starts);
     }
 
     /// Move the caret to a cell of a mouse click, and say whether the click

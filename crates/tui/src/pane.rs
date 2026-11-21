@@ -79,19 +79,43 @@ enum Block<'a> {
     Answer(&'a str),
 }
 
-/// The conversation as the pane draws it, oldest first.
+/// How many blocks the pane draws: the committed items, then the open buffers.
 ///
 /// Reasoning being assembled sits above the answer it precedes, the same order
 /// the model produced it in, and both sit below everything already committed.
-fn blocks(app: &App) -> Vec<Block<'_>> {
-    let mut blocks: Vec<Block<'_>> = app.transcript.items().iter().map(Block::Item).collect();
-    if let Some(text) = app.transcript.open_reasoning() {
-        blocks.push(Block::Reasoning(text));
+fn block_count(items: usize, reasoning: Option<&str>, answer: Option<&str>) -> usize {
+    items
+        .saturating_add(usize::from(reasoning.is_some()))
+        .saturating_add(usize::from(answer.is_some()))
+}
+
+/// One block by its place in the pane's order.
+///
+/// The committed items are read where they already are, so walking the
+/// conversation as the pane draws it costs no per-frame copy of the item list;
+/// the two open buffers follow them as the newest blocks.
+fn block_at<'a>(
+    items: &'a [Item],
+    reasoning: Option<&'a str>,
+    answer: Option<&'a str>,
+    index: usize,
+) -> Option<Block<'a>> {
+    if let Some(item) = items.get(index) {
+        return Some(Block::Item(item));
     }
-    if let Some(text) = app.transcript.open_text() {
-        blocks.push(Block::Answer(text));
+    let mut slot = items.len();
+    if let Some(text) = reasoning {
+        if index == slot {
+            return Some(Block::Reasoning(text));
+        }
+        slot += 1;
     }
-    blocks
+    if let Some(text) = answer
+        && index == slot
+    {
+        return Some(Block::Answer(text));
+    }
+    None
 }
 
 /// One block's lines, ready to be asked for the rows the pane shows.
@@ -196,15 +220,21 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
     let frame = notes::Frame::new(app);
     let mut rows: Vec<Line<'static>> = Vec::new();
-    let blocks = blocks(app);
-    for (index, block) in blocks.iter().enumerate().rev() {
+    let items = app.transcript.items();
+    let reasoning = app.transcript.open_reasoning();
+    let answer = app.transcript.open_text();
+    let count = block_count(items.len(), reasoning, answer);
+    for index in (0..count).rev() {
         if rows.len() >= capacity {
             break;
         }
+        let Some(block) = block_at(items, reasoning, answer, index) else {
+            continue;
+        };
         // Only the rows this block contributes to the pane are built, and they
         // are built from the end: a block taller than the pane costs the pane's
         // rows, not its own.
-        let source = block_source(block, &look, Some(&expand), index == 0, &frame, index);
+        let source = block_source(&block, &look, Some(&expand), index == 0, &frame, index);
         let wanted = capacity - rows.len();
         let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
         rows.extend(window.into_iter().rev());
@@ -222,27 +252,33 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
     let frame = notes::Frame::new(app);
-    let blocks = blocks(app);
+    let items = app.transcript.items();
+    let reasoning = app.transcript.open_reasoning();
+    let answer = app.transcript.open_text();
+    let count = block_count(items.len(), reasoning, answer);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
     // one, so it is dropped rather than read against the wrong block.
-    let heights: &[usize] = if measured.len() == blocks.len() { &measured } else { &[] };
+    let heights = (measured.len() == count).then_some(&measured);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let mut below = offset;
-    for (index, block) in blocks.iter().enumerate().rev() {
-        match heights.get(index) {
-            // Wholly below the view: its height is known, so it is skipped
-            // without wrapping a single line of it.
-            Some(&height) if below >= height && height > 0 => {
-                below -= height;
-                continue;
-            }
-            _ => {}
+    for index in (0..count).rev() {
+        // Wholly below the view: its height is known, so it is skipped without
+        // wrapping a single line of it.
+        if let Some(height) = heights.and_then(|heights| heights.get(index))
+            && below >= height
+            && height > 0
+        {
+            below -= height;
+            continue;
         }
         if rows.len() >= capacity {
             break;
         }
-        let source = block_source(block, &look, Some(&expand), index == 0, &frame, index);
+        let Some(block) = block_at(items, reasoning, answer, index) else {
+            continue;
+        };
+        let source = block_source(&block, &look, Some(&expand), index == 0, &frame, index);
         let wanted = capacity - rows.len();
         // The rows below the view's bottom edge are counted and dropped; what
         // is built is the window above them that the pane fills with.
@@ -256,22 +292,59 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
 
 /// The measured height of every block, in the order the pane draws them.
 ///
-/// The committed items come from the scrollback's tally; the two open buffers
-/// are blocks only while they are being streamed, so their slots are added only
-/// then, and the list stays aligned with [`blocks`].
-fn block_heights(app: &App) -> Vec<usize> {
-    let mut heights = match app.scroll.heights() {
-        Some(items) => items.to_vec(),
-        None => Vec::new(),
-    };
-    let open = app.scroll.open_heights();
-    if app.transcript.open_reasoning().is_some() {
-        heights.push(open[0]);
+/// The committed items come from the scrollback's tally and are read where they
+/// already are, so a held frame does not copy the whole list of counted heights
+/// on every step; the two open buffers are blocks only while they are being
+/// streamed, and their slots are read after the committed ones so the list stays
+/// aligned with [`block_at`].
+struct BlockHeights<'a> {
+    /// Wrapped rows of each committed item, as the scrollback last counted them.
+    items: &'a [usize],
+    /// Wrapped rows of the open reasoning block and the open answer.
+    open: [usize; 2],
+    /// Whether the reasoning buffer is a block of its own.
+    reasoning: bool,
+    /// Whether the answer buffer is a block of its own.
+    answer: bool,
+}
+
+impl BlockHeights<'_> {
+    /// How many blocks have a measured height.
+    fn len(&self) -> usize {
+        self.items
+            .len()
+            .saturating_add(usize::from(self.reasoning))
+            .saturating_add(usize::from(self.answer))
     }
-    if app.transcript.open_text().is_some() {
-        heights.push(open[1]);
+
+    /// The height of the block at `index`, or `None` when this list does not
+    /// describe it.
+    fn get(&self, index: usize) -> Option<usize> {
+        if let Some(height) = self.items.get(index) {
+            return Some(*height);
+        }
+        let mut slot = self.items.len();
+        if self.reasoning {
+            if index == slot {
+                return Some(self.open[0]);
+            }
+            slot += 1;
+        }
+        if self.answer && index == slot {
+            return Some(self.open[1]);
+        }
+        None
     }
-    heights
+}
+
+/// The measured height of every block the scrollback knows about.
+fn block_heights(app: &App) -> BlockHeights<'_> {
+    BlockHeights {
+        items: app.scroll.heights().unwrap_or(&[]),
+        open: app.scroll.open_heights(),
+        reasoning: app.transcript.open_reasoning().is_some(),
+        answer: app.transcript.open_text().is_some(),
+    }
 }
 
 /// The line a held view keeps in the pane's bottom row.

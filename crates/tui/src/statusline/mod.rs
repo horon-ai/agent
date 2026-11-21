@@ -746,13 +746,6 @@ fn usage_text(usage: Option<UsageTotals>) -> String {
     let Some(usage) = usage else {
         return String::new();
     };
-    let mut parts = Vec::new();
-    if let Some(input) = usage.input {
-        parts.push(format!("↑{}", compact(input)));
-    }
-    if let Some(output) = usage.output {
-        parts.push(format!("↓{}", compact(output)));
-    }
     // Cache tokens only when one of the two was reported and the sum is not
     // zero: a provider that omitted both measured nothing, and one that
     // reported zero has nothing worth a column.
@@ -760,13 +753,34 @@ fn usage_text(usage: Option<UsageTotals>) -> String {
         (None, None) => 0,
         (read, creation) => read.unwrap_or(0).saturating_add(creation.unwrap_or(0)),
     };
-    if cache > 0 {
-        parts.push(format!("⚡{}", compact(cache)));
-    }
-    if parts.is_empty() {
+    let parts = usize::from(usage.input.is_some()) + usize::from(usage.output.is_some()) + usize::from(cache > 0);
+    if parts == 0 {
         return String::new();
     }
-    format!("Σ{}", parts.join(" "))
+    // One buffer, written straight through: the segment is redrawn with every
+    // frame, and a list of part strings built only to be joined would allocate
+    // one string per part and one more for the join.
+    let mut text = String::with_capacity(parts * 8);
+    text.push('Σ');
+    if let Some(input) = usage.input {
+        text.push('↑');
+        text.push_str(&compact(input));
+    }
+    if let Some(output) = usage.output {
+        if usage.input.is_some() {
+            text.push(' ');
+        }
+        text.push('↓');
+        text.push_str(&compact(output));
+    }
+    if cache > 0 {
+        if usage.input.is_some() || usage.output.is_some() {
+            text.push(' ');
+        }
+        text.push('⚡');
+        text.push_str(&compact(cache));
+    }
+    text
 }
 
 /// The daemon's spend estimate, or nothing when it publishes none.
