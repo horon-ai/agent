@@ -207,15 +207,24 @@ impl App {
         self.model_shortlist_skipped.clear();
     }
 
-    /// Fill the open session list, marking the session in force.
+    /// Fill the open session list, pinned sessions first.
     ///
     /// The preview lines travel with the row: they are built from the stored
     /// history the bridge already read, so drawing the list costs one map here
     /// and no request at all. The head line is drawn but not searched: it is
     /// the directory and the time, which every row of one directory shares, so
     /// a filter on the path would otherwise keep the whole list.
+    ///
+    /// The answer arrives newest first. It is kept whole and the rows are built
+    /// from it, so a pin taken while the list is open reorders the same answer
+    /// without asking the harness again. A pinned id the answer no longer holds
+    /// simply has no row: the pin waits in the file until the session is listed
+    /// again, and the list keeps working meanwhile.
     pub fn show_sessions(&mut self, sessions: Vec<SessionRow>) {
-        self.fill_session_rows(Kind::Sessions, sessions);
+        self.load_pins();
+        self.pins.rows = sessions;
+        let rows = self.session_picker_rows();
+        self.fill(Kind::Sessions, rows);
     }
 
     pub(crate) fn show_archived_sessions(&mut self, sessions: Vec<SessionRow>) {
@@ -248,6 +257,44 @@ impl App {
             })
             .collect();
         self.fill(kind, rows);
+    }
+
+    /// The session rows in display order: pinned first, newest first in each.
+    ///
+    /// The split keeps the order the bridge sent inside both groups, so a pin
+    /// changes which group a session joins and never the recent order within
+    /// it. The marker travels with the row so the list says why it moved.
+    pub(super) fn session_picker_rows(&self) -> Vec<Row> {
+        let mut rows = Vec::with_capacity(self.pins.rows.len());
+        for pinned in [true, false] {
+            rows.extend(
+                self.pins
+                    .rows
+                    .iter()
+                    .filter(|session| self.pins.store.is_pinned(&session.id) == pinned)
+                    .map(|session| session_row(session, pinned)),
+            );
+        }
+        rows
+    }
+
+    /// Put the open session list back in its new order, on the row `keep`.
+    ///
+    /// Only a session list can be reordered; a model or link list keeps the
+    /// rows it was given. A save that failed never reaches here, so the order
+    /// on screen is the order the file holds.
+    pub(super) fn refresh_session_picker(&mut self, keep: &str) {
+        if !self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.kind() == Kind::Sessions)
+        {
+            return;
+        }
+        let rows = self.session_picker_rows();
+        if let Some(picker) = self.picker.as_mut() {
+            picker.refill(rows, keep);
+        }
     }
 
     /// Fill the open swarm list: this session's children, then the parent row.
@@ -309,6 +356,20 @@ impl App {
         }
         match picker.on_key(key) {
             Outcome::Handled => {
+                self.picker = Some(picker);
+                None
+            }
+            // The pin key means something only in the session list, and only
+            // when a row is under the cursor. The list is put back before the
+            // store is read, so a failed save leaves it exactly as it was.
+            Outcome::TogglePin => {
+                if picker.kind() == Kind::Sessions
+                    && let Some(session) = picker.selected_row().map(|row| row.value.clone())
+                {
+                    self.picker = Some(picker);
+                    self.toggle_session_pin(&session);
+                    return None;
+                }
                 self.picker = Some(picker);
                 None
             }
@@ -560,6 +621,24 @@ impl App {
         }
         self.warn(message);
     }
+}
+
+/// One session as the list draws it.
+///
+/// The preview's first line is the directory and time every row of one
+/// directory shares, so only the conversation lines are searchable; a filter
+/// on the path would otherwise keep the whole list.
+fn session_row(session: &SessionRow, pinned: bool) -> Row {
+    let mut search = Vec::new();
+    if let Some((_head, conversation)) = session.preview.split_first() {
+        search.extend_from_slice(conversation);
+    }
+    Row::new(session.label.clone(), session.id.clone())
+        .with_detail(session.detail.clone())
+        .marked(session.current)
+        .pinned(pinned)
+        .with_preview(session.preview.clone())
+        .with_search(search)
 }
 
 /// The lines the model list shows while one of its rows is selected.
