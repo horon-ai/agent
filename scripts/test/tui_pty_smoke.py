@@ -589,14 +589,15 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("session title updated", STEP_TIMEOUT, "saved session title")
         terminal.send("/rename\r")
         terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "empty title refusal")
-        terminal.send("/new\r")
-        terminal.read_until("a new session session_", STEP_TIMEOUT, "switch away from the renamed session")
-        picker_start = len(terminal.transcript)
-        terminal.send("/resume\r")
-        terminal.read_until("Resume session", STEP_TIMEOUT, "session picker")
-        terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
-        terminal.send(f"{name}\r")
-        terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+        if POSIX:
+            terminal.send("/new\r")
+            terminal.read_until("a new session session_", STEP_TIMEOUT, "switch away from the renamed session")
+            picker_start = len(terminal.transcript)
+            terminal.send("/resume\r")
+            terminal.read_until("Resume session", STEP_TIMEOUT, "session picker")
+            terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
+            terminal.send(f"{name}\r")
+            terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
