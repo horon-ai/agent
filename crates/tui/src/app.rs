@@ -22,7 +22,7 @@ use crate::recording::Event;
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::{Motion, Settings};
-use crate::statusline::{Layout, TokenTotals};
+use crate::statusline::{Layout, TokenTotals, UsageTotals};
 use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
@@ -340,8 +340,16 @@ pub struct App {
     pub home: Option<String>,
     /// Latest token totals the daemon reported.
     pub tokens: Option<TokenTotals>,
+    /// Context window of the route in force, from the runtime's own report.
+    pub capacity: Option<u64>,
+    /// Cumulative token totals of the session, when the runtime reported them.
+    pub usage: Option<UsageTotals>,
+    /// The daemon's own spend estimate, when it publishes one.
+    pub cost: Option<f64>,
     /// How the bottom line is arranged, replaced when `tui.toml` changes.
     pub statusline: Layout,
+    /// The status line's separator after applying its appearance settings.
+    pub(crate) status_separator: Option<&'static str>,
     /// Colours the renderer uses, replaced when the theme loader resolves a
     /// new theme.
     pub theme: Theme,
@@ -384,20 +392,9 @@ pub struct App {
     /// Where user theme files are read from, offered by the settings screen.
     pub themes_dir: std::path::PathBuf,
     /// The artifact store root (`$HORON_HOME/artifacts`), read by `/artifact`.
-    ///
-    /// Held apart from the session id so a test can point the command at a
-    /// temporary store instead of the user's own, exactly as `themes_dir` does
-    /// for the theme loader.
     pub artifacts_dir: std::path::PathBuf,
-    /// Whether the attached session runs on this client's own harness.
-    ///
-    /// Set from the connection itself, not from an address a line carries: an
-    /// explicit `--socket` or a `HORON_AGENT_API_SOCKET` override may point at
-    /// an SSH forward or a remote bridge, where a session id can coincide with a
-    /// local id while naming another conversation. Anything that reads this
-    /// machine's disk for the session is offered only while this is true; the
-    /// artifact store is the first such read, and #500 gates path completion on
-    /// the same evidence.
+    /// Whether the attached session uses this machine's default local endpoint.
+    /// Explicit socket paths may point to a remote host with the same session ID.
     pub workspace_is_local: bool,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
@@ -481,7 +478,11 @@ impl App {
             cwd: None,
             home: home_directory(),
             tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
             statusline: Layout::default(),
+            status_separator: None,
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
@@ -559,7 +560,11 @@ impl App {
             cwd: None,
             home: home_directory(),
             tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
             statusline: Layout::default(),
+            status_separator: None,
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
@@ -947,9 +952,21 @@ impl App {
                     cache_read: optional_count(cache_read_input),
                     cache_creation: optional_count(cache_creation_input),
                 });
-                // The status line shows this request alone; the turn's footer
-                // adds each request of the turn together, so a tool loop's
-                // several provider calls are all counted.
+                // The event is one provider call, so the cumulative figure
+                // moves with it. The running total is kept here rather than
+                // read again: a request per call would be a request per tool
+                // round, and a requested report replaces this baseline with the
+                // daemon's own totals whenever the session or model moves.
+                self.usage = Some(match self.usage {
+                    Some(total) => total.plus(*input, *output, *cache_read_input, *cache_creation_input),
+                    None => UsageTotals {
+                        input: Some(*input),
+                        output: Some(*output),
+                        cache_read: *cache_read_input,
+                        cache_creation: *cache_creation_input,
+                    },
+                });
+                // The turn footer totals all provider calls in this turn.
                 self.transcript.note_usage(*input, *output);
             }
             // The daemon classifies one miss per completed provider request and

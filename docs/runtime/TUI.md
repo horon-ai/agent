@@ -100,9 +100,9 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
-The table is the settings registry (`crates/tui/src/settings/registry.rs`), twenty-one keys in its order, and it is what the settings screen draws.
+The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen. The opt-in `usage` and `cost` segments are chosen with `statusline.left` and `statusline.right` rather than by a key of their own, so the registry gains no key for them.
 
-`statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
+`statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is a manual override of the token count the `context_pct` segment divides by. Left at `0` the segment divides by the window the runtime reported for the route in force, so switching models refreshes the denominator without a restart; a value above zero wins over the report, for a user who knows their route better than the daemon's catalog does. Neither known hides the segment.
 
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
@@ -257,7 +257,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | Deny the parked call; a question stays open |
 | `prompt.confirm` | `enter` | Confirm a multi-choice question |
 
-The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`, each action with the scope it belongs to. `/help` lists the same ids in the same order with the keys in force, so a rebound key is the key the listing shows, and `/keys` prints the same rows without the command listing. A marker that names a key, such as `ctrl+o expands`, names the key the map in force gives that action.
+The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`, each action with the scope it belongs to.
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
@@ -384,7 +384,9 @@ The bottom line is assembled from named segments. A segment with no data draws n
 | `session` | The session id, shortened |
 | `path` | The working directory, with the home directory shortened to `~` and long paths cut at a segment boundary |
 | `tokens` | Input and output tokens of the last request, as `↑in ↓out` |
-| `context_pct` | Share of `statusline.context_window` used; hidden when the setting is `0` |
+| `context_pct` | Share of the context window used, where `statusline.context_window` overrides the window the runtime reports; hidden when neither is known |
+| `usage` | Tokens the whole session has spent, as `Σ↑in ↓out`; opt-in, and only the metrics the runtime recorded are drawn |
+| `cost` | The daemon's own spend estimate as `$0.00`; opt-in, and hidden when the daemon publishes none |
 | `time` | Local wall-clock time as `HH:MM` |
 | `pending` | A parked approval or question |
 
@@ -398,7 +400,11 @@ The bottom line is assembled from named segments. A segment with no data draws n
 | `minimal` | `model` | `status` |
 | `custom` | Whatever `statusline.left` names | Whatever `statusline.right` names |
 
-The `model` segment carries the reasoning effort the daemon reported for the model, joined by the preset's separator (`·` unless the preset draws another of its own): `provider/model · high`. A missing or blank effort draws nothing, and an effort with no model name beside it is not drawn at all. The client asks the harness what the session is running before the first keystroke, so the first frame already names the model and its effort; a report the daemon refuses leaves both unknown and prints one warning, `could not read the runtime info: <error>`, and the identity event that follows every attach or new session fills the same two fields. When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `context_pct`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
+The `model` segment carries the reasoning effort the daemon reported for the model, joined by the preset's separator (`·` unless the preset draws another of its own): `provider/model · high`. A missing or blank effort draws nothing, and an effort with no model name beside it is not drawn at all. The client asks the harness what the session is running before the first keystroke, so the first frame already names the model and its effort; a report the daemon refuses leaves both unknown and prints one warning, `could not read the runtime info: <error>`, and the identity event that follows every attach or new session fills the same two fields.
+
+`usage` and `cost` are opt-in: no preset draws them, and only a custom `statusline.left` or `statusline.right` array can. Both read what the runtime reported, so a metric nobody recorded draws nothing rather than a zero: a provider that omitted cache accounting gets `Σ↑in ↓out` with no cache column, and a daemon without a price table publishes no estimate, which is why `cost` is hidden on this build. Neither one causes a request per frame: the report is read when the client moves to a session and again when the model moves.
+
+When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
 
 ## Commands
 

@@ -8,7 +8,7 @@
 use horon_agent_sdk::RuntimeInfo;
 
 use super::Incoming;
-use super::runtime::{effort, reported};
+use super::runtime::{effort, reported, snapshot};
 
 /// A runtime report of the session named, with nothing else known.
 fn info(session_id: &str, effort: Option<&str>) -> RuntimeInfo {
@@ -98,4 +98,42 @@ fn an_empty_effort_from_the_harness_is_not_shown_as_a_level() {
         Some(Incoming::RuntimeInfo { effort, .. }) => assert_eq!(effort, None),
         other => panic!("expected a runtime report, got {other:?}"),
     }
+}
+
+#[test]
+fn a_usage_snapshot_keeps_what_the_runtime_recorded_and_leaves_the_rest_unknown() {
+    let report = horon_agent_sdk::UsageReport {
+        session_id: Some("s1".to_string()),
+        totals: horon_agent_sdk::api::UsageTotals {
+            input: Some(1_000),
+            output: None,
+            cache_read_input: Some(200),
+            cache_creation_input: None,
+            requests: 3,
+            sessions: 1,
+        },
+        context_window: Some(200_000),
+        // This build has no price table, so the estimate is always absent.
+        estimated_cost: None,
+        ..Default::default()
+    };
+    let usage = snapshot(&report);
+    assert_eq!(
+        usage.totals,
+        Some(crate::statusline::UsageTotals {
+            input: Some(1_000),
+            output: None,
+            cache_read: Some(200),
+            cache_creation: None,
+        }),
+        "a total the runtime did not report must stay unknown, not become zero"
+    );
+    assert_eq!(usage.context_window, Some(200_000));
+    assert_eq!(usage.cost, None);
+
+    // A report that recorded no metric at all leaves the totals unknown, so the
+    // segment hides instead of drawing a zero it never measured.
+    let empty = horon_agent_sdk::UsageReport::default();
+    assert_eq!(snapshot(&empty).totals, None);
+    assert_eq!(snapshot(&empty).context_window, None);
 }

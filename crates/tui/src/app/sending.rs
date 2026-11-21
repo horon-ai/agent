@@ -247,8 +247,11 @@ impl App {
         let Some(message) = self.queue.get(index) else {
             return 0;
         };
-        self.queue[..index]
+        self.steer_pending
             .iter()
+            .filter(|pending| self.carried_into(pending))
+            .flat_map(|pending| pending.messages.iter())
+            .chain(&self.queue[..index])
             .filter(|earlier| earlier.display == message.display)
             .count()
     }

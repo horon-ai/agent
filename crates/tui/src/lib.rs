@@ -427,11 +427,9 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
     // theme file, so clearing the setting restores the selected theme exactly.
     app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
-    // The status line's own two choices sit on top of the theme and the glyph
-    // preset, so they are applied here where every snapshot arrives rather than
-    // in the drawing call: a save from the settings screen and a hand edit of
-    // `tui.toml` then take effect on the next frame alike.
-    statusline::apply_appearance(settings, &mut app.theme, &mut app.symbols);
+    let mut status_symbols = app.symbols;
+    statusline::apply_appearance(settings, &mut app.theme, &mut status_symbols);
+    app.status_separator = Some(status_symbols.separator);
 }
 
 /// Write the change the settings screen confirmed, then re-apply it.
@@ -920,7 +918,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     let mut data = app.status_data();
     data.now = Some(statusline::local_now());
-    let line = statusline::render(&data, &app.statusline, &app.theme, app.symbols, width);
+    let mut symbols = app.symbols;
+    symbols.separator = app.status_separator.unwrap_or(symbols.separator);
+    let line = statusline::render(&data, &app.statusline, &app.theme, symbols, width);
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
 }
 
