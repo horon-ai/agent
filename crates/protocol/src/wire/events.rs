@@ -72,9 +72,7 @@ pub enum ServerEvent {
         duration_secs: Option<f64>,
     },
 
-    /// Replace the current turn's streamed text content
-    /// Used when text-wrapped tool calls are recovered: the garbled text
-    /// shown during streaming is replaced with the clean prefix text.
+    /// Replace the current turn's streamed text content. Kept for older peers.
     #[serde(rename = "text_replace")]
     TextReplace { text: String },
 
@@ -298,6 +296,7 @@ pub enum ServerEvent {
         display_role: Option<String>,
         /// Which injection point: "A" (after stream), "B" (no tools),
         /// "C" (between tools), "D" (after all tools)
+        /// `native_tool_retry` carries a user-facing system notice.
         point: String,
         /// Number of tools skipped (only for urgent interrupt at point C)
         #[serde(skip_serializing_if = "Option::is_none")]

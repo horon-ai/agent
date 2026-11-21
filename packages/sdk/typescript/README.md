@@ -582,6 +582,8 @@ one id. Retraction is decided against delivery atomically: an id is never
 reported both cancelled and delivered. `session_status` after attaching carries
 `pending_soft_interrupts` so a reconnecting client can reconcile its own queue.
 
+For a native tool retry, `point` is `native_tool_retry` and `notice` carries the user-visible message.
+
 `backgroundToolResult(id)` moves the running tool to the background so a
 queued message can be read sooner, and reports `{ moved, toolCallId, toolName }`.
 

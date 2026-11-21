@@ -241,8 +241,10 @@ pub fn truncate_cells(text: &str, width: usize) -> String {
 /// The wording the approval gate refuses a call with.
 ///
 /// The request id in it is how a parked prompt pairs itself with this line, so
-/// the sentence is stored whole and cannot be shortened at the source.
-const GATE_REFUSAL: &str = "needs approval before it runs";
+/// the sentence is stored whole and cannot be shortened at the source. A
+/// recording reads this too: a call the gate held is an approval matter, and
+/// the default recording leaves those out.
+pub(crate) const GATE_REFUSAL: &str = "needs approval before it runs";
 /// What that refusal is drawn as: one phrase, because the prompt beside it
 /// already asks the question and three rows of the same words push the rest of
 /// the conversation off the pane.
