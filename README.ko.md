@@ -113,7 +113,7 @@ horon run "summarize this repo"
 | 명령 | 하는 일 |
 | --- | --- |
 | `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
-| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. |
+| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](docs/provider/MODEL.ko.md#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰고 [`--max-time`](docs/runtime/TURNS.ko.md#실행-시간-제한)으로 실행 시간을 제한한다. |
 | `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. |
@@ -246,6 +246,7 @@ jcode v1.0.1(릴리스 `v1.0.1`, 커밋 `10114429c8133994861d6c915a2483d397c0f7c
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] bash_direnv` | `false` | `true`는 신뢰한 작업 폴더에서 승인된 direnv 파일의 새 변수를 가져온다 |
 | `[tools] output_column_cap` | `0`(꺼짐) | 텍스트 미리보기 한 줄에 표시할 유니코드 문자 수(양의 정수) |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full`(정전에도 기록이 남는다) | `fast` |

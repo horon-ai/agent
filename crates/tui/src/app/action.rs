@@ -5,7 +5,7 @@
 //! It is re-exported from `crate::app`, so callers keep naming `Action` there.
 use horon_agent_sdk::api::AskSelection;
 
-/// What the UI asks the bridge to do after a keystroke.
+/// One request for the bridge thread: the client's half of a command.
 ///
 /// Not `Eq`: an answer carries protocol selections, which only compare with
 /// `PartialEq`.
@@ -21,6 +21,11 @@ pub enum Action {
     Steer(String),
     /// Cancel the running turn.
     Cancel,
+    /// Cancel one background terminal this session started.
+    ///
+    /// It names the tool call that started the job, not the turn: the session
+    /// and every other job keep running.
+    CancelBackgroundTerminal(String),
     /// Answer a parked approval.
     Approval {
         request_id: String,
@@ -66,6 +71,8 @@ pub enum Action {
     Rename(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask for the background work this session is still running.
+    BackgroundJobs,
     /// Ask which noted sessions were deleted, including checks for archived sessions.
     CheckSessions(Vec<String>),
     /// Hand the draft to the user's editor; the loop answers this one itself,

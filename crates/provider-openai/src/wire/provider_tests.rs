@@ -145,6 +145,41 @@ fn empty_reply(wire: WireProtocol) -> Reply {
     Reply::sse(&[&frame])
 }
 
+#[tokio::test]
+async fn service_tier_is_sent_on_both_openai_wires() -> anyhow::Result<()> {
+    tokio::time::timeout(DEADLINE, async {
+        for wire in [WireProtocol::ChatCompletions, WireProtocol::Responses] {
+            let server = MockServer::start(empty_reply(wire));
+            let provider = wire_provider(&server.url, wire, "gpt-6-astra");
+            let messages = [Message::user("hello")];
+            let mut stream = provider.complete(&messages, &[], "", None).await?;
+            collect(&mut stream).await;
+            assert!(recorded_body(&server, 0).get("service_tier").is_none());
+
+            provider.set_service_tier("ultrafast")?;
+            let mut stream = provider.complete(&messages, &[], "", None).await?;
+            collect(&mut stream).await;
+            assert_eq!(recorded_body(&server, 1)["service_tier"], "ultrafast");
+        }
+        Ok(())
+    })
+    .await?
+}
+
+#[test]
+fn unsupported_service_tiers_are_rejected() {
+    for wire in [WireProtocol::AnthropicMessages, WireProtocol::GeminiGenerateContent] {
+        let provider = wire_provider("http://localhost", wire, "test-model");
+        let error = provider.set_service_tier("priority").unwrap_err();
+        assert!(error.to_string().contains("only supported on OpenAI"));
+    }
+    let provider = wire_provider("http://localhost", WireProtocol::Responses, "gpt-5");
+    for tier in ["auto", "default", "flex", "ultrafast"] {
+        let error = provider.set_service_tier(tier).unwrap_err();
+        assert!(error.to_string().contains("unsupported service tier"));
+    }
+}
+
 /// Every object in `value` whose `key` equals `expected`.
 fn collect_matching<'a>(value: &'a Value, key: &str, expected: &str, out: &mut Vec<&'a Value>) {
     match value {

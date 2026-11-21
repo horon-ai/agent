@@ -109,6 +109,8 @@ Commands:
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /fork          start a separate session from a saved history point
+  /jobs          list this session's background work, and cancel a terminal
+                 with Delete
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
   /mcp [probe <server>] list trusted MCP servers or test one connection
@@ -274,6 +276,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "exit" => "leave, the same as /quit",
         "fork" => "start a separate session from a saved history point",
         "help" => "list the commands and the keys in force",
+        "jobs" => "list the background work this session is running, and cancel a terminal",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
         "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",

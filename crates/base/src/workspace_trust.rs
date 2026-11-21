@@ -213,6 +213,15 @@ pub fn trust_state(project_root: &Path) -> TrustState {
     }
 }
 
+/// Whether the workspace has an explicit Horon trust decision for local shell hooks.
+pub fn allows_shell_hooks(project_root: &Path) -> bool {
+    match env_decision() {
+        Some(TrustDecision::Denied) => false,
+        Some(TrustDecision::Trusted) => true,
+        None => cli_trust_workspace() || trust_state(project_root) == TrustState::Trusted,
+    }
+}
+
 /// Record `decision` for `project_root` at `digest`.
 ///
 /// `digest` is the [`WorkspaceSnapshot::digest`] the decision was made against; a later
