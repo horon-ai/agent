@@ -46,6 +46,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.ko.md`](performance/BENCHMARK.ko.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
+| | [`EVAL.ko.md`](performance/EVAL.ko.md) | 고정 입력을 쓰는 지시 준수 평가 설계 제안 |
 | | [`RESULTS.ko.md`](performance/RESULTS.ko.md) | 측정 결과와 한계 |
 | | [`MEMORY.ko.md`](performance/MEMORY.ko.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
 | `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, npm 설치, Linux 서버 실행, TLS 신뢰 집합 |

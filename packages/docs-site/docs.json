@@ -106,6 +106,7 @@
                 "group": "Performance",
                 "pages": [
                   "reference/performance/benchmark",
+                  "reference/performance/eval",
                   "reference/performance/results",
                   "reference/performance/memory"
                 ]
@@ -212,6 +213,7 @@
                 "group": "성능",
                 "pages": [
                   "ko/reference/performance/benchmark",
+                  "ko/reference/performance/eval",
                   "ko/reference/performance/results",
                   "ko/reference/performance/memory"
                 ]
