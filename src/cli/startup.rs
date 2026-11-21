@@ -378,6 +378,19 @@ mod tests {
     }
 
     #[test]
+    fn startup_goal_requires_budget_and_conflicts_with_resume() {
+        let goal = ["horon", "--goal", "Ship a fix", "--goal-budget", "1200"];
+        let parsed = parse_args(&goal);
+        assert_eq!(parsed.goal.as_deref(), Some("Ship a fix"));
+        assert_eq!(parsed.goal_budget, Some(1200));
+        for resume in [["--resume", "session-1"].as_slice(), ["--continue"].as_slice()] {
+            let error = Args::try_parse_from(goal.iter().chain(resume)).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+        assert!(Args::try_parse_from(["horon", "--goal", "Ship a fix"]).is_err());
+    }
+
+    #[test]
     fn source_update_check_preserves_git_error() {
         let crate::bus::UpdateStatus::Error(message) =
             source_update_check_status(Err(anyhow::anyhow!("git fetch: offline")))

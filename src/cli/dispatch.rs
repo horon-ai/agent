@@ -40,6 +40,9 @@ fn arm_debug_client_parent_death_signal() {
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
+    if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
+        anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
+    }
     if args.ssh.is_some() {
         // A remote session ID and working directory belong to the remote host.
         // Do not run local resume lookup or provider bootstrap.
@@ -599,7 +602,11 @@ async fn run_default_command(args: Args) -> Result<()> {
     // installed beside this executable, this process becomes that client, with
     // a resumed session passed along; every other shape (a pipe, `HORON_NO_TUI`,
     // no sibling) keeps the headless message so scripts and CI still see it.
-    super::tui_handoff::run(super::tui_handoff::decide_for_process(), args.resume.as_deref())
+    super::tui_handoff::run(
+        super::tui_handoff::decide_for_process(),
+        args.resume.as_deref(),
+        args.goal.as_deref().zip(args.goal_budget),
+    )
 }
 
 pub(crate) async fn server_is_running() -> bool {

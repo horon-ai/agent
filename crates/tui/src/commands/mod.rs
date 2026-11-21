@@ -747,6 +747,7 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Auth,
     RuntimeCommand::Logout,
     RuntimeCommand::Plan,
+    RuntimeCommand::Goal,
     RuntimeCommand::Mcp,
 ];
 

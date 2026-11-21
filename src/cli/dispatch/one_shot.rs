@@ -28,7 +28,19 @@ pub(super) async fn run(
     let mut agent = Agent::for_one_shot_run(provider.clone(), registry).closing_after_run();
     let setup = (|| {
         commands::restore_agent_session_if_requested(&mut agent, args.resume.as_deref())?;
-        apply_model_overrides(&mut agent, overrides)
+        apply_model_overrides(&mut agent, overrides)?;
+        if let (Some(title), Some(budget)) = (&args.goal, args.goal_budget) {
+            let goal = crate::goal::start_session_goal(
+                agent.session_id(),
+                agent.working_dir().map(std::path::Path::new),
+                title.clone(),
+                budget,
+            )?;
+            if !emit_json && !emit_ndjson {
+                super::output::stderr_info(crate::goal::render_goal_detail(&goal));
+            }
+        }
+        Ok(())
     })();
     if let Err(error) = setup {
         agent.mark_closed();

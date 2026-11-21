@@ -1220,6 +1220,24 @@ def run_build_layout(
             jobs_root = os.path.join(root, "jobs")
             jobs_launch = build_launch(jobs_root, agent, tui)
             text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
+            goal_root = os.path.join(root, "goal")
+            goal_launch = build_launch(goal_root, agent, tui)
+            home = write_config(goal_launch.home, base_url)
+            env = horon_env(goal_root, home)
+            env.pop("HORON_NO_TUI", None)
+            argv = goal_launch.client_argv(goal_root) + ["--goal", "Verify startup objective", "--goal-budget", "1200"]
+            terminal = Terminal(argv, cwd=goal_root, env=env)
+            try:
+                terminal.read_until("Verify startup objective", STARTUP_TIMEOUT, "startup goal appears")
+                terminal.read_until("1200", STEP_TIMEOUT, "startup token ceiling appears")
+                terminal.send("/goal 2400 Reject duplicate objective\r")
+                terminal.read_until("already has an active goal", STEP_TIMEOUT, "startup goal stays attached")
+                terminal.send("/quit\r")
+                if terminal.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"goal client did not exit\n--- transcript ---\n{terminal.transcript}")
+                text += "\n--- startup goal ---\n" + terminal.transcript
+            finally:
+                terminal.close()
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)
