@@ -236,6 +236,7 @@ fn a_pin_that_cannot_be_written_leaves_the_list_and_the_marker_unchanged() {
 
     app.on_key(key(KeyCode::Down));
     app.on_key(key(KeyCode::Down));
+    app.on_key(ctrl_p());
     assert_eq!(shown(&app), vec!["session_new", "session_mid", "session_old"]);
     assert_eq!(selected(&app), ("session_old".to_string(), false));
     assert!(
