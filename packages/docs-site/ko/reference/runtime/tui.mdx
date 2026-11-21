@@ -389,6 +389,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 `/links`는 최근 어시스턴트 답변 8개에서 HTTP와 HTTPS 링크를 최신순으로 표시합니다. 행에서 Enter를 누르면 표시된 주소를 시스템 브라우저에서 엽니다. Esc를 누르면 목록이 닫힙니다. 잘못된 주소, 로컬 파일과 자격 증명이 포함된 링크는 목록에서 빠집니다.
 
+`/mcp`는 연결된 작업공간에서 데몬이 신뢰하는 서버 설정을 보여 줍니다. `/mcp probe <server>`는 켜진 서버를 이름으로 지정해 별도로 연결하고 전송 방식과 서버가 제공하는 기능을 표시합니다. 검사에서는 도구 목록을 읽습니다. 신뢰하지 않았거나 설정에서 끈 서버는 TUI에서 검사할 수 없습니다.
+
 패널을 그리기에 화면이 너무 작으면 선택 목록과 설정 화면이 패널 대신 한 줄을 그린다. `list hidden: window too small, esc closes`이거나 `settings hidden: window too small, esc closes`이다. 그때도 오버레이는 모든 키를 가져가므로 `esc`로 닫는다.
 
 ## 상태 줄
@@ -438,6 +440,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
+| `/mcp [probe <server>]` | 신뢰한 MCP 설정을 조회하거나 이름을 지정해 연결을 검사한다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
 | `/note [add\|edit\|remove\|list\|prune] [주소] [text]` | 전사 메시지의 로컬 메모를 남기거나 나열하거나 지운다 |
@@ -451,7 +454,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열일곱 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물한 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -475,6 +478,7 @@ built-in commands:
   /help                list the commands and the keys in force
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
+  /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /note                note, list or remove a local note on a transcript message
