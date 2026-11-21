@@ -70,10 +70,7 @@ pub(super) fn read(client: &HoronAgentClient, session_id: &str) -> Result<Incomi
 /// client reports it without hiding either.
 pub(super) fn cancel(client: &HoronAgentClient, session_id: &str, call_id: &str) -> Result<Incoming, Error> {
     let outcome = client.cancel_background_terminal(session_id, call_id)?;
-    let jobs = client
-        .list_background_work(session_id)
-        .map(rows)
-        .map_err(|error| error.to_string());
+    let jobs = client.list_background_work(session_id).map(rows);
     Ok(Incoming::BackgroundJobCancelled {
         call_id: outcome.call_id,
         accepted: outcome.accepted,

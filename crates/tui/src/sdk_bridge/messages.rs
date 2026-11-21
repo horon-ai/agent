@@ -157,7 +157,7 @@ pub enum Incoming {
         call_id: String,
         accepted: bool,
         reason: Option<String>,
-        jobs: Result<Vec<super::BackgroundJobRow>, String>,
+        jobs: Result<Vec<super::BackgroundJobRow>, horon_agent_sdk::Error>,
     },
     /// The running turn took the text a steer carried, echoed back so the
     /// client knows which held messages it settles.

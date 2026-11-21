@@ -67,7 +67,7 @@ impl App {
         call_id: &str,
         accepted: bool,
         reason: Option<&str>,
-        jobs: Result<Vec<BackgroundJobRow>, String>,
+        jobs: Result<Vec<BackgroundJobRow>, horon_agent_sdk::Error>,
     ) {
         if accepted {
             self.transcript
@@ -134,9 +134,7 @@ impl App {
             };
             (row.label.clone(), index)
         };
-        let Some(job) = self.background_jobs.get(index) else {
-            return None;
-        };
+        let job = self.background_jobs.get(index)?;
         // Read before the refusal below: a warning changes the transcript, and
         // the row's borrow cannot stay alive across it.
         let call_id = job.call_id.clone();

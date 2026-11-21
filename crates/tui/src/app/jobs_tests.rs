@@ -112,7 +112,15 @@ fn an_accepted_cancellation_refreshes_only_the_job_that_left() {
 fn an_unreadable_refresh_keeps_the_rows_and_says_why_they_are_stale() {
     let mut app = app();
     open(&mut app, vec![job("call-1", "terminal")]);
-    app.job_cancelled("call-1", true, None, Err("the harness connection closed".to_string()));
+    app.job_cancelled(
+        "call-1",
+        true,
+        None,
+        Err(horon_agent_sdk::Error::new(
+            horon_agent_sdk::ErrorKind::Disconnected,
+            "the harness connection closed",
+        )),
+    );
     // The verdict and the failure are both useful: the row stays because the
     // client could not learn whether the stop landed, and the sentence says so.
     assert_eq!(app.background_jobs.len(), 1);
