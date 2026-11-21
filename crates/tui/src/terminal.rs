@@ -104,19 +104,15 @@ fn release(pop_title: bool) {
 /// Best effort like the rest of the exit path: a client that cannot install
 /// the handlers reports the refusal and keeps running, because losing the
 /// signal path is not a reason to refuse to start.
+#[cfg(unix)]
 pub(crate) fn guard_signals(pop_title: bool) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        unix::install(pop_title)
-    }
-    #[cfg(not(unix))]
-    {
-        // Windows has no signal to catch here: the console is torn down with
-        // the process, and a console-control handler would need a Windows
-        // dependency the client does not carry.
-        let _ = pop_title;
-        Ok(())
-    }
+    unix::install(pop_title)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn guard_signals(_pop_title: bool) -> std::io::Result<()> {
+    // The console is torn down with the process on Windows.
+    Ok(())
 }
 
 /// Draw the connection-failure banner once, when there is a terminal to draw it
