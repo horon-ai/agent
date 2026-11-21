@@ -433,7 +433,7 @@ fn execute_linked_agentgrep(
             let (before, after) = params.grep_context.bounded();
             let with_context = !args.paths_only && (before, after) != (0, 0);
             let rendered = if with_context {
-                render_grep_context(&root, &result, max_regions, before, after)
+                render_grep_context(&root, &result, max_regions, before, after)?
             } else {
                 render_grep_output(&result, &args, Some(max_regions))
             };
@@ -472,7 +472,13 @@ fn execute_linked_agentgrep(
     }
 }
 
-fn render_grep_context(root: &Path, result: &GrepResult, max_regions: usize, before: usize, after: usize) -> String {
+fn render_grep_context(
+    root: &Path,
+    result: &GrepResult,
+    max_regions: usize,
+    before: usize,
+    after: usize,
+) -> Result<String> {
     use std::collections::BTreeMap;
     use std::fmt::Write as _;
     use std::io::Read as _;
@@ -500,7 +506,7 @@ fn render_grep_context(root: &Path, result: &GrepResult, max_regions: usize, bef
         }
         if out.len() + 1100 > out_limit {
             out.push_str(OMITTED);
-            return out;
+            return Ok(out);
         }
 
         let path = root.join(&file.path);
@@ -531,9 +537,10 @@ fn render_grep_context(root: &Path, result: &GrepResult, max_regions: usize, bef
         }
 
         let source = text.as_deref().map(String::from_utf8_lossy);
-        let mut lines = source.as_deref().unwrap_or_default().lines();
+        let mut lines = source.as_deref().unwrap_or("").lines();
         let mut previous = 0;
-        let _ = write!(out, "\n\n{}", util::truncate_str(&file.path, 1024));
+        out.push_str("\n\n");
+        out.push_str(util::truncate_str(&file.path, 1024));
         if source.is_none() {
             out.push_str("\n  [Context unavailable within the file-read budget.]");
         }
@@ -548,16 +555,16 @@ fn render_grep_context(root: &Path, result: &GrepResult, max_regions: usize, bef
             let text = util::truncate_str(text, 240);
             if out.len() + text.len() + 32 > out_limit {
                 out.push_str(OMITTED);
-                return out;
+                return Ok(out);
             }
-            let _ = write!(out, "\n  {marker} {line} {text}");
+            write!(out, "\n  {marker} {line} {text}")?;
             displayed += usize::from(matched_text.is_some());
         }
     }
     if displayed < result.total_matches {
-        let _ = write!(out, "\n\n... {} more matches omitted", result.total_matches - displayed);
+        write!(out, "\n\n... {} more matches omitted", result.total_matches - displayed)?;
     }
-    out
+    Ok(out)
 }
 
 fn resolve_path_arg(ctx: &ToolContext, path: &str) -> PathBuf {
