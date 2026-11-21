@@ -95,6 +95,17 @@ pub(super) trait SideLink {
     fn ask(&self, child: &str, question: &str) -> Result<(), Error>;
 }
 
+/// The sentence each failed step is shown with.
+const CONNECT_FAILED: &str = "the side session could not connect";
+const OPEN_FAILED: &str = "the session could not be opened";
+const FORK_FAILED: &str = "the harness refused a side session";
+const BASELINE_FAILED: &str = "the side session's transcript could not be read";
+const ASK_FAILED: &str = "the side question could not be sent";
+/// The answer ran past its deadline and the cancel that followed succeeded.
+const TIMED_OUT: &str = "the side question did not finish in time; press enter to open it later";
+/// The child's connection closed with its turn still open.
+const CLOSED: &str = "the side session's connection closed before it answered";
+
 /// Why a side question stopped without an answer.
 ///
 /// The sentence this renders is the one the overlay shows; the SDK cause stays
@@ -108,15 +119,18 @@ pub(super) struct SideFault {
 }
 
 /// What went wrong, in a form the sentence is built from.
+///
+/// Each cause is boxed: an SDK [`Error`] is wide, and a failure travels through
+/// `Result` values on the hot path, so the fault stays small.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Kind {
-    /// A step failed; `what` names it and the cause is the SDK's.
-    Step { what: &'static str, cause: Error },
-    /// The answer ran past its deadline. `cancel` keeps the cause of a cancel
-    /// that failed, so "could not be cancelled" is still typed.
-    Timeout { cancel: Option<Error> },
+    /// A step failed; the sentence names it and the cause is the SDK's.
+    Step(&'static str, Box<Error>),
+    /// The answer ran past its deadline. The cause is the cancel that failed,
+    /// so "could not be cancelled" is still typed.
+    Timeout(Option<Box<Error>>),
     /// The child's event stream ended with its turn still open.
-    StreamEnded(Error),
+    StreamEnded(Box<Error>),
     /// The child's connection closed before it answered.
     Disconnected,
 }
@@ -125,7 +139,7 @@ impl SideFault {
     /// A step that failed, named by the sentence it is shown with.
     fn step(what: &'static str, cause: Error) -> Self {
         Self {
-            kind: Kind::Step { what, cause },
+            kind: Kind::Step(what, Box::new(cause)),
             child: None,
         }
     }
@@ -139,7 +153,7 @@ impl SideFault {
     /// The answer did not finish in time; `cancel` is the failed cancellation.
     fn timeout(cancel: Option<Error>) -> Self {
         Self {
-            kind: Kind::Timeout { cancel },
+            kind: Kind::Timeout(cancel.map(Box::new)),
             child: None,
         }
     }
@@ -147,7 +161,7 @@ impl SideFault {
     /// The child's stream ended with its turn still open.
     fn stream_ended(cause: Error) -> Self {
         Self {
-            kind: Kind::StreamEnded(cause),
+            kind: Kind::StreamEnded(Box::new(cause)),
             child: None,
         }
     }
@@ -164,64 +178,20 @@ impl SideFault {
 impl std::fmt::Display for SideFault {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.kind {
-            Kind::Step { what, cause } => write!(formatter, "{what}: {cause}")?,
-            Kind::Timeout { cancel: None } => {
-                formatter.write_str("the side question did not finish in time; press enter to open it later")?
-            }
-            Kind::Timeout { cancel: Some(cause) } => write!(
+            Kind::Step(what, cause) => write!(formatter, "{what}: {cause}")?,
+            Kind::Timeout(None) => formatter.write_str(TIMED_OUT)?,
+            Kind::Timeout(Some(cause)) => write!(
                 formatter,
                 "the side question did not finish in time and could not be cancelled ({cause}); \
                  press enter to open it later"
             )?,
-            Kind::StreamEnded(cause) => {
-                write!(formatter, "the side session's event stream ended: {cause}")?
-            }
-            Kind::Disconnected => formatter.write_str("the side session's connection closed before it answered")?,
+            Kind::StreamEnded(cause) => write!(formatter, "the side session's event stream ended: {cause}")?,
+            Kind::Disconnected => formatter.write_str(CLOSED)?,
         }
         match &self.child {
             Some(child) => write!(formatter, "; the side session is {child}"),
             None => Ok(()),
         }
-    }
-}
-
-/// The sentence each failed step is shown with.
-const CONNECT_FAILED: &str = "the side session could not connect";
-const OPEN_FAILED: &str = "the session could not be opened";
-const FORK_FAILED: &str = "the harness refused a side session";
-const BASELINE_FAILED: &str = "the side session's transcript could not be read";
-const ASK_FAILED: &str = "the side question could not be sent";
-
-/// A step that failed, whether the question had already been sent, and the
-/// child when one exists.
-///
-/// The child is named in a failure so a reader can open it (it is read-only and
-/// stored); a failure before the fork names none.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct AskError {
-    fault: SideFault,
-    pub(super) asked: bool,
-}
-
-impl AskError {
-    /// A step refused, before the question was sent and without a child.
-    fn refused(what: &'static str, cause: Error) -> Self {
-        Self {
-            fault: SideFault::step(what, cause),
-            asked: false,
-        }
-    }
-
-    /// The same refusal, naming the child the daemon stored before it failed.
-    fn naming(mut self, child: &str) -> Self {
-        self.fault = self.fault.naming(child);
-        self
-    }
-
-    /// The question had already been sent when this failed.
-    fn after_asking(mut self) -> Self {
-        self.asked = true;
-        self
     }
 }
 
@@ -244,7 +214,8 @@ impl SideLink for LiveLink<'_> {
     }
 
     fn baseline(&self, child: &str) -> Result<usize, Error> {
-        self.client.get_history(child).map(|messages| messages.len())
+        let messages = self.client.get_history(child)?;
+        Ok(messages.len())
     }
 
     fn ask(&self, child: &str, question: &str) -> Result<(), Error> {
@@ -265,22 +236,27 @@ pub(super) fn open_with(
     boundary: Option<&str>,
     question: &str,
     announce: &mut dyn FnMut(&str),
-) -> Result<(usize, String), AskError> {
-    link.attach(parent)
-        .map_err(|cause| AskError::refused(OPEN_FAILED, cause))?;
-    let child = link
-        .fork(parent, boundary)
-        .map_err(|cause| AskError::refused(FORK_FAILED, cause))?;
+) -> Result<(usize, String), SideFault> {
+    if let Err(cause) = link.attach(parent) {
+        return Err(SideFault::step(OPEN_FAILED, cause));
+    }
+    let child = match link.fork(parent, boundary) {
+        Ok(child) => child,
+        Err(cause) => return Err(SideFault::step(FORK_FAILED, cause)),
+    };
     // The boundary and the question are read on the child, so the connection
     // moves to it now. A failure here leaves the stored child named.
-    link.attach(&child)
-        .map_err(|cause| AskError::refused(OPEN_FAILED, cause).naming(&child))?;
-    let baseline = link
-        .baseline(&child)
-        .map_err(|cause| AskError::refused(BASELINE_FAILED, cause).naming(&child))?;
+    if let Err(cause) = link.attach(&child) {
+        return Err(SideFault::step(OPEN_FAILED, cause).naming(&child));
+    }
+    let baseline = match link.baseline(&child) {
+        Ok(rows) => rows,
+        Err(cause) => return Err(SideFault::step(BASELINE_FAILED, cause).naming(&child)),
+    };
     announce(&child);
-    link.ask(&child, question)
-        .map_err(|cause| AskError::refused(ASK_FAILED, cause).naming(&child).after_asking())?;
+    if let Err(cause) = link.ask(&child, question) {
+        return Err(SideFault::step(ASK_FAILED, cause).naming(&child));
+    }
     Ok((baseline, child))
 }
 
@@ -315,7 +291,7 @@ pub(super) fn start(
     }
 }
 
-/// The thread body: connect, open, ask, and reduce the answer's events.
+/// The thread body: run one question and report its failure to the UI.
 fn follow(id: u64, dial: Dial, parent: String, question: String, boundary: Option<String>, events: Sender<Incoming>) {
     if let Err(fault) = answer(id, &dial, &parent, &question, boundary.as_deref(), &events) {
         deliver(
@@ -328,6 +304,7 @@ fn follow(id: u64, dial: Dial, parent: String, question: String, boundary: Optio
     }
 }
 
+/// Connect, open the child, ask, and reduce the answer's events.
 fn answer(
     id: u64,
     dial: &Dial,
@@ -351,10 +328,8 @@ fn answer(
             },
         );
     };
-    match open_with(&link, parent, boundary, question, &mut announce) {
-        Ok((baseline, child)) => drain(id, &client, &stream, &child, baseline, events),
-        Err(AskError { fault, .. }) => Err(fault),
-    }
+    let (baseline, child) = open_with(&link, parent, boundary, question, &mut announce)?;
+    drain(id, &client, &stream, &child, baseline, events)
 }
 
 /// Read the child's events until its turn ends, reporting what the overlay shows.
@@ -544,8 +519,8 @@ impl Preview {
         if text.is_empty() {
             return;
         }
-        // An id-less delta is the legacy single stream: it belongs to the
-        // message that is open, whatever id that message was given.
+        // An id-less delta belongs to the stream already open: whatever id
+        // that message was given, it continues it.
         match self.segments.last_mut() {
             Some((id, body)) if message_id.is_none() || id.as_deref() == message_id => body.push_str(text),
             _ => self.segments.push((message_id.map(str::to_string), text.to_string())),

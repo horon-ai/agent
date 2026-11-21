@@ -36,7 +36,7 @@ impl Recorder {
 
 /// A failure the recorder returns, so a refused step carries a typed cause.
 fn refusal() -> Error {
-    Error::new(ErrorKind::Harness(horon_agent_sdk::api::ErrorCode::Internal), "no")
+    Error::new(ErrorKind::Timeout, "no")
 }
 
 impl SideLink for Recorder {
@@ -122,9 +122,7 @@ fn a_refused_fork_leaves_the_child_unannounced_and_unasked() {
         announced.is_empty(),
         "a child that was never created was announced anyway"
     );
-    assert_eq!(error.message, "no");
-    assert!(!error.asked, "no turn can have started");
-    assert_eq!(error.child, None);
+    assert_eq!(error.to_string(), "the harness refused a side session: timeout: no");
     assert_eq!(
         link.calls(),
         ["attach parent".to_string(), "fork parent".to_string()],
@@ -136,9 +134,10 @@ fn a_refused_fork_leaves_the_child_unannounced_and_unasked() {
 fn a_failure_after_the_question_was_sent_names_the_child() {
     let link = Recorder::new(Some("ask"));
     let error = open_with(&link, "parent", None, "why?", &mut |_| {}).expect_err("the refusal must travel");
-    assert_eq!(error.message, "no");
-    assert!(error.asked, "the turn may have started");
-    assert_eq!(error.child.as_deref(), Some("child"), "the stored child was not named");
+    assert_eq!(
+        error.to_string(),
+        "the side question could not be sent: timeout: no; the side session is child"
+    );
 }
 
 #[test]
@@ -160,7 +159,7 @@ fn a_preview_joins_messages_and_rewrites_a_replaced_one() {
 }
 
 #[test]
-fn a_legacy_delta_without_an_id_appends_to_the_open_message() {
+fn an_idless_delta_appends_to_the_open_message() {
     let mut preview = Preview::default();
     preview.delta(Some("a"), "one");
     preview.delta(None, " two");

@@ -509,7 +509,7 @@ impl App {
             // A new session starts in the launch directory until it reports otherwise.
             workspace_known: true,
             path_cycle: None,
-            home: home_directory(),
+            home: crate::recording::home_directory(),
             tokens: None,
             capacity: None,
             usage: None,
@@ -597,7 +597,7 @@ impl App {
             workspace_is_local: false,
             workspace_known: true,
             path_cycle: None,
-            home: home_directory(),
+            home: crate::recording::home_directory(),
             tokens: None,
             capacity: None,
             usage: None,
@@ -1003,8 +1003,8 @@ impl App {
                 self.tokens = Some(TokenTotals {
                     input: *input,
                     output: *output,
-                    cache_read: optional_count(cache_read_input),
-                    cache_creation: optional_count(cache_creation_input),
+                    cache_read: cache_read_input.unwrap_or(0),
+                    cache_creation: cache_creation_input.unwrap_or(0),
                 });
                 // The event is one provider call, so the cumulative figure
                 // moves with it. The running total is kept here rather than
@@ -1177,23 +1177,6 @@ impl App {
         self.input.set_text(&filled);
         self.path_cycle = Some(choice);
         self.sync_slash();
-    }
-}
-
-/// The status line shortens this home directory to `~`.
-fn home_directory() -> Option<String> {
-    let value = match std::env::var_os("HOME") {
-        Some(home) => home,
-        None => std::env::var_os("USERPROFILE")?,
-    };
-    Some(value.to_string_lossy().into_owned())
-}
-
-/// A token count the protocol left optional.
-fn optional_count(value: &Option<u64>) -> u64 {
-    match value {
-        Some(value) => *value,
-        None => 0,
     }
 }
 
