@@ -62,6 +62,9 @@ impl App {
                 self.transcript.clear();
                 None
             }
+            // Copying is answered here and written by the loop: the app decides
+            // what a copy carries and never touches the terminal.
+            Local::Copy => self.copy_command(arguments),
             // No argument asks for the list the picker draws; a name still
             // switches straight away, or waits for the turn to end, which is
             // what a script or a habit uses.
@@ -81,10 +84,7 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
-            Local::Settings => {
-                self.open_settings();
-                None
-            }
+            Local::Settings => self.open_settings(),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and
             // sends nothing to the harness.

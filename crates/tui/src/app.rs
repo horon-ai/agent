@@ -27,7 +27,10 @@ use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
+use self::copy::CopyRequest;
+
 mod commands;
+mod copy;
 mod effort;
 mod history_search;
 mod keys;
@@ -46,6 +49,9 @@ mod boundary_tests;
 
 #[cfg(test)]
 mod cache_miss_tests;
+
+#[cfg(test)]
+mod copy_tests;
 
 #[cfg(test)]
 mod effort_cmd_tests;
@@ -106,6 +112,8 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask the daemon for the values the settings screen displays.
+    DaemonSettings,
     /// Leave.
     Quit,
 }
@@ -360,6 +368,12 @@ pub struct App {
     pub skills: Vec<SkillRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
+    /// The daemon values the settings screen shows, or why it has none.
+    ///
+    /// Read only when the screen opens or `r` is pressed, because the daemon
+    /// owns these values and this client never changes one: a stale copy is
+    /// worse than a fresh read the user asked for.
+    pub daemon_settings: crate::settings::DaemonSettings,
     /// Where user theme files are read from, offered by the settings screen.
     pub themes_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
@@ -384,6 +398,12 @@ pub struct App {
     /// outcome is held here until the user does something and the mark is safe
     /// to drop.
     pub(crate) outcome: Option<crate::progress::Outcome>,
+    /// A copy the app decided on, waiting for the loop to write it.
+    ///
+    /// It sits here rather than being written from the key handler so that the
+    /// app keeps knowing nothing about a terminal: the loop that owns standard
+    /// output is the one place a sequence is written.
+    pending_copy: Option<CopyRequest>,
     /// The recording the user turned on with `/record`.
     ///
     /// Off until asked for: nothing is written to disk unless a recording was
@@ -462,12 +482,14 @@ impl App {
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
             picker: None,
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
+            pending_copy: None,
             recorder: None,
             replay: None,
             record_scan: (0, 0),
@@ -538,12 +560,14 @@ impl App {
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
             picker: None,
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
+            pending_copy: None,
             recorder: None,
             replay: None,
             record_scan: (0, 0),

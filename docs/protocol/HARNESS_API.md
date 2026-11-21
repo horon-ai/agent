@@ -568,6 +568,109 @@ client that cannot read it.
 
 Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
+## Daemon effective settings (protocol 1.25)
+
+The harness API keeps major version 1 and moved from minor version 24 to 25.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+A settings screen that shows only the client's own preferences cannot explain
+why a turn behaves the way it does. `get_effective_settings` reports a **fixed
+allow-list** of daemon values, each with the layer that supplied it. It is a
+list, not a dump: there is no "other keys" field and no raw file text, so a
+credential in the config file cannot reach a client however the file is
+written. `effective_settings_v1` gates the pair.
+
+### Request: `get_effective_settings`
+
+```json
+{"v":1,"id":7,"req":"get_effective_settings","session_id":"s-1"}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `session_id` | string | Yes | Session the question is about |
+
+### Response: `effective_settings`
+
+```json
+{"v":1,"reply_to":7,"ev":"effective_settings","session_id":"s-1",
+ "settings":[{"key":"provider.stream_idle_timeout_secs",
+              "label":"Stream idle timeout (seconds)",
+              "value":"240","source":"file","origin":"/home/u/.horon/config.toml"}]}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `key` | string | Dotted config path, e.g. `provider.stream_idle_timeout_secs` |
+| `label` | string | Human-readable name for the row |
+| `value` | string | The value in force, as the screen prints it |
+| `source` | `default`, `cli`, `file`, `env` | The layer that supplied it |
+| `origin` | string, absent for `default` | The flag, file path or variable name `source` points at |
+
+`value` is text because the screen prints it: a client that rendered a number
+itself would have to know which keys are numeric, and that knowledge belongs
+beside the allow-list rather than in every client.
+
+### Allow-list
+
+The rows are `provider.openai_reasoning_effort`,
+`provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`,
+`provider.max_retries`, `tools.profile`, `tools.mcp_tools`,
+`tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`,
+`compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`. A key added
+to the daemon's spec table is the only way a row appears; nothing outside it
+can be reported.
+
+### Behaviour
+
+The **daemon** answers, from the configuration it actually loaded. It is the
+process whose environment, launch flags and config file the session runs with,
+so it is the only process that can say which value is in force and where that
+value came from. The bridge only translates: it forwards
+`get_effective_settings` on the internal protocol and passes the rows back.
+`crates/base/src/effective_settings.rs` holds the table and the source
+decisions; `crates/app-core/src/server/effective_settings.rs` maps the rows onto
+this reply.
+
+A daemon advertises `effective_settings_api` in its ping. The bridge advertises
+`effective_settings_v1` unconditionally and refuses the request with a
+structured `unsupported` naming that capability when the daemon behind it does
+not advertise it — an older daemon answers an unknown request with a frame that
+carries no id, so a forwarding bridge would otherwise leave the client waiting
+for its own timeout. A client sees the same "this daemon does not report its
+settings" state from an older bridge (which never advertises the capability) and
+from an older daemon (which is refused by name).
+
+The layer is decided from evidence, strongest first:
+
+1. `cli` — a flag the launcher recorded for the variable it set. The launcher
+   turns flags such as `--tool-profile` and `--mcp-tools` into environment
+   variables, so the environment alone cannot tell a flag from a variable the
+   user exported. A default the launcher chose because nothing selected one is
+   not reported at all: the variable exists, but the user never set it.
+2. `env` — a variable this process read and the daemon would apply. A variable
+   the daemon ignores (a zero timeout, an unparseable retry count, a mode it does
+   not know) is not named as the source of the value in force.
+3. `file` — the effective config file: the same strict parse the daemon runs,
+   read as one document, and only when the declared value is one the daemon
+   applies and renders the value in force. A file that does not parse supplied
+   nothing, so its rows read as `default`, and neither does a declared value the
+   daemon rejects — `approval_mode = "nonsense"`, for example, falls back to the
+   default without making the file the source of that default.
+4. `default` — the shipped value.
+
+The rows describe the daemon's own configuration. A session that changes a value
+for itself at runtime (for example `set_session_approval_mode`) is not reflected
+here; the row reports what the daemon loaded, not what one session overrode
+afterwards.
+
+Nothing writes. The request is read-only by construction, and a client that
+cannot read it keeps working against the daemon defaults. The SDKs expose the
+call as `get_effective_settings` (Rust, Python) and `getEffectiveSettings`
+(TypeScript); each refuses it before sending when the capability was not
+advertised. The TUI's `Daemon` tab is the shipped consumer.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.
@@ -942,3 +1045,4 @@ The four surfaces added by protocol minor 14. All four are **additive**, so a cl
 - Capability constants: `CAPABILITY_DURABLE_RUNTIME_V1`, `CAPABILITY_MONITOR_V1`, `CAPABILITY_SNAPSHOT_MARKER_V1` and `CAPABILITY_ASK_RECEIPTS_V1` in `crates/harness-api/src/lib.rs`
 - Protocol version: `API_VERSION_MAJOR = 1`, `API_VERSION_MINOR = 22`
 - `[messages]` modes: `GetMessageModes` in `crates/harness-api/src/requests.rs`, the `MessageModes` reply in `crates/harness-api/src/events.rs`, answered by the bridge itself in `crates/harness-api-server/src/message_modes.rs`
+- Effective settings: `GetEffectiveSettings` in `crates/harness-api/src/requests.rs`, the `EffectiveSettings` reply and `EffectiveSetting` row in `crates/harness-api/src/effective_settings.rs`, answered by the daemon in `crates/base/src/effective_settings.rs` and `crates/app-core/src/server/effective_settings.rs`, forwarded by the bridge in `crates/harness-api-server/src/translate.rs`, gated by `CAPABILITY_EFFECTIVE_SETTINGS_V1` in `crates/harness-api/src/lib.rs`

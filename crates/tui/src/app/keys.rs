@@ -82,6 +82,12 @@ impl App {
                     self.pending_change = Some(change);
                     self.overlay = Some(overlay);
                 }
+                // The daemon tab asked for its values again. The screen stays
+                // open, showing what it already has until the answer lands.
+                Outcome::Reload => {
+                    self.overlay = Some(overlay);
+                    return Some(Action::DaemonSettings);
+                }
             }
             return None;
         }
@@ -136,9 +142,13 @@ impl App {
                         // The transcript still scrolls while a prompt waits:
                         // reading further back neither answers the prompt nor
                         // reaches the draft, and these keys are not in the
-                        // prompt's scope, so the prompt stays answerable.
+                        // prompt's scope, so the prompt stays answerable. The
+                        // copy keys are the same: reading an earlier answer is
+                        // what an approval prompt makes the user do.
                         Some(action) => {
-                            self.apply_scroll(action);
+                            if !self.copy_action(action) {
+                                self.apply_scroll(action);
+                            }
                             return None;
                         }
                         _ => return None,
@@ -288,6 +298,26 @@ impl App {
             }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
+            // Copying reads what is already on screen and edits nothing: it
+            // returns before the editor, so the draft, its history and the
+            // caret stay exactly where they were, and `alt+c` does not type a
+            // `c` into the message being written.
+            Some(keys::ids::APP_COPY_DRAFT) => {
+                self.copy_draft();
+                return None;
+            }
+            Some(keys::ids::APP_COPY_LINE) => {
+                self.copy_line();
+                return None;
+            }
+            Some(keys::ids::APP_COPY_LAST) => {
+                self.copy_last_answer();
+                return None;
+            }
+            Some(keys::ids::APP_COPY_CODE) => {
+                self.copy_newest_code();
+                return None;
+            }
             Some(keys::ids::APP_CYCLE_MODEL) => return self.cycle_model(true),
             Some(keys::ids::APP_CYCLE_MODEL_BACK) => return self.cycle_model(false),
             Some(keys::ids::APP_TOGGLE_THINKING) => {

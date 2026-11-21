@@ -227,6 +227,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
 | `app.expand_tool` | `ctrl+o` | Expand or fold the selected retained tool result |
 | `app.toggle_tool_activity` | `alt+t` | Show or hide completed tool activity for this session |
+| `app.copy_code` | `alt+c` | Copy the newest code block in the latest answer |
+| `app.copy_last` | `alt+l` | Copy the latest answer |
+| `app.copy_draft` | `alt+d` | Copy the whole draft |
+| `app.copy_line` | `alt+k` | Copy the line under the cursor |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `app.cycle_model` | `ctrl+p` | Move forward through the model shortlist |
@@ -404,6 +408,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | Command | Effect |
 | --- | --- |
 | `/clear` | Clear the transcript pane |
+| `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
@@ -424,6 +429,8 @@ The table lists the built-in commands the client handles (`Local` in `crates/tui
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
+Copy uses an OSC 52 clipboard request. Set `HORON_TUI_OSC52=0` to turn it off, or set `HORON_TUI_OSC52=1` if your terminal forwards these requests through a multiplexer or SSH. When the terminal cannot accept the request, the text stays available for manual selection.
+
 Enter `!command` to run a shell command in the TUI process's working directory. The transcript shows the local directory before the command starts. `!!command` leaves only the directory and exit status in the transcript. Both forms keep the command and output out of the model conversation. The client runs one local command at a time and stops it after ten seconds. Retained output is limited to 200 lines and 32 KiB.
 
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
@@ -433,6 +440,7 @@ The harness commands run in the attached runtime and never reach the model as a 
 ```text
 built-in commands:
   /clear               clear the transcript
+  /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
@@ -471,7 +479,9 @@ Every other harness command prints the message the daemon wrote, except one whos
 
 `/settings` is generated from the settings registry: one row per key, grouped into the Appearance, Status line, Editor and Transcript tabs, with the label and description the registry declares. Each row also shows the layer the value came from.
 
-Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone.
+A fifth tab, `Daemon`, is not built from the registry: it lists the daemon values this client may only read, which the daemon reports through `get_effective_settings` on the harness API. Each row shows the label, the value in force and where it came from (`daemon default`, `cli <FLAG>`, `env <NAME>`, or the config file path). Nothing on this tab is editable and `enter` there changes nothing, because the daemon owns those values; `r` asks for them again. Opening the screen asks once, and the tab says `reading the daemon settings` until the answer lands. A daemon or bridge that predates the request cannot report them, and the tab then says so while every local tab keeps working. A read that fails settles the tab instead of leaving it on that sentence: it says the settings could not be read and keeps the reason on the footer.
+
+Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone. A filter covers only the registry's rows: it moves the screen to the tab of the match it lands on, and no daemon row is ever listed.
 
 | Key | Effect |
 | --- | --- |
@@ -480,6 +490,7 @@ Press `/` to search all tabs by setting label, key or description. The results l
 | `left`, `tab` | Move to the previous tab |
 | `right`, `shift+tab` | Move to the next tab |
 | `enter` | Open the editor or the pick list of the row, or confirm |
+| `r` | On the `Daemon` tab, read the daemon's values again |
 | `esc` | Close the editor or pick list, then clear the search, then close the screen |
 
 A value that the key's type rejects is shown as an inline error and nothing is written. A save goes to the global `tui.toml` only; the project and `--config` layers are never rewritten.

@@ -69,6 +69,8 @@ pub enum Local {
     Keys,
     /// Clear the transcript pane.
     Clear,
+    /// Copy the draft, an answer or a code block to the terminal clipboard.
+    Copy,
     /// Open the model picker, or switch to the model named.
     Model,
     /// Set the reasoning effort, or pick one from the ladder.
@@ -106,6 +108,7 @@ impl Local {
             "help" => Some(Self::Help),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
+            "copy" => Some(Self::Copy),
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
@@ -129,6 +132,7 @@ impl Local {
             Self::Help => "help",
             Self::Keys => "keys",
             Self::Clear => "clear",
+            Self::Copy => "copy",
             Self::Model => "model",
             Self::Effort => "effort",
             Self::New => "new",
@@ -637,9 +641,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 16] = [
-    "clear", "effort", "exit", "help", "keys", "links", "model", "new", "queue", "quit", "record", "replay", "resume",
-    "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 17] = [
+    "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "queue", "quit", "record", "replay",
+    "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

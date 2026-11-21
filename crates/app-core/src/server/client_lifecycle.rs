@@ -2441,6 +2441,14 @@ pub(super) async fn handle_client(
                 let _ = client_event_tx.send(reply);
             }
 
+            // The allow-listed settings this daemon loaded. Answered here
+            // because the configuration and the environment that overrode it
+            // belong to this process; a bridge reading its own copy could
+            // report values the session never ran with. A closed receiver means
+            // the client left while the reply was built, which its own close
+            // path reports.
+            Request::GetEffectiveSettings { id } => drop(client_event_tx.send(super::effective_settings::event(id))),
+
             Request::PermissionDecision {
                 id,
                 request_id,

@@ -962,6 +962,17 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_bytes: Option<u64>,
     },
+
+    /// Read the allow-listed settings this daemon runs with.
+    ///
+    /// Added for the stable harness API's `get_effective_settings`. The bridge
+    /// is a separate process with its own environment and its own read of the
+    /// config file, so a value it computed itself could differ from the one the
+    /// session acts on. Only this daemon knows what it loaded, so it answers.
+    /// The reply is [`ServerEvent::EffectiveSettings`], and it holds no key
+    /// outside the allow-list.
+    #[serde(rename = "get_effective_settings")]
+    GetEffectiveSettings { id: u64 },
 }
 
 pub mod acp_v2_events;

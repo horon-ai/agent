@@ -32,6 +32,7 @@ from .protocol import (
     ApprovalAckReceipt,
     ArtifactEntry,
     CanonicalRecordRef,
+    EffectiveSetting,
     FailoverAckReceipt,
     MessageModes,
     SessionSearchHit,
@@ -1936,6 +1937,24 @@ class HoronAgentClient:
             "data": frame.get("data"),
             "message": frame.get("message"),
         }
+
+    async def get_effective_settings(self, session_id: str) -> list[EffectiveSetting]:
+        """The allow-listed daemon values a settings screen displays.
+
+        The daemon behind the bridge answers from its own configuration, so the
+        values and their sources describe the process the session runs with.
+        Requires ``effective_settings_v1``; an older bridge does not advertise
+        it, and a daemon that predates the request is refused with
+        ``unsupported`` naming the capability, so the caller never has to guess
+        whether the daemon has no settings or the request never landed.
+        """
+        self._require_capability("effective_settings_v1", "get_effective_settings")
+        frame = await self._expect_reply(
+            {"req": "get_effective_settings", "session_id": session_id},
+            "effective_settings",
+        )
+        settings = frame.get("settings")
+        return cast(list[EffectiveSetting], settings if isinstance(settings, list) else [])
 
     async def get_runtime_info(self, session_id: str) -> RuntimeInfo:
         await self.ping()

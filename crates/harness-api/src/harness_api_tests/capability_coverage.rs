@@ -67,6 +67,9 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("DebugCommand", ClientInternal),
     ("FailoverAck", Covered),
     ("GetControlReceipt", Covered),
+    // The daemon owns the configuration, its environment overrides and the
+    // launch record, so only it can answer truthfully; the bridge forwards.
+    ("GetEffectiveSettings", Covered),
     ("GetHistory", Covered),
     ("GetModelCatalog", Covered),
     ("GetRuntimeState", Covered),
@@ -271,6 +274,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "cancellable_work_v1",
         "background_output_v1",
         "live_todo_v1",
+        "effective_settings_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(
@@ -327,6 +331,9 @@ fn every_gated_request_names_a_defined_capability() {
         ApiRequest::ListBackgroundWork {
             session_id: "s1".into(),
         },
+        ApiRequest::GetEffectiveSettings {
+            session_id: "s1".into(),
+        },
     ];
     let mut gated = 0;
     for request in requests {
@@ -337,7 +344,10 @@ fn every_gated_request_names_a_defined_capability() {
         );
         gated += 1;
     }
-    assert_eq!(gated, 9, "the scan must cover every new request, not silently skip one");
+    assert_eq!(
+        gated, 10,
+        "the scan must cover every new request, not silently skip one"
+    );
 
     let events = [
         ApiEvent::RuntimeState {
