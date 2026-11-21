@@ -702,6 +702,28 @@ fn ctrl_c_cancels_a_turn_and_ctrl_d_leaves_once_it_stops() {
     assert_eq!(app.on_key(quit), Some(Action::Quit));
 }
 
+#[test]
+fn ctrl_g_hands_the_draft_to_the_editor_only_when_nothing_owns_the_screen() {
+    let mut app = app_with(None);
+    let draft = "first line\nsecond".to_string();
+    app.input.set_text(&draft);
+    let hand_over = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('g'),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
+    assert_eq!(app.on_key(hand_over), Some(Action::EditDraft));
+    assert_eq!(app.input.text(), draft, "the key itself must not touch the draft");
+
+    // A parked approval owns every key: the editor is never opened on top of a
+    // question that is still waiting for an answer.
+    app.prompt = Some(crate::prompts::Prompt::approval(
+        "req-1".to_string(),
+        "shell".to_string(),
+    ));
+    assert_eq!(app.on_key(hand_over), None);
+    assert_eq!(app.input.text(), draft);
+}
+
 fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
     crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
 }

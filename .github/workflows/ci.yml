@@ -1859,6 +1859,16 @@ jobs:
           python3 scripts/ci/run_integration_targets.py \
             --artifacts "$TEST_ARTIFACTS" --timeout 900
 
+      - name: Verify package manifests with an isolated home
+        shell: bash
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          trap 'rmdir "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --kind test --target-name package_manifest --min-passed 9 --timeout 900
+
       # e2e runs inside `Run integration contracts` above, through the same
       # artifacts file: its binary is built by the compile step, and a second
       # `cargo test --test e2e` here would rebuild the selection set (#19).
@@ -2241,6 +2251,20 @@ jobs:
             -Name 'Windows power-inhibit tests' `
             -TimeoutSeconds 900 `
             -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-platform-windows', '--lib', 'power::tests::', '--', '--nocapture')
+
+      - name: Run Windows package manifest contracts
+        shell: pwsh
+        run: |
+          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
+          try {
+            & ./scripts/ci/cargo_with_timeout.ps1 `
+              -Name 'Windows package manifest contracts' `
+              -TimeoutSeconds 900 `
+              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_manifest')
+          } finally {
+            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
+          }
 
       - name: Run Windows e2e smoke tests
         shell: pwsh

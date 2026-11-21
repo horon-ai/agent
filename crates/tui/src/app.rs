@@ -122,6 +122,9 @@ pub enum Action {
     /// rather than the client assuming anything from a list that leaves
     /// archived sessions out.
     CheckSessions(Vec<String>),
+    /// Hand the draft to the user's editor; the loop answers this one itself,
+    /// because the editor needs the terminal the loop is drawing on.
+    EditDraft,
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.

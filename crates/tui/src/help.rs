@@ -232,6 +232,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "fill the draft with the local suggestion shown after the caret",
     ),
     (ids::EDITOR_HISTORY_SEARCH, "search the drafts sent before this one"),
+    (
+        ids::EDITOR_EXTERNAL,
+        "edit the draft in $VISUAL or $EDITOR, then load the saved text",
+    ),
     (ids::PROMPT_ALLOW, "approve the parked tool call once"),
     (
         ids::PROMPT_ALLOW_ALWAYS,
