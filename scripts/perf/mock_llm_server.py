@@ -715,6 +715,7 @@ class Handler(BaseHTTPRequestHandler):
         saw_result = has_tool_result(kind, body)
         results = tool_result_text(kind, body)
         transcript = json.dumps(body, ensure_ascii=False)
+        fork_fixture = "tui-fork-boundary-proof" in transcript
         counter = STATS.next_call_id()
         nonce = f"{NONCE_PREFIX}{counter}"
 
@@ -722,7 +723,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name == "hint" or '"tui-fork-boundary-proof"' in transcript:
+        if plan_name == "hint" or fork_fixture:
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -891,7 +892,7 @@ class Handler(BaseHTTPRequestHandler):
             "arguments": arguments,
             "namespace": namespace if calls_tool else None,
             "text": (
-                "fork-boundary-ready" if '"tui-fork-boundary-proof"' in transcript
+                "fork-boundary-ready" if fork_fixture
                 else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT
             ),
             "model": body.get("model") or MOCK_MODEL,
