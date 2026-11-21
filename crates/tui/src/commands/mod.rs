@@ -6,7 +6,8 @@
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
-//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
+//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay`, `/diff`, `/commit`
+//!    and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -127,6 +128,10 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Show the staged and unstaged changes in the session's workspace.
+    Diff,
+    /// Review the staged set, and commit exactly it after a second line.
+    Commit,
     /// Record, recognize or speak with on-device programs; nothing leaves the
     /// client.
     Voice,
@@ -161,6 +166,8 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "diff" => Some(Self::Diff),
+            "commit" => Some(Self::Commit),
             "voice" => Some(Self::Voice),
             _ => None,
         }
@@ -198,6 +205,8 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Diff => "diff",
+            Self::Commit => "commit",
             Self::Voice => "voice",
         }
     }
@@ -691,13 +700,15 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: [&str; 28] = [
     "archived",
     "artifact",
     "clear",
     "clear-context",
+    "commit",
     "compact",
     "copy",
+    "diff",
     "effort",
     "exit",
     "help",

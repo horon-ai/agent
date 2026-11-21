@@ -142,6 +142,11 @@ impl App {
             // `/queue` opens the list of messages waiting for the running turn
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),
+            // `/diff` and `/commit` describe this machine's git state for the
+            // session's workspace. Both refuse a session that works elsewhere,
+            // and the commit needs a review of the staged set before it runs.
+            Local::Diff => self.run_diff(arguments),
+            Local::Commit => self.run_commit(arguments),
             // `/voice` is entirely local: consent, capture, recognition and
             // playback stay in this client, and recognized text is inserted as
             // a draft rather than sent.
