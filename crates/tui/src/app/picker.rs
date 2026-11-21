@@ -440,6 +440,9 @@ impl App {
     pub fn apply_session_directory(&mut self, directory: Option<&str>) {
         let Some(directory) = directory.map(str::trim).filter(|directory| !directory.is_empty()) else {
             self.workspace_known = false;
+            // A review describes the index of one work tree, and this session
+            // now names none, so there is nothing it could be confirmed against.
+            self.commit_review = None;
             return;
         };
         self.workspace_known = true;
@@ -447,6 +450,9 @@ impl App {
             return;
         }
         self.cwd = Some(directory.to_string());
+        // The review was read from the directory being left; its commit would
+        // land in a repository this session no longer works in.
+        self.commit_review = None;
         self.reload_commands();
     }
 

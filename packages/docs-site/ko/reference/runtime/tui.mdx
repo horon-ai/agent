@@ -428,7 +428,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | --- | --- |
 | `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
 | `/clear` | 트랜스크립트 창을 지운다 |
+| `/commit <message>` | 명시적으로 승인하기 전에 커밋할 스테이징 내용을 검토한다 |
 | `/copy` | 복사할 텍스트를 고른다 |
+| `/diff [staged\|unstaged]` | 연결된 로컬 작업 폴더의 스테이징 전후 변경을 살펴본다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
@@ -445,6 +447,10 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
+
+`/diff`는 스테이징에 올린 변경과 올리지 않은 변경을 따로 보여 줍니다. `/commit <message>`는 커밋할 파일과 내용의 식별자를 표시합니다. `/commit --yes`는 검토한 브랜치의 마지막 커밋이 그대로일 때 확인한 내용만 커밋합니다. `/commit --cancel`은 검토를 취소합니다. 스테이징 내용이 달라지면 다시 검토해야 합니다. 이 명령은 연결된 로컬 브랜치에서 로컬 커밋만 만듭니다.
+
+저장소에 커밋이나 참조 갱신 훅이 설정돼 있으면 검토 뒤 터미널에서 `git commit`을 사용합니다. TUI는 Git의 서명 설정을 따릅니다. 확인하는 동안 다른 브랜치로 이동해도 커밋은 검토 화면에 나온 브랜치에만 적용됩니다.
 
 이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열일곱 명령을 이름 순으로 적었다.
 
@@ -465,6 +471,8 @@ built-in commands:
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear the transcript
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
+  /commit              review a staged commit, confirm with --yes, or cancel with --cancel
+  /diff                show staged and unstaged changes in the attached local worktree
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force

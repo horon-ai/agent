@@ -17,6 +17,7 @@ pub mod context;
 mod editor;
 mod fuzzy;
 pub mod gallery;
+mod git_review;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -121,6 +122,10 @@ mod fuzzy_tests;
 #[cfg(test)]
 #[path = "path_completion_tests.rs"]
 mod path_completion_tests;
+
+#[cfg(test)]
+#[path = "git_review_tests.rs"]
+mod git_review_tests;
 
 use ratatui::Terminal;
 use ratatui::backend::Backend;

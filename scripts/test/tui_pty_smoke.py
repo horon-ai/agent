@@ -574,14 +574,62 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def git(root: str, env: dict[str, str], *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
+
+
+def git_fixture(root: str, env: dict[str, str]) -> None:
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    git(root, env, "init", "-qb", "main")
+    git(root, env, "config", "user.email", "smoke@example.invalid")
+    git(root, env, "config", "user.name", "TUI Smoke Test")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+            handle.write("original\n")
+    git(root, env, "add", "--", "a.txt", "b.txt")
+    git(root, env, "commit", "-qm", "base")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "a", encoding="utf-8") as handle:
+            handle.write(f"new {name}\n")
+    git(root, env, "add", "--", "a.txt")
+
+
+def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> None:
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for staged review")
+    before = git(root, env, "rev-parse", "HEAD")
+    terminal.send("/diff\r")
+    terminal.read_until("what /commit would include", STEP_TIMEOUT, "staged diff")
+    terminal.read_until("left alone by /commit", STEP_TIMEOUT, "unstaged diff")
+    terminal.send("/commit Reviewed test change\r")
+    terminal.read_until("nothing was committed yet", STEP_TIMEOUT, "commit starts as a review")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("review moved HEAD before confirmation")
+    git(root, env, "add", "--", "b.txt")
+    terminal.send("/commit --yes\r")
+    terminal.read_until("the staged index changed", STEP_TIMEOUT, "stale review refused")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("confirming a stale review moved HEAD")
+    git(root, env, "restore", "--staged", "--", "b.txt")
+    terminal.send("/commit Confirmed test change\r")
+    terminal.read_until("Confirmed test change", STEP_TIMEOUT, "fresh review")
+    terminal.send("/commit --yes\r")
+    terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed")
+    changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
+    if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
+        raise Failure("the commit did not preserve the reviewed staging boundary")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    git_fixture(case_root, env)
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        staged_review_smoke(terminal, case_root, env)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and

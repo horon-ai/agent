@@ -253,7 +253,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
         "clear" => "clear the transcript",
+        "commit" => "review the staged set and commit exactly it after a second line; never pushes",
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
+        "diff" => "show the staged and unstaged changes in the session's workspace",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",

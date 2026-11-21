@@ -428,7 +428,9 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | --- | --- |
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
 | `/clear` | Clear the transcript pane |
+| `/commit <message>` | Review staged changes before an explicit local commit |
 | `/copy` | Choose which text to copy |
+| `/diff [staged\|unstaged]` | Inspect staged and unstaged changes in the attached local worktree |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
@@ -445,6 +447,10 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+
+Use `/diff` to see staged and unstaged changes separately. `/commit <message>` displays the staged files and the content identifier it will commit. `/commit --yes` commits that exact content to the reviewed branch if its previous commit is still current. `/commit --cancel` discards the review. Any change to staging requires a new review. The command works on an attached local branch and performs a local commit only.
+
+If a repository has a commit or reference-transaction hook configured, use `git commit` in the terminal after reviewing the changes. The TUI preserves Git's signing settings. If a checkout races with confirmation, only the reviewed branch can receive the commit.
 
 The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
 
@@ -465,6 +471,8 @@ built-in commands:
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear the transcript
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
+  /commit              review a staged commit, confirm with --yes, or cancel with --cancel
+  /diff                show staged and unstaged changes in the attached local worktree
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force

@@ -6,7 +6,7 @@
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
 //!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record` and `/replay`.
+//!    `/queue`, `/record`, `/replay`, `/diff` and `/commit`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -101,6 +101,10 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Show the staged and unstaged changes in the session's workspace.
+    Diff,
+    /// Review the staged set, and commit exactly it after a second line.
+    Commit,
 }
 
 impl Local {
@@ -126,6 +130,8 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "diff" => Some(Self::Diff),
+            "commit" => Some(Self::Commit),
             _ => None,
         }
     }
@@ -157,6 +163,8 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Diff => "diff",
+            Self::Commit => "commit",
         }
     }
 }
@@ -649,9 +657,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 21] = [
+    "artifact", "clear", "commit", "copy", "diff", "effort", "exit", "help", "keys", "links", "model", "new", "note",
+    "queue", "quit", "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
