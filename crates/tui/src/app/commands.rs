@@ -110,6 +110,7 @@ impl App {
             // `/switch` and `/resume` are one flow under two names: the list
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
+            Local::Archived => self.open_archived_sessions(),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
             Local::Rename => self.rename_session(arguments),
             // A note is the reader's own text about a message: it never joins
