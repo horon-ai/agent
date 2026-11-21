@@ -105,16 +105,18 @@ pub enum Action {
     Model(String),
     /// Set the reasoning effort to the level named.
     Effort(String),
-    /// Ask for the model list the picker offers.
-    ///
-    /// The answer fills an open list and is also the catalog a cycle checks
-    /// `models.shortlist` against, so a cycle pressed before the list was read
-    /// asks for it the same way and opens nothing.
+    /// Request the model catalog used by the picker and shortlist cycling.
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
     /// Ask for the swarm children of the attached session, and its parent row.
     Swarm,
+    /// Ask for the sessions kept in the archive.
+    ArchivedSessions,
+    /// Archive the session named.
+    Archive(String),
+    /// Bring the archived session named back to this directory.
+    Restore(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
     /// Attach to another session and replay its stored conversation.

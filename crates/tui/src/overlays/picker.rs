@@ -43,6 +43,8 @@ pub enum Kind {
     /// Its rows are chosen like a session's: `enter` names a session id for the
     /// attach request the session list already uses.
     Swarm,
+    /// Archived sessions available to restore for this working directory.
+    ArchivedSessions,
     /// The skills the harness reports for this session.
     Skills,
     /// The drafts sent before this one.
