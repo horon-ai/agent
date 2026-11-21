@@ -379,6 +379,9 @@ impl App {
         self.cost = None;
         self.scroll = Scroll::new();
         self.slash.dismiss();
+        // The candidates were read from the directory of the session being
+        // left; the next Tab reads the directory this session reported.
+        self.path_cycle = None;
         self.transcript.clear();
         for message in &session.history {
             match message.role.as_str() {
@@ -425,6 +428,26 @@ impl App {
         } else {
             format!("resumed {session_id}")
         });
+    }
+
+    /// Point the client at the directory the attached session works in.
+    ///
+    /// Called with the directory that travels beside the attach answer, after
+    /// the session itself is in place. This is what keeps a draft's completed
+    /// paths the session's: a switch to a session in another folder moves the
+    /// root, and an answer that names no folder is not the old one either, so
+    /// path completion stays off until a session names one.
+    pub fn apply_session_directory(&mut self, directory: Option<&str>) {
+        let Some(directory) = directory.map(str::trim).filter(|directory| !directory.is_empty()) else {
+            self.workspace_known = false;
+            return;
+        };
+        self.workspace_known = true;
+        if self.cwd.as_deref() == Some(directory) {
+            return;
+        }
+        self.cwd = Some(directory.to_string());
+        self.reload_commands();
     }
 
     /// A list or attach request the harness refused.

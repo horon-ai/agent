@@ -99,24 +99,35 @@ const INJECTED: &str = "<system-reminder>";
 ///
 /// The history is empty rather than read: a session the daemon just created has
 /// stored no messages, and a history read would answer the same thing for one
-/// request more.
+/// request more. The directory the daemon reports for it comes back with it.
 pub(super) fn created(
     dial: &Dial,
     working_dir: Option<&str>,
     socket: &str,
-) -> Result<(HoronAgentClient, EventStream, AttachedSession), Error> {
+) -> Result<(HoronAgentClient, EventStream, AttachedSession, Option<String>), Error> {
     let client = HoronAgentClient::connect(dial.options())?;
     let stream = client.events(None);
     let session = client.create_session(working_dir.map(str::to_owned))?;
     let (model, effort) = runtime::identity(&client, &session.session_id);
-    Ok((client, stream, described(session, Vec::new(), model, effort, socket)))
+    let directory = session_directory(&session);
+    Ok((
+        client,
+        stream,
+        described(session, Vec::new(), model, effort, socket),
+        directory,
+    ))
 }
 
 /// Attach to a session and read back what the client has to show for it.
 ///
 /// The stored conversation is read after the attach, so it is the one the
-/// connection now follows.
-pub(super) fn resumed(client: &HoronAgentClient, session_id: &str, socket: &str) -> Result<AttachedSession, Error> {
+/// connection now follows. The directory the session reports comes back beside
+/// it, for the client to adopt as the folder a draft's paths are relative to.
+pub(super) fn resumed(
+    client: &HoronAgentClient,
+    session_id: &str,
+    socket: &str,
+) -> Result<(AttachedSession, Option<String>), Error> {
     let session = client.attach_session(session_id)?;
     // From here the connection already follows `session`, so a read that fails
     // cannot be the answer's failure: the caller moves the worker with
@@ -125,7 +136,8 @@ pub(super) fn resumed(client: &HoronAgentClient, session_id: &str, socket: &str)
     // conversation shows empty instead.
     let history = history_or_empty(client.get_history(&session.session_id));
     let (model, effort) = runtime::identity(client, &session.session_id);
-    Ok(described(session, history, model, effort, socket))
+    let directory = session_directory(&session);
+    Ok((described(session, history, model, effort, socket), directory))
 }
 
 /// The stored conversation an attach reports when the read itself failed.
@@ -278,6 +290,20 @@ pub(super) fn described(
         history,
         title,
     }
+}
+
+/// The directory the harness reports for a session, trimmed.
+///
+/// It travels beside the attached session rather than inside it, so the record
+/// the client shows stays the session's own report, and the directory is
+/// applied where the switch answer is received.
+pub(super) fn session_directory(session: &SessionInfo) -> Option<String> {
+    session
+        .working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|directory| !directory.is_empty())
+        .map(str::to_string)
 }
 
 /// The stored messages of a session, newest last, or none when nothing answers.

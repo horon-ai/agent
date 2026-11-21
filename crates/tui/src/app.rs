@@ -346,6 +346,12 @@ pub struct App {
     new_session_pending: bool,
     /// Working directory the `path` segment shows.
     pub cwd: Option<String>,
+    /// Whether path completion may read this session's workspace on this machine.
+    pub workspace_is_local: bool,
+    /// Whether the daemon supplied the workspace directory.
+    pub workspace_known: bool,
+    /// The path candidates from the last Tab, for cycling.
+    pub(crate) path_cycle: Option<crate::path_completion::Choice>,
     /// The user's home directory, shortened to `~` by the `path` segment.
     pub home: Option<String>,
     /// Latest token totals the daemon reported.
@@ -497,6 +503,10 @@ impl App {
             session_title: None,
             new_session_pending: false,
             cwd: None,
+            workspace_is_local: false,
+            // A new session starts in the launch directory until it reports otherwise.
+            workspace_known: true,
+            path_cycle: None,
             home: home_directory(),
             tokens: None,
             capacity: None,
@@ -580,6 +590,9 @@ impl App {
             session_title: None,
             new_session_pending: false,
             cwd: None,
+            workspace_is_local: false,
+            workspace_known: true,
+            path_cycle: None,
             home: home_directory(),
             tokens: None,
             capacity: None,
@@ -1112,6 +1125,7 @@ impl App {
             return false;
         };
         self.history.reset();
+        self.path_cycle = None;
         self.input.set_text(&format!("/{name}"));
         // The filled line names the command outright, which is the state the
         // popup has nothing to offer for; syncing here keeps that true for the
@@ -1120,21 +1134,42 @@ impl App {
         true
     }
 
-    /// Complete the line being edited to the longest common prefix, or the
-    /// single match when there is one.
+    /// Complete a slash command first, then a path in the local workspace.
     pub fn complete(&mut self) {
         if self.slash.is_open() && self.complete_selected() {
             return;
         }
         let text = self.input.text();
-        let Some(completion) = self.commands.complete(&text) else {
-            return;
-        };
-        if completion.insert == text {
+        if let Some(completion) = self.commands.complete(&text) {
+            if completion.insert == text {
+                return;
+            }
+            self.history.reset();
+            self.path_cycle = None;
+            self.input.set_text(&completion.insert);
+            self.sync_slash();
             return;
         }
+        // A path completion replaces the last token and leaves the cursor at its end.
+        if self.input.cursor() != text.chars().count() {
+            return;
+        }
+        if text.trim_start().starts_with('/') {
+            return;
+        }
+        // Neither a session that runs elsewhere nor one that never named its
+        // directory leaves a directory here that the session's paths belong to.
+        if !self.workspace_is_local || !self.workspace_known {
+            return;
+        }
+        let filled = crate::path_completion::complete(&text, self.cwd.as_deref(), self.path_cycle.as_ref());
+        let Some((filled, choice)) = filled else {
+            self.path_cycle = None;
+            return;
+        };
         self.history.reset();
-        self.input.set_text(&completion.insert);
+        self.input.set_text(&filled);
+        self.path_cycle = Some(choice);
         self.sync_slash();
     }
 }
