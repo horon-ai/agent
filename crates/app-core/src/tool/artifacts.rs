@@ -51,6 +51,7 @@ pub(super) fn condense_preview(session_id: &str, tool_name: &str, text: &str, bu
         budget_bytes,
         config.output_column_cap,
         config.secrets_mode,
+        &config.artifact_output,
     )
 }
 
@@ -61,12 +62,20 @@ fn preview(
     budget_bytes: usize,
     mut columns: usize,
     secrets_mode: crate::config::SecretsMode,
+    settings: &crate::config::ArtifactOutputConfig,
 ) -> Option<String> {
-    let over_budget = text.len() > budget_bytes;
+    let threshold = settings.spill_threshold_kib.map_or(budget_bytes, |kib| {
+        kib.clamp(1, 64).saturating_mul(1024).min(budget_bytes)
+    });
+    let mut over_budget = text.len() > threshold;
+    if (columns != 0 || (over_budget && text.len() <= budget_bytes))
+        && serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok()
+    {
+        columns = 0;
+        over_budget = text.len() > budget_bytes;
+    }
     if columns != 0
-        && (text.contains(ARTIFACT_SCHEME)
-            || !text.lines().any(|line| line.char_indices().nth(columns).is_some())
-            || serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok())
+        && (text.contains(ARTIFACT_SCHEME) || !text.lines().any(|line| line.char_indices().nth(columns).is_some()))
     {
         columns = 0;
     }
@@ -75,7 +84,7 @@ fn preview(
     }
 
     let masked = crate::secrets::mask_for_history(text, session_id, secrets_mode);
-    let stored = store(session_id, tool_name, &masked);
+    let stored = crate::artifacts::save_with_file_cap(session_id, tool_name, &masked, settings.file_cap_mib);
     let condensed = match stored {
         Ok(id) if !over_budget => {
             let pointer =
@@ -88,7 +97,7 @@ fn preview(
             clipped.push_str(&pointer);
             clipped
         }
-        Ok(id) => render_condensed(text, tool_name, budget_bytes, Ok(&id.to_string()), columns),
+        Ok(id) => render_condensed(text, tool_name, threshold, Ok(&id.to_string()), columns, settings),
         Err(error) => {
             crate::logging::warn(&format!(
                 "[tool:{tool_name}] could not save full output as an artifact for session {session_id}: {error}"
@@ -100,9 +109,10 @@ fn preview(
             render_condensed(
                 text,
                 tool_name,
-                budget_bytes,
+                threshold,
                 Err(crate::util::truncate_str(&detail, 200)),
                 columns,
+                settings,
             )
         }
     };
@@ -169,15 +179,33 @@ fn render_condensed(
     budget_bytes: usize,
     stored: Result<&str, &str>,
     columns: usize,
+    settings: &crate::config::ArtifactOutputConfig,
 ) -> String {
     use std::fmt::Write as _;
 
-    let head_budget = budget_bytes * 2 / 5;
-    let tail_budget = budget_bytes * 2 / 5;
+    let segment_limit = budget_bytes * 2 / 5;
+    let head_budget = settings
+        .head_kib
+        .map_or(segment_limit, |kib| kib.saturating_mul(1024).min(segment_limit));
+    let tail_budget = settings
+        .tail_kib
+        .map_or(segment_limit, |kib| kib.saturating_mul(1024).min(segment_limit));
     let signal_budget = budget_bytes.saturating_sub(head_budget + tail_budget + POINTER_RESERVE_BYTES);
 
     let head_end = head_end(text, head_budget);
     let tail_start = tail_start(text, tail_budget, head_end);
+    let tail_start = settings.tail_lines.map_or(tail_start, |lines| {
+        if lines == 0 {
+            return text.len();
+        }
+        let suffix = &text[tail_start..];
+        suffix
+            .strip_suffix('\n')
+            .unwrap_or(suffix)
+            .rmatch_indices('\n')
+            .nth(lines - 1)
+            .map_or(tail_start, |(index, _)| tail_start + index + 1)
+    });
     let head = &text[..head_end];
     let omitted = &text[head_end..tail_start];
     let tail = &text[tail_start..];
