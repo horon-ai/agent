@@ -68,6 +68,8 @@ pub enum Provenance {
     File { layer: FileLayerKind, path: PathBuf },
     /// An environment variable.
     Env { name: &'static str },
+    /// A `--flag` on the command line, which outranks every file.
+    Flag,
 }
 
 impl Provenance {
@@ -77,6 +79,7 @@ impl Provenance {
             Self::Default => "default".to_string(),
             Self::File { layer, path } => format!("{} {}", layer.label(), path.display()),
             Self::Env { name } => format!("env {name}"),
+            Self::Flag => "command line".to_string(),
         }
     }
 }
@@ -121,6 +124,29 @@ impl Settings {
     /// The resolved entry for `id`.
     pub fn get(&self, id: &str) -> Option<&ResolvedValue> {
         self.entries.get(id)
+    }
+
+    /// Put command-line overrides above every layer.
+    ///
+    /// A `--flag` lasts for the process, so it is reapplied after each resolve
+    /// instead of being written into a file. A value the declaration refuses is
+    /// skipped: the argument parser has already bounded the ones it can produce.
+    pub fn apply_overrides(&mut self, overrides: &[(&'static str, SettingValue)]) {
+        for (id, value) in overrides {
+            let Some(setting) = registry::spec(id) else {
+                continue;
+            };
+            if !setting.accepts(value) {
+                continue;
+            }
+            self.entries.insert(
+                setting.id,
+                ResolvedValue {
+                    value: value.clone(),
+                    provenance: Provenance::Flag,
+                },
+            );
+        }
     }
 
     /// The origin of `id`'s value.
