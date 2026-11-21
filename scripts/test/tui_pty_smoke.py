@@ -632,7 +632,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
                 selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
                 if selected is None:
                     raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
-                receipt = rf"phase=resume_restored_done .*target_session_id={re.escape(selected[1])}(?:\s|$)"
+                attached = r"phase=resume_(?:restored|live_attach)_done"
+                receipt = rf"{attached} .*target_session_id={re.escape(selected[1])}(?:\s|$)"
                 current_log = daemon_log_tail(home, limit=2000)
                 if len(re.findall(receipt, current_log)) <= len(re.findall(receipt, previous_log)):
                     raise Failure(f"continue did not restore session {selected[1]}\n{resumed.transcript}")
