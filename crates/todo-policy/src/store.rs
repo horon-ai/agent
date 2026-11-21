@@ -81,29 +81,28 @@ pub fn load_snapshot(home: &Path, session_id: &str) -> TodoSnapshot {
 ///
 /// Both come from one read, so a writer between two reads cannot make the
 /// revision describe a list other than the one returned. A missing file is the
-/// empty list and carries the revision of that same empty value, never a
-/// revision of nothing.
-pub fn load_todos_with_revision(home: &Path, session_id: &str) -> (Vec<TodoItem>, String) {
-    let bytes = match std::fs::read(todo_file_path(home, session_id, TodoFile::Todos)) {
-        Ok(bytes) => Some(bytes),
-        // A read that fails is the same state a reader has always seen for a
-        // missing list: no todos. Kept explicit rather than hidden behind a
-        // chain so the empty list is a decision, not an accident.
-        Err(_) => None,
-    };
-    let todos = tolerant_todos(bytes.as_deref());
-    (todos, revision_of(bytes.as_deref().unwrap_or(b"[]")))
-}
-
-/// The list a tolerant reader sees: parsed when the bytes are JSON, empty
-/// otherwise.
-fn tolerant_todos(bytes: Option<&[u8]>) -> Vec<TodoItem> {
-    match bytes {
-        Some(bytes) => match serde_json::from_slice(bytes) {
-            Ok(todos) => todos,
-            Err(_) => Vec::new(),
+/// empty list and carries the revision of that same empty value. A list that
+/// exists but cannot be read, or cannot be parsed, still yields the empty list
+/// every client already tolerates, but no revision: an empty list with no
+/// revision is read-only, so it can never be offered as an editable blank
+/// slate over a store this process could not understand.
+pub fn load_todos_with_revision(home: &Path, session_id: &str) -> (Vec<TodoItem>, Option<String>) {
+    match std::fs::read(todo_file_path(home, session_id, TodoFile::Todos)) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(todos) => (todos, Some(revision_of(&bytes))),
+            // A corrupt list still reads as the empty list every tolerant
+            // client already sees, but it carries no revision: the edit path
+            // re-parses strictly, so exposing a revision here would only offer
+            // a write that must fail.
+            Err(_) => (Vec::new(), None),
         },
-        None => Vec::new(),
+        // A missing file is a real empty list: that is the state a session
+        // starts in, and it can carry a revision like any other list.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (Vec::new(), Some(revision_of(b"[]"))),
+        // An unreadable list (permissions, I/O) is not evidence of "no todos",
+        // so it reads as empty for compatibility but is not offered as an
+        // editable list.
+        Err(_) => (Vec::new(), None),
     }
 }
 
@@ -112,7 +111,7 @@ fn tolerant_todos(bytes: Option<&[u8]>) -> Vec<TodoItem> {
 /// The revision covers the list only, not the plan or the goal assessments:
 /// those are read and written by the agent, and a change to one of them does
 /// not change what an operator is looking at when editing an item's status.
-pub fn load_snapshot_with_revision(home: &Path, session_id: &str) -> (TodoSnapshot, String) {
+pub fn load_snapshot_with_revision(home: &Path, session_id: &str) -> (TodoSnapshot, Option<String>) {
     let path = |file| todo_file_path(home, session_id, file);
     let review: Option<TodoReviewState> = std::fs::read_to_string(path(TodoFile::ReviewState))
         .ok()
@@ -218,17 +217,10 @@ pub fn apply_todo_status_edit_with(
         Err(error) => return Err(error),
     };
     let revision = revision_of(bytes.as_deref().unwrap_or(b"[]"));
-    if expected_revision.trim() != revision {
-        // A stale caller only needs the current list and revision: a store it
-        // cannot parse is reported as the empty list every tolerant reader
-        // already sees, not as an error that hides the refresh.
-        let todos = tolerant_todos(bytes.as_deref());
-        return Ok(TodoEditOutcome::refused(
-            TodoEditRefusal::StaleRevision,
-            todos,
-            revision,
-        ));
-    }
+    // The list is parsed strictly before any refusal is built. A store this
+    // process cannot understand must not be reported as an empty editable list
+    // through a stale reply: the caller gets an error and the bytes stay as
+    // they are.
     let mut todos: Vec<TodoItem> = match bytes.as_deref() {
         Some(bytes) => serde_json::from_slice(bytes).map_err(|error| {
             io::Error::new(
@@ -238,6 +230,13 @@ pub fn apply_todo_status_edit_with(
         })?,
         None => Vec::new(),
     };
+    if expected_revision.trim() != revision {
+        return Ok(TodoEditOutcome::refused(
+            TodoEditRefusal::StaleRevision,
+            todos,
+            revision,
+        ));
+    }
     let Some(canonical) = canonical_todo_status(status) else {
         return Ok(TodoEditOutcome::refused(
             TodoEditRefusal::InvalidStatus,
@@ -463,6 +462,7 @@ mod tests {
         write_todos(&dir, &items());
         let before = std::fs::read(todo_file_path(&dir, "s", TodoFile::Todos)).unwrap();
         let (_, revision) = load_todos_with_revision(&dir, "s");
+        let revision = revision.expect("a readable list has a revision");
 
         let outcome = apply_todo_status_edit(&dir, "s", "not-the-list", "t1", "completed").unwrap();
         assert!(!outcome.applied);
@@ -483,7 +483,7 @@ mod tests {
         assert_ne!(outcome.revision, revision);
         let (stored, stored_revision) = load_todos_with_revision(&dir, "s");
         assert_eq!(stored, outcome.todos);
-        assert_eq!(stored_revision, outcome.revision);
+        assert_eq!(stored_revision.as_deref(), Some(outcome.revision.as_str()));
 
         // And the old revision is stale against the new list.
         let again = apply_todo_status_edit(&dir, "s", &revision, "t1", "cancelled").unwrap();
@@ -497,6 +497,7 @@ mod tests {
         let dir = edit_home("scope");
         write_todos(&dir, &items());
         let (_, revision) = load_todos_with_revision(&dir, "s");
+        let revision = revision.expect("a readable list has a revision");
 
         let unknown = apply_todo_status_edit(&dir, "s", &revision, "nope", "completed").unwrap();
         assert_eq!(unknown.refusal, Some(TodoEditRefusal::UnknownItem));
@@ -520,10 +521,31 @@ mod tests {
         let dir = edit_home("missing");
         let (todos, revision) = load_todos_with_revision(&dir, "s");
         assert!(todos.is_empty());
+        let revision = revision.expect("a missing list is a real empty list");
         assert!(!revision.is_empty());
         let outcome = apply_todo_status_edit(&dir, "s", &revision, "t1", "completed").unwrap();
         assert_eq!(outcome.refusal, Some(TodoEditRefusal::UnknownItem));
         assert_eq!(outcome.revision, revision);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_corrupt_list_reads_empty_without_a_revision_and_cannot_be_edited() {
+        let dir = edit_home("corrupt");
+        let path = todo_file_path(&dir, "s", TodoFile::Todos);
+        std::fs::write(&path, b"{not json").unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let (todos, revision) = load_todos_with_revision(&dir, "s");
+        assert!(todos.is_empty(), "a tolerant reader still sees no items");
+        assert_eq!(revision, None, "a corrupt list must not look editable");
+
+        // Even an edit that guesses the bytes' revision is refused before the
+        // write, so a corrupt store is never replaced by an operator edit.
+        let guessed = revision_of(&before);
+        let error = apply_todo_status_edit(&dir, "s", &guessed, "t1", "completed").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -29,7 +29,7 @@ pub(super) fn get(api_id: u64, request: &Value) -> Vec<Outbound> {
                 ApiEvent::TodoState {
                     session_id: session_id.to_string(),
                     state,
-                    revision: Some(revision),
+                    revision,
                 },
             ))]
         }
@@ -97,7 +97,14 @@ pub(super) fn edit_result(state: &mut BridgeState, event: &Value, attached: &str
         .and_then(horon_agent_todo_policy::TodoEditRefusal::from_wire_name);
     match home(attached) {
         Ok(home) => {
-            let (state, revision) = horon_agent_todo_policy::store::load_snapshot_with_revision(&home, attached);
+            let (state, read_revision) = horon_agent_todo_policy::store::load_snapshot_with_revision(&home, attached);
+            // If this read cannot name the list, the reply carries no revision:
+            // the client refreshes and stays read-only instead of editing a
+            // store this process could not read.
+            let revision = match read_revision {
+                Some(revision) => revision,
+                None => String::new(),
+            };
             vec![ServerFrame::reply(
                 api_id,
                 ApiEvent::TodoEditResult {

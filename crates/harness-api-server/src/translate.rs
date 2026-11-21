@@ -3966,3 +3966,6 @@ mod replication_tests;
 #[cfg(test)]
 #[path = "history_page_perf_tests.rs"]
 mod history_page_perf_tests;
+
+#[cfg(test)]
+mod todo_tests;

@@ -1,10 +1,10 @@
 //! Todo edit translation through the bridge.
 //!
-//! Kept beside the other translation tests but in its own file: the request
-//! and reply are one flow and the shared file would otherwise grow past the
-//! test-size budget for a single new scenario.
+//! A child of `translate` because it builds `BridgeState`, whose fields are
+//! private to that module. Kept in its own file so the shared translation test
+//! file stays at its test-size ceiling.
 
-use crate::translate::{BridgeState, Outbound, horon_agent_home_test_lock};
+use super::{BridgeState, Outbound, horon_agent_home_test_lock};
 use horon_agent_harness_api::ApiEvent;
 use serde_json::json;
 
