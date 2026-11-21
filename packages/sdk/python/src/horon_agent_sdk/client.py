@@ -2121,6 +2121,45 @@ class HoronAgentClient:
         state = frame.get("state")
         return state if isinstance(state, dict) else {}
 
+    async def todo_snapshot(self, session_id: str) -> tuple[dict[str, Any], str | None]:
+        """Persisted todo state with the revision that names the stored list.
+
+        The revision is ``None`` on a server that predates revisions. Requires
+        the ``todo_state`` capability.
+        """
+        frame = await self._expect_reply({"req": "get_todo_state", "session_id": session_id}, "todo_state")
+        state = frame.get("state")
+        revision = frame.get("revision")
+        return (
+            state if isinstance(state, dict) else {},
+            revision if isinstance(revision, str) else None,
+        )
+
+    async def set_todo_status(
+        self,
+        session_id: str,
+        expected_revision: str,
+        id: str,
+        status: str,
+    ) -> dict[str, Any]:
+        """Change one todo item's status only if the stored list is unchanged.
+
+        A stale list answers with ``applied`` false, the refusal
+        ``stale_revision``, and the current state, and writes nothing. Requires
+        the ``todo_edit_v1`` capability.
+        """
+        self._require_capability("todo_edit_v1", "set_todo_status")
+        return await self._expect_reply(
+            {
+                "req": "set_todo_status",
+                "session_id": session_id,
+                "expected_revision": expected_revision,
+                "id": id,
+                "status": status,
+            },
+            "todo_edit_result",
+        )
+
     async def ack_todo_follow_up(self, session_id: str, effects: dict[str, Any]) -> None:
         """Apply a follow-up decision's persistent effects."""
         if not effects.get("clear_gate_observations") and not effects.get("mark_long_session_review_delivered"):

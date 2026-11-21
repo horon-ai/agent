@@ -79,6 +79,10 @@ mod turn_state_tests;
 mod prompt_queue_tests;
 
 #[cfg(test)]
+#[path = "todo_editor_tests.rs"]
+mod todo_editor_tests;
+
+#[cfg(test)]
 #[path = "input_tests.rs"]
 mod input_tests;
 

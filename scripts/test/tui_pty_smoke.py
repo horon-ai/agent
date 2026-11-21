@@ -574,6 +574,32 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def todo_edit_smoke(terminal: Terminal, home: str) -> None:
+    from pathlib import Path
+
+    events = list(Path(home).glob("sessions/*/events.jsonl"))
+    if len(events) != 1:
+        raise Failure(f"expected a single active session, got {len(events)}")
+    todo = Path(home, "todos", f"{events[0].parent.name}.json")
+    todo.parent.mkdir(exist_ok=True)
+    rows = [{"id": f"todo-{i}", "content": f"fixture item {i:02}", "status": "pending", "priority": "medium"}
+            for i in range(1, 13)]
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    terminal.send("/todo\r")
+    terminal.read_until("fixture item 01", STEP_TIMEOUT, "full todo picker is loaded")
+    rows[0]["status"] = "in_progress"
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    terminal.send("\r")
+    terminal.read_until("changed on the server", STEP_TIMEOUT, "stale todo edit was refused")
+    if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "in_progress":
+        raise Failure("stale todo edit overwrote the newer list")
+    terminal.send("\r")
+    terminal.read_until("is now completed", STEP_TIMEOUT, "refreshed todo edit applied")
+    if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "completed":
+        raise Failure("the updated todo was not saved")
+    terminal.send("\x1b")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -600,6 +626,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            todo_edit_smoke(terminal, home)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

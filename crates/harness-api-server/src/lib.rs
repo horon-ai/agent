@@ -133,6 +133,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // it is refused with a structured `unsupported` naming this capability
     // rather than being sent a frame it would answer with no correlation.
     horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when

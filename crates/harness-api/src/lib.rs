@@ -76,7 +76,7 @@ mod tool_done_verdict_tests;
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 25;
+pub const API_VERSION_MINOR: u32 = 26;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -126,6 +126,15 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// all. The reply never carries a value outside the allow-list, so no credential
 /// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
+/// Change one todo item's status in the attached session's stored list, with
+/// the revision the client last read checked before the write. Gates
+/// `set_todo_status`.
+///
+/// The write is the stored list itself, not a message to the agent: no turn
+/// starts and no model prompt is injected. A server that does not advertise
+/// this leaves the list readable and uneditable, which is what an older bridge
+/// serves.
+pub const CAPABILITY_TODO_EDIT_V1: &str = "todo_edit_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -157,6 +166,7 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
+    (CAPABILITY_TODO_EDIT_V1, &["set_todo_status"]),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -169,6 +179,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
     CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    CAPABILITY_TODO_EDIT_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

@@ -125,6 +125,8 @@ pub enum Action {
     OpenArtifact(std::path::PathBuf),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
+    /// Commit one revision-checked todo status change for the attached session.
+    TodoStatus { session_id: String, revision: String, id: String, status: String },
     /// Leave.
     Quit,
 }

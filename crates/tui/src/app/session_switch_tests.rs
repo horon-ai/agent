@@ -92,6 +92,7 @@ fn todo_panel_updates_and_clears_when_the_session_changes() {
         .send(Incoming::Todos {
             session_id: "session_a".into(),
             items: vec![active.clone(), blocked.clone()],
+            revision: Some("rev-1".into()),
         })
         .unwrap();
     let initial = screen(&mut app);
@@ -109,6 +110,7 @@ fn todo_panel_updates_and_clears_when_the_session_changes() {
                 },
                 blocked.clone(),
             ],
+            revision: Some("rev-2".into()),
         })
         .unwrap();
     let updated = screen(&mut app);
@@ -125,6 +127,7 @@ fn todo_panel_updates_and_clears_when_the_session_changes() {
         .send(Incoming::Todos {
             session_id: "session_a".into(),
             items: vec![blocked],
+            revision: None,
         })
         .unwrap();
     let switched = screen(&mut app);

@@ -571,6 +571,8 @@ client that cannot read it.
 
 Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
+`todo_edit_v1` adds a revision to `todo_state` and enables `set_todo_status` for the attached session. Send `session_id`, `todo_id`, `expected_revision` and the requested `status`. The daemon saves the update only if the revision still matches. `todo_edit_result` includes `applied`, the current list and its revision, and `stale_revision` when a newer list takes precedence. Successful writes notify clients with the existing `todo_changed` event.
+
 ## Daemon effective settings (protocol 1.25)
 
 The harness API keeps major version 1 and moved from minor version 24 to 25.

@@ -625,6 +625,7 @@ impl Request {
             Request::ArchiveSession { id, .. } => *id,
             Request::DeleteSession { id, .. } => *id,
             Request::SetSessionSaved { id, .. } => *id,
+            Request::SetTodoStatus { id, .. } => *id,
             Request::Split { id } => *id,
             Request::Transfer { id } => *id,
             Request::Compact { id, .. } => *id,

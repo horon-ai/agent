@@ -442,10 +442,13 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/todo` | Open the attached session's full todo list and update a selected item |
 
 The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
+
+In `/todo`, Enter completes or reopens the selected item and Delete cancels it. If a newer list was saved after the picker opened, the daemon returns the updated list and leaves that write in place. The edit does not start a model turn. A daemon that supplies no revision opens a read-only list.
 
 `/artifact` lists retained artifacts for the current local session. Enter `/artifact <id>` or paste the `artifact://<id>` pointer to edit a temporary copy with `VISUAL` or `EDITOR`. The retained file stays unchanged and the temporary copy is removed on return. An explicit socket or remote bridge disables local artifact access.
 
@@ -478,6 +481,7 @@ built-in commands:
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
+  /todo                open and update the current session's todo list
 harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```

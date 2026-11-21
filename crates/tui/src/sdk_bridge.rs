@@ -549,10 +549,11 @@ fn report_todos(events: &Sender<Incoming>, client: &HoronAgentClient, session_id
     if !client.supports("todo_state") || !client.supports(horon_agent_sdk::api::CAPABILITY_LIVE_TODO_V1) {
         return true;
     }
-    let incoming = match client.todo_state(session_id) {
-        Ok(snapshot) => Incoming::Todos {
+    let incoming = match client.todo_snapshot(session_id) {
+        Ok((snapshot, revision)) => Incoming::Todos {
             session_id: session_id.to_owned(),
             items: snapshot.todos,
+            revision,
         },
         Err(error) => Incoming::Notice(format!("could not read the todo list: {error}")),
     };
@@ -661,6 +662,31 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // client matches that against the messages it is holding, so one
         // refusal restores exactly the messages it was about.
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
+        // The edit belongs to the session whose list the user saw. A command
+        // that outlived an attach is not applied to the session the worker
+        // moved to; nothing is guessed about the list the new session holds.
+        Command::SetTodoStatus {
+            session_id: owner,
+            expected_revision,
+            id,
+            status,
+        } => {
+            if owner != session_id {
+                return Ok(Some(Incoming::Notice(
+                    "the session changed before the todo change was sent; nothing was edited".to_string(),
+                )));
+            }
+            let edit = client.set_todo_status(session_id, &expected_revision, &id, &status)?;
+            Ok(Some(Incoming::TodoEdit {
+                session_id: session_id.to_owned(),
+                applied: edit.applied,
+                refusal: edit.refusal,
+                items: edit.state.todos,
+                revision: edit.revision,
+                id,
+                status,
+            }))
+        }
         Command::Runtime { command, arguments } => runtime::command(client, session_id, command, arguments),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
@@ -683,6 +709,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Skills { .. }
         | Command::DaemonSettings
         | Command::Steer(_)
+        | Command::SetTodoStatus { .. }
         | Command::Runtime { .. }
         | Command::NewSession { .. }
         | Command::Attach(_) => Ok(None),
@@ -730,6 +757,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Skills { .. } => "could not list the skills",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",
+        Command::SetTodoStatus { .. } => "could not change the todo list",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",

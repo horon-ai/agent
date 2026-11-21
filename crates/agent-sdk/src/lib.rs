@@ -148,6 +148,7 @@ mod reports;
 mod ssh;
 mod structured;
 pub mod turn_retry;
+mod todo_client;
 pub mod worktrees;
 
 #[cfg(test)]
@@ -159,6 +160,7 @@ pub use client::{
     GlobalEventStream, GlobalEventsOptions, HoronAgentClient, RunOptions, RuntimeInfo, SearchTextOptions, ToolCall,
     Transport, TurnResult, UnixTransport, Usage,
 };
+pub use todo_client::TodoEdit;
 pub use diagnostics::{SocketState, Stage, describe_disconnect, explain, human_duration};
 pub use errors::{Error, ErrorKind, Result};
 pub use horon_agent_harness_api::{
