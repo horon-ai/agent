@@ -896,6 +896,17 @@ pub(crate) enum ProviderCommand {
         json: bool,
     },
 
+    /// Check configured profiles: missing config, missing credential variable, and (with --check) reachability
+    Diagnose {
+        /// Contact each endpoint's model-list URL with the configured credentials
+        #[arg(long)]
+        check: bool,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Add a named API provider profile
     Add {
         /// Profile name used with --provider-profile and config defaults, e.g. my-gateway

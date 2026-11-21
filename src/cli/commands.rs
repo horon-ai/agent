@@ -20,7 +20,7 @@ pub(crate) use session_rename::run_session_rename_command;
 pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
-pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
+pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
 
 pub enum AmbientSubcommand {
     Status,

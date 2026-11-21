@@ -1,3 +1,6 @@
+mod diagnose;
+pub(crate) use diagnose::run_provider_diagnose_command;
+
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::io::Read;

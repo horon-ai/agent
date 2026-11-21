@@ -911,3 +911,52 @@ async fn unconfigured_provider_explains_setup() {
     assert!(stderr.contains("[providers."), "{stderr}");
     assert!(!stderr.contains("router"), "{stderr}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn provider_diagnose_separates_missing_config_missing_credential_and_unreachable_endpoint() {
+    let secret = "sk-diagnose-masked-fixture-0123456789";
+    let home = Home::new();
+
+    let none = home.run(&["provider", "diagnose", "--json"]).await;
+    assert_eq!(none.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&none.stdout).unwrap()["status"],
+        "no_providers"
+    );
+
+    let table = |extra: &str| {
+        format!(
+            "{COMPACTION_HEAD}[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\n\
+api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n{extra}"
+        )
+    };
+    std::fs::write(home.path().join("config.toml"), table("")).unwrap();
+    let missing = home.run(&["provider", "diagnose", "--json"]).await;
+    assert_eq!(missing.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["outcome"], "missing_credential");
+
+    // Credential present, local endpoint closed: reachability fails without leaking the key.
+    let local = format!(
+        "{COMPACTION_HEAD}[providers.local]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n\
+api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n"
+    );
+    std::fs::write(home.path().join("config.toml"), local).unwrap();
+    let unreachable = home
+        .run_with_env(&["provider", "diagnose", "--check", "--json"], &[(KEY_ENV, secret)])
+        .await;
+    assert_eq!(unreachable.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&unreachable.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["outcome"], "unreachable");
+    assert!(!text(&unreachable.stdout).contains(secret) && !text(&unreachable.stderr).contains(secret));
+
+    // Without --check no request is made, so the same profile is merely configured.
+    let configured = home
+        .run_with_env(&["provider", "diagnose", "--json"], &[(KEY_ENV, secret)])
+        .await;
+    assert!(configured.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&configured.stdout).unwrap()["profiles"][0]["outcome"],
+        "configured"
+    );
+}
