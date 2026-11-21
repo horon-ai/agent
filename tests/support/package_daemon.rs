@@ -272,7 +272,11 @@ impl PackageDaemon {
             .stdout(Stdio::null())
             .stderr(Stdio::from(errors));
         self.daemon = Some(command.spawn().expect("spawn horon-agent serve"));
-        wait_for_socket(&self.socket);
+        wait_for_socket(
+            &self.socket,
+            self.daemon.as_mut().expect("started daemon"),
+            &self.runtime.join("daemon.log"),
+        );
     }
 
     fn spawn_bridge(&mut self) {
@@ -300,7 +304,11 @@ impl PackageDaemon {
             .stdout(Stdio::null())
             .stderr(Stdio::from(errors));
         self.bridge = Some(command.spawn().expect("spawn horon-agent api-bridge"));
-        wait_for_socket(&self.api_socket);
+        wait_for_socket(
+            &self.api_socket,
+            self.bridge.as_mut().expect("started bridge"),
+            &self.runtime.join("bridge.log"),
+        );
     }
 }
 
@@ -472,52 +480,40 @@ fn root_profile(root: &Path) -> PathBuf {
 }
 
 fn scratch_root(label: &str) -> PathBuf {
-    let base = std::env::temp_dir()
+    // macOS often supplies a long TMPDIR. Use a short, canonical base so the
+    // daemon and bridge sockets fit in sockaddr_un and the store sees no links.
+    let base = Path::new("/tmp")
         .canonicalize()
-        .expect("the OS temporary directory must resolve");
-    let short: String = label.chars().filter(|ch| ch.is_ascii_alphanumeric()).take(6).collect();
-    let root = base.join(format!("pkg-{short}-{}-{}", std::process::id(), monotonic_suffix()));
-    fs::create_dir_all(&root).expect("create the scratch root");
-    root
-}
-
-fn monotonic_suffix() -> u128 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let serial = COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_nanos())
-        .unwrap_or(0);
-    nanos + serial * 1_000_000_000
+        .expect("resolve the short temporary directory");
+    tempfile::Builder::new()
+        .prefix(&format!("hp-{label}-"))
+        .tempdir_in(base)
+        .expect("create the private package test directory")
+        .keep()
 }
 
 fn set_mode(path: &Path, mode: u32) {
     fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("set the fixture directory mode");
 }
 
-fn wait_for_socket(path: &Path) {
+fn wait_for_socket(path: &Path, child: &mut Child, log: &Path) {
     let deadline = Instant::now() + STARTUP_DEADLINE;
-    let log = path
-        .parent()
-        .map(|parent| {
-            parent.join(if path.file_name().is_some_and(|name| name == "api.sock") {
-                "bridge.log"
-            } else {
-                "daemon.log"
-            })
-        })
-        .unwrap_or_default();
     loop {
+        if let Some(status) = child.try_wait().expect("check socket owner") {
+            let output = fs::read_to_string(log).unwrap_or_default();
+            panic!(
+                "process exited with {status} before socket {} opened\n{output}",
+                path.display()
+            );
+        }
         if UnixStream::connect(path).is_ok() {
             return;
         }
         if Instant::now() >= deadline {
-            let output = fs::read_to_string(&log).unwrap_or_default();
+            let output = fs::read_to_string(log).unwrap_or_default();
             panic!(
-                "socket {} never became connectable within {STARTUP_DEADLINE:?}\n{}",
-                path.display(),
-                output
+                "socket {} never became connectable within {STARTUP_DEADLINE:?}\n{output}",
+                path.display()
             );
         }
         std::thread::sleep(Duration::from_millis(25));
