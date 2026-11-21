@@ -618,7 +618,7 @@ fn package_daemon_old_client_request_still_succeeds() -> Result<()> {
 /// reach.
 #[test]
 fn package_daemon_cli_permission_failure_is_not_offline() -> Result<()> {
-    let daemon = packages::PackageDaemon::start("permission");
+    let mut daemon = packages::PackageDaemon::start("permission");
     daemon.stop();
 
     let denied = daemon.root.join("denied");
