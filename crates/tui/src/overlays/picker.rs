@@ -42,6 +42,8 @@ pub enum Kind {
     Skills,
     /// The drafts sent before this one.
     History,
+    /// The text this session can copy: the draft, answers, code blocks.
+    Copies,
     /// The http(s) links in the newest assistant answers.
     Links,
     /// The messages waiting for the running turn to end.

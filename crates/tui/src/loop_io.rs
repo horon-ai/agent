@@ -17,6 +17,7 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 
 use crate::app::{Action, App};
+use crate::clipboard::{self, Prepared};
 use crate::scroll;
 use crate::sdk_bridge::{Command, Incoming};
 
@@ -179,6 +180,51 @@ pub(crate) fn sync_mouse_capture(app: &mut App, captured: &mut bool) -> bool {
     }
     *captured = false;
     true
+}
+
+/// Write the copy the app queued, if any, and say what became of it.
+///
+/// The terminal is the only clipboard this client has, so the terminal is asked
+/// first: one that cannot take the sequence gets a sentence naming why, and the
+/// text stays on screen for the terminal's own selection instead of a copy that
+/// silently never arrives. A copy that does leave is reported with what it
+/// carried, because the cap and the control-character filter can both change it.
+pub(crate) fn flush_copy(app: &mut App, out: &mut impl std::io::Write, env: impl Fn(&str) -> Option<String>) -> bool {
+    let Some(request) = app.take_copy() else {
+        return false;
+    };
+    if let Err(refusal) = clipboard::support(&env) {
+        app.warn(format!(
+            "copy: {}; {} stays on screen to select with the terminal",
+            refusal.reason(),
+            request.label
+        ));
+        return true;
+    }
+    let prepared = clipboard::prepare(&request.text);
+    let Some(sequence) = clipboard::sequence(&prepared) else {
+        app.warn(format!("copy: {} holds nothing to copy", request.label));
+        return true;
+    };
+    match clipboard::write(out, &sequence) {
+        Ok(()) => app.transcript.push_notice(copy_notice(&request.label, &prepared)),
+        Err(error) => app.warn(format!("copy: the terminal did not take the sequence: {error}")),
+    }
+    true
+}
+
+/// The line the transcript keeps after a copy left the client.
+fn copy_notice(label: &str, prepared: &Prepared) -> String {
+    let characters = prepared.text.chars().count();
+    let mut line = format!("asked the terminal to copy {label} ({characters} characters");
+    if prepared.truncated {
+        line.push_str(&format!(", cut from {} bytes", prepared.total));
+    }
+    if prepared.dropped > 0 {
+        line.push_str(&format!(", {} control characters left out", prepared.dropped));
+    }
+    line.push(')');
+    line
 }
 
 /// Draw the one frame this pass owes, if any.

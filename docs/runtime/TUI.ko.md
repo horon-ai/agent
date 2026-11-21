@@ -223,6 +223,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_bottom` | `ctrl+end` | 다시 대화의 끝을 따라간다 |
 | `app.expand_tool` | `ctrl+o` | 선택한 보존 도구 결과를 펼치거나 접는다 |
 | `app.toggle_tool_activity` | `alt+t` | 현재 세션에서 완료된 도구 활동을 표시하거나 숨긴다 |
+| `app.copy_code` | `alt+c` | 최근 답변의 마지막 코드 블록을 복사한다 |
+| `app.copy_last` | `alt+l` | 최근 답변을 복사한다 |
+| `app.copy_draft` | `alt+d` | 초안 전체를 복사한다 |
+| `app.copy_line` | `alt+k` | 커서가 있는 줄을 복사한다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
 | `app.cycle_model` | `ctrl+p` | 모델 후보 목록에서 다음 모델로 옮긴다 |
@@ -404,6 +408,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | 명령 | 하는 일 |
 | --- | --- |
 | `/clear` | 트랜스크립트 창을 지운다 |
+| `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
@@ -425,6 +430,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
+터미널에는 OSC 52로 복사를 요청합니다. `HORON_TUI_OSC52=0`으로 끌 수 있습니다. 멀티플렉서나 SSH에서 터미널로 복사 요청을 전달하도록 설정했다면 `HORON_TUI_OSC52=1`로 사용할 수 있습니다. 터미널이 요청을 처리할 수 없으면 화면에서 텍스트를 직접 선택할 수 있습니다.
+
 `!command`를 입력하면 TUI가 실행된 작업 디렉터리에서 셸 명령을 실행합니다. 실행 전에 전사에 로컬 디렉터리를 표시합니다. `!!command`는 전사에 경로와 종료 상태만 남깁니다. 두 형식 모두 명령과 출력을 모델 대화에 보내지 않습니다. 한 번에 하나만 실행하며 10초를 넘으면 중지합니다. 출력은 최대 200줄과 32 KiB까지 남깁니다.
 
 `/record`는 보낸 메시지, 완료된 답변과 도구 실행 결과를 비공개 로컬 파일에 기록합니다. `stop`으로 기록을 끝냅니다. 미전송 초안, 승인 답변, 추론과 도구 출력은 저장하지 않으며 파일은 최대 2 MiB입니다. `/replay`는 녹화된 입력을 보내지 않고 파일을 재생합니다. 재생은 로컬에서만 이뤄지므로 화면에 그리는 내용은 하네스로 보내지 않습니다. 스페이스로 일시 정지하고 방향 키로 앞뒤로 이동하며 `+`와 `-`로 속도를 조절합니다. Esc를 누르면 현재 대화로 돌아옵니다.
@@ -434,6 +441,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 ```text
 built-in commands:
   /clear               clear the transcript
+  /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force

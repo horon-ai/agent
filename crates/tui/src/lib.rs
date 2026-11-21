@@ -10,6 +10,7 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+mod clipboard;
 pub mod commands;
 pub mod context;
 mod fuzzy;
@@ -319,8 +320,7 @@ fn run_interactive(
     // or an embedded `App` writes to.
     app.notes = notes::NoteStore::owned();
     app.load_notes();
-    // The stderr copy of these warnings is wiped by the alternate screen, so
-    // the transcript carries them for the person using the interface.
+    // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
     }
@@ -415,14 +415,10 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    // The palette is applied to the copy the renderer reads, never to the
-    // theme file, so clearing the setting restores the selected theme exactly.
+    // Apply the palette to a copy so reloading can restore the theme exactly.
     app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
-    // The status line's own two choices sit on top of the theme and the glyph
-    // preset, so they are applied here where every snapshot arrives rather than
-    // in the drawing call: a save from the settings screen and a hand edit of
-    // `tui.toml` then take effect on the next frame alike.
+    // Apply status-line overrides on each settings reload.
     statusline::apply_appearance(settings, &mut app.theme, &mut app.symbols);
 }
 
@@ -545,13 +541,16 @@ where
             app.bindings = reload.bindings;
             changed = true;
         }
-        // Command directories are only stat-ed here; a file is re-read when its
-        // own stamp moved.
+        // Reread command files only when their stamps change.
         changed |= app.tick_commands();
-        // A replay is a clock over the conversation: each frame plays the events
-        // that became due and reports whether the pane changed.
         changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
+            changed = true;
+        }
+        // The one place a copy reaches standard output: the app decided what it
+        // carries, and the terminal is asked here, after the frame is measured
+        // and before it is drawn.
+        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment()) {
             changed = true;
         }
         let minute = statusline::local_minute();
