@@ -1477,7 +1477,7 @@ impl BridgeState {
                     "operation_id": operation_id,
                 }))]
             }
-            "get_effective_settings" => return effective_settings::request(self, request, api_id, req),
+            "get_effective_settings" => effective_settings::request(self, request, api_id, req),
             "get_snapshot" => {
                 let Some(session_id) = Self::request_session(request, api_id) else {
                     return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");

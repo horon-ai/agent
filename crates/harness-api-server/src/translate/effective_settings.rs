@@ -70,7 +70,16 @@ pub(super) fn reply(state: &mut BridgeState, event: &Value) -> Vec<ServerFrame> 
     let Some(api_id) = state.take_simple(id, SimpleKind::EffectiveSettings) else {
         return vec![];
     };
-    let session_id = state.session_id.clone().unwrap_or_else(String::new);
+    let Some(session_id) = state.session_id.clone() else {
+        return vec![ServerFrame::reply(
+            api_id,
+            ApiEvent::Error {
+                code: ErrorCode::Internal,
+                message: "the settings reply has no attached session".into(),
+                details: None,
+            },
+        )];
+    };
     match serde_json::from_value::<Vec<EffectiveSetting>>(event["settings"].clone()) {
         Ok(settings) => vec![ServerFrame::reply(
             api_id,
