@@ -565,6 +565,14 @@ pub struct AgentsConfig {
     /// call does not pass an explicit `effort`. Leave unset to let workers
     /// inherit the provider-wide reasoning effort.
     pub swarm_effort: Option<String>,
+    /// Maximum elapsed seconds for a spawned child, starting at its first turn. Zero disables it.
+    pub swarm_child_runtime_secs: u32,
+    /// Maximum main-model requests a live child may start. Zero disables it.
+    pub swarm_child_request_limit: u32,
+    /// Notify the child and attached clients before its last allowed model request.
+    pub swarm_child_request_notice: bool,
+    /// Maximum reasoning effort at spawn, using the standard effort ladder.
+    pub swarm_max_spawn_effort: Option<String>,
     /// Root reasoning effort in light swarm mode. Unset or invalid means `max`.
     /// This does not change worker effort (`swarm_effort`).
     pub swarm_root_effort: Option<String>,
@@ -678,6 +686,10 @@ impl Default for AgentsConfig {
         Self {
             swarm_model: None,
             swarm_effort: None,
+            swarm_child_runtime_secs: 0,
+            swarm_child_request_limit: 0,
+            swarm_child_request_notice: true,
+            swarm_max_spawn_effort: None,
             swarm_root_effort: None,
             swarm_deep_root_effort: None,
             swarm_spawn_mode: SwarmSpawnMode::default(),
