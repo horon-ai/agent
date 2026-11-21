@@ -577,7 +577,8 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
 def todo_edit_smoke(terminal: Terminal, home: str) -> None:
     from pathlib import Path
 
-    events = list(Path(home).glob("sessions/*/events.jsonl"))
+    events = [path for path in Path(home).glob("sessions/*/events.jsonl")
+              if TOOL_FILE in path.read_text(encoding="utf-8")]
     if len(events) != 1:
         raise Failure(f"expected a single active session, got {len(events)}")
     todo = Path(home, "todos", f"{events[0].parent.name}.json")
