@@ -29,6 +29,10 @@ pub(crate) fn restore() {
     // knows what it wrote; this covers the panic hook and the signal thread,
     // which have no writer left, and finds nothing to do after the writer ran.
     crate::progress::clear_stdout();
+    // A local shell command still running when the client leaves or takes a
+    // signal goes with it: the command belongs to this terminal, and a
+    // detached copy would keep writing after the client is gone.
+    crate::commands::shell::kill_active_group();
     paste::disable();
     // The stack entry goes back with the screen: the title the shell set is the
     // one the next prompt should be in.

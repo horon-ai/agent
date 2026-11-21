@@ -380,8 +380,7 @@ fn run_interactive(
     if let Err(error) = title.start(&window_label(&app, state_supported)) {
         app.warn(format!("title: {error}"));
     }
-    // The tab indicator and the status record follow the app state; nothing is
-    // written until a state differs from the one the terminal already holds.
+    // Writes nothing until a different state reaches the terminal.
     let mut signals = progress::Signals::stdout();
     // Installed once the modes it restores are on: a signal before this point
     // had nothing to undo. A refusal is reported and the client keeps running.
@@ -401,10 +400,8 @@ fn run_interactive(
         keys,
     );
     // The tab indicator and the status record come down before the alternate
-    // screen does: this writer knows exactly which sequences it put on the wire,
-    // so it removes only those. The panic and signal paths have no writer left
-    // to ask and go through `terminal::restore`, which finds nothing left to
-    // undo here.
+    // screen, from the writer that knows what it put on the wire; the panic and
+    // signal paths have no writer left and go through `terminal::restore`.
     let signals_error = signals.clear().err();
     // The same sequence the signal path runs: see `terminal::restore`.
     terminal::restore();
@@ -510,6 +507,9 @@ where
                 false
             }
         };
+        // A local command runs on a worker thread; its result joins the same
+        // redraw decision as an event from the bridge.
+        changed |= crate::commands::shell::drain(app);
         if !app.running {
             break;
         }
@@ -585,6 +585,9 @@ where
             failure = Some(message);
             break;
         }
+        // The header has been drawn, so the command may start: after the frame,
+        // not inside the key handler, so the target shows before any output.
+        crate::commands::shell::start_pending();
         match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
