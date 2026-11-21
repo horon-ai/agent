@@ -5,6 +5,7 @@
 //! POSIX, and nothing here is Linux-specific beyond the name.
 
 mod allocator;
+mod child_exit;
 pub mod ipc;
 mod resources;
 pub mod signal;
@@ -248,6 +249,10 @@ impl PlatformAdapter for Adapter {
 
     fn terminate_child(child: &mut Child) {
         unix::terminate_child(child);
+    }
+
+    fn wait_child_exit(pid: u32, nonblocking: bool) -> io::Result<bool> {
+        child_exit::wait_child_exit(pid, nonblocking)
     }
 
     fn describe_file_kind(metadata: &Metadata) -> &'static str {

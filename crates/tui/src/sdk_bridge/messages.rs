@@ -27,6 +27,8 @@ pub enum Command {
         command: RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Clear or compact the model context of the session the bridge follows.
+    Context(crate::commands::ContextCommand),
     /// Switch to the model named.
     ///
     /// The list the picker shows is its own command: `/model` with no argument

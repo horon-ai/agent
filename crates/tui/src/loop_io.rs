@@ -144,6 +144,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::Context(command) => Command::Context(command),
         Action::Model(name) => Command::Model(name),
         Action::Effort(level) => Command::Effort(level),
         Action::Models => Command::Models,

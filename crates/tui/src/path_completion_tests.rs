@@ -134,6 +134,7 @@ fn slash_completion_keeps_its_priority_over_a_workspace_path() {
     // An argument position is the user's: a workspace file that starts the
     // same way is not filled into a model id.
     std::fs::write(workspace.path().join("gpt-notes.md"), "").expect("a file");
+    let mut app = app_at(&workspace);
     app.input.set_text("/model gpt");
     app.complete();
     assert_eq!(app.input.text(), "/model gpt");
