@@ -2213,6 +2213,14 @@ jobs:
             -TimeoutSeconds 900 `
             -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-platform-windows', '--lib', 'power::tests::', '--', '--nocapture')
 
+      - name: Run Windows package manifest contracts
+        shell: pwsh
+        run: |
+          & ./scripts/ci/cargo_with_timeout.ps1 `
+            -Name 'Windows package manifest contracts' `
+            -TimeoutSeconds 900 `
+            -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_manifest')
+
       - name: Run Windows e2e smoke tests
         shell: pwsh
         run: |

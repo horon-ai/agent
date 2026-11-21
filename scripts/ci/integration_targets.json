@@ -148,6 +148,11 @@
     },
     {
       "package": "horon-agent-base",
+      "target": "package_manifest",
+      "min_passed": 9
+    },
+    {
+      "package": "horon-agent-base",
       "target": "prompt_guidance_integration",
       "min_passed": 1
     },

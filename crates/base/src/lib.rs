@@ -76,6 +76,7 @@ pub mod model_usage;
 pub mod monitor;
 pub mod open_url;
 pub mod output_style;
+pub mod packages;
 pub mod plan;
 pub mod power_inhibit;
 pub mod process_memory;
