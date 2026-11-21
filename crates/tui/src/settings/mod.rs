@@ -16,6 +16,7 @@
 //! changes, keeping the last good values from a file that stops parsing.
 
 pub mod layers;
+pub mod motion;
 pub mod registry;
 pub mod reload;
 
@@ -23,5 +24,6 @@ pub mod reload;
 mod tests;
 
 pub use layers::{Provenance, SettingValue, Settings, Sources, save_global};
+pub use motion::{Motion, MotionMode};
 pub use registry::{REGISTRY, SettingKind, SettingSpec, UiMeta, spec};
 pub use reload::{Reload, Reloader};

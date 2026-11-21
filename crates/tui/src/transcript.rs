@@ -8,6 +8,10 @@
 
 use std::time::Instant;
 
+#[path = "transcript_recording.rs"]
+mod recording;
+pub use recording::{OUTPUT_NOT_RECORDED, WARNING_NOT_RECORDED};
+
 #[path = "transcript_turn_usage.rs"]
 mod turn_usage;
 
@@ -82,20 +86,6 @@ impl ToolState {
 /// same way, and neither says anything about the tool itself.
 pub const TURN_ENDED: &str = "the turn ended before this call reported";
 
-/// What a replayed failure says instead of the output it never kept.
-///
-/// A recording leaves tool bodies out, so the row cannot repeat the error text.
-/// Saying that the output was not recorded is true and reads as a boundary
-/// rather than as a failure reason the tool never gave.
-pub const OUTPUT_NOT_RECORDED: &str = "the output was not recorded";
-
-/// What a replayed warning says instead of the text it never kept.
-///
-/// A recording keeps that a warning was shown, not what it said: a warning can
-/// name a private path or echo a harness message, and a recording is read on its
-/// own. The row says so rather than inventing the text.
-pub const WARNING_NOT_RECORDED: &str = "a warning was shown; its text was not recorded";
-
 /// One tool call, as far as the client knows it.
 ///
 /// The call id is kept because parallel calls of the same tool are ordinary:
@@ -136,6 +126,17 @@ impl ToolCall {
     /// caller falls back to "the oldest running call of this name".
     fn is_call(&self, call_id: &str) -> bool {
         !call_id.is_empty() && self.call_id == call_id
+    }
+
+    /// Whether the call has stopped and its line is only a record of what ran.
+    ///
+    /// A call in progress and one waiting for approval are still the work the
+    /// reader follows, so hiding tool activity leaves them on screen.
+    pub(crate) fn finished_activity(&self) -> bool {
+        matches!(
+            self.state,
+            ToolState::Done | ToolState::Failed(_) | ToolState::Settled(_, _)
+        )
     }
 }
 
@@ -471,14 +472,6 @@ impl Transcript {
         &self.items
     }
 
-    /// How many times this conversation was replaced by a clear.
-    ///
-    /// The number itself means nothing; a reader compares it with the one it
-    /// last saw to learn that the items it counted are gone.
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
     /// The assistant text still streaming, if any.
     ///
     /// `None` once the message is committed by [`finish_stream`](Self::finish_stream),
@@ -517,31 +510,6 @@ impl Transcript {
         self.items.push(Item::Assistant(text.into()));
     }
 
-    /// Append the line a recording kept for one tool call.
-    ///
-    /// Only the name and whether the call failed survived the recording, so the
-    /// line has neither arguments nor output. A failure says why it has no
-    /// error text rather than inventing one.
-    pub fn push_recorded_tool(&mut self, name: &str, failed: bool) {
-        self.finish_stream();
-        let mut call = ToolCall::new("", name);
-        call.state = if failed {
-            ToolState::Failed(OUTPUT_NOT_RECORDED.to_string())
-        } else {
-            ToolState::Done
-        };
-        self.items.push(Item::Tool(call));
-    }
-
-    /// Append the line a recording kept for one warning.
-    ///
-    /// The recording keeps that a warning was shown, not what it said, so the
-    /// row states the boundary instead of repeating text the file never held.
-    pub fn push_recorded_warning(&mut self) {
-        self.finish_stream();
-        self.items.push(Item::Warning(WARNING_NOT_RECORDED.to_string()));
-    }
-
     /// Empty the conversation, keeping the display settings.
     ///
     /// Resuming another session replaces the conversation rather than the
@@ -567,12 +535,85 @@ impl Transcript {
         &self.expand
     }
 
-    /// Show, or hide again, the whole output of the newest cut call.
+    /// Show, or hide again, the whole output of the selected cut call.
     ///
     /// Answers whether there was anything to toggle: the caller says so when
-    /// there was not, rather than leaving the key silently doing nothing.
+    /// there was not, rather than leaving the key silently doing nothing. A
+    /// selection the activity setting hides is not expanded: the press would
+    /// change text no frame draws.
     pub(crate) fn toggle_expand(&mut self) -> bool {
+        let Some(call_id) = self.expand.selected().map(str::to_string) else {
+            return false;
+        };
+        if self.tool_hidden(&call_id) {
+            return false;
+        }
         self.expand.toggle()
+    }
+
+    /// Make the call the view shows the one the expand key acts on.
+    ///
+    /// `heights` are the wrapped rows of each item as the last held frame
+    /// measured them, and `top` is the first row of the content the pane shows.
+    /// The first call whose rows cross that window is selected; a window that
+    /// shows no call leaves nothing selected, so the key does not open a line
+    /// the reader cannot see.
+    pub(crate) fn select_tool_at(&mut self, heights: &[usize], top: usize, view: usize) {
+        if heights.len() != self.items.len() {
+            return;
+        }
+        let bottom = top.saturating_add(view);
+        let mut row = 0usize;
+        let mut chosen: Option<String> = None;
+        for (item, height) in self.items.iter().zip(heights) {
+            let start = row;
+            row = row.saturating_add(*height);
+            if row <= top {
+                continue;
+            }
+            if start >= bottom {
+                break;
+            }
+            if let Item::Tool(call) = item
+                && self.expand.holds(&call.call_id)
+                && !self.tool_hidden(&call.call_id)
+            {
+                chosen = Some(call.call_id.clone());
+                break;
+            }
+        }
+        match chosen {
+            Some(call_id) => {
+                self.expand.select(&call_id);
+            }
+            None => self.expand.select_none(),
+        }
+    }
+
+    /// Make the newest call the selection again, as following the end does.
+    pub(crate) fn select_newest_tool(&mut self) {
+        self.expand.follow_newest();
+    }
+
+    /// Whether the activity setting hides `call_id`'s line.
+    fn tool_hidden(&self, call_id: &str) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, Item::Tool(call) if call.call_id == call_id && call.finished_activity()))
+            && !self.expand.shows_activity()
+    }
+
+    /// Draw, or stop drawing, the calls that finished.
+    ///
+    /// A call in progress and one waiting for approval stay on screen: the
+    /// setting is about the record of what ran, not about the work itself.
+    pub(crate) fn set_tool_activity(&mut self, show: bool) {
+        self.expand.set_activity(show);
+    }
+
+    /// Whether finished calls are drawn.
+    pub(crate) fn show_tool_activity(&self) -> bool {
+        self.expand.shows_activity()
     }
 
     /// Record an informational line.
@@ -1069,30 +1110,6 @@ impl Transcript {
         }
         let draws = !Self::settled(&call.state);
         stored && draws && hides && self.keep_output(call_id, output)
-    }
-
-    /// How the call `call_id` names stands, without its body.
-    ///
-    /// A caller that only needs the visible outcome (a recording keeps the name
-    /// and whether the call failed) does not get the output this way. An empty
-    /// id names the most recent call of that name, which is the line the result
-    /// that carried no id was just written onto.
-    pub fn tool_state(&self, call_id: &str, name: &str) -> Option<ToolState> {
-        let mut found = None;
-        for item in &self.items {
-            let Item::Tool(call) = item else {
-                continue;
-            };
-            let named = if call_id.is_empty() {
-                call.name == name
-            } else {
-                call.is_call(call_id)
-            };
-            if named {
-                found = Some(call.state.clone());
-            }
-        }
-        found
     }
 
     /// Whether a call's line draws no output at all.

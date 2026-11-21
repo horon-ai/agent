@@ -51,6 +51,7 @@ impl SymbolPreset {
                 rule: "─",
                 bar_full: "█",
                 bar_empty: "░",
+                spinner: &["⠋", "⠙", "⠹", "⠸"],
             },
             Self::Nerd => Symbols {
                 bullet: "\u{f111}",
@@ -65,6 +66,7 @@ impl SymbolPreset {
                 rule: "\u{2500}",
                 bar_full: "\u{2588}",
                 bar_empty: "\u{2591}",
+                spinner: &["\u{280b}", "\u{2819}", "\u{2839}", "\u{2838}"],
             },
             Self::Ascii => Symbols {
                 bullet: "*",
@@ -79,6 +81,7 @@ impl SymbolPreset {
                 rule: "-",
                 bar_full: "#",
                 bar_empty: "-",
+                spinner: &["-", "\\", "|", "/"],
             },
         }
     }
@@ -111,6 +114,14 @@ pub struct Symbols {
     pub bar_full: &'static str,
     /// An empty cell of a proportional bar.
     pub bar_empty: &'static str,
+    /// The frames of the spinner beside a running turn, in the order they turn.
+    ///
+    /// The first frame is what a `reduced` preset freezes on, so it carries the
+    /// same reading as the running glyph: something is still happening. The
+    /// frames are their own rotation rather than `tool_running` repeated: a
+    /// tool row waiting on a decision and a turn in flight are two different
+    /// things, and the same mark would read as one.
+    pub spinner: &'static [&'static str],
 }
 
 impl Default for Symbols {
