@@ -84,6 +84,11 @@ on:
         type: string
         required: false
         default: ""
+      jcode_version:
+        description: "Optional published jcode tag (vX.Y.Z) to pin; empty resolves the newest stable release once for every OS and suite"
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       install_ref:
@@ -122,6 +127,10 @@ on:
         description: "Cargo features added to the candidate release build only, e.g. jemalloc (empty builds exactly what ships; the baseline never gets them)"
         required: false
         default: ""
+      jcode_version:
+        description: "Optional published jcode tag (vX.Y.Z) to pin; empty resolves the newest stable release once for every OS and suite"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -151,6 +160,7 @@ jobs:
       suites: ${{ steps.plan.outputs.suites }}
       install: ${{ steps.plan.outputs.install }}
       run: ${{ steps.plan.outputs.run }}
+      jcode: ${{ steps.plan.outputs.jcode }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -167,6 +177,7 @@ jobs:
         env:
           SUITES_INPUT: ${{ inputs.suites }}
           OS_INPUT: ${{ inputs.os }}
+          COMPETITORS: ${{ inputs.competitors }}
         run: |
           set -euo pipefail
           strip() { sed -E 's/^,//; s/,$//; s/,,+/,/g; s/^,//; s/,$//'; }
@@ -180,6 +191,14 @@ jobs:
           hosts="$(printf '%s' "$hosts" | tr -d '[:space:]' | sed -E 's/,freebsd,/,/' | strip)"
           echo "install=$install" >> "$GITHUB_OUTPUT"
           echo "suites=$suites" >> "$GITHUB_OUTPUT"
+          competitors=",${COMPETITORS//[[:space:]]/},"
+          compare=false
+          if [[ -n "${hosts//,/}" && ( ",$suites," == *,all,* || ",$suites," == *,compare,* ) ]]; then
+            compare=true
+          fi
+          if [[ "$competitors" == *,jcode,* && ( "$install" == true || "$compare" == true ) ]]; then
+            echo "jcode=true" >> "$GITHUB_OUTPUT"
+          fi
           # A matrix cannot be expanded from an empty include, so a skipped
           # selection hands over one placeholder that the job's `if` skips.
           placeholder='matrix={"include":[{"os":"none","runner":"ubuntu-24.04"}]}'
@@ -192,10 +211,65 @@ jobs:
           python3 scripts/perf/bench_select.py --platforms "$hosts" | tee -a "$GITHUB_OUTPUT"
           echo "run=true" >> "$GITHUB_OUTPUT"
 
+  resolve:
+    name: Resolve jcode release
+    # One resolution per benchmark round, shared by the regular suites and the
+    # install matrix: picking the release inside each OS job would let runners
+    # race a publish and measure two different releases in one round.
+    needs: plan
+    if: ${{ needs.plan.outputs.jcode == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      commit: ${{ steps.resolve.outputs.commit }}
+      selection: ${{ steps.resolve.outputs.selection }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          sparse-checkout: scripts/perf
+
+      - name: Resolve the newest stable release (or the pin)
+        id: resolve
+        shell: bash
+        env:
+          # The API call is rate-limited per IP; the job token raises the limit
+          # and never reaches a downloaded binary.
+          GH_TOKEN: ${{ github.token }}
+          JCODE_VERSION: ${{ inputs.jcode_version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/perf/jcode_release.py resolve \
+            --metadata jcode-release.json --github-output "$GITHUB_OUTPUT"
+          # The resolver writes only validated values; re-check before they are
+          # handed to other jobs as shell-visible inputs.
+          python3 - jcode-release.json <<'PY'
+          import json, re, sys
+          record = json.load(open(sys.argv[1], encoding="utf-8"))
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", record.get("tag", "")):
+              raise SystemExit(f"invalid resolved tag: {record.get('tag')!r}")
+          if not re.fullmatch(r"[0-9a-f]{40,64}", record.get("commit", "")):
+              raise SystemExit(f"invalid resolved commit: {record.get('commit')!r}")
+          PY
+          cat jcode-release.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jcode-release-${{ github.run_id }}
+          path: jcode-release.json
+          retention-days: 30
+
   benchmark:
     name: Benchmark (${{ matrix.os }})
-    needs: plan
-    if: ${{ needs.plan.outputs.run == 'true' }}
+    needs: [plan, resolve]
+    # A failed resolution must not be papered over: the resolve job is red and
+    # these jobs wait for a re-run instead of measuring another release.
+    # `!cancelled()` is explicit because a skipped `resolve` (jcode not in the
+    # competitor list) would otherwise suppress this job through GitHub's
+    # implicit success() check.
+    if: ${{ !cancelled() && needs.plan.outputs.run == 'true' && (needs.resolve.result == 'success' || needs.resolve.result == 'skipped') }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -213,14 +287,17 @@ jobs:
       oneshot_runs: ${{ inputs.oneshot_runs }}
       baseline_ref: ${{ inputs.baseline_ref }}
       features: ${{ inputs.features }}
+      jcode_version: ${{ needs.resolve.outputs.tag }}
+      jcode_release_commit: ${{ needs.resolve.outputs.commit }}
+      jcode_release_source: ${{ needs.resolve.outputs.selection }}
 
   install:
     name: Install benchmark
-    needs: plan
+    needs: [plan, resolve]
     # Opt-in only. This job installs the published release and the npm
     # competitors over the real internet on seven OS/architecture targets, so it
     # never rides along with an `all` run.
-    if: ${{ needs.plan.outputs.install == 'true' }}
+    if: ${{ !cancelled() && needs.plan.outputs.install == 'true' && (needs.resolve.result == 'success' || needs.resolve.result == 'skipped') }}
     uses: ./.github/workflows/benchmark-install.yml
     with:
       ref: ${{ inputs.install_ref || inputs.ref }}
@@ -230,3 +307,6 @@ jobs:
       # and five warm installs per tool.
       runs: ${{ inputs.oneshot_runs }}
       baseline_ref: ${{ inputs.baseline_ref }}
+      jcode_version: ${{ needs.resolve.outputs.tag }}
+      jcode_release_commit: ${{ needs.resolve.outputs.commit }}
+      jcode_release_source: ${{ needs.resolve.outputs.selection }}

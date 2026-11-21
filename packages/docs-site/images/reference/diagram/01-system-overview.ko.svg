@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" width="960" height="620" role="img" aria-labelledby="t d">
-<title id="t">horon-agent 전체 구조</title><desc id="d">왼쪽의 클라이언트 - horon-tui, TypeScript·Python SDK, ACP로 붙는 편집기, RPC로 붙는 호스트 프로그램 - 는 Unix 소켓이나 stdio로 하나의 horon-agent 프로세스에 닿는다. 프로세스는 api-bridge, acp, rpc 진입점에서 시작하고 이들은 모두 horon-agent serve가 띄운 데몬 위에 있다. 데몬은 워크스페이스 크레이트로 만들어지고, 세션을 ~/.horon/sessions 아래 추가 전용 이벤트 저장소에 두며, MCP 서버 풀 하나를 모든 세션이 공유한다. 모델 호출은 활성 프로필의 type이 가리키는 엔드포인트로 바로 POST하며 그 사이에 라우터 프로세스도 플러그인 호스트도 없다. 터미널 클라이언트는 별도 바이너리 horon-tui이고 horon-agent-sdk 위에서 도는데, 에이전트 바이너리는 이 SDK를 링크하지 않는다.</desc>
+<title id="t">horon-agent 전체 구조</title><desc id="d">왼쪽의 클라이언트 - horon-tui, TypeScript·Python SDK, ACP로 붙는 편집기, RPC로 붙는 호스트 프로그램 - 는 Unix 소켓이나 stdio로 하나의 horon-agent 프로세스에 닿는다. 프로세스는 api-bridge, acp, rpc 진입점에서 시작하고 이들은 모두 horon-agent serve가 띄운 데몬 위에 있다. 데몬은 워크스페이스 크레이트로 만들어지고, 세션을 ~/.horon/sessions 아래 추가 전용 이벤트 저장소에 두며, MCP 서버 풀 하나를 모든 세션이 공유한다. 공급자 런타임 하나가 활성 프로필의 type이 가리키는 엔드포인트로 바로 POST한다. 터미널 클라이언트는 별도 바이너리 horon-tui이고 horon-agent-sdk 위에서 도는데, 에이전트 바이너리는 이 SDK를 링크하지 않는다.</desc>
 <style>
 :root{--bg:#ffffff;--fg:#1f2328;--muted:#59636e;--line:#d1d9e0;--panel:#f6f8fa;--a:#0b6bcb;--b:#c2410c;--ok:#1a7f37}
 @media (prefers-color-scheme: dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--line:#3d444d;--panel:#151b23;--a:#58a6ff;--b:#ffa657;--ok:#3fb950}}
@@ -78,8 +78,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="840" y="298" font-size="10.5" class="m" text-anchor="middle">이미지: /images/*</text>
 <text x="840" y="328" font-size="11" class="m" text-anchor="middle">네 회선 중 하나를</text>
 <text x="840" y="344" font-size="11" class="m" text-anchor="middle">type이 고른다</text>
-<text x="840" y="372" font-size="11" class="m" text-anchor="middle">라우터도 플러그인</text>
-<text x="840" y="388" font-size="11" class="m" text-anchor="middle">호스트도 없이 직접 POST</text>
+<text x="840" y="372" font-size="11" class="m" text-anchor="middle">공급자 런타임 하나</text>
+<text x="840" y="388" font-size="11" class="m" text-anchor="middle">엔드포인트로 바로 POST</text>
 
 <text x="480" y="580" font-size="12" class="m" text-anchor="middle">모든 클라이언트가 같은 데몬에 닿고, 다른 것은 연결 방식뿐이다.</text>
 </svg>

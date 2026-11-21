@@ -117,6 +117,17 @@ except EOFError:
                 self.assertEqual([(f["type"], f["id"]) for f in frames], [("error", None)])
                 self.assertLess(len(frames[0]["text"]), 100)
 
+    def test_tool_reply_must_match_the_active_cell_and_sequence(self):
+        code = "print(await tool.read(file_path='fixture'))"
+        for cell_id, seq in [(1, 1), (2, 2)]:
+            with self.subTest(cell_id=cell_id, seq=seq):
+                reply = {"type": "tool_result", "id": cell_id, "seq": seq, "ok": True, "text": "unexpected result"}
+                result = run_wire(request(2, code) + json.dumps(reply).encode("utf-8") + b"\n")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                frames = [json.loads(line) for line in result.stdout.splitlines()]
+                self.assertEqual([(f["type"], f["id"]) for f in frames], [("started", 2), ("tool_call", 2), ("error", None)])
+                self.assertIn("Unexpected Python tool response", frames[-1]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()
