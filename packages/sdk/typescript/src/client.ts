@@ -890,9 +890,28 @@ export class HoronAgentClient extends EventEmitter {
   }
 
   /** Clone a session's complete persisted context into a new idle session. */
-  async forkSession(sessionId: string): Promise<SessionInfo> {
-    const frame = await this.expectReply({ req: "fork_session", session_id: sessionId }, "session_forked");
+  async forkSession(
+    sessionId: string,
+    options: { consult?: boolean; boundary?: string } = {},
+  ): Promise<SessionInfo> {
+    const frame = await this.expectReply(
+      {
+        req: "fork_session",
+        session_id: sessionId,
+        ...(options.consult ? { consult: true } : {}),
+        ...(options.boundary ? { boundary: options.boundary } : {}),
+      },
+      "session_forked",
+    );
     return frame.session;
+  }
+
+  /** Fork a read-only consult child, optionally before a stored message id. */
+  async forkConsult(sessionId: string, boundary?: string): Promise<SessionInfo> {
+    if (!this.supports("consult_fork_v1")) {
+      throw new Error("This harness cannot create a read-only side session. Update the runtime and API bridge.");
+    }
+    return this.forkSession(sessionId, { consult: true, boundary });
   }
 
   async detachSession(sessionId: string): Promise<void> {

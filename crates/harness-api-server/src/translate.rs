@@ -2,6 +2,7 @@
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
 mod cancellable_work;
+mod consult;
 mod compact_handoff;
 mod credentials;
 pub(crate) mod effective_settings;
@@ -680,7 +681,7 @@ impl BridgeState {
             "fork_session" => {
                 let id = self.legacy_id();
                 self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "split", "id": id}))]
+                vec![Outbound::Legacy(consult::fork_frame(id, &request))]
             }
             "transfer_session" => {
                 let id = self.legacy_id();

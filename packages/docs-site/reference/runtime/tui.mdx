@@ -443,12 +443,15 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
+| `/side <question>` | Ask a separate read-only session a question |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
 The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
+
+`/side <question>` shows the answer in its own panel. Use `/side --at <message-id> <question>` to use the conversation before a saved message. Press Escape to close the panel and continue the parent conversation. Press Enter when the panel offers a saved session to open it again. The daemon keeps the child read-only when reopened.
 
 `/artifact` lists retained artifacts for the current local session. Enter `/artifact <id>` or paste the `artifact://<id>` pointer to edit a temporary copy with `VISUAL` or `EDITOR`. The retained file stays unchanged and the temporary copy is removed on return. An explicit socket or remote bridge disables local artifact access.
 
@@ -479,6 +482,7 @@ built-in commands:
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
+  /side                ask a separate read-only session a question
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
 harness commands:

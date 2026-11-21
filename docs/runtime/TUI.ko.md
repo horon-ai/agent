@@ -440,12 +440,15 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/replay [path\|stop]` | 로컬에서 기록을 재생하거나 현재 세션으로 돌아온다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
+| `/side <질문>` | 별도의 읽기 전용 세션에 질문한다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
 이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열일곱 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
+
+`/side <질문>`의 답변은 별도 패널에 표시됩니다. 저장된 메시지 직전까지의 대화로 질문하려면 `/side --at <메시지-id> <질문>`을 사용합니다. Escape를 누르면 패널을 닫고 원래 대화를 이어갑니다. 패널에 저장된 세션이 나오면 Enter를 눌러 다시 열 수 있습니다. 데몬은 다시 연 자식 세션에도 읽기 전용 제한을 적용합니다.
 
 `/artifact`는 현재 로컬 세션에 보관된 산출물을 나열합니다. `/artifact <id>`를 입력하거나 `artifact://<id>` 주소를 붙여넣으면 `VISUAL` 또는 `EDITOR`에서 임시 사본을 편집합니다. 원본은 유지되고 돌아올 때 사본을 지웁니다. 소켓을 직접 지정하거나 원격 브리지에 연결하면 로컬 산출물을 열 수 없습니다.
 
@@ -476,6 +479,7 @@ built-in commands:
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
+  /side                ask a separate read-only session a question
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
 harness commands:

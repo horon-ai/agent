@@ -55,6 +55,12 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// Fork the attached session into a read-only child and ask it a question.
+    ///
+    /// The fork and the question run on a second connection, so the worker
+    /// keeps following the parent: the parent's stream, transcript and tools
+    /// are untouched while the child answers.
+    SideQuestion { id: u64, question: String, boundary: Option<String> },
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one
@@ -160,6 +166,21 @@ pub enum Incoming {
     },
     /// A request the harness answered with an error; the client stops waiting.
     RequestFailed(String),
+    /// The side session exists and is read-only; its id is the identity a
+    /// later `/switch` reattaches by.
+    SideStarted { id: u64, session_id: String },
+    /// The answer as the child's stream has built it so far.
+    SideAnswer { id: u64, answer: String },
+    /// What the child is doing, on one line.
+    SideProgress { id: u64, line: String },
+    /// Something about the side turn worth keeping in view. The answer still
+    /// arrives separately.
+    SideNotice { id: u64, line: String },
+    /// The turn ended; `answer` is the stored answer, not the streamed preview.
+    SideDone { id: u64, answer: String },
+    /// The side question could not be started or answered. A failure after
+    /// `SideStarted` leaves the child stored, and its id is on the overlay.
+    SideFailed { id: u64, message: String },
     /// The connection ended; the string says why.
     Closed(String),
 }

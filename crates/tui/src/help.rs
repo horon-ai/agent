@@ -268,6 +268,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
+        "side" => "ask a read-only side session about this conversation (also /btw; --at <id> forks before a stored message), then esc back",
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",
         _ => "",

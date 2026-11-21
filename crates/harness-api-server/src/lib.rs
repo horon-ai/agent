@@ -361,6 +361,7 @@ where
     let user_connections_supported = daemon_caps.iter().any(|cap| cap == "session_connections");
     let runtime_commands_supported = daemon_caps.iter().any(|cap| cap == "runtime_commands");
     let session_tools_supported = daemon_caps.iter().any(|cap| cap == "session_tools");
+    let consult_fork_supported = daemon_caps.iter().any(|cap| cap == "consult_fork_v1");
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
@@ -385,6 +386,7 @@ where
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
                 .chain(session_tools_supported.then(|| "session_tools".to_string()))
+                .chain(consult_fork_supported.then(|| "consult_fork_v1".to_string()))
                 .chain(
                     ["soft_interrupt_ids", "background_tool_result"]
                         .into_iter()

@@ -2337,8 +2337,8 @@ pub(super) async fn handle_client(
                 handle_invalidate_openai_usage(id, account_label, &client_event_tx).await;
             }
 
-            Request::Split { id } => {
-                handle_split(id, &client_session_id, &agent, &client_event_tx).await;
+            Request::Split { id, consult, boundary } => {
+                handle_split(id, &client_session_id, &agent, &client_event_tx, consult, boundary).await;
             }
 
             Request::Transfer { id } => {

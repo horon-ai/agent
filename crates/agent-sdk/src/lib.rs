@@ -134,6 +134,7 @@
 
 mod cancellable_work;
 mod client;
+mod consult;
 pub mod collections;
 mod connect_options;
 mod diagnostics;

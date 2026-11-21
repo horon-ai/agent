@@ -228,6 +228,9 @@ struct SessionToolPolicy {
     /// that read it - `toolbox` and the `mcp` management tool - hold a registry
     /// and cannot reach the session's own state.
     listed_mcp_surface: bool,
+    /// A read-only consult child: the stored allow list outranks every client
+    /// tool configuration, so reconnecting or reconfiguring cannot widen it.
+    consult: bool,
     owner: Option<u64>,
 }
 
@@ -405,6 +408,29 @@ async fn run_gated_pre_tool_hook(
 ///
 /// The owner token prevents a stale Agent from removing the policy installed by
 /// a successor connection for the same persisted session ID.
+/// Mark an existing policy as a consult child's.
+///
+/// Called where the agent is built from a session whose `consult` flag is set,
+/// so the allow list that build registered is also the one no client can
+/// replace. A session without an entry is left alone.
+pub(crate) fn mark_session_consult_policy(session_id: &str) {
+    let mut policies = SESSION_TOOL_POLICIES
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(policy) = policies.get_mut(session_id).map(Arc::make_mut) {
+        policy.consult = true;
+    }
+}
+
+/// Whether this session's stored policy is a read-only consult child's.
+pub(crate) fn session_is_consult(session_id: &str) -> bool {
+    SESSION_TOOL_POLICIES
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(session_id)
+        .is_some_and(|policy| policy.consult)
+}
+
 pub(crate) struct SessionToolPolicyRegistration {
     session_id: String,
     owner: u64,
@@ -462,6 +488,7 @@ pub(crate) fn register_session_tool_policy(
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
+            consult: false,
             owner: Some(owner),
         }),
     );
@@ -526,6 +553,7 @@ pub(crate) fn set_session_tool_policy(
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
+            consult: false,
             owner: None,
         }),
     );
@@ -558,6 +586,11 @@ fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
+    if stored.as_ref().is_some_and(|policy| policy.consult) {
+        // A consult child is read-only for its whole stored life; a client's
+        // overlay may describe tools, but it cannot widen this one.
+        return stored;
+    }
     let Some(config) = sdk::config(session_id) else {
         return stored;
     };

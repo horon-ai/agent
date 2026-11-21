@@ -164,6 +164,9 @@ pub(super) async fn create_headless_session(
     );
     if let Some(source) = consult_source.as_ref() {
         new_agent.install_forked_transcript(source)?;
+        // Persist the classification, not only the list this agent was born
+        // with: a later agent built for this session must narrow itself too.
+        new_agent.mark_consult();
     }
     new_agent.set_memory_enabled(memory_enabled);
     // Inline swarm mode renders a live gallery of worker viewports in the
@@ -179,6 +182,9 @@ pub(super) async fn create_headless_session(
         new_agent.set_session_provider_key(provider_key_override.clone());
     }
     let client_session_id = new_agent.session_id().to_string();
+    if consult_source.is_some() {
+        crate::tool::mark_session_consult_policy(&client_session_id);
+    }
 
     if let Some(model) = model_override {
         // Build a model-switch request that preserves the coordinator's auth

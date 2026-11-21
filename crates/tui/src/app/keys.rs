@@ -59,6 +59,13 @@ impl App {
         if self.replaying() && self.replay_key(key) {
             return None;
         }
+        // A side question owns every key while it is open: it is a reading
+        // surface, and `esc` there returns to the conversation instead of
+        // interrupting the parent's turn. It sits above the picker because it
+        // is opened from the draft, where no list can be open.
+        if self.side.is_some() {
+            return self.side_key(key);
+        }
         // The queue list is a list whose rows are edited rather than chosen,
         // so it is answered before the generic picker that would read `enter`
         // as a choice. It still owns every key while it is open.
@@ -389,7 +396,7 @@ impl App {
     /// keystrokes would be. Otherwise the whole text lands in the draft as one
     /// edit, with its line breaks kept.
     pub fn on_paste(&mut self, text: &str) {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return;
         }
         self.history.reset();
@@ -490,7 +497,7 @@ impl App {
     /// the cell it covered on the last frame; a click elsewhere on screen has
     /// nothing to mean.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
-        if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() {
+        if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return;
         }
         match mouse.kind {

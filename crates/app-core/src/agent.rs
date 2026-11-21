@@ -569,6 +569,14 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// Mark this session as a read-only consult child.
+    ///
+    /// The flag is persisted with the session, so every later agent built for
+    /// it starts on the consult tool list instead of the configured profile.
+    pub(crate) fn mark_consult(&mut self) {
+        self.session.consult = true;
+    }
+
     fn should_track_client_cache(&self) -> bool {
         match std::env::var("HORON_AGENT_TRACK_CLIENT_CACHE") {
             Ok(value) => {
@@ -618,6 +626,14 @@ impl Agent {
         // dispatcher that reaches them, so an operator who removed `toolbox`
         // gets every core tool eager again instead of tools nothing can call.
         let core_listed = default_core_profile && tool_config.toolbox_reachable();
+        // A consult child is read-only from its first agent, on every path that
+        // builds one. The flag lives in the stored session, so an attach after a
+        // daemon restart gets the same list as the fork that created it.
+        let allowed_tools = if session.consult {
+            Some(crate::session_scope::CONSULT_TOOLS.iter().map(|tool| (*tool).to_string()).collect())
+        } else {
+            allowed_tools
+        };
         let allowed_tools = Self::without_unreachable_dispatcher(tool_config, allowed_tools, core_listed);
         let load_tiers = tool_config.load_tiers(allowed_tools.as_ref(), core_listed);
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
@@ -626,6 +642,9 @@ impl Agent {
         let initial_provider_model = provider.model();
         let tool_policy_registration =
             crate::tool::register_session_tool_policy(&session.id, allowed_tools.clone(), disabled_tools.clone());
+        if session.consult {
+            crate::tool::mark_session_consult_policy(&session.id);
+        }
         let secret_vault_registration = crate::secrets::register_session_vault(&session.id);
         // The dispatcher must read the same frozen tier snapshot the tool list
         // uses, not a later configuration reload.

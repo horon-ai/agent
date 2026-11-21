@@ -27,6 +27,7 @@ mod daemon_settings;
 mod messages;
 mod runtime;
 mod sessions;
+mod side;
 mod skills;
 mod steer;
 
@@ -38,6 +39,9 @@ mod steer_tests;
 
 #[cfg(test)]
 mod sessions_tests;
+
+#[cfg(test)]
+mod side_tests;
 
 #[cfg(test)]
 mod skills_tests;
@@ -362,14 +366,14 @@ fn run_worker(
                         _ => None,
                     };
                     let description = describe(&command);
-                    // The two commands that change the session answer here
-                    // rather than in `serve`, because each also moves the
-                    // connection the worker holds. Both subscribe before the
-                    // request leaves: the daemon publishes the new session's
-                    // identity (provider, model, reasoning effort) while the
-                    // request is in flight, and a stream opened after the
-                    // answer would drop it. An attach retargets the one
-                    // connection; a create gets a connection of its own,
+                    // The commands that create or move a session answer here
+                    // rather than in `serve`, because each also touches the
+                    // connection the worker holds. The create and the attach
+                    // subscribe before the request leaves: the daemon publishes
+                    // the new session's identity (provider, model, reasoning
+                    // effort) while the request is in flight, and a stream
+                    // opened after the answer would drop it. An attach retargets
+                    // the one connection; a create gets a connection of its own,
                     // because the daemon answers a second subscribe on one
                     // connection with the session it already has. A failed dial
                     // or create moves nothing, which keeps the session the
@@ -392,6 +396,32 @@ fn run_worker(
                                 }
                                 Err(error) => Err(error),
                             }
+                        }
+                        // A side question is the one command whose answer does
+                        // not return here: the worker keeps following the
+                        // parent while a second thread drives the child, and
+                        // every result of it arrives as a `Side*` delivery.
+                        Command::SideQuestion { id, question, boundary } => {
+                            // Refused before any fork, so an older daemon can
+                            // never hand back a wide child under a read-only
+                            // request it does not understand.
+                            if !client.supports("consult_fork_v1") {
+                                side::fail(
+                                    &events,
+                                    id,
+                                    "this harness cannot create a read-only side session; update the daemon",
+                                );
+                            } else {
+                                side::start(
+                                    &session_id,
+                                    id,
+                                    dial.clone(),
+                                    question,
+                                    boundary,
+                                    events.clone(),
+                                );
+                            }
+                            Ok(None)
                         }
                         Command::Attach(id) => {
                             // Unfiltered for the same reason as the start-up
@@ -685,7 +715,8 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Steer(_)
         | Command::Runtime { .. }
         | Command::NewSession { .. }
-        | Command::Attach(_) => Ok(None),
+        | Command::Attach(_)
+        | Command::SideQuestion { .. } => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -732,6 +763,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
+        Command::SideQuestion { .. } => "could not start the side question",
         Command::Cancel => "could not cancel the turn",
         Command::Approval { .. } => "could not answer the approval",
         Command::Ask { .. } => "could not answer the question",

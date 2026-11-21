@@ -574,6 +574,24 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def side_question_smoke(terminal: Terminal, home: str) -> None:
+    from pathlib import Path
+
+    parents = list(Path(home).glob("sessions/*/events.jsonl"))
+    if len(parents) != 1:
+        raise Failure(f"expected one parent session, got {len(parents)}")
+    question = "side fixture question"
+    terminal.send(f"/side {question}\r")
+    terminal.read_until("Side question", STEP_TIMEOUT, "separate panel opened")
+    terminal.read_until("side-fixture-answer", STEP_TIMEOUT, "read-only child answered")
+    if question in parents[0].read_text(encoding="utf-8"):
+        raise Failure("the side question entered the parent history")
+    children = [path for path in Path(home).glob("sessions/*/events.jsonl") if path != parents[0]]
+    if len(children) != 1 or question not in children[0].read_text(encoding="utf-8"):
+        raise Failure("expected the side question in a saved child session")
+    terminal.send("\x1b")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -600,6 +618,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            side_question_smoke(terminal, home)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

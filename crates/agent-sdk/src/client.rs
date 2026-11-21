@@ -1157,16 +1157,11 @@ impl HoronAgentClient {
         }
     }
 
+    /// Clone a session's complete persisted context into a new idle session.
+    ///
+    /// The read-only consult fork and its boundary live in [`crate::consult`].
     pub fn fork_session(&self, session_id: &str) -> Result<SessionInfo> {
-        match self
-            .request_ok(ApiRequest::ForkSession {
-                session_id: session_id.to_string(),
-            })?
-            .event
-        {
-            ApiEvent::SessionForked { session } => Ok(session),
-            other => Err(unexpected("session_forked", &other)),
-        }
+        self.fork_with(session_id, false, None)
     }
 
     pub fn detach_session(&self, session_id: &str) -> Result<()> {

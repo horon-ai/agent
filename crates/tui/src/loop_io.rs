@@ -104,6 +104,12 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 app.apply_session_directory(working_dir.as_deref());
             }
             Incoming::RequestFailed(message) => app.request_failed(&message),
+            Incoming::SideStarted { id, session_id } => app.side_started(id, session_id),
+            Incoming::SideAnswer { id, answer } => app.side_answer(id, answer),
+            Incoming::SideProgress { id, line } => app.side_progress(id, line),
+            Incoming::SideNotice { id, line } => app.side_notice(id, line),
+            Incoming::SideDone { id, answer } => app.side_done(id, answer),
+            Incoming::SideFailed { id, message } => app.side_failed(id, message),
             Incoming::Closed(message) => app.disconnect(&message),
         }
     }
@@ -142,6 +148,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        Action::SideQuestion { id, question, boundary } => Command::SideQuestion { id, question, boundary },
         Action::CheckSessions(sessions) => Command::CheckSessions(sessions),
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.

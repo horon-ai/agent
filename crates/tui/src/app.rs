@@ -40,6 +40,7 @@ mod prompts;
 pub(crate) mod record;
 mod sending;
 mod sessions;
+mod side;
 mod settings;
 mod skills;
 mod status;
@@ -62,10 +63,8 @@ mod history_search_tests;
 
 #[cfg(test)]
 mod notes_tests;
-
 #[cfg(test)]
 mod session_switch_tests;
-
 #[cfg(test)]
 mod steer_tests;
 
@@ -114,6 +113,7 @@ pub enum Action {
     NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
+    SideQuestion { id: u64, question: String, boundary: Option<String> },
     /// Ask the harness for the skills it reports for the session.
     Skills,
     /// Ask which noted sessions were deleted, including checks for archived sessions.
@@ -408,6 +408,7 @@ pub struct App {
     pub artifacts_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
+    pub side: Option<crate::overlays::side::SideOverlay>,
     /// The open list of models or sessions, if one is showing.
     ///
     /// A picker sits above every other surface: while it is open no key reaches
@@ -527,6 +528,7 @@ impl App {
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
+            side: None,
             picker: None,
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
@@ -614,6 +616,7 @@ impl App {
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
+            side: None,
             picker: None,
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),

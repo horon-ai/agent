@@ -270,6 +270,15 @@ pub struct Session {
     /// Last time the session was marked active
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<Timestamp>,
+    /// A read-only consult child.
+    ///
+    /// Every agent built for this session starts on
+    /// [`crate::session_scope::CONSULT_TOOLS`], and a client tool configuration
+    /// cannot widen it. A fork does not inherit the flag: a normal copy of a
+    /// consult is an ordinary session, and a consult fork of a normal session
+    /// is the only way to become one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub consult: bool,
     /// Whether this is a debug/test session (created via debug socket)
     #[serde(default)]
     pub is_debug: bool,
@@ -715,6 +724,7 @@ impl Session {
             status: SessionStatus::Active,
             last_pid: Some(std::process::id()),
             last_active_at: Some(now),
+            consult: false,
             is_debug,
             saved: false,
             save_label: None,
@@ -785,6 +795,7 @@ impl Session {
             status: SessionStatus::Active,
             last_pid: Some(std::process::id()),
             last_active_at: Some(now),
+            consult: false,
             is_debug,
             saved: false,
             save_label: None,
