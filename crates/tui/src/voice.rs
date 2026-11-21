@@ -335,10 +335,7 @@ impl Voice {
         if let Some(recorder) = &self.recorder {
             let pid = recorder.swap(0, Ordering::SeqCst);
             if pid != 0 {
-                match process::force_stop_process_group(pid) {
-                    Ok(()) => {}
-                    Err(_) => {}
-                }
+                stop_group(pid);
             }
         }
     }
@@ -498,21 +495,20 @@ impl Drop for Voice {
 pub(crate) fn kill_active_process() {
     let pid = ACTIVE_PID.swap(0, Ordering::SeqCst);
     if pid != 0 {
-        match process::force_stop_process_group(pid) {
-            // The program may already have ended; the client is stopping.
-            Ok(()) => {}
-            Err(_) => {}
-        }
+        // The program may already have ended; the client is stopping.
+        stop_group(pid);
     }
+}
+
+/// Stop a process group, treating a program that already ended as done.
+fn stop_group(pid: u32) {
+    drop(process::force_stop_process_group(pid));
 }
 
 /// Send a result to the app, or drop it when the client is gone.
 fn report_to(sender: &Sender<Event>, event: Event) {
-    match sender.send(event) {
-        Ok(()) => {}
-        // The app is gone; the worker has nobody left to report to.
-        Err(_) => {}
-    }
+    // The app is gone when this fails; the worker has nobody left to report to.
+    drop(sender.send(event));
 }
 
 /// What one worker attempt produced.
@@ -593,10 +589,8 @@ impl<'a> Active<'a> {
 impl Drop for Active<'_> {
     fn drop(&mut self) {
         if self.armed {
-            match process::force_stop_process_group(self.pid) {
-                Ok(()) => {}
-                Err(_) => {}
-            }
+            // The program may have ended already; this guard is unwinding.
+            stop_group(self.pid);
         }
         self.clear_recorder();
         if ACTIVE_PID.load(Ordering::SeqCst) == self.pid {
@@ -639,10 +633,7 @@ fn run_child(
     let mut active = Active::new(pid, recorder);
     loop {
         if cancel.load(Ordering::SeqCst) {
-            match process::force_stop_process_group(pid) {
-                Ok(()) => {}
-                Err(_) => {}
-            }
+            stop_group(pid);
             reap(&mut child);
             active.disarm();
             return Ok(ChildEnd::Cancelled);
@@ -650,10 +641,7 @@ fn run_child(
         // A stop asked for while the capture runs ends it as if its own limit
         // had been reached: the audio recorded so far is still recognized.
         if finish.is_some_and(|finish| finish.load(Ordering::SeqCst)) {
-            match process::force_stop_process_group(pid) {
-                Ok(()) => {}
-                Err(_) => {}
-            }
+            stop_group(pid);
             reap(&mut child);
             active.disarm();
             return Ok(ChildEnd::Stopped);
@@ -667,19 +655,13 @@ fn run_child(
             }
             Ok(None) if Instant::now() < deadline => std::thread::sleep(POLL),
             Ok(None) => {
-                match process::force_stop_process_group(pid) {
-                    Ok(()) => {}
-                    Err(_) => {}
-                }
+                stop_group(pid);
                 reap(&mut child);
                 active.disarm();
                 return Ok(ChildEnd::Stopped);
             }
             Err(error) => {
-                match process::force_stop_process_group(pid) {
-                    Ok(()) => {}
-                    Err(_) => {}
-                }
+                stop_group(pid);
                 reap(&mut child);
                 active.disarm();
                 return Err(VoiceError::new(format!(
@@ -693,11 +675,8 @@ fn run_child(
 
 /// Reap a program that was stopped, so it does not stay a zombie.
 fn reap(child: &mut std::process::Child) {
-    match child.wait() {
-        Ok(_status) => {}
-        // The status is already known not to matter on this path.
-        Err(_) => {}
-    }
+    // The status is already known not to matter on this path.
+    drop(child.wait());
 }
 
 /// Capture, then recognize, removing the files it wrote on the way out.
@@ -921,7 +900,7 @@ fn is_annotation(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     matches!(
         lower.as_str(),
-        "[blank_audio]" | "[music]" | "[silence]" | "(silence)" | "[no speech]" | "[inaudible]"
+        "[blank_audio]" | "[music]" | "(music)" | "[silence]" | "(silence)" | "[no speech]" | "[inaudible]"
     )
 }
 
@@ -1011,9 +990,6 @@ fn sweep(dir: &Path) {
 
 /// Remove one scratch file; a file already gone needs no report.
 fn discard(path: &Path) {
-    match fs::remove_file(path) {
-        Ok(()) => {}
-        // Nothing is left to tell: the worker has finished with the file.
-        Err(_) => {}
-    }
+    // Nothing is left to tell: the worker has finished with the file.
+    drop(fs::remove_file(path));
 }
