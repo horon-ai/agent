@@ -233,7 +233,9 @@ fn rpc_subcommand_wins_over_the_mode_flag() {
 fn run_json_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "run", "--json", "hello"]).unwrap();
     match args.command {
-        Some(Command::Run { json, ndjson, message }) => {
+        Some(Command::Run {
+            json, ndjson, message, ..
+        }) => {
             assert!(json);
             assert!(!ndjson);
             assert_eq!(message, "hello");
@@ -246,7 +248,9 @@ fn run_json_subcommand_parses() {
 fn run_ndjson_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "run", "--ndjson", "hello"]).unwrap();
     match args.command {
-        Some(Command::Run { json, ndjson, message }) => {
+        Some(Command::Run {
+            json, ndjson, message, ..
+        }) => {
             assert!(!json);
             assert!(ndjson);
             assert_eq!(message, "hello");

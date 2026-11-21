@@ -423,6 +423,8 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 
 ## Live background output notices
 
+`horon run --no-pty` uses pipes for shell tools started by that invocation, including background shell jobs. It overrides both `[tools] bash_pty` and the shell call's `pty` argument.
+
 Set `run_in_background: true` and `notify_pattern` to receive matching stdout or stderr lines from a finite `bash` call while it runs. Use a Rust regex of at most 512 bytes. The tool rejects invalid patterns, foreground calls with a pattern, and patterns on named services before starting a process.
 
 The session that launched the job receives up to 20 matching lines. Each notice identifies the job and its output stream. A last line without a newline is eligible. The output remains available through `bg action=output`, and `notify` still controls the separate completion notice. These live notices do not wake the model.

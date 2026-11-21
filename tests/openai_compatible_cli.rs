@@ -158,6 +158,10 @@ struct Mock {
 
 impl Mock {
     async fn start() -> Self {
+        Self::start_with_tool("ls", r#"{"path":"."}"#).await
+    }
+
+    async fn start_with_tool(tool: &'static str, arguments: &'static str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind the mock");
         let port = listener.local_addr().expect("the mock address").port();
         let requests = Arc::new(AtomicUsize::new(0));
@@ -172,7 +176,7 @@ impl Mock {
                 let requests = Arc::clone(&requests_thread);
                 let bodies = Arc::clone(&bodies_thread);
                 tokio::spawn(async move {
-                    let _ = serve(socket, &requests, &bodies).await;
+                    let _ = serve(socket, &requests, &bodies, tool, arguments).await;
                 });
             }
         });
@@ -199,6 +203,8 @@ async fn serve(
     mut socket: tokio::net::TcpStream,
     requests: &AtomicUsize,
     bodies: &std::sync::Mutex<Vec<String>>,
+    tool: &str,
+    arguments: &str,
 ) -> std::io::Result<()> {
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -235,7 +241,7 @@ async fn serve(
                 "index": 0,
                 "id": "call_qa_1",
                 "type": "function",
-                "function": {"name": "ls", "arguments": "{\"path\":\".\"}"}
+                "function": {"name": tool, "arguments": arguments}
             }]}),
             Value::Null,
         )
@@ -469,6 +475,32 @@ impl Recorder {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn run_sets_validated_model_options_before_requesting_the_model() {
+    let recorder = Recorder::start(Wire::Responses).await;
+    let home = Home::new();
+    home.add_profile("qa-wire", Wire::Responses, recorder.base_url()).await;
+    for (flags, success) in [
+        (&[][..], true),
+        (&["--thinking", "high", "--service-tier", "priority"][..], true),
+        (&["--thinking", "unsupported"][..], false),
+        (&["--service-tier", "auto"][..], false),
+    ] {
+        let mut args = vec!["--provider-profile", "qa-wire", "run", PROMPT, "--no-update"];
+        args.extend_from_slice(flags);
+        let output = home.run_with_env(&args, &[(KEY_ENV, FAKE_KEY)]).await;
+        assert_eq!(output.status.success(), success, "{}", text(&output.stderr));
+    }
+    let requests = recorder.requests();
+    assert_eq!(requests.len(), 2, "unsupported values made a model request");
+    let default: Value = serde_json::from_str(&requests[0].body).unwrap();
+    let changed: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert!(default.get("service_tier").is_none());
+    assert!(default.get("reasoning").is_none());
+    assert_eq!(changed["service_tier"], "priority");
+    assert_eq!(changed["reasoning"]["effort"], "high");
+}
+
 /// Registers `wire` through `provider add`, runs one prompt through the real
 /// binary, and checks the recorded request and the printed answer together: a
 /// passing run that never reached the mock would prove nothing.
@@ -604,6 +636,75 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
         message["role"] == "user" && message["content"].as_str().is_some_and(|text| text.contains("hi"))
     });
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
+    let home = Home::new();
+    for output_mode in [None, Some("--json"), Some("--ndjson")] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        home.write_config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+        let provider = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await.unwrap();
+            assert!(request.body.contains("check the deadline"));
+            assert_eq!(socket.read(&mut [0]).await.unwrap(), 0, "model connection stayed open");
+        });
+        let mut args = vec!["run", "check the deadline", "--no-update", "--max-time", "2"];
+        args.extend(output_mode);
+        let result = home.run(&args).await;
+        assert_eq!(result.status.code(), Some(124), "{}", text(&result.stderr));
+        tokio::time::timeout(Duration::from_secs(2), provider)
+            .await
+            .expect("the model sees the cancelled connection")
+            .unwrap();
+
+        let stdout = text(&result.stdout);
+        if let Some(mode) = output_mode {
+            let rows: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            if mode == "--ndjson" {
+                assert_eq!(rows[0]["type"], "start");
+                assert!(!rows.iter().any(|row| row["type"] == "done"));
+            } else {
+                assert_eq!(rows.len(), 1, "{stdout}");
+            }
+            let error = rows.last().unwrap();
+            assert_eq!(error["type"], "error");
+            assert_eq!(error["code"], "deadline_exceeded");
+            assert_eq!(error["max_time_seconds"], 2.0);
+        } else {
+            assert!(text(&result.stderr).contains("run exceeded its --max-time limit"));
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn no_pty_overrides_shell_allocation_for_one_run() {
+    use std::io::Write as _;
+
+    let home = Home::new();
+    for (flags, expected) in [(&["--no-pty"][..], "pipe-shell"), (&[][..], "tty-shell")] {
+        let mock = Mock::start_with_tool(
+            "bash",
+            r#"{"command":"if test -t 1; then state=tty-shell; else state=pipe-shell; fi; printf '%s' \"$state\" > pty-receipt"}"#,
+        )
+        .await;
+        home.write_config(&mock.base_url);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(home.path().join("config.toml"))
+            .unwrap()
+            .write_all(b"\n[tools]\nbash_pty = \"always\"\n")
+            .unwrap();
+        let mut args = vec!["run", "check whether the shell has a terminal", "--no-update"];
+        args.extend_from_slice(flags);
+        let result = home.run(&args).await;
+        assert!(result.status.success(), "{}", text(&result.stderr));
+        let receipt = home.path().join("pty-receipt");
+        assert_eq!(std::fs::read_to_string(&receipt).unwrap(), expected);
+        std::fs::remove_file(receipt).unwrap();
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

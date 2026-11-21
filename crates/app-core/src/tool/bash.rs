@@ -1134,11 +1134,25 @@ mod utf8_truncation_tests;
 #[path = "bash_notify_tests.rs"]
 mod notify_tests;
 
-pub struct BashTool;
+pub struct BashTool {
+    disable_pty: bool,
+}
 
 impl BashTool {
     pub fn new() -> Self {
-        Self
+        Self { disable_pty: false }
+    }
+
+    pub(super) fn without_pty() -> Self {
+        Self { disable_pty: true }
+    }
+
+    fn pty_mode(&self, params: &BashInput) -> crate::config::BashPtyMode {
+        if self.disable_pty {
+            crate::config::BashPtyMode::Off
+        } else {
+            params.pty.unwrap_or_else(|| crate::config::config().tools.bash_pty)
+        }
     }
 }
 
@@ -1645,7 +1659,7 @@ impl BashTool {
         let pty_mode = if bridged {
             crate::config::BashPtyMode::Off
         } else {
-            params.pty.unwrap_or_else(|| crate::config::config().tools.bash_pty)
+            self.pty_mode(params)
         };
         let wants_terminal = match pty_mode {
             crate::config::BashPtyMode::Always => true,
@@ -2185,7 +2199,7 @@ impl BashTool {
         let start_dir = resolve_bash_start_dir(params.cwd.as_deref(), &ctx, session_cwd);
         let direnv = direnv::load(start_dir.as_deref(), &ctx).await?;
         let session_id_env = ctx.session_id.clone();
-        let pty_mode = params.pty.unwrap_or_else(|| crate::config::config().tools.bash_pty);
+        let pty_mode = self.pty_mode(&params);
         // A service runs until cancelled: its `timeout` would kill the very
         // thing the caller asked to keep alive, so readiness owns the wait.
         let timeout = if service.is_some() {
