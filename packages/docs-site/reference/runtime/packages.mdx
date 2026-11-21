@@ -261,9 +261,9 @@ configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and with neither breakaway
 flag, so no package code runs before the job owns it, nothing in the package can
 leave the job, and closing the handle terminates every member, whether it closes
 by cancellation, by dropping the owner, or by the host exiting. Reporting an
-exit means the tree was swept first. A host process that already sits inside a
-Job Object which forbids nesting cannot own a child at all: the launch is
-refused with that diagnostic rather than starting a process the host could not
+exit means the tree was swept first. A host whose Job Object cannot take another
+process, or a Windows without nested jobs, cannot own a child: the launch is
+refused with a diagnostic rather than starting a process the host could not
 stop. While the child starts, the launcher holds the installed executable open
 read-only, which denies any concurrent write, rename or delete of that image on
 Windows. The launch is not a sandbox: the child still runs with the user's
