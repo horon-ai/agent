@@ -110,6 +110,14 @@ pub(crate) struct Args {
     #[arg(long = "continue", global = true, conflicts_with_all = ["resume", "ssh"])]
     pub(crate) continue_latest: bool,
 
+    /// Attach an objective to a new session before its first turn.
+    #[arg(long, global = true, requires = "goal_budget", conflicts_with_all = ["resume", "continue_latest", "ssh"])]
+    pub(crate) goal: Option<String>,
+
+    /// Token ceiling for the new session goal.
+    #[arg(long, global = true, requires = "goal", value_parser = clap::value_parser!(u64).range(1..))]
+    pub(crate) goal_budget: Option<u64>,
+
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
     #[allow(dead_code)]
@@ -186,8 +194,26 @@ impl Args {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Print shell completions for horon
+    Completions { shell: CompletionShell },
+
+    /// Validate stream rules and optionally preview one assistant-text sample
+    #[command(name = "stream-rules")]
+    StreamRules {
+        /// Assistant text to check, or '-' to read UTF-8 text from stdin
+        #[arg(value_name = "TEXT")]
+        sample: Option<String>,
+    },
+
     /// List configured MCP servers or manage remote-server OAuth credentials
     Mcp {
         #[command(subcommand)]
@@ -256,6 +282,10 @@ pub(crate) enum Command {
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
         max_time: Option<std::time::Duration>,
+
+        /// Wait for background jobs started by this invocation before exiting
+        #[arg(long)]
+        wait_async: bool,
 
         #[command(flatten)]
         model_overrides: RunModelOverrides,
@@ -667,7 +697,22 @@ pub(crate) enum ModelCommand {
         /// Show provider/selection summary before the list
         #[arg(long)]
         verbose: bool,
+        #[command(flatten)]
+        filter: ModelListFilter,
     },
+}
+
+#[derive(clap::Args, Debug)]
+pub(crate) struct ModelListFilter {
+    /// Filter model IDs by a case-insensitive substring
+    #[arg(long, value_name = "TEXT")]
+    pub(crate) search: Option<String>,
+    /// Filter results by provider profile name
+    #[arg(long, value_name = "PROFILE")]
+    pub(crate) profile: Option<String>,
+    /// Fetch current model IDs for matching OpenAI-compatible profiles
+    #[arg(long)]
+    pub(crate) refresh: bool,
 }
 
 #[derive(Subcommand, Debug)]

@@ -39,6 +39,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`RPC.md`](/reference/protocol/rpc) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
 | | [`SHARING.md`](/reference/protocol/sharing) | Proposed encrypted session sharing and revocation |
 | `runtime/` | [`TOOLS.md`](/reference/runtime/tools) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
+| | [`EDIT_DIAGNOSTICS.md`](/reference/runtime/edit-diagnostics) | Proposed post-edit language diagnostics |
 | | [`TOOL_SCHEDULING.md`](/reference/runtime/tool-scheduling) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](/reference/runtime/turns) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
 | | [`IRC.md`](/reference/runtime/irc) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
@@ -48,6 +49,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`PACKAGES.md`](/reference/runtime/packages) | User-installed Rust packages: the author SDK, the declaration and its digest, both layouts, targets, signing and installation |
 | | [`SWARM_TASK_GRAPH.md`](/reference/runtime/swarm-task-graph) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
 | `provider/` | [`MODEL.md`](/reference/provider/model) | Direct calls to the endpoint of the wire a profile's `type` names (Chat Completions, Responses, Anthropic Messages, Gemini generateContent), provider profiles and API keys, model roles and their fallback order, the one-shot `[prewalk]` handoff, model usage metadata |
+| | [`LOCAL_HELPERS.md`](/reference/provider/local-helpers) | Proposed offline local model helper |
 | | [`INTEGRATIONS.md`](/reference/provider/integrations) | Remote MCP, user-defined web search |
 | | [`VISION_POLICY.md`](/reference/provider/vision-policy) | Proposed image input routing policy |
 | | [`DIAGNOSTICS.md`](/reference/provider/diagnostics) | Proposed bounded provider-stream diagnostic |

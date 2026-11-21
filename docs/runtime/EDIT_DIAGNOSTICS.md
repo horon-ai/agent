@@ -1,0 +1,29 @@
+# Post-edit language diagnostics
+
+Language: **English** | [한국어](EDIT_DIAGNOSTICS.ko.md)
+
+Status: proposed design for #558. The explicit LSP tool offers diagnostics, rename and code actions. This proposal adds an optional read-only report after Horon commits an edit. [Tool reference](TOOLS.md)
+
+## Decision
+
+| Option | Consequence |
+| --- | --- |
+| Run a formatter after edits | Introduces new writes and may start project commands. |
+| Ask the existing LSP registry for diagnostics | Reuses trusted server selection and returns a bounded report. Selected. |
+| Retain manual diagnostics only | Keeps control but misses immediate feedback in long worker turns. |
+
+## Scheduling and trust
+
+Enable per workspace or session with a default-off setting. A process disable overrides it and propagates to workers. A worker may disable its own report. Require the explicit LSP tool's workspace trust and server authorization. Use an already running eligible server, so this path starts no server or formatter. With no server, report `unavailable` and keep the edit successful.
+
+Read successfully committed changed paths from the edit pipeline. Ignore failed, rolled-back and no-op edits and arbitrary shell writes. Resolve eligible paths inside the workspace. Deduplicate by workspace, path and committed content revision across workers. Coalesce newer pending revisions for the same path and discard superseded responses. Use registry document synchronization and accept only diagnostics matched to the revision or a fresh response correlated to its request. Otherwise report `stale`. Limit a batch to 8 changed files, 20 diagnostics per file, one in-flight query per server and 500 ms total. On timeout or cancellation release the slot and report incomplete coverage. Diagnostic text cannot trigger an edit or tool invocation.
+
+## Implementation boundaries
+
+1. In `crates/base/src/config.rs`, define the opt-in setting and effective worker disable. Verify precedence with fake worker configuration.
+2. In `crates/app-core/src/tool/`, collect committed changes after edit operations. In `crates/app-core/src/tool/lsp.rs`, use the registry for versioned diagnostics and bounded summaries. Keep manual formatting and code actions separately consented.
+3. Use a fake server and isolated workspace in Actions. Return diagnostics in the existing edit result without a TUI dependency.
+
+## Verification
+
+Run `cargo test --locked -p horon-agent-app-core --lib`. Enable the feature and write the same new content to `example.rs` twice while leaving `other.rs` unchanged. Expect one report for `example.rs` and no query for `other.rs`. Delay the fake server past the cap and expect a timeout receipt with the edit retained. A process disable, absent server, failed edit or untrusted workspace produces zero queries and no extra writes. An older response cannot overwrite a newer report.

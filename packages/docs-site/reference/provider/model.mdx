@@ -37,7 +37,9 @@ Effort maps per wire. `openai-compatible` sends `reasoning_effort`, and `openai-
 
 Each wire appears in the model routes under its own `api_method` value from the table above. The runtime identity stays `openai-compatible` or `openai-compatible:<profile>` for all four, so stored sessions, the harness API and the SDK see one provider name.
 
-`prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. The model list comes from the profile's static `[[providers.<name>.models]]` array; no wire asks the endpoint for a list.
+`prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. By default, the model list uses the profile's static `[[providers.<name>.models]]` array.
+
+`horon model list --profile <name> --search <text>` filters the configured list by profile and by a case-insensitive substring in the model ID. Add `--refresh` to fetch `GET /models` for matching `openai-compatible` and `openai-responses` profiles using their configured authentication. The report identifies each profile and whether it refreshed, failed, or uses an unsupported wire. Failed and unsupported profiles retain their configured models in the report. `--json` includes the model source and reason per profile. Refresh results apply to that command and leave `config.toml` unchanged.
 
 ### Tool parameter schemas
 
@@ -129,6 +131,19 @@ A single `default_model` line is enough to make calls. The `models` array tells 
 A model's `reasoning_effort` is applied when that model becomes active. The session reports the level before the first request and the request carries it, so the status line draws `provider/model · high` without anyone running `/effort`, and the field is filled on whichever wire the profile speaks (the second column of [Wire protocols](#wire-protocols)). An explicit `/effort`, `shift+tab`, or a client `set_reasoning_effort` overrides the configured level and stays in force; a switch to another model then adopts the level that model declares, and a model that declares none keeps the effort already in force. A session restored from storage keeps the effort it recorded even when the configuration names a different level.
 
 `horon run --thinking <effort>` overrides the selected model's effort for the run. `--service-tier <tier>` applies to OpenAI Chat Completions and Responses. Use `priority` (also `fast`), `off` to omit the request field, or `ultrafast` for a supported model. The command rejects unsupported values before sending the prompt. These flags leave the profile configuration unchanged.
+
+## Session model presets
+
+Add a named preset to `config.toml` and use `/modelpreset preview focus` to inspect it before `/modelpreset apply focus` changes the current session.
+
+```toml
+[model_presets.focus]
+model = "daily-model"
+effort = "high"
+roles = { swarm = "worker-model", review = "daily-model" }
+```
+
+Each field is optional. `roles` accepts the session targets `swarm`, `review`, `judge`, `memory` and `ambient`. A role value of `inherit` uses the session model where the workload supports inheritance. Models must be available in the current provider profile and effort must be supported by the resulting session model. An invalid preset leaves the current choices in force.
 
 ## Model roles
 

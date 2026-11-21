@@ -34,7 +34,9 @@ effort는 방식마다 다르게 실린다. `openai-compatible`은 `reasoning_ef
 
 각 방식은 모델 라우트에 위 표의 `api_method` 값으로 나타난다. 런타임 정체성은 네 가지 모두 `openai-compatible` 또는 `openai-compatible:<profile>`로 남으므로, 저장된 세션과 하네스 API, SDK는 프로바이더 이름 하나를 본다.
 
-`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열에서 오고, 어떤 방식도 엔드포인트에 목록을 묻지 않는다.
+`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 기본 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열을 사용한다.
+
+`horon model list --profile <name> --search <text>`는 프로파일 이름과 모델 ID에 포함된 문자열로 설정 목록을 거른다. 모델 ID를 거를 때 대소문자를 구분하지 않는다. `--refresh`를 추가하면 조건에 맞는 `openai-compatible`과 `openai-responses` 프로파일에 설정된 인증을 사용해 `GET /models`를 요청한다. 프로파일별로 갱신 성공, 실패 또는 지원하지 않는 방식임을 표시한다. 실패하거나 지원하지 않는 프로파일은 설정된 모델을 목록에 표시한다. `--json`에는 프로파일별 목록 출처와 사유가 들어간다. 갱신 결과는 이번 명령에 적용되며 `config.toml`은 그대로 둔다.
 
 ### 도구 파라미터 스키마
 
@@ -126,6 +128,19 @@ input = ["text", "image"]
 모델의 `reasoning_effort`는 그 모델이 활성화될 때 적용된다. 세션은 첫 요청 전에 그 값을 보고하고 요청에 실으므로, `/effort`를 실행하지 않아도 상태 줄이 `provider/model · high`를 그리고 값은 프로파일이 쓰는 방식([요청 방식](#요청-방식) 표의 둘째 열)에 맞는 자리에 들어간다. `/effort`, `shift+tab`, 클라이언트의 `set_reasoning_effort` 같은 명시적 지정은 설정 값을 덮어쓰고 유지된다. 그 뒤 다른 모델로 바꾸면 새로 고른 모델이 선언한 값을 받아들이고, 선언이 없는 모델이면 이미 적용 중인 값을 그대로 둔다. 저장소에서 복원한 세션은 설정이 다른 값을 적었더라도 기록해 둔 값을 유지한다.
 
 `horon run --thinking <effort>`는 선택한 모델의 추론 강도를 이번 실행에 적용한다. `--service-tier <tier>`는 OpenAI Chat Completions와 Responses에서 쓴다. `priority`(`fast`도 같은 값), 요청에서 등급 필드를 빼는 `off`, 지원 모델에서 쓰는 `ultrafast`를 받는다. 지원하지 않는 값은 프롬프트를 보내기 전에 거절한다. 두 옵션은 프로파일 설정을 바꾸지 않는다.
+
+## 세션 모델 프리셋
+
+`config.toml`에 이름을 붙인 프리셋을 넣는다. `/modelpreset preview focus`로 확인하고 `/modelpreset apply focus`로 현재 세션에 적용한다.
+
+```toml
+[model_presets.focus]
+model = "daily-model"
+effort = "high"
+roles = { swarm = "worker-model", review = "daily-model" }
+```
+
+모든 항목은 생략할 수 있다. `roles`에는 세션 대상 `swarm`, `review`, `judge`, `memory`, `ambient`를 지정한다. 값에 `inherit`를 쓰면 상속을 지원하는 작업이 세션 모델을 쓴다. 모델은 현재 공급자 프로파일에서 쓸 수 있어야 하고 추론 강도는 적용할 세션 모델이 지원해야 한다. 잘못된 프리셋을 적용하면 기존 설정을 유지한다.
 
 ## 모델 역할
 
