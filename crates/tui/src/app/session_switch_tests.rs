@@ -1,5 +1,6 @@
-//! `/new`, `/switch` and `/resume` in the client: what each command refuses,
-//! and what a created session leaves behind.
+//! `/new`, `/switch`, `/resume` and `/swarm` in the client: what each command
+//! refuses, what a created session leaves behind, and which session the swarm
+//! list attaches to.
 //!
 //! These drive a real [`App`] the way the interface does, so a pass means the
 //! command reached the bridge with the right request, a refusal named the
@@ -8,9 +9,12 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use horon_agent_sdk::RuntimeCommand;
+
 use crate::app::{Action, App};
+use crate::overlays::picker::Kind;
 use crate::prompts::Prompt;
-use crate::sdk_bridge::{AttachedSession, SessionRow};
+use crate::sdk_bridge::{AttachedSession, SessionRow, SwarmRow};
 use crate::statusline::TokenTotals;
 use crate::transcript::Item;
 
@@ -420,5 +424,108 @@ fn the_directory_every_session_preview_starts_with_does_not_match_the_filter() {
         picker.is_empty(),
         "the shared directory matched {} row(s) although no label or detail holds it",
         picker.len()
+    );
+}
+
+/// One row of the `/swarm` list, as the bridge builds it.
+fn swarm_row(id: &str, label: &str, detail: &str) -> SwarmRow {
+    SwarmRow {
+        id: id.to_string(),
+        label: label.to_string(),
+        detail: detail.to_string(),
+        task: None,
+        report: None,
+        preview: vec![format!("state: {detail}")],
+        parent: false,
+    }
+}
+
+#[test]
+fn swarm_opens_the_list_and_asks_the_bridge_for_the_children() {
+    let mut app = app();
+    assert_eq!(submit(&mut app, "/swarm"), Some(Action::Swarm));
+    let picker = app.picker.as_ref().expect("`/swarm` did not open the list");
+    assert_eq!(picker.kind(), Kind::Swarm);
+    assert!(picker.is_loading(), "the list claimed rows the harness never sent");
+}
+
+#[test]
+fn swarm_with_an_argument_still_reaches_the_harness_report() {
+    let mut app = app();
+    assert_eq!(
+        submit(&mut app, "/swarm status"),
+        Some(Action::Runtime {
+            command: RuntimeCommand::Swarm,
+            arguments: vec!["status".to_string()],
+        })
+    );
+    assert!(app.picker.is_none(), "the report opened a list it has no rows for");
+}
+
+#[test]
+fn a_chosen_swarm_child_attaches_and_the_parent_row_returns() {
+    let mut app = app();
+    submit(&mut app, "/swarm");
+    app.show_swarm(vec![
+        swarm_row("child", "fix the parser", "running"),
+        swarm_row("root", "parent: root", "ready"),
+    ]);
+
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        Some(Action::Attach("child".to_string())),
+        "enter did not attach to the child the row names"
+    );
+
+    // Opened again, the last row is the way back to the session this one
+    // reports to, and it leaves by the same attach request.
+    submit(&mut app, "/swarm");
+    app.show_swarm(vec![
+        swarm_row("child", "fix the parser", "running"),
+        swarm_row("root", "parent: root", "ready"),
+    ]);
+    app.on_key(key(KeyCode::Down));
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        Some(Action::Attach("root".to_string())),
+        "the parent row did not attach to the session it names"
+    );
+}
+
+#[test]
+fn an_attach_drops_a_list_fetched_for_the_session_it_left() {
+    let mut app = app();
+    submit(&mut app, "/swarm");
+    app.show_swarm(vec![swarm_row("child", "fix the parser", "running")]);
+    assert!(app.picker.is_some(), "the list did not open");
+
+    // An attach can answer after another list was opened for the session being
+    // left. Its rows name that session's children, so they must not stay under
+    // the session the answer moved to.
+    app.attach_session(created("child", None), false);
+
+    assert!(
+        app.picker.is_none(),
+        "a list fetched for the session that was left survived the attach"
+    );
+}
+
+#[test]
+fn a_swarm_choice_waits_for_the_running_turn() {
+    let mut app = app();
+    app.pending_turn = true;
+    submit(&mut app, "/swarm");
+    app.show_swarm(vec![swarm_row("child", "fix the parser", "running")]);
+
+    assert_eq!(
+        app.on_key(key(KeyCode::Enter)),
+        None,
+        "a session change left while the turn was still arriving for this one"
+    );
+    assert!(app.picker.is_none(), "the list stayed open over a refusal");
+    let said = said(&app).join("\n");
+    assert!(
+        said.contains("/swarm") && said.contains("still running"),
+        "the refusal did not name the command and the reason: {said}"
     );
 }
