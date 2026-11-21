@@ -232,6 +232,13 @@ impl EventMapper {
                     vec![self.chunk("agent_message_chunk", "msg", message)]
                 }
             }
+            ServerEvent::SoftInterruptInjected { content, point, .. } if point == "native_tool_retry" => {
+                if self.options.notices {
+                    vec![notice("info", &content, "Tool call retry")]
+                } else {
+                    vec![self.chunk("agent_message_chunk", "msg", format!("\n{content}\n"))]
+                }
+            }
             ServerEvent::TurnStopped { reason, message, .. } if self.options.notices => {
                 vec![notice(turn_stopped_severity(reason), &message, "The turn stopped")]
             }

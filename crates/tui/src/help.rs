@@ -80,6 +80,9 @@ Keys:
   Alt-K          copy the line under the cursor to the terminal clipboard
   Alt-L          copy the last answer to the terminal clipboard
   Alt-C          copy the newest code block to the terminal clipboard
+  While a replay plays, space pauses, left/right seek five seconds,
+  +/- change the speed, home/end jump to the start or the end, and esc
+  stops it.
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force. Copying uses the terminal's OSC 52 sequence: a
   terminal or a multiplexer that does not take it keeps the text on
@@ -102,6 +105,8 @@ Commands:
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
+  /record [path] record the conversation to a local file (stop, status)
+  /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
   /skills        list the skills the harness reports, and put one in the
@@ -245,6 +250,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "new" => "start a new session in this directory",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
+        "record" => "record the conversation to a local file, or stop (stop, status)",
+        "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
