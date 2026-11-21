@@ -4,11 +4,14 @@ use anyhow::Result;
 use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::{gateway, memory, storage};
 
 mod provider_setup;
 mod report_info;
+mod run_deadline;
 mod session_delete;
 mod session_rename;
 
@@ -16,6 +19,7 @@ pub(crate) use session_delete::run_session_delete_command;
 pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;
+pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
 
@@ -864,10 +868,16 @@ pub(super) async fn run_single_message_with_agent(
     message: &str,
     emit_json: bool,
     emit_ndjson: bool,
+    max_time: Option<Duration>,
 ) -> Result<()> {
-    let result: Result<()> = async {
+    let elapsed = AtomicBool::new(false);
+    let deadline = max_time.map(|duration| (duration, agent.graceful_shutdown_signal()));
+    let run = async {
         if emit_json {
             let text = run_single_message_command_capture_with_auto_poke(agent, message).await?;
+            if elapsed.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             let report = RunCommandReport {
                 session_id: agent.session_id().to_string(),
                 provider: run_report_provider_name(provider.as_ref(), agent.session_provider_key().as_deref()),
@@ -877,13 +887,16 @@ pub(super) async fn run_single_message_with_agent(
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else if emit_ndjson {
-            run_single_message_command_ndjson(agent, provider, message).await?;
+            run_single_message_command_ndjson(agent, provider, message, &elapsed).await?;
         } else {
             run_single_message_command_plain_with_auto_poke(agent, message).await?;
         }
         Ok(())
-    }
-    .await;
+    };
+    let result = match deadline {
+        Some((duration, cancel)) => run_deadline::run_with_deadline(duration, &elapsed, || cancel.fire(), run).await,
+        None => run.await,
+    };
 
     // `Agent::new` and session restore both register this process as the active
     // owner. Unlike the interactive lifecycle, `horon-agent run` has no later quit
@@ -892,6 +905,13 @@ pub(super) async fn run_single_message_with_agent(
     // one-shot exit from looking like a stale-PID crash on the next startup
     // (issue #988).
     agent.mark_closed();
+    if let Some(error) = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<RunDeadlineExceeded>())
+    {
+        error.report(agent.session_id(), emit_json, emit_ndjson)?;
+    }
     result
 }
 
@@ -1296,6 +1316,7 @@ async fn run_single_message_command_ndjson(
     agent: &mut crate::agent::Agent,
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
+    deadline_elapsed: &AtomicBool,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = agent.session_id().to_string();
@@ -1347,6 +1368,10 @@ async fn run_single_message_command_ndjson(
             }
             run_result.unwrap_or(Ok(()))
         };
+
+        if deadline_elapsed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         if let Err(err) = turn_result {
             result = Err(err);

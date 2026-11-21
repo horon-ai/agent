@@ -11,6 +11,7 @@ pub(super) async fn run(
     emit_ndjson: bool,
     no_pty: bool,
     overrides: &RunModelOverrides,
+    max_time: Option<std::time::Duration>,
 ) -> Result<()> {
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
@@ -35,7 +36,7 @@ pub(super) async fn run(
     }
     // User-authored `run` message; later helper turns are synthetic.
     agent.arm_effort_keywords(message);
-    commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson).await
+    commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, max_time).await
 }
 
 fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Result<()> {

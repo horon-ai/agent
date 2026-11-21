@@ -638,6 +638,46 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
+    let home = Home::new();
+    for output_mode in [None, Some("--json"), Some("--ndjson")] {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        home.write_config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+        let provider = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await.unwrap();
+            assert!(request.body.contains("check the deadline"));
+            assert_eq!(socket.read(&mut [0]).await.unwrap(), 0, "model connection stayed open");
+        });
+        let mut args = vec!["run", "check the deadline", "--no-update", "--max-time", "2"];
+        args.extend(output_mode);
+        let result = home.run(&args).await;
+        assert_eq!(result.status.code(), Some(124), "{}", text(&result.stderr));
+        tokio::time::timeout(Duration::from_secs(2), provider)
+            .await
+            .expect("the model sees the cancelled connection")
+            .unwrap();
+
+        let stdout = text(&result.stdout);
+        if let Some(mode) = output_mode {
+            let rows: Vec<Value> = stdout.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            if mode == "--ndjson" {
+                assert_eq!(rows[0]["type"], "start");
+                assert!(!rows.iter().any(|row| row["type"] == "done"));
+            } else {
+                assert_eq!(rows.len(), 1, "{stdout}");
+            }
+            let error = rows.last().unwrap();
+            assert_eq!(error["type"], "error");
+            assert_eq!(error["code"], "deadline_exceeded");
+            assert_eq!(error["max_time_seconds"], 2.0);
+        } else {
+            assert!(text(&result.stderr).contains("run exceeded its --max-time limit"));
+        }
+    }
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn no_pty_overrides_shell_allocation_for_one_run() {

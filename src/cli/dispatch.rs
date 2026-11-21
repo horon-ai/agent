@@ -273,8 +273,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             json,
             ndjson,
             no_pty,
+            max_time,
             ref model_overrides,
-        }) => one_shot::run(&args, message, json, ndjson, no_pty, model_overrides).await?,
+        }) => one_shot::run(&args, message, json, ndjson, no_pty, model_overrides, max_time).await?,
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref()).await?;

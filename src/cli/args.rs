@@ -253,6 +253,10 @@ pub(crate) enum Command {
         #[arg(long)]
         no_pty: bool,
 
+        /// Cancel the run after this many seconds (fractions are accepted)
+        #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
+        max_time: Option<std::time::Duration>,
+
         #[command(flatten)]
         model_overrides: RunModelOverrides,
 
