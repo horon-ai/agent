@@ -39,6 +39,10 @@ effort는 방식마다 다르게 실린다. `openai-compatible`은 `reasoning_ef
 
 `prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열에서 오고, 어떤 방식도 엔드포인트에 목록을 묻지 않는다.
 
+### 도구 파라미터 스키마
+
+도구의 `parameters`는 선택한 요청 형식의 JSON Schema 규격에 맞춰 보낸다. 지원하지 않는 키워드는 `schema_keyword_dropped`로 기록한다. OpenAI의 두 형식은 루트에 객체 하나를 요구한다. 루트 `anyOf`나 `oneOf`의 객체 대안은 속성을 모으고 모든 객체 대안에 공통인 필수 항목을 올려 객체 하나로 보낸다. 루트에 이미 선언한 속성은 그 선언을 유지한다. 대안에만 선언한 속성의 규칙이 서로 다르면 속성 안의 `anyOf`에 모은다. 요청은 `strict: false`로 보내고 제거한 루트 결합 규칙을 기록한다. `swarm`의 `spawn`에 필요한 `label`처럼 동작별 필수 항목은 실행할 때 도구가 검사한다.
+
 ```toml
 # Chat Completions, 기본값
 [providers.my-chat]
@@ -190,7 +194,7 @@ aux = "my-small-model"
 
 - **같은** 프로파일의 `POST {base_url}/images/generations`에 JSON 본문으로, 또는 `POST {base_url}/images/edits`에 멀티파트 본문으로 보낸다. base URL, 자격 증명, `auth`, `extra_body`가 모두 같다.
 - `openai-compatible` 또는 `openai-responses` 종류의 프로파일만 이 경로를 받는다. Anthropic이나 Gemini 방식의 프로파일은 두 방식 모두 Images 엔드포인트를 두지 않으므로 이 경로를 처리할 수 없다. `roles.image`가 모델을 가리키면 도구는 등록되지만, 호출할 때마다 답할 수 없는 URL로 요청을 보내는 대신 프로파일과 그 종류를 이름으로 밝힌 오류로 끝난다(`crates/base/src/provider/external.rs`의 `image_endpoint`).
-- 프로바이더 런타임은 여전히 하나이고 두 번째 라우터도 플러그인 호스트도 없다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에 놓인 요청 빌더이지 런타임이 아니다.
+- 공급자 런타임 하나가 요청을 직접 보낸다. `crates/provider-openai/src/images.rs`는 `chat/` 옆에서 이미지 요청을 만든다. 계획 중인 사용자 설치 Rust 패키지는 모델 경로 밖에 둔다.
 - 모델은 `roles.image`에서 온다. 도구는 그 항목이 있고 `[tools] generate_image = true`일 때만 등록된다. 둘 다 필요하다. 스위치만 있으면 모든 호출이 실패하는 도구를 광고하고, 역할만 있으면 요청하지도 않은 세션에 등록된다.
 - 호출은 `WRITE | NETWORK`를 선언한다. 그래서 `approval_mode = "write"`는 먼저 확인하고, 승인 없는 무인 실행은 돈을 쓰지 않는다.
 - 모델은 이미지 바이트를 받지 않는다. 파일은 `~/.horon/generated-images/`에 놓이고 결과는 경로, 크기, MIME 타입을 알린다. 한 호출이 컨텍스트와 저장 이벤트 로그에 메가바이트를 넣지 않고 수백 토큰으로 끝나는 이유다.

@@ -10,8 +10,15 @@
 //! nothing at all, and when the line does not fit the least important segment
 //! is dropped first. A misspelled segment is reported once and skipped instead
 //! of hiding the rest of the line.
+//!
+//! Two appearance settings sit on top of the theme and the glyph preset:
+//! `statusline.separator` names the mark between the parts, or `preset` keeps
+//! the glyph preset's own, and `statusline.background` either takes the theme's
+//! `status_bg` or leaves the terminal's own background unpainted. Neither needs
+//! a theme file edit, and [`apply_appearance`] applies both on every settings
+//! snapshot the client resolves.
 
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use time::{OffsetDateTime, Time, UtcOffset};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -198,6 +205,18 @@ impl Preset {
             Self::Minimal => (vec![SegmentId::Model], vec![SegmentId::Status]),
             Self::Custom => (Vec::new(), Vec::new()),
         }
+    }
+}
+
+/// Apply status-line overrides to the active theme and glyph preset.
+pub(crate) fn apply_appearance(settings: &Settings, theme: &mut Theme, symbols: &mut Symbols) {
+    match settings.text("statusline.separator") {
+        Some("dot") => symbols.separator = DEFAULT_SEPARATOR,
+        Some("bar") => symbols.separator = "|",
+        _ => {}
+    }
+    if settings.text("statusline.background") == Some("terminal") {
+        theme.status.status_bg = Color::Reset;
     }
 }
 

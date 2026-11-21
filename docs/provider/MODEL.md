@@ -36,6 +36,10 @@ Each wire appears in the model routes under its own `api_method` value from the 
 
 `prompt_cache_key` applies to `openai-compatible` and `openai-responses` only. `extra_body` keys are merged into the top level of every request body on all four wires. The model list comes from the profile's static `[[providers.<name>.models]]` array; no wire asks the endpoint for a list.
 
+### Tool parameter schemas
+
+A tool's `parameters` is sent as JSON Schema narrowed to the selected wire's dialect. Unsupported keywords are reported as `schema_keyword_dropped`. Both OpenAI wires require an object at the root. A root `anyOf` or `oneOf` of object alternatives becomes a single object with the fields the alternatives advertise and the requirements shared by all object alternatives. A property already declared at the root keeps that declaration. A field declared only in the alternatives keeps its different schemas under a property-level `anyOf`. The request uses `strict: false` and reports the removed root combiner. The tool still enforces conditional requirements at execution, such as the `label` required by `swarm`'s `spawn` action.
+
 ```toml
 # Chat Completions, the default
 [providers.my-chat]
@@ -189,7 +193,7 @@ The build's rule is that one model path serves models: a turn posts to the endpo
 
 - It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
 - Only a profile of type `openai-compatible` or `openai-responses` accepts this route. A profile on the Anthropic or Gemini wire cannot serve it, because neither wire carries an Images endpoint: the tool still registers when `roles.image` names a model, and each call fails with an error naming the profile and its type instead of sending a request to a URL that cannot answer (`crates/base/src/provider/external.rs` `image_endpoint`).
-- There is still one provider runtime, no second router and no plugin host. `crates/provider-openai/src/images.rs` is a request builder beside `chat/`, not a runtime.
+- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. Planned user-installed Rust packages sit outside the model path.
 - The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
 - A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
 - The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.

@@ -301,7 +301,9 @@ impl Tool for ReadTool {
         // send a diff for a changed whole file. Recorded even under `full`,
         // since that output is in context too. Only the start_line/offset form
         // is tracked; a selector read is rendered as asked.
-        let dedup = crate::config::config().tools.read_dedup && range.is_some();
+        // Python receives bridge output directly and may discard it without
+        // ever putting the file in the model's context.
+        let dedup = crate::config::config().tools.read_dedup && range.is_some() && !super::eval::owns_subcall();
         let read_key = dedup.then(|| read_state::key_for(&path));
         let content_hash: Option<[u8; 32]> = dedup.then(|| Sha256::digest(content.as_bytes()).into());
         let previous = read_key
