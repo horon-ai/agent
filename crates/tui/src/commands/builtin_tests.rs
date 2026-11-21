@@ -402,6 +402,7 @@ fn builtin_help_lists_every_built_in_command() {
         "/help",
         "/keys",
         "/links",
+        "/mcp",
         "/model",
         "/new",
         "/pin",
@@ -409,6 +410,7 @@ fn builtin_help_lists_every_built_in_command() {
         "/rename",
         "/resume",
         "/settings",
+        "/swarm",
         "/switch",
         "/unpin",
     ] {

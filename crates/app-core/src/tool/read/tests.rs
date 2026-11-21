@@ -2,7 +2,7 @@ use super::*;
 use crate::tool::{ToolContext, ToolExecutionMode};
 use serde_json::json;
 
-fn make_ctx(working_dir: std::path::PathBuf) -> ToolContext {
+pub(super) fn make_ctx(working_dir: std::path::PathBuf) -> ToolContext {
     ToolContext {
         session_id: "test-session".to_string(),
         message_id: "test-message".to_string(),
@@ -971,13 +971,9 @@ async fn a_selector_page_reports_the_next_selector_to_use() {
     // the line cap does.
     assert!(!output.contains("more lines in file"), "output={output:?}");
 
-    let output = read_fixture(
-        &numbered_lines(super::DEFAULT_LIMIT + 5),
-        json!({"file_path": "sample.txt:1-"}),
-    )
-    .await;
+    let output = read_fixture(&numbered_lines(5_005), json!({"file_path": "sample.txt:1-"})).await;
     assert!(
-        output.contains("more lines in file. Use :"),
+        output.contains("more lines in file. Use :5004 to continue"),
         "output tail={:?}",
         &output[output.len().saturating_sub(200)..]
     );
@@ -1023,13 +1019,13 @@ impl Drop for HomeGuard {
 }
 
 /// Points the process at a temporary `HORON_HOME` with the given config.
-struct ConfigHome {
+pub(super) struct ConfigHome {
     _home: tempfile::TempDir,
     previous: Option<std::ffi::OsString>,
 }
 
 impl ConfigHome {
-    fn with_config(contents: &str) -> Self {
+    pub(super) fn with_config(contents: &str) -> Self {
         let home = tempfile::tempdir().expect("config home");
         let previous = std::env::var_os("HORON_HOME");
         crate::env::set_var("HORON_HOME", home.path());
