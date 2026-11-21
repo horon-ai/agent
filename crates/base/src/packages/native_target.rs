@@ -56,7 +56,7 @@ fn verify_mach(file: &mut File, arm64: bool) -> Result<()> {
         let kind = u32::from_le_bytes(command[..4].try_into()?);
         let len = u64::from(u32::from_le_bytes(command[4..8].try_into()?));
         ensure!(
-            len >= 8 && len % 8 == 0 && offset + len <= 32 + bytes,
+            len >= 8 && len.is_multiple_of(8) && offset + len <= 32 + bytes,
             "invalid Mach-O load command length"
         );
         match kind {
