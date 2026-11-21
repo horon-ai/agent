@@ -552,6 +552,22 @@ fn interrupted_publication_leftovers_are_collected_but_referenced_copies_are_not
 }
 
 #[test]
+fn a_reference_owner_that_names_a_windows_device_is_refused() {
+    let harness = Harness::new();
+    let error = match harness.store.lease("com1") {
+        Ok(_lease) => panic!("COM1 is a reserved device name, so it cannot own a reference"),
+        Err(error) => error,
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("reserved Windows device name"),
+        "the refusal must name the rule: {message}"
+    );
+    // Only the numbered families are reserved, and only for the digits 1-9.
+    harness.store.lease("com0").expect("com0 is not a device name");
+}
+
+#[test]
 fn verification_reports_a_changed_copy_and_leaves_it_in_place() {
     let harness = Harness::new();
     let source = extension_fixture("hello", "1.0.0");

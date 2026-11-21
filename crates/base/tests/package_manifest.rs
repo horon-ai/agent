@@ -178,6 +178,8 @@ fn rejects_path_escape_and_reserved_windows_paths_on_every_runner() {
         "C:/child.exe",
         "bin//child",
         "bin/CON.exe",
+        "bin/COM1.exe",
+        "bin/lpt9.exe",
     ] {
         fs::write(
             root.path().join("extension.toml"),

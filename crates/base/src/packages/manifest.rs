@@ -146,7 +146,14 @@ fn exists(path: &Path) -> Result<bool> {
 
 fn read_manifest<T: DeserializeOwned>(root: &Path, path: &Path) -> Result<T> {
     let file = open_package_file(root, path)?;
-    let mut text = String::new();
+    // The size already read for the open check sizes the buffer, so a manifest
+    // that fits the limit is read without regrowing it. A file that grew since
+    // then still trips the limit check below.
+    let capacity = file
+        .metadata()
+        .map_or(0, |metadata| metadata.len())
+        .min(MAX_MANIFEST_BYTES) as usize;
+    let mut text = String::with_capacity(capacity);
     file.take(MAX_MANIFEST_BYTES + 1)
         .read_to_string(&mut text)
         .with_context(|| format!("read {}", path.display()))?;
@@ -210,12 +217,15 @@ fn portable_component(name: &str) -> bool {
         return false;
     }
     let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
-    let stem = stem.to_ascii_uppercase();
-    !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        && !["COM", "LPT"].into_iter().any(|prefix| {
-            stem.strip_prefix(prefix)
-                .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
-        })
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+    if reserved.into_iter().any(|word| stem.eq_ignore_ascii_case(word)) {
+        return false;
+    }
+    !["COM", "LPT"].into_iter().any(|prefix| {
+        stem.len() == prefix.len() + 1
+            && stem.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+            && stem.as_bytes()[prefix.len()].is_ascii_digit()
+    })
 }
 
 /// The package ID grammar, shared with the names accepted in the inbox.
