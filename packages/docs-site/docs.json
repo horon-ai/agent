@@ -93,6 +93,7 @@
               {
                 "group": "Providers",
                 "pages": [
+                  "reference/provider/vision-policy",
                   "reference/provider/model",
                   "reference/provider/diagnostics",
                   "reference/provider/integrations"
@@ -203,6 +204,7 @@
               {
                 "group": "제공자",
                 "pages": [
+                  "ko/reference/provider/vision-policy",
                   "ko/reference/provider/model",
                   "ko/reference/provider/diagnostics",
                   "ko/reference/provider/integrations"
