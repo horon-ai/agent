@@ -67,7 +67,7 @@ async fn exercise_bash(workspace: &Path) {
     let tool = super::super::BashTool::new();
     let run = || {
         tool.execute(
-            json!({"command": "test -t 1 && printf 'PTY:%s:%s' \"$FIXTURE_NEW\" \"$FIXTURE_EXISTING\"", "pty": "always"}),
+            json!({"command": "test -t 1 && printf 'PTY:%s:%s\\n' \"$FIXTURE_NEW\" \"$FIXTURE_EXISTING\"", "pty": "always"}),
             crate::tool::ToolContext {
                 session_id: "direnv-fixture".into(),
                 message_id: String::new(),
