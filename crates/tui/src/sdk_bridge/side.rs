@@ -311,7 +311,7 @@ fn drain(
 }
 
 /// One change the drain loop has to perform.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub(super) enum Effect {
     /// Forward something the overlay draws.
     Send(Incoming),
