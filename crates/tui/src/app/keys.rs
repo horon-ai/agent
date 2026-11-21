@@ -157,6 +157,16 @@ impl App {
             }
         }
 
+        // A capture, a recognition or a playback takes `esc` before the popup
+        // and the editor: the key that means "not this" ends the voice activity,
+        // and the draft it was going to change stays as it was. A live prompt
+        // has already taken every key above, and a prompt arriving cancels the
+        // capture before it gets here.
+        if key.code == KeyCode::Esc && self.voice.phase() != crate::voice::Phase::Idle {
+            self.cancel_voice();
+            return None;
+        }
+
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         let pressed = Key::from_event(key);
         let bound = pressed.and_then(|pressed| self.bindings.resolve_editing(&pressed));
@@ -329,6 +339,10 @@ impl App {
             Some(keys::ids::APP_RETRY_TURN) => return self.retry_turn(),
             Some(keys::ids::APP_TOGGLE_THINKING) => {
                 self.toggle_thinking();
+                return None;
+            }
+            Some(keys::ids::APP_VOICE) => {
+                self.toggle_voice();
                 return None;
             }
             // Every edit ends a walk through the history: the draft on screen

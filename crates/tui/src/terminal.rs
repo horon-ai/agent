@@ -32,6 +32,8 @@ pub(crate) fn restore(pop_title: bool) {
     crate::progress::clear_stdout();
     // The running local command belongs to this terminal and exits with it.
     crate::commands::shell::kill_active_group();
+    // The voice recorder, recognizer or player is this terminal's child too.
+    crate::voice::kill_active_process();
     release(pop_title);
 }
 
