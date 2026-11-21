@@ -18,11 +18,15 @@ Scenario, evaluated per request:
    only when it carries that nonce in a tool result.
 3. omp's skill routing-hint request -> one valid hint, so omp does not retry it
    three times in the skill scenario.
-4. First request of a conversation that offers a shell-like tool -> the model
+4. The prompt carries ``[tui:jobs]`` -> start two background shell jobs, one per
+   tool call, so the terminal client can list and cancel them.
+5. The prompt carries ``[tui:context-proof]`` -> answer with the marker's own
+   tail, which is how the context-controls smoke reads a model reply.
+6. First request of a conversation that offers a shell-like tool -> the model
    asks for that tool once with ``{"command": "ls"}``.
-5. A request whose transcript already carries a tool result -> the model answers
+7. A request whose transcript already carries a tool result -> the model answers
    with the fixed text ``mock-ok`` and stops.
-6. A request with no shell tool -> the model answers ``mock-ok`` immediately.
+8. A request with no shell tool -> the model answers ``mock-ok`` immediately.
 
 Every request is recorded so the benchmark can prove a tool round-trip actually
 happened (``GET /__stats``).
@@ -540,6 +544,8 @@ def _plan_name(body: dict, prompt: str) -> str:
         return "mcp"
     if JOBS_MARKER in blob:
         return "jobs"
+    if "[tui:context-proof]" in prompt:
+        return "context-proof"
     return "ls"
 
 
@@ -729,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name == "hint":
+        if plan_name in {"hint", "context-proof"}:
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -875,6 +881,10 @@ class Handler(BaseHTTPRequestHandler):
             "tool_choice_prop": next(iter(arguments), None),
             "via": via,
             "sentinel_seen": sentinel_seen,
+            **({
+                "context_proof_prompt": prompt,
+                "context_proof_contains_original": "[tui:context-proof] original" in transcript,
+            } if plan_name == "context-proof" else {}),
             "capped": capped,
             "bench_echo_exposed": plan_name == "mcp"
             and bool(
@@ -908,7 +918,10 @@ class Handler(BaseHTTPRequestHandler):
             "tool": tool_name,
             "arguments": arguments,
             "namespace": namespace if calls_tool else None,
-            "text": ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT,
+            "text": (
+                f"context-verified-{prompt.rsplit(' ', 1)[-1]}" if plan_name == "context-proof"
+                else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT
+            ),
             "model": body.get("model") or MOCK_MODEL,
             "stream": bool(body.get("stream")),
         }

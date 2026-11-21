@@ -28,8 +28,6 @@ use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
 use self::copy::CopyRequest;
 
-pub use action::Action;
-
 mod action;
 mod commands;
 mod copy;
@@ -75,6 +73,8 @@ mod session_switch_tests;
 
 #[cfg(test)]
 mod steer_tests;
+
+pub use action::Action;
 
 /// One message from the user, before the harness has confirmed it.
 ///

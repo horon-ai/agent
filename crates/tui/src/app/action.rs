@@ -6,7 +6,7 @@
 
 use horon_agent_sdk::api::AskSelection;
 
-/// What the UI asks the bridge to do after a keystroke.
+/// One request for the bridge thread: the client's half of a command.
 ///
 /// Not `Eq`: an answer carries protocol selections, which only compare with
 /// `PartialEq`.
@@ -34,15 +34,14 @@ pub enum Action {
         always: bool,
     },
     /// Answer a structured question.
-    Ask {
-        ask_id: String,
-        answers: Vec<AskSelection>,
-    },
+    Ask { ask_id: String, answers: Vec<AskSelection> },
     /// Ask the harness to run one of its own commands.
     Runtime {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Clear or compact the model context on the daemon.
+    Context(crate::commands::ContextCommand),
     /// Switch to the model named.
     Model(String),
     /// Set the reasoning effort to the level named.
@@ -55,8 +54,11 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Ask for the sessions stored for this working directory, archived ones included.
     ArchivedSessions,
+    /// Archive the session named.
     Archive(String),
+    /// Restore the archived session named.
     Restore(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
