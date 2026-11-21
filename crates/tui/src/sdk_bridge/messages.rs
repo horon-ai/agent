@@ -59,6 +59,8 @@ pub enum Command {
     Forks,
     /// Fork a new session from the named stored message and follow it.
     Fork(String),
+    /// Save a title for the session the bridge follows.
+    Rename(String),
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one

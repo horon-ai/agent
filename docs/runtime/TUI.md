@@ -24,7 +24,7 @@ The client takes its own arguments:
 
 ```text
 horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
-           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking] [--no-title]
 ```
 
 The three motion flags are per-launch overrides: they outrank every settings file and the environment, are shown as `command line` in the settings screen, and survive a reload of the files under them. A flag outside its range is an argument error, not a warning: `--max-fps 0` prints the expected range and exits with code 2.
@@ -40,6 +40,7 @@ The three motion flags are per-launch overrides: they outrank every settings fil
 | `--spinner-interval <ms>` | Spinner frame length for this launch, `40` to `2000` |
 | `--max-fps <n>` | Stream frame limit for this launch, `1` to `240` |
 | `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
+| `--no-title` | Leave the terminal window title alone for this launch |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
 
@@ -52,6 +53,8 @@ A connection lost while the client runs is handled differently: the screen stays
 The client names the terminal window `horon · <label>`, so a stack of terminals says which one belongs to which session. The label is the session's own title, and the last component of the working directory for a session the daemon never titled; control characters are dropped and the label stops at eighty characters. The title the shell set is pushed onto the terminal's title stack first and comes back on every way out — the normal exit, the error path and the panic hook — because the shell still owns the window afterwards. The stack pair (`CSI 22 ; 2 t` to push, `CSI 23 ; 2 t` to pop) is an extension, so it is written only where the terminal keeps a stack: an xterm-like terminal (`TERM` other than `dumb`), Windows Terminal (`WT_SESSION`) and ConEmu (`ConEmuANSI`) restore the title, while a Windows console without either marker and any terminal that calls itself `dumb` get the title without the pair and keep `horon · <label>` after the client exits. Nothing is written when standard output is not a terminal.
 
 Set `title.state = true` to append `running`, `waiting` or `idle` to the title on terminals with a title stack. The marker changes with the turn or the pending prompt. Exit restores the previous title.
+
+Set `title.enabled = false` in `tui.toml` to leave the terminal title alone from the next launch. `--no-title` overrides the setting for one launch and also works in the offline gallery. Saved session names still appear in the session picker.
 
 ## User files
 
@@ -82,6 +85,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `motion.spinner_interval` | number | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
 | `motion.max_fps` | number | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
+| `title.enabled` | boolean | `true` | `HORON_TUI_TITLE_ENABLED` |
 | `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | array of segment names | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
@@ -438,6 +442,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
+| `/rename <title>` | Save a title for the attached session and update the window title after the daemon confirms |
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
@@ -477,6 +482,7 @@ built-in commands:
   /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
+  /rename              save a title for the current session
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen

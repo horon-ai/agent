@@ -3,9 +3,9 @@
 //!
 //! A typed line is resolved against three sources, in this order:
 //!
-//! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
+//! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/new`, `/fork`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
+//!    `/effort`, `/new`, `/fork`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
 //!    `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -83,6 +83,8 @@ pub enum Local {
     Fork,
     /// Open the settings screen.
     Settings,
+    /// Rename the attached session.
+    Rename,
     /// Resume a session stored for this working directory.
     Resume,
     /// List the skills the harness reports, and put one in the draft.
@@ -121,6 +123,7 @@ impl Local {
             "new" => Some(Self::New),
             "fork" | "branch" => Some(Self::Fork),
             "settings" => Some(Self::Settings),
+            "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
@@ -148,6 +151,7 @@ impl Local {
             Self::New => "new",
             Self::Fork => "fork",
             Self::Settings => "settings",
+            Self::Rename => "rename",
             Self::Resume => "resume",
             Self::Skills => "skills",
             Self::Switch => "switch",
@@ -653,9 +657,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 20] = [
+const LOCAL_NAMES: [&str; 21] = [
     "artifact", "clear", "copy", "effort", "exit", "fork", "help", "keys", "links", "model", "new", "note", "queue",
-    "quit", "record", "replay", "resume", "settings", "skills", "switch",
+    "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
