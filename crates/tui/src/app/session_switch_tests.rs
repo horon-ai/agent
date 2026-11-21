@@ -484,6 +484,24 @@ fn a_chosen_swarm_child_attaches_and_the_parent_row_returns() {
 }
 
 #[test]
+fn an_attach_drops_a_list_fetched_for_the_session_it_left() {
+    let mut app = app();
+    submit(&mut app, "/swarm");
+    app.show_swarm(vec![swarm_row("child", "fix the parser", "running")]);
+    assert!(app.picker.is_some(), "the list did not open");
+
+    // An attach can answer after another list was opened for the session being
+    // left. Its rows name that session's children, so they must not stay under
+    // the session the answer moved to.
+    app.attach_session(created("child", None), false);
+
+    assert!(
+        app.picker.is_none(),
+        "a list fetched for the session that was left survived the attach"
+    );
+}
+
+#[test]
 fn a_swarm_choice_waits_for_the_running_turn() {
     let mut app = app();
     app.pending_turn = true;

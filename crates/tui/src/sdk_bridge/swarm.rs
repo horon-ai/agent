@@ -139,8 +139,15 @@ fn list(listed: &[SessionInfo], current: &str) -> Vec<SwarmRow> {
 }
 
 /// The lifecycle word the harness recorded for a session, trimmed.
-fn recorded(session: &SessionInfo) -> &str {
-    session.swarm_status.as_deref().map(str::trim).unwrap_or_default()
+///
+/// A record that names no state, or only whitespace, has none: the row then
+/// says so and sorts with the states this build does not know.
+fn recorded(session: &SessionInfo) -> Option<&str> {
+    session
+        .swarm_status
+        .as_deref()
+        .map(str::trim)
+        .filter(|word| !word.is_empty())
 }
 
 /// The state a row's second column says.
@@ -150,11 +157,10 @@ fn recorded(session: &SessionInfo) -> &str {
 /// used here. A state this client does not know is shown as the harness wrote
 /// it, because a newer daemon may have a word this build has never seen.
 fn state(session: &SessionInfo) -> String {
-    let word = recorded(session);
-    if word.is_empty() {
-        return NO_STATE.to_string();
+    match recorded(session) {
+        Some(word) => word.to_string(),
+        None => NO_STATE.to_string(),
     }
-    word.to_string()
 }
 
 /// Whether the state says the child is still producing an answer.
@@ -173,13 +179,11 @@ fn producing(state: &str) -> bool {
 ///
 /// A ready worker is live: it finished its turn and is waiting for the next
 /// assignment, which is a session this client can still use.
-fn group(state: &str) -> u8 {
-    if producing(state) || state == "ready" {
-        0
-    } else if matches!(state, "completed" | "done" | "failed" | "stopped" | "crashed") {
-        1
-    } else {
-        2
+fn group(state: Option<&str>) -> u8 {
+    match state {
+        Some(word) if producing(word) || word == "ready" => 0,
+        Some("completed" | "done" | "failed" | "stopped" | "crashed") => 1,
+        _ => 2,
     }
 }
 
@@ -244,11 +248,18 @@ fn last_active(session: &SessionInfo) -> String {
 }
 
 /// The directory a session reports, cut to one preview line.
+///
+/// A session that names no directory, or only whitespace, shows the empty state
+/// the preview pane has always used for it.
 fn directory(session: &SessionInfo) -> String {
-    let directory = session.working_dir.as_deref().map(str::trim).unwrap_or_default();
-    if directory.is_empty() {
+    let Some(directory) = session
+        .working_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
         return NO_DIRECTORY.to_string();
-    }
+    };
     cut(directory)
 }
 

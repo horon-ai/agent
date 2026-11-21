@@ -420,6 +420,13 @@ impl App {
         self.cost = None;
         self.scroll = Scroll::new();
         self.slash.dismiss();
+        // A list that is still open describes the session being left: its rows
+        // were fetched for that session's swarm or directory, and a selection
+        // from it would attach for a scope the client no longer shows. It goes
+        // with the rest of the old session's state, so a list request that was
+        // in flight when the answer landed cannot put strangers' rows under the
+        // new session.
+        self.picker = None;
         // The candidates were read from the directory of the session being
         // left; the next Tab reads the directory this session reported.
         self.path_cycle = None;

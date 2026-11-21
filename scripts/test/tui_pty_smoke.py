@@ -315,10 +315,10 @@ class PosixTerminal:
         )
         os.close(slave)
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if contains(self.transcript, needle):
+            if contains(self.transcript[since:], needle):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -329,7 +329,7 @@ class PosixTerminal:
                 if not chunk:
                     break
                 self.transcript += chunk.decode("utf-8", "replace")
-        if not contains(self.transcript, needle):
+        if not contains(self.transcript[since:], needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
     def send(self, keys: str) -> None:
@@ -593,7 +593,7 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
     child = next(iter(children))
     snapshot = Path(env["HORON_AGENT_RUNTIME_DIR"], "durable-state", "swarm", "smoke.json")
     snapshot.parent.mkdir(parents=True, exist_ok=True)
-    snapshot.write_text(json.dumps({"members": [{
+    snapshot.write_text(json.dumps({"updated_at_unix_ms": int(time.time() * 1000) + 600_000, "members": [{
         "session_id": child,
         "report_back_to_session_id": parent,
         "task_label": "Fixture child",
@@ -602,12 +602,14 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
     terminal.send("/swarm\r")
     terminal.read_until("Swarm children", STEP_TIMEOUT, "swarm picker opened")
     terminal.read_until("Fixture child", STEP_TIMEOUT, "completed direct child listed")
+    child_start = len(terminal.transcript)
     terminal.send("\r")
-    terminal.read_until(child, STEP_TIMEOUT, "opened the recorded child")
+    terminal.read_until(f"resumed {child}", STEP_TIMEOUT, "opened the recorded child", since=child_start)
     terminal.send("/swarm\r")
     terminal.read_until("parent:", STEP_TIMEOUT, "parent return row")
+    parent_start = len(terminal.transcript)
     terminal.send("\r")
-    terminal.read_until(parent, STEP_TIMEOUT, "returned to the original session")
+    terminal.read_until(f"resumed {parent}", STEP_TIMEOUT, "returned to the original session", since=parent_start)
 
 
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
