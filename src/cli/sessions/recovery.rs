@@ -141,7 +141,7 @@ pub(super) fn build_report(paths: &store::SessionPaths, id: &store::SessionId) -
     };
     if layout != store::reader::SourceLayout::Canonical {
         bail!(
-            "session {} is a legacy original; run `session migrate` before previewing its recovery",
+            "session {} is not in the current layout; run `session migrate` before previewing its recovery",
             id.as_str()
         );
     }
@@ -169,7 +169,9 @@ pub(super) fn build_report(paths: &store::SessionPaths, id: &store::SessionId) -
                 ));
             }
             Ok(_) => {}
-            Err(_) => unreadable.push(source.session_id.as_str().to_owned()),
+            Err(error) => {
+                unreadable.push(json!({"session_id": source.session_id.as_str(), "error": error.to_string()}))
+            }
         }
     }
     children.sort_by(|a, b| a["session_id"].as_str().cmp(&b["session_id"].as_str()));
@@ -208,10 +210,10 @@ pub(super) fn run(home: &Path, session: &str, json_output: bool) -> Result<()> {
 
 fn print_report(report: &Value) {
     let line = |item: &Value| {
-        let title = item["title"]
-            .as_str()
-            .map(|title| format!(" ({title})"))
-            .unwrap_or_default();
+        let title = match item["title"].as_str() {
+            Some(title) => format!(" ({title})"),
+            None => String::new(),
+        };
         format!(
             "{}{}: {}{}",
             item["session_id"].as_str().unwrap_or(""),
@@ -235,12 +237,12 @@ fn print_report(report: &Value) {
         }
     };
     parked(report);
-    let children = report["children"].as_array().cloned().unwrap_or_default();
+    let children: &[Value] = report["children"].as_array().map_or(&[], Vec::as_slice);
     if children.is_empty() {
         println!("children: none");
     } else {
         println!("children:");
-        for child in &children {
+        for child in children {
             println!("  {}", line(child));
             parked(child);
         }
