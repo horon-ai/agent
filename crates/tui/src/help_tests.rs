@@ -441,15 +441,15 @@ fn the_selection_stops_at_both_ends_and_tab_fills_it() {
 #[test]
 fn tab_fills_the_row_a_fuzzy_match_offers() {
     let mut app = app();
-    type_text(&mut app, "/mdl");
-    assert!(app.slash.is_open(), "the letters of `/model` did not offer it");
+    type_text(&mut app, "/qit");
+    assert!(app.slash.is_open(), "the letters of `/quit` did not offer it");
     assert_eq!(
         app.slash.selected_name(),
-        Some("model"),
+        Some("quit"),
         "the marker is not on the row Tab would fill"
     );
     assert_eq!(press(&mut app, KeyCode::Tab), None);
-    assert_eq!(app.input.text(), "/model", "tab did not fill the offered row");
+    assert_eq!(app.input.text(), "/quit", "tab did not fill the offered row");
     assert!(
         !app.slash.is_open(),
         "the popup stayed open over the command it had just filled"
