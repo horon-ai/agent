@@ -315,10 +315,10 @@ class PosixTerminal:
         )
         os.close(slave)
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if contains(self.transcript, needle):
+            if contains(self.transcript[since:], needle):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -329,7 +329,7 @@ class PosixTerminal:
                 if not chunk:
                     break
                 self.transcript += chunk.decode("utf-8", "replace")
-        if not contains(self.transcript, needle):
+        if not contains(self.transcript[since:], needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
     def send(self, keys: str) -> None:
@@ -574,6 +574,35 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import urlopen
+
+    marker = "[tui:context-proof]"
+
+    def send(label: str, has_original: bool) -> None:
+        prompt = f"{marker} {label}"
+        start = len(terminal.transcript)
+        terminal.send(f"{prompt}\r")
+        terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
+        with urlopen(base_url + "/__stats", timeout=5) as response:
+            requests = json.load(response)["requests"]
+        request = next((entry for entry in reversed(requests) if entry.get("context_proof_prompt") == prompt), None)
+        if request is None or request["context_proof_contains_original"] != has_original:
+            raise Failure(f"unexpected original message visibility in the model request for {label}")
+
+    send("original", True)
+    terminal.send("/clear\r")
+    send("after display clear", True)
+    start = len(terminal.transcript)
+    terminal.send("/clear-context\r")
+    terminal.read_until("previous conversation remains", STEP_TIMEOUT, "reset model context", since=start)
+    send("after context reset", False)
+    if not any(f"{marker} original" in path.read_text(encoding="utf-8")
+               for path in Path(home).glob("sessions/*/events.jsonl")):
+        raise Failure("the original user message disappeared from the saved event log")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -605,6 +634,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            context_request_smoke(terminal, home, base_url)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
