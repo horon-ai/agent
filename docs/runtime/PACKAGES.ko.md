@@ -11,7 +11,7 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 
 ## 상태
 
-`dev`에서는 설치 명령으로 두 패키지 유형을 등록할 수 있고 수신함 동기화 함수가 완성된 폴더를 처리한다. 자식 프로세스 감독기는 Linux와 macOS에서 설치 사본을 실행한다. 수신함 자동 동기화와 세션 연결은 후속 이슈에서 다룬다.
+`dev`에서는 설치 명령으로 두 패키지 유형을 등록한다. 실행 중인 데몬은 수신함의 완성 폴더를 처리하고 카탈로그 세대를 게시한다. 자식 프로세스 감독기는 Linux와 macOS에서 설치 사본을 실행한다. 세션 연결은 후속 이슈에서 다룬다.
 
 | 영역 | 상태 | 검사 |
 | --- | --- | --- |
@@ -22,6 +22,7 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 | 두 레이아웃의 예제 실행 | 구현됨 | `cargo test -p horon-package-example --test extension_layouts` |
 | `horon package install`과 수신함 동기화 함수 | 구현됨 | `cargo test --locked --test package_cli` |
 | Linux와 macOS의 자식 프로세스 감독 | 구현됨 | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| 데몬 카탈로그 제어와 수신함 자동 동기화 | 구현됨 | `cargo test --locked --test harness_roundtrip package_daemon` |
 | Windows의 자식 프로세스 감독과 세션 연결 | 예정 | 같은 실행 경로의 후속 변경 |
 
 ## 두 패키지 유형
