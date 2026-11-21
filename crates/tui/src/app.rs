@@ -348,6 +348,8 @@ pub struct App {
     pub tokens: Option<TokenTotals>,
     /// How the bottom line is arranged, replaced when `tui.toml` changes.
     pub statusline: Layout,
+    /// The status line's separator after applying its appearance settings.
+    pub(crate) status_separator: Option<&'static str>,
     /// Colours the renderer uses, replaced when the theme loader resolves a
     /// new theme.
     pub theme: Theme,
@@ -475,6 +477,7 @@ impl App {
             home: home_directory(),
             tokens: None,
             statusline: Layout::default(),
+            status_separator: None,
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
@@ -552,6 +555,7 @@ impl App {
             home: home_directory(),
             tokens: None,
             statusline: Layout::default(),
+            status_separator: None,
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),

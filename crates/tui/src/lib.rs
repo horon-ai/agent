@@ -393,7 +393,6 @@ fn run_interactive(
         &mut themes,
         keys,
     );
-    // The same sequence the signal path runs: see `terminal::restore`.
     terminal::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
@@ -418,8 +417,9 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
     // Apply the palette to a copy so reloading can restore the theme exactly.
     app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
-    // Apply status-line overrides on each settings reload.
-    statusline::apply_appearance(settings, &mut app.theme, &mut app.symbols);
+    let mut status_symbols = app.symbols;
+    statusline::apply_appearance(settings, &mut app.theme, &mut status_symbols);
+    app.status_separator = Some(status_symbols.separator);
 }
 
 /// Write the change the settings screen confirmed, then re-apply it.
@@ -541,7 +541,6 @@ where
             app.bindings = reload.bindings;
             changed = true;
         }
-        // Reread command files only when their stamps change.
         changed |= app.tick_commands();
         changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
@@ -886,7 +885,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
 fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     let mut data = app.status_data();
     data.now = Some(statusline::local_now());
-    let line = statusline::render(&data, &app.statusline, &app.theme, app.symbols, width);
+    let mut symbols = app.symbols;
+    symbols.separator = app.status_separator.unwrap_or(symbols.separator);
+    let line = statusline::render(&data, &app.statusline, &app.theme, symbols, width);
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
 }
 
