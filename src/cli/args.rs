@@ -95,6 +95,10 @@ pub(crate) struct Args {
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "")]
     pub(crate) resume: Option<String>,
 
+    /// Continue the most recently active saved session in the working directory
+    #[arg(long = "continue", global = true, conflicts_with_all = ["resume", "ssh"])]
+    pub(crate) continue_latest: bool,
+
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
     #[allow(dead_code)]
