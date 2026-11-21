@@ -94,6 +94,9 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         ),
         Item::Assistant(text) => answer(text, look),
         Item::Tool(call) => {
+            if hidden(call, expand) {
+                return Vec::new();
+            }
             let retained = match expand {
                 Some(expand) => expand.retained(&call.call_id),
                 None => tool_line::Retained::default(),
@@ -117,6 +120,15 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::TurnUsage(metrics) => turn_usage(metrics, look),
         Item::CacheMiss(miss) => cache_miss(miss, look),
     }
+}
+
+/// Whether a finished call is left out of the pane.
+///
+/// The setting hides the record of what ran. A call still in progress and one
+/// waiting for approval are the work the reader has to see or answer, so they
+/// are drawn either way.
+fn hidden(call: &crate::transcript::ToolCall, expand: Option<&tool_expand::Frame<'_>>) -> bool {
+    expand.is_some_and(|frame| frame.hides_finished()) && call.finished_activity()
 }
 
 /// A completed turn's footer: how long it ran and what it spent.
@@ -171,6 +183,9 @@ pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expa
     let Item::Tool(call) = item else {
         return wrap::Source::built(lines(item, look, expand));
     };
+    if hidden(call, expand) {
+        return wrap::Source::built(Vec::new());
+    }
     let retained = match expand {
         Some(expand) => expand.retained(&call.call_id),
         None => tool_line::Retained::default(),

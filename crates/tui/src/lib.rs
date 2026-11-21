@@ -102,8 +102,6 @@ mod help_tests;
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
 
-use std::time::Duration;
-
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -141,6 +139,12 @@ pub struct Args {
     /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
     /// the scene either way and `run` has one branch to take.
     pub gallery: Option<String>,
+    /// Motion preset for this launch, over every settings file.
+    pub motion: Option<settings::MotionMode>,
+    /// Spinner interval for this launch, in milliseconds.
+    pub spinner_interval: Option<i64>,
+    /// Frame limit for this launch, in frames a second.
+    pub max_fps: Option<i64>,
     /// Start with the model's reasoning hidden, whatever the setting says.
     pub hide_thinking: bool,
     /// Print the version and exit.
@@ -158,6 +162,18 @@ impl Args {
         let mut parsed = Self::default();
         let mut arguments = args.into_iter();
         while let Some(argument) = arguments.next() {
+            // The motion flags share one setting family and take both spellings,
+            // so they are read and converted together instead of one arm per
+            // flag per spelling.
+            if settings::motion::LaunchFlag::read(
+                &argument,
+                &mut arguments,
+                &mut parsed.motion,
+                &mut parsed.spinner_interval,
+                &mut parsed.max_fps,
+            )? {
+                continue;
+            }
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
@@ -261,7 +277,10 @@ where
     if let Some(note) = note {
         eprintln!("horon-tui: {note}");
     }
-    let mut reloader = settings::Reloader::new(sources);
+    // A launch flag outranks every file, so it rides with the reloader and is
+    // reapplied after each resolve instead of being written anywhere.
+    let overrides = settings::motion::launch_overrides(args.motion, args.spinner_interval, args.max_fps);
+    let mut reloader = settings::Reloader::with_overrides(sources, std::time::Duration::from_secs(1), overrides);
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
     }
@@ -471,11 +490,9 @@ where
     B::Error: std::fmt::Display,
 {
     let mut failure = None;
-    // Whether the terminal is currently reporting the mouse, which follows the
-    // `transcript.mouse_scroll` setting rather than being decided once.
     let mut mouse_captured = false;
-    // Draw once at startup and again when the visible state changes.
-    let mut redraw = true;
+    // The scheduler draws the first frame and sets the cadence after that.
+    let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
     let mut clock = statusline::local_minute();
@@ -486,7 +503,14 @@ where
     // the first frame must not write it again.
     let mut shown_state = window_state(app, state_supported);
     loop {
-        let mut changed = loop_io::drain_events(app);
+        let mut changed = match loop_io::drain_events(app) {
+            loop_io::Redraw::Immediate => true,
+            loop_io::Redraw::None => false,
+            loop_io::Redraw::Stream => {
+                frames.request_stream();
+                false
+            }
+        };
         if !app.running {
             break;
         }
@@ -502,9 +526,7 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
-        // The tab indicator and the status record follow the state the status
-        // line reads. The call is cheap when nothing moved, because the signals
-        // compare against what the terminal already holds.
+        // Only changed signals reach the terminal.
         let signal = app.terminal_signal();
         if let Err(error) = channels.signals.sync(signal, app.terminal_signals) {
             app.warn(format!("terminal signals: {error}"));
@@ -556,16 +578,14 @@ where
             clock = minute;
             changed = true;
         }
-        // A turn in flight keeps drawing even while its events are quiet: its
-        // rows are where the elapsed time and the streaming text land.
-        if redraw || changed || app.pending_turn {
-            if let Err(message) = draw(terminal, app) {
-                failure = Some(message);
-                break;
-            }
-            redraw = false;
+        // The frame this pass owes: one for a screen that changed, one the
+        // spinner scheduler says is due, and the first after the loop starts.
+        // An idle screen reaches none of those and is left untouched.
+        if let Err(message) = loop_io::draw_due(terminal, app, &mut frames, changed) {
+            failure = Some(message);
+            break;
         }
-        match crossterm::event::poll(Duration::from_millis(50)) {
+        match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
@@ -578,7 +598,6 @@ where
         // Every input event can change what is on screen: a key edits the
         // draft or moves the selection, a paste inserts, the wheel scrolls and a
         // resize remakes the whole layout.
-        redraw = true;
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting
@@ -608,6 +627,9 @@ where
                 app.exit_code = 1;
             }
         }
+        // Asked for after the event was acted on, so one keystroke costs one
+        // frame rather than one per pass.
+        frames.request();
     }
     (if failure.is_some() { 1 } else { app.exit_code }, failure)
 }
@@ -618,18 +640,14 @@ where
 /// resets the frame Ratatui keeps, so the draw below writes every cell instead
 /// of only the rows that differ. That is what recovers a screen something else
 /// has overwritten, and it is the whole of what the repaint key does.
-pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
+pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), B::Error>
 where
     B: Backend,
-    B::Error: std::fmt::Display,
 {
     if app.take_repaint_request() {
-        terminal.clear().map_err(|error| error.to_string())?;
+        terminal.clear()?;
     }
-    terminal
-        .draw(|frame| render(frame, app))
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    terminal.draw(|frame| render(frame, app)).map(|_| ())
 }
 
 /// Rows the conversation keeps when a tall draft asks for more.
@@ -1158,7 +1176,9 @@ fn indicator_line(app: &App, below: usize) -> Line<'static> {
 
 /// What an empty transcript says instead of nothing.
 fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    if !rows.is_empty() {
+    // A conversation whose only rows are hidden tool calls still has content:
+    // asking the reader to send a message would misread what is on screen.
+    if !rows.is_empty() || !app.transcript.items().is_empty() {
         return rows;
     }
     wrap::wrap_line(

@@ -3,7 +3,7 @@
 
 use super::App;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
-use crate::settings::Settings;
+use crate::settings::{Motion, Settings};
 
 impl App {
     /// Show the settings screen, seeded from the settings in force.
@@ -27,7 +27,9 @@ impl App {
     /// says so, the window title carries the turn state only while
     /// `title.state` says so, and the model cycle walks `models.shortlist`. The
     /// terminal signal channels are read here rather than per frame, so a
-    /// channel the setting turns off is cleared by the next sync.
+    /// channel the setting turns off is cleared by the next sync. The motion
+    /// preset is read here too, so the renderer and the frame loop share one
+    /// snapshot.
     /// Whether the terminal is actually captured is the event loop's decision,
     /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
@@ -56,6 +58,13 @@ impl App {
             None => crate::tool_line::DEFAULT_OUTPUT_LINES,
         };
         self.transcript.set_tool_output_lines(output_lines);
+        // Finished tool lines take rows or give them back, which a held view
+        // has to recount the same way the expand key does.
+        let show_tool_activity = settings.boolean("transcript.show_tool_activity").unwrap_or(true);
+        if show_tool_activity != self.transcript.show_tool_activity() {
+            self.transcript.set_tool_activity(show_tool_activity);
+            self.scroll.reflow();
+        }
         // A terminal that already reported the wheel keeps doing so until the
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
@@ -74,6 +83,15 @@ impl App {
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
+        // The preset decides what the spinner draws and how often a quiet turn
+        // redraws; both are read here so the loop and the renderer agree on one
+        // snapshot. A refused number is reported once, naming the default that
+        // took its place.
+        let (motion, motion_warnings) = Motion::from_settings(settings);
+        self.motion = motion;
+        for warning in motion_warnings {
+            self.warn(format!("motion: {warning}"));
+        }
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

@@ -20,7 +20,7 @@ use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
-use crate::settings::Settings;
+use crate::settings::{Motion, Settings};
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
@@ -38,6 +38,7 @@ mod sending;
 mod sessions;
 mod settings;
 mod skills;
+mod terminal_signals;
 
 #[cfg(test)]
 mod boundary_tests;
@@ -332,6 +333,17 @@ pub struct App {
     pub symbols: Symbols,
     /// What keystrokes mean, replaced when `keybindings.toml` changes.
     pub bindings: Bindings,
+    /// How much the screen animates, and how often a streaming turn draws.
+    ///
+    /// The cadence is the event loop's, but the glyph a running turn shows is
+    /// drawn here, so the frame the loop just made is what picks it.
+    pub motion: Motion,
+    /// The animation frame the frame being drawn uses.
+    ///
+    /// The loop sets it before each draw; a draw made outside the loop (a test,
+    /// or the connection-failure screen) uses frame zero, which is the same
+    /// glyph a `reduced` preset freezes on.
+    pub motion_frame: usize,
     /// The slash command popup: the commands the draft offers, and its row.
     pub slash: crate::help::SlashPopup,
     /// The local draft suggestion: a ghost suffix offered from drafts already
@@ -429,6 +441,8 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            motion: Motion::default(),
+            motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
             suggestions: Suggestions::new(),
             commands: Registry::default(),
@@ -500,6 +514,8 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            motion: Motion::default(),
+            motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
             suggestions: Suggestions::new(),
             commands: Registry::default(),
@@ -512,48 +528,6 @@ impl App {
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
         }
-    }
-
-    /// What the terminal should say about the client right now.
-    ///
-    /// One place decides, from the state the status line already reads, so the
-    /// tab indicator and the status record can never disagree with each other
-    /// or with what the screen says. Precedence follows the user's attention: a
-    /// lost connection outranks everything, a prompt outranks a running turn
-    /// (an approval is what is blocking it), and a turn that ended outranks the
-    /// idle state until the user does something.
-    ///
-    /// The share is the todo list's: it is the only counted work the client
-    /// knows about. A turn with no counted list reports no share, which the
-    /// protocols draw as an indeterminate spinner instead of a frozen 0%.
-    pub(crate) fn terminal_signal(&self) -> crate::progress::Signal {
-        use crate::progress::{Kind, Signal};
-        if self.disconnected {
-            return Signal::error();
-        }
-        if let Some(prompt) = &self.prompt {
-            let kind = match prompt {
-                Prompt::Approval(_) => Kind::Permission,
-                Prompt::Ask(_) => Kind::Question,
-            };
-            return Signal::blocked(kind);
-        }
-        if self.pending_turn {
-            return Signal::working(self.todos.percent());
-        }
-        match self.outcome {
-            Some(outcome) => outcome.signal(),
-            None => Signal::idle(),
-        }
-    }
-
-    /// Forget how the last turn ended, because the user has acted on it.
-    ///
-    /// A submission, a session change and a key that answers a prompt all mean
-    /// the user is looking at the client again, so the mark on the tab has
-    /// served its purpose and the next report is the state they are in now.
-    pub(crate) fn note_user_attention(&mut self) {
-        self.outcome = None;
     }
 
     /// Ask for the screen to be painted again in full.
@@ -665,6 +639,7 @@ impl App {
     /// the app state never holds a time that goes stale.
     pub fn status_data(&self) -> StatusData<'_> {
         StatusData {
+            spinner: self.spinner_glyph(),
             provider: self.provider.as_deref(),
             model: self.model.as_deref(),
             effort: self.reasoning_effort.as_deref(),
@@ -678,6 +653,28 @@ impl App {
             tokens: self.tokens,
             now: None,
         }
+    }
+
+    /// Whether the screen animates on its own right now.
+    ///
+    /// A turn in flight is the only source of motion, and only a `full` preset
+    /// draws a moving spinner for it: `reduced` leaves one still mark, `static`
+    /// none, and a parked prompt or a lost connection draws none, so the loop
+    /// has no reason to add frames for any of them.
+    pub fn animating(&self) -> bool {
+        self.motion.turns() && self.spinner_glyph().is_some()
+    }
+
+    /// The spinner glyph the status segment draws, if any.
+    ///
+    /// Only a turn in flight animates, and only while the preset allows it: a
+    /// prompt or a lost connection already says more than a turning mark, and
+    /// `reduced` freezes on the first frame while `static` draws none.
+    fn spinner_glyph(&self) -> Option<&'static str> {
+        if !self.pending_turn || self.disconnected || self.prompt.is_some() || !self.running {
+            return None;
+        }
+        self.motion.glyph(self.symbols, self.motion_frame)
     }
 
     /// Fold one protocol event into the state.
@@ -723,7 +720,9 @@ impl App {
                     .transcript
                     .tool_done(call_id, name, Some(output.as_str()), error.as_deref())
                 {
-                    self.scroll.invalidate();
+                    // A fold is a block changing height with no output
+                    // arriving; the held view keeps the row it was reading.
+                    self.scroll.reflow();
                 }
                 // A refusal can reach the client before the event that parks
                 // it, so the line is parked from this side too: any request
@@ -830,6 +829,9 @@ impl App {
                 // it was refused because the mode asks first, and the failure
                 // wording is for a call that broke.
                 self.transcript.park_request(request_id);
+                // The line changed rows without output arriving; a held view
+                // keeps the row it was reading.
+                self.scroll.reflow();
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -859,6 +861,7 @@ impl App {
                 // way one made here does.
                 self.transcript
                     .decide_request(request_id, if *approved { Decision::Allowed } else { Decision::Denied });
+                self.scroll.reflow();
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
@@ -1006,6 +1009,7 @@ impl App {
             });
         if let Some(request) = request {
             self.transcript.park_request(&request);
+            self.scroll.reflow();
         }
     }
 
