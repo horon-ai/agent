@@ -104,6 +104,7 @@ horon run "summarize this repo"
 프로파일을 정하지 않으면 모델 호출은 네트워크에 닿기 전에 멈추고 빠진 `[providers.<name>]` 표를 알려 준다. `headers`, `extra_body`, `context_window`와 `openrouter`·`zai`·`kimi`·`ollama` 같은 내장 프로파일까지 모든 키는 [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md)에 있다.
 
 이름 있는 프로파일에 `stream_first_event_timeout_secs`와 `stream_idle_timeout_secs`를 두면 첫 응답과 응답 도중 대기 시간을 따로 제한할 수 있다.
+`max_in_flight_requests`를 지정하면 같은 프로파일을 쓰는 여러 세션의 동시 요청 수를 제한할 수 있다.
 
 ## 실행 방법
 
