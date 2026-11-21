@@ -577,17 +577,15 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
 def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
     from pathlib import Path
 
-    def session_ids() -> set[str]:
-        return {event.parent.name for event in Path(home).glob("sessions/*/events.jsonl")}
-
-    parents = session_ids()
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
     if len(parents) != 1:
-        raise Failure(f"expected the active parent session, found {parents}")
-    parent = next(iter(parents))
+        raise Failure(f"expected one session containing the approved tool call, found {parents}")
+    parent = parents[0].parent.name
     child_result = subprocess.run([launch.argv0, "run", "swarm fixture result"], cwd=root,
                                   env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
                                   capture_output=True, text=True, timeout=STEP_TIMEOUT)
-    children = session_ids() - parents
+    children = {path.parent.name for path in Path(home).glob("sessions/*/events.jsonl") if path not in originals}
     if child_result.returncode != 0 or len(children) != 1:
         raise Failure(f"expected one recorded child: {child_result.stdout}\n{child_result.stderr}")
     child = next(iter(children))
