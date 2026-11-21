@@ -861,18 +861,17 @@ pub struct ToolConfig {
     /// Opt-in `redo`: expose the tool that re-applies the mutation the last
     /// `undo` removed. Off by default; `undo` is always available.
     pub redo: bool,
-    /// On by default: append the `AGENTS.md` of a read file's ancestor
-    /// directories to `read` results, so a session sees the rules of the
-    /// directories it actually reads from.
+    /// On by default: append the `AGENTS.md` files in a read file's ancestor directories.
     pub nested_agents_md: bool,
-    /// On by default: answer a repeated `read` of unchanged lines with a
-    /// one-line notice, and a whole-file re-read of a changed file with a diff
-    /// against the earlier read. `full: true` on a call always prints.
+    /// On by default: notice unchanged reads and diff changed whole-file re-reads. `full: true` always prints.
     pub read_dedup: bool,
     /// On by default: condense large, older tool results in one batch when the
     /// prompt cache is already cold or compaction is near. Originals stay
     /// readable through `artifact://`.
     pub tool_result_aging: bool,
+    /// Maximum characters per text preview line, including the truncation marker.
+    /// Zero keeps the original line widths.
+    pub output_column_cap: usize,
     /// On by default: refuse to edit, replace, delete, or overwrite a file that
     /// a generator produces. A generated file is regenerated from its source,
     /// so an edit to it is silently lost.
@@ -1005,6 +1004,7 @@ impl Default for ToolConfig {
             nested_agents_md: true,
             read_dedup: true,
             tool_result_aging: true,
+            output_column_cap: 0,
             block_auto_generated: true,
             bash_pty: BashPtyMode::Auto,
             hashline_edit: false,

@@ -91,7 +91,10 @@ pub enum Action {
         always: bool,
     },
     /// Answer a structured question.
-    Ask { ask_id: String, answers: Vec<AskSelection> },
+    Ask {
+        ask_id: String,
+        answers: Vec<AskSelection>,
+    },
     /// Ask the harness to run one of its own commands.
     Runtime {
         command: horon_agent_sdk::RuntimeCommand,
@@ -101,10 +104,13 @@ pub enum Action {
     Model(String),
     /// Set the reasoning effort to the level named.
     Effort(String),
-    /// The model catalog used by the picker and shortlist cycling.
+    /// Request the model catalog used by the picker and shortlist cycling.
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    ArchivedSessions,
+    Archive(String),
+    Restore(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
     /// Attach to another session and replay its stored conversation.
@@ -127,7 +133,6 @@ pub enum Action {
     OpenArtifact(std::path::PathBuf),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
-    /// Leave.
     Quit,
 }
 

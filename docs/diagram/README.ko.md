@@ -34,6 +34,8 @@ Source: `docs/runtime/TURNS.md`, `docs/architecture/SERVER.md`, `crates/app-core
 
 모델 호출은 프로파일을 고른 뒤 그 타입이 지정한 경로로 POST한다. 네 가지 연결 타입, 자격 증명 조회 순서, 각 연결이 보내는 인증 헤더, 역할이 모델로 풀리는 방식을 한 그림에 담았다. 요청이 엉뚱한 주소로 가거나 헤더가 틀리거나, 설정한 것과 다른 모델이 선택될 때 쓴다.
 
+이름 있는 프로필마다 의미 있는 첫 이벤트와 그 뒤 이벤트를 기다리는 시간을 따로 제한할 수 있다.
+
 Source: `docs/provider/MODEL.md`, `docs/provider/INTEGRATIONS.md`, `crates/base/src/config.rs`
 
 ## 05 ACP 협상
