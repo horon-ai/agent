@@ -390,6 +390,12 @@ file. The model reads a path with `read` if it needs the contents.
 | A URL-only `data` entry | Error. The tool never fetches a second host. |
 | Call runs past 180 s | Error. An image is slow, so the bound is generous, but it exists. |
 
+## `bash` environment from direnv
+
+Set `[tools] bash_direnv = true` with direnv 2.38 or later on `PATH` to load new environment variables for local POSIX shell calls, including PTY and background calls. Horon looks up the file from the shell's starting directory, only inside the session workspace. Both [Horon workspace trust](../safety/SECURITY.md#workspace-trust) and direnv approval are required. If direnv blocks the file, review it and run `direnv allow` in its directory.
+
+Exports apply only to the local shell child. Variables already in the agent's environment keep their values, including `PATH`. When there are exports to apply, Horon runs the command locally rather than forwarding those values to an ACP client terminal.
+
 ## Executable files that write creates
 
 When `write` creates a new file whose content starts with `#!`, it also grants the execute permission on Unix (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). The point is to stop a freshly written script from burning a turn on a permission error when it is next run as `bash ./script.sh`.
