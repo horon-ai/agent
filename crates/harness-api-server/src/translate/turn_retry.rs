@@ -22,7 +22,9 @@ use super::*;
 
 /// Whether `request` asks to continue a run rather than start unrelated work.
 pub(super) fn continues_run(request: &Value) -> bool {
-    request["expected_run_id"].as_str().is_some_and(|value| !value.is_empty())
+    request["expected_run_id"]
+        .as_str()
+        .is_some_and(|value| !value.is_empty())
 }
 
 /// Record what will answer this `send_message`.

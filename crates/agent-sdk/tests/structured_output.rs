@@ -125,8 +125,7 @@ fn validates_fenced_json_and_returns_parsed_data() {
     let client = fake_harness(move |frame, writer| {
         if let ApiRequest::SendMessage {
             session_id, content, ..
-        expected_run_id: None,
-} = &frame.request
+        } = &frame.request
         {
             seen.lock().unwrap().push(content.clone());
             send_turn(writer, session_id, "```json\n{\"summary\":\"done\",\"count\":2}\n```");
@@ -160,8 +159,7 @@ fn retries_with_validation_details_then_returns_the_correction() {
     let client = fake_harness(move |frame, writer| {
         if let ApiRequest::SendMessage {
             session_id, content, ..
-        expected_run_id: None,
-} = &frame.request
+        } = &frame.request
         {
             let index = {
                 let mut prompts = seen.lock().unwrap();
@@ -200,8 +198,7 @@ fn exhaustion_reports_every_bounded_attempt_and_last_parse_error() {
     let client = fake_harness(move |frame, writer| {
         if let ApiRequest::SendMessage {
             session_id, content, ..
-        expected_run_id: None,
-} = &frame.request
+        } = &frame.request
         {
             seen.lock().unwrap().push(content.clone());
             send_turn(writer, session_id, "not json");

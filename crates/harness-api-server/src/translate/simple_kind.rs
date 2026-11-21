@@ -47,3 +47,9 @@ pub(crate) enum SimpleKind {
         configured: bool,
     },
 }
+
+impl SimpleKind {
+    pub(super) fn error_is_reply_only(&self) -> bool {
+        matches!(self, Self::Tools | Self::ToolControl | Self::ContinueRun)
+    }
+}

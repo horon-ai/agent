@@ -47,10 +47,7 @@ impl HoronAgentClient {
     /// Read the id from [`HoronAgentClient::get_runtime_state`]'s `last_stop`:
     /// the daemon recorded it, so it names the run that actually ended.
     pub fn continue_run(&self, session_id: &str, expected_run_id: &str) -> Result<()> {
-        self.require_capability(
-            horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1,
-            "continue_run",
-        )?;
+        self.require_capability(horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1, "continue_run")?;
         if expected_run_id.trim().is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidOption,
@@ -68,12 +65,9 @@ impl HoronAgentClient {
         match frame.event {
             // A refusal is the daemon's verdict, and it is the answer: the run
             // moved on, never stopped, or ended for a reason a retry cannot fix.
-            ApiEvent::Error { code, message, details } => Err(Error::from_frame(
-                code,
-                message,
-                details,
-                Some(session_id),
-            )),
+            ApiEvent::Error { code, message, details } => {
+                Err(Error::from_frame(code, message, details, Some(session_id)))
+            }
             // `ok` is the answer to *this* question, not a receipt: the daemon
             // holds it until it has begun the new run, so a continuation that
             // returns here has a run behind it. Nothing further is awaited —

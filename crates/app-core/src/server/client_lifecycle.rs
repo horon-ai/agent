@@ -3783,16 +3783,16 @@ async fn start_processing_message(
                 }
             };
             agent.arm_effort_keywords(&content);
-            // Ownership is claimed only once this turn holds the agent, and the
-            // guard drops before that lock is released. Claiming earlier left a
-            // window in which a daemon wake turn could take the idle agent and
-            // run its tools under this connection's claim (bridges, approval
-            // override). The guard drops when the turn ends, fails, or is
-            // aborted, so no later turn inherits it.
+            // Claim ownership under the agent lock so a daemon wake turn cannot
+            // inherit this connection's bridges or approval override. The claim
+            // ends before the agent is unlocked, including on failure and abort.
             let _turn_ownership = crate::tool::acp_session::claim_turn(&claim_session_id, turn_owner.as_deref());
             if let (Some(expected_run_id), Some(decision)) = (expected_run_id.as_deref(), continuation_decision) {
                 // Decide under the agent lock so one failed run starts at most one retry.
-                return match agent.continue_run(expected_run_id, event_tx, Some(report), decision).await {
+                return match agent
+                    .continue_run(expected_run_id, event_tx, Some(report), decision)
+                    .await
+                {
                     crate::agent::run_journal::ContinuationOutcome::Continued => TurnBegin::Ran {
                         result: Ok(()),
                         start_message_index,

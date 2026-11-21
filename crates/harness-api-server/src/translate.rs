@@ -658,7 +658,7 @@ impl BridgeState {
             "send_message" => {
                 let id = self.legacy_id();
                 let no_reply = request["no_reply"].as_bool().unwrap_or(false);
-                turn_retry::track_send(self, &request, id, api_id, no_reply);
+                turn_retry::track_send(self, request, id, api_id, no_reply);
                 let mut message = json!({
                     "type": "message",
                     "id": id,
@@ -675,7 +675,7 @@ impl BridgeState {
                 {
                     message["images"] = json!(images);
                 }
-                turn_retry::forward_run_id(&mut message, &request);
+                turn_retry::forward_run_id(&mut message, request);
                 vec![Outbound::Legacy(message)]
             }
             "fork_session" => {
@@ -2511,13 +2511,13 @@ impl BridgeState {
                 }
             }
             "error" => {
-                // A rejected tool configuration/result is not a failed model
-                // turn. Preserve streaming state and correlate only its request.
+                // Tool and retry refusals leave the current turn untouched.
                 let id = event["id"].as_u64().unwrap_or(0);
-                if let Some(index) = self.pending_simple.iter().position(|(pending_id, _, kind)| {
-                    *pending_id == id
-                        && matches!(kind, SimpleKind::Tools | SimpleKind::ToolControl | SimpleKind::ContinueRun)
-                }) {
+                if let Some(index) = self
+                    .pending_simple
+                    .iter()
+                    .position(|(pending_id, _, kind)| *pending_id == id && kind.error_is_reply_only())
+                {
                     let (_, api_id, _) = self.pending_simple.remove(index);
                     return vec![ServerFrame::reply(
                         api_id,

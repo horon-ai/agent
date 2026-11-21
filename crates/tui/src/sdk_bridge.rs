@@ -25,9 +25,9 @@ use crate::context::ContextReport;
 
 mod daemon_settings;
 mod messages;
+mod retry;
 mod runtime;
 mod sessions;
-mod retry;
 mod skills;
 mod steer;
 

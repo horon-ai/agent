@@ -61,5 +61,9 @@ fn a_continuation_is_answered_by_the_daemon_decision() {
         "a refusal is a correlated error reply, not a turn event"
     );
     let unrelated_done = state.legacy_event_to_api(&json!({"type": "done", "id": 999}));
-    assert!(unrelated_done.iter().all(|frame| !matches!(frame.event, ApiEvent::TurnDone { .. })));
+    assert!(
+        unrelated_done
+            .iter()
+            .all(|frame| !matches!(frame.event, ApiEvent::TurnDone { .. }))
+    );
 }

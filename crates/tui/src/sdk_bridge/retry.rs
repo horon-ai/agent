@@ -47,10 +47,14 @@ fn eligible_run(state: &RuntimeStateSummary) -> Result<&str, Error> {
     // An open run means a turn is executing now, so the stop `last_stop` names
     // belongs to earlier work and continuing it would run the wrong thing.
     if !state.runs.is_empty() {
-        return Err(refusal("a turn is running, so there is no failed turn to continue".to_string()));
+        return Err(refusal(
+            "a turn is running, so there is no failed turn to continue".to_string(),
+        ));
     }
     let Some(stop) = state.last_stop.as_ref() else {
-        return Err(refusal("nothing has failed in this session; there is no turn to continue".to_string()));
+        return Err(refusal(
+            "nothing has failed in this session; there is no turn to continue".to_string(),
+        ));
     };
     // These are the causes the daemon itself accepts for a continuation, read
     // from the stop it recorded. The daemon re-decides the same question when

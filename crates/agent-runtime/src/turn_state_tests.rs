@@ -1,7 +1,7 @@
 use super::*;
+use crate::ContinuationVerdict;
 use crate::turn_recovery::MAX_AUTO_CONTINUATIONS;
 use crate::turn_state::MAX_RUN_STOP_HISTORY;
-use crate::ContinuationVerdict;
 
 #[test]
 fn run_identity_carries_the_minted_id_unchanged() {
@@ -342,7 +342,11 @@ fn ledger_stopped_as(run_id: &str, cause: StopProvenance) -> RunLedger {
 
 #[test]
 fn a_failed_run_may_be_continued() {
-    for cause in [StopProvenance::ProviderError, StopProvenance::Timeout, StopProvenance::InterruptedUnknown] {
+    for cause in [
+        StopProvenance::ProviderError,
+        StopProvenance::Timeout,
+        StopProvenance::InterruptedUnknown,
+    ] {
         let mut ledger = ledger_stopped_as("run-a", cause);
         assert_eq!(
             ledger.continuation_verdict("run-a"),
