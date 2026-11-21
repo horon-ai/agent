@@ -623,6 +623,56 @@ def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> N
     changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
     if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
         raise Failure("the commit did not preserve the reviewed staging boundary")
+
+
+def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
+    from pathlib import Path
+
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(parents) != 1:
+        raise Failure(f"expected one session containing the approved tool call, found {parents}")
+    parent = parents[0].parent.name
+    child_result = subprocess.run([launch.argv0, "run", "swarm fixture result"], cwd=root,
+                                  env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+                                  capture_output=True, text=True, timeout=STEP_TIMEOUT)
+    children = {path.parent.name for path in Path(home).glob("sessions/*/events.jsonl") if path not in originals}
+    if child_result.returncode != 0 or len(children) != 1:
+        raise Failure(f"expected one recorded child: {child_result.stdout}\n{child_result.stderr}")
+    child = next(iter(children))
+    snapshot = Path(env["HORON_AGENT_RUNTIME_DIR"], "durable-state", "swarm", "smoke.json")
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({"updated_at_unix_ms": int(time.time() * 1000) + 600_000, "members": [{
+        "session_id": child,
+        "report_back_to_session_id": parent,
+        "task_label": "Fixture child",
+        "status": "completed",
+    }]}), encoding="utf-8")
+    terminal.send("/swarm\r")
+    terminal.read_until("Swarm children", STEP_TIMEOUT, "swarm picker opened")
+    terminal.read_until("Fixture child", STEP_TIMEOUT, "completed direct child listed")
+
+    def completed_subscriptions(session_id: str) -> int:
+        marker = f"request_kind=subscribe session_id={session_id} "
+        return sum("phase=handled " in line and marker in line for line in daemon_log_tail(home, limit=5000).splitlines())
+
+    def select_session(session_id: str) -> None:
+        previous = completed_subscriptions(session_id)
+        terminal.send("\r")
+        deadline = time.monotonic() + STEP_TIMEOUT
+        while time.monotonic() < deadline:
+            if completed_subscriptions(session_id) > previous:
+                return
+            time.sleep(0.05)
+        raise Failure(f"the daemon did not attach to session {session_id}\n{daemon_log_tail(home)}")
+
+    select_session(child)
+    picker_start = len(terminal.transcript)
+    terminal.send("/swarm\r")
+    terminal.read_until("parent:", STEP_TIMEOUT, "parent return row", since=picker_start)
+    select_session(parent)
+
+
 def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
     tool_dir = os.path.join(case_root, "voice-bin")
     os.makedirs(tool_dir)
@@ -833,6 +883,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
             context_request_smoke(terminal, home, base_url)
+            swarm_picker_smoke(terminal, launch, home, case_root, env)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         terminal.send("/resume\r")
@@ -842,6 +893,12 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
         terminal.send("\x01")
         terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        archive_path = os.path.join(home, "sdk-archive.json")
+        with open(archive_path, encoding="utf-8") as handle:
+            archived_ids = json.load(handle)["sessions"]
+        if len(archived_ids) != 1:
+            raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
+        archived_id = next(iter(archived_ids))
         recent_start = len(terminal.transcript)
         terminal.send("/resume\r")
         terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
@@ -856,6 +913,14 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         restore_start = len(terminal.transcript)
         terminal.send("\r")
         terminal.read_until("to the recent list", STEP_TIMEOUT, "daemon confirmed restoration", since=restore_start)
+        with open(archive_path, encoding="utf-8") as handle:
+            if archived_id in json.load(handle)["sessions"]:
+                raise Failure(f"restored session {archived_id} remained archived")
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "restored session returned to recent list", since=recent_start)
+        terminal.send("\x1b")
+        time.sleep(0.15)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
