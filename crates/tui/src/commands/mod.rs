@@ -101,6 +101,8 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Continue the last failed turn of this session.
+    Retry,
 }
 
 impl Local {
@@ -126,6 +128,7 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "retry" => Some(Self::Retry),
             _ => None,
         }
     }
@@ -157,6 +160,7 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Retry => "retry",
         }
     }
 }
@@ -649,9 +653,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
+const LOCAL_NAMES: [&str; 20] = [
     "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+    "record", "replay", "resume", "retry", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

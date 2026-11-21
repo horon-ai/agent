@@ -267,6 +267,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "record" => "record the conversation to a local file, or stop (stop, status)",
         "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
+        "retry" => "continue the last failed turn of this session, keeping its one prompt",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",

@@ -574,6 +574,36 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def retry_turn_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import Request, urlopen
+
+    def set_fixture(ready: bool) -> None:
+        request = Request(base_url + "/__retry_fixture", data=json.dumps({"ready": ready}).encode(),
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=5) as response:
+            if not json.load(response)["ok"]:
+                raise Failure("could not change the retry fixture state")
+
+    prompt = "[tui:retry-proof] count this user prompt once"
+    set_fixture(False)
+    terminal.send(f"{prompt}\r")
+    terminal.read_until("TUI retry fixture provider failure", STEP_TIMEOUT, "provider refused the first attempt")
+    time.sleep(0.15)
+    set_fixture(True)
+    terminal.send("/retry\r")
+    terminal.read_until("retry-fixture-recovered", STEP_TIMEOUT, "continued the failed request")
+    time.sleep(0.15)
+    terminal.send("/retry\r")
+    terminal.read_until("nothing was started", STEP_TIMEOUT, "completed work is not retried")
+
+    matching = [line for path in Path(home).glob("sessions/*/events.jsonl")
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if '"kind":"message_appended"' in line and prompt in line]
+    if len(matching) != 1:
+        raise Failure(f"expected one stored user prompt across retry, found {len(matching)}")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -600,6 +630,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            retry_turn_smoke(terminal, home, base_url)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

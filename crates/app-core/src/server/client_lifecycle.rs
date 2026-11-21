@@ -76,6 +76,12 @@ struct ProcessingMessage {
     active_skill: Option<String>,
     /// Present when the sending connection negotiated ACP v2.
     v2: Option<AcpV2Message>,
+    /// A run this message continues instead of starting unrelated work.
+    ///
+    /// The turn decides whether the run may still be continued while it holds
+    /// the agent, so the answer is taken at the point that would begin the new
+    /// run rather than when the request was read.
+    expected_run_id: Option<String>,
 }
 
 const V2_MESSAGE_QUEUED: u8 = 0;
@@ -1226,10 +1232,12 @@ pub(super) async fn handle_client(
             continue;
         }
 
-        // Send ack
-        let ack = ServerEvent::Ack { id: request.id() };
-        let json = encode_event(&ack);
-        {
+        // A continuation is acked by the turn that decides it, and a refusal is
+        // answered there with an error, so the generic ack never claims it.
+        if !crate::agent::run_journal::is_continuation_request(&request) {
+            let ack = ServerEvent::Ack { id: request.id() };
+            let json = encode_event(&ack);
+            {
             let ack_start = Instant::now();
             let mut w = writer.lock().await;
             if w.write_all(json.as_bytes()).await.is_err() {
@@ -1278,6 +1286,7 @@ pub(super) async fn handle_client(
                 ));
                 crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
             }
+            }
         }
 
         // Legacy/direct clients can send a prompt without Subscribe. Their
@@ -1308,6 +1317,7 @@ pub(super) async fn handle_client(
                 system_reminder,
                 active_skill,
                 no_reply,
+                expected_run_id,
             } => {
                 if no_reply {
                     append_context_message(
@@ -1344,6 +1354,7 @@ pub(super) async fn handle_client(
                         system_reminder,
                         active_skill,
                         v2: v2_message.clone(),
+                        expected_run_id,
                     },
                     &client_session_id,
                     Some(&client_connection_id),
@@ -1467,6 +1478,7 @@ pub(super) async fn handle_client(
                             system_reminder: None,
                             active_skill: None,
                             v2: None,
+                            expected_run_id: None,
                         },
                         &client_session_id,
                         Some(&client_connection_id),
@@ -3632,6 +3644,7 @@ async fn start_processing_message(
         system_reminder,
         active_skill,
         v2,
+        expected_run_id,
     } = message;
     if server_reload_starting() {
         crate::logging::info(&format!(
@@ -3768,6 +3781,24 @@ async fn start_processing_message(
             // override). The guard drops when the turn ends, fails, or is
             // aborted, so no later turn inherits it.
             let _turn_ownership = crate::tool::acp_session::claim_turn(&claim_session_id, turn_owner.as_deref());
+            if let Some(expected_run_id) = expected_run_id.as_deref() {
+                // The decision belongs here, where this turn holds the agent: a
+                // continuation that arrives after another turn already began
+                // its own run finds a different current run and runs nothing, so
+                // a repeated click or a second attached client cannot start the
+                // same failed work twice.
+                // The turn answers the request itself: its ack means a new run
+                // began, and a refusal is answered by the rejection path below.
+                let decision = crate::agent::run_journal::ContinuationDecision::new(rejection_tx.clone(), id);
+                return match agent.continue_run(expected_run_id, event_tx, Some(report), decision).await {
+                    crate::agent::run_journal::ContinuationOutcome::Continued => TurnBegin::Ran {
+                        result: Ok(()),
+                        start_message_index,
+                        pending_queue,
+                    },
+                    crate::agent::run_journal::ContinuationOutcome::Refused(refusal) => TurnBegin::Rejected(refusal),
+                };
+            }
             let result =
                 process_locked_message_streaming_mpsc(agent, &content, images, system_reminder, event_tx, Some(report))
                     .await;

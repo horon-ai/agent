@@ -127,6 +127,16 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
 
+/// A `send_message` carrying `expected_run_id` continues the run it names, and
+/// the daemon decides under the session lock whether that run may still be
+/// continued.
+///
+/// The field is optional on the request, so a daemon without this capability
+/// would ignore it and run an ordinary turn against a stale run: the duplicate
+/// turn the field exists to prevent. A client therefore asks the daemon to
+/// continue a run only when this capability is advertised.
+pub const CAPABILITY_TURN_RETRY_V1: &str = "turn_retry_v1";
+
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
 ///
@@ -157,6 +167,7 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
+    (CAPABILITY_TURN_RETRY_V1, &["send_message.expected_run_id"]),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -169,6 +180,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
     CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    CAPABILITY_TURN_RETRY_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

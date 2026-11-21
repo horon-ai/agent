@@ -442,11 +442,14 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
+| `/retry` | Continue the latest eligible failed turn in the attached session |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
+The table lists the client's built-in command names (`Local` in `crates/tui/src/commands/mod.rs`) in name order.
+
+`/retry` resumes the most recent eligible failed request in the attached session. It keeps one visible user message and uses the work already completed during that request. The daemon refuses to retry if the request was superseded, completed, or already resumed.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -478,6 +481,7 @@ built-in commands:
   /record              record the conversation to a local file, or stop (stop, status)
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
+  /retry               continue the current session's latest eligible failed turn
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list

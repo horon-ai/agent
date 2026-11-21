@@ -27,6 +27,7 @@ mod daemon_settings;
 mod messages;
 mod runtime;
 mod sessions;
+mod retry;
 mod skills;
 mod steer;
 
@@ -652,6 +653,9 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // server too old to answer is a state the screen explains, never an
         // error the worker reports.
         Command::DaemonSettings => daemon_settings::read(client, session_id),
+        // The run id is read from the daemon first, so a refusal is the daemon's
+        // own sentence rather than the worker's generic failure.
+        Command::Retry => retry::retry(client, session_id).map(Some),
         // The effort is answered here rather than in `apply` because the level
         // on the status line comes from the runtime report, not from the set
         // request: the harness stores the level and answers with the state it
@@ -733,6 +737,7 @@ fn describe(command: &Command) -> &'static str {
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
         Command::Cancel => "could not cancel the turn",
+        Command::Retry => "could not continue the failed turn",
         Command::Approval { .. } => "could not answer the approval",
         Command::Ask { .. } => "could not answer the question",
     }

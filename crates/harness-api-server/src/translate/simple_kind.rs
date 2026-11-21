@@ -10,6 +10,7 @@ pub(crate) enum SimpleKind {
     Ping,
     History,
     Ok,
+    ContinueRun,
     /// Awaiting `done`: the daemon acks a delete before it touches the store,
     /// and acknowledging a delete that later failed would report a transcript
     /// as gone while it is still there. Only `done` answers this one.

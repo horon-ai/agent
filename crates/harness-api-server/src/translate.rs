@@ -9,6 +9,10 @@ mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
 mod simple_kind;
+mod turn_retry;
+#[cfg(test)]
+#[path = "translate/turn_retry_tests.rs"]
+mod turn_retry_tests;
 mod usage_report;
 
 use crate::background_progress::parse_background_notification;
@@ -654,11 +658,7 @@ impl BridgeState {
             "send_message" => {
                 let id = self.legacy_id();
                 let no_reply = request["no_reply"].as_bool().unwrap_or(false);
-                if no_reply {
-                    self.pending_no_reply_message_id = Some((id, api_id));
-                } else {
-                    self.pending_message_id = Some(id);
-                }
+                turn_retry::track_send(self, &request, id, api_id, no_reply);
                 let mut message = json!({
                     "type": "message",
                     "id": id,
@@ -675,6 +675,7 @@ impl BridgeState {
                 {
                     message["images"] = json!(images);
                 }
+                turn_retry::forward_run_id(&mut message, &request);
                 vec![Outbound::Legacy(message)]
             }
             "fork_session" => {
@@ -2493,8 +2494,9 @@ impl BridgeState {
                     return vec![];
                 };
                 let (_, api_id, kind) = self.pending_simple.remove(index);
+                self.observed_turn_active |= matches!(kind, SimpleKind::ContinueRun);
                 match kind {
-                    SimpleKind::Ok | SimpleKind::ToolControl => {
+                    SimpleKind::Ok | SimpleKind::ToolControl | SimpleKind::ContinueRun => {
                         vec![ServerFrame::reply(api_id, ApiEvent::Ok)]
                     }
                     SimpleKind::Credential { provider, configured } => vec![ServerFrame::reply(
@@ -2513,7 +2515,8 @@ impl BridgeState {
                 // turn. Preserve streaming state and correlate only its request.
                 let id = event["id"].as_u64().unwrap_or(0);
                 if let Some(index) = self.pending_simple.iter().position(|(pending_id, _, kind)| {
-                    *pending_id == id && matches!(kind, SimpleKind::Tools | SimpleKind::ToolControl)
+                    *pending_id == id
+                        && matches!(kind, SimpleKind::Tools | SimpleKind::ToolControl | SimpleKind::ContinueRun)
                 }) {
                     let (_, api_id, _) = self.pending_simple.remove(index);
                     return vec![ServerFrame::reply(
@@ -2527,7 +2530,6 @@ impl BridgeState {
                 }
                 self.activity_version += 1;
                 self.observed_turn_active = false;
-                let id = event["id"].as_u64().unwrap_or(0);
                 self.pending_control_done_ids.remove(&id);
                 self.pending_activity_snapshots.remove(&id);
                 if let Some((state_id, api_id, target)) = self.pending_attach_id.as_ref()
