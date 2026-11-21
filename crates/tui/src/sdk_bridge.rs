@@ -659,7 +659,9 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::DaemonSettings => daemon_settings::read(client, session_id),
         // The run id is read from the daemon first, so a refusal is the daemon's
         // own sentence rather than the worker's generic failure.
-        Command::Retry => retry::retry(client, session_id).map(Some),
+        Command::Retry => Ok(Some(retry::retry(client, session_id).unwrap_or_else(|error| {
+            Incoming::RetryRefused(format!("could not continue the failed turn: {error}"))
+        }))),
         // The effort is answered here rather than in `apply` because the level
         // on the status line comes from the runtime report, not from the set
         // request: the harness stores the level and answers with the state it
