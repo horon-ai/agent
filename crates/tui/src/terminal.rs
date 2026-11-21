@@ -25,6 +25,11 @@ use crate::{app::App, draw, paste, scroll, title};
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
 pub(crate) fn restore() {
+    // The progress indicator and the status record outlive the process that
+    // wrote them. The normal exit clears them through its own writer, which
+    // knows what it wrote; this covers the panic hook and the signal thread,
+    // which have no writer left, and finds nothing to do after the writer ran.
+    crate::progress::clear_stdout();
     // The running local command belongs to this terminal and exits with it.
     crate::commands::shell::kill_active_group();
     release(true);

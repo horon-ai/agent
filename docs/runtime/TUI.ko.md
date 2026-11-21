@@ -89,6 +89,8 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `statusline.context_window` | 숫자 | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `statusline.separator` | `preset`, `dot`, `bar` | `preset` | `HORON_TUI_STATUSLINE_SEPARATOR` |
 | `statusline.background` | `theme`, `terminal` | `theme` | `HORON_TUI_STATUSLINE_BACKGROUND` |
+| `terminal.progress` | 참·거짓 | `false` | `HORON_TUI_TERMINAL_PROGRESS` |
+| `terminal.program_status` | 참·거짓 | `false` | `HORON_TUI_TERMINAL_PROGRAM_STATUS` |
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | 참·거짓 | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
@@ -109,6 +111,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
 `motion.preset`은 `running` 옆의 표시를 제어한다. `full`은 표시 문자를 순서대로 바꾸고 `reduced`는 첫 문자를 유지하며 `static`은 표시를 숨긴다. `motion.spinner_interval`은 같은 문자를 유지하는 최소 시간이며 `40`부터 `2000`밀리초까지 설정할 수 있다. `motion.max_fps`는 모든 모드에서 본문이 도착하거나 회전 표시가 바뀔 때 자동으로 다시 그리는 횟수를 초당 `1`부터 `240`까지 제한한다. `max_fps = 4`이면 자동 갱신 간격은 최소 250밀리초다. 키 입력, 화면 크기 변경처럼 즉시 응답해야 하는 이벤트는 그보다 빨리 화면을 갱신할 수 있다. 범위를 벗어난 값은 거부하며 경고에 대신 적용한 기본값을 표시한다.
+
+`terminal.progress = true`로 설정하면 OSC 9;4를 지원하는 터미널에 진행 상태를 표시합니다. 수치가 있으면 백분율을 보여 주고, 수치가 없으면 진행 중임을 표시합니다. `terminal.program_status = true`를 지정하면 OSC 7501을 지원하는 터미널에 프로그램 상태를 보냅니다. 상태가 바뀔 때 알리고 종료 시 표시를 지웁니다.
+
 `appearance.changes = "accessible"`로 지정하면 도구 출력에서 추가와 삭제를 서로 다른 색으로 표시하며 `+`와 `-` 표식을 유지합니다. 긍정과 부정 상태의 색도 조정합니다. `theme`을 선택하면 테마의 원래 색으로 돌아갑니다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
