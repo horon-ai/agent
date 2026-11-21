@@ -345,6 +345,7 @@ fn a_notice_keeps_its_hanging_indent() {
         symbols: Symbols::default(),
         width: 40,
         markdown: true,
+        visual_blocks: true,
     };
     let text = "the transcript pane draws the newest rows first and stops when it fills";
     let rows: Vec<String> = wrap::wrap_rows(item_lines::lines(&Item::Notice(text.to_string()), &look, None), 40)
@@ -734,6 +735,7 @@ fn listing_rows(line: &str, width: u16) -> Vec<String> {
         symbols: Symbols::default(),
         width,
         markdown: false,
+        visual_blocks: true,
     };
     wrap::wrap_rows(item_lines::lines(&Item::Notice(line.to_string()), &look, None), width)
         .iter()

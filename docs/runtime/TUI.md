@@ -74,16 +74,21 @@ The settings of one process are the registry defaults, then the global file, the
 | `statusline.right` | array of segment names | `["status"]` | `HORON_TUI_STATUSLINE_RIGHT` |
 | `statusline.path_max` | number | `40` | `HORON_TUI_STATUSLINE_PATH_MAX` |
 | `statusline.context_window` | number | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
+| `statusline.separator` | `preset`, `dot`, `bar` | `preset` | `HORON_TUI_STATUSLINE_SEPARATOR` |
+| `statusline.background` | `theme`, `terminal` | `theme` | `HORON_TUI_STATUSLINE_BACKGROUND` |
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | boolean | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
+
+`statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
 
@@ -196,10 +201,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
-| `editor.backspace` | `backspace` | Delete the character before the cursor |
-| `editor.delete` | `delete` | Delete the character at the cursor |
-| `editor.left` | `left`, `ctrl+b` | Move the cursor one character left |
-| `editor.right` | `right`, `ctrl+f` | Move the cursor one character right |
+| `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
+| `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
+| `editor.left` | `left`, `ctrl+b` | Move the cursor one grapheme cluster left |
+| `editor.right` | `right`, `ctrl+f` | Move the cursor one grapheme cluster right |
 | `editor.home` | `home`, `ctrl+a` | Move the cursor to the start of its line |
 | `editor.end` | `end`, `ctrl+e` | Move the cursor to the end of its line |
 | `editor.word_left` | `alt+left` | Move to the start of the word before the cursor |
@@ -241,7 +246,7 @@ The last hundred drafts are kept for `up` and `down`. A walk starts from the new
 
 `ctrl+r` opens those drafts as a list, newest first, for reaching a draft that is too many `up` presses back. Each row is the draft's first line, with its line count when it has more than one, and the whole draft in the preview pane. The list is the same picker the model and session commands use, so typing filters it and `enter` puts the chosen draft back in the editor without sending it; `esc` closes the list and keeps the draft that was there. The drafts are the client's own, so the list is complete the moment it opens.
 
-The cursor is placed in display cells rather than bytes, so a wide character counts for two. Text before the cursor is dropped from the left once the draft is wider than the pane, leaving one cell free so the caret stays visible at the right edge.
+The cursor moves between grapheme clusters, so a flag emoji or a syllable made of combining characters stays together. The editor measures these clusters in display cells. With mouse capture enabled, clicking in the editor moves the cursor to the cluster at that cell. When a line exceeds the pane, the editor scrolls horizontally to keep the caret visible.
 
 ## The transcript
 
@@ -260,6 +265,8 @@ The client marks avoidable prompt cache misses after the request that caused the
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
 
 Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
+
+A `diagram` fence can draw a one-line flow such as `load -> parse -> render`. It accepts up to eight labels, with at most 24 characters and 24 display cells per label. The source must fit within 4 KiB and the rendered flow must fit the pane. Incomplete, malformed and oversized flows remain readable as source. Set `transcript.visual_blocks = false` to show every flow as source.
 
 `transcript.markdown = false` turns the rendering off and draws the same text with its markers as typed.
 
@@ -366,6 +373,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/links` | List links from recent assistant answers and open the selected URL |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
+| `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
@@ -374,7 +382,9 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table lists the client commands (`Local` in `crates/tui/src/commands/mod.rs`) in name order.
+The table lists the built-in commands the client handles (`Local` in `crates/tui/src/commands/mod.rs`), in name order.
+
+In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
 

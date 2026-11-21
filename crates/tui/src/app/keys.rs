@@ -1,10 +1,11 @@
 //! Keystroke, paste and mouse handling: the key map in force decides what a key
 //! means, a live prompt or overlay gets the key first, and nothing is swallowed.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{Action, App};
 use crate::keys::{self, Key};
+use crate::overlays::picker::Kind;
 use crate::overlays::settings::Outcome;
 use crate::prompts::{Prompt, Response};
 use crate::scroll;
@@ -53,6 +54,12 @@ impl App {
         // keys that leave the client still leave it.
         if self.replaying() && self.replay_key(key) {
             return None;
+        }
+        // The queue list is a list whose rows are edited rather than chosen,
+        // so it is answered before the generic picker that would read `enter`
+        // as a choice. It still owns every key while it is open.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue) {
+            return self.queue_panel_key(key);
         }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
@@ -389,12 +396,13 @@ impl App {
         usize::from(self.viewport_height.unwrap_or(24).saturating_sub(1).max(1))
     }
 
-    /// Take a mouse event into the transcript view.
+    /// Take a mouse event into the transcript view or the draft.
     ///
-    /// Only the wheel is used, and only while `transcript.mouse_scroll` holds
-    /// the capture that makes the terminal report it: a client with no
-    /// focusable regions has nothing for a click to mean, and the settings
-    /// screen covers the pane the wheel would move.
+    /// The wheel is used only while `transcript.mouse_scroll` holds the capture
+    /// that makes the terminal report it, and the settings screen covers the
+    /// pane the wheel would move. A left click in the draft places the caret at
+    /// the cell it covered on the last frame; a click elsewhere on screen has
+    /// nothing to mean.
     pub fn on_mouse(&mut self, mouse: MouseEvent) {
         if !self.mouse_scroll || self.overlay.is_some() || self.picker.is_some() {
             return;
@@ -402,6 +410,9 @@ impl App {
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll.up(scroll::WHEEL_ROWS),
             MouseEventKind::ScrollDown => self.scroll.down(scroll::WHEEL_ROWS),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.input.place_caret(mouse.column, mouse.row);
+            }
             _ => {}
         }
     }

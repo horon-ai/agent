@@ -440,7 +440,7 @@ fn commands_tab_completes_the_typed_prefix() {
 
     // A unique match completes whole, and prose gets no hint.
     app.input.clear();
-    for character in "/qu".chars() {
+    for character in "/qui".chars() {
         assert!(press(&mut app, KeyCode::Char(character)).is_none());
     }
     assert_eq!(press(&mut app, KeyCode::Tab), None);

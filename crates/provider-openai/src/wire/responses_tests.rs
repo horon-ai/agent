@@ -172,6 +172,85 @@ fn a_blank_or_absent_effort_adds_no_reasoning_block() {
     assert!(absent.get("reasoning").is_none(), "{absent}");
 }
 
+// ---------------------------------------------------------------------------
+// Tool parameter schemas with root alternatives (#596)
+
+/// The schema shape a multi-action tool such as `swarm` declares: per-action
+/// requirements live in a root `anyOf`, because the root `required` array would
+/// apply to every action.
+fn multi_action_tool() -> ToolDefinition {
+    ToolDefinition::new(
+        "swarm",
+        "Run one swarm action",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["spawn", "list", "message"],
+                    "description": "what to do"
+                },
+                "to_session": { "type": "string", "description": "who to address" },
+                "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Required for spawn"
+                },
+                "filter": { "anyOf": [{ "type": "string" }, { "type": "integer" }] }
+            },
+            "required": ["action"],
+            "anyOf": [
+                {
+                    "type": "object",
+                    "required": ["action", "label"],
+                    "properties": {
+                        "action": { "type": "string", "enum": ["spawn"] },
+                        "label": { "type": "string", "minLength": 1 },
+                        "mode": { "type": "string", "enum": ["fast"] }
+                    }
+                },
+                {
+                    "type": "object",
+                    "required": ["action"],
+                    "properties": {
+                        "action": { "type": "string", "enum": ["list", "message"] },
+                        "mode": { "type": "string", "enum": ["safe"] }
+                    }
+                }
+            ]
+        }),
+    )
+}
+
+#[test]
+fn a_root_alternative_becomes_one_object_schema_for_responses_tools() {
+    let tools = [multi_action_tool()];
+
+    let request = body("gpt-5", &[user(vec![text("go")])], &tools, "", None);
+    let declared = &request["tools"][0];
+    let parameters = &declared["parameters"];
+
+    // A root combiner is not part of the function-parameters contract.
+    assert!(parameters.get("anyOf").is_none(), "{parameters}");
+    assert!(parameters.get("oneOf").is_none(), "{parameters}");
+    assert_eq!(parameters["type"], json!("object"));
+    assert_eq!(parameters["required"], json!(["action"]));
+    for name in ["action", "to_session", "label", "mode"] {
+        assert!(
+            parameters["properties"].get(name).is_some(),
+            "`{name}` was dropped: {parameters}"
+        );
+    }
+    // Only the root is widened; a nested alternative stays as declared.
+    assert_eq!(
+        parameters["properties"]["filter"]["anyOf"],
+        json!([{ "type": "string" }, { "type": "integer" }])
+    );
+    // The branch conditions cannot be represented, so no strict guarantee.
+    assert_eq!(declared["strict"], json!(false), "{declared}");
+}
+
 #[test]
 fn a_second_tool_with_the_same_name_is_dropped_and_reported() {
     let tools = [
