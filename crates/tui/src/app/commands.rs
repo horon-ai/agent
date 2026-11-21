@@ -99,6 +99,7 @@ impl App {
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
+            Local::Rename => self.rename_session(arguments),
             // `/swarm` opens this session's children; an argument after it still
             // reaches the harness's own report, so the built-in takes the bare
             // name rather than the command.

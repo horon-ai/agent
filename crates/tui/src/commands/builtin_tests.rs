@@ -404,6 +404,7 @@ fn builtin_help_lists_every_built_in_command() {
         "/model",
         "/new",
         "/quit",
+        "/rename",
         "/resume",
         "/settings",
         "/swarm",

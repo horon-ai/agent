@@ -81,6 +81,16 @@ impl App {
         Some(Action::Swarm)
     }
 
+    pub(crate) fn rename_session(&mut self, arguments: &str) -> Option<Action> {
+        let title = arguments.trim();
+        if title.is_empty() || title.chars().any(char::is_control) {
+            self.warn("enter a title without control characters: /rename <title>");
+            return None;
+        }
+        self.session_change_allowed("rename")
+            .then(|| Action::Rename(title.to_owned()))
+    }
+
     /// Take the flag that says the next attach answer started a fresh session.
     pub(crate) fn take_pending_new_session(&mut self) -> bool {
         std::mem::take(&mut self.new_session_pending)

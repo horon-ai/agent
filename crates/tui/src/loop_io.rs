@@ -54,6 +54,20 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
         changed = Redraw::Immediate;
         match delivery {
             Incoming::Event(event) => {
+                if let ApiEvent::SessionRenamed {
+                    session_id,
+                    display_title,
+                    ..
+                } = *event
+                {
+                    if app.session_id.as_deref() == Some(session_id.as_str()) {
+                        app.session_title = Some(display_title);
+                        app.transcript.push_notice("session title updated".to_owned());
+                    } else {
+                        changed = previously_changed;
+                    }
+                    continue;
+                }
                 if matches!(&*event, ApiEvent::TextDelta { .. } | ApiEvent::ReasoningDelta { .. })
                     && previously_changed != Redraw::Immediate
                 {
@@ -147,6 +161,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        Action::Rename(title) => Command::Rename(title),
         Action::CheckSessions(sessions) => Command::CheckSessions(sessions),
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
@@ -311,15 +326,12 @@ where
     if let Err(error) = crate::paste::enable() {
         app.warn(format!("paste: {error}"));
     }
-    // The editor may have named the window itself, and the title writer only
-    // skips a label it believes is already up; a fresh one writes this client's
-    // name again without touching the stack entry the exit will pop. The state
-    // goes back with it: the fresh writer has shown nothing yet, and the frame
-    // loop only rewrites the name when the state moves.
-    *title = crate::title::WindowTitle::stdout();
-    let state_supported = title.state_supported();
-    if let Err(error) = title.show(&crate::window::label(app, state_supported)) {
-        app.warn(format!("title: {error}"));
+    if title.enabled() {
+        title.forget_label();
+        let state_supported = title.state_supported();
+        if let Err(error) = title.show(&crate::window::label(app, state_supported)) {
+            app.warn(format!("title: {error}"));
+        }
     }
     Ok(outcome)
 }

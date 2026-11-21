@@ -229,10 +229,10 @@ impl Title<Stdout> {
     ///
     /// A redirected stdout writes a file, not a window, so nothing goes through
     /// it.
-    pub(crate) fn stdout() -> Self {
+    pub(crate) fn stdout(enabled: bool) -> Self {
         let output = std::io::stdout();
-        let terminal = output.is_terminal();
-        Self::with_stack(output, terminal, title_stack_supported())
+        let terminal = enabled && output.is_terminal();
+        Self::with_stack(output, terminal, terminal && title_stack_supported())
     }
 }
 
@@ -247,6 +247,16 @@ impl<W: Write> Title<W> {
             stack,
             broken: false,
         }
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.terminal
+    }
+
+    /// A child may have changed the title while it owned the screen.
+    pub(crate) fn forget_label(&mut self) {
+        self.current = None;
+        self.broken = false;
     }
 
     /// Whether the title may carry the turn state marker.
