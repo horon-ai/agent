@@ -68,6 +68,8 @@ pub enum Action {
     Rename(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask the harness for the tools enabled for the session.
+    Tools,
     /// Ask for the background work this session is still running.
     BackgroundJobs,
     /// Ask which noted sessions were deleted, including checks for archived sessions.

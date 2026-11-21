@@ -751,6 +751,13 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
+        terminal.send("/tools\r")
+        terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
+        terminal.read_until("tier unknown", STEP_TIMEOUT, "unreported loading tier")
+        terminal.send("bash\r")
+        if contains(terminal.transcript, APPROVAL_PROMPT) or os.path.exists(os.path.join(case_root, TOOL_FILE)):
+            raise Failure(f"browsing tools started a call\n--- transcript ---\n{terminal.transcript}")
         if POSIX:
             voice_input_smoke(terminal, case_root, base_url)
 
@@ -783,18 +790,26 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
         terminal.send("\x01")
         terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        archive_path = os.path.join(home, "sdk-archive.json")
+        with open(archive_path, encoding="utf-8") as handle:
+            archived_ids = json.load(handle)["sessions"]
+        if len(archived_ids) != 1:
+            raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
+        archived_id = next(iter(archived_ids))
+        archived_start = len(terminal.transcript)
+        terminal.send("/archived\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
+        restore_start = len(terminal.transcript)
+        terminal.send("\r")
+        terminal.read_until("to the recent list", STEP_TIMEOUT, "daemon confirmed restoration", since=restore_start)
+        with open(archive_path, encoding="utf-8") as handle:
+            if archived_id in json.load(handle)["sessions"]:
+                raise Failure(f"restored session {archived_id} remained archived")
         recent_start = len(terminal.transcript)
         terminal.send("/resume\r")
-        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
-        recent_filter = len(terminal.transcript)
-        terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.read_until(archive_label, STEP_TIMEOUT, "restored session returned to recent list", since=recent_start)
         terminal.send("\x1b")
         time.sleep(0.15)
-        terminal.send("/archived\r")
-        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
-        terminal.send(f"{archive_label}\r")
-        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
@@ -1154,6 +1169,29 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
+    home = write_config(os.path.join(root, "home"), base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('profile = "none"\n')
+    env = horon_env(root, home)
+    env.pop("HORON_AGENT_TOOL_PROFILE", None)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(root), cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "empty-profile session ready")
+        terminal.send("/tools\r")
+        terminal.read_until("are enabled for this session", STEP_TIMEOUT, "empty tool picker")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0:
+            raise Failure(f"empty tool picker exited {code}\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url, "yolo")
     env = horon_env(case_root, home)
@@ -1217,6 +1255,7 @@ def run_build_layout(
                 source = "--no-title" if from_flag else "title.enabled=false"
                 text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
                 log(f"{source}: no title or title stack sequences")
+            text += "\n--- empty tool profile ---\n" + empty_tool_picker(launch, os.path.join(root, "empty-tools"), base_url)
             jobs_root = os.path.join(root, "jobs")
             jobs_launch = build_launch(jobs_root, agent, tui)
             text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)

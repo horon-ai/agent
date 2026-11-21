@@ -5,8 +5,9 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
-//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
-//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
+//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`,
+//!    `/settings`, `/resume`, `/skills`, `/switch`, `/tools`, `/links`, `/queue`,
+//!    `/record`, `/replay` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -107,6 +108,8 @@ pub enum Local {
     Archived,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
+    /// Browse the tools enabled for the attached session.
+    Tools,
     /// List trusted MCP servers or explicitly probe one by name.
     Mcp,
     /// Switch to another session, by id or from the list.
@@ -153,6 +156,7 @@ impl Local {
             "resume" => Some(Self::Resume),
             "archived" => Some(Self::Archived),
             "skills" => Some(Self::Skills),
+            "tools" => Some(Self::Tools),
             "mcp" => Some(Self::Mcp),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
@@ -185,6 +189,7 @@ impl Local {
             Self::Resume => "resume",
             Self::Archived => "archived",
             Self::Skills => "skills",
+            Self::Tools => "tools",
             Self::Mcp => "mcp",
             Self::Switch => "switch",
             Self::Note => "note",
@@ -691,7 +696,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: [&str; 27] = [
     "archived",
     "artifact",
     "clear",
@@ -717,6 +722,7 @@ const LOCAL_NAMES: [&str; 26] = [
     "settings",
     "skills",
     "switch",
+    "tools",
     "voice",
 ];
 

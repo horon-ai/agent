@@ -366,7 +366,7 @@ Typing `/` opens a list of the commands the typed letters match: the same comman
 
 ## Pickers
 
-The model, effort, session, skill, link and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
+The model, effort, session, skill, link, tool and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
 
 The filter is the subsequence match the slash popup uses, over a row's name and its second column and, for a session, over the conversation lines its preview carries. Those lines are searchable and a preview's header line is not, because the header names the directory and the time every row of one directory shares. Matches are ranked, and rows that rank the same keep the order the list gave them, so an empty filter shows the list in its own order. A filter that leaves nothing says `nothing matches that filter`.
 
@@ -458,13 +458,14 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/tools` | Browse the current session's enabled tools without running them |
 | `/voice` | Dictate to the draft or play text on this device |
 
 Use `/voice consent` in the attached session before recording. Press Ctrl+Space or run `/voice` to start or stop. `/voice cancel` discards the recording and `/voice forget` withdraws consent. Recognized text goes into the draft and only goes to the model if you submit it. `/voice say <text>` and `/voice read` play text on this device.
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -507,6 +508,7 @@ built-in commands:
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
+  /tools               browse the current session's enabled tools without running them
   /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

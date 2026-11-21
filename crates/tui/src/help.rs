@@ -124,6 +124,7 @@ Commands:
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
+  /tools         browse the current session's enabled tools
   /voice [consent|forget|stop|cancel|say <text>|read|status]
                  on-device speech: consent to capture, dictate into the
                  draft (not sent), or speak text locally
@@ -290,6 +291,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",
+        "tools" => "browse the current session's enabled tools without running them",
         "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",
     }

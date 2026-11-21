@@ -652,6 +652,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
                 Incoming::Sessions(rows)
             }))
         }
+        Command::Tools => client.list_tools(session_id).map(|tools| Some(Incoming::Tools(tools))),
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
@@ -723,6 +724,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::Tools
         | Command::CheckSessions(_)
         | Command::Skills { .. }
         | Command::BackgroundJobs
@@ -774,6 +776,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Tools => "could not list the session tools",
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
