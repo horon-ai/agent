@@ -658,7 +658,9 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
 
     def select_session(session_id: str) -> None:
         previous = completed_subscriptions(session_id)
+        attach_start = len(terminal.transcript)
         terminal.send("\r")
+        terminal.read_until("resumed", STEP_TIMEOUT, "TUI applied the session change", since=attach_start)
         deadline = time.monotonic() + STEP_TIMEOUT
         while time.monotonic() < deadline:
             if completed_subscriptions(session_id) > previous:
