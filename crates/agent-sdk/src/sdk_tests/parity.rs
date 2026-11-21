@@ -327,6 +327,7 @@ fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
         "client.rs",
+        "client/session_fork.rs",
         "handoff.rs",
         "structured.rs",
         "export.rs",
