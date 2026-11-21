@@ -38,6 +38,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("create_session_with_options", "createSession"),
     cap("attach_session", "attachSession"),
     cap("fork_session", "forkSession"),
+    cap("fork_session_at", "forkSessionAt"),
     cap("transfer_session", "transferSession"),
     cap("detach_session", "detachSession"),
     cap("send_message", "sendMessage"),
@@ -326,6 +327,7 @@ fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
         "client.rs",
+        "client/session_fork.rs",
         "handoff.rs",
         "structured.rs",
         "export.rs",

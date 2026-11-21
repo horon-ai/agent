@@ -13,7 +13,7 @@ use horon_agent_sdk::{ConnectOptions, HistoryMessage, SessionInfo};
 
 use super::AttachedSession;
 use super::sessions::{
-    Dial, belongs, described, first_user_text, follow, history_or_empty, messages, preview, session_of,
+    Dial, belongs, boundaries, described, first_user_text, follow, history_or_empty, messages, preview, session_of,
 };
 
 /// One streamed delta of the session named, as the daemon publishes it.
@@ -359,4 +359,40 @@ fn an_attach_whose_history_read_answered_keeps_the_conversation() {
         history_or_empty(read),
         vec![message("user", "hello"), message("assistant", "hi")]
     );
+}
+
+fn stored(role: &str, content: &str, id: &str) -> HistoryMessage {
+    HistoryMessage {
+        role: role.to_string(),
+        content: content.to_string(),
+        response_stats: None,
+        answer: None,
+        message_id: Some(id.to_string()),
+    }
+}
+
+#[test]
+fn fork_rows_are_the_recorded_user_messages_newest_first() {
+    let history = [
+        stored("user", "first question", "message_1"),
+        stored("assistant", "an answer", "message_2"),
+        // Injected context is stored under the user role but was never written
+        // by the user, so it cannot be a branch point.
+        stored("user", "<system-reminder>hidden</system-reminder>", "message_3"),
+        stored("user", "second question\nwith a second line", "message_4"),
+        // A row without a stored id has no stable boundary to send.
+        message("user", "no id"),
+    ];
+    let rows = boundaries(&history);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert_eq!(rows[0].boundary, "message_4", "the newest boundary is not first");
+    assert_eq!(rows[0].label, "second question with a second line");
+    assert_eq!(rows[0].detail, "#2");
+    assert!(
+        rows[0].preview.iter().any(|line| line.contains("3 stored messages")),
+        "{:?}",
+        rows[0].preview
+    );
+    assert_eq!(rows[1].boundary, "message_1");
+    assert_eq!(rows[1].detail, "#1");
 }

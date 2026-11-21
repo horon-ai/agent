@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 25;
+export const API_VERSION_MINOR = 26;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -30,6 +30,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
+  ["session_fork_at_v1", ["fork_session_at"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -645,6 +646,7 @@ export type ApiRequest =
   | { req: "create_session"; working_dir?: string; system_prompt?: string }
   | { req: "attach_session"; session_id: string }
   | { req: "fork_session"; session_id: string }
+  | { req: "fork_session_at"; session_id: string; boundary_message_id: string }
   | { req: "transfer_session"; session_id: string }
   | { req: "detach_session"; session_id: string }
   | { req: "configure_tools"; session_id: string; tools: ToolConfiguration }
@@ -1245,6 +1247,7 @@ export const KNOWN_REQUEST_KINDS = [
   "create_session",
   "attach_session",
   "fork_session",
+  "fork_session_at",
   "transfer_session",
   "detach_session",
   "configure_tools",

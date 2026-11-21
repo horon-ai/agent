@@ -444,6 +444,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
+| `/fork` | Start a separate saved session from a recorded history boundary |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
@@ -463,11 +464,13 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/voice` | Dictate to the draft or play text on this device |
 
+Choose a saved user message in `/fork` to start a separate session containing the conversation before that message. The parent keeps its full history. In the new session, `/fork` also offers a row to return to the parent. The daemon refuses a history boundary that disappeared after the picker opened.
+
 Use `/voice consent` in the attached session before recording. Press Ctrl+Space or run `/voice` to start or stop. `/voice cancel` discards the recording and `/voice forget` withdraws consent. Recognized text goes into the draft and only goes to the model if you submit it. `/voice say <text>` and `/voice read` play text on this device.
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -493,6 +496,7 @@ built-in commands:
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
+  /fork                start a separate session from a saved history point
   /help                list the commands and the keys in force
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does

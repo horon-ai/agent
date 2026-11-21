@@ -133,6 +133,12 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // it is refused with a structured `unsupported` naming this capability
     // rather than being sent a frame it would answer with no correlation.
     horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    // Forking from a recorded boundary runs in the daemon. The bridge
+    // advertises the surface unconditionally and forwards; a daemon too old to
+    // serve it is refused with a structured `unsupported` naming this
+    // capability, which is the same answer a client would read from a bridge
+    // that did not advertise it.
+    horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -365,6 +371,7 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    let session_fork_at_supported = daemon_caps.iter().any(|cap| cap == "session_fork_at_api");
     let requested_events = hello["event_capabilities"].as_array();
     let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
         let capability = OPT_IN_EVENT_CAPABILITIES[index];
@@ -408,6 +415,7 @@ where
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;
     state.cancellable_work_api_supported = cancellable_work_api_supported;
+    state.session_fork_at_supported = session_fork_at_supported;
     // The daemon, and therefore this capability, is one per bridge process, so
     // the forwarding module records it instead of every `BridgeState` site.
     translate::effective_settings::set_supported(effective_settings_api_supported);

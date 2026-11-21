@@ -75,7 +75,7 @@ impl App {
     }
 
     /// Whether the session may change now, saying why not when it may not.
-    fn session_change_allowed(&mut self, name: &str) -> bool {
+    pub(super) fn session_change_allowed(&mut self, name: &str) -> bool {
         if self.pending_turn {
             self.transcript
                 .push_notice(format!("the turn is still running; /{name} works once it ends"));

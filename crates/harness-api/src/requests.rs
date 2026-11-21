@@ -103,6 +103,18 @@ pub enum ApiRequest {
     /// Clone an attached session's transcript into a new, idle session.
     ForkSession { session_id: String },
 
+    /// Clone the messages recorded before `boundary_message_id` into a new,
+    /// idle session, leaving the source untouched.
+    ///
+    /// The boundary is a stored message id the client read from the source's
+    /// history, not an index: the daemon resolves it against the source's
+    /// selected head and refuses a boundary that head no longer records.
+    /// Requires `session_fork_at_v1`. Replies with `SessionForked`.
+    ForkSessionAt {
+        session_id: String,
+        boundary_message_id: String,
+    },
+
     /// Create a fresh session containing a runtime-compacted handoff.
     /// The parent remains unchanged. Replies with `SessionForked`.
     TransferSession { session_id: String },
@@ -654,6 +666,7 @@ impl ApiRequest {
             Self::DeleteSession { session_id, .. } => Some(session_id.as_str()),
             Self::AttachSession { session_id, .. } => Some(session_id.as_str()),
             Self::ForkSession { session_id, .. } => Some(session_id.as_str()),
+            Self::ForkSessionAt { session_id, .. } => Some(session_id.as_str()),
             Self::TransferSession { session_id, .. } => Some(session_id.as_str()),
             Self::DetachSession { session_id, .. } => Some(session_id.as_str()),
             Self::SendMessage { session_id, .. } => Some(session_id.as_str()),
@@ -734,6 +747,7 @@ impl ApiRequest {
             // `answer_id` is the legacy request and needs no negotiation.
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),
             Self::GetEffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
+            Self::ForkSessionAt { .. } => Some(crate::CAPABILITY_SESSION_FORK_AT_V1),
             _ => None,
         }
     }

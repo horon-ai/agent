@@ -100,6 +100,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             } => app.runtime_info(provider, model, effort, level),
             Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
+            Incoming::Forks(rows) => app.show_forks(rows),
             Incoming::ArchivedSessions(rows) => app.show_archived_sessions(rows),
             Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
             Incoming::Skills(rows) => app.show_skills(rows),
@@ -118,7 +119,15 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 // Read before the attach so the notice names what happened: the
                 // same answer covers a resumed session and one just created.
                 let started = app.take_pending_new_session();
+                // Read before the session moves: the origin is the session the
+                // fork was asked from, and the answer is the branch to record
+                // it against.
+                let origin = app.take_pending_fork();
+                let branch = session.session_id.clone();
                 app.attach_session(*session, started);
+                if let Some(origin) = origin {
+                    app.forked_from(origin, &branch);
+                }
                 // The directory travels with the answer: the session's own
                 // folder becomes the completion root, and an answer that names
                 // none turns path completion off rather than keeping the
@@ -175,6 +184,8 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        Action::Forks => Command::Forks,
+        Action::Fork(boundary) => Command::Fork(boundary),
         Action::Rename(title) => Command::Rename(title),
         Action::CheckSessions(sessions) => Command::CheckSessions(sessions),
         // The user opened the list, so a failure is theirs to see and the

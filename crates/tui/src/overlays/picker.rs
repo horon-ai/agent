@@ -38,6 +38,8 @@ pub enum Kind {
     Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// The recorded message boundaries this session can fork from.
+    Forks,
     /// Archived sessions available to restore for this working directory.
     ArchivedSessions,
     /// The skills the harness reports for this session.

@@ -108,6 +108,7 @@ Commands:
                  the last answer or the newest code block
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
+  /fork          start a separate session from a saved history point
   /jobs          list this session's background work, and cancel a terminal
                  with Delete
   /keys          list the keys in force and what each does
@@ -273,6 +274,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
+        "fork" => "start a separate session from a saved history point",
         "help" => "list the commands and the keys in force",
         "jobs" => "list the background work this session is running, and cancel a terminal",
         "keys" => "list the keys in force and what each does",

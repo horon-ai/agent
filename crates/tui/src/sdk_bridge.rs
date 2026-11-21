@@ -103,6 +103,23 @@ pub struct SkillRow {
     pub allowed_tools: Vec<String>,
 }
 
+/// One recorded boundary the fork picker offers, as the bridge built it.
+///
+/// `boundary` is the stored message id the daemon will resolve, never an index:
+/// a message that has since left the session's head comes back as an error
+/// rather than forking the wrong prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkRow {
+    /// The stored message id the fork request carries.
+    pub boundary: String,
+    /// What the row reads as: the first line of the message it forks before.
+    pub label: String,
+    /// A short second column naming the message's place in the history.
+    pub detail: String,
+    /// Lines the preview pane shows while this row is selected.
+    pub preview: Vec<String>,
+}
+
 /// A session the bridge attached to, and what the client needs to show it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachedSession {
@@ -383,7 +400,10 @@ fn run_worker(
                     // Whether the answer moves the worker to another session,
                     // which is also when the skills of the one left behind stop
                     // being the client's.
-                    let resets_session = matches!(&command, Command::NewSession { .. } | Command::Attach(_));
+                    let resets_session = matches!(
+                        &command,
+                        Command::NewSession { .. } | Command::Attach(_) | Command::Fork(_)
+                    );
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
@@ -413,6 +433,19 @@ fn run_worker(
                                         working_dir,
                                     }))
                                 }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        // The daemon resolves the boundary against the source
+                        // it is attached to and refuses a stale one before any
+                        // session exists, so a refusal leaves `session_id` and
+                        // `stream` on the source.
+                        Command::Fork(boundary) => {
+                            match sessions::forked(&client, &boundary, &mut session_id, &mut stream, &socket) {
+                                Ok((attached, working_dir)) => Ok(Some(Incoming::Attached {
+                                    session: Box::new(attached),
+                                    working_dir,
+                                })),
                                 Err(error) => Err(error),
                             }
                         }
@@ -653,6 +686,14 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             }))
         }
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
+        // The fork list reads the session's own history once, when the user
+        // opens it: the rows are stored message ids, so a boundary that has
+        // since left the session's head is refused by the daemon instead of
+        // forking the wrong place.
+        Command::Forks => {
+            let messages = client.get_history(session_id)?;
+            Ok(Some(Incoming::Forks(sessions::boundaries(&messages))))
+        }
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
@@ -723,6 +764,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::Forks
         | Command::CheckSessions(_)
         | Command::Skills { .. }
         | Command::BackgroundJobs
@@ -731,7 +773,8 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Steer(_)
         | Command::Runtime { .. }
         | Command::NewSession { .. }
-        | Command::Attach(_) => Ok(None),
+        | Command::Attach(_)
+        | Command::Fork(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -774,6 +817,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Forks => "could not list the recorded messages",
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
@@ -784,6 +828,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
+        Command::Fork(_) => "could not fork the session",
         Command::Rename(_) => "could not rename the session",
         Command::Cancel => "could not cancel the turn",
         Command::Approval { .. } => "could not answer the approval",
