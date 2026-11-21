@@ -1701,19 +1701,17 @@ fn write_json_line(stdout: &mut impl Write, value: &impl Serialize) -> Result<()
     Ok(())
 }
 
-pub async fn run_model_command(
+pub(super) async fn run_model_command(
     choice: &super::provider_init::ProviderChoice,
     model: Option<&str>,
     emit_json: bool,
     verbose: bool,
+    filter: &super::args::ModelListFilter,
 ) -> Result<()> {
-    let provider = super::provider_init::init_provider_quiet(choice, model).await?;
-
-    if let Err(err) = provider.prefetch_models().await
-        && !super::output::quiet_enabled()
-    {
-        eprintln!("Warning: failed to refresh dynamic model list: {}", err);
+    if filter.refresh || filter.profile.is_some() || filter.search.is_some() {
+        return model_catalog::run(filter, emit_json).await;
     }
+    let provider = super::provider_init::init_provider_quiet(choice, model).await?;
 
     let routes = provider.model_routes();
     let filtered_routes = filter_cli_model_routes_for_choice(choice, &routes);
@@ -1765,6 +1763,7 @@ pub async fn run_model_command(
     Ok(())
 }
 
+mod model_catalog;
 mod model_routes;
 use model_routes::*;
 

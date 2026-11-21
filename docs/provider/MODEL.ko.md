@@ -34,7 +34,9 @@ effort는 방식마다 다르게 실린다. `openai-compatible`은 `reasoning_ef
 
 각 방식은 모델 라우트에 위 표의 `api_method` 값으로 나타난다. 런타임 정체성은 네 가지 모두 `openai-compatible` 또는 `openai-compatible:<profile>`로 남으므로, 저장된 세션과 하네스 API, SDK는 프로바이더 이름 하나를 본다.
 
-`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열에서 오고, 어떤 방식도 엔드포인트에 목록을 묻지 않는다.
+`prompt_cache_key`는 `openai-compatible`과 `openai-responses`에만 적용한다. `extra_body` 키는 네 방식 모두에서 모든 요청 본문의 최상위에 합쳐진다. 기본 모델 목록은 프로파일의 정적 `[[providers.<name>.models]]` 배열을 사용한다.
+
+`horon model list --profile <name> --search <text>`는 프로파일 이름과 모델 ID에 포함된 문자열로 설정 목록을 거른다. 모델 ID를 거를 때 대소문자를 구분하지 않는다. `--refresh`를 추가하면 조건에 맞는 `openai-compatible`과 `openai-responses` 프로파일에 설정된 인증을 사용해 `GET /models`를 요청한다. 프로파일별로 갱신 성공, 실패 또는 지원하지 않는 방식임을 표시한다. 실패하거나 지원하지 않는 프로파일은 설정된 모델을 목록에 표시한다. `--json`에는 프로파일별 목록 출처와 사유가 들어간다. 갱신 결과는 이번 명령에 적용되며 `config.toml`은 그대로 둔다.
 
 ### 도구 파라미터 스키마
 
