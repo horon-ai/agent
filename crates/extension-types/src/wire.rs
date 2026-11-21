@@ -597,14 +597,13 @@ pub fn negotiate(expectation: &HostExpectation<'_>, result: &InitializeResult) -
     if result.declaration_digest != expectation.declaration_digest {
         return Err(HandshakeError::DigestMismatch);
     }
-    let shared =
-        expectation
-            .protocol
-            .intersection(&result.protocol)
-            .ok_or_else(|| HandshakeError::ProtocolIncompatible {
-                host: expectation.protocol,
-                extension: result.protocol,
-            })?;
+    let shared = expectation
+        .protocol
+        .intersection(&result.protocol)
+        .ok_or(HandshakeError::ProtocolIncompatible {
+            host: expectation.protocol,
+            extension: result.protocol,
+        })?;
     for capability in result.capabilities.iter() {
         if !expectation.declared.contains(&capability) {
             return Err(HandshakeError::CapabilityNotDeclared(capability));
@@ -649,17 +648,11 @@ impl RequestIds {
         }
     }
 
-    /// Allocate the next id, or `None` once the space is exhausted. Sessions
-    /// stop rather than wrap, because a repeated id would make an answer
-    /// ambiguous.
-    pub fn allocate(&self) -> Option<u64> {
-        match self
-            .next
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| current.checked_add(1))
-        {
-            Ok(id) => Some(id),
-            Err(_exhausted) => None,
-        }
+    /// Allocate the next id. An exhausted counter returns its final value as
+    /// an error instead of wrapping and making an answer ambiguous.
+    pub fn allocate(&self) -> Result<u64, u64> {
+        self.next
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| current.checked_add(1))
     }
 }
 

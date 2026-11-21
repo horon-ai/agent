@@ -670,7 +670,7 @@ impl ExtensionWire {
     }
 
     fn next_id(&self) -> Result<u64, WireError> {
-        self.ids.allocate().ok_or(WireError::IdsExhausted)
+        self.ids.allocate().map_err(|_| WireError::IdsExhausted)
     }
 
     /// Mark the connection finished and wake everything still waiting.

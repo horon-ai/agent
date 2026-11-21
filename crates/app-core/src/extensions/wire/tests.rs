@@ -12,10 +12,10 @@ use std::time::Duration;
 
 use horon_agent_extension_types::wire::{
     Capability, CapabilitySet, CommandInvokeParams, FrameError, HOST_PROTOCOL_RANGE, HandshakeError, HostExpectation,
-    InitializeParams, InitializeResult, Negotiated, ObserverEvent, ObserverParams, PackageKind, ProtocolRange,
-    ProtocolVersion, RpcError, ToolCallParams, WireFrame, WireMethod, WireNotification, WireRequest, WireResponse,
-    parse_frame,
+    InitializeParams, InitializeResult, Negotiated, ObserverParams, ProtocolRange, ProtocolVersion, RpcError,
+    ToolCallParams, WireFrame, WireMethod, WireNotification, WireRequest, WireResponse, parse_frame,
 };
+use horon_agent_extension_types::{ObserverEvent, PackageKind};
 use serde_json::Value;
 use tokio::io::DuplexStream;
 use tokio::task::JoinHandle;
@@ -108,7 +108,7 @@ fn accepted(offered: &[Capability]) -> InitializeResult {
 #[derive(Debug)]
 enum PeerAction {
     /// Write this frame back.
-    Reply(WireFrame),
+    Reply(WireResponse),
     /// Answer nothing and keep reading, which is how a child stalls a request.
     Silent,
     /// Stop reading; the stream ends.
@@ -119,10 +119,10 @@ enum PeerAction {
 /// request waits until its deadline or cancellation.
 fn answering(body: InitializeResult) -> impl FnMut(&WireRequest) -> PeerAction {
     move |request| match request.method {
-        WireMethod::Initialize => PeerAction::Reply(WireFrame::Response(WireResponse::reply(
+        WireMethod::Initialize => PeerAction::Reply(WireResponse::reply(
             request.id,
             serde_json::to_value(&body).expect("initialize result serializes"),
-        ))),
+        )),
         _ => PeerAction::Silent,
     }
 }
@@ -132,7 +132,7 @@ fn answering(body: InitializeResult) -> impl FnMut(&WireRequest) -> PeerAction {
 fn spawn_peer(
     stream: DuplexStream,
     limits: WireLimits,
-    mut answer: impl FnMut(&WireRequest) -> PeerAction,
+    mut answer: impl FnMut(&WireRequest) -> PeerAction + Send + 'static,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let (read, mut write) = tokio::io::split(stream);
@@ -157,7 +157,24 @@ fn spawn_peer(
 
 fn connected(limits: WireLimits) -> (Arc<ExtensionWire>, DuplexStream) {
     let (host, peer) = tokio::io::duplex(64 * 1024);
-    (Arc::new(ExtensionWire::new(host, limits)), peer)
+    (host_with_reader(host, limits), peer)
+}
+
+fn host_with_reader(host: DuplexStream, limits: WireLimits) -> Arc<ExtensionWire> {
+    let (read, write) = tokio::io::split(host);
+    let wire = Arc::new(ExtensionWire::new(write, limits));
+    let reader_wire = Arc::downgrade(&wire);
+    tokio::spawn(async move {
+        let mut reader = FrameReader::new(read, limits);
+        while let Ok(Some(frame)) = reader.next().await {
+            let Some(wire) = reader_wire.upgrade() else {
+                return;
+            };
+            wire.dispatch(frame)
+                .expect("the peer sends a response to a waiting request");
+        }
+    });
+    wire
 }
 
 async fn handshake(wire: &ExtensionWire, record: &Record, offered: &[Capability]) -> Result<Negotiated, WireError> {
@@ -202,13 +219,13 @@ fn echoing_peer(
             // A child exiting on `shutdown` without answering is allowed.
             WireMethod::Shutdown => return PeerAction::Stop,
             WireMethod::Cancel | WireMethod::ObserverNotify => {
-                return PeerAction::Reply(WireFrame::Response(WireResponse::fail(
+                return PeerAction::Reply(WireResponse::fail(
                     request.id,
                     RpcError::method_not_found("not answered here"),
-                )));
+                ));
             }
         };
-        PeerAction::Reply(WireFrame::Response(WireResponse::reply(request.id, reply)))
+        PeerAction::Reply(WireResponse::reply(request.id, reply))
     })
 }
 
@@ -578,7 +595,13 @@ async fn a_duplicate_or_unregistered_answer_is_reported() {
     wire.lock_pending().insert(5, PendingRequest { outcome });
     wire.dispatch(answer(5))
         .expect("the first answer for a waiting id is delivered");
-    assert!(delivered.await.expect("the answer is delivered").is_exclusive());
+    assert!(
+        delivered
+            .await
+            .expect("the reply arrives")
+            .expect("the request succeeds")
+            .is_exclusive()
+    );
     assert_eq!(
         wire.dispatch(answer(5))
             .expect_err("the second answer for the same id is stale"),
@@ -655,7 +678,7 @@ async fn cancel_wakes_the_waiter_and_drops_the_late_answer() {
 async fn two_concurrent_handshakes_put_one_frame_on_the_wire() {
     let limits = limits();
     let (host, peer) = tokio::io::duplex(64 * 1024);
-    let wire = Arc::new(ExtensionWire::new(host, limits));
+    let wire = host_with_reader(host, limits);
     let seen = Arc::new(Mutex::new(Vec::new()));
 
     // An inline peer that answers `initialize` only after a delay, so the
@@ -670,10 +693,10 @@ async fn two_concurrent_handshakes_put_one_frame_on_the_wire() {
                 continue;
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
-            let frame = WireFrame::Response(WireResponse::reply(
+            let frame = WireResponse::reply(
                 request.id,
                 serde_json::to_value(accepted(&[Capability::ToolCall])).expect("serializes"),
-            ));
+            );
             if write_frame(&mut write, &frame, limits.write_deadline).await.is_err() {
                 break;
             }
@@ -813,7 +836,7 @@ async fn a_request_whose_deadline_passed_is_never_queued() {
     })
     .await;
     match read {
-        Err(_elapsed) | Ok(Ok(0)) => {}
+        Err(_) | Ok(Ok(0)) => {}
         Ok(Ok(count)) => panic!("a spent request reached the peer as {count} bytes"),
         Ok(Err(error)) => panic!("reading the peer failed: {error}"),
     }
