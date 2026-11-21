@@ -41,8 +41,11 @@ pub(super) use host::stop_child;
 struct Cell {
     code: String,
     timeout: Option<u64>,
-    #[serde(default)]
-    reset: bool,
+    reset: Option<bool>,
+    #[serde(rename = "intent")]
+    _intent: Option<String>,
+    #[serde(rename = "accept_large_output")]
+    _accept_large_output: Option<bool>,
 }
 
 #[derive(Default)]
@@ -227,7 +230,7 @@ async fn run_cell(
     let mut current = slot.kernel.take();
     if current
         .as_ref()
-        .is_some_and(|(working_dir, _)| cell.reset || working_dir != cwd)
+        .is_some_and(|(working_dir, _)| cell.reset == Some(true) || working_dir != cwd)
         && let Some((_, kernel)) = current.take()
     {
         slot.stopping = kernel.begin_stop();

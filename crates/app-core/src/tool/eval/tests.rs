@@ -363,6 +363,28 @@ fn eval_oversized_cell_preserves_previous_state() {
 }
 
 #[test]
+fn eval_accepts_model_tool_arguments() {
+    isolated(async |home| {
+        home.config("profile = 'full'\neval = true");
+        let registry = Registry::new(Arc::new(OfflineProvider)).await;
+        let session = TestSession::new("eval-model-arguments", &home.cwd);
+        let output = session
+            .approved(
+                &registry,
+                json!({
+                    "code": "print(37)",
+                    "intent": "Show the value",
+                    "accept_large_output": null,
+                    "reset": null,
+                    "timeout": null
+                }),
+            )
+            .await;
+        assert_eq!(output.output, "37\n");
+    });
+}
+
+#[test]
 fn eval_daemon_approval_is_consumed_once() {
     isolated(async |home| {
         home.config("profile = 'full'\neval = true");
