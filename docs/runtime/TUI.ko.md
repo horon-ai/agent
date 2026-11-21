@@ -77,6 +77,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
 | `motion.spinner_interval` | 숫자 | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
 | `motion.max_fps` | 숫자 | `30` | `HORON_TUI_MOTION_MAX_FPS` |
+| `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | 참·거짓 | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | 세그먼트 이름 배열 | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
@@ -93,7 +94,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 | `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 열일곱 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 스물한 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
@@ -102,6 +103,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
 `motion.preset`은 `running` 옆의 표시를 제어한다. `full`은 표시 문자를 순서대로 바꾸고 `reduced`는 첫 문자를 유지하며 `static`은 표시를 숨긴다. `motion.spinner_interval`은 같은 문자를 유지하는 최소 시간이며 `40`부터 `2000`밀리초까지 설정할 수 있다. `motion.max_fps`는 모든 모드에서 본문이 도착하거나 회전 표시가 바뀔 때 자동으로 다시 그리는 횟수를 초당 `1`부터 `240`까지 제한한다. `max_fps = 4`이면 자동 갱신 간격은 최소 250밀리초다. 키 입력, 화면 크기 변경처럼 즉시 응답해야 하는 이벤트는 그보다 빨리 화면을 갱신할 수 있다. 범위를 벗어난 값은 거부하며 경고에 대신 적용한 기본값을 표시한다.
+`appearance.changes = "accessible"`로 지정하면 도구 출력에서 추가와 삭제를 서로 다른 색으로 표시하며 `+`와 `-` 표식을 유지합니다. 긍정과 부정 상태의 색도 조정합니다. `theme`을 선택하면 테마의 원래 색으로 돌아갑니다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
 
@@ -262,7 +264,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 `ctrl+r`은 그 초안들을 최신 순 목록으로 연다. `up`을 너무 여러 번 눌러야 닿는 초안을 찾을 때 쓴다. 행마다 초안의 첫 줄을 쓰고 여러 줄이면 줄 수를 덧붙이며, 초안 전체는 미리보기 창에 보여 준다. 모델과 세션 명령이 쓰는 것과 같은 선택 목록이므로 글자를 입력하면 걸러지고, `enter`는 고른 초안을 보내지 않고 편집기에 되돌려 넣는다. `esc`는 목록을 닫고 그 전에 있던 초안을 남긴다. 초안은 클라이언트의 것이므로 목록은 여는 순간 이미 완성되어 있다.
 
-커서는 바이트가 아니라 표시 칸으로 놓이므로 넓은 글자는 두 칸을 센다. 입력 줄이 화면보다 넓어지면 커서 앞 글자를 왼쪽부터 버리고 한 칸을 남겨, 커서가 오른쪽 끝에 계속 보이게 한다.
+커서는 글자소 단위로 움직이므로 국기 이모지나 결합 문자로 이루어진 음절을 쪼개지 않습니다. 편집기는 각 글자소의 표시 칸을 계산합니다. 마우스 캡처가 켜져 있으면 입력란의 칸을 클릭해 그 글자소에 커서를 놓습니다. 줄이 화면보다 길어지면 커서가 보이도록 가로로 스크롤합니다.
 
 ## 트랜스크립트
 
@@ -389,13 +391,16 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
+| `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표에는 클라이언트 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
+이 표에는 클라이언트가 처리하는 내장 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
+
+`/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아옵니다. Delete로 메시지를 삭제하고 Alt+위쪽 또는 Alt+아래쪽 방향 키로 순서를 바꿉니다. 이미 전송 중인 메시지는 목록에서 빠집니다. 편집한 초안은 준비됐을 때 다시 보낼 수 있습니다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 

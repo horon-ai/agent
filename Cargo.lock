@@ -2478,6 +2478,7 @@ dependencies = [
  "time",
  "toml",
  "toml_edit 0.20.2",
+ "unicode-segmentation",
  "unicode-width",
  "url",
 ]

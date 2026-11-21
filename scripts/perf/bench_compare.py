@@ -259,6 +259,10 @@ BASE_ENV_DROP = (
     "OMO_DEBUG",
     "OMO_TELEMETRY_ALLOW_AUTOMATION",
     "OPENCODE_CONFIG",
+    # The installer uses these for GitHub API calls; a release binary never needs
+    # them, and a measured tool must not inherit the runner's credentials.
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
 )
 
 
@@ -2381,6 +2385,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--install-failures", metavar="PATH",
                         help="failures.txt from install_competitors.sh (`name<TAB>reason` lines); a tool "
                              "without a binary is skipped with that reason")
+    parser.add_argument("--jcode-release", metavar="PATH",
+                        help="jcode-release.json from install_competitors.sh; its tag, commit, asset and "
+                             "SHA-256 are copied into the report as measured release provenance")
     return parser.parse_args(argv)
 
 
@@ -2429,6 +2436,24 @@ def read_install_failures(path: str | None) -> dict[str, str]:
             if sep and name and reason:
                 reasons.setdefault(name, []).append(reason)
     return {name: "; ".join(items) for name, items in reasons.items()}
+
+
+def release_provenance(path: str) -> dict:
+    """The resolved jcode release record, or a recorded reason when it is unreadable.
+
+    The installer already verified the bytes it measured; this only carries the
+    identity into the report so a comparison can be traced to one release even
+    when the uploaded artifact is all someone has.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        reason = f"release provenance unavailable: {exc}"
+        bc.eprint(f"[bench_compare] {reason}")
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::warning title=compare: jcode release provenance::{reason}", flush=True)
+        return {"jcode": None, "error": reason}
+    return {"jcode": data if isinstance(data, dict) else None}
 
 
 def missing_binary_reason(name: str, install_failures: dict[str, str]) -> str:
@@ -3287,6 +3312,8 @@ def main(argv: list[str] | None = None) -> int:
     results = [by_name[runner.name] for runner in runners if runner.name in by_name]
 
     report = bc.build_report(SUITE, results, skipped, started_at)
+    if args.jcode_release:
+        report["provenance"] = release_provenance(args.jcode_release)
     report["parameters"] = {
         "sessions": args.sessions,
         "turns": args.turns,

@@ -8,11 +8,14 @@ use std::path::{Path, PathBuf};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::Color;
+use ratatui::text::Line;
 
 use super::*;
 use crate::app::App;
 use crate::settings::layers::LayerSet;
 use crate::settings::{Settings, Sources};
+use crate::tool_line::{self, OutputHead};
+use crate::transcript::{ToolCall, ToolState};
 
 struct Fixture {
     dir: tempfile::TempDir,
@@ -345,4 +348,287 @@ fn theme_default_settings_select_dark() {
     assert!(loader.apply(&Settings::defaults()).is_empty());
     assert_eq!(loader.name(), "dark");
     assert_eq!(loader.theme().symbols, Some(SymbolPreset::Unicode));
+}
+
+/// WCAG relative luminance, measured here rather than trusted from the palette
+/// constants: the test is what makes those numbers true.
+fn luminance(color: Color) -> f64 {
+    let Color::Rgb(red, green, blue) = color else {
+        panic!("{color:?} is not an RGB colour");
+    };
+    let channel = |value: u8| {
+        let value = f64::from(value) / 255.0;
+        if value <= 0.040_45 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+}
+
+/// Contrast of two colours as a ratio, the way WCAG states it.
+fn contrast(first: Color, second: Color) -> f64 {
+    let (one, other) = (luminance(first), luminance(second));
+    let (high, low) = if one >= other { (one, other) } else { (other, one) };
+    (high + 0.05) / (low + 0.05)
+}
+
+/// A colour's OKLCH lightness, chroma and hue in degrees.
+///
+/// Hue separation is measured in OKLCH because that is the space in which two
+/// hues of equal distance look equally different, which is what a
+/// colour-vision-friendly pair has to be checked against.
+fn oklch(color: Color) -> (f64, f64, f64) {
+    let Color::Rgb(red, green, blue) = color else {
+        panic!("{color:?} is not an RGB colour");
+    };
+    let channel = |value: u8| {
+        let value = f64::from(value) / 255.0;
+        if value <= 0.040_45 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let linear = |value: f64| value.cbrt();
+    let (red, green, blue) = (channel(red), channel(green), channel(blue));
+    let long = linear(0.412_221_470_8 * red + 0.536_332_536_3 * green + 0.051_445_992_9 * blue);
+    let medium = linear(0.211_903_498_2 * red + 0.680_699_545_1 * green + 0.107_396_956_6 * blue);
+    let short = linear(0.088_302_461_9 * red + 0.281_718_837_6 * green + 0.629_978_700_5 * blue);
+    let lightness = 0.210_454_255_3 * long + 0.793_617_785_0 * medium - 0.004_072_046_8 * short;
+    let a = 1.977_998_495_1 * long - 2.428_592_205_0 * medium + 0.450_593_709_9 * short;
+    let b = 0.025_904_037_1 * long + 0.782_771_766_2 * medium - 0.808_675_766_0 * short;
+    (lightness, a.hypot(b), b.atan2(a).to_degrees().rem_euclid(360.0))
+}
+
+/// The smaller angle between two colours' hues, in degrees.
+fn hue_gap(first: Color, second: Color) -> f64 {
+    let gap = (oklch(first).2 - oklch(second).2).abs();
+    gap.min(360.0 - gap)
+}
+
+fn builtin(name: &str) -> Theme {
+    let text = builtin_source(name).expect("a built-in theme");
+    parse(text, &format!("built-in theme `{name}`")).expect("the built-in theme parses")
+}
+
+/// A finished tool call whose output is exactly `rows`, with `hidden` rows the
+/// preview does not keep.
+fn call_with_output(rows: &[&str], hidden: usize) -> ToolCall {
+    ToolCall {
+        call_id: "c1".to_string(),
+        name: "edit".to_string(),
+        state: ToolState::Done,
+        input: r#"{"path":"src/main.rs"}"#.to_string(),
+        duration_ms: Some(12),
+        output: Some(OutputHead {
+            rows: rows.iter().map(|row| (*row).to_string()).collect(),
+            total_rows: rows.len() + hidden,
+        }),
+    }
+}
+
+/// A tool call whose output is a unified diff, as `edit` reports one.
+fn diff_call() -> ToolCall {
+    // Two more rows than the preview keeps, so the count row is drawn too: it
+    // starts with a sign and must not read as an added line.
+    call_with_output(
+        &[
+            "--- a/src/main.rs",
+            "+++ b/src/main.rs",
+            "@@ -1,2 +1,3 @@",
+            "-old",
+            "+new",
+            " unchanged",
+        ],
+        2,
+    )
+}
+
+fn drawn_row(line: &Line<'_>) -> String {
+    line.spans.iter().map(|span| span.content.as_ref()).collect()
+}
+
+fn row_color(line: &Line<'_>) -> Option<Color> {
+    line.spans.first().and_then(|span| span.style.fg)
+}
+
+#[test]
+fn theme_changes_setting_selects_the_palette() {
+    let fixture = Fixture::new();
+    // No layer sets the key: the theme keeps its own pair.
+    assert_eq!(
+        ChangePalette::from_settings(&Settings::defaults()),
+        ChangePalette::Theme
+    );
+
+    let settings = fixture.settings("appearance.changes = \"accessible\"\n");
+    assert_eq!(ChangePalette::from_settings(&settings), ChangePalette::Accessible);
+
+    // A word outside the declared set is dropped by the loader, so the theme's
+    // own pair stays in force rather than an unreadable value repainting it.
+    let settings = fixture.settings("appearance.changes = \"rainbow\"\n");
+    assert_eq!(ChangePalette::from_settings(&settings), ChangePalette::Theme);
+}
+
+#[test]
+fn theme_changes_palette_off_restores_the_selected_theme() {
+    for name in ["dark", "light"] {
+        let theme = builtin(name);
+        // Turning the setting on repaints the copy, and the copy carries the
+        // palette that drew it.
+        let drawn = changes::apply(&theme, ChangePalette::Accessible);
+        assert_ne!(drawn.core.success, theme.core.success, "{name}");
+        assert_eq!(drawn.changes, ChangePalette::Accessible, "{name}");
+
+        // Turning it off again reads the theme the loader holds, which the
+        // palette never touched, so every token is the file's own again.
+        let restored = changes::apply(&theme, ChangePalette::Theme);
+        assert_eq!(restored, theme, "{name}: the restored theme is not the file's");
+        assert_eq!(restored.changes, ChangePalette::Theme, "{name}");
+    }
+}
+
+#[test]
+fn theme_changes_palette_assumes_a_dark_background_when_the_text_is_the_terminal_own() {
+    // A theme may leave its text to the terminal, which says nothing about the
+    // background. The bright pair is the one that still reads on the dark
+    // background `Theme::default` assumes.
+    let mut theme = builtin("dark");
+    theme.core.text = Color::Reset;
+    let drawn = changes::apply(&theme, ChangePalette::Accessible);
+    let dark = changes::apply(&builtin("dark"), ChangePalette::Accessible);
+    assert_eq!(drawn.core.success, dark.core.success);
+    assert_eq!(drawn.core.error, dark.core.error);
+}
+
+#[test]
+fn theme_changes_palette_is_readable_on_both_builtin_appearances() {
+    for name in ["dark", "light"] {
+        let theme = builtin(name);
+        let drawn = changes::apply(&theme, ChangePalette::Accessible);
+        let (added, removed) = (drawn.core.success, drawn.core.error);
+
+        // The pair is not the theme's own, or the setting would do nothing.
+        assert_ne!(added, theme.core.success, "{name}");
+        assert_ne!(removed, theme.core.error, "{name}");
+        assert_ne!(added, removed, "{name}: both changes would read as one colour");
+
+        // Hues far enough apart to survive the common colour-vision
+        // differences, and far enough from the amber the client already uses
+        // for a warning that the two never read as one colour.
+        let pair = hue_gap(added, removed);
+        assert!(pair >= 120.0, "{name}: the pair is {pair:.1} degrees apart");
+        for (change, color) in [("added", added), ("removed", removed)] {
+            let away = hue_gap(color, drawn.core.warning);
+            assert!(
+                away >= 30.0,
+                "{name}: {change} is {away:.1} degrees from the warning colour"
+            );
+        }
+
+        // Measured against the surfaces the theme itself paints, which is the
+        // only background the client knows on a terminal that draws its own.
+        for (surface, color) in [
+            ("status_bg", theme.status.status_bg),
+            ("selected_bg", theme.prompt.selected_bg),
+        ] {
+            for (change, ink) in [("added", added), ("removed", removed)] {
+                let ratio = contrast(ink, color);
+                assert!(
+                    ratio >= 4.5,
+                    "{name}: {change} on {surface} measures {ratio:.2}:1, under 4.5:1"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn theme_changes_palette_marks_diff_rows_by_text_not_only_colour() {
+    let call = diff_call();
+    let symbols = SymbolPreset::Unicode.symbols();
+    for name in ["dark", "light"] {
+        let theme = builtin(name);
+        let drawn = changes::apply(&theme, ChangePalette::Accessible);
+        let lines = tool_line::lines(&call, &drawn, symbols, 80);
+        let rows: Vec<String> = lines.iter().map(drawn_row).collect();
+
+        // The signs the tool wrote are still on the rows: that is the marker a
+        // reader who cannot tell the two colours apart follows.
+        let removed = lines
+            .iter()
+            .find(|line| drawn_row(line).ends_with("-old"))
+            .unwrap_or_else(|| panic!("{name}: no removed row in {rows:?}"));
+        let added = lines
+            .iter()
+            .find(|line| drawn_row(line).ends_with("+new"))
+            .unwrap_or_else(|| panic!("{name}: no added row in {rows:?}"));
+        assert_eq!(row_color(removed), Some(drawn.core.error), "{name}: {rows:?}");
+        assert_eq!(row_color(added), Some(drawn.core.success), "{name}: {rows:?}");
+
+        // A file header and a hunk header describe the file rather than change
+        // it, and the count row the client adds itself starts with a sign of
+        // its own, so all three keep the output's ordinary colour.
+        for row in ["--- a/src/main.rs", "+++ b/src/main.rs", "@@ -1,2 +1,3 @@", "+2 lines"] {
+            let line = lines
+                .iter()
+                .find(|line| drawn_row(line).ends_with(row))
+                .unwrap_or_else(|| panic!("{name}: no `{row}` row in {rows:?}"));
+            assert_eq!(
+                row_color(line),
+                Some(drawn.transcript.notice),
+                "{name}: `{row}` was drawn as a change"
+            );
+        }
+    }
+}
+
+#[test]
+fn theme_changes_palette_leaves_output_that_is_not_a_diff_alone() {
+    // `ls -l` prints an ordinary file with a leading `-` and a tool's own prose
+    // may hold a Markdown bullet. Neither is a change: a leading sign means one
+    // only inside a diff, and this block carries no diff marker.
+    let call = call_with_output(
+        &[
+            "total 8",
+            "-rw-r--r--  1 u  staff  12 main.rs",
+            "- a bullet in the tool's prose",
+            "+ plain text",
+        ],
+        0,
+    );
+    let symbols = SymbolPreset::Unicode.symbols();
+    for name in ["dark", "light"] {
+        let theme = changes::apply(&builtin(name), ChangePalette::Accessible);
+        let lines = tool_line::lines(&call, &theme, symbols, 80);
+        for line in lines.iter().skip(1) {
+            assert_eq!(
+                row_color(line),
+                Some(theme.transcript.notice),
+                "{name}: `{}` was read as a change outside a diff",
+                drawn_row(line)
+            );
+        }
+    }
+}
+
+#[test]
+fn theme_changes_palette_off_leaves_every_output_row_its_own_colour() {
+    let call = diff_call();
+    let symbols = SymbolPreset::Unicode.symbols();
+    let theme = builtin("dark");
+    let lines = tool_line::lines(&call, &theme, symbols, 80);
+    for line in lines.iter().skip(1) {
+        assert_eq!(
+            row_color(line),
+            Some(theme.transcript.notice),
+            "`{}` left the output's own colour with the palette off",
+            drawn_row(line)
+        );
+    }
+    // And the signs are there the same way, because they never came from colour.
+    assert!(lines.iter().any(|line| drawn_row(line).ends_with("-old")));
+    assert!(lines.iter().any(|line| drawn_row(line).ends_with("+new")));
 }
