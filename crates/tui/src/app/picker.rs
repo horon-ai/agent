@@ -558,8 +558,7 @@ impl App {
         refusal: Option<TodoEditRefusal>,
         items: Vec<TodoItem>,
         revision: String,
-        id: &str,
-        status: &str,
+        (id, status): (&str, &str),
     ) -> bool {
         if self.session_id.as_deref() != Some(session_id) {
             return false;

@@ -133,8 +133,7 @@ fn a_stale_answer_refreshes_the_list_and_the_next_edit_uses_the_new_revision() {
         Some(TodoEditRefusal::StaleRevision),
         vec![item("t1", "ship", "in_progress")],
         "rev-2".to_string(),
-        "t1",
-        "completed",
+        ("t1", "completed"),
     ));
     assert!(last_line(&app).contains("changed on the server"), "{}", last_line(&app));
     assert_eq!(app.picker.as_ref().map(|picker| picker.len()), Some(1));
@@ -192,8 +191,7 @@ fn a_reply_for_another_session_changes_nothing() {
         None,
         vec![item("t1", "ship", "completed")],
         "rev-2".to_string(),
-        "t1",
-        "completed",
+        ("t1", "completed"),
     ));
     assert_eq!(app.todos.items()[0].status, "pending");
 }

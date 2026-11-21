@@ -86,10 +86,8 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 revision,
             } => {
                 changed = previously_changed;
-                if app.session_id.as_deref().is_none_or(|current| current == session_id) {
-                    if app.set_todos(&session_id, items, revision) {
-                        changed = Redraw::Immediate;
-                    }
+                if app.set_todos(&session_id, items, revision) {
+                    changed = Redraw::Immediate;
                 }
             }
             Incoming::TodoEdit {
@@ -101,7 +99,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 id,
                 status,
             } => {
-                if app.todo_edit_reply(&session_id, applied, refusal, items, revision, &id, &status) {
+                if app.todo_edit_reply(&session_id, applied, refusal, items, revision, (&id, &status)) {
                     changed = Redraw::Immediate;
                 }
             }

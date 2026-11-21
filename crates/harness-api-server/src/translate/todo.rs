@@ -101,10 +101,7 @@ pub(super) fn edit_result(state: &mut BridgeState, event: &Value, attached: &str
             // If this read cannot name the list, the reply carries no revision:
             // the client refreshes and stays read-only instead of editing a
             // store this process could not read.
-            let revision = match read_revision {
-                Some(revision) => revision,
-                None => String::new(),
-            };
+            let revision = read_revision.unwrap_or_else(|| "".into());
             vec![ServerFrame::reply(
                 api_id,
                 ApiEvent::TodoEditResult {
