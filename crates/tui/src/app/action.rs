@@ -23,10 +23,7 @@ pub enum Action {
         always: bool,
     },
     /// Answer a structured question.
-    Ask {
-        ask_id: String,
-        answers: Vec<AskSelection>,
-    },
+    Ask { ask_id: String, answers: Vec<AskSelection> },
     /// Ask the harness to run one of its own commands.
     Runtime {
         command: horon_agent_sdk::RuntimeCommand,
