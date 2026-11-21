@@ -13,10 +13,10 @@ test a package without the engine's internal ABI.
 
 ## Status
 
-On `dev`, the install command registers both package kinds and the inbox
-reconciler can process completed folders. The child supervisor runs installed
-copies on Linux and macOS. Automatic inbox reconciliation and session
-integration are tracked separately.
+On `dev`, the install command registers both package kinds. A running daemon
+reconciles completed inbox folders and publishes catalog generations. The child
+supervisor runs installed copies on Linux and macOS. Session integration is a
+later step.
 
 | Surface | State | Check |
 | --- | --- | --- |
@@ -27,6 +27,7 @@ integration are tracked separately.
 | Worked example in both layouts | Implemented | `cargo test -p horon-package-example --test extension_layouts` |
 | `horon package install` and the inbox reconciler | Implemented | `cargo test --locked --test package_cli` |
 | Child supervision on Linux and macOS | Implemented | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| Daemon catalog control and automatic inbox reconciliation | Implemented | `cargo test --locked --test harness_roundtrip package_daemon` |
 | Windows child supervision and session integration | Pending | Follow-up changes on the same launch path |
 
 ## Two package kinds
@@ -217,8 +218,9 @@ author, not by that release.
 `horon package install <dir>` and the inbox reconciler use the same catalog
 installer. It validates, copies and registers the package. Installation is
 consent to run the package with the user's permissions. The catalog records
-SHA-256 values for integrity checks. Automatic inbox processing and applying
-catalog changes to open sessions are tracked separately.
+SHA-256 values for integrity checks. A running daemon reconciles the inbox and
+publishes new catalog generations. Applying them to open sessions is a later
+step.
 
 | Command | Effect |
 | --- | --- |

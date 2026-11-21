@@ -47,7 +47,12 @@ async fn run_with_args(args: Args) -> Result<()> {
                 if let Some(cwd) = &args.cwd {
                     std::env::set_current_dir(cwd)?;
                 }
-                return super::packages::run(action);
+                // A running daemon owns the catalog, so the command has to reach
+                // the socket the rest of the CLI would use.
+                if let Some(socket) = &args.socket {
+                    server::set_socket_path(socket);
+                }
+                return super::packages::run(action).await;
             }
             Some(Command::Mcp { .. } | Command::Approvals { .. }) => {
                 if let Some(cwd) = &args.cwd {

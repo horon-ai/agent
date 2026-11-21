@@ -2028,6 +2028,7 @@ dependencies = [
 name = "horon-agent-harness-api"
 version = "0.1.0"
 dependencies = [
+ "horon-agent-extension-types",
  "horon-agent-platform",
  "horon-agent-session-store",
  "horon-agent-session-types",
@@ -2249,6 +2250,7 @@ dependencies = [
  "anyhow",
  "horon-agent-batch-types",
  "horon-agent-config-types",
+ "horon-agent-extension-types",
  "horon-agent-message-types",
  "horon-agent-plan",
  "horon-agent-provider-core",

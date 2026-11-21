@@ -1956,6 +1956,18 @@ class HoronAgentClient:
         settings = frame.get("settings")
         return cast(list[EffectiveSetting], settings if isinstance(settings, list) else [])
 
+    async def package_control(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Apply one package-management operation and return the published catalog receipt.
+
+        Requires ``package_control_v1``. The daemon owns the catalog, so this needs
+        no attached session; reusing the same ``operation_id`` reports the recorded
+        result instead of applying the operation twice.
+        """
+        self._require_capability("package_control_v1", "package_control")
+        frame = await self._expect_reply({"req": "package_control", **request}, "package_control")
+        receipt = frame.get("receipt")
+        return cast(dict[str, Any], receipt if isinstance(receipt, dict) else {})
+
     async def get_runtime_info(self, session_id: str) -> RuntimeInfo:
         await self.ping()
         frame = await self._expect_reply({"req": "get_runtime_info", "session_id": session_id}, "runtime_info")
