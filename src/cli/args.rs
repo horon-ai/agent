@@ -925,6 +925,17 @@ pub(crate) enum ProviderCommand {
         json: bool,
     },
 
+    /// Show each configured profile's credential source and local status
+    ///
+    /// Reads local configuration only. It never prints credential values or
+    /// contacts a provider, so a profile with no resolvable credential is
+    /// `unauthenticated` and one that uses no credential is `unknown`.
+    Status {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Show the currently requested and resolved provider selection
     Current {
         /// Emit JSON instead of plain text
