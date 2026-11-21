@@ -83,8 +83,13 @@ fn preview(
         return None;
     }
 
-    let masked = crate::secrets::mask_for_history(text, session_id, secrets_mode);
-    let stored = crate::artifacts::save_with_file_cap(session_id, tool_name, &masked, settings.file_cap_mib);
+    // `Off` means there are no vault placeholders to write into the text, so
+    // the store reads it in place instead of receiving a full copy.
+    let masked = match secrets_mode {
+        crate::config::SecretsMode::Off => std::borrow::Cow::Borrowed(text),
+        mode => std::borrow::Cow::Owned(crate::secrets::mask_for_history(text, session_id, mode)),
+    };
+    let stored = crate::artifacts::save_with_file_cap(session_id, tool_name, masked.as_ref(), settings.file_cap_mib);
     let condensed = match stored {
         Ok(id) if !over_budget => {
             let pointer =
@@ -212,24 +217,28 @@ fn render_condensed(
 
     let total_lines = text.lines().count();
     let omitted_lines = omitted.lines().count();
-    let first_omitted_line = head.bytes().filter(|&b| b == b'\n').count() + 1;
 
     let mut signals = String::new();
     if signal_budget > SIGNAL_HEADER.len() {
+        // Counted here so a call that has no room for signals, or none to show,
+        // does not walk the head at all.
+        let first_omitted_line = head.bytes().filter(|&b| b == b'\n').count() + 1;
         let room = signal_budget - SIGNAL_HEADER.len();
         for (index, line) in omitted.lines().enumerate() {
             if !SIGNAL_LINE.is_match(line) {
                 continue;
             }
-            let entry = format!(
-                "L{}: {}\n",
+            let before = signals.len();
+            let _ = writeln!(
+                signals,
+                "L{}: {}",
                 first_omitted_line + index,
                 crate::util::truncate_str(line, SIGNAL_LINE_MAX_BYTES)
             );
-            if signals.len() + entry.len() > room {
+            if signals.len() > room {
+                signals.truncate(before);
                 break;
             }
-            signals.push_str(&entry);
         }
     }
 

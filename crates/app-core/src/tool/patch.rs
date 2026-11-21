@@ -21,20 +21,22 @@ struct PatchInput {
 }
 
 #[derive(Debug)]
-struct FilePatch {
-    path: String,
-    hunks: Vec<Hunk>,
+struct FilePatch<'a> {
+    path: &'a str,
+    hunks: Vec<Hunk<'a>>,
     is_new: bool,
     is_delete: bool,
 }
 
+/// Body lines stay borrowed from the patch text: the applier only compares and
+/// copies them, so one allocation per parsed line would buy nothing.
 #[derive(Debug)]
-struct Hunk {
+struct Hunk<'a> {
     old_start: usize,
     old_count: usize,
     new_start: usize,
-    old_lines: Vec<String>,
-    new_lines: Vec<String>,
+    old_lines: Vec<&'a str>,
+    new_lines: Vec<&'a str>,
     old_no_newline: bool,
     new_no_newline: bool,
 }
@@ -55,8 +57,8 @@ enum PreparedAction {
 }
 
 #[derive(Debug)]
-struct PreparedFile {
-    path: String,
+struct PreparedFile<'a> {
+    path: &'a str,
     resolved: std::path::PathBuf,
     action: PreparedAction,
 }
@@ -94,35 +96,39 @@ impl Tool for PatchTool {
             return Err(anyhow::anyhow!("No valid patches found in input"));
         }
 
-        let resolved: Vec<(&FilePatch, std::path::PathBuf)> = patches
+        let resolved: Vec<(&FilePatch<'_>, std::path::PathBuf)> = patches
             .iter()
-            .map(|patch| (patch, ctx.resolve_path(Path::new(&patch.path))))
+            .map(|patch| (patch, ctx.resolve_path(Path::new(patch.path))))
             .collect();
 
         // One path may appear under several spellings; writing either spelling
         // would make the later operation overwrite what the earlier one just
         // produced. Refuse before any read so the whole request is predictable.
-        let mut seen = std::collections::BTreeMap::new();
-        let mut duplicates = Vec::new();
-        for (patch, path) in &resolved {
-            let identity = identity_path(path);
-            if let Some(first) = seen.insert(identity, patch.path.clone()) {
-                duplicates.push(if first == patch.path {
-                    format!("✗ {}: the patch names the same file more than once", patch.path)
-                } else {
-                    format!(
-                        "✗ {}: resolves to the same file as {} ({})",
-                        patch.path,
-                        first,
-                        path.display()
-                    )
-                });
+        // A single-file patch cannot repeat a path, so it skips the canonicalize
+        // that each identity costs.
+        if resolved.len() > 1 {
+            let mut seen = std::collections::BTreeMap::new();
+            let mut duplicates = Vec::new();
+            for (patch, path) in &resolved {
+                let identity = identity_path(path);
+                if let Some(first) = seen.insert(identity, patch.path) {
+                    duplicates.push(if first == patch.path {
+                        format!("✗ {}: the patch names the same file more than once", patch.path)
+                    } else {
+                        format!(
+                            "✗ {}: resolves to the same file as {} ({})",
+                            patch.path,
+                            first,
+                            path.display()
+                        )
+                    });
+                }
             }
-        }
-        if !duplicates.is_empty() {
-            let mut body = duplicates.join("\n");
-            body.push_str("\n\nNo files changed: the patch failed preflight.");
-            return Ok(ToolOutput::new(body).with_verdict(ToolVerdict::Failed));
+            if !duplicates.is_empty() {
+                let mut body = duplicates.join("\n");
+                body.push_str("\n\nNo files changed: the patch failed preflight.");
+                return Ok(ToolOutput::new(body).with_verdict(ToolVerdict::Failed));
+            }
         }
 
         // Hold every path for the whole request so preflight and the writes it
@@ -135,12 +141,12 @@ impl Tool for PatchTool {
         // Preflight every file before the first write. A missing context in the
         // last file must not leave the earlier creations, modifications or
         // deletions already on disk.
-        let mut prepared = Vec::with_capacity(resolved.len());
+        let mut prepared: Vec<PreparedFile<'_>> = Vec::with_capacity(resolved.len());
         let mut failures = Vec::new();
         for (patch, resolved_path) in &resolved {
             match preflight_patch(patch, resolved_path, &ctx).await {
                 Ok(action) => prepared.push(PreparedFile {
-                    path: patch.path.clone(),
+                    path: patch.path,
                     resolved: resolved_path.clone(),
                     action,
                 }),
@@ -224,7 +230,7 @@ fn is_new_file_header(line: &str) -> bool {
     line == "+++" || line.starts_with("+++ ") || line.starts_with("+++\t")
 }
 
-fn parse_patch(text: &str) -> Result<Vec<FilePatch>> {
+fn parse_patch(text: &str) -> Result<Vec<FilePatch<'_>>> {
     let mut patches = Vec::new();
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
@@ -292,7 +298,7 @@ fn parse_patch(text: &str) -> Result<Vec<FilePatch>> {
 
         if !hunks.is_empty() || is_new || is_delete {
             patches.push(FilePatch {
-                path: path.to_string(),
+                path,
                 hunks,
                 is_new,
                 is_delete,
@@ -326,7 +332,7 @@ fn parse_hunk_range(token: &str, sign: char, path: &str, header: &str) -> Result
     Ok((start, count))
 }
 
-fn parse_hunk(lines: &[&str], i: &mut usize, path: &str) -> Result<Hunk> {
+fn parse_hunk<'a>(lines: &[&'a str], i: &mut usize, path: &str) -> Result<Hunk<'a>> {
     // @@ -start[,count] +start[,count] @@ [section heading]
     let header = lines[*i];
     let rest = header
@@ -387,8 +393,8 @@ fn parse_hunk(lines: &[&str], i: &mut usize, path: &str) -> Result<Hunk> {
             if old_remaining == 0 || new_remaining == 0 {
                 anyhow::bail!("hunk '{header}' in {path} has more lines than it declares");
             }
-            old_lines.push(content.to_string());
-            new_lines.push(content.to_string());
+            old_lines.push(content);
+            new_lines.push(content);
             old_remaining -= 1;
             new_remaining -= 1;
             last_kind = Some(' ');
@@ -396,14 +402,14 @@ fn parse_hunk(lines: &[&str], i: &mut usize, path: &str) -> Result<Hunk> {
             if old_remaining == 0 {
                 anyhow::bail!("hunk '{header}' in {path} removes more lines than it declares");
             }
-            old_lines.push(content.to_string());
+            old_lines.push(content);
             old_remaining -= 1;
             last_kind = Some('-');
         } else if let Some(content) = line.strip_prefix('+') {
             if new_remaining == 0 {
                 anyhow::bail!("hunk '{header}' in {path} adds more lines than it declares");
             }
-            new_lines.push(content.to_string());
+            new_lines.push(content);
             new_remaining -= 1;
             last_kind = Some('+');
         } else if line.is_empty() {
@@ -411,8 +417,8 @@ fn parse_hunk(lines: &[&str], i: &mut usize, path: &str) -> Result<Hunk> {
             if old_remaining == 0 || new_remaining == 0 {
                 anyhow::bail!("hunk '{header}' in {path} has more lines than it declares");
             }
-            old_lines.push(String::new());
-            new_lines.push(String::new());
+            old_lines.push("");
+            new_lines.push("");
             old_remaining -= 1;
             new_remaining -= 1;
             last_kind = Some(' ');
@@ -493,12 +499,12 @@ fn mark_no_newline(
 }
 
 /// Read and validate one file's operation without writing anything.
-async fn preflight_patch(patch: &FilePatch, path: &Path, ctx: &ToolContext) -> Result<PreparedAction> {
+async fn preflight_patch(patch: &FilePatch<'_>, path: &Path, ctx: &ToolContext) -> Result<PreparedAction> {
     if patch.is_delete {
         // The bash gate cannot see this route, so an absolute protected path
         // would otherwise be deleted here (#604). Refusing during preflight
         // keeps the rest of the request unapplied too.
-        if let Some(refusal) = super::path_policy::catastrophic_delete_refusal(path, &patch.path, ctx) {
+        if let Some(refusal) = super::path_policy::catastrophic_delete_refusal(path, patch.path, ctx) {
             let detail = refusal.strip_prefix(&format!("✗ {}: ", patch.path)).unwrap_or(&refusal);
             anyhow::bail!("{detail}");
         }
@@ -510,7 +516,7 @@ async fn preflight_patch(patch: &FilePatch, path: &Path, ctx: &ToolContext) -> R
             let Some(text) = old.as_deref() else {
                 anyhow::bail!("cannot verify the delete context: the file is not valid UTF-8 text");
             };
-            let remaining = apply_hunks(text, &patch.hunks, &patch.path)?;
+            let remaining = apply_hunks(text, &patch.hunks, patch.path)?;
             if !remaining.is_empty() {
                 anyhow::bail!("delete hunk does not remove every line; the file no longer matches the patch");
             }
@@ -528,7 +534,7 @@ async fn preflight_patch(patch: &FilePatch, path: &Path, ctx: &ToolContext) -> R
         if exists {
             anyhow::bail!("file already exists");
         }
-        return Ok(PreparedAction::Create(new_file_content(&patch.hunks, &patch.path)?));
+        return Ok(PreparedAction::Create(new_file_content(&patch.hunks, patch.path)?));
     }
 
     // The editor buffer is the source of truth when a client serves reads; a
@@ -543,7 +549,7 @@ async fn preflight_patch(patch: &FilePatch, path: &Path, ctx: &ToolContext) -> R
             tokio::fs::read_to_string(path).await?
         }
     };
-    let new = apply_hunks(&old, &patch.hunks, &patch.path)?;
+    let new = apply_hunks(&old, &patch.hunks, patch.path)?;
     let first_line = patch.hunks.iter().map(|hunk| hunk.old_start.max(1)).min().unwrap_or(1);
     Ok(PreparedAction::Modify {
         old,
@@ -581,7 +587,9 @@ impl LineEnding {
     }
 }
 
-fn split_lines(content: &str) -> (Vec<String>, bool, LineEnding) {
+/// Lines stay borrowed from `content`: the applier only compares and copies
+/// them, so owning one `String` per line would buy nothing.
+fn split_lines(content: &str) -> (Vec<&str>, bool, LineEnding) {
     if content.is_empty() {
         return (Vec::new(), false, LineEnding::Lf);
     }
@@ -592,13 +600,13 @@ fn split_lines(content: &str) -> (Vec<String>, bool, LineEnding) {
     // will fail the exact context check rather than being silently converted.
     let crlf = newline_count > 0 && content.matches("\r\n").count() == newline_count;
     let ending = if crlf { LineEnding::CrLf } else { LineEnding::Lf };
-    let mut lines: Vec<String> = content
+    let mut lines: Vec<&str> = content
         .split('\n')
         .map(|line| {
             if crlf {
-                line.strip_suffix('\r').unwrap_or(line).to_string()
+                line.strip_suffix('\r').unwrap_or(line)
             } else {
-                line.to_string()
+                line
             }
         })
         .collect();
@@ -608,22 +616,24 @@ fn split_lines(content: &str) -> (Vec<String>, bool, LineEnding) {
     (lines, ends_with_newline, ending)
 }
 
-fn join_lines(lines: Vec<String>, trailing_newline: bool, ending: LineEnding) -> String {
-    if lines.is_empty() {
-        return String::new();
+/// Append `lines` to `text`, separating them from `written` earlier lines.
+fn push_lines(text: &mut String, lines: &[&str], separator: &str, mut written: usize) -> usize {
+    for line in lines {
+        if written > 0 {
+            text.push_str(separator);
+        }
+        text.push_str(line);
+        written += 1;
     }
-    let separator = ending.separator();
-    let mut text = lines.join(separator);
-    if trailing_newline {
-        text.push_str(separator);
-    }
-    text
+    written
 }
 
 /// Rebuild a file from its exact old text and the hunks that describe it.
-fn apply_hunks(old: &str, hunks: &[Hunk], path: &str) -> Result<String> {
+fn apply_hunks(old: &str, hunks: &[Hunk<'_>], path: &str) -> Result<String> {
     let (lines, old_ends_with_newline, ending) = split_lines(old);
-    let mut output = Vec::with_capacity(lines.len());
+    let separator = ending.separator();
+    let mut text = String::with_capacity(old.len());
+    let mut produced = 0usize;
     let mut cursor = 0usize;
 
     for (index, hunk) in hunks.iter().enumerate() {
@@ -672,7 +682,7 @@ fn apply_hunks(old: &str, hunks: &[Hunk], path: &str) -> Result<String> {
                 hunk.old_start
             );
         }
-        let produced_before = output.len() + (position - cursor);
+        let produced_before = produced + (position - cursor);
         if hunk.new_lines.is_empty() {
             if hunk.new_start != produced_before {
                 anyhow::bail!(
@@ -686,22 +696,26 @@ fn apply_hunks(old: &str, hunks: &[Hunk], path: &str) -> Result<String> {
                 hunk.old_start
             );
         }
-        output.extend(lines[cursor..position].iter().cloned());
-        output.extend(hunk.new_lines.iter().cloned());
+        produced = push_lines(&mut text, &lines[cursor..position], separator, produced);
+        produced = push_lines(&mut text, &hunk.new_lines, separator, produced);
         cursor = end;
     }
-    output.extend(lines[cursor..].iter().cloned());
+    produced = push_lines(&mut text, &lines[cursor..], separator, produced);
 
     let trailing_newline = match hunks.last() {
         Some(last) if last.new_no_newline => false,
         Some(last) if last.old_no_newline => true,
         _ => old_ends_with_newline || old.is_empty(),
     };
-    Ok(join_lines(output, trailing_newline, ending))
+    if trailing_newline && produced > 0 {
+        text.push_str(separator);
+    }
+    Ok(text)
 }
 
-fn new_file_content(hunks: &[Hunk], path: &str) -> Result<String> {
-    let mut lines = Vec::new();
+fn new_file_content(hunks: &[Hunk<'_>], path: &str) -> Result<String> {
+    let mut text = String::new();
+    let mut produced = 0usize;
     for (index, hunk) in hunks.iter().enumerate() {
         if hunk.old_count != 0 || !hunk.old_lines.is_empty() {
             anyhow::bail!("new-file hunk in {path} must not remove lines");
@@ -712,18 +726,20 @@ fn new_file_content(hunks: &[Hunk], path: &str) -> Result<String> {
         if hunk.new_no_newline && index + 1 != hunks.len() {
             anyhow::bail!("no-newline marker in {path} is only valid on the last hunk");
         }
-        if hunk.new_start != lines.len() + 1 {
+        if hunk.new_start != produced + 1 {
             anyhow::bail!("new-file hunk in {path} declares a new range that does not match its position");
         }
-        lines.extend(hunk.new_lines.iter().cloned());
+        produced = push_lines(&mut text, &hunk.new_lines, "\n", produced);
     }
-    let trailing_newline = !hunks.last().is_some_and(|hunk| hunk.new_no_newline);
-    Ok(join_lines(lines, trailing_newline, LineEnding::Lf))
+    if produced > 0 && !hunks.last().is_some_and(|hunk| hunk.new_no_newline) {
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 /// Write one preflighted operation and return (status_message, diff_output).
 async fn apply_prepared(
-    file: &PreparedFile,
+    file: &PreparedFile<'_>,
     ctx: &ToolContext,
     journal: &mut super::undo::Journal<'_>,
 ) -> Result<(String, String)> {
