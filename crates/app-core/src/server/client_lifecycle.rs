@@ -3764,6 +3764,9 @@ async fn start_processing_message(
             lock
         });
         let locked = &mut agent;
+        let continuation_decision = expected_run_id
+            .as_ref()
+            .map(|_| crate::agent::run_journal::ContinuationDecision::new(rejection_tx.clone(), id));
         let turn = async move {
             let agent = &mut ***locked;
             let (start_message_index, pending_queue) = match prepared {
@@ -3787,15 +3790,8 @@ async fn start_processing_message(
             // override). The guard drops when the turn ends, fails, or is
             // aborted, so no later turn inherits it.
             let _turn_ownership = crate::tool::acp_session::claim_turn(&claim_session_id, turn_owner.as_deref());
-            if let Some(expected_run_id) = expected_run_id.as_deref() {
-                // The decision belongs here, where this turn holds the agent: a
-                // continuation that arrives after another turn already began
-                // its own run finds a different current run and runs nothing, so
-                // a repeated click or a second attached client cannot start the
-                // same failed work twice.
-                // The turn answers the request itself: its ack means a new run
-                // began, and a refusal is answered by the rejection path below.
-                let decision = crate::agent::run_journal::ContinuationDecision::new(rejection_tx.clone(), id);
+            if let (Some(expected_run_id), Some(decision)) = (expected_run_id.as_deref(), continuation_decision) {
+                // Decide under the agent lock so one failed run starts at most one retry.
                 return match agent.continue_run(expected_run_id, event_tx, Some(report), decision).await {
                     crate::agent::run_journal::ContinuationOutcome::Continued => TurnBegin::Ran {
                         result: Ok(()),

@@ -125,7 +125,6 @@ pub enum Action {
     EditDraft,
     /// Give the terminal to the editor with a private copy of a resolved artifact.
     OpenArtifact(std::path::PathBuf),
-    /// Continue the last failed run of the attached session.
     Retry,
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,

@@ -42,6 +42,7 @@ async fn permission_bridge_not_owned_by_daemon_turn_in_claim_window() {
             system_reminder: None,
             active_skill: None,
             v2: None,
+            expected_run_id: None,
         },
         session_id,
         Some("conn-acp"),

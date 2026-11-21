@@ -1441,9 +1441,9 @@ impl RawClient {
             other => anyhow::bail!("unexpected state response: {other:?}"),
         }
     }
-
     async fn send_message(&mut self, content: &str) -> Result<u64> {
-        let id = std::mem::replace(&mut self.next_id, self.next_id + 1);
+        let id = self.next_id;
+        self.next_id += 1;
         self.send_request(Request::Message {
             id,
             content: content.to_string(),
