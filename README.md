@@ -241,6 +241,7 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0` disables |
