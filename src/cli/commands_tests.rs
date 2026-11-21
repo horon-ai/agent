@@ -821,6 +821,7 @@ async fn one_shot_output_modes_close_sessions_and_clear_active_pid_markers() {
             "Return the test response.",
             emit_json,
             emit_ndjson,
+            None,
         )
         .await
         .unwrap_or_else(|error| panic!("{mode} run failed: {error:#}"));
@@ -874,6 +875,7 @@ async fn resumed_one_shot_closes_the_restored_session() {
         "Finish the resumed one-shot session.",
         true,
         false,
+        None,
     )
     .await
     .expect("run resumed one-shot session");
@@ -907,7 +909,9 @@ async fn one_shot_cleanup_preserves_the_original_command_error() {
             .join(&session_id);
 
         let error =
-            match run_single_message_with_agent(&mut agent, provider, "Fail this run.", emit_json, emit_ndjson).await {
+            match run_single_message_with_agent(&mut agent, provider, "Fail this run.", emit_json, emit_ndjson, None)
+                .await
+            {
                 Ok(()) => panic!("{mode} provider failure should remain the command result"),
                 Err(error) => error,
             };

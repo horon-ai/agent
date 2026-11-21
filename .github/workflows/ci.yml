@@ -1111,6 +1111,20 @@ jobs:
             --timeout 600 \
             -- tool::bash::tests::test_stdin_forwarding --nocapture
 
+      - name: Run approved direnv shell cohort
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bin_dir=$(mktemp -d "$RUNNER_TEMP/horon-direnv.XXXXXXXX")
+          curl -fsSL https://github.com/direnv/direnv/releases/download/v2.38.2/direnv.linux-amd64 -o "$bin_dir/direnv"
+          printf '%s  %s\n' 148820a187930d36ca6a204504e5cdb30d8396cd1a97e64c3b3f10d793c11247 "$bin_dir/direnv" | sha256sum --check --status
+          chmod +x "$bin_dir/direnv"
+          PATH="$bin_dir:$PATH" direnv version
+          PATH="$bin_dir:$PATH" python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 1 \
+            -- tool::bash::direnv::tests:: --nocapture
+
       - name: Run background output notice cohort
         shell: bash
         run: |
@@ -1365,6 +1379,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 2 \
             -- tool::artifacts::render_tests::preview_column_cap_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::agentgrep::tests::grep_context_merges_overlaps_and_preserves_paths_only --nocapture
 
       - name: Run instant handling cohort
         shell: bash
@@ -1633,7 +1651,7 @@ jobs:
             -- chat:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
-            --timeout 600 --min-passed 175 \
+            --timeout 600 --min-passed 177 \
             -- wire:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
