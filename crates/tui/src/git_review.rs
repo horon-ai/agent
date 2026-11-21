@@ -1066,13 +1066,11 @@ fn parse_status(bytes: &[u8]) -> Vec<Change> {
 fn bounded_patch(text: &str, cut_by_read: bool) -> (String, bool) {
     let mut kept = String::new();
     let mut cut = cut_by_read;
-    let mut lines = 0;
-    for line in text.lines() {
+    for (lines, line) in text.lines().enumerate() {
         if lines == PATCH_LINES {
             cut = true;
             break;
         }
-        lines += 1;
         let piece: String = line
             .chars()
             .take(PATCH_LINE_CHARS)

@@ -82,6 +82,7 @@
                   "reference/runtime/turns",
                   "reference/runtime/prompt",
                   "reference/runtime/hooks",
+                  "reference/runtime/packages",
                   "reference/runtime/irc",
                   "reference/runtime/tui",
                   "reference/runtime/swarm-task-graph"
@@ -187,6 +188,7 @@
                   "ko/reference/runtime/turns",
                   "ko/reference/runtime/prompt",
                   "ko/reference/runtime/hooks",
+                  "ko/reference/runtime/packages",
                   "ko/reference/runtime/irc",
                   "ko/reference/runtime/tui",
                   "ko/reference/runtime/swarm-task-graph"

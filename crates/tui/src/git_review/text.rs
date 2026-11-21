@@ -118,7 +118,7 @@ pub(crate) fn review_text(review: &Review) -> String {
 /// they name something the review did not say, and the caller draws them where
 /// warnings go.
 pub(crate) fn commit_text(committed: &Committed) -> String {
-    vec![
+    [
         format!(
             "committed {} on {}: {}",
             short_id(&committed.id),

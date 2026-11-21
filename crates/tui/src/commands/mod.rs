@@ -5,7 +5,7 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/new`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
+//!    `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
 //!    `/queue`, `/record`, `/replay`, `/diff` and `/commit`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -13,9 +13,9 @@
 //!    what that name means for that project.
 //! 3. Every [`RuntimeCommand`] answers under its own `snake_case` name, so the
 //!    list cannot drift from the protocol. The names are read out of serde
-//!    rather than written down twice. The harness's `skills` command is the one
-//!    exception: the built-in `/skills` list owns that name, and the skills
-//!    themselves answer as `/skill:<name>`.
+//!    rather than written down twice. The harness's `skills` and `mcp` commands
+//!    are the exceptions: the built-in `/skills` and `/mcp` own those names,
+//!    and a skill itself answers as `/skill:<name>`.
 //!
 //! A file whose name a built-in UI command already owns is shadowed: `/help`
 //! lists it with that label and it never runs, because the built-in wins.
@@ -87,6 +87,8 @@ pub enum Local {
     Resume,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
+    /// List trusted MCP servers or explicitly probe one by name.
+    Mcp,
     /// Switch to another session, by id or from the list.
     Switch,
     /// Attach, edit, list or remove a local note on a transcript message.
@@ -127,6 +129,7 @@ impl Local {
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
+            "mcp" => Some(Self::Mcp),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
             "links" => Some(Self::Links),
@@ -156,6 +159,7 @@ impl Local {
             Self::Rename => "rename",
             Self::Resume => "resume",
             Self::Skills => "skills",
+            Self::Mcp => "mcp",
             Self::Switch => "switch",
             Self::Note => "note",
             // The shell forms are typed with a `!` prefix, not a slash, so
@@ -661,9 +665,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 22] = [
-    "artifact", "clear", "commit", "copy", "diff", "effort", "exit", "help", "keys", "links", "model", "new", "note",
-    "queue", "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 23] = [
+    "artifact", "clear", "commit", "copy", "diff", "effort", "exit", "help", "keys", "links", "mcp", "model", "new",
+    "note", "queue", "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
@@ -693,6 +697,7 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Auth,
     RuntimeCommand::Logout,
     RuntimeCommand::Plan,
+    RuntimeCommand::Mcp,
 ];
 
 /// Every runtime command under the name the protocol serialises it to.
@@ -712,10 +717,8 @@ fn server_catalog() -> &'static ServerCatalog {
             warnings: Vec::new(),
         };
         for command in SERVER_VARIANTS {
-            // The built-in `/skills` list owns this name, so the harness's own
-            // `skills` command is not offered beside it: a listing with the
-            // same name twice would name one command and run another.
-            if *command == RuntimeCommand::Skills {
+            // These built-ins own their names and send their own typed requests.
+            if matches!(command, RuntimeCommand::Skills | RuntimeCommand::Mcp) {
                 continue;
             }
             match serde_json::to_value(command) {

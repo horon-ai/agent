@@ -1,0 +1,28 @@
+schema_version = 1
+id = "hello"
+version = "0.1.0"
+name = "Hello package example"
+protocol = "1.0"
+events = ["turn.start", "turn.end"]
+
+[targets]
+aarch64-apple-darwin = "bin/aarch64-apple-darwin/horon-package-example"
+x86_64-apple-darwin = "bin/x86_64-apple-darwin/horon-package-example"
+aarch64-unknown-linux-gnu = "bin/aarch64-unknown-linux-gnu/horon-package-example"
+x86_64-unknown-linux-gnu = "bin/x86_64-unknown-linux-gnu/horon-package-example"
+aarch64-pc-windows-msvc = "bin/aarch64-pc-windows-msvc/horon-package-example.exe"
+x86_64-pc-windows-msvc = "bin/x86_64-pc-windows-msvc/horon-package-example.exe"
+
+[[tools]]
+name = "greet"
+description = "Greet one name."
+input_schema = { type = "object", properties = { name = { type = "string" } }, additionalProperties = false }
+
+[[tools]]
+name = "wait"
+description = "Wait until the host cancels the call."
+input_schema = { type = "object", properties = {}, additionalProperties = false }
+
+[[commands]]
+name = "hello"
+description = "Report the arguments this executable command was called with."
