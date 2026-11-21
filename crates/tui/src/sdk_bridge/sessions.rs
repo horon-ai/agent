@@ -21,6 +21,10 @@ use super::{AttachedSession, cut, detail, runtime};
 /// (`crates/harness-api-server/src/translate.rs`, the `create_session |
 /// attach_session` arm). A new session therefore needs a connection of its own,
 /// and dialling it needs the settings the first connection consumed.
+///
+/// Cloned for the side-question thread, which opens a second connection while
+/// the worker keeps the first: both need the same endpoint and client identity.
+#[derive(Clone)]
 pub(super) struct Dial {
     socket_path: Option<PathBuf>,
     client_name: String,

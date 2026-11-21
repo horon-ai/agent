@@ -30,6 +30,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
+  ["consult_fork_v1", ["fork_session.consult", "fork_session.boundary"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -644,7 +645,14 @@ export type ApiRequest =
   | { req: "set_retention_policy"; archive_after_days?: number }
   | { req: "create_session"; working_dir?: string; system_prompt?: string }
   | { req: "attach_session"; session_id: string }
-  | { req: "fork_session"; session_id: string }
+  | {
+      req: "fork_session";
+      session_id: string;
+      /** Create a read-only consult child; stored before the reply. */
+      consult?: boolean;
+      /** Stored message id the child stops before; a stale id is refused. */
+      boundary?: string;
+    }
   | { req: "transfer_session"; session_id: string }
   | { req: "detach_session"; session_id: string }
   | { req: "configure_tools"; session_id: string; tools: ToolConfiguration }

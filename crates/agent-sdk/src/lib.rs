@@ -136,6 +136,7 @@ mod cancellable_work;
 mod client;
 pub mod collections;
 mod connect_options;
+mod consult;
 mod diagnostics;
 mod effective_settings;
 mod errors;

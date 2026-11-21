@@ -5,6 +5,7 @@ mod advisor;
 #[path = "agent/advisor_tests.rs"]
 mod advisor_tests;
 mod compaction;
+mod consult;
 mod conversation_reset;
 mod degradation_event;
 #[cfg(test)]
@@ -618,14 +619,13 @@ impl Agent {
         // dispatcher that reaches them, so an operator who removed `toolbox`
         // gets every core tool eager again instead of tools nothing can call.
         let core_listed = default_core_profile && tool_config.toolbox_reachable();
-        let allowed_tools = Self::without_unreachable_dispatcher(tool_config, allowed_tools, core_listed);
+        let allowed_tools = consult::narrow(tool_config, &session, allowed_tools, core_listed);
         let load_tiers = tool_config.load_tiers(allowed_tools.as_ref(), core_listed);
         let working_dir = session.working_dir.as_deref().map(std::path::Path::new);
         let agents_md_snapshot = crate::prompt::load_agents_md_files_from_dir(working_dir);
         let static_prompt_sources = crate::prompt::StaticPromptSources::load(working_dir);
         let initial_provider_model = provider.model();
-        let tool_policy_registration =
-            crate::tool::register_session_tool_policy(&session.id, allowed_tools.clone(), disabled_tools.clone());
+        let registration = consult::register(&session, &allowed_tools, &disabled_tools);
         let secret_vault_registration = crate::secrets::register_session_vault(&session.id);
         // The dispatcher must read the same frozen tier snapshot the tool list
         // uses, not a later configuration reload.
@@ -638,7 +638,7 @@ impl Agent {
             active_skill: None,
             allowed_tools,
             disabled_tools,
-            _tool_policy_registration: tool_policy_registration,
+            _tool_policy_registration: registration,
             _secret_vault_registration: secret_vault_registration,
             mcp_tools_mode: tool_config.mcp_tools,
             load_tiers,

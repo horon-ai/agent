@@ -456,6 +456,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
+| `/side <question>` | Ask a separate read-only session a question |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/voice` | Dictate to the draft or play text on this device |
@@ -464,9 +465,11 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
+
+`/side <question>` shows the answer in its own panel. Use `/side --at <message-id> <question>` to use the conversation before a saved message. Press Escape to close the panel and continue the parent conversation. Press Enter when the panel offers a saved session to open it again. The daemon keeps the child read-only when reopened.
 
 `/jobs` lists the background work this session is still running, read from the daemon each time rather than replayed from the transcript, so a job that started or ended on another client shows up as it stands. Each row shows the command, the job kind and its newest output. Delete cancels the selected background terminal; the session and every other job keep running, and Esc closes the list without cancelling anything. A tool-call job is listed but cannot be cancelled from this list, and the list says so instead of sending a request the daemon would refuse. Switching sessions clears the rows, because a job's call id only means something in the session that started it.
 
@@ -505,6 +508,7 @@ built-in commands:
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
+  /side                ask a separate read-only session a question
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
   /voice               dictate to the draft or play text on this device

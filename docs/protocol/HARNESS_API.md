@@ -568,6 +568,10 @@ client that cannot read it.
 
 Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
+## Read-only consult forks
+
+On a daemon advertising `consult_fork_v1`, send `fork_session` with `consult: true` to persist a separate session whose tools are limited to the daemon's read-only consult list. An optional `boundary` identifies a stored message. The new conversation ends before that message, and the daemon rejects a stale boundary before creating the fork. Reattaching after a daemon restart retains the tool restriction.
+
 ## Daemon effective settings (protocol 1.25)
 
 The harness API keeps major version 1 and moved from minor version 24 to 25.

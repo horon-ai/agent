@@ -20,6 +20,8 @@ pub(crate) mod client_fs;
 mod codemode;
 mod communicate;
 mod config_edit_notice;
+mod consult;
+pub(crate) use consult::{mark_session_consult_policy, session_is_consult};
 mod context_notes;
 mod conversation_search;
 mod discover;
@@ -228,6 +230,9 @@ struct SessionToolPolicy {
     /// that read it - `toolbox` and the `mcp` management tool - hold a registry
     /// and cannot reach the session's own state.
     listed_mcp_surface: bool,
+    /// A read-only consult child: the stored allow list outranks every client
+    /// tool configuration, so reconnecting or reconfiguring cannot widen it.
+    consult: bool,
     owner: Option<u64>,
 }
 
@@ -462,6 +467,7 @@ pub(crate) fn register_session_tool_policy(
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
+            consult: false,
             owner: Some(owner),
         }),
     );
@@ -526,6 +532,7 @@ pub(crate) fn set_session_tool_policy(
             disabled_tools,
             load_tiers: None,
             listed_mcp_surface: false,
+            consult: false,
             owner: None,
         }),
     );
@@ -558,6 +565,9 @@ fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
+    if stored.as_deref().is_some_and(consult::is_stored_consult) {
+        return stored;
+    }
     let Some(config) = sdk::config(session_id) else {
         return stored;
     };
@@ -2029,14 +2039,10 @@ impl Registry {
         }
 
         let working_dir = ctx.working_dir.as_ref().map(|dir| dir.display().to_string());
-        // The dispatch clock starts before the hooks. A transformer or gate that
-        // queues on `HOOK_SERIAL` or runs long is time the caller waited, and
-        // starting at `Tool::execute` made that wait invisible.
+        // Include time spent waiting for and running hooks in dispatch latency.
         let dispatch_started_at = std::time::Instant::now();
-        // User-configured input transformer: may replace the tool input before
-        // anything reads it, so it is serialized with the other awaited hooks;
-        // see `HOOK_SERIAL`. It is skipped entirely when not configured, and for
-        // the dispatcher, whose payload the target's own transformer rewrites.
+        // Serialize input transforms with other hooks. The dispatcher leaves
+        // its payload for the target's own transformer.
         let input = if policy_on_self {
             let _serial = HOOK_SERIAL.lock().await;
             crate::hooks::transform_tool_input(&ctx.session_id, working_dir.as_deref(), resolved_name, input).await

@@ -6,7 +6,7 @@
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
-//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
+//!    `/side`, `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -99,6 +99,8 @@ pub enum Local {
     New,
     /// Open the settings screen.
     Settings,
+    /// Ask a read-only child of this conversation a side question.
+    Side,
     /// Rename the attached session.
     Rename,
     /// Resume a session stored for this working directory.
@@ -149,6 +151,9 @@ impl Local {
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
             "settings" => Some(Self::Settings),
+            // `/btw` is the name the workflow is known by elsewhere; both ask
+            // the same question and open the same screen.
+            "side" | "btw" => Some(Self::Side),
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
             "archived" => Some(Self::Archived),
@@ -181,6 +186,7 @@ impl Local {
             Self::Effort => "effort",
             Self::New => "new",
             Self::Settings => "settings",
+            Self::Side => "side",
             Self::Rename => "rename",
             Self::Resume => "resume",
             Self::Archived => "archived",
@@ -691,7 +697,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: [&str; 27] = [
     "archived",
     "artifact",
     "clear",
@@ -715,6 +721,7 @@ const LOCAL_NAMES: [&str; 26] = [
     "replay",
     "resume",
     "settings",
+    "side",
     "skills",
     "switch",
     "voice",

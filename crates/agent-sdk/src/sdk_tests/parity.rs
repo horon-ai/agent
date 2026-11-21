@@ -38,6 +38,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("create_session_with_options", "createSession"),
     cap("attach_session", "attachSession"),
     cap("fork_session", "forkSession"),
+    cap("fork_consult", "forkConsult"),
     cap("transfer_session", "transferSession"),
     cap("detach_session", "detachSession"),
     cap("send_message", "sendMessage"),
@@ -280,6 +281,11 @@ const RUST_ONLY: &[&str] = &[
     "overflow_error",
     // TS reads `client.socketPath` as a field; Rust exposes it as an accessor.
     "socket_path",
+    // The TypeScript and Python consult forks take the boundary as an optional
+    // second argument on `forkConsult`/`fork_consult`. Rust has no optional
+    // parameter, so the boundary is a second method rather than a new exported
+    // options type for one argument.
+    "fork_consult_at",
 ];
 
 /// Public TypeScript methods not yet represented by an equivalent Rust method.
@@ -326,6 +332,7 @@ fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
         "client.rs",
+        "consult.rs",
         "handoff.rs",
         "structured.rs",
         "export.rs",

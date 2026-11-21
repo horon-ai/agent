@@ -126,6 +126,9 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// all. The reply never carries a value outside the allow-list, so no credential
 /// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
+/// `fork_session` accepts `consult` and `boundary`: the daemon stores the
+/// read-only classification and resolves the boundary before answering.
+pub const CAPABILITY_CONSULT_FORK_V1: &str = "consult_fork_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -157,6 +160,10 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
+    (
+        CAPABILITY_CONSULT_FORK_V1,
+        &["fork_session.consult", "fork_session.boundary"],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -169,6 +176,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
     CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    CAPABILITY_CONSULT_FORK_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

@@ -9,6 +9,7 @@ use super::{
 use crate::agent::Agent;
 use crate::protocol::{FeatureToggle, NotificationType, ServerEvent};
 use crate::session::Session;
+use anyhow::Context;
 use horon_agent_agent_runtime::SoftInterruptSource;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -469,7 +470,12 @@ fn send_owed_commit_error(id: u64, error: &anyhow::Error, client_event_tx: &mpsc
     });
 }
 
-fn clone_split_session(parent_session_id: &str, live_parent: Option<&Session>) -> anyhow::Result<(String, String)> {
+fn clone_split_session(
+    parent_session_id: &str,
+    live_parent: Option<&Session>,
+    consult: bool,
+    boundary: Option<&str>,
+) -> anyhow::Result<(String, String)> {
     // Keep the persisted snapshot authoritative, including while the parent is
     // busy. A brand-new Agent may not have saved anything yet, however. Only a
     // missing snapshot permits an in-memory fallback, never corrupt/unreadable
@@ -484,16 +490,51 @@ fn clone_split_session(parent_session_id: &str, live_parent: Option<&Session>) -
         }
     })?;
 
+    // Resolve a recorded boundary against the parent's own history before a
+    // child exists. The boundary is the first message the child does not get,
+    // so the child receives the exact prefix before the chosen turn; an id the
+    // parent no longer records forks nothing. This is the same rule #506's
+    // `Session::inherit_history_before` applies; when that lands here first,
+    // this block becomes that call.
+    let kept = match boundary {
+        Some(boundary) => {
+            let boundary = boundary.trim();
+            anyhow::ensure!(!boundary.is_empty(), "fork requires a recorded boundary");
+            let history = parent.history_messages()?;
+            let index = history
+                .iter()
+                .position(|message| message.id == boundary)
+                .with_context(|| {
+                    format!("boundary {boundary} is not in session {parent_session_id} at its selected head")
+                })?;
+            Some(index)
+        }
+        None => None,
+    };
     let mut child = Session::create(Some(parent_session_id.to_string()), None);
     child.inherit_history(&parent)?;
+    if let Some(kept) = kept {
+        child.truncate_messages(kept);
+    }
     child.inherit_cache_root(&parent);
-    child.compaction = parent.compaction.clone();
+    // A summary covers a window the boundary may have cut, so a boundary fork
+    // starts uncompacted; the full fork keeps the parent's compaction.
+    child.compaction = if kept.is_none() {
+        parent.compaction.clone()
+    } else {
+        None
+    };
     child.system_prompt = parent.system_prompt.clone();
     child.working_dir = parent.working_dir.clone();
     child.model = parent.model.clone();
     child.provider_key = parent.provider_key.clone();
     child.route_api_method = parent.route_api_method.clone();
     child.status = crate::session::SessionStatus::Closed;
+    // A read-only consult child is persisted with the flag, so it is already
+    // narrow when its id is answered and stays narrow after a daemon restart.
+    // A normal parent does not become consult, but a consult parent can never
+    // be copied into a wider child: the classification only ever narrows.
+    child.consult = consult || parent.consult;
     // The parent agent keeps ownership of any in-flight request; tell the
     // forked agent so it treats the next prompt as fresh work instead of
     // continuing (and duplicating) the parent's current turn.
@@ -535,6 +576,8 @@ fn create_transfer_child_session(
     child.improve_mode = parent.improve_mode;
     child.autoreview_enabled = parent.autoreview_enabled;
     child.autojudge_enabled = parent.autojudge_enabled;
+    // A handoff of a read-only consult child is still a consult child.
+    child.consult = parent.consult;
     child.provider_session_id = None;
     child.status = crate::session::SessionStatus::Closed;
     child.save()?;
@@ -547,6 +590,8 @@ pub(super) async fn handle_split(
     client_session_id: &str,
     agent: &Arc<Mutex<Agent>>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    consult: bool,
+    boundary: Option<String>,
 ) {
     let started = Instant::now();
     crate::logging::event_info(
@@ -568,6 +613,8 @@ pub(super) async fn handle_split(
         clone_split_session(
             client_session_id,
             idle_agent.as_ref().map(|agent| agent.session_for_split()),
+            consult,
+            boundary.as_deref(),
         )
     };
     let (new_session_id, new_session_name) = match result {

@@ -99,6 +99,9 @@ impl App {
                     .collect(),
             }),
             Local::Settings => self.open_settings(),
+            // `/side` asks a read-only child of this conversation a question.
+            // Nothing leaves the client until the question is non-empty.
+            Local::Side => self.run_side(arguments),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and
             // sends nothing to the harness.

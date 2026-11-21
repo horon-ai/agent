@@ -47,7 +47,7 @@ impl App {
     /// The suffix belongs to the exact draft it completes, so it is looked up
     /// against the text on screen rather than trusted from the last answer.
     pub fn suggestion_text(&self) -> Option<String> {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
+        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return None;
         }
         if !self.suggestions.pending() || !self.input.is_at_end() {

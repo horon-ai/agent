@@ -574,6 +574,29 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def side_question_smoke(terminal: Terminal, home: str) -> None:
+    from pathlib import Path
+
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(parents) != 1:
+        raise Failure(f"expected one parent session, got {len(parents)}")
+    question = "side fixture question"
+    terminal.send(f"/side {question}\r")
+    terminal.read_until("Side question", STEP_TIMEOUT, "separate panel opened")
+    terminal.read_until("side-fixture-answer", STEP_TIMEOUT, "read-only child answered")
+    if question in parents[0].read_text(encoding="utf-8"):
+        raise Failure("the side question entered the parent history")
+    children = list(set(Path(home).glob("sessions/*/events.jsonl")) - originals)
+    if len(children) != 1 or question not in children[0].read_text(encoding="utf-8"):
+        raise Failure("expected the side question in a saved child session")
+    terminal.send("\x1b")
+    time.sleep(0.15)
+    dismissed = len(terminal.transcript)
+    terminal.send("/rename\r")
+    terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "parent composer restored", since=dismissed)
+
+
 def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
     tool_dir = os.path.join(case_root, "voice-bin")
     os.makedirs(tool_dir)
@@ -774,6 +797,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
             context_request_smoke(terminal, home, base_url)
+            side_question_smoke(terminal, home)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         terminal.send("/resume\r")

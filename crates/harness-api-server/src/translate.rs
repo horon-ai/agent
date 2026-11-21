@@ -3,6 +3,7 @@
 
 mod cancellable_work;
 mod compact_handoff;
+mod consult;
 mod credentials;
 pub(crate) mod effective_settings;
 mod runtime_identity;
@@ -680,7 +681,7 @@ impl BridgeState {
             "fork_session" => {
                 let id = self.legacy_id();
                 self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "split", "id": id}))]
+                vec![Outbound::Legacy(consult::fork_frame(id, request))]
             }
             "transfer_session" => {
                 let id = self.legacy_id();

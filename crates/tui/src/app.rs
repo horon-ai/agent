@@ -43,6 +43,7 @@ pub(crate) mod record;
 mod sending;
 mod sessions;
 mod settings;
+mod side;
 mod skills;
 mod status;
 mod terminal_signals;
@@ -67,10 +68,8 @@ mod jobs_tests;
 
 #[cfg(test)]
 mod notes_tests;
-
 #[cfg(test)]
 mod session_switch_tests;
-
 #[cfg(test)]
 mod steer_tests;
 
@@ -361,6 +360,7 @@ pub struct App {
     pub artifacts_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
+    pub side: Option<crate::overlays::side::SideOverlay>,
     /// The open list of models or sessions, if one is showing.
     ///
     /// A picker sits above every other surface: while it is open no key reaches
@@ -460,7 +460,7 @@ impl App {
             // A new session starts in the launch directory until it reports otherwise.
             workspace_known: true,
             path_cycle: None,
-            home: home_directory(),
+            home: crate::recording::home_directory(),
             tokens: None,
             capacity: None,
             usage: None,
@@ -482,6 +482,7 @@ impl App {
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
+            side: None,
             picker: None,
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
@@ -549,7 +550,7 @@ impl App {
             workspace_is_local: false,
             workspace_known: true,
             path_cycle: None,
-            home: home_directory(),
+            home: crate::recording::home_directory(),
             tokens: None,
             capacity: None,
             usage: None,
@@ -571,6 +572,7 @@ impl App {
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
+            side: None,
             picker: None,
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
@@ -956,8 +958,8 @@ impl App {
                 self.tokens = Some(TokenTotals {
                     input: *input,
                     output: *output,
-                    cache_read: optional_count(cache_read_input),
-                    cache_creation: optional_count(cache_creation_input),
+                    cache_read: cache_read_input.unwrap_or(0),
+                    cache_creation: cache_creation_input.unwrap_or(0),
                 });
                 // The event is one provider call, so the cumulative figure
                 // moves with it. The running total is kept here rather than
@@ -1130,23 +1132,6 @@ impl App {
         self.input.set_text(&filled);
         self.path_cycle = Some(choice);
         self.sync_slash();
-    }
-}
-
-/// The status line shortens this home directory to `~`.
-fn home_directory() -> Option<String> {
-    let value = match std::env::var_os("HOME") {
-        Some(home) => home,
-        None => std::env::var_os("USERPROFILE")?,
-    };
-    Some(value.to_string_lossy().into_owned())
-}
-
-/// A token count the protocol left optional.
-fn optional_count(value: &Option<u64>) -> u64 {
-    match value {
-        Some(value) => *value,
-        None => 0,
     }
 }
 
