@@ -612,10 +612,12 @@ def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> N
         raise Failure("confirming a stale review moved HEAD")
     git(root, env, "restore", "--staged", "--", "b.txt")
     fresh_start = len(terminal.transcript)
-    terminal.send("/commit Review proof zebra\r")
-    terminal.read_until("proof zebra", STEP_TIMEOUT, "fresh review", since=fresh_start)
+    terminal.send("/commit Quartz\r")
+    terminal.read_until("Quartz", STEP_TIMEOUT, "fresh review", since=fresh_start)
     terminal.send("/commit --yes\r")
     terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed")
+    if git(root, env, "log", "-1", "--format=%s") != "Quartz":
+        raise Failure("the local commit did not use the fresh review's message")
     changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
     if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
         raise Failure("the commit did not preserve the reviewed staging boundary")
