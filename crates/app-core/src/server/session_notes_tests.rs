@@ -16,7 +16,10 @@ fn a_note_is_only_visible_to_the_session_that_recorded_it() {
     let off = view(&other);
     assert!(!off.recording, "a session that never opted in must read as off");
     record(&other, NoteKind::Work, "background_task_progress", Some("build"));
-    assert!(view(&other).notes.is_empty(), "a record made before opting in must not exist");
+    assert!(
+        view(&other).notes.is_empty(),
+        "a record made before opting in must not exist"
+    );
 
     set_recording(&mine, true);
     set_recording(&other, true);
@@ -65,7 +68,11 @@ fn repeats_fold_and_the_cap_counts_every_line_it_drops() {
 
     notes.clear();
     for index in 0..NOTE_CAP + 2 {
-        notes.record(NoteKind::Work, "background_task_progress", Some(&format!("task {index}")));
+        notes.record(
+            NoteKind::Work,
+            "background_task_progress",
+            Some(&format!("task {index}")),
+        );
     }
 
     let counts = &notes.counts;
@@ -89,8 +96,15 @@ fn a_note_is_one_bounded_line() {
     notes.record(NoteKind::Hook, "post_tool", Some(&detail));
 
     let text = &notes.notes[0].text;
-    assert!(!text.contains('\n') && !text.contains('\t'), "control characters leaked: {text:?}");
-    assert!(text.chars().count() <= NOTE_TEXT_MAX, "note is not bounded: {}", text.chars().count());
+    assert!(
+        !text.contains('\n') && !text.contains('\t'),
+        "control characters leaked: {text:?}"
+    );
+    assert!(
+        text.chars().count() <= NOTE_TEXT_MAX,
+        "note is not bounded: {}",
+        text.chars().count()
+    );
     assert!(text.ends_with('…'), "a cut note must say it was cut: {text:?}");
 }
 
@@ -116,7 +130,10 @@ fn the_command_turns_recording_on_and_refuses_an_unknown_word() {
 
     let (data, message) = command(&id, &[]).expect("a status view");
     assert_eq!(data["recording"], serde_json::Value::Bool(false));
-    assert!(message.contains("\"recording\": false"), "the message is the payload: {message}");
+    assert!(
+        message.contains("\"recording\": false"),
+        "the message is the payload: {message}"
+    );
 
     let (data, _) = command(&id, &["on".to_string()]).expect("enabling");
     assert_eq!(data["recording"], serde_json::Value::Bool(true));

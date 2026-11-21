@@ -187,11 +187,7 @@ impl SessionNotes {
             self.notes.pop_front();
             self.counts.dropped += 1;
         }
-        self.notes.push_back(Note {
-            kind,
-            text,
-            repeats: 1,
-        });
+        self.notes.push_back(Note { kind, text, repeats: 1 });
         self.counts.retained = self.notes.len();
     }
 
@@ -259,7 +255,7 @@ fn capped(text: String) -> String {
 pub(crate) fn configured_hooks() -> Vec<&'static str> {
     HOOK_NAMES
         .into_iter()
-        .filter(|name| crate::hooks::hook_configured(*name))
+        .filter(|name| crate::hooks::hook_configured(name))
         .collect()
 }
 

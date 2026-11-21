@@ -71,7 +71,10 @@ fn a_different_session_starts_the_counters_over() {
     notes.observe(&tool_start("session_b", "three"));
     notes.observe(&tool_done("session_b", "three"));
     let closing = notes.observe(&turn_done("session_b")).expect("its own turn summary");
-    assert!(closing.contains("1 tool calls"), "session A's calls leaked into B: {closing}");
+    assert!(
+        closing.contains("1 tool calls"),
+        "session A's calls leaked into B: {closing}"
+    );
 }
 
 #[test]
@@ -108,7 +111,11 @@ fn nothing_is_read_or_drawn_while_the_setting_is_off() {
 fn a_repeated_progress_tick_does_not_take_another_line() {
     let mut notes = WorkNotes::default();
     notes.set_enabled(true);
-    assert!(notes.observe(&progress("session_a", "build", "42% · Running tests")).is_some());
+    assert!(
+        notes
+            .observe(&progress("session_a", "build", "42% · Running tests"))
+            .is_some()
+    );
     assert_eq!(
         notes.observe(&progress("session_a", "build", "42% · Running tests")),
         None,

@@ -78,13 +78,17 @@ impl WorkNotes {
             return None;
         }
         match event {
-            ApiEvent::ToolStart { session_id, call_id, .. } => {
+            ApiEvent::ToolStart {
+                session_id, call_id, ..
+            } => {
                 if self.belongs(session_id) {
                     self.tools_running.insert(call_id.clone());
                 }
                 None
             }
-            ApiEvent::ToolDone { session_id, call_id, .. } => {
+            ApiEvent::ToolDone {
+                session_id, call_id, ..
+            } => {
                 if self.belongs(session_id) && self.tools_running.remove(call_id) {
                     self.tools_finished += 1;
                 }
@@ -172,11 +176,7 @@ impl WorkNotes {
         let running = self.tools_running.len() as u64;
         self.tools_running.clear();
         self.tools_finished += running;
-        let line = if self.tools_finished > 0
-            || self.jobs_finished > 0
-            || !self.jobs.is_empty()
-            || self.omitted > 0
-        {
+        let line = if self.tools_finished > 0 || self.jobs_finished > 0 || !self.jobs.is_empty() || self.omitted > 0 {
             let mut text = format!(
                 "work · {} tool calls · {} background jobs finished",
                 self.tools_finished, self.jobs_finished
