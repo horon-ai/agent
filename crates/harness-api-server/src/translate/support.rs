@@ -17,6 +17,6 @@ pub fn legacy_event_may_block(event: &Value) -> bool {
 /// running at once would read each other's sessions.
 #[cfg(test)]
 pub(crate) fn horon_agent_home_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::LazyLock<std::sync::Mutex<()>> = std::sync::LazyLock::new(std::sync::Mutex::new);
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
