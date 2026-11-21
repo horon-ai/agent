@@ -1,5 +1,23 @@
 use super::*;
 
+pub(super) const MAX_GREP_CONTEXT_LINES: usize = 20;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(super) struct GrepContext {
+    pub before: usize,
+    pub after: usize,
+}
+
+impl GrepContext {
+    pub fn bounded(&self) -> (usize, usize) {
+        (
+            self.before.min(MAX_GREP_CONTEXT_LINES),
+            self.after.min(MAX_GREP_CONTEXT_LINES),
+        )
+    }
+}
+
 struct ResolvedSearchScope {
     root: Option<String>,
     glob: Option<String>,

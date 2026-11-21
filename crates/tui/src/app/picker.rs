@@ -325,7 +325,9 @@ impl App {
                 // The queue answers its own keys before this list sees them, so
                 // no row is ever chosen from here; a value that arrives anyway
                 // changes nothing rather than acting as some other kind of row.
-                Kind::Queue => None,
+                // The job list is the same shape: `delete` cancels, and the
+                // generic selector never runs for it.
+                Kind::Queue | Kind::Jobs => None,
                 // The todo list answers its own keys before this list sees
                 // them, so no row is ever chosen from here either.
                 Kind::Todos => None,
@@ -368,6 +370,9 @@ impl App {
         let session_id = session.session_id;
         self.description = session.description;
         self.session_id = Some(session_id.clone());
+        // A call id is scoped to the session that started it, so neither the
+        // job rows nor an open job list may follow the client across.
+        self.clear_background_jobs();
         self.todos = Default::default();
         // The todo list belonged to the session being left; a key must not
         // carry it into the one just attached.

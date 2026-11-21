@@ -442,6 +442,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
+| `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
 | `/mcp [probe <server>]` | List trusted MCP configuration or explicitly test a named connection |
@@ -464,9 +465,11 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
+
+`/jobs` lists the background work this session is still running, read from the daemon each time rather than replayed from the transcript, so a job that started or ended on another client shows up as it stands. Each row shows the command, the job kind and its newest output. Delete cancels the selected background terminal; the session and every other job keep running, and Esc closes the list without cancelling anything. A tool-call job is listed but cannot be cancelled from this list, and the list says so instead of sending a request the daemon would refuse. Switching sessions clears the rows, because a job's call id only means something in the session that started it.
 
 In `/todo`, Enter completes or reopens the selected item and Delete cancels it. If a newer list was saved after the picker opened, the daemon returns the updated list and leaves that write in place. The edit does not start a model turn. A daemon that supplies no revision opens a read-only list.
 
@@ -491,6 +494,7 @@ built-in commands:
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
+  /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
   /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
