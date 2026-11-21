@@ -654,6 +654,11 @@ jobs:
           # exercised.
           "$CARGO_BIN" build --locked --target ${{ matrix.target }} -p horon-tui
 
+      - name: Launch profile isolation
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/launch_profile_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
       - name: TUI PTY smoke (Linux, macOS)
         # The bare command hands a terminal launch to the sibling `horon-tui`
         # binary, and nothing else in this workflow drives that handoff or the
