@@ -1092,7 +1092,7 @@ fn bounded_patch(text: &str, cut_by_read: bool) -> (String, bool) {
         }
         kept.push_str("… diff truncated");
     }
-    kept
+    (kept, cut)
 }
 
 /// A short, stable id over the staged entries, `HEAD` and the branch.
