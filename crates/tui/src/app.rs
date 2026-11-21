@@ -70,18 +70,13 @@ mod session_switch_tests;
 mod steer_tests;
 
 /// What the UI asks the bridge to do after a keystroke.
-///
-/// Not `Eq`: an answer carries protocol selections, which only compare with
-/// `PartialEq`.
+/// Answers carry protocol selections that only implement `PartialEq`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
     /// Send this text as a user message.
     Send(String),
     /// Send this text into the running turn as one soft interrupt.
-    ///
-    /// It carries the queued messages joined for the harness; what the
-    /// transcript shows is each message's own row, settled when the bridge
-    /// answers.
+    /// The harness receives joined text while each queued row stays visible until the reply.
     Steer(String),
     /// Cancel the running turn.
     Cancel,
