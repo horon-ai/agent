@@ -112,6 +112,9 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Hand the draft to the user's editor; the loop answers this one itself,
+    /// because the editor needs the terminal the loop is drawing on.
+    EditDraft,
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.

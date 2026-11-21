@@ -98,6 +98,8 @@ pub mod ids {
     pub const EDITOR_ACCEPT_SUGGESTION: &str = "editor.accept_suggestion";
     /// Search the drafts sent before this one.
     pub const EDITOR_HISTORY_SEARCH: &str = "editor.history_search";
+    /// Hand the draft to `VISUAL` or `EDITOR` and load what it saves.
+    pub const EDITOR_EXTERNAL: &str = "editor.external";
     /// Approve a parked tool call once.
     pub const PROMPT_ALLOW: &str = "prompt.allow";
     /// Approve a parked tool call and every later call like it.
@@ -231,6 +233,10 @@ pub const ACTIONS: &[ActionSpec] = &[
     // reached by a slip while typing.
     ActionSpec::new(ids::EDITOR_ACCEPT_SUGGESTION, Scope::Editor, &["ctrl+right"]),
     ActionSpec::new(ids::EDITOR_HISTORY_SEARCH, Scope::Editor, &["ctrl+r"]),
+    // The draft leaves the client for the length of one edit. `ctrl+g` is
+    // unclaimed by the rest of the map, so the key adds a surface without
+    // taking one away.
+    ActionSpec::new(ids::EDITOR_EXTERNAL, Scope::Editor, &["ctrl+g"]),
     ActionSpec::new(ids::PROMPT_ALLOW, Scope::Prompt, &["y"]),
     ActionSpec::new(ids::PROMPT_ALLOW_ALWAYS, Scope::Prompt, &["a"]),
     ActionSpec::new(ids::PROMPT_DENY, Scope::Prompt, &["n"]),

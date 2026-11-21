@@ -84,6 +84,46 @@ pub fn is_executable(path: &Path) -> bool {
     Current::is_executable(path)
 }
 
+/// Whether metadata from `symlink_metadata` describes a path indirection.
+pub fn is_path_link(metadata: &Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+/// The package target that matches this agent's OS, architecture and ABI.
+pub fn native_package_target() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("macos", "x86_64") => Some("x86_64-apple-darwin"),
+        ("linux", "aarch64") if cfg!(target_env = "gnu") => Some("aarch64-unknown-linux-gnu"),
+        ("linux", "x86_64") if cfg!(target_env = "gnu") => Some("x86_64-unknown-linux-gnu"),
+        ("windows", "aarch64") if cfg!(target_env = "msvc") => Some("aarch64-pc-windows-msvc"),
+        ("windows", "x86_64") if cfg!(target_env = "msvc") => Some("x86_64-pc-windows-msvc"),
+        _ => None,
+    }
+}
+
+/// Open a package leaf without following its symlink or reparse point.
+pub fn package_open_options() -> OpenOptions {
+    let mut options = no_follow_open_options();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    options.read(true);
+    options
+}
+
 /// Open options that refuse to follow a symlink at the leaf.
 pub fn no_follow_open_options() -> OpenOptions {
     Current::no_follow_open_options()
