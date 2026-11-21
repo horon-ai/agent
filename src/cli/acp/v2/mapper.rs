@@ -242,6 +242,9 @@ impl V2Mapper {
             ServerEvent::ProviderGuardrail { message, .. } => {
                 vec![notice("warning", &message, "The provider stopped the turn")]
             }
+            ServerEvent::SoftInterruptInjected { content, point, .. } if point == "native_tool_retry" => {
+                vec![notice("info", &content, "Tool call retry")]
+            }
             ServerEvent::TurnStopped { reason, message, .. } => {
                 vec![notice(turn_stopped_severity(reason), &message, "The turn stopped")]
             }

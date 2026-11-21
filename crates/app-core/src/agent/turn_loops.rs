@@ -1415,8 +1415,6 @@ impl Agent {
                 cache_creation_input_tokens: usage_cache_creation,
             };
 
-            let text_tool_recovery = self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
-
             let visible_text_is_empty = text_content.trim().is_empty();
 
             // Add assistant message to history. Avoid persisting whitespace-only text as a
@@ -1497,10 +1495,11 @@ impl Agent {
 
             // If no tool calls, we're done
             if tool_calls.is_empty() {
-                // Unparseable tool-call markup in the text (issue #1702):
-                // surface it and ask the model to re-issue the call natively.
-                if let Some(notice) =
-                    self.maybe_nudge_unparsed_tool_markup(&text_tool_recovery, stop_reason.as_deref())?
+                // Ask for a native call before retrying a text-only tool attempt.
+                if saw_message_end
+                    && !tools.is_empty()
+                    && let Some(notice) =
+                        self.maybe_nudge_unparsed_tool_markup(&text_content, stop_reason.as_deref())?
                 {
                     if print_output {
                         println!("\n{}", notice);
