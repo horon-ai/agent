@@ -624,6 +624,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        env.pop("HORON_AGENT_API_SOCKET", None)
     git_fixture(case_root, env)
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
