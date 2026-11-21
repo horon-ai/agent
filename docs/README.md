@@ -39,6 +39,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, the multi-line editor, the transcript and its scrollback, turn state, prompts, the slash popup, the model and session pickers, commands, the settings screen, installing the optional asset, limits |
 | | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
 | | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
+| | [`PACKAGES.md`](runtime/PACKAGES.md) | User-installed Rust packages: the author SDK, the declaration and its digest, both layouts, targets, signing and installation |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
 | `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to the endpoint of the wire a profile's `type` names (Chat Completions, Responses, Anthropic Messages, Gemini generateContent), provider profiles and API keys, model roles and their fallback order, the one-shot `[prewalk]` handoff, model usage metadata |
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | Remote MCP, user-defined web search |

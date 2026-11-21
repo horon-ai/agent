@@ -206,16 +206,24 @@ fn commands_server_names_follow_the_protocol() {
             arguments: "status".to_string()
         }
     );
-    // The names come from serde, so every variant is reachable and unique,
-    // apart from the two the built-in list took over.
+    // `/mcp` is the same shape: the built-in owns the name and sends its own
+    // typed request, so the harness's `mcp` command is not listed beside it.
+    assert_eq!(
+        state.resolve("/mcp"),
+        Invocation::Local {
+            command: Local::Mcp,
+            arguments: String::new()
+        }
+    );
+    // The names come from serde, so every variant is reachable and unique and
+    // the ones the built-in list took over are simply absent.
     let names = server_commands();
     assert_eq!(
-        names.len() + 2,
+        names.len() + 3,
         SERVER_VARIANTS.len(),
-        "the built-in `/skills` and `/swarm` own exactly two harness names"
+        "the built-in `/skills`, `/mcp` and `/swarm` own exactly three harness names"
     );
-    assert!(!names.iter().any(|(name, _)| name == "skills"));
-    assert!(!names.iter().any(|(name, _)| name == "swarm"));
+    assert!(!names.iter().any(|(name, _)| matches!(name.as_str(), "skills" | "mcp" | "swarm")));
     let mut unique: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
     unique.sort_unstable();
     unique.dedup();

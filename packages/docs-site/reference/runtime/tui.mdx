@@ -389,6 +389,8 @@ Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, an
 
 `/links` lists HTTP and HTTPS links from the eight most recent assistant answers, newest first. Choose a row with Enter to open the displayed URL in the system browser. Esc closes the list. The picker skips malformed URLs, local files and links with embedded credentials.
 
+`/mcp` lists servers from the daemon's trusted configuration for the attached workspace. `/mcp probe <server>` opens a separate connection to the named enabled server and reports its transport and advertised capabilities. The probe reads the tool list without calling a tool. An untrusted or disabled server cannot be probed from the TUI.
+
 In a window too small for an overlay, the lists and the settings screen draw one line instead of the panel: `list hidden: window too small, esc closes` or `settings hidden: window too small, esc closes`. The overlay still owns every key, so `esc` closes it.
 
 ## The status line
@@ -438,6 +440,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
+| `/mcp [probe <server>]` | List trusted MCP configuration or explicitly test a named connection |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
 | `/note [add\|edit\|remove\|list\|prune] [address] [text]` | Keep, list or remove a local note on a transcript message |
@@ -452,7 +455,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-two commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -476,6 +479,7 @@ built-in commands:
   /help                list the commands and the keys in force
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
+  /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /note                note, list or remove a local note on a transcript message
@@ -487,7 +491,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
-  /swarm               browse child sessions; add status for the daemon's swarm report
+  /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

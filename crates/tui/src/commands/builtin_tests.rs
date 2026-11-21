@@ -401,6 +401,7 @@ fn builtin_help_lists_every_built_in_command() {
         "/help",
         "/keys",
         "/links",
+        "/mcp",
         "/model",
         "/new",
         "/quit",

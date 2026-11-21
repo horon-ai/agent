@@ -30,6 +30,7 @@ pub enum RuntimeCommand {
     Auth,
     Logout,
     Plan,
+    Mcp,
 }
 
 /// Structured runtime data plus a human-readable rendering. Data is command
