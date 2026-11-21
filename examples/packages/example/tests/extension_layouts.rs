@@ -275,16 +275,14 @@ impl Client {
     }
 
     fn expect_eof(&mut self) {
-        loop {
-            match self.incoming.recv_timeout(TIMEOUT) {
-                Ok(Incoming::Frame(frame)) => panic!("the example sent a frame after shutdown: {frame:?}"),
-                Ok(Incoming::Stray(line)) => panic!(
-                    "stdout carried a line that is not a frame: {:?}",
-                    String::from_utf8_lossy(&line)
-                ),
-                Err(RecvTimeoutError::Disconnected) => return,
-                Err(RecvTimeoutError::Timeout) => panic!("stdout stayed open after shutdown"),
-            }
+        match self.incoming.recv_timeout(TIMEOUT) {
+            Ok(Incoming::Frame(frame)) => panic!("the example sent a frame after shutdown: {frame:?}"),
+            Ok(Incoming::Stray(line)) => panic!(
+                "stdout carried a line that is not a frame: {:?}",
+                String::from_utf8_lossy(&line)
+            ),
+            Err(RecvTimeoutError::Disconnected) => {}
+            Err(RecvTimeoutError::Timeout) => panic!("stdout stayed open after shutdown"),
         }
     }
 
