@@ -574,14 +574,76 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
+    tool_dir = os.path.join(case_root, "voice-bin")
+    os.makedirs(tool_dir)
+    scripts = {
+        "ffmpeg": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "arecord": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "whisper-cli": 'while [ "$1" != -of ]; do shift; done\nprintf "hello from voice\\n" > "$2.txt"',
+        "say": 'cat "$2" > "$(dirname "$0")/played"',
+        "espeak-ng": 'cat "$2" > "$(dirname "$0")/played"',
+    }
+    for name, script in scripts.items():
+        path = os.path.join(tool_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"#!/bin/sh\n{script}\n")
+        os.chmod(path, 0o700)
+    models = os.path.join(home, "models")
+    os.makedirs(models, exist_ok=True)
+    with open(os.path.join(models, "ggml-tiny.en.bin"), "wb") as handle:
+        handle.truncate(1024 * 1024 + 1)
+    env["PATH"] = tool_dir + os.pathsep + env.get("PATH", os.defpath)
+
+
+def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None:
+    from urllib.request import urlopen
+
+    def request_count() -> int:
+        with urlopen(base_url.removesuffix("/v1") + "/__stats", timeout=5) as response:
+            return json.load(response)["request_count"]
+
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
+    count = request_count()
+    terminal.send("/voice\r")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.send("/voice consent\r")
+    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    terminal.send("/voice\r")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    if request_count() != count:
+        raise Failure("voice input sent a request before the user submitted the draft")
+    terminal.send("\x15")
+    terminal.send("/voice say local playback proof\r")
+    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
+    played = os.path.join(case_root, "voice-bin", "played")
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            with open(played, encoding="utf-8") as handle:
+                if handle.read().strip() == "local playback proof":
+                    break
+        except FileNotFoundError:
+            pass
+        time.sleep(0.05)
+    else:
+        raise Failure("the local player did not receive the requested text")
+    if request_count() != count:
+        raise Failure("local playback sent a model request")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        voice_fixture(case_root, home, env)
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        if POSIX:
+            voice_input_smoke(terminal, case_root, base_url)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and

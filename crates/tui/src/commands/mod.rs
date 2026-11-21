@@ -101,6 +101,9 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Record, recognize or speak with on-device programs; nothing leaves the
+    /// client.
+    Voice,
 }
 
 impl Local {
@@ -126,6 +129,7 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "voice" => Some(Self::Voice),
             _ => None,
         }
     }
@@ -157,6 +161,7 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Voice => "voice",
         }
     }
 }
@@ -649,9 +654,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
+const LOCAL_NAMES: [&str; 20] = [
     "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+    "record", "replay", "resume", "settings", "skills", "switch", "voice",
 ];
 
 /// Every runtime command, in declaration order.
