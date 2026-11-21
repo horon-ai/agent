@@ -105,6 +105,8 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask the daemon for the values the settings screen displays.
+    DaemonSettings,
     /// Leave.
     Quit,
 }
@@ -359,6 +361,12 @@ pub struct App {
     pub skills: Vec<SkillRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
+    /// The daemon values the settings screen shows, or why it has none.
+    ///
+    /// Read only when the screen opens or `r` is pressed, because the daemon
+    /// owns these values and this client never changes one: a stale copy is
+    /// worse than a fresh read the user asked for.
+    pub daemon_settings: crate::settings::DaemonSettings,
     /// Where user theme files are read from, offered by the settings screen.
     pub themes_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
@@ -448,6 +456,7 @@ impl App {
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
             picker: None,
@@ -522,6 +531,7 @@ impl App {
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
             picker: None,

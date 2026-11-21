@@ -32,6 +32,7 @@ import {
   type BackgroundWorkItem,
   type CanonicalRecordRef,
   type CompactHandoffOutcome,
+  type EffectiveSetting,
   type HistoryMessage,
   type ImageAttachment,
   type MessageModes,
@@ -858,6 +859,20 @@ export class HoronAgentClient extends EventEmitter {
    */
   async getMessageModes(sessionId: string): Promise<MessageModes> {
     return (await this.expectReply({ req: "get_message_modes", session_id: sessionId }, "message_modes")).modes;
+  }
+
+  /**
+   * The allow-listed daemon values a settings screen displays. The daemon
+   * behind the bridge answers from its own configuration, so the values and
+   * their sources describe the process the session runs with. Requires
+   * `effective_settings_v1`; an older bridge does not advertise it, and a
+   * daemon that predates the request answers `unsupported` naming the
+   * capability rather than timing out.
+   */
+  async getEffectiveSettings(sessionId: string): Promise<EffectiveSetting[]> {
+    this.requireCapability("effective_settings_v1", "getEffectiveSettings");
+    return (await this.expectReply({ req: "get_effective_settings", session_id: sessionId }, "effective_settings"))
+      .settings;
   }
 
   /** Low-level response API for applications handling tool_call events themselves. */

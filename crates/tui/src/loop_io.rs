@@ -82,6 +82,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 effort,
                 level,
             } => app.runtime_info(provider, model, effort, level),
+            Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
             Incoming::Skills(rows) => app.show_skills(rows),
             // The answer names the text it settles, so a steer the client no
@@ -136,6 +137,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
+        Action::DaemonSettings => Command::DaemonSettings,
         Action::Quit => {
             app.running = false;
             return;

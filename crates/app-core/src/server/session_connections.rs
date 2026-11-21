@@ -52,6 +52,12 @@ pub(super) async fn connection_presence_pong(
             // capability only when this is present, because the work is done
             // here and not in the bridge.
             "cancellable_work_api".into(),
+            // The daemon answers `get_effective_settings` from its own loaded
+            // config, its own environment and its own launch record. The bridge
+            // forwards the request only when this is present: an older daemon
+            // would answer an unknown request with an uncorrelated error frame,
+            // so a forwarding bridge would wait out the client's timeout.
+            "effective_settings_api".into(),
             "background_output_v1".into(),
             "live_todo_v1".into(),
         ],

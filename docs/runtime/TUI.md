@@ -467,7 +467,9 @@ Every other harness command prints the message the daemon wrote, except one whos
 
 `/settings` is generated from the settings registry: one row per key, grouped into the Appearance, Status line, Editor and Transcript tabs, with the label and description the registry declares. Each row also shows the layer the value came from.
 
-Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone.
+A fifth tab, `Daemon`, is not built from the registry: it lists the daemon values this client may only read, which the daemon reports through `get_effective_settings` on the harness API. Each row shows the label, the value in force and where it came from (`daemon default`, `cli <FLAG>`, `env <NAME>`, or the config file path). Nothing on this tab is editable and `enter` there changes nothing, because the daemon owns those values; `r` asks for them again. Opening the screen asks once, and the tab says `reading the daemon settings` until the answer lands. A daemon or bridge that predates the request cannot report them, and the tab then says so while every local tab keeps working. A read that fails settles the tab instead of leaving it on that sentence: it says the settings could not be read and keeps the reason on the footer.
+
+Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone. A filter covers only the registry's rows: it moves the screen to the tab of the match it lands on, and no daemon row is ever listed.
 
 | Key | Effect |
 | --- | --- |
@@ -476,6 +478,7 @@ Press `/` to search all tabs by setting label, key or description. The results l
 | `left`, `tab` | Move to the previous tab |
 | `right`, `shift+tab` | Move to the next tab |
 | `enter` | Open the editor or the pick list of the row, or confirm |
+| `r` | On the `Daemon` tab, read the daemon's values again |
 | `esc` | Close the editor or pick list, then clear the search, then close the screen |
 
 A value that the key's type rejects is shown as an inline error and nothing is written. A save goes to the global `tui.toml` only; the project and `--config` layers are never rewritten.
