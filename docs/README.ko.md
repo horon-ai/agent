@@ -2,7 +2,7 @@
 
 언어: [English](README.md) | **한국어**
 
-이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
+이 폴더는 horon agent의 현재 동작을 설명하고 설계 제안에는 상태를 표시한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
 문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 이 문서들을 Reference 탭에 보여 준다. `scripts/ci/sync_docs_site.py`가 이 폴더에서 `packages/docs-site/reference/`를 생성하고, `packages/docs-site`의 나머지 가이드는 손으로 쓰므로, 가이드도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
 
@@ -33,6 +33,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
 | | [`COLLABORATION.ko.md`](protocol/COLLABORATION.ko.md) | 실시간 세션 초대와 참가자 권한 설계 제안 |
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
+| | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |

@@ -774,6 +774,8 @@ The full body of output over budget is saved under the agent home's `artifacts/<
 
 Output over budget becomes a head, a signal line for the omitted region, a tail, and the address of the original. Head and tail are 40% of the budget each and are cut on line boundaries. Lines in the omitted region that contain words such as `error`, `warning`, `failed`, `panic`, `exception`, `traceback`, `fatal`, or `assert` are carried over within the remaining budget as `L<original line>: <line>` (300 bytes per line).
 
+Set `[tools] output_column_cap = 120` to shorten each text preview line to 120 Unicode characters, including the truncation marker. The default `0` keeps the original line widths. The artifact keeps the original text within the existing storage limits. Inline JSON and existing artifact addresses keep their full width.
+
 | Point | Budget |
 | --- | --- |
 | `bash` | 30,000 bytes |
