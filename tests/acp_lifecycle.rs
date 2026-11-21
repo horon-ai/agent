@@ -19,7 +19,7 @@ mod acp {
     use super::acp_client::{Frame, FrameParser};
     use super::acp_daemon::AcpDaemon;
     use super::lifecycle::{
-        BINARY, HOLD_TURN_PROMPT, scratch_root, set_mode, wait_for_socket, write_config, write_provider_config,
+        self, BINARY, HOLD_TURN_PROMPT, scratch_root, set_mode, wait_for_socket, write_config, write_provider_config,
     };
     use horon_agent::session::event_store_api as store;
     use serde_json::{Value, json};
