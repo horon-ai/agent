@@ -95,6 +95,7 @@
                 "pages": [
                   "reference/provider/model",
                   "reference/provider/diagnostics",
+                  "reference/provider/quota-fallback",
                   "reference/provider/integrations"
                 ]
               },
@@ -205,6 +206,7 @@
                 "pages": [
                   "ko/reference/provider/model",
                   "ko/reference/provider/diagnostics",
+                  "ko/reference/provider/quota-fallback",
                   "ko/reference/provider/integrations"
                 ]
               },
