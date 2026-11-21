@@ -39,27 +39,103 @@ pub(crate) fn load(session_id: &str, id: u64) -> Result<String> {
 /// (history-masked) text as a session artifact the condensed form points to.
 /// Returns `text` unchanged (no copy) when it already fits.
 pub(crate) fn condense_for_context(session_id: &str, tool_name: &str, text: String, budget_bytes: usize) -> String {
-    if text.len() <= budget_bytes {
-        return text;
+    condense_preview(session_id, tool_name, &text, budget_bytes).unwrap_or(text)
+}
+
+pub(super) fn condense_preview(session_id: &str, tool_name: &str, text: &str, budget_bytes: usize) -> Option<String> {
+    let config = &crate::config::config().tools;
+    preview(
+        session_id,
+        tool_name,
+        text,
+        budget_bytes,
+        config.output_column_cap,
+        config.secrets_mode,
+    )
+}
+
+fn preview(
+    session_id: &str,
+    tool_name: &str,
+    text: &str,
+    budget_bytes: usize,
+    mut columns: usize,
+    secrets_mode: crate::config::SecretsMode,
+) -> Option<String> {
+    let over_budget = text.len() > budget_bytes;
+    if columns != 0
+        && (text.contains(ARTIFACT_SCHEME)
+            || !text.lines().any(|line| line.char_indices().nth(columns).is_some())
+            || serde_json::from_str::<serde::de::IgnoredAny>(text).is_ok())
+    {
+        columns = 0;
     }
-    let masked = crate::secrets::mask_for_history(&text, session_id, crate::config::config().tools.secrets_mode);
-    let condensed = match store(session_id, tool_name, &masked) {
-        Ok(id) => render_condensed(&text, tool_name, budget_bytes, Ok(&id.to_string())),
+    if !over_budget && columns == 0 {
+        return None;
+    }
+
+    let masked = crate::secrets::mask_for_history(text, session_id, secrets_mode);
+    let stored = store(session_id, tool_name, &masked);
+    let condensed = match stored {
+        Ok(id) if !over_budget => {
+            let pointer =
+                format!("\n[horon: output lines shortened. Full output: read file_path=\"{ARTIFACT_SCHEME}{id}\".]");
+            let mut clipped = String::new();
+            push_preview_lines(&mut clipped, text, columns);
+            if clipped.len() + pointer.len() > budget_bytes {
+                clipped.truncate(head_end(&clipped, budget_bytes.saturating_sub(pointer.len())));
+            }
+            clipped.push_str(&pointer);
+            clipped
+        }
+        Ok(id) => render_condensed(text, tool_name, budget_bytes, Ok(&id.to_string()), columns),
         Err(error) => {
             crate::logging::warn(&format!(
                 "[tool:{tool_name}] could not save full output as an artifact for session {session_id}: {error}"
             ));
+            if !over_budget {
+                return None;
+            }
             let detail = format!("{error}");
             render_condensed(
-                &text,
+                text,
                 tool_name,
                 budget_bytes,
                 Err(crate::util::truncate_str(&detail, 200)),
+                columns,
             )
         }
     };
     horon_agent_perf_counters::record_tool_output_spill(text.len() as u64, condensed.len() as u64);
-    condensed
+    Some(condensed)
+}
+
+fn push_preview_lines(out: &mut String, text: &str, columns: usize) {
+    if columns == 0 {
+        out.push_str(text);
+        return;
+    }
+    for line in text.split_inclusive('\n') {
+        let body = line
+            .strip_suffix("\r\n")
+            .or_else(|| line.strip_suffix('\n'))
+            .unwrap_or(line);
+        let mut chars = body.char_indices();
+        if let Some((end, _)) = chars.nth(columns - 1)
+            && chars.next().is_some()
+        {
+            let marker = if body.len() - end >= '…'.len_utf8() {
+                '…'
+            } else {
+                '>'
+            };
+            out.push_str(&body[..end]);
+            out.push(marker);
+            out.push_str(&line[body.len()..]);
+        } else {
+            out.push_str(line);
+        }
+    }
 }
 
 /// End of a head slice of at most `budget` bytes, preferring a line boundary
@@ -87,7 +163,13 @@ pub(crate) fn tail_start(text: &str, budget: usize, floor: usize) -> usize {
 }
 
 /// Pure layout; `stored` is the artifact id or the store error message.
-fn render_condensed(text: &str, tool_name: &str, budget_bytes: usize, stored: Result<&str, &str>) -> String {
+fn render_condensed(
+    text: &str,
+    tool_name: &str,
+    budget_bytes: usize,
+    stored: Result<&str, &str>,
+    columns: usize,
+) -> String {
     use std::fmt::Write as _;
 
     let head_budget = budget_bytes * 2 / 5;
@@ -124,7 +206,7 @@ fn render_condensed(text: &str, tool_name: &str, budget_bytes: usize, stored: Re
     }
 
     let mut out = String::with_capacity(head.len() + tail.len() + signals.len() + POINTER_RESERVE_BYTES);
-    out.push_str(head);
+    push_preview_lines(&mut out, head, columns);
     if !head.is_empty() && !head.ends_with('\n') {
         out.push('\n');
     }
@@ -155,9 +237,9 @@ fn render_condensed(text: &str, tool_name: &str, budget_bytes: usize, stored: Re
     }
     if !signals.is_empty() {
         out.push_str(SIGNAL_HEADER);
-        out.push_str(&signals);
+        push_preview_lines(&mut out, &signals, columns);
     }
-    out.push_str(tail);
+    push_preview_lines(&mut out, tail, columns);
     out
 }
 

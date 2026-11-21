@@ -40,6 +40,8 @@ pub enum Kind {
     Sessions,
     /// The recorded message boundaries this session can fork from.
     Forks,
+    /// Archived sessions available to restore for this working directory.
+    ArchivedSessions,
     /// The skills the harness reports for this session.
     Skills,
     /// The drafts sent before this one.

@@ -71,6 +71,7 @@
                   "reference/protocol/acp",
                   "reference/protocol/harness-api",
                   "reference/protocol/rpc",
+                  "reference/protocol/sharing",
                   "reference/protocol/session-store"
                 ]
               },
@@ -177,6 +178,7 @@
                   "ko/reference/protocol/acp",
                   "ko/reference/protocol/harness-api",
                   "ko/reference/protocol/rpc",
+                  "ko/reference/protocol/sharing",
                   "ko/reference/protocol/session-store"
                 ]
               },

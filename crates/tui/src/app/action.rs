@@ -48,6 +48,12 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Ask for the sessions that were archived, so one can be restored.
+    ArchivedSessions,
+    /// Archive the named session.
+    Archive(String),
+    /// Restore the named archived session.
+    Restore(String),
     /// Ask for the recorded message boundaries this session can fork from.
     Forks,
     /// Fork a new session from the named stored message and follow it.
