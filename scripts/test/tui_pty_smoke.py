@@ -790,18 +790,26 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
         terminal.send("\x01")
         terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        archive_path = os.path.join(home, "sdk-archive.json")
+        with open(archive_path, encoding="utf-8") as handle:
+            archived_ids = json.load(handle)["sessions"]
+        if len(archived_ids) != 1:
+            raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
+        archived_id = next(iter(archived_ids))
+        archived_start = len(terminal.transcript)
+        terminal.send("/archived\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
+        restore_start = len(terminal.transcript)
+        terminal.send("\r")
+        terminal.read_until("to the recent list", STEP_TIMEOUT, "daemon confirmed restoration", since=restore_start)
+        with open(archive_path, encoding="utf-8") as handle:
+            if archived_id in json.load(handle)["sessions"]:
+                raise Failure(f"restored session {archived_id} remained archived")
         recent_start = len(terminal.transcript)
         terminal.send("/resume\r")
-        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
-        recent_filter = len(terminal.transcript)
-        terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.read_until(archive_label, STEP_TIMEOUT, "restored session returned to recent list", since=recent_start)
         terminal.send("\x1b")
         time.sleep(0.15)
-        terminal.send("/archived\r")
-        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
-        terminal.send(f"{archive_label}\r")
-        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
