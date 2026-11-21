@@ -57,9 +57,9 @@ impl Agent {
     /// or locking a new tool snapshot. Pending memory is deliberately not consumed.
     pub async fn debug_context(&self) -> serde_json::Value {
         self.ensure_listed_tools_index().await;
-        let prompt = self.build_system_prompt_split(None);
         let current_tools = self.tool_definitions_for_debug().await;
         let effective_tools: &[ToolDefinition] = self.locked_tools.as_deref().unwrap_or(&current_tools);
+        let prompt = self.build_request_system_prompt(effective_tools);
         let locked_tool_names = self
             .locked_tools
             .as_ref()
@@ -234,8 +234,42 @@ impl Agent {
         split.dynamic_part.push_str(notes);
     }
 
-    /// Build split system prompt for better caching
-    /// Returns static (cacheable) and dynamic (not cached) parts separately
+    /// Build the cacheable guidance from the definitions used for this request.
+    pub(super) fn build_request_system_prompt(&self, tools: &[ToolDefinition]) -> crate::prompt::SplitSystemPrompt {
+        let mut split = self.build_system_prompt_split(None);
+        if self.session.system_prompt.is_some() || !crate::config::config().tools.eval {
+            return split;
+        }
+        let Some(eval) = tools.iter().find(|tool| tool.name == "eval") else {
+            return split;
+        };
+        let toolbox = tools
+            .iter()
+            .any(|tool| tool.name == crate::config::TOOLBOX_TOOL && !tool.defer_loading);
+        if eval.defer_loading && !toolbox && !self.provider.supports_deferred_tools() {
+            return split;
+        }
+
+        Self::append_static_section(
+            &mut split.static_part,
+            "# Python cells (`eval`)\n\
+             Use `eval` for Python computation or data processing, especially when later cells reuse intermediate values. \
+             Pass Python source as `code`. Variables persist in the session until reset, timeout, or kernel shutdown. \
+             Set `reset: true` for a fresh kernel. Each cell requires explicit approval, and denied cells do not run. \
+             Inside Python, call allowed Horon tools with top-level `await`, for example \
+             `await tool.read(file_path=\"notes.txt\")`. Print values you want back. \
+             The default timeout is 30 seconds. Each cell can make up to 64 bridge calls, with frames up to 256 KiB.",
+        );
+        if eval.defer_loading && toolbox {
+            split.static_part.push_str(
+                " If `eval` is not in the direct tool list, use `toolbox` with `action: \"run\"`, `tool: \"eval\"`, \
+                 and `args` containing the cell's `code` and any `timeout` or `reset` options.",
+            );
+        }
+        split
+    }
+
+    /// Build split system prompt for better caching.
     pub(super) fn build_system_prompt_split(&self, memory_prompt: Option<&str>) -> crate::prompt::SplitSystemPrompt {
         // Read the frozen index once: it is the same rows on every turn, and an
         // SDK system-prompt override carries it too, so those sessions keep the
