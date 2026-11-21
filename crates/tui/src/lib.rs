@@ -28,6 +28,7 @@ mod markdown;
 pub mod overlays;
 mod pane;
 pub mod paste;
+mod progress;
 pub mod prompts;
 pub mod recording;
 pub mod report;
@@ -62,6 +63,10 @@ mod tool_expand_tests;
 #[cfg(test)]
 #[path = "title_tests.rs"]
 mod title_tests;
+
+#[cfg(test)]
+#[path = "progress_tests.rs"]
+mod progress_tests;
 
 #[cfg(test)]
 #[path = "turn_state_tests.rs"]
@@ -120,6 +125,7 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::pane::transcript_pane;
+use crate::progress::Channels;
 use crate::sdk_bridge::{Command, Runtime};
 use crate::terminal::show_failure;
 use crate::theme::changes::{self, ChangePalette};
@@ -374,6 +380,7 @@ fn run_interactive(
     paste::guard_panics();
     scroll::guard_panics();
     title::guard_panics();
+    progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
@@ -387,6 +394,8 @@ fn run_interactive(
     if let Err(error) = title.start(&window::label(&app, state_supported)) {
         app.warn(format!("title: {error}"));
     }
+    // Writes nothing until a different state reaches the terminal.
+    let mut signals = progress::Signals::stdout();
     // Installed once the modes it restores are on: a signal before this point
     // had nothing to undo. A refusal is reported and the client keeps running.
     if let Err(error) = terminal::guard_signals() {
@@ -395,16 +404,26 @@ fn run_interactive(
     let (code, failure) = event_loop(
         &mut terminal,
         &mut app,
-        &mut title,
+        Channels {
+            title: &mut title,
+            signals: &mut signals,
+        },
         &runtime.commands,
         reloader,
         &mut themes,
         keys,
     );
+    // The tab indicator and the status record come down before the alternate screen, from the
+    // writer that knows what it put on the wire; the panic and signal paths go through
+    // `terminal::restore`, which has no writer left.
+    let signals_error = signals.clear().err();
     // The same sequence the signal path runs: see `terminal::restore`.
     terminal::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
+    }
+    if let Some(error) = signals_error {
+        eprintln!("horon-tui: terminal signals: {error}");
     }
     code
 }
@@ -423,8 +442,7 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    // The palette is applied to the copy the renderer reads, never to the
-    // theme file, so clearing the setting restores the selected theme exactly.
+    // Apply the palette to a copy so reloading can restore the theme exactly.
     app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
     let mut status_symbols = app.symbols;
@@ -474,7 +492,7 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    title: &mut title::WindowTitle,
+    channels: Channels<'_>,
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
@@ -489,7 +507,9 @@ where
     let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
     // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
-    let state_supported = title.state_supported();
+    // Whether the terminal keeps a title worth adding the state to; asked once,
+    // because the answer is the terminal's and does not change while it runs.
+    let state_supported = channels.title.state_supported();
     // The state the window title already carries: `title.start` wrote it, and
     // the first frame must not write it again.
     let mut shown_state = window::state(app, state_supported);
@@ -520,12 +540,18 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
+        // Only changed signals reach the terminal.
+        let signal = app.terminal_signal();
+        if let Err(error) = channels.signals.sync(signal, app.terminal_signals) {
+            app.warn(format!("terminal signals: {error}"));
+            changed = true;
+        }
         // Titles can change on either a daemon event or local input.
         let state = window::state(app, state_supported);
         if changed || state != shown_state {
             shown_state = state;
             let label = window::label(app, state_supported);
-            if let Err(error) = title.show(&label) {
+            if let Err(error) = channels.title.show(&label) {
                 app.warn(format!("title: {error}"));
                 changed = true;
             }
@@ -553,21 +579,15 @@ where
             app.bindings = reload.bindings;
             changed = true;
         }
-        // Command directories are only stat-ed here; a file is re-read when its
-        // own stamp moved.
+        // Reread command files only when their stamps change.
         changed |= app.tick_commands();
-        // A replay is a clock over the conversation: each frame plays the events
-        // that became due and reports whether the pane changed.
         changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }
         // The one place a copy reaches standard output: the app decided what it
-        // carries, and the terminal is asked here, after the frame is measured
-        // and before it is drawn.
-        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment()) {
-            changed = true;
-        }
+        // carries, and the terminal is asked here, after the frame is measured and before it is drawn.
+        changed |= loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment());
         let minute = statusline::local_minute();
         if minute != clock {
             clock = minute;
@@ -580,9 +600,8 @@ where
             failure = Some(message);
             break;
         }
-        // The header has been drawn, so the command may start. This is after
-        // the frame, not inside the key handler, which is what makes the
-        // target visible before the command can print anything.
+        // The header has been drawn, so the command may start: after the frame,
+        // not inside the key handler, so the target shows before any output.
         crate::commands::shell::start_pending();
         match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
@@ -605,10 +624,10 @@ where
                     // Editor actions borrow the terminal owned by this loop.
                     let error = match action {
                         crate::app::Action::EditDraft => {
-                            loop_io::hand_over_draft(terminal, app, title, &mut mouse_captured)
+                            loop_io::hand_over_draft(terminal, app, channels.title, &mut mouse_captured)
                         }
                         crate::app::Action::OpenArtifact(path) => {
-                            loop_io::hand_over_artifact(terminal, app, title, &mut mouse_captured, &path)
+                            loop_io::hand_over_artifact(terminal, app, channels.title, &mut mouse_captured, &path)
                         }
                         action => {
                             loop_io::dispatch(app, commands, action);

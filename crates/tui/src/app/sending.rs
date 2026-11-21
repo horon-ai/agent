@@ -559,6 +559,9 @@ impl App {
 
     /// Mark a turn as running and hand the text to the bridge.
     fn start_turn(&mut self, text: String) -> Action {
+        // The user just acted, so the mark a finished or failed turn left on
+        // the tab has been seen and the next report is the running turn.
+        self.note_user_attention();
         self.pending_turn = true;
         // Measured from the moment the message is handed to the bridge, so the
         // footer describes the whole turn rather than only its last request.
