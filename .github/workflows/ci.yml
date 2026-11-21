@@ -1234,7 +1234,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 300 --min-passed 9 \
+            --timeout 300 --min-passed 14 \
             -- tool::eval::tests:: --test-threads=1 --nocapture
 
       - name: Run tool surface cohort
@@ -2125,7 +2125,12 @@ jobs:
               'eval_aborted_call_cleans_up_before_the_next_cell',
               'eval_oversized_cell_preserves_previous_state',
               'eval_daemon_approval_is_consumed_once',
-              'eval_editor_approves_one_cell_without_releasing_another'
+              'eval_editor_approves_one_cell_without_releasing_another',
+              'eval_bridge_reads_and_runs_shell_through_the_registry',
+              'eval_bridge_requires_separate_approval_for_a_shell_call',
+              'eval_bridge_refuses_off_tools_dispatchers_and_background_shell',
+              'eval_bridge_limits_calls_and_keeps_the_next_cell_usable',
+              'eval_bridge_timeout_stops_running_shell'
             )
             'horon-agent-irc-core' = @(
               'send_orders_same_millisecond_messages_by_seq',

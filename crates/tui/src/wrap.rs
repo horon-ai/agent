@@ -16,6 +16,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
+use crate::theme::changes::RowStyle;
+
 /// One character, the columns it takes, and the style of the span it came from.
 type Cell = (char, usize, Style);
 
@@ -167,8 +169,8 @@ impl FromEnd {
 pub enum Source<'a> {
     /// Every line is built already.
     Built(Vec<Indented>),
-    /// `head` rows, then one line per row of `text`, each `prefix`ed in `style`
-    /// and keeping `indent` columns on its continuation rows.
+    /// `head` rows, then one line per row of `text`, each `prefix`ed in its
+    /// row style and keeping `indent` columns on its continuation rows.
     Output {
         /// The rows above the output: a tool call's head, and a failure.
         head: Vec<Indented>,
@@ -176,8 +178,9 @@ pub enum Source<'a> {
         text: &'a str,
         /// Columns every row of the output starts with.
         prefix: &'static str,
-        /// The style every row of the output is drawn in.
-        style: Style,
+        /// The style every row of the output is drawn in, or the styles that
+        /// tell an added line and a removed one apart.
+        style: RowStyle,
         /// Columns a continuation row of the output keeps.
         indent: usize,
         /// Lines under the output: a reader's note sits here.
@@ -225,7 +228,7 @@ impl<'a> Source<'a> {
                 let rows: usize = text
                     .lines()
                     .map(|row| {
-                        fill_row(&mut cells, prefix, *style, row);
+                        fill_row(&mut cells, prefix, style.of(row), row);
                         break_rows(&cells, width, *indent, |_| {})
                     })
                     .sum();
@@ -283,7 +286,7 @@ impl<'a> Source<'a> {
                     if take == 0 {
                         break;
                     }
-                    fill_row(&mut cells, prefix, *style, row);
+                    fill_row(&mut cells, prefix, style.of(row), row);
                     let window = take_from_line(&cells, &plain, width, *indent, &mut skip, &mut take);
                     rows.extend(window.into_iter().rev());
                 }
@@ -653,7 +656,7 @@ mod tests {
             head: vec![head.clone()],
             text: &text,
             prefix: "  ",
-            style,
+            style: RowStyle::Plain(style),
             indent: 2,
             tail: Vec::new(),
         };
@@ -737,7 +740,7 @@ mod tests {
             head: vec![Indented::plain(Line::from("head"))],
             text: &text,
             prefix: "  ",
-            style: Style::default(),
+            style: RowStyle::Plain(Style::default()),
             indent: 2,
             tail: Vec::new(),
         };
