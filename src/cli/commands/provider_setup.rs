@@ -181,6 +181,8 @@ pub(crate) fn configure_provider_profile(options: ProviderAddOptions) -> Result<
         }],
         extra_body: None,
         prompt_cache_key: None,
+        stream_first_event_timeout_secs: None,
+        stream_idle_timeout_secs: None,
         supports_reasoning_effort: None,
         disable_reasoning_heuristics: false,
         model_roles: Default::default(),

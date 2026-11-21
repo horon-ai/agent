@@ -34,6 +34,8 @@ Source: `docs/runtime/TURNS.md`, `docs/architecture/SERVER.md`, `crates/app-core
 
 A model call resolves a profile, then posts to the path its provider type names. The four wire types, the credential lookup order, the auth header each wire sends, and how a role resolves to a model are all in one picture. Use it when a request goes to the wrong URL, carries the wrong header, or a model is not the one you configured.
 
+Each named profile can cap the wait for the first meaningful stream event and for pauses after it independently.
+
 Source: `docs/provider/MODEL.md`, `docs/provider/INTEGRATIONS.md`, `crates/base/src/config.rs`
 
 ## 05 ACP negotiation

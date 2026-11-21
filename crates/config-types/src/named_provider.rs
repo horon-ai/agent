@@ -131,6 +131,12 @@ pub struct NamedProviderConfig {
     /// endpoints from rejecting an unknown field.
     #[serde(default, alias = "prompt-cache-key", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<bool>,
+    /// Seconds from sending an attempt to the first meaningful stream event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_first_event_timeout_secs: Option<std::num::NonZeroU32>,
+    /// Seconds without meaningful progress after the first stream event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_idle_timeout_secs: Option<std::num::NonZeroU32>,
     /// Whether this endpoint accepts the DeepSeek-style top-level
     /// `reasoning_effort` request field (`/effort` support). When unset, horon-agent
     /// auto-detects it from the active model id (DeepSeek-family models
