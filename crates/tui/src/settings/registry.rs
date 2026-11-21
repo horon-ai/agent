@@ -259,7 +259,7 @@ pub const REGISTRY: &[SettingSpec] = &[
             tab: "Status line",
             group: "Segments",
             label: "Context window",
-            description: "Tokens the model can hold, used for the context percentage; 0 hides the segment.",
+            description: "Tokens the model can hold, overriding what the runtime reports for the context percentage; 0 uses the runtime's window.",
         },
     },
     SettingSpec {

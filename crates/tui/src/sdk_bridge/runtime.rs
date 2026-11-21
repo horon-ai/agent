@@ -5,9 +5,10 @@
 //! session flows: each request here is one call in, one answer out, and the
 //! answer is a structure the client draws instead of a line it prints.
 
-use horon_agent_sdk::{Error, HoronAgentClient, RuntimeCommand, RuntimeInfo};
+use horon_agent_sdk::{Error, HoronAgentClient, RuntimeCommand, RuntimeInfo, UsageReport};
 
 use super::Incoming;
+use crate::statusline::{UsageSnapshot, UsageTotals};
 
 /// Run one harness command and shape its answer for the transcript.
 ///
@@ -55,6 +56,53 @@ pub(super) fn identity(client: &HoronAgentClient, session_id: &str) -> (Option<S
         return (None, None);
     };
     (info.model, effort(info.reasoning_effort))
+}
+
+/// The spending the runtime reported for a session, for the status line.
+///
+/// A harness without the `usage_report` capability is not asked: the request
+/// would come back as a structured `unsupported` error, and a segment nobody
+/// can fill would print a warning on every session change instead of drawing
+/// nothing. A daemon that does answer but names no figure leaves the matching
+/// field unknown, so the segment hides rather than printing a zero.
+pub(super) fn usage(client: &HoronAgentClient, session_id: &str) -> Option<UsageSnapshot> {
+    if !client.supports("usage_report") {
+        return None;
+    }
+    let Ok(report) = client.usage_report(Some(session_id)) else {
+        // A report this client cannot read says nothing about the session; the
+        // status line keeps whatever it knew rather than clearing a value the
+        // runtime did report a moment ago.
+        return None;
+    };
+    Some(snapshot(&report))
+}
+
+/// The snapshot one report carries, narrowed to what the status line draws.
+///
+/// `estimated_cost` is `None` on every build without a price table, and the
+/// segment then hides: the report never guesses a price.
+pub(super) fn snapshot(report: &UsageReport) -> UsageSnapshot {
+    UsageSnapshot {
+        totals: known(&report.totals),
+        context_window: report.context_window,
+        cost: report.estimated_cost,
+    }
+}
+
+/// The token sums that were actually recorded.
+///
+/// `None` when the runtime recorded no metric at all, which is what a session
+/// whose first request has not finished sends: an all-`None` struct would be
+/// indistinguishable from "nothing spent" once a segment formatted it.
+fn known(totals: &horon_agent_sdk::api::UsageTotals) -> Option<UsageTotals> {
+    let sums = UsageTotals {
+        input: totals.input,
+        output: totals.output,
+        cache_read: totals.cache_read_input,
+        cache_creation: totals.cache_creation_input,
+    };
+    sums.is_known().then_some(sums)
 }
 
 /// The report the client draws, for the session the worker follows.

@@ -132,6 +132,12 @@ pub enum Incoming {
     /// saying why, so the client can put the messages back in front of the
     /// user instead of losing them.
     SteerFailed { text: String, message: String },
+    /// What the runtime reported about the session's spending.
+    ///
+    /// Read when the client moves to a session and again when the model moves,
+    /// never per frame: the report is a request, and the status line renders far
+    /// faster than a socket round trip.
+    Usage(crate::statusline::UsageSnapshot),
     /// The bridge moved to another session, with its stored conversation and
     /// the directory the harness reports for it.
     ///

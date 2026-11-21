@@ -7,7 +7,6 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
-use std::time::Instant;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
@@ -22,7 +21,7 @@ use crate::recording::Event;
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::{Motion, Settings};
-use crate::statusline::{Layout, TokenTotals};
+use crate::statusline::{Layout, TokenTotals, UsageTotals};
 use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
@@ -31,6 +30,7 @@ use self::copy::CopyRequest;
 
 mod commands;
 mod copy;
+mod draft_suggestions;
 mod effort;
 mod history_search;
 mod keys;
@@ -338,6 +338,12 @@ pub struct App {
     pub home: Option<String>,
     /// Latest token totals the daemon reported.
     pub tokens: Option<TokenTotals>,
+    /// Context window of the route in force, from the runtime's own report.
+    pub capacity: Option<u64>,
+    /// Cumulative token totals of the session, when the runtime reported them.
+    pub usage: Option<UsageTotals>,
+    /// The daemon's own spend estimate, when it publishes one.
+    pub cost: Option<f64>,
     /// How the bottom line is arranged, replaced when `tui.toml` changes.
     pub statusline: Layout,
     /// The status line's separator after applying its appearance settings.
@@ -469,6 +475,9 @@ impl App {
             path_cycle: None,
             home: home_directory(),
             tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
             statusline: Layout::default(),
             status_separator: None,
             theme: Theme::default(),
@@ -549,6 +558,9 @@ impl App {
             path_cycle: None,
             home: home_directory(),
             tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
             statusline: Layout::default(),
             status_separator: None,
             theme: Theme::default(),
@@ -936,9 +948,21 @@ impl App {
                     cache_read: optional_count(cache_read_input),
                     cache_creation: optional_count(cache_creation_input),
                 });
-                // The status line shows this request alone; the turn's footer
-                // adds each request of the turn together, so a tool loop's
-                // several provider calls are all counted.
+                // The event is one provider call, so the cumulative figure
+                // moves with it. The running total is kept here rather than
+                // read again: a request per call would be a request per tool
+                // round, and a requested report replaces this baseline with the
+                // daemon's own totals whenever the session or model moves.
+                self.usage = Some(match self.usage {
+                    Some(total) => total.plus(*input, *output, *cache_read_input, *cache_creation_input),
+                    None => UsageTotals {
+                        input: Some(*input),
+                        output: Some(*output),
+                        cache_read: *cache_read_input,
+                        cache_creation: *cache_creation_input,
+                    },
+                });
+                // The turn footer totals all provider calls in this turn.
                 self.transcript.note_usage(*input, *output);
             }
             // The daemon classifies one miss per completed provider request and
@@ -1038,84 +1062,6 @@ impl App {
         }
         let text = self.input.text();
         self.slash.sync(&self.commands, &text);
-    }
-
-    /// Bring the local draft suggestion in line with the draft and the setting.
-    ///
-    /// A changed draft starts a new generation and asks the local provider
-    /// again; an unchanged one keeps the answer it has, so a dismiss or an
-    /// accepted line stays put until the next edit. The provider reads only the
-    /// drafts this editor already holds, and the answer is dropped unless it
-    /// names the generation and the exact text it was asked about.
-    pub fn sync_suggestions(&mut self) {
-        if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
-            self.suggestions.withdraw();
-            return;
-        }
-        let fingerprint = self.input.fingerprint();
-        if self.suggestions.is_synced(fingerprint) {
-            return;
-        }
-        // The cap is checked before the text is built, so a huge draft costs a
-        // length read rather than a copy.
-        if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
-            self.suggestions.skip(fingerprint);
-            return;
-        }
-        let text = self.input.text();
-        let App {
-            history, suggestions, ..
-        } = self;
-        let Some(request) = suggestions.begin(fingerprint, &text) else {
-            return;
-        };
-        let started = Instant::now();
-        let suffix = crate::suggestions::local_suffix(&text, history.drafts());
-        let elapsed = started.elapsed();
-        if let Some(suffix) = suffix {
-            suggestions.finish(&request, &suffix, elapsed);
-        }
-    }
-
-    /// The ghost suffix the editor draws after the caret, when one applies.
-    ///
-    /// The suffix belongs to the exact draft it completes, so it is looked up
-    /// against the text on screen rather than trusted from the last answer.
-    pub fn suggestion_text(&self) -> Option<String> {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
-            return None;
-        }
-        if !self.suggestions.pending() || !self.input.is_at_end() {
-            return None;
-        }
-        let text = self.input.text();
-        self.suggestions.visible(&text).map(str::to_string)
-    }
-
-    /// Accept the suggestion for the draft on screen.
-    ///
-    /// This is the only place the suffix reaches the input: until here the
-    /// draft is exactly what the user typed, and nothing is sent or queued.
-    fn accept_suggestion(&mut self) -> bool {
-        if !self.input.is_at_end() {
-            return false;
-        }
-        let text = self.input.text();
-        let Some(full) = self.suggestions.accept(&text) else {
-            return false;
-        };
-        self.history.reset();
-        self.input.set_text(&full);
-        true
-    }
-
-    /// Whether a suggestion for the draft on screen can take the next key.
-    fn suggestion_available(&self) -> bool {
-        if !self.suggestions.pending() || !self.input.is_at_end() {
-            return false;
-        }
-        let text = self.input.text();
-        self.suggestions.visible(&text).is_some()
     }
 
     /// Fill the draft from the command the popup has selected.

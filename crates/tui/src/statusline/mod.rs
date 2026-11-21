@@ -6,6 +6,11 @@
 //! the segments for each side, and `statusline.preset = "custom"` replaces that
 //! with the explicit `statusline.left` and `statusline.right` arrays.
 //!
+//! Two segments are opt-in and no preset draws them: `usage`, the tokens the
+//! whole session has spent, and `cost`, the daemon's own estimate when it
+//! publishes one. Both read values the runtime reports, so a metric nobody
+//! measured draws nothing at all rather than a zero.
+//!
 //! Two rules keep a narrow terminal readable: a segment with no data draws
 //! nothing at all, and when the line does not fit the least important segment
 //! is dropped first. A misspelled segment is reported once and skipped instead
@@ -39,6 +44,8 @@ pub const SEGMENT_IDS: &[&str] = &[
     "path",
     "tokens",
     "context_pct",
+    "usage",
+    "cost",
     "time",
     "pending",
 ];
@@ -58,6 +65,10 @@ pub enum SegmentId {
     Tokens,
     /// Share of the context window used.
     ContextPct,
+    /// Tokens the whole session has spent, when the runtime reports them.
+    Usage,
+    /// The daemon's own spend estimate, when it publishes one.
+    Cost,
     /// Local wall-clock time.
     Time,
     /// A parked approval or question.
@@ -74,6 +85,8 @@ impl SegmentId {
             "path" => Some(Self::Path),
             "tokens" => Some(Self::Tokens),
             "context_pct" => Some(Self::ContextPct),
+            "usage" => Some(Self::Usage),
+            "cost" => Some(Self::Cost),
             "time" => Some(Self::Time),
             "pending" => Some(Self::Pending),
             _ => None,
@@ -89,6 +102,8 @@ impl SegmentId {
             Self::Path => "path",
             Self::Tokens => "tokens",
             Self::ContextPct => "context_pct",
+            Self::Usage => "usage",
+            Self::Cost => "cost",
             Self::Time => "time",
             Self::Pending => "pending",
         }
@@ -101,7 +116,9 @@ impl SegmentId {
             Self::Time => 2,
             Self::Session => 3,
             Self::Tokens => 4,
+            Self::Cost => 4,
             Self::ContextPct => 5,
+            Self::Usage => 5,
             Self::Path => 6,
             Self::Pending => 7,
             Self::Status => 8,
@@ -133,6 +150,70 @@ impl TokenTotals {
     }
 }
 
+/// Token totals the runtime reported for the whole session so far.
+///
+/// Every field is optional for the same reason the report's are: a provider
+/// that recorded no cache accounting recorded nothing, and a screen that drew
+/// `0` there would state a measurement nobody made. A total the runtime does
+/// not report stays `None` and the segment leaves it out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UsageTotals {
+    /// Summed prompt tokens.
+    pub input: Option<u64>,
+    /// Summed completion tokens.
+    pub output: Option<u64>,
+    /// Summed cache-read prompt tokens.
+    pub cache_read: Option<u64>,
+    /// Summed cache-write prompt tokens.
+    pub cache_creation: Option<u64>,
+}
+
+impl UsageTotals {
+    /// Whether the runtime reported any total at all.
+    pub fn is_known(self) -> bool {
+        self.input.is_some() || self.output.is_some() || self.cache_read.is_some() || self.cache_creation.is_some()
+    }
+
+    /// These totals plus one more provider call.
+    ///
+    /// The client keeps this running between reports so the segment moves with
+    /// each answer instead of waiting for the next requested report: a status
+    /// line that lags a whole turn is the one thing a cumulative figure is for.
+    /// A cache count stays unknown until a call reports one, which is what
+    /// tells a provider that omits cache accounting from one that billed zero.
+    #[must_use]
+    pub fn plus(self, input: u64, output: u64, cache_read: Option<u64>, cache_creation: Option<u64>) -> Self {
+        let add = |total: Option<u64>, delta: Option<u64>| match (total, delta) {
+            (Some(total), Some(delta)) => Some(total.saturating_add(delta)),
+            (Some(total), None) | (None, Some(total)) => Some(total),
+            (None, None) => None,
+        };
+        Self {
+            input: Some(self.input.unwrap_or(0).saturating_add(input)),
+            output: Some(self.output.unwrap_or(0).saturating_add(output)),
+            cache_read: add(self.cache_read, cache_read),
+            cache_creation: add(self.cache_creation, cache_creation),
+        }
+    }
+}
+
+/// What the runtime reported about a session's spending.
+///
+/// Taken once when the session is read and again when the model moves, rather
+/// than per frame: the status line renders tens of times a second and each of
+/// those reads is a request over the socket.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct UsageSnapshot {
+    /// Cumulative token totals, `None` when the runtime reported none.
+    pub totals: Option<UsageTotals>,
+    /// Context window of the route in force. `None` means unknown, never the
+    /// default window of some other model.
+    pub context_window: Option<u64>,
+    /// The daemon's own spend estimate. `None` when it publishes none, which
+    /// is every report from a build without a price table.
+    pub cost: Option<f64>,
+}
+
 /// What the segments read, taken as a snapshot so the renderer stays a plain
 /// function.
 #[derive(Debug, Clone, Copy, Default)]
@@ -159,6 +240,13 @@ pub struct StatusData<'a> {
     pub home: Option<&'a str>,
     /// Latest token totals.
     pub tokens: Option<TokenTotals>,
+    /// Context window the runtime reported for the route in force, used by
+    /// `context_pct` when `statusline.context_window` is unset.
+    pub capacity: Option<u64>,
+    /// Cumulative token totals of the session, when the runtime reported them.
+    pub usage: Option<UsageTotals>,
+    /// The daemon's own spend estimate, when it publishes one.
+    pub cost: Option<f64>,
     /// The spinner glyph for the frame being drawn.
     ///
     /// Supplied only while a turn is in flight and only by a motion preset that
@@ -242,7 +330,11 @@ pub struct Layout {
     pub right: Vec<SegmentId>,
     /// Longest path the `path` segment shows; `0` keeps it whole.
     pub path_max: usize,
-    /// Context window the `context_pct` segment divides by; `0` hides it.
+    /// Manual override of the context window `context_pct` divides by.
+    ///
+    /// `0` means "no override": the window the runtime reported is used. A
+    /// value above zero outranks the report, which is what a user who knows
+    /// their route better than the daemon does wants.
     pub context_window: u64,
 }
 
@@ -296,6 +388,20 @@ impl Layout {
             },
             warnings,
         )
+    }
+
+    /// The context window the segments divide by.
+    ///
+    /// The setting is an override and wins whenever it is set; otherwise the
+    /// capacity the runtime reported for the route in force is used, so a model
+    /// switch refreshes the denominator without a restart. `0` means neither is
+    /// known, and the segment draws nothing.
+    pub fn capacity(&self, data: &StatusData<'_>) -> u64 {
+        if self.context_window > 0 {
+            self.context_window
+        } else {
+            data.capacity.unwrap_or(0)
+        }
     }
 }
 
@@ -458,7 +564,9 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: 
             Some(tokens) => format!("↑{} ↓{}", compact(tokens.input), compact(tokens.output)),
             None => String::new(),
         },
-        SegmentId::ContextPct => context_text(data, layout.context_window),
+        SegmentId::ContextPct => context_text(data, layout.capacity(data)),
+        SegmentId::Usage => usage_text(data.usage),
+        SegmentId::Cost => cost_text(data.cost),
         SegmentId::Time => match data.now {
             Some(now) => format!("{:02}:{:02}", now.hour(), now.minute()),
             None => String::new(),
@@ -524,6 +632,7 @@ fn segment_style(id: SegmentId, data: &StatusData<'_>, theme: &Theme) -> Style {
                 Style::default().fg(theme.core.success)
             }
         }
+        SegmentId::Usage | SegmentId::Cost => Style::default().fg(theme.status.status_accent),
         SegmentId::Session | SegmentId::Path | SegmentId::Tokens | SegmentId::ContextPct | SegmentId::Time => {
             Style::default().fg(theme.status.status_text)
         }
@@ -623,6 +732,51 @@ pub(crate) fn compact(value: u64) -> String {
         format!("{:.1}k", value as f64 / 1_000.0)
     } else {
         value.to_string()
+    }
+}
+
+/// The tokens the session has spent so far, or nothing when the runtime
+/// reported no total.
+///
+/// Only a metric that was recorded is drawn: a provider that omitted cache
+/// accounting prints `Σ↑in ↓out`, never a zero for it. The `Σ` is what tells a
+/// cumulative figure from the last request's `↑in ↓out`, which the `tokens`
+/// segment draws.
+fn usage_text(usage: Option<UsageTotals>) -> String {
+    let Some(usage) = usage else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if let Some(input) = usage.input {
+        parts.push(format!("↑{}", compact(input)));
+    }
+    if let Some(output) = usage.output {
+        parts.push(format!("↓{}", compact(output)));
+    }
+    // Cache tokens only when one of the two was reported and the sum is not
+    // zero: a provider that omitted both measured nothing, and one that
+    // reported zero has nothing worth a column.
+    let cache = match (usage.cache_read, usage.cache_creation) {
+        (None, None) => 0,
+        (read, creation) => read.unwrap_or(0).saturating_add(creation.unwrap_or(0)),
+    };
+    if cache > 0 {
+        parts.push(format!("⚡{}", compact(cache)));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    format!("Σ{}", parts.join(" "))
+}
+
+/// The daemon's spend estimate, or nothing when it publishes none.
+///
+/// This build carries no price table, so the field is absent on every report;
+/// drawing `$0.00` for it would claim a price nobody computed.
+fn cost_text(cost: Option<f64>) -> String {
+    match cost {
+        Some(cost) if cost.is_finite() && cost >= 0.0 => format!("${cost:.2}"),
+        Some(_) | None => String::new(),
     }
 }
 

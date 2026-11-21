@@ -103,9 +103,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | 모델 ID 배열 | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
-이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 스물한 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
+이 표는 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따르고, 설정 화면도 이 레지스트리로 그린다. 선택 항목인 `usage`와 `cost` 세그먼트는 따로 키를 두지 않고 `statusline.left`와 `statusline.right`로 고르므로 레지스트리에 키를 더하지 않는다.
 
-`statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
+`statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수를 손으로 덮어쓰는 값이다. `0`으로 두면 지금 라우트에 대해 런타임이 보고한 창으로 나누므로 모델을 바꾸면 재시작 없이 분모가 갱신된다. 0보다 큰 값은 그 보고를 이기며, 데몬의 카탈로그보다 자기 라우트를 더 잘 아는 사용자를 위한 것이다. 둘 다 모르면 세그먼트를 숨긴다.
 
 `statusline.separator`는 글리프 프리셋을 따르거나 가운뎃점(`·`)과 세로줄(`|`) 중 하나를 표시합니다. `statusline.background = "terminal"`을 지정하면 상태줄에 터미널 기본 배경을 씁니다.
 
@@ -258,7 +258,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `prompt.dismiss` | `esc` | 대기 중인 호출을 거절한다. 질문 프롬프트는 연 채로 둔다 |
 | `prompt.confirm` | `enter` | 여러 선택지 질문을 확정한다 |
 
-이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 동작마다 속한 범위가 붙는다. `/help`는 같은 아이디를 같은 순서로, 지금 적용된 키와 함께 보여 주므로 다시 배치한 키는 그 목록에 새 바인딩으로 나온다. `/keys`는 명령 목록 없이 같은 행만 출력하고, `ctrl+o expands` 같은 키 이름 표시는 지금 적용된 배치가 그 동작에 준 키를 쓴다.
+이 표가 `crates/tui/src/keys/bindings.rs`의 `ACTIONS`이고, 동작마다 속한 범위가 붙는다.
 
 대부분의 터미널은 Shift-Enter를 평범한 Enter로 보내고, 그것은 전송이다. 그래서 믿을 만한 새 줄 키는 `alt+enter`와 `ctrl+j`이고, `shift+enter`는 터미널이 시프트 붙은 형태를 보고할 때만 응답한다.
 
@@ -385,7 +385,9 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `session` | 세션 아이디를 줄인 것 |
 | `path` | 작업 디렉터리. 홈 디렉터리는 `~`로 줄이고, 긴 경로는 세그먼트 경계에서 자른다 |
 | `tokens` | 마지막 요청의 입력·출력 토큰. `↑in ↓out` |
-| `context_pct` | `statusline.context_window`에서 쓴 비율. 설정이 `0`이면 숨긴다 |
+| `context_pct` | 문맥 창에서 쓴 비율. `statusline.context_window`가 있으면 런타임이 보고한 창 대신 그 값을 쓰고, 둘 다 모르면 숨긴다 |
+| `usage` | 세션이 지금까지 쓴 토큰, `Σ↑in ↓out`. 선택 항목이고 런타임이 기록한 지표만 그린다 |
+| `cost` | 데몬 자신의 지출 추정, `$0.00`. 선택 항목이고 데몬이 발행하지 않으면 숨긴다 |
 | `time` | 현지 시각 `HH:MM` |
 | `pending` | 대기 중인 승인이나 질문 |
 
@@ -399,7 +401,11 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `minimal` | `model` | `status` |
 | `custom` | `statusline.left`가 이름한 것 | `statusline.right`가 이름한 것 |
 
-`model` 세그먼트는 데몬이 그 모델의 값으로 보고한 추론 노력 단계를 프리셋의 구분자로 이어 붙인다. 구분자는 프리셋이 따로 그리지 않으면 `·`이고, 예를 들어 `provider/model · high`다. 노력 단계가 없거나 비어 있으면 아무것도 붙이지 않고, 모델 이름 없이 노력 단계만 있으면 그리지 않는다. 클라이언트는 첫 키 입력 전에 하네스에 이 세션이 무엇으로 도는지 묻기 때문에 첫 화면이 이미 모델과 노력 단계를 적는다. 데몬이 보고를 거절하면 둘 다 모르는 채로 남고 `could not read the runtime info: <error>` 경고 한 줄이 붙으며, 세션에 붙거나 새 세션을 시작한 뒤 오는 정체성 이벤트가 같은 두 값을 채운다. 줄이 터미널에 들어가지 않으면 중요도가 낮은 세그먼트부터 버린다. 우선순위는 `time`(가장 먼저 버림), `session`, `tokens`, `context_pct`, `path`, `pending`, `status`, `model`(가장 나중에 버림) 순이다. 마지막으로 남은 세그먼트는 화면보다 넓어도 남긴다. 잘린 모델 이름이 빈 줄보다 쓸모 있기 때문이고, 그 자리에서 가장 먼저 포기하는 것이 노력 단계라서 잘리는 자리는 뒤에 아무것도 없는 구분자 다음이 아니라 모델 이름 안이다.
+`model` 세그먼트는 데몬이 그 모델의 값으로 보고한 추론 노력 단계를 프리셋의 구분자로 이어 붙인다. 구분자는 프리셋이 따로 그리지 않으면 `·`이고, 예를 들어 `provider/model · high`다. 노력 단계가 없거나 비어 있으면 아무것도 붙이지 않고, 모델 이름 없이 노력 단계만 있으면 그리지 않는다. 클라이언트는 첫 키 입력 전에 하네스에 이 세션이 무엇으로 도는지 묻기 때문에 첫 화면이 이미 모델과 노력 단계를 적는다. 데몬이 보고를 거절하면 둘 다 모르는 채로 남고 `could not read the runtime info: <error>` 경고 한 줄이 붙으며, 세션에 붙거나 새 세션을 시작한 뒤 오는 정체성 이벤트가 같은 두 값을 채운다.
+
+`usage`와 `cost`는 선택 항목이다. 어떤 프리셋도 그리지 않고, `statusline.left`나 `statusline.right`를 직접 적은 `custom`만 그릴 수 있다. 둘 다 런타임이 보고한 값만 읽으므로 기록되지 않은 지표는 0이 아니라 아무것도 그리지 않는다. 캐시 집계를 보고하지 않은 제공자는 캐시 열 없이 `Σ↑in ↓out`만 남고, 가격표가 없는 데몬은 추정을 발행하지 않으므로 이 빌드에서 `cost`는 숨는다. 프레임마다 요청하지도 않는다. 보고는 세션으로 옮길 때와 모델이 바뀔 때 한 번씩 읽는다.
+
+줄이 터미널에 들어가지 않으면 중요도가 낮은 세그먼트부터 버린다. 우선순위는 `time`(가장 먼저 버림), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, `model`(가장 나중에 버림) 순이다. 마지막으로 남은 세그먼트는 화면보다 넓어도 남긴다. 잘린 모델 이름이 빈 줄보다 쓸모 있기 때문이고, 그 자리에서 가장 먼저 포기하는 것이 노력 단계라서 잘리는 자리는 뒤에 아무것도 없는 구분자 다음이 아니라 모델 이름 안이다.
 
 ## 명령
 
