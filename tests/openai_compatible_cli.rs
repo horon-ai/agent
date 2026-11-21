@@ -346,6 +346,100 @@ async fn read_request(socket: &mut tokio::net::TcpStream) -> std::io::Result<Rec
     })
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn model_list_filters_locally_and_refreshes_only_supported_profiles() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let home = Home::new();
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+[provider]
+default_provider = "alpha"
+[providers.alpha]
+type = "openai-compatible"
+base_url = "{base}/chat/completions"
+default_model = "configured-alpha"
+models = [{{ id = "configured-alpha" }}]
+auth = "header"
+auth_header = "x-fixture-auth"
+api_key = "fixture-secret"
+[providers.beta]
+type = "openai-responses"
+base_url = "{base}/responses?fixture=private-query"
+default_model = "configured-beta"
+[providers.gamma]
+type = "anthropic-compatible"
+base_url = "{base}"
+default_model = "configured-gamma"
+"#
+        ),
+    )
+    .unwrap();
+
+    let local = home
+        .run(&["model", "list", "--profile", "ALPHA", "--search", "ALPHA", "--json"])
+        .await;
+    assert!(local.status.success(), "{}", text(&local.stderr));
+    let local: Value = serde_json::from_slice(&local.stdout).unwrap();
+    assert_eq!(local["profiles"][0]["models"], serde_json::json!(["configured-alpha"]));
+    let ordinary = home.run(&["model", "list"]).await;
+    assert!(ordinary.status.success(), "{}", text(&ordinary.stderr));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), listener.accept())
+            .await
+            .is_err()
+    );
+
+    let endpoint = tokio::spawn(async move {
+        for (path, status, body) in [
+            (
+                "/v1/models",
+                "200 OK",
+                r#"{"data":[{"id":"zeta"},{"id":"alpha"},{"id":"alpha"}]}"#,
+            ),
+            (
+                "/v1/models?fixture=private-query",
+                "503 Service Unavailable",
+                "fixture-secret private-query",
+            ),
+        ] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await.unwrap();
+            assert!(request.head.starts_with("GET "));
+            assert_eq!(request.path(), path);
+            if status == "200 OK" {
+                assert_eq!(request.header("x-fixture-auth"), Some("fixture-secret"));
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    let refreshed = home.run(&["model", "list", "--refresh", "--json"]).await;
+    assert!(refreshed.status.success(), "{}", text(&refreshed.stderr));
+    for output in [&refreshed.stdout, &refreshed.stderr] {
+        assert!(!text(output).contains("fixture-secret") && !text(output).contains("private-query"));
+    }
+    let report: Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    let profiles = report["profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 3);
+    assert_eq!(profiles[0]["status"], "refreshed");
+    assert_eq!(profiles[0]["models"], serde_json::json!(["alpha", "zeta"]));
+    assert_eq!(profiles[1]["status"], "failed");
+    assert_eq!(profiles[1]["reason"], "model list returned HTTP 503");
+    assert_eq!(profiles[2]["status"], "unsupported");
+    endpoint.await.unwrap();
+}
+
 /// The `[providers.<name>].type` values that speak a wire other than Chat
 /// Completions, with the endpoint each one posts to.
 #[derive(Clone, Copy, Debug)]
