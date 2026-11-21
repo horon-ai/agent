@@ -293,6 +293,51 @@ pub(super) async fn handle_set_session_saved(
     let _ = client_event_tx.send(ServerEvent::Done { id });
 }
 
+/// Apply one revision-checked todo status change and publish it.
+///
+/// The write goes through the shared todo lock and the same store as the todo
+/// tool, so the two cannot both validate one list and then overwrite each
+/// other. Publishing `TodoUpdated` is what turns a local edit into the
+/// `TodoChanged` every attached client already listens for; without it another
+/// client would keep showing the list it had before this edit.
+///
+/// A refusal is not an error: the stored list stands, and the reply carries the
+/// refusal and the revision it stands at so the caller refreshes. Nothing here
+/// starts a turn or sends a prompt.
+pub(super) async fn handle_set_todo_status(
+    id: u64,
+    expected_revision: String,
+    todo_id: String,
+    status: String,
+    client_session_id: &str,
+    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+) {
+    let outcome = match crate::todo::apply_todo_status_edit(client_session_id, &expected_revision, &todo_id, &status) {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            drop(client_event_tx.send(ServerEvent::Error {
+                id,
+                message: crate::util::format_error_chain(&error),
+                retry_after_secs: None,
+            }));
+            return;
+        }
+    };
+    if outcome.applied {
+        crate::bus::Bus::global().publish(crate::bus::BusEvent::TodoUpdated(crate::bus::TodoEvent {
+            session_id: client_session_id.to_string(),
+            todos: outcome.todos.clone(),
+        }));
+    }
+    let event = crate::protocol::TodoEditResultEvent {
+        id,
+        applied: outcome.applied,
+        refusal: outcome.refusal.map(|refusal| refusal.as_str().to_string()),
+        revision: outcome.revision,
+    };
+    drop(client_event_tx.send(ServerEvent::TodoEditResult(event)));
+}
+
 async fn broadcast_session_renamed(
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
     client_session_id: &str,

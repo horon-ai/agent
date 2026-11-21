@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 25
+API_VERSION_MINOR = 26
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -35,6 +35,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("background_output_v1", ("background_output",)),
     ("live_todo_v1", ("todo_changed",)),
     ("effective_settings_v1", ("get_effective_settings",)),
+    ("todo_edit_v1", ("set_todo_status",)),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -214,6 +215,11 @@ class TodoEffects(TypedDict, total=False):
 
     clear_gate_observations: bool
     mark_long_session_review_delivered: bool
+
+
+TodoEditRefusal: TypeAlias = Literal["stale_revision", "unknown_item", "invalid_status", "invalid_blocker"]
+"""Why a revision-checked todo status edit was refused. The reply still carries
+the current list and revision, so the client refreshes from it."""
 
 
 class ResponseStats(TypedDict, total=False):
@@ -777,6 +783,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "text_matches",
     "file_status",
     "todo_state",
+    "todo_edit_result",
     "background_output",
     "todo_changed",
     "session_search_results",
@@ -846,6 +853,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "list_artifacts",
     "get_todo_state",
     "ack_todo_follow_up",
+    "set_todo_status",
     "set_model",
     "set_reasoning_effort",
     "compact",

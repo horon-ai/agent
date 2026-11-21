@@ -574,6 +574,41 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def todo_edit_smoke(terminal: Terminal, home: str) -> None:
+    from pathlib import Path
+
+    events = [path for path in Path(home).glob("sessions/*/events.jsonl")
+              if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(events) != 1:
+        raise Failure(f"expected a single active session, got {len(events)}")
+    session_id = events[0].parent.name
+    todo = Path(home, "todos", f"{session_id}.json")
+    todo.parent.mkdir(exist_ok=True)
+    rows = [{"id": f"todo-{i}", "content": f"fixture item {i:02}", "status": "pending", "priority": "medium"}
+            for i in range(1, 13)]
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    # Writing the fixture out of process does not emit TodoChanged. Attaching
+    # reloads the saved snapshot through the same path as a real reconnect.
+    attach_start = len(terminal.transcript)
+    terminal.send(f"/resume {session_id}\r")
+    terminal.read_until(f"resumed {session_id}", STEP_TIMEOUT, "reloaded the seeded session", since=attach_start)
+    terminal.read_until("0/12 complete", STEP_TIMEOUT, "seeded todo snapshot loaded", since=attach_start)
+    picker_start = len(terminal.transcript)
+    terminal.send("/todo\r")
+    terminal.read_until("fixture item 01", STEP_TIMEOUT, "full todo picker is loaded", since=picker_start)
+    rows[0]["status"] = "in_progress"
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    terminal.send("\r")
+    terminal.read_until("changed on the server", STEP_TIMEOUT, "stale todo edit was refused")
+    if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "in_progress":
+        raise Failure("stale todo edit overwrote the newer list")
+    terminal.send("\r")
+    terminal.read_until("is now completed", STEP_TIMEOUT, "refreshed todo edit applied")
+    if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "completed":
+        raise Failure("the updated todo was not saved")
+    terminal.send("\x1b")
+
+
 def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
     tool_dir = os.path.join(case_root, "voice-bin")
     os.makedirs(tool_dir)
@@ -773,6 +808,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
+            terminal.read_until("idle", STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
+            todo_edit_smoke(terminal, home)
             context_request_smoke(terminal, home, base_url)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)

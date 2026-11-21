@@ -60,6 +60,12 @@ pub enum Kind {
     /// can take back, delete or move, and its keys are answered before the
     /// generic list sees them.
     Queue,
+    /// The attached session's complete todo list.
+    ///
+    /// Like the queue, its rows are changed rather than chosen: `enter` toggles
+    /// an item and `delete` cancels it, and those keys are answered before the
+    /// generic list sees them.
+    Todos,
 }
 
 /// One row of the list.

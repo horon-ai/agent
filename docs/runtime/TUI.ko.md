@@ -458,17 +458,20 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
+| `/todo` | 연결된 세션의 전체 할 일 목록을 열고 선택한 항목을 수정한다 |
 | `/voice` | 받아쓴 내용을 초안에 넣거나 기기에서 텍스트를 재생한다 |
 
 녹음하기 전에 연결된 세션에서 `/voice consent`를 실행합니다. Ctrl+Space나 `/voice`로 녹음을 시작하거나 멈춥니다. `/voice cancel`은 녹음을 버리고 `/voice forget`은 동의를 철회합니다. 받아쓴 내용은 초안에 들어가며 직접 전송할 때만 모델로 전달됩니다. `/voice say <text>`와 `/voice read`는 기기에서 텍스트를 재생합니다.
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물여섯 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물일곱 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
 `/jobs`는 현재 세션이 아직 실행 중인 백그라운드 작업을 나열한다. 전사에 남은 알림을 다시 그리는 대신 데몬에 매번 새로 묻기 때문에, 다른 클라이언트에서 시작하거나 끝난 작업도 지금 상태 그대로 보인다. 행마다 명령, 작업 종류와 가장 최근 출력을 보여 준다. Delete는 선택한 백그라운드 터미널을 취소하며, 세션과 다른 작업은 계속 실행된다. Esc는 아무것도 취소하지 않고 목록만 닫는다. 도구 호출 작업은 목록에 나오지만 여기서는 취소할 수 없고, 데몬이 거부할 요청을 보내는 대신 그렇다고 알린다. 세션을 바꾸면 행을 비우는데, 호출 id는 그 작업을 시작한 세션에서만 뜻이 있기 때문이다.
+
+`/todo`에서 Enter는 선택한 항목을 완료하거나 다시 열고 Delete는 취소한다. 목록을 연 뒤 새 목록이 저장되면 데몬은 최신 목록을 돌려주며 기존 변경을 덮어쓰지 않는다. 편집할 때 모델 요청은 시작되지 않는다. 데몬이 버전 식별자를 제공하지 않으면 목록은 읽기 전용으로 열린다.
 
 `/artifact`는 현재 로컬 세션에 보관된 산출물을 나열합니다. `/artifact <id>`를 입력하거나 `artifact://<id>` 주소를 붙여넣으면 `VISUAL` 또는 `EDITOR`에서 임시 사본을 편집합니다. 원본은 유지되고 돌아올 때 사본을 지웁니다. 소켓을 직접 지정하거나 원격 브리지에 연결하면 로컬 산출물을 열 수 없습니다.
 
@@ -507,6 +510,7 @@ built-in commands:
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
+  /todo                show every todo in the session and mark one done, open or cancelled
   /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

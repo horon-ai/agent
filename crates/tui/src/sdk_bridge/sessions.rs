@@ -216,6 +216,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | TextMatches { session_id, .. }
         | FileStatus { session_id, .. }
         | TodoState { session_id, .. }
+        | TodoEditResult { session_id, .. }
         | TodoChanged { session_id }
         | Artifacts { session_id, .. }
         | Compacted { session_id, .. }

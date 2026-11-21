@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 25;
+export const API_VERSION_MINOR = 26;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -30,6 +30,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["background_output_v1", ["background_output"]],
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
+  ["todo_edit_v1", ["set_todo_status"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -185,6 +186,10 @@ export interface TodoEffects {
   clear_gate_observations?: boolean;
   mark_long_session_review_delivered?: boolean;
 }
+
+/** Why a revision-checked todo status edit was refused. The reply still
+ * carries the current list and revision, so the client refreshes from it. */
+export type TodoEditRefusal = "stale_revision" | "unknown_item" | "invalid_status" | "invalid_blocker";
 
 /** Durable raw provider counts summed over all assistant rounds in one user turn.
  * Missing metrics are unknown, not zero. Cache accounting differs by provider.
@@ -724,6 +729,16 @@ export type ApiRequest =
   | { req: "list_artifacts"; session_id: string }
   | { req: "get_todo_state"; session_id: string }
   | { req: "ack_todo_follow_up"; session_id: string; effects: TodoEffects }
+  /** Change one item's status only if the list is still `expected_revision`.
+   * A stale list answers `todo_edit_result` with `applied: false` and the
+   * current list; nothing is written. */
+  | {
+      req: "set_todo_status";
+      session_id: string;
+      expected_revision: string;
+      id: string;
+      status: string;
+    }
   | { req: "set_model"; session_id: string; model: string }
   | { req: "set_reasoning_effort"; session_id: string; effort: string }
   | { req: "compact"; session_id: string; method?: "handoff" }
@@ -1037,7 +1052,15 @@ export type ApiEvent =
       size?: number;
       modified_ms?: number;
     }
-  | { ev: "todo_state"; session_id: string; state: TodoSnapshot }
+  | { ev: "todo_state"; session_id: string; state: TodoSnapshot; revision?: string }
+  | {
+      ev: "todo_edit_result";
+      session_id: string;
+      applied: boolean;
+      refusal?: TodoEditRefusal;
+      state: TodoSnapshot;
+      revision: string;
+    }
   | { ev: "background_output"; session_id: string; text: string }
   | { ev: "todo_changed"; session_id: string }
   | { ev: "session_search_results"; query: string; results: SessionSearchHit[] }
@@ -1209,6 +1232,7 @@ export const KNOWN_EVENT_KINDS = [
   "text_matches",
   "file_status",
   "todo_state",
+  "todo_edit_result",
   "background_output",
   "todo_changed",
   "session_search_results",
@@ -1278,6 +1302,7 @@ export const KNOWN_REQUEST_KINDS = [
   "list_artifacts",
   "get_todo_state",
   "ack_todo_follow_up",
+  "set_todo_status",
   "set_model",
   "set_reasoning_effort",
   "compact",

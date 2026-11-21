@@ -6,7 +6,8 @@
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
-//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
+//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay`, `/todo` and
+//!    `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -127,6 +128,8 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Show the attached session's todo list and change an item's status.
+    Todo,
     /// Record, recognize or speak with on-device programs; nothing leaves the
     /// client.
     Voice,
@@ -161,6 +164,7 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "todo" | "todos" => Some(Self::Todo),
             "voice" => Some(Self::Voice),
             _ => None,
         }
@@ -198,6 +202,7 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Todo => "todo",
             Self::Voice => "voice",
         }
     }
@@ -691,7 +696,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: &[&str] = &[
     "archived",
     "artifact",
     "clear",
@@ -717,6 +722,7 @@ const LOCAL_NAMES: [&str; 26] = [
     "settings",
     "skills",
     "switch",
+    "todo",
     "voice",
 ];
 

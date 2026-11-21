@@ -39,6 +39,50 @@ pub use horon_agent_task_types::{
 /// second description of the work.
 pub const TODO_BLOCKER_MAX_CHARS: usize = 500;
 
+/// Why one revision-checked operator edit was refused.
+///
+/// A refusal means the stored list was not written. The list and revision in
+/// the reply are the ones the client should show next; `stale_revision` in
+/// particular is the normal outcome of editing a list the agent changed after
+/// the client read it, not an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoEditRefusal {
+    /// The stored list is not the revision the client last read.
+    StaleRevision,
+    /// The item id is not in the stored list.
+    UnknownItem,
+    /// The status is outside the canonical vocabulary.
+    InvalidStatus,
+    /// A `blocked` status was asked for an item with no usable blocker note.
+    InvalidBlocker,
+}
+
+impl TodoEditRefusal {
+    /// The wire name, matching the serde representation.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::StaleRevision => "stale_revision",
+            Self::UnknownItem => "unknown_item",
+            Self::InvalidStatus => "invalid_status",
+            Self::InvalidBlocker => "invalid_blocker",
+        }
+    }
+
+    /// The refusal a wire name names, or none for a word this build does not
+    /// know. Keeping the table here means the daemon and the bridge cannot
+    /// spell one refusal two ways.
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "stale_revision" => Self::StaleRevision,
+            "unknown_item" => Self::UnknownItem,
+            "invalid_status" => Self::InvalidStatus,
+            "invalid_blocker" => Self::InvalidBlocker,
+            _ => return None,
+        })
+    }
+}
+
 /// Return the canonical todo status for model-written status vocabulary.
 ///
 /// The todo tool historically accepted any string, so persisted sessions can

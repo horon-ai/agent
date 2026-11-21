@@ -282,6 +282,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
+        "todo" => "show every todo in the session and mark one done, open or cancelled",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
         "rename" => "save a title for the current session",

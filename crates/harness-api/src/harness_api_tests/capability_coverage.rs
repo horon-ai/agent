@@ -92,6 +92,9 @@ const LEDGER: &[(&str, Disposition)] = &[
     // ACP's session/set_mode; API clients answer prompts, not sessions.
     ("SetSessionApprovalMode", ClientInternal),
     ("SetSessionSaved", Covered),
+    // The daemon applies the revision-checked status edit itself, so the
+    // bridge forwards it instead of writing the stored list.
+    ("SetTodoStatus", Covered),
     ("SoftInterrupt", Covered),
     ("Split", Covered),
     ("Subscribe", Covered),

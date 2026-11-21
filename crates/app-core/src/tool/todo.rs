@@ -760,12 +760,12 @@ impl Tool for TodoTool {
             }
         })
     }
-
     async fn execute(&self, input: Value, ctx: ToolContext) -> Result<ToolOutput> {
         let params = parse_todo_input(input)?;
         let is_write = params.todos.is_some() || params.goals.is_some() || params.plan.is_some();
         let operation = if is_write { "write" } else { "read" };
         let result = if is_write {
+            let _lock = crate::todo::lock_todos(&ctx.session_id)?; // one writer per list
             // Goals/plan-only writes keep the stored todo list.
             let previous = load_todos(&ctx.session_id).unwrap_or_default();
             let mut todos = params.todos.unwrap_or_else(|| previous.clone());

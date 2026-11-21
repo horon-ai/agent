@@ -429,6 +429,22 @@ pub enum Request {
         label: Option<String>,
     },
 
+    /// Change one todo item's status in the attached session, only if the
+    /// stored list is still `expected_revision`.
+    ///
+    /// Routed through the daemon so the write shares the todo tool's lock and
+    /// the resulting `TodoUpdated` bus event reaches every attached client.
+    /// Unlike a message, it starts no turn and injects no prompt. A stale
+    /// revision answers `TodoEditResult` with `applied: false` and leaves the
+    /// list untouched.
+    #[serde(rename = "set_todo_status")]
+    SetTodoStatus {
+        id: u64,
+        expected_revision: String,
+        todo_id: String,
+        status: String,
+    },
+
     /// Hide or restore the attached session by appending an ArchiveChanged
     /// record. Routed through the daemon because its in-memory session owns the
     /// writer lock and later writes; nothing is deleted either way.
@@ -987,7 +1003,7 @@ pub mod event_types;
 mod events;
 mod model_identity;
 pub use acp_v2_events::{BackgroundWorkEvent, BackgroundWorkItem};
-pub use event_types::{FileDiffWire, PlanEntryWire};
+pub use event_types::{FileDiffWire, PlanEntryWire, TodoEditResultEvent};
 pub use events::ServerEvent;
 pub use model_identity::RuntimeModelIdentity;
 

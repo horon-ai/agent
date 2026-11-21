@@ -57,6 +57,7 @@ import {
   type SessionToolDefinition,
   type TextMatch,
   type TodoEffects,
+  type TodoEditRefusal,
   type TodoSnapshot,
   type ToolVerdictName,
   type TurnStopReason,
@@ -1384,6 +1385,32 @@ export class HoronAgentClient extends EventEmitter {
   async todoState(sessionId: string): Promise<TodoSnapshot> {
     const frame = await this.expectReply({ req: "get_todo_state", session_id: sessionId }, "todo_state");
     return frame.state;
+  }
+
+  /** Persisted todo state with the revision that names the stored list it was
+   * read from. The revision is absent on servers that predate it.
+   * Requires the `todo_state` capability. */
+  async todoSnapshot(sessionId: string): Promise<{ state: TodoSnapshot; revision?: string }> {
+    const frame = await this.expectReply({ req: "get_todo_state", session_id: sessionId }, "todo_state");
+    return { state: frame.state, revision: frame.revision };
+  }
+
+  /** Change one todo item's status only if the stored list is still the
+   * revision the caller read. A stale list answers with `applied: false`, the
+   * refusal `stale_revision`, and the current state, and writes nothing.
+   * Requires the `todo_edit_v1` capability. */
+  async setTodoStatus(
+    sessionId: string,
+    expectedRevision: string,
+    id: string,
+    status: string,
+  ): Promise<{ applied: boolean; refusal?: TodoEditRefusal; state: TodoSnapshot; revision: string }> {
+    this.requireCapability("todo_edit_v1", "setTodoStatus");
+    const frame = await this.expectReply(
+      { req: "set_todo_status", session_id: sessionId, expected_revision: expectedRevision, id, status },
+      "todo_edit_result",
+    );
+    return { applied: frame.applied, refusal: frame.refusal, state: frame.state, revision: frame.revision };
   }
 
   /** Apply a follow-up decision's persistent effects. */

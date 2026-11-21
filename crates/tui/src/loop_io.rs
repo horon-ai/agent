@@ -80,14 +80,27 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             Incoming::Info(message) => app.transcript.push_notice(message),
             Incoming::Context(report) => app.transcript.push_context(*report),
             Incoming::Report(report) => app.transcript.push_report(*report),
-            Incoming::Todos { session_id, items } => {
+            Incoming::Todos {
+                session_id,
+                items,
+                revision,
+            } => {
                 changed = previously_changed;
-                if app.session_id.as_deref().is_none_or(|current| current == session_id) {
-                    let panel = crate::todo_panel::TodoPanel::from_items(&items);
-                    if app.todos != panel {
-                        app.todos = panel;
-                        changed = Redraw::Immediate;
-                    }
+                if app.set_todos(&session_id, items, revision) {
+                    changed = Redraw::Immediate;
+                }
+            }
+            Incoming::TodoEdit {
+                session_id,
+                applied,
+                refusal,
+                items,
+                revision,
+                id,
+                status,
+            } => {
+                if app.todo_edit_reply(&session_id, applied, refusal, items, revision, (&id, &status)) {
+                    changed = Redraw::Immediate;
                 }
             }
             Incoming::Models { models, current } => app.show_models(models, current),
@@ -150,6 +163,12 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         },
         Action::Ask { ask_id, answers } => Command::Ask { ask_id, answers },
         Action::Runtime { command, arguments } => Command::Runtime { command, arguments },
+        Action::TodoStatus(request) => Command::SetTodoStatus {
+            session_id: request.session_id,
+            expected_revision: request.revision,
+            id: request.id,
+            status: request.status,
+        },
         Action::Context(command) => Command::Context(command),
         Action::Model(name) => Command::Model(name),
         Action::Effort(level) => Command::Effort(level),
