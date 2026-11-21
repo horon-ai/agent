@@ -10,6 +10,7 @@
 //! terminal. [`run`] is the only entry point that touches the real terminal.
 
 pub mod app;
+mod artifact;
 mod clipboard;
 pub mod commands;
 pub mod context;
@@ -108,6 +109,10 @@ mod markdown_tests;
 #[cfg(test)]
 #[path = "help_tests.rs"]
 mod help_tests;
+
+#[cfg(test)]
+#[path = "artifact_tests.rs"]
+mod artifact_tests;
 
 #[cfg(test)]
 #[path = "fuzzy_tests.rs"]
@@ -642,26 +647,24 @@ where
                     continue;
                 }
                 if let Some(action) = app.on_key(key) {
-                    match action {
-                        // The child needs the terminal this loop draws on, so
-                        // the hand-over happens here rather than on the bridge
-                        // thread: the screen is given up, the editor runs, and
-                        // the frame that follows repaints all of it.
+                    // Editor actions borrow the terminal owned by this loop.
+                    let error = match action {
                         crate::app::Action::EditDraft => {
-                            if let Some(message) =
-                                loop_io::hand_over_draft(terminal, app, channels.title, &mut mouse_captured)
-                            {
-                                // The screen could not be taken back, so no
-                                // frame can be drawn and no key can be read:
-                                // the loop ends and the caller restores and
-                                // reports on the shell's screen.
-                                failure = Some(message);
-                                app.running = false;
-                                app.exit_code = 1;
-                                break;
-                            }
+                            loop_io::hand_over_draft(terminal, app, channels.title, &mut mouse_captured)
                         }
-                        action => loop_io::dispatch(app, commands, action),
+                        crate::app::Action::OpenArtifact(path) => {
+                            loop_io::hand_over_artifact(terminal, app, channels.title, &mut mouse_captured, &path)
+                        }
+                        action => {
+                            loop_io::dispatch(app, commands, action);
+                            None
+                        }
+                    };
+                    if let Some(message) = error {
+                        failure = Some(message);
+                        app.running = false;
+                        app.exit_code = 1;
+                        break;
                     }
                 }
                 flush_setting_change(app, reloader, themes);

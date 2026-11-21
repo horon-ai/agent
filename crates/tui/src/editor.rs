@@ -22,6 +22,10 @@
 //!
 //! The screen is not this module's business: the caller hands the terminal over
 //! before [`edit`] and takes it back after.
+//!
+//! [`open_copy`] hands the program a private copy of a retained artifact and
+//! reads nothing back: the source is only read, so an edit lands in the copy
+//! that is removed with it.
 
 use std::fmt;
 use std::io::{Read, Write};
@@ -36,6 +40,17 @@ const MAX_DRAFT_MIB: u64 = 4;
 
 /// The same limit in bytes.
 const MAX_DRAFT_BYTES: u64 = MAX_DRAFT_MIB * 1024 * 1024;
+
+/// The most an artifact copy may read from the store before it is refused.
+///
+/// A retained artifact is at most 16 MiB, because the store keeps a head and a
+/// tail of 8 MiB each, so this is a ceiling on the copy rather than on the
+/// artifact. It is checked before the bytes are read and again on the count the
+/// read saw.
+const MAX_COPY_MIB: u64 = 32;
+
+/// The copy limit in bytes.
+const MAX_COPY_BYTES: u64 = MAX_COPY_MIB * 1024 * 1024;
 
 /// The program that edits a draft, already split into words.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,6 +124,14 @@ pub(crate) enum Problem {
     TooLarge,
     /// The saved draft is not UTF-8, so the draft on screen is kept.
     NotText,
+    /// The retained artifact could not be inspected or read.
+    Source(String),
+    /// The retained artifact is a link, a directory or another non-file.
+    SourceReplaced,
+    /// The retained artifact is past the copy limit.
+    SourceTooLarge,
+    /// The editor ran on an artifact copy and failed; the copy is discarded.
+    SourceExit(String),
 }
 
 impl fmt::Display for Problem {
@@ -128,6 +151,10 @@ impl fmt::Display for Problem {
                 "the editor saved more than {MAX_DRAFT_MIB} MiB; the draft is unchanged"
             ),
             Self::NotText => formatter.write_str("the editor saved text that is not UTF-8; the draft is unchanged"),
+            Self::Source(error) => write!(formatter, "cannot read the artifact: {error}"),
+            Self::SourceReplaced => formatter.write_str("the artifact is a link or another kind of file; not opened"),
+            Self::SourceTooLarge => write!(formatter, "the artifact is larger than {MAX_COPY_MIB} MiB; not opened"),
+            Self::SourceExit(status) => write!(formatter, "the editor {status}; the artifact copy was discarded"),
         }
     }
 }
@@ -167,6 +194,62 @@ fn prepare(draft: &str) -> Result<tempfile::NamedTempFile, Problem> {
     file.write_all(draft.as_bytes())
         .map_err(|error| Problem::TempFile(error.to_string()))?;
     Ok(file)
+}
+
+/// Run `program` over a private copy of the artifact at `source`.
+///
+/// The store's file is only read: the editor is never handed that path, and
+/// what it saves is not read back, so an edit lands in the copy and nowhere the
+/// transcript can see. The copy is `tempfile`'s own 0600 file and is removed
+/// when the program exits, including a failing one. A source that is a link, a
+/// pipe or a directory, or one past the copy limit, is refused before a byte is
+/// copied.
+pub(crate) fn open_copy(source: &Path, program: &Program) -> Result<(), Problem> {
+    let copy = prepare_copy(source)?;
+    let outcome = std::process::Command::new(&program.program)
+        .args(&program.arguments)
+        .arg(copy.path())
+        .status();
+    match outcome {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(Problem::SourceExit(describe(status))),
+        Err(error) => Err(Problem::Start(format!("`{}`: {error}", program.program))),
+    }
+}
+
+/// Copy the artifact at `source` into the temporary file the editor is given.
+///
+/// The store's file is inspected before it is opened and the opened handle's
+/// metadata again after, exactly as [`read_saved`] checks a saved draft, so a
+/// link or a directory in its place is refused. The size limit is checked on the
+/// metadata and again on the count the copy actually moved, because the artifact
+/// can grow between the two.
+fn prepare_copy(source: &Path) -> Result<tempfile::NamedTempFile, Problem> {
+    let entry = std::fs::symlink_metadata(source).map_err(|error| Problem::Source(error.to_string()))?;
+    if !entry.file_type().is_file() {
+        return Err(Problem::SourceReplaced);
+    }
+    let file = std::fs::File::open(source).map_err(|error| Problem::Source(error.to_string()))?;
+    let metadata = file.metadata().map_err(|error| Problem::Source(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(Problem::SourceReplaced);
+    }
+    if metadata.len() > MAX_COPY_BYTES {
+        return Err(Problem::SourceTooLarge);
+    }
+    let mut copy = tempfile::Builder::new()
+        .prefix("horon-artifact-")
+        .suffix(".log")
+        .tempfile()
+        .map_err(|error| Problem::TempFile(error.to_string()))?;
+    let mut reader = file.take(MAX_COPY_BYTES + 1);
+    let copied = std::io::copy(&mut reader, copy.as_file_mut()).map_err(|error| Problem::Source(error.to_string()))?;
+    // The artifact can grow between the metadata and the read, so the count that
+    // decides is the one the copy actually saw.
+    if copied > MAX_COPY_BYTES {
+        return Err(Problem::SourceTooLarge);
+    }
+    Ok(copy)
 }
 
 /// How a finished process failed, for the line the transcript keeps.
@@ -288,5 +371,74 @@ mod tests {
         let path = directory.path().join("saved.md");
         std::fs::write(&path, [0xFFu8]).expect("the saved bytes");
         assert_eq!(read_saved(&path), Err(Problem::NotText));
+    }
+
+    #[test]
+    fn an_artifact_is_copied_whole_and_the_source_is_left_alone() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let source = directory.path().join("12.bash.log");
+        std::fs::write(&source, "original output").expect("the artifact");
+        let copy = super::prepare_copy(&source).expect("the copy");
+        assert_ne!(
+            copy.path(),
+            source.as_path(),
+            "the editor would have been handed the retained file"
+        );
+        assert_eq!(
+            std::fs::read_to_string(copy.path()).expect("the copy is readable"),
+            "original output",
+            "the copy does not hold the artifact"
+        );
+        let copy_path = copy.path().to_path_buf();
+        drop(copy);
+        assert!(!copy_path.exists(), "the artifact copy outlived the open");
+        assert_eq!(
+            std::fs::read_to_string(&source).expect("the artifact is still there"),
+            "original output",
+            "the retained artifact was written to"
+        );
+    }
+
+    #[test]
+    fn a_directory_in_place_of_an_artifact_is_not_copied() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        // A link is refused by the same regular-file check; creating one is the
+        // platform's business and is covered by the PTY receipt.
+        assert!(matches!(
+            super::prepare_copy(directory.path()),
+            Err(Problem::SourceReplaced)
+        ));
+    }
+
+    #[test]
+    fn an_artifact_past_the_copy_limit_is_refused_before_it_is_read() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let source = directory.path().join("12.bash.log");
+        let file = std::fs::File::create(&source).expect("an artifact");
+        // Sparse, so the limit is tested without writing 32 MiB.
+        file.set_len(super::MAX_COPY_BYTES + 1).expect("a large artifact");
+        drop(file);
+        assert!(matches!(super::prepare_copy(&source), Err(Problem::SourceTooLarge)));
+    }
+
+    #[test]
+    fn an_editor_that_cannot_start_is_reported_and_the_source_is_kept() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let source = directory.path().join("12.bash.log");
+        std::fs::write(&source, "original output").expect("the artifact");
+        // A program no platform has: the failure is the start, not the exit, so
+        // nothing has to exist to run it.
+        let editor = program("horon-tui-test-no-such-editor", &[]);
+        match super::open_copy(&source, &editor) {
+            Err(Problem::Start(message)) => {
+                assert!(message.contains("horon-tui-test-no-such-editor"), "message: {message}");
+            }
+            other => panic!("expected an editor that could not be started, got {other:?}"),
+        }
+        assert_eq!(
+            std::fs::read_to_string(&source).expect("the artifact is still there"),
+            "original output",
+            "a failed editor reached the retained artifact"
+        );
     }
 }

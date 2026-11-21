@@ -116,16 +116,13 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
-    /// Ask which noted sessions the harness no longer stores.
-    ///
-    /// The ids are the sessions this client holds notes for. A session may be
-    /// archived, which is reversible, so the harness is asked about each id
-    /// rather than the client assuming anything from a list that leaves
-    /// archived sessions out.
+    /// Ask which noted sessions were deleted, including checks for archived sessions.
     CheckSessions(Vec<String>),
     /// Hand the draft to the user's editor; the loop answers this one itself,
     /// because the editor needs the terminal the loop is drawing on.
     EditDraft,
+    /// Give the terminal to the editor with a private copy of a resolved artifact.
+    OpenArtifact(std::path::PathBuf),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.
@@ -407,6 +404,8 @@ pub struct App {
     pub daemon_settings: crate::settings::DaemonSettings,
     /// Where user theme files are read from, offered by the settings screen.
     pub themes_dir: std::path::PathBuf,
+    /// The artifact store root (`$HORON_HOME/artifacts`), read by `/artifact`.
+    pub artifacts_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
     pub overlay: Option<SettingsOverlay>,
     /// The open list of models or sessions, if one is showing.
@@ -526,6 +525,7 @@ impl App {
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
             picker: None,
             pending_change: None,
@@ -612,6 +612,7 @@ impl App {
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
             picker: None,
             pending_change: None,

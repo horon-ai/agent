@@ -4,8 +4,8 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
-//!    `/exit`, `/help`, `/keys`, `/clear`, `/copy`, `/model`, `/effort`, `/new`,
-//!    `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
+//!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
+//!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
 //!    `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -65,6 +65,8 @@ pub enum Local {
     Exit,
     /// List every command.
     Help,
+    /// Open a retained artifact of this session in the editor.
+    Artifact,
     /// List the keys in force and what each does.
     Keys,
     /// Clear the transcript pane.
@@ -108,6 +110,7 @@ impl Local {
             "quit" => Some(Self::Quit),
             "exit" => Some(Self::Exit),
             "help" => Some(Self::Help),
+            "artifact" => Some(Self::Artifact),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
             "copy" => Some(Self::Copy),
@@ -133,6 +136,7 @@ impl Local {
             Self::Quit => "quit",
             Self::Exit => "exit",
             Self::Help => "help",
+            Self::Artifact => "artifact",
             Self::Keys => "keys",
             Self::Clear => "clear",
             Self::Copy => "copy",
@@ -645,9 +649,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 18] = [
-    "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit", "record",
-    "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 19] = [
+    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
+    "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

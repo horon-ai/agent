@@ -146,9 +146,9 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
-        // The frame loop answers this one: the editor needs the terminal that
+        // The frame loop answers these two: the editor needs the terminal that
         // loop is drawing on, so the action never reaches the bridge thread.
-        Action::EditDraft => return,
+        Action::EditDraft | Action::OpenArtifact(_) => return,
         Action::DaemonSettings => Command::DaemonSettings,
         Action::Quit => {
             app.running = false;
@@ -197,20 +197,110 @@ where
         }
     };
     let draft = app.input.text();
+    let handed = with_terminal(terminal, app, title, mouse_captured, || {
+        crate::editor::edit(&draft, &program)
+    });
+    let outcome = match handed {
+        Ok(outcome) => outcome,
+        // The edit is not applied, because there is no frame left to show it
+        // in; the caller restores what it can and prints this sentence on the
+        // shell's screen.
+        Err(error) => return Some(format!("cannot take the terminal back after the editor: {error}")),
+    };
+    match outcome {
+        Ok(text) => {
+            app.history.reset();
+            app.input.set_text(&text);
+            app.sync_slash();
+        }
+        Err(problem) => app.warn(format!("editor: {problem}")),
+    }
+    None
+}
+
+/// Open a retained artifact as a private copy in the user's editor.
+///
+/// The path arrived resolved, so a missing artifact or an address outside this
+/// session never reaches this point and the screen is never given up for one.
+/// The program is resolved before the hand-over for the same reason the draft
+/// editor does it: a client with no `VISUAL` or `EDITOR` has nothing to hand the
+/// terminal to and must not blink it to say so.
+///
+/// Nothing is read back: an edit lands in the copy, which is removed with the
+/// editor's directory, and the retained artifact is only ever read. Returns the
+/// sentence that ends the session when the screen did not come back, exactly as
+/// [`hand_over_draft`] does.
+pub(crate) fn hand_over_artifact<B>(
+    terminal: &mut ratatui::Terminal<B>,
+    app: &mut App,
+    title: &mut crate::title::WindowTitle,
+    mouse_captured: &mut bool,
+    path: &std::path::Path,
+) -> Option<String>
+where
+    B: ratatui::backend::Backend,
+    B::Error: std::fmt::Display,
+{
+    let program = match crate::editor::Program::from_environment() {
+        Ok(program) => program,
+        Err(problem) => {
+            app.warn(format!("editor: {problem}"));
+            return None;
+        }
+    };
+    let source = path.to_path_buf();
+    let handed = with_terminal(terminal, app, title, mouse_captured, || {
+        crate::editor::open_copy(&source, &program)
+    });
+    let outcome = match handed {
+        Ok(outcome) => outcome,
+        Err(error) => return Some(format!("cannot take the terminal back after the editor: {error}")),
+    };
+    match outcome {
+        Ok(()) => {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            app.transcript.push_notice(format!(
+                "artifact: {name} opened as a private copy; the retained file is unchanged"
+            ));
+        }
+        Err(problem) => app.warn(format!("editor: {problem}")),
+    }
+    None
+}
+
+/// Give the terminal to the editor for one run, then take it back.
+///
+/// `run` is the editor itself. Its result is handed back only when the screen
+/// came back: without a screen there is no frame to apply a change in and no key
+/// to read, so the caller ends the session with the returned sentence instead.
+/// A refused paste or title is a warning, exactly as at startup, and the client
+/// keeps running.
+///
+/// The take-back failure is the [`std::io::Result`] `take_back` produced, passed
+/// on unchanged; the caller writes the sentence because only it knows what to do
+/// with the edit that was already made.
+fn with_terminal<B, T>(
+    terminal: &mut ratatui::Terminal<B>,
+    app: &mut App,
+    title: &mut crate::title::WindowTitle,
+    mouse_captured: &mut bool,
+    run: impl FnOnce() -> T,
+) -> std::io::Result<T>
+where
+    B: ratatui::backend::Backend,
+    B::Error: std::fmt::Display,
+{
     crate::terminal::hand_over();
-    let outcome = crate::editor::edit(&draft, &program);
+    let outcome = run();
     let resumed = crate::terminal::take_back(terminal);
     // The hand-over released the wheel; the frame loop captures it again at the
     // top of the next pass when the setting asks for it.
     *mouse_captured = false;
-    if let Err(error) = resumed {
-        // Nothing on this terminal is trustworthy any more: the screen, its
-        // modes and the keyboard belong to whoever owns it now, so the session
-        // ends here rather than painting escapes over the shell. The edit is not
-        // applied, because there is no frame left to show it in; the caller
-        // restores what it can and prints this sentence on the shell's screen.
-        return Some(format!("cannot take the terminal back after the editor: {error}"));
-    }
+    // Stop before writing any more terminal state if restoration failed.
+    resumed?;
     // A refusal is a warning, not a reason to stop, exactly as at startup: the
     // paste then arrives as ordinary keystrokes the editor already handles.
     if let Err(error) = crate::paste::enable() {
@@ -226,15 +316,7 @@ where
     if let Err(error) = title.show(&crate::window::label(app, state_supported)) {
         app.warn(format!("title: {error}"));
     }
-    match outcome {
-        Ok(text) => {
-            app.history.reset();
-            app.input.set_text(&text);
-            app.sync_slash();
-        }
-        Err(problem) => app.warn(format!("editor: {problem}")),
-    }
-    None
+    Ok(outcome)
 }
 
 /// Keep the terminal's mouse capture in step with `transcript.mouse_scroll`.

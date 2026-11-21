@@ -23,6 +23,9 @@ impl App {
             // their fingers; both leave through the same action, so the exit
             // code is the same.
             Local::Quit | Local::Exit => Some(Action::Quit),
+            // Listing is a notice and opening is an action the frame loop
+            // answers, so neither reaches the bridge thread.
+            Local::Artifact => self.run_artifact(arguments),
             Local::Help => match arguments.trim() {
                 "" => {
                     // The listing names the keys in force, not the shipped ones: a
@@ -126,6 +129,53 @@ impl App {
         }
     }
 
+    /// `/artifact`: list this session's retained artifacts, or open one as a copy.
+    ///
+    /// The connection decides first: only the client's own harness has a store
+    /// on this machine, so a session behind an explicit socket or a remote
+    /// bridge is refused by the store access itself, before any file is looked
+    /// at. Then only the attached session's store is reachable, and only through
+    /// an address [`crate::artifact::parse`] reads as an id. A URL, a path or a
+    /// session-prefixed line is refused here, before the store is listed or the
+    /// terminal is given up, so a typo cannot become a local read of a file this
+    /// client has no business opening. A missing artifact is refused the same
+    /// way: the action carries a resolved path or nothing.
+    fn run_artifact(&mut self, arguments: &str) -> Option<Action> {
+        let Some(session) = self.session_id.clone() else {
+            let refusal = crate::artifact::Refusal::NoSession;
+            self.warn(format!("artifact: {refusal}"));
+            return None;
+        };
+        // The store access checks `workspace_is_local` itself: an explicit
+        // socket or a remote bridge can report an id that coincides with a local
+        // one, and the store function is what refuses to read this machine's
+        // disk for it. The same evidence #500 uses for local workspace paths.
+        if arguments.trim().is_empty() {
+            match crate::artifact::entries(&self.artifacts_dir, &session, self.workspace_is_local) {
+                Ok(entries) if entries.is_empty() => {
+                    self.transcript
+                        .push_notice("artifact: this session has no retained artifacts");
+                }
+                Ok(entries) => self.transcript.push_notice(artifact_listing(&entries)),
+                Err(refusal) => self.warn(format!("artifact: {refusal}")),
+            }
+            return None;
+        }
+        match crate::artifact::parse(arguments) {
+            Ok(id) => match crate::artifact::resolve(&self.artifacts_dir, &session, id, self.workspace_is_local) {
+                Ok(path) => Some(Action::OpenArtifact(path)),
+                Err(refusal) => {
+                    self.warn(format!("artifact: {refusal}"));
+                    None
+                }
+            },
+            Err(refusal) => {
+                self.warn(format!("artifact: {refusal}"));
+                None
+            }
+        }
+    }
+
     /// `/links`: the http(s) URLs in the newest assistant answers.
     ///
     /// The list is built from what the transcript already holds, so nothing is
@@ -178,5 +228,44 @@ impl App {
             self.warn(format!("commands: {warning}"));
         }
         true
+    }
+}
+
+/// Rows a `/artifact` listing prints before it summarizes the rest.
+///
+/// A session's store is capped in bytes, not in entries, so a long run of small
+/// artifacts could otherwise fill the pane with names and push the conversation
+/// off the screen.
+const ARTIFACT_ROWS: usize = 20;
+
+/// The text `/artifact` prints: one row per artifact, newest last.
+fn artifact_listing(entries: &[crate::artifact::Stored]) -> String {
+    let mut lines = Vec::with_capacity(entries.len().min(ARTIFACT_ROWS) + 2);
+    lines.push("artifacts: open one with /artifact <id>, or paste its artifact://<id> pointer".to_string());
+    for entry in entries.iter().take(ARTIFACT_ROWS) {
+        lines.push(format!(
+            "  {:>4}  {:>9}  {}",
+            entry.id,
+            size_text(entry.bytes),
+            entry.tool
+        ));
+    }
+    if entries.len() > ARTIFACT_ROWS {
+        lines.push(format!("  … {} more", entries.len() - ARTIFACT_ROWS));
+    }
+    lines.join("\n")
+}
+
+/// A size in the unit a list can compare at a glance.
+fn size_text(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes >= MIB {
+        format!("{:.1} MiB", bytes / MIB)
+    } else if bytes >= KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{bytes:.0} B")
     }
 }

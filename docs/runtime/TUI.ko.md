@@ -423,6 +423,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 | 명령 | 하는 일 |
 | --- | --- |
+| `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
 | `/clear` | 트랜스크립트 창을 지운다 |
 | `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
@@ -446,6 +447,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
+`/artifact`는 현재 로컬 세션에 보관된 산출물을 나열합니다. `/artifact <id>`를 입력하거나 `artifact://<id>` 주소를 붙여넣으면 `VISUAL` 또는 `EDITOR`에서 임시 사본을 편집합니다. 원본은 유지되고 돌아올 때 사본을 지웁니다. 소켓을 직접 지정하거나 원격 브리지에 연결하면 로컬 산출물을 열 수 없습니다.
+
 터미널에는 OSC 52로 복사를 요청합니다. `HORON_TUI_OSC52=0`으로 끌 수 있습니다. 멀티플렉서나 SSH에서 터미널로 복사 요청을 전달하도록 설정했다면 `HORON_TUI_OSC52=1`로 사용할 수 있습니다. 터미널이 요청을 처리할 수 없으면 화면에서 텍스트를 직접 선택할 수 있습니다.
 
 `!command`를 입력하면 TUI가 실행된 작업 디렉터리에서 셸 명령을 실행합니다. 실행 전에 전사에 로컬 디렉터리를 표시합니다. `!!command`는 전사에 경로와 종료 상태만 남깁니다. 두 형식 모두 명령과 출력을 모델 대화에 보내지 않습니다. 한 번에 하나만 실행하며 10초를 넘으면 중지합니다. 출력은 최대 200줄과 32 KiB까지 남깁니다.
@@ -456,6 +459,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 ```text
 built-in commands:
+  /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear the transcript
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
