@@ -696,7 +696,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: &[&str] = &[
     "archived",
     "artifact",
     "clear",
