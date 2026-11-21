@@ -186,8 +186,18 @@ impl Args {
     }
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Print shell completions for horon
+    Completions { shell: CompletionShell },
+
     /// List configured MCP servers or manage remote-server OAuth credentials
     Mcp {
         #[command(subcommand)]

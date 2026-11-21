@@ -18,6 +18,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Run { .. }) => "horon-agent run".to_string(),
         Some(Command::Mcp { .. }) => "horon-agent mcp".to_string(),
         Some(Command::Package { .. }) => "horon-agent package".to_string(),
+        Some(Command::Completions { .. }) => "horon-agent completions".to_string(),
         Some(Command::Repl) => "horon-agent repl".to_string(),
         Some(Command::Update) => "horon-agent update".to_string(),
         Some(Command::InstallRelease { .. }) => "horon-agent install-release".to_string(),
