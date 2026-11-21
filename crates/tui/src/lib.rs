@@ -28,6 +28,7 @@ mod markdown;
 pub mod overlays;
 mod pane;
 pub mod paste;
+mod path_completion;
 mod progress;
 pub mod prompts;
 pub mod recording;
@@ -115,6 +116,10 @@ mod artifact_tests;
 #[cfg(test)]
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
+
+#[cfg(test)]
+#[path = "path_completion_tests.rs"]
+mod path_completion_tests;
 
 use ratatui::Terminal;
 use ratatui::backend::Backend;
@@ -305,12 +310,13 @@ where
         eprintln!("horon-tui: keys: {warning}");
     }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
+    let launch_dir = path_completion::launch_directory(args.cwd);
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, args.hide_thinking),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -322,19 +328,23 @@ where
 }
 
 /// Drive the real terminal until the user leaves.
+///
+/// `launch_dir` is the directory the session was asked for, used only when the
+/// daemon's answer names none, so `--cwd` and the session keep one workspace.
 fn run_interactive(
     runtime: Runtime,
     reloader: &mut settings::Reloader,
     keys: &mut keys::Loader,
+    launch_dir: Option<std::path::PathBuf>,
     hide_thinking: bool,
 ) -> i32 {
     let mut themes = ThemeLoader::new();
-    // Only a local connection may open retained artifacts.
+    let workspace = runtime.workspace.clone();
+    // Read before the events travel with the app: the flag decides whether a
+    // keystroke may read this machine's disk for the session.
     let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
-    app.workspace_is_local = local;
-    // The stderr copy of these warnings is wiped by the alternate screen, so
-    // the transcript carries them for the person using the interface.
+    // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
     }
@@ -358,10 +368,20 @@ fn run_interactive(
         app.transcript
             .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
     }
-    match std::env::current_dir() {
-        Ok(directory) => app.cwd = Some(directory.display().to_string()),
-        Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+    // The session's own directory names the workspace: `--cwd` is what the
+    // create was asked for, and a resumed session reports the directory it
+    // already has. A daemon that names none still gets the launch directory on
+    // screen, but path completion stays off, because where the session works
+    // is then only a guess.
+    app.workspace_known = workspace.is_some();
+    app.cwd = workspace.or_else(|| launch_dir.map(|dir| dir.display().to_string()));
+    if app.cwd.is_none() {
+        match std::env::current_dir() {
+            Ok(directory) => app.cwd = Some(directory.display().to_string()),
+            Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+        }
     }
+    app.workspace_is_local = local;
     app.reload_commands();
     // `try_init` installs the restoring panic hook itself, so a panic inside
     // the alternate screen still leaves the terminal usable.
@@ -534,6 +554,7 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
+        // Titles can change on either a daemon event or local input.
         // A cycle pressed before the model catalog was known asked for it
         // instead; that press walks now that the answer is in.
         if let Some(action) = app.take_model_cycle() {
@@ -615,8 +636,7 @@ where
         }
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
-                // Windows always reports a key's release as its own event; acting
-                // on both would send every message twice.
+                // Windows key releases must not submit another message.
                 if key.is_release() {
                     continue;
                 }

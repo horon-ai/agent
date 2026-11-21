@@ -238,6 +238,8 @@ impl App {
                 // The draft is remembered before it is resolved: a slash line
                 // that turns out to be an error is still a line the user typed.
                 self.history.record(&text);
+                // The candidates belonged to the token that was just sent.
+                self.path_cycle = None;
                 return self.submit(&text);
             }
             Some(keys::ids::EDITOR_COMPLETE) => {
