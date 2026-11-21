@@ -201,6 +201,9 @@ pub(super) async fn execute(
             let (data, message) = crate::plan_mode::command(agent.session_id(), args)?;
             return Ok((data, message));
         }
+        // Answered from the notes registry rather than the agent, so the server
+        // routes this one before taking the agent lock.
+        RuntimeCommand::Observations => return crate::server::session_notes::command(agent.session_id(), args),
         RuntimeCommand::Transport => {
             let provider = agent.provider_handle();
             match args {

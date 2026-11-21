@@ -33,6 +33,7 @@ mod effective_settings;
 mod plan_proposals;
 mod session_connections;
 mod session_forget;
+pub(crate) mod session_notes;
 mod session_observation;
 pub mod session_replication;
 use configured_name::normalize_configured_server_name;

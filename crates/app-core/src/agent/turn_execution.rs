@@ -275,6 +275,7 @@ impl Agent {
         if !crate::hooks::hook_configured("turn_start") {
             return;
         }
+        crate::server::session_notes::note_hook(self.session_id(), "turn_start", Some(source));
         let mut event = crate::hooks::HookEvent::new("turn_start")
             .session_id(self.session.id.clone())
             .field("MODEL", self.provider_model())
@@ -292,6 +293,7 @@ impl Agent {
             return;
         }
         let status = if result.is_ok() { "ok" } else { "error" };
+        crate::server::session_notes::note_hook(self.session_id(), "turn_end", Some(status));
         let mut event = crate::hooks::HookEvent::new("turn_end")
             .session_id(self.session.id.clone())
             .field("STATUS", status)

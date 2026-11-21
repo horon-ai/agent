@@ -92,10 +92,6 @@ HEADLESS_FALLBACK = "horon-agent serve"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
-# The client draws a tool call as its name and status, not its output, so the
-# approved retry is proven by the status line plus the file the command writes
-# (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-APPROVAL_RESOLVED = "approval approved"
 # The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
 # harness sends over the session event stream once the bridge is serving this
 # client, so seeing it means the client is past its first frame and talking to
@@ -696,6 +692,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
     if POSIX:
+        env["HORON_AGENT_HOOK_TURN_END"] = "true"
         voice_fixture(case_root, home, env)
     archive_label = "archive-pty-fixture"
     seeded = subprocess.run(
@@ -751,6 +748,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+            terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before observing work")
+            terminal.send("/observations\r")
+            terminal.read_until("recording  no", STEP_TIMEOUT, "observation recording defaults off")
+            terminal.send("/observations on\r")
+            terminal.read_until("recording  yes", STEP_TIMEOUT, "observation recording enabled explicitly")
         if POSIX:
             voice_input_smoke(terminal, case_root, base_url)
 
@@ -761,9 +763,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
-
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
@@ -773,6 +773,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
+            observations_start = len(terminal.transcript)
+            terminal.send("/observations\r")
+            terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
             context_request_smoke(terminal, home, base_url)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
@@ -781,20 +784,23 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         filter_start = len(terminal.transcript)
         terminal.send(archive_label)
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
+        archive_start = len(terminal.transcript)
         terminal.send("\x01")
-        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        terminal.read_until("/archived to restore it", STEP_TIMEOUT, "daemon confirmed archive", since=archive_start)
         recent_start = len(terminal.transcript)
         terminal.send("/resume\r")
         terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
         recent_filter = len(terminal.transcript)
         terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.read_until("nothing match", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
         terminal.send("\x1b")
         time.sleep(0.15)
+        archived_start = len(terminal.transcript)
         terminal.send("/archived\r")
-        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
-        terminal.send(f"{archive_label}\r")
-        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
+        restore_start = len(terminal.transcript)
+        terminal.send("\r")
+        terminal.read_until("to the recent list", STEP_TIMEOUT, "daemon confirmed restoration", since=restore_start)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

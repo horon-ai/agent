@@ -81,6 +81,7 @@ pub(crate) mod yield_result;
 
 use crate::compaction::CompactionManager;
 use crate::provider::Provider;
+use crate::server::session_notes;
 use crate::skill::SkillRegistry;
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -390,7 +391,10 @@ async fn run_gated_pre_tool_hook(
 ) -> crate::hooks::GateDecision {
     let queue_budget = hook_serial_queue_budget();
     match acquire_hook_serial(queue_budget).await {
-        Some(_serial) => crate::hooks::run_pre_tool_gate(session_id, working_dir, tool_name, input_json).await,
+        Some(_serial) => {
+            session_notes::note_hook(session_id, "pre_tool", Some(tool_name));
+            crate::hooks::run_pre_tool_gate(session_id, working_dir, tool_name, input_json).await
+        }
         None => {
             crate::logging::warn(&format!(
                 "pre_tool hook gate still busy after {}ms; allowing tool '{tool_name}' for session {session_id} without running the gate (fail-open)",
@@ -1852,6 +1856,7 @@ impl Registry {
         if !crate::hooks::hook_configured("post_tool") {
             return;
         }
+        session_notes::note_hook(&ctx.session_id, "post_tool", Some(resolved_name));
         crate::hooks::dispatch_observer(Self::post_tool_event(
             "post_tool",
             resolved_name,
@@ -1878,6 +1883,7 @@ impl Registry {
         if !crate::hooks::hook_configured("post_tool_feedback") {
             return;
         }
+        session_notes::note_hook(&ctx.session_id, "post_tool_feedback", Some(resolved_name));
         let event = Self::post_tool_event("post_tool_feedback", resolved_name, input, ctx, Ok(output), latency_ms);
         let input_json = input.to_string();
         let feedback = {
@@ -2029,16 +2035,15 @@ impl Registry {
         }
 
         let working_dir = ctx.working_dir.as_ref().map(|dir| dir.display().to_string());
-        // The dispatch clock starts before the hooks. A transformer or gate that
-        // queues on `HOOK_SERIAL` or runs long is time the caller waited, and
-        // starting at `Tool::execute` made that wait invisible.
+        // Include time spent waiting for and running hooks in dispatch latency.
         let dispatch_started_at = std::time::Instant::now();
-        // User-configured input transformer: may replace the tool input before
-        // anything reads it, so it is serialized with the other awaited hooks;
-        // see `HOOK_SERIAL`. It is skipped entirely when not configured, and for
-        // the dispatcher, whose payload the target's own transformer rewrites.
+        // Serialize input transforms with other hooks. The dispatcher leaves
+        // its payload for the target's own transformer.
         let input = if policy_on_self {
             let _serial = HOOK_SERIAL.lock().await;
+            if crate::hooks::hook_configured("pre_tool_transform") {
+                session_notes::note_hook(&ctx.session_id, "pre_tool_transform", Some(resolved_name));
+            }
             crate::hooks::transform_tool_input(&ctx.session_id, working_dir.as_deref(), resolved_name, input).await
         } else {
             input
