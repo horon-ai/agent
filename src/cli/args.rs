@@ -413,6 +413,20 @@ pub(crate) enum Command {
         action: ApprovalsCommand,
     },
 
+    /// Inspect named agent definitions without starting a session
+    Agents,
+
+    /// Estimate tokens in UTF-8 text without contacting a model provider
+    #[command(alias = "toks")]
+    Tokens {
+        /// Inline UTF-8 text, or '-' to read stdin (also the default)
+        #[arg(conflicts_with = "file", value_name = "TEXT")]
+        text: Option<String>,
+        /// Read UTF-8 text from a local file
+        #[arg(long, value_name = "PATH")]
+        file: Option<std::path::PathBuf>,
+    },
+
     /// Model management commands
     #[command(subcommand)]
     Model(ModelCommand),
