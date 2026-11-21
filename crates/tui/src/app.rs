@@ -129,7 +129,6 @@ pub enum Action {
     OpenArtifact(std::path::PathBuf),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
-    /// Leave.
     Quit,
 }
 
