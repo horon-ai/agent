@@ -577,7 +577,8 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
 def side_question_smoke(terminal: Terminal, home: str) -> None:
     from pathlib import Path
 
-    parents = list(Path(home).glob("sessions/*/events.jsonl"))
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
     if len(parents) != 1:
         raise Failure(f"expected one parent session, got {len(parents)}")
     question = "side fixture question"
@@ -586,7 +587,7 @@ def side_question_smoke(terminal: Terminal, home: str) -> None:
     terminal.read_until("side-fixture-answer", STEP_TIMEOUT, "read-only child answered")
     if question in parents[0].read_text(encoding="utf-8"):
         raise Failure("the side question entered the parent history")
-    children = [path for path in Path(home).glob("sessions/*/events.jsonl") if path != parents[0]]
+    children = list(set(Path(home).glob("sessions/*/events.jsonl")) - originals)
     if len(children) != 1 or question not in children[0].read_text(encoding="utf-8"):
         raise Failure("expected the side question in a saved child session")
     terminal.send("\x1b")
