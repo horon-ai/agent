@@ -76,6 +76,8 @@ Keys:
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
+  Ctrl-Space     start or finish on-device voice input; /voice has the rest
+                 (consent, stop, cancel, say <text>, read, status)
   Alt-P          pick the model this session uses
   Alt-D          copy the draft to the terminal clipboard
   Alt-K          copy the line under the cursor to the terminal clipboard
@@ -122,6 +124,9 @@ Commands:
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
+  /voice [consent|forget|stop|cancel|say <text>|read|status]
+                 on-device speech: consent to capture, dictate into the
+                 draft (not sent), or speak text locally
   //text         send the literal message /text
 
 Local shell (runs in this terminal, in the client's working directory; never
@@ -210,6 +215,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_TOGGLE_THINKING,
         "show or hide the model's reasoning for this session",
     ),
+    (ids::APP_VOICE, "start or finish on-device voice input"),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -284,6 +290,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",
+        "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",
     }
 }
