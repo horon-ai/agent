@@ -100,6 +100,16 @@ impl App {
             // the conversation or a request, so this arm answers entirely in
             // the client except when it asks which noted sessions are gone.
             Local::Note => self.run_note(arguments),
+            // `!command` and `!!command` are resolved by the registry, never
+            // by a slash name, and are run by this client alone.
+            Local::Shell => {
+                self.run_local_shell(arguments, false);
+                None
+            }
+            Local::ShellExcluded => {
+                self.run_local_shell(arguments, true);
+                None
+            }
             // Neither asks the harness for anything: a recording is a local
             // file, and a replay is local playback over it.
             Local::Record => {

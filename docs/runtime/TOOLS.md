@@ -342,6 +342,8 @@ eval = true
 
 The default is `eval = false`. With an explicit `enabled` list, include `eval` and keep `eval = true`. The closed `core`, `acp` and `minimal` profiles do not add it automatically. The session's tool load mode and allow-list still apply.
 
+When the session can call `eval`, the default system prompt explains when to use Python cells and how to call the bridge. A discoverable `eval` can be invoked through `toolbox run`. Sessions where the tool is disabled or unreachable omit this guidance.
+
 Send `code` as a Python string. `timeout` accepts 1 to 3600 seconds and defaults to 30. Use `reset = true` to discard the previous kernel before executing the cell. Top-level `await`, stdout, stderr and the last expression's value are supported. A timeout, cancellation, directory change, session close or idle sweep discards the kernel. The next cell in that session starts with fresh state.
 
 Each cell needs explicit approval before it runs, including in `yolo` and `off`. Approved Python can read files, connect to the network and start processes with the agent's OS permissions. See the [security guide](../safety/SECURITY.md#python-eval) for the execution boundary.

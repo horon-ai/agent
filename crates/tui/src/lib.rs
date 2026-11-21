@@ -494,6 +494,9 @@ where
                 false
             }
         };
+        // A local command runs on a worker thread; its result joins the same
+        // redraw decision as an event from the bridge.
+        changed |= crate::commands::shell::drain(app);
         if !app.running {
             break;
         }
@@ -519,9 +522,7 @@ where
                 changed = true;
             }
         }
-        // The reloader throttles itself to one file check per second; the
-        // theme loader, the key bindings and the command directories share
-        // that cadence for their own files.
+        // Reloaders check for changes once per second.
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
@@ -565,6 +566,10 @@ where
             failure = Some(message);
             break;
         }
+        // The header has been drawn, so the command may start. This is after
+        // the frame, not inside the key handler, which is what makes the
+        // target visible before the command can print anything.
+        crate::commands::shell::start_pending();
         match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
@@ -577,8 +582,7 @@ where
         }
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
-                // Windows always reports a key's release as its own event; acting
-                // on both would send every message twice.
+                // Windows key releases must not submit another message.
                 if key.is_release() {
                     continue;
                 }
