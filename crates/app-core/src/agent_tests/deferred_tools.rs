@@ -392,3 +392,81 @@ async fn load_mode_off_removes_todo_and_session_search() {
         "no todo tool means no hint"
     );
 }
+
+#[derive(Default)]
+struct EvalRequestProvider {
+    requests: std::sync::Mutex<Vec<(String, Vec<ToolDefinition>)>>,
+}
+
+#[async_trait]
+impl Provider for EvalRequestProvider {
+    async fn complete(
+        &self,
+        _: &[Message],
+        tools: &[ToolDefinition],
+        system: &str,
+        _: Option<&str>,
+    ) -> Result<EventStream> {
+        self.requests.lock().unwrap().push((system.to_owned(), tools.to_vec()));
+        Ok(Box::pin(futures::stream::iter([
+            Ok(StreamEvent::TextDelta("Ready".into())),
+            Ok(StreamEvent::MessageEnd {
+                stop_reason: Some("end_turn".into()),
+            }),
+        ])))
+    }
+
+    fn name(&self) -> &str {
+        "eval-request-capture"
+    }
+
+    fn fork(&self) -> Arc<dyn Provider> {
+        Arc::new(Self::default())
+    }
+}
+
+#[tokio::test]
+async fn eval_guidance_follows_session_tool_visibility() {
+    let _guard = crate::storage::lock_test_env();
+    for (profile, enabled, load_mode, expected) in [
+        ("full", true, "discoverable", Some(true)),
+        ("full", true, "essential", Some(false)),
+        ("full", false, "essential", None),
+        ("full", true, "off", None),
+        ("core", true, "essential", None),
+    ] {
+        let config =
+            format!("[tools]\nprofile = '{profile}'\neval = {enabled}\n[tools.load_mode]\neval = '{load_mode}'\n");
+        let _env = super::tool_tiers::ProfileEnv::new(profile, Some(&config));
+        let provider = Arc::new(EvalRequestProvider::default());
+        let registry = Registry::new(provider.clone()).await;
+        let mut agent = Agent::new(provider.clone(), registry);
+        agent.add_message(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "Reply ready.".into(),
+                cache_control: None,
+            }],
+        );
+        agent.run_turn(false).await.expect("send one provider request");
+        let requests = provider.requests.lock().unwrap();
+        let [(system, tools)] = requests.as_slice() else {
+            panic!("expected one request, got {}", requests.len());
+        };
+        assert_eq!(
+            tools
+                .iter()
+                .find(|tool| tool.name == "eval")
+                .map(|tool| tool.defer_loading),
+            expected,
+            "{profile} / {enabled} / {load_mode}",
+        );
+        assert_eq!(system.contains("# Python cells (`eval`)"), expected.is_some());
+        if let Some(discoverable) = expected {
+            assert!(system.contains("explicit approval"));
+            assert!(system.contains("await tool.read(file_path="));
+            assert!(system.contains("64 bridge calls") && system.contains("256 KiB"));
+            assert_eq!(system.contains("action: \"run\"`, `tool: \"eval\""), discoverable);
+        }
+    }
+}
