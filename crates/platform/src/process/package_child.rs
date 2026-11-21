@@ -281,7 +281,6 @@ impl PackageChild {
             Err(error) => Err(error),
         }
     }
-
 }
 
 impl Drop for PackageChild {
