@@ -23,23 +23,33 @@ horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]... [--gallery[=<scene>]]
+                 [--motion <full|reduced|static>]
+                 [--spinner-interval <ms>] [--max-fps <n>]
+                 [--hide-thinking]
 
 Options:
-  --socket <path>  Harness API socket to connect to (default: the resolved
-                   harness socket for this user)
-  --session <id>   Attach to an existing session instead of creating one
-  --cwd <dir>      Working directory for a newly created session
-  --config <file>  Extra settings file, read after the global and project
-                   files and before the environment (repeatable)
-  --gallery[=<scene>]
-                   Draw the built-in fixtures through the renderer and leave;
-                   no socket is opened and no session is read. Scenes:
-                   conversation, tools, error, prompt, unicode
-                   (default: conversation)
-  --hide-thinking  Hide the model's reasoning for this session, whatever
-                   transcript.show_reasoning says; ctrl+t toggles it again
-  -V, --version    Print the version and exit
-  -h, --help       Print this help and exit
+  --socket <path>           Harness API socket to connect to (default: the
+                            resolved harness socket for this user)
+  --session <id>            Attach to an existing session instead of creating one
+  --cwd <dir>               Working directory for a newly created session
+  --config <file>           Extra settings file, read after the global and
+                            project files and before the environment
+                            (repeatable)
+  --gallery[=<scene>]       Draw the built-in fixtures through the renderer and
+                            leave; no socket is opened and no session is read.
+                            Scenes: conversation, tools, error, prompt,
+                            unicode (default: conversation)
+  --motion <mode>           full, reduced or static; overrides the `motion`
+                            setting for this launch
+  --spinner-interval <ms>   Milliseconds one spinner frame stays, 40 to 2000;
+                            overrides `motion.spinner_interval`
+  --max-fps <n>             Most frames a second a streaming turn draws, 1 to
+                            240; overrides `motion.max_fps`
+  --hide-thinking           Hide the model's reasoning for this session,
+                            whatever `transcript.show_reasoning` says; ctrl+t
+                            toggles it again
+  -V, --version             Print the version and exit
+  -h, --help                Print this help and exit
 
 Gallery keys:
   n, Right, Tab     show the next fixture
@@ -66,14 +76,28 @@ Keys:
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
   Alt-P          pick the model this session uses
+  Alt-D          copy the draft to the terminal clipboard
+  Alt-K          copy the line under the cursor to the terminal clipboard
+  Alt-L          copy the last answer to the terminal clipboard
+  Alt-C          copy the newest code block to the terminal clipboard
+  While a replay plays, space pauses, left/right seek five seconds,
+  +/- change the speed, home/end jump to the start or the end, and esc
+  stops it.
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
-  the keys in force.
+  the keys in force. Copying uses the terminal's OSC 52 sequence: a
+  terminal or a multiplexer that does not take it keeps the text on
+  screen for selection. HORON_TUI_OSC52=0 turns copying off, and
+  HORON_TUI_OSC52=1 sends it anyway for a multiplexer or ssh session that
+  was configured to forward it.
 
 Commands:
   /help          list the commands (built-in, harness, command files),
                  the skills and the keys in force; /help <command>
                  describes one of them
   /clear         clear the transcript pane
+  /copy [last|code]
+                 open the list of recent answers and code blocks, or copy
+                 the last answer or the newest code block
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
@@ -81,12 +105,20 @@ Commands:
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
+  /record [path] record the conversation to a local file (stop, status)
+  /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
   //text         send the literal message /text
+
+Local shell (runs in this terminal, in the client's working directory; never
+sent to the model, the session or the daemon):
+  !command       run command and keep its output in the transcript
+  !!command      run command without keeping the command or its output
+                 (exit status is still shown); a command is stopped after 10s
 ";
 
 /// Rows the popup may show at once.
@@ -131,13 +163,27 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
     (
         ids::APP_EXPAND_TOOL,
-        "show the whole output of the newest cut tool call, or hide it again",
+        "show the whole output of the selected cut tool call, or hide it again",
+    ),
+    (
+        ids::APP_TOGGLE_TOOL_ACTIVITY,
+        "hide or show the record of finished tool calls",
     ),
     (
         ids::APP_CYCLE_EFFORT,
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (ids::APP_COPY_DRAFT, "copy the draft to the terminal clipboard"),
+    (
+        ids::APP_COPY_LINE,
+        "copy the line under the cursor to the terminal clipboard",
+    ),
+    (ids::APP_COPY_LAST, "copy the last answer to the terminal clipboard"),
+    (
+        ids::APP_COPY_CODE,
+        "copy the newest code block to the terminal clipboard",
+    ),
     (
         ids::APP_CYCLE_MODEL,
         "switch to the next model in models.shortlist, wrapping at the last one",
@@ -200,6 +246,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
+        "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
@@ -209,6 +256,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "new" => "start a new session in this directory",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
+        "record" => "record the conversation to a local file, or stop (stop, status)",
+        "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",

@@ -62,6 +62,9 @@ impl App {
                 self.transcript.clear();
                 None
             }
+            // Copying is answered here and written by the loop: the app decides
+            // what a copy carries and never touches the terminal.
+            Local::Copy => self.copy_command(arguments),
             // No argument asks for the list the picker draws; a name still
             // switches straight away, or waits for the turn to end, which is
             // what a script or a habit uses.
@@ -81,10 +84,7 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
-            Local::Settings => {
-                self.open_settings();
-                None
-            }
+            Local::Settings => self.open_settings(),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and
             // sends nothing to the harness.
@@ -96,6 +96,26 @@ impl App {
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
+            // `!command` and `!!command` are resolved by the registry, never
+            // by a slash name, and are run by this client alone.
+            Local::Shell => {
+                self.run_local_shell(arguments, false);
+                None
+            }
+            Local::ShellExcluded => {
+                self.run_local_shell(arguments, true);
+                None
+            }
+            // Neither asks the harness for anything: a recording is a local
+            // file, and a replay is local playback over it.
+            Local::Record => {
+                self.run_record(arguments);
+                None
+            }
+            Local::Replay => {
+                self.run_replay(arguments);
+                None
+            }
             // `/queue` opens the list of messages waiting for the running turn
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),

@@ -252,6 +252,9 @@ pub enum ApiEvent {
         /// Tools skipped by an urgent interrupt at point C.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tools_skipped: Option<u32>,
+        /// User-facing notice for a native tool retry. Ordinary interrupts omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notice: Option<String>,
         /// `system` or `background_task` for daemon-originated injections.
         /// Absent for user messages.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -806,6 +809,19 @@ pub enum ApiEvent {
         modes: crate::MessageModes,
     },
 
+    /// Reply to `GetEffectiveSettings`: the allow-listed daemon values a
+    /// settings screen displays, each with the layer that supplied it.
+    ///
+    /// Requires `effective_settings_v1`. The report names only keys the
+    /// allow-list holds, so a client that shows it cannot display a value the
+    /// server did not choose to report. The daemon behind the bridge produced
+    /// the rows from its own configuration; a bridge that cannot get them
+    /// answers `unsupported` instead of reporting its own environment.
+    EffectiveSettings {
+        session_id: String,
+        settings: Vec<crate::EffectiveSetting>,
+    },
+
     /// Forward-compatibility catch-all: clients must skip this silently.
     #[serde(other)]
     Unknown,
@@ -830,6 +846,7 @@ impl ApiEvent {
             }
             Self::BackgroundOutput { .. } => Some(crate::CAPABILITY_BACKGROUND_OUTPUT_V1),
             Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
+            Self::EffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
             _ => None,
         }
     }

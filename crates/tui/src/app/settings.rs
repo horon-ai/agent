@@ -1,16 +1,38 @@
 //! The settings screen and the settings that change behavior as they are
 //! applied, rather than on the next drawing call.
 
-use super::App;
+use super::{Action, App};
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
-use crate::settings::Settings;
+use crate::settings::{DaemonSettings, Motion, Settings};
 
 impl App {
     /// Show the settings screen, seeded from the settings in force.
-    pub fn open_settings(&mut self) {
+    ///
+    /// The daemon's own values are asked for at the same moment: the screen
+    /// opens on the local tabs without waiting, and the daemon tab fills in
+    /// when the answer lands. A connection that is already gone skips the ask
+    /// rather than reporting a failure the user cannot act on, and the tab says
+    /// the read cannot happen instead of waiting for a request that never left.
+    pub fn open_settings(&mut self) -> Option<Action> {
+        // Read before the overlay is built so the tab is seeded with the state
+        // it will keep. A previous answer stays as it is: it was true then, and
+        // the next connection may make it true again.
+        if self.disconnected && matches!(self.daemon_settings, DaemonSettings::Unknown) {
+            self.daemon_settings = DaemonSettings::Failed("the connection is closed".to_string());
+        }
         let mut overlay = SettingsOverlay::new(self.themes_dir.clone());
         overlay.refresh(&self.settings);
+        overlay.set_daemon(self.daemon_settings.clone());
         self.overlay = Some(overlay);
+        (!self.disconnected).then_some(Action::DaemonSettings)
+    }
+
+    /// The daemon's report arrived: keep it and redraw the tab if it is open.
+    pub fn show_daemon_settings(&mut self, settings: DaemonSettings) {
+        self.daemon_settings = settings.clone();
+        if let Some(overlay) = self.overlay.as_mut() {
+            overlay.set_daemon(settings);
+        }
     }
 
     /// Take the change the settings screen confirmed, for the caller to write.
@@ -25,7 +47,9 @@ impl App {
     /// reasoning as it streams, the editor asks before it sends, the mouse
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
     /// says so, the window title carries the turn state only while
-    /// `title.state` says so, and the model cycle walks `models.shortlist`.
+    /// `title.state` says so, and the model cycle walks `models.shortlist`. The
+    /// motion preset is read here too, so the renderer and the frame loop share
+    /// one snapshot.
     /// Whether the terminal is actually captured is the event loop's decision,
     /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
@@ -54,6 +78,13 @@ impl App {
             None => crate::tool_line::DEFAULT_OUTPUT_LINES,
         };
         self.transcript.set_tool_output_lines(output_lines);
+        // Finished tool lines take rows or give them back, which a held view
+        // has to recount the same way the expand key does.
+        let show_tool_activity = settings.boolean("transcript.show_tool_activity").unwrap_or(true);
+        if show_tool_activity != self.transcript.show_tool_activity() {
+            self.transcript.set_tool_activity(show_tool_activity);
+            self.scroll.reflow();
+        }
         // A terminal that already reported the wheel keeps doing so until the
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
@@ -68,6 +99,15 @@ impl App {
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
+        // The preset decides what the spinner draws and how often a quiet turn
+        // redraws; both are read here so the loop and the renderer agree on one
+        // snapshot. A refused number is reported once, naming the default that
+        // took its place.
+        let (motion, motion_warnings) = Motion::from_settings(settings);
+        self.motion = motion;
+        for warning in motion_warnings {
+            self.warn(format!("motion: {warning}"));
+        }
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

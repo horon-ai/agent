@@ -5,7 +5,8 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/keys`, `/clear`, `/model`, `/effort`, `/new`,
-//!    `/settings`, `/resume`, `/skills`, `/switch`, `/links` and `/queue`.
+//!    `/settings`, `/resume`, `/skills`, `/switch`, `/links`, `/queue`,
+//!    `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -23,6 +24,13 @@
 //! that starts with a slash. A line that starts with a slash and names nothing
 //! becomes an error line instead of a message, so a typo never reaches the
 //! model as prose.
+//!
+//! `!command` and `!!command` are the local shell. They are resolved before the
+//! slash forms, because they begin with a different character, and they run in
+//! the client's own working directory instead of the agent session: the
+//! command text comes from the submitted line and from nowhere else, and
+//! neither form sends anything to the harness. `!` keeps the output in the
+//! transcript; `!!` keeps neither the command nor its output.
 
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -32,8 +40,13 @@ use horon_agent_sdk::RuntimeCommand;
 
 mod parse;
 
+pub(crate) mod shell;
+
 #[cfg(test)]
 mod builtin_tests;
+
+#[cfg(test)]
+mod shell_tests;
 
 #[cfg(test)]
 mod skills_tests;
@@ -56,6 +69,8 @@ pub enum Local {
     Keys,
     /// Clear the transcript pane.
     Clear,
+    /// Copy the draft, an answer or a code block to the terminal clipboard.
+    Copy,
     /// Open the model picker, or switch to the model named.
     Model,
     /// Set the reasoning effort, or pick one from the ladder.
@@ -70,8 +85,16 @@ pub enum Local {
     Skills,
     /// Switch to another session, by id or from the list.
     Switch,
+    /// Run `!command` in this client, keeping its output in the transcript.
+    Shell,
+    /// Run `!!command` in this client, keeping neither the command nor its output.
+    ShellExcluded,
     /// List the http(s) links in the newest assistant answers and open one.
     Links,
+    /// Record the visible conversation to a local file, or stop.
+    Record,
+    /// Replay a recorded conversation, or stop the replay.
+    Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
 }
@@ -85,6 +108,7 @@ impl Local {
             "help" => Some(Self::Help),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
+            "copy" => Some(Self::Copy),
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
@@ -93,6 +117,8 @@ impl Local {
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
             "links" => Some(Self::Links),
+            "record" => Some(Self::Record),
+            "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
             _ => None,
         }
@@ -106,6 +132,7 @@ impl Local {
             Self::Help => "help",
             Self::Keys => "keys",
             Self::Clear => "clear",
+            Self::Copy => "copy",
             Self::Model => "model",
             Self::Effort => "effort",
             Self::New => "new",
@@ -113,7 +140,14 @@ impl Local {
             Self::Resume => "resume",
             Self::Skills => "skills",
             Self::Switch => "switch",
+            // The shell forms are typed with a `!` prefix, not a slash, so
+            // these names are only what a listing would call them. They are
+            // deliberately absent from `LOCAL_NAMES`.
+            Self::Shell => "shell",
+            Self::ShellExcluded => "shell",
             Self::Links => "links",
+            Self::Record => "record",
+            Self::Replay => "replay",
             Self::Queue => "queue",
         }
     }
@@ -392,8 +426,19 @@ impl Registry {
     }
 
     /// Resolve one typed line.
+    ///
+    /// The local shell is read first: `!!name` is excluded from the transcript,
+    /// `!name` keeps its output, and either with no command is an error rather
+    /// than prose. Only the submitted line is read here; the command text is
+    /// never taken from a transcript item, a tool result or a model message.
     pub fn resolve(&self, text: &str) -> Invocation {
         let trimmed = text.trim();
+        if let Some(rest) = trimmed.strip_prefix("!!") {
+            return shell_invocation(rest, Local::ShellExcluded);
+        }
+        if let Some(rest) = trimmed.strip_prefix('!') {
+            return shell_invocation(rest, Local::Shell);
+        }
         let Some(rest) = trimmed.strip_prefix('/') else {
             return Invocation::Message(text.to_string());
         };
@@ -596,9 +641,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 14] = [
-    "clear", "effort", "exit", "help", "keys", "links", "model", "new", "queue", "quit", "resume", "settings",
-    "skills", "switch",
+const LOCAL_NAMES: [&str; 17] = [
+    "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "queue", "quit", "record", "replay",
+    "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
@@ -695,6 +740,23 @@ fn expand_skill(skill: &Skill, display: &str, arguments: &str) -> Invocation {
 /// The line shown for `/skill:<name>` when the harness listed no such skill.
 fn unknown_skill(name: &str) -> String {
     format!("unknown skill `{name}`; /skills lists them")
+}
+
+/// The invocation a `!` line asks for, or the error an empty one earns.
+fn shell_invocation(command: &str, form: Local) -> Invocation {
+    let command = command.trim();
+    if command.is_empty() {
+        return Invocation::Error(shell_usage());
+    }
+    Invocation::Local {
+        command: form,
+        arguments: command.to_string(),
+    }
+}
+
+/// The line an empty `!` or `!!` leaves instead of running anything.
+pub(crate) fn shell_usage() -> String {
+    "a local shell command needs text: `!command` runs it, `!!command` runs it without keeping the command or its output".to_string()
 }
 
 /// Whether a name can be a skill's bare address.

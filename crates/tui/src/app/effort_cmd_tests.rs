@@ -280,7 +280,7 @@ fn the_answer_reaches_the_app_and_the_action_reaches_the_bridge() {
             level: Some("high".to_string()),
         })
         .expect("the app is listening");
-    assert!(crate::loop_io::drain_events(&mut app));
+    crate::loop_io::drain_events(&mut app);
     assert_eq!(app.status_data().effort, Some("high"));
     assert_eq!(app.status_data().model, Some("mock-model"));
 

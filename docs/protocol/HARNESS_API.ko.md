@@ -312,6 +312,8 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
 `getMessageModes`(TypeScript)로 제공합니다.
 
+텍스트 도구 호출을 재시도할 때 `soft_interrupt_injected`는 `point: "native_tool_retry"`와 화면에 표시할 선택 필드 `notice`를 보냅니다. 안내는 이어질 재시도를 설명합니다. 표시할 안내가 없는 인터럽트는 이 필드를 생략합니다.
+
 ## 도구 판정(프로토콜 1.19)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼습니다. 아래 내용은 모두
@@ -546,6 +548,62 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 ## 실시간 할 일 갱신(프로토콜 1.24)
 
 `hello.event_capabilities`에서 `live_todo_v1`을 요청하고 `hello_ok`에 같은 기능이 있는지 확인합니다. 데몬이 실시간 갱신을 지원해야 합니다. 할 일 변경을 저장하면 연결한 세션에 `session_id`가 담긴 `todo_changed`가 도착합니다. 이벤트에는 할 일 목록이 들어 있지 않습니다. 최초 `get_todo_state` 조회 전에 구독하고 연결 중인 세션의 변경 알림을 받으면 다시 조회합니다. 응답에는 최신 목록이 들어 있으므로 여러 알림에 한 번만 조회해도 됩니다. 기능을 요청하지 않은 클라이언트는 `todo_changed` 없이 목록을 계속 조회할 수 있습니다.
+
+## 데몬 유효 설정(프로토콜 1.25)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 24에서 25로 옮겼습니다. 이 요청을 보내지 않는 클라이언트는 이전과 같은 프레임을 읽으므로 모두 추가형입니다.
+
+클라이언트 자체 선호만 보여 주는 설정 화면으로는 턴이 왜 그렇게 동작하는지 설명할 수 없습니다. `get_effective_settings`는 **고정 허용 목록**에 있는 데몬 값과 그 값을 공급한 계층을 보고합니다. 전부 덤프가 아니라 목록입니다. 다른 키를 담는 필드도, 원본 파일 텍스트도 없으므로 설정 파일에 자격 증명이 들어 있어도 어떤 형태로든 클라이언트에 닿지 않습니다. `effective_settings_v1`이 이 쌍을 게이트합니다.
+
+### 요청: `get_effective_settings`
+
+```json
+{"v":1,"id":7,"req":"get_effective_settings","session_id":"s-1"}
+```
+
+| 필드 | 형식 | 필수 | 뜻 |
+| --- | --- | --- | --- |
+| `session_id` | 문자열 | 예 | 질문 대상 세션 |
+
+### 응답: `effective_settings`
+
+```json
+{"v":1,"reply_to":7,"ev":"effective_settings","session_id":"s-1",
+ "settings":[{"key":"provider.stream_idle_timeout_secs",
+              "label":"Stream idle timeout (seconds)",
+              "value":"240","source":"file","origin":"/home/u/.horon/config.toml"}]}
+```
+
+| 필드 | 형식 | 뜻 |
+| --- | --- | --- |
+| `key` | 문자열 | 설정 경로. 예: `provider.stream_idle_timeout_secs` |
+| `label` | 문자열 | 행에 보일 사람이 읽는 이름 |
+| `value` | 문자열 | 유효 값. 화면이 인쇄하는 그대로 |
+| `source` | `default`, `cli`, `file`, `env` | 값을 공급한 계층 |
+| `origin` | 문자열, `default`면 없음 | `source`가 가리키는 플래그, 파일 경로, 변수 이름 |
+
+`value`가 문자열인 이유는 화면이 그대로 인쇄하기 때문입니다. 클라이언트가 숫자를 직접 렌더링하면 어느 키가 숫자인지 알아야 하고, 그 지식은 모든 클라이언트가 아니라 허용 목록 옆에 있어야 합니다.
+
+### 허용 목록
+
+행은 `provider.openai_reasoning_effort`, `provider.anthropic_reasoning_effort`, `provider.stream_idle_timeout_secs`, `provider.max_retries`, `tools.profile`, `tools.mcp_tools`, `tools.approval_mode`, `tools.ask_policy`, `tools.secrets_mode`, `compaction.mode`, `messages.{follow_up,steering,interrupt}_mode`입니다. 데몬의 표에 키를 넣는 것만이 행을 만드는 방법이고, 그 밖의 값은 보고될 수 없습니다.
+
+### 동작
+
+답하는 쪽은 **데몬**입니다. 데몬이 실제로 불러온 설정으로 답합니다. 세션이 실제로 도는 프로세스는 데몬이고, 그 프로세스의 환경, 실행 플래그, 설정 파일이 곧 유효 값과 출처입니다. 브리지는 번역만 합니다. 내부 프로토콜로 `get_effective_settings`를 전달하고 돌아온 행을 그대로 넘깁니다. 표와 출처 판정은 `crates/base/src/effective_settings.rs`에 있고, `crates/app-core/src/server/effective_settings.rs`가 그 행을 이 응답으로 옮깁니다.
+
+데몬은 ping에서 `effective_settings_api`를 광고합니다. 브리지는 `effective_settings_v1`을 항상 광고하고, 뒤에 있는 데몬이 그 요청을 광고하지 않으면 그 기능 이름을 담은 구조화된 `unsupported`로 거부합니다. 옛 데몬은 모르는 요청에 id 없는 프레임으로 답하므로, 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다리게 됩니다. 옛 브리지(기능 자체를 광고하지 않음)와 옛 데몬(이름을 붙여 거부됨)은 클라이언트에게 같은 "이 데몬은 설정을 보고하지 않는다" 상태로 보입니다.
+
+계층은 근거가 강한 순서로 정합니다.
+
+1. `cli` — 실행기가 기록한 플래그입니다. 실행기는 `--tool-profile`, `--mcp-tools` 같은 플래그를 환경 변수로 바꾸므로, 환경만 보아서는 플래그와 사용자가 내보낸 변수를 구분할 수 없습니다. 아무것도 선택하지 않아 실행기가 고른 기본값은 아예 보고하지 않습니다. 변수는 존재하지만 사용자가 설정한 것이 아닙니다.
+2. `env` — 이 프로세스가 읽었고 데몬이 적용하는 변수입니다. 데몬이 무시하는 변수(0인 타임아웃, 파싱되지 않는 재시도 횟수, 모르는 모드)는 유효 값의 출처로 보고하지 않습니다.
+3. `file` — 유효 설정 파일입니다. 데몬이 하는 것과 같은 엄격한 파싱으로 한 번에 읽은 문서이고, 파일이 선언한 값이 데몬이 적용하는 값이며 유효 값과 같을 때만 출처가 됩니다. 파싱되지 않는 파일은 아무것도 공급하지 않았으므로 그 행은 `default`로 읽힙니다. 데몬이 거부하는 형식의 값도 마찬가지입니다. 예를 들어 `approval_mode = "nonsense"`는 기본값으로 떨어지고, 파일은 그 기본값의 출처가 되지 않습니다.
+4. `default` — 함께 배포된 값입니다.
+
+행은 데몬 자체 설정을 설명합니다. 세션이 실행 중에 자기 값만 바꾼 경우(예: `set_session_approval_mode`)는 여기에 반영되지 않습니다. 이 행은 데몬이 불러온 값을 보고하고, 한 세션이 나중에 덮어쓴 값은 보고하지 않습니다.
+
+쓰기는 없습니다. 요청은 구조상 읽기 전용이고, 읽지 못하는 클라이언트는 데몬 기본값으로 계속 동작합니다. SDK는 이 호출을 `get_effective_settings`(Rust, Python)와 `getEffectiveSettings`(TypeScript)로 노출하고, 기능이 광고되지 않았으면 보내기 전에 거부합니다. TUI의 `Daemon` 탭이 배포되는 소비자입니다.
 
 ## 세션 이벤트 저장소와 복제(프로토콜 1.12)
 

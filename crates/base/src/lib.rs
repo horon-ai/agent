@@ -37,6 +37,7 @@ pub mod crash;
 pub mod detected_emails;
 pub mod durable_input;
 pub mod durable_runtime;
+pub mod effective_settings;
 #[cfg(feature = "embeddings")]
 pub mod embedding;
 pub mod embedding_backend;

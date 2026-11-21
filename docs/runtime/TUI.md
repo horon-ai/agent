@@ -23,8 +23,11 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]] [--hide-thinking]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
 ```
+
+The three motion flags are per-launch overrides: they outrank every settings file and the environment, are shown as `command line` in the settings screen, and survive a reload of the files under them. A flag outside its range is an argument error, not a warning: `--max-fps 0` prints the expected range and exits with code 2.
 
 | Flag | Meaning |
 | --- | --- |
@@ -33,6 +36,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
 | `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
+| `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |
+| `--spinner-interval <ms>` | Spinner frame length for this launch, `40` to `2000` |
+| `--max-fps <n>` | Stream frame limit for this launch, `1` to `240` |
 | `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
@@ -71,6 +77,9 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
+| `motion.spinner_interval` | number | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
+| `motion.max_fps` | number | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
@@ -83,6 +92,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | boolean | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.show_tool_activity` | boolean | `true` | `HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY` |
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
@@ -90,13 +100,15 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
-The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
+The table is the settings registry (`crates/tui/src/settings/registry.rs`), twenty-one keys in its order, and it is what the settings screen draws.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
 
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`motion.preset` controls the indicator beside `running`. `full` cycles its glyphs, `reduced` holds the first glyph and `static` hides the indicator. `motion.spinner_interval` sets the minimum time a glyph stays visible, from `40` to `2000` milliseconds. `motion.max_fps` caps automatic redraws due to incoming text or spinner ticks in all presets, from `1` to `240` frames per second. At `max_fps = 4`, automatic redraws are at least 250 milliseconds apart. Input, resize and other events that need immediate feedback can redraw sooner. Out-of-range values are rejected with a warning that names the default in use.
 
 `appearance.changes = "accessible"` gives additions and deletions distinct colours in tool diffs and preserves their `+` and `-` marks. It also adjusts positive and negative status colours. Select `theme` to restore the theme's own colours.
 
@@ -110,6 +122,11 @@ The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working dire
 # ~/.horon/tui.toml
 theme = "dark"
 symbols = "nerd"
+
+[motion]
+preset = "reduced"
+spinner_interval = 120
+max_fps = 20
 
 [statusline]
 preset = "custom"
@@ -204,12 +221,17 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
-| `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
-| `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
+| `app.expand_tool` | `ctrl+o` | Expand or fold the selected retained tool result |
+| `app.toggle_tool_activity` | `alt+t` | Show or hide completed tool activity for this session |
+| `app.copy_code` | `alt+c` | Copy the newest code block in the latest answer |
+| `app.copy_last` | `alt+l` | Copy the latest answer |
+| `app.copy_draft` | `alt+d` | Copy the whole draft |
+| `app.copy_line` | `alt+k` | Copy the line under the cursor |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `app.cycle_model` | `ctrl+p` | Move forward through the model shortlist |
 | `app.cycle_model_back` | `ctrl+alt+p` | Move backward through the model shortlist |
+| `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
 | `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
 | `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
@@ -275,6 +297,8 @@ Set `transcript.turn_usage = true` to show elapsed time after each turn you star
 The client marks avoidable prompt cache misses after the request that caused them. A marker shows the cause and the approximate number of tokens resent, without prompt text or cache identifiers. A model or provider switch, expiry, or a documented invalidation leaves no marker. Set `[features] kv_cache_miss_notices = false` in the daemon's `config.toml` to turn off the reports.
 
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
+
+Scroll to an older retained tool result and press Ctrl+O to expand or fold it. Alt+T hides or restores completed tool rows. Running calls and pending approvals remain visible.
 
 Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
 
@@ -380,6 +404,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | Command | Effect |
 | --- | --- |
 | `/clear` | Clear the transcript pane |
+| `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
@@ -389,6 +414,8 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/new` | Start a new session in this directory |
 | `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
+| `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
+| `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
@@ -398,11 +425,18 @@ The table lists the built-in commands the client handles (`Local` in `crates/tui
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
+Copy uses an OSC 52 clipboard request. Set `HORON_TUI_OSC52=0` to turn it off, or set `HORON_TUI_OSC52=1` if your terminal forwards these requests through a multiplexer or SSH. When the terminal cannot accept the request, the text stays available for manual selection.
+
+Enter `!command` to run a shell command in the TUI process's working directory. The transcript shows the local directory before the command starts. `!!command` leaves only the directory and exit status in the transcript. Both forms keep the command and output out of the model conversation. The client runs one local command at a time and stops it after ten seconds. Retained output is limited to 200 lines and 32 KiB.
+
+`/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
+
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
 ```text
 built-in commands:
   /clear               clear the transcript
+  /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
@@ -411,6 +445,8 @@ built-in commands:
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /quit                leave
+  /record              record the conversation to a local file, or stop (stop, status)
+  /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
@@ -439,7 +475,9 @@ Every other harness command prints the message the daemon wrote, except one whos
 
 `/settings` is generated from the settings registry: one row per key, grouped into the Appearance, Status line, Editor and Transcript tabs, with the label and description the registry declares. Each row also shows the layer the value came from.
 
-Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone.
+A fifth tab, `Daemon`, is not built from the registry: it lists the daemon values this client may only read, which the daemon reports through `get_effective_settings` on the harness API. Each row shows the label, the value in force and where it came from (`daemon default`, `cli <FLAG>`, `env <NAME>`, or the config file path). Nothing on this tab is editable and `enter` there changes nothing, because the daemon owns those values; `r` asks for them again. Opening the screen asks once, and the tab says `reading the daemon settings` until the answer lands. A daemon or bridge that predates the request cannot report them, and the tab then says so while every local tab keeps working. A read that fails settles the tab instead of leaving it on that sentence: it says the settings could not be read and keeps the reason on the footer.
+
+Press `/` to search all tabs by setting label, key or description. The results list shows the tab for each match. Press Enter to keep the filter and return to the rows. Searching and moving among results leave the values alone. A filter covers only the registry's rows: it moves the screen to the tab of the match it lands on, and no daemon row is ever listed.
 
 | Key | Effect |
 | --- | --- |
@@ -448,6 +486,7 @@ Press `/` to search all tabs by setting label, key or description. The results l
 | `left`, `tab` | Move to the previous tab |
 | `right`, `shift+tab` | Move to the next tab |
 | `enter` | Open the editor or the pick list of the row, or confirm |
+| `r` | On the `Daemon` tab, read the daemon's values again |
 | `esc` | Close the editor or pick list, then clear the search, then close the screen |
 
 A value that the key's type rejects is shown as an inline error and nothing is written. A save goes to the global `tui.toml` only; the project and `--config` layers are never rewritten.

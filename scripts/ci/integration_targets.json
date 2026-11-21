@@ -19,7 +19,7 @@
     {
       "package": "horon-agent",
       "target": "acp_lifecycle",
-      "min_passed": 11
+      "min_passed": 14
     },
     {
       "package": "horon-agent",

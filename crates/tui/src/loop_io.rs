@@ -1,23 +1,42 @@
-//! What the frame loop hands over between frames.
+//! What the frame loop hands over between frames, and when the next frame is due.
 //!
 //! Deliveries from the bridge become app state, a keystroke's action goes out to
 //! the bridge thread, and the terminal's mouse capture follows the setting that
 //! asks for it. None of it draws, which is what keeps it out of the renderer and
-//! testable on its own.
+//! testable on its own; the one exception is the frame the loop has already
+//! decided is due, handed straight back to the client's `draw`.
+//!
+//! The last piece is [`Frames`]: the one thing that decides whether a frame is
+//! due, so an idle screen stays untouched and a streaming one animates at the
+//! cadence the motion settings allow.
+
+use std::time::{Duration, Instant};
+
+use horon_agent_sdk::api::ApiEvent;
+use ratatui::Terminal;
+use ratatui::backend::Backend;
 
 use crate::app::{Action, App};
+use crate::clipboard::{self, Prepared};
 use crate::scroll;
 use crate::sdk_bridge::{Command, Incoming};
 
-/// Move every buffered SDK delivery into the app state, reporting whether
-/// anything arrived.
+/// How long the loop waits for a keystroke before looking at the screen again.
 ///
-/// The report is what drives the redraw: an empty queue leaves the screen as it
-/// is. A closed bridge is a real end of the session, not an empty queue: the
-/// channel only reports it once, so treating it as "nothing yet" would leave the
-/// interface showing a dead connection forever.
-pub(crate) fn drain_events(app: &mut App) -> bool {
-    let mut changed = false;
+/// This is a bound on input latency, not a frame rate: a key waits for it, so it
+/// stays short whatever the motion settings say.
+pub(crate) const POLL: Duration = Duration::from_millis(50);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Redraw {
+    None,
+    Stream,
+    Immediate,
+}
+
+/// Apply buffered events, keeping text-only updates on the stream cadence.
+pub(crate) fn drain_events(app: &mut App) -> Redraw {
+    let mut changed = Redraw::None;
     loop {
         let delivery = match app.events.try_recv() {
             Ok(delivery) => delivery,
@@ -27,14 +46,21 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                 // daemon is more use than "the bridge stopped", and the banner
                 // is what the user reads, so it must not change under them.
                 app.disconnect("the harness bridge stopped");
-                changed = true;
+                changed = Redraw::Immediate;
                 break;
             }
         };
         let previously_changed = changed;
-        changed = true;
+        changed = Redraw::Immediate;
         match delivery {
-            Incoming::Event(event) => app.apply_event(&event),
+            Incoming::Event(event) => {
+                if matches!(&*event, ApiEvent::TextDelta { .. } | ApiEvent::ReasoningDelta { .. })
+                    && previously_changed != Redraw::Immediate
+                {
+                    changed = Redraw::Stream;
+                }
+                app.apply_event(&event);
+            }
             Incoming::Notice(message) => app.warn(message),
             Incoming::SendFailed { text, message, lost } => app.send_failed(&text, &message, lost),
             Incoming::Info(message) => app.transcript.push_notice(message),
@@ -46,7 +72,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                     let panel = crate::todo_panel::TodoPanel::from_items(&items);
                     if app.todos != panel {
                         app.todos = panel;
-                        changed = true;
+                        changed = Redraw::Immediate;
                     }
                 }
             }
@@ -57,6 +83,7 @@ pub(crate) fn drain_events(app: &mut App) -> bool {
                 effort,
                 level,
             } => app.runtime_info(provider, model, effort, level),
+            Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
             Incoming::Skills(rows) => app.show_skills(rows),
             // The answer names the text it settles, so a steer the client no
@@ -111,6 +138,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
+        Action::DaemonSettings => Command::DaemonSettings,
         Action::Quit => {
             app.running = false;
             return;
@@ -150,4 +178,144 @@ pub(crate) fn sync_mouse_capture(app: &mut App, captured: &mut bool) -> bool {
     }
     *captured = false;
     true
+}
+
+/// Write the copy the app queued, if any, and say what became of it.
+///
+/// The terminal is the only clipboard this client has, so the terminal is asked
+/// first: one that cannot take the sequence gets a sentence naming why, and the
+/// text stays on screen for the terminal's own selection instead of a copy that
+/// silently never arrives. A copy that does leave is reported with what it
+/// carried, because the cap and the control-character filter can both change it.
+pub(crate) fn flush_copy(app: &mut App, out: &mut impl std::io::Write, env: impl Fn(&str) -> Option<String>) -> bool {
+    let Some(request) = app.take_copy() else {
+        return false;
+    };
+    if let Err(refusal) = clipboard::support(&env) {
+        app.warn(format!(
+            "copy: {}; {} stays on screen to select with the terminal",
+            refusal.reason(),
+            request.label
+        ));
+        return true;
+    }
+    let prepared = clipboard::prepare(&request.text);
+    let Some(sequence) = clipboard::sequence(&prepared) else {
+        app.warn(format!("copy: {} holds nothing to copy", request.label));
+        return true;
+    };
+    match clipboard::write(out, &sequence) {
+        Ok(()) => app.transcript.push_notice(copy_notice(&request.label, &prepared)),
+        Err(error) => app.warn(format!("copy: the terminal did not take the sequence: {error}")),
+    }
+    true
+}
+
+/// The line the transcript keeps after a copy left the client.
+fn copy_notice(label: &str, prepared: &Prepared) -> String {
+    let characters = prepared.text.chars().count();
+    let mut line = format!("asked the terminal to copy {label} ({characters} characters");
+    if prepared.truncated {
+        line.push_str(&format!(", cut from {} bytes", prepared.total));
+    }
+    if prepared.dropped > 0 {
+        line.push_str(&format!(", {} control characters left out", prepared.dropped));
+    }
+    line.push(')');
+    line
+}
+
+/// Draw the one frame this pass owes, if any.
+///
+/// A settings file, the settings screen and a launch flag all end in one
+/// applied snapshot, so the cadence is adopted here and a changed preset takes
+/// effect without waiting for the next event. A frame is due when something
+/// changed, when the scheduler says the spinner is due, or on its first pass;
+/// an idle screen reaches none of those and is left untouched.
+pub(crate) fn draw_due<B>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    frames: &mut Frames,
+    changed: bool,
+) -> Result<(), String>
+where
+    B: Backend,
+    B::Error: std::fmt::Display,
+{
+    frames.retune(app.motion);
+    if changed {
+        frames.request();
+    }
+    let Some(frame) = frames.due(app.animating(), Instant::now()) else {
+        return Ok(());
+    };
+    app.motion_frame = frame;
+    crate::draw(terminal, app).map_err(|error| error.to_string())
+}
+
+/// Schedule automatic frames without delaying input or advancing the spinner
+/// on every redraw. The loop supplies one timestamp per scheduling pass.
+pub(crate) struct Frames {
+    motion: crate::settings::Motion,
+    pending: bool,
+    stream: bool,
+    last_draw: Instant,
+    last_spinner: Option<Instant>,
+    frame: usize,
+}
+
+impl Frames {
+    pub fn new(motion: crate::settings::Motion, now: Instant) -> Self {
+        Self {
+            motion,
+            pending: true,
+            stream: false,
+            last_draw: now,
+            last_spinner: None,
+            frame: 0,
+        }
+    }
+
+    /// Apply a new cadence immediately and restart the indicator.
+    pub fn retune(&mut self, motion: crate::settings::Motion) {
+        if self.motion != motion {
+            self.motion = motion;
+            self.last_spinner = None;
+            self.frame = 0;
+            self.request();
+        }
+    }
+
+    pub fn request(&mut self) {
+        self.pending = true;
+    }
+
+    pub fn request_stream(&mut self) {
+        self.stream = true;
+    }
+
+    pub fn due(&mut self, animate: bool, now: Instant) -> Option<usize> {
+        let mut spinner_due = false;
+        if let Some(interval) = self.motion.frame_interval().filter(|_| animate) {
+            let last = *self.last_spinner.get_or_insert(now);
+            spinner_due = now.duration_since(last) >= interval;
+        } else {
+            self.last_spinner = None;
+            self.frame = 0;
+        }
+
+        let automatic =
+            (self.stream || spinner_due) && now.duration_since(self.last_draw) >= self.motion.stream_interval();
+        if !self.pending && !automatic {
+            return None;
+        }
+        if spinner_due {
+            self.last_spinner = Some(now);
+            self.frame = self.frame.wrapping_add(1);
+        }
+        self.pending = false;
+        self.stream = false;
+        self.last_draw = now;
+        Some(self.frame)
+    }
 }

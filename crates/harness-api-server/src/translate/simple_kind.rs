@@ -35,6 +35,8 @@ pub(crate) enum SimpleKind {
     BackgroundWorkList,
     /// Awaiting `runtime_state`.
     RuntimeState,
+    /// Awaiting `effective_settings`.
+    EffectiveSettings,
     /// Awaiting `control_receipt`.
     ControlReceipt,
     /// Awaiting `snapshot_result`.

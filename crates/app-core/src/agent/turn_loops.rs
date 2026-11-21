@@ -119,7 +119,7 @@ impl Agent {
         // so the index is built here exactly as `tool_definitions` builds it.
         self.ensure_listed_tools_index().await;
         let tools = self.tool_definitions_for_debug().await;
-        let split_prompt = self.build_system_prompt_split(None);
+        let split_prompt = self.build_request_system_prompt(&tools);
         (
             Arc::clone(&self.provider),
             tools,
@@ -638,7 +638,7 @@ impl Agent {
             // compacting the request history. This is the first point where the
             // stable request settings are available.
             let mut tools = self.tool_definitions().await;
-            let mut split_prompt = self.build_system_prompt_split(None);
+            let mut split_prompt = self.build_request_system_prompt(&tools);
             self.provider
                 .prewarm_with_context(&tools, &split_prompt.static_part, &self.provider_request_context())
                 .await;
@@ -655,7 +655,7 @@ impl Agent {
                 // Compaction clears the tool lock, so rebuild the foreground
                 // request metadata rather than relying on the pre-compaction snapshot.
                 tools = self.tool_definitions().await;
-                split_prompt = self.build_system_prompt_split(None);
+                split_prompt = self.build_request_system_prompt(&tools);
             }
 
             // `messages` is this turn's single owned request snapshot. Memory and
@@ -1415,8 +1415,6 @@ impl Agent {
                 cache_creation_input_tokens: usage_cache_creation,
             };
 
-            let text_tool_recovery = self.recover_text_wrapped_tool_call(&mut text_content, &mut tool_calls);
-
             let visible_text_is_empty = text_content.trim().is_empty();
 
             // Add assistant message to history. Avoid persisting whitespace-only text as a
@@ -1497,10 +1495,11 @@ impl Agent {
 
             // If no tool calls, we're done
             if tool_calls.is_empty() {
-                // Unparseable tool-call markup in the text (issue #1702):
-                // surface it and ask the model to re-issue the call natively.
-                if let Some(notice) =
-                    self.maybe_nudge_unparsed_tool_markup(&text_tool_recovery, stop_reason.as_deref())?
+                // Ask for a native call before retrying a text-only tool attempt.
+                if saw_message_end
+                    && !tools.is_empty()
+                    && let Some(notice) =
+                        self.maybe_nudge_unparsed_tool_markup(&text_content, stop_reason.as_deref())?
                 {
                     if print_output {
                         println!("\n{}", notice);

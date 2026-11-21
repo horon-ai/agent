@@ -137,7 +137,6 @@ pub use horon_agent_agent_runtime::{
 use interrupts::{InFlightGuard, NoToolCallOutcome, PostToolInterruptOutcome};
 
 const HORON_AGENT_NATIVE_TOOLS: &[&str] = &["communicate"];
-static RECOVERED_TEXT_WRAPPED_TOOL_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static HORON_AGENT_REPO_SOURCE_STATE: LazyLock<(Option<String>, Option<bool>)> = LazyLock::new(|| {
     crate::build::get_repo_dir()
         .map(|repo_dir| {

@@ -92,6 +92,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
 
     if let Some(tool_profile) = args.tool_profile.as_deref() {
         crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
+        crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
     }
     if let Some(tools) = args.tools.as_deref() {
         crate::env::set_var("HORON_AGENT_TOOLS", tools);
@@ -104,6 +105,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     }
     if let Some(mcp_tools) = args.mcp_tools.as_deref() {
         crate::env::set_var("HORON_AGENT_MCP_TOOLS", mcp_tools);
+        crate::effective_settings::record_launch_flag("HORON_AGENT_MCP_TOOLS", "--mcp-tools");
     }
     if let Some(threshold) = args.mcp_tools_token_threshold {
         crate::env::set_var("HORON_AGENT_MCP_TOOLS_TOKEN_THRESHOLD", threshold.to_string());
@@ -443,6 +445,7 @@ fn apply_default_tool_profile(flag_profile: Option<&str>) {
     {
         crate::env::set_var("HORON_AGENT_TOOL_PROFILE", default_profile);
         crate::config::Config::set_loaded_tool_profile(default_profile);
+        crate::effective_settings::record_launch_default("HORON_AGENT_TOOL_PROFILE");
     }
 }
 

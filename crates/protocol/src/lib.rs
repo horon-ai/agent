@@ -638,6 +638,7 @@ impl Request {
             Request::GetRuntimeState { id }
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
+            | Request::GetEffectiveSettings { id }
             | Request::GetSnapshot { id, .. } => *id,
             Request::CommMessage { id, .. } => *id,
             Request::CommList { id, .. } => *id,

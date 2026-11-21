@@ -5,6 +5,8 @@
 //! `lib.rs` is at its code-size budget and production code keeps the room;
 //! `streaming_tests.rs` is the same arrangement for streamed text.
 
+use std::time::Duration;
+
 use super::*;
 use crate::app::Action;
 use crate::transcript::ToolState;
@@ -107,6 +109,27 @@ fn args_parse_repeated_config_files() {
     }
     assert!(Args::parse(["--config".to_string()]).is_err());
     assert!(Args::parse(["--config=".to_string()]).is_err());
+}
+
+#[test]
+fn args_parse_motion_flags_with_both_spellings() {
+    let parsed = Args::parse([
+        "--motion".to_string(),
+        "reduced".to_string(),
+        "--spinner-interval=120".to_string(),
+        "--max-fps".to_string(),
+        "12".to_string(),
+    ])
+    .expect("a parse");
+    assert_eq!(parsed.motion, Some(crate::settings::MotionMode::Reduced));
+    assert_eq!(parsed.spinner_interval, Some(120));
+    assert_eq!(parsed.max_fps, Some(12));
+
+    assert!(Args::parse(["--motion".to_string(), "slow".to_string()]).is_err());
+    assert!(Args::parse(["--motion".to_string()]).is_err());
+    assert!(Args::parse(["--spinner-interval".to_string(), "10".to_string()]).is_err());
+    assert!(Args::parse(["--max-fps".to_string(), "0".to_string()]).is_err());
+    assert!(Args::parse(["--max-fps".to_string()]).is_err());
 }
 
 #[test]
@@ -497,7 +520,7 @@ fn ctrl_t_hides_later_reasoning_and_the_choice_outlives_an_unrelated_reload() {
 fn the_settings_screen_keeps_the_toggle_key_to_itself() {
     let mut app = app_with(None);
     app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
-    app.open_settings();
+    let _ = app.open_settings();
 
     assert_eq!(app.on_key(ctrl('t')), None);
     assert!(
@@ -980,7 +1003,7 @@ fn the_repaint_key_answers_under_every_surface_without_taking_its_keys() {
     // points it at an empty one instead of the user's own themes folder.
     let themes = tempfile::tempdir().expect("a temporary theme directory");
     app.themes_dir = themes.path().to_path_buf();
-    app.open_settings();
+    let _ = app.open_settings();
     app.on_key(key(crossterm::event::KeyCode::Down));
     let selected = app
         .overlay
