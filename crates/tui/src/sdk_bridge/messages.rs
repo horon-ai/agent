@@ -55,6 +55,10 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// List the recorded boundaries this session can fork from.
+    Forks,
+    /// Fork a new session from the named stored message and follow it.
+    Fork(String),
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one
@@ -131,6 +135,9 @@ pub enum Incoming {
     DaemonSettings(crate::settings::DaemonSettings),
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// The recorded message boundaries this session can fork from, newest
+    /// first. Each row names a stored message id, not an index.
+    Forks(Vec<super::ForkRow>),
     /// Noted sessions that no longer exist, and how many could not be checked.
     SessionsChecked { gone: Vec<String>, unverified: usize },
     /// The skills the harness reports for the session it serves.

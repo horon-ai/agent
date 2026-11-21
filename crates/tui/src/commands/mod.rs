@@ -5,7 +5,7 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
+//!    `/effort`, `/new`, `/fork`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
 //!    `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -79,6 +79,8 @@ pub enum Local {
     Effort,
     /// Start a new session in this working directory.
     New,
+    /// Fork a new session from a recorded message boundary.
+    Fork,
     /// Open the settings screen.
     Settings,
     /// Resume a session stored for this working directory.
@@ -117,6 +119,7 @@ impl Local {
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
+            "fork" | "branch" => Some(Self::Fork),
             "settings" => Some(Self::Settings),
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
@@ -143,6 +146,7 @@ impl Local {
             Self::Model => "model",
             Self::Effort => "effort",
             Self::New => "new",
+            Self::Fork => "fork",
             Self::Settings => "settings",
             Self::Resume => "resume",
             Self::Skills => "skills",
@@ -649,9 +653,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 20] = [
+    "artifact", "clear", "copy", "effort", "exit", "fork", "help", "keys", "links", "model", "new", "note", "queue",
+    "quit", "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

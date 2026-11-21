@@ -600,6 +600,17 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            terminal.send("tui-fork-boundary-proof\r")
+            terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
+            terminal.send("/fork\r")
+            terminal.read_until("Fork from a message", STEP_TIMEOUT, "choose a saved message boundary")
+            terminal.send("tui-fork-boundary-proof\r")
+            terminal.read_until("resumed session_", STEP_TIMEOUT, "the fork was saved and attached")
+            terminal.send("/fork\r")
+            terminal.read_until("back to", STEP_TIMEOUT, "the fork menu can return to the parent")
+            terminal.send("\r")
+            terminal.read_until("attaching to session_", STEP_TIMEOUT, "return to the parent")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

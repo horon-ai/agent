@@ -722,7 +722,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name == "hint":
+        if plan_name == "hint" or prompt == "tui-fork-boundary-proof":
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -890,7 +890,10 @@ class Handler(BaseHTTPRequestHandler):
             "tool": tool_name,
             "arguments": arguments,
             "namespace": namespace if calls_tool else None,
-            "text": ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT,
+            "text": (
+                "fork-boundary-ready" if prompt == "tui-fork-boundary-proof"
+                else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT
+            ),
             "model": body.get("model") or MOCK_MODEL,
             "stream": bool(body.get("stream")),
         }

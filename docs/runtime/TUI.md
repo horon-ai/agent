@@ -428,6 +428,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
+| `/fork` | Start a separate saved session from a recorded history boundary |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
@@ -442,6 +443,8 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+
+Choose a saved user message in `/fork` to start a separate session containing the conversation before that message. The parent keeps its full history. In the new session, `/fork` also offers a row to return to the parent. The daemon refuses a history boundary that disappeared after the picker opened.
 
 The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
 
@@ -464,6 +467,7 @@ built-in commands:
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
+  /fork                start a separate session from a saved history point
   /help                list the commands and the keys in force
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one

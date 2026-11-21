@@ -1593,6 +1593,27 @@ class HoronAgentClient:
             raise HarnessError("unexpected_reply", "session_forked without a session")
         return session
 
+    async def fork_session_at(self, session_id: str, boundary_message_id: str) -> dict[str, Any]:
+        """Fork the messages recorded before ``boundary_message_id`` into a new session.
+
+        The boundary is a stored message id from the source's history, not an
+        index. A boundary the source no longer records is refused and the source
+        is left untouched. Requires ``session_fork_at_v1``.
+        """
+        self._require_capability("session_fork_at_v1", "fork_session_at")
+        frame = await self._expect_reply(
+            {
+                "req": "fork_session_at",
+                "session_id": session_id,
+                "boundary_message_id": boundary_message_id,
+            },
+            "session_forked",
+        )
+        session = frame.get("session")
+        if not isinstance(session, dict):
+            raise HarnessError("unexpected_reply", "session_forked without a session")
+        return session
+
     async def transfer_session(self, session_id: str) -> dict[str, Any]:
         frame = await self._expect_reply({"req": "transfer_session", "session_id": session_id}, "session_forked")
         session = frame.get("session")
