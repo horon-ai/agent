@@ -241,10 +241,20 @@ pub struct WireNotification {
 pub struct WireResponse {
     pub jsonrpc: JsonRpcVersion,
     pub id: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_result",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub result: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<RpcError>,
+}
+
+fn deserialize_result<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Value>, D::Error> {
+    // A present `null` is a successful JSON-RPC result. Only an absent field
+    // may default to `None`.
+    Value::deserialize(deserializer).map(Some)
 }
 
 impl WireResponse {
@@ -378,6 +388,9 @@ pub fn parse_frame(frame: &[u8]) -> Result<WireFrame, FrameError> {
         (true, true) => deserialize::<WireRequest>(value).map(WireFrame::Request),
         (true, false) => deserialize::<WireNotification>(value).map(WireFrame::Notification),
         (false, true) => {
+            if object.contains_key("result") == object.contains_key("error") {
+                return Err(FrameError::InvalidResponse);
+            }
             let response = deserialize::<WireResponse>(value)?;
             if !response.is_exclusive() {
                 return Err(FrameError::InvalidResponse);

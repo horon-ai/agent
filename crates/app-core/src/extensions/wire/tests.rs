@@ -574,10 +574,19 @@ async fn a_silent_peer_hits_the_read_deadline() {
 }
 
 #[tokio::test]
-async fn a_response_with_both_result_and_error_is_refused() {
-    let frame = br#"{"jsonrpc":"2.0","id":7,"result":null,"error":{"code":-32603,"message":"both"}}"#;
-    let error = parse_frame(frame).expect_err("exactly one of result and error is the answer");
-    assert_eq!(error, FrameError::InvalidResponse);
+async fn a_response_requires_exactly_one_result_or_error_field() {
+    for invalid in [
+        br#"{"jsonrpc":"2.0","id":7,"result":null,"error":{"code":-32603,"message":"both"}}"#.as_slice(),
+        br#"{"jsonrpc":"2.0","id":7,"result":true,"error":null}"#.as_slice(),
+        br#"{"jsonrpc":"2.0","id":7}"#.as_slice(),
+        br#"{"jsonrpc":"2.0","id":7,"error":null}"#.as_slice(),
+    ] {
+        assert_eq!(parse_frame(invalid), Err(FrameError::InvalidResponse));
+    }
+    let frame = br#"{"jsonrpc":"2.0","id":7,"result":null}"#;
+    let response = WireResponse::reply(7, Value::Null);
+    assert_eq!(parse_frame(frame), Ok(WireFrame::Response(response.clone())));
+    assert_eq!(serde_json::from_slice::<WireResponse>(frame).unwrap(), response);
 }
 
 #[tokio::test]
