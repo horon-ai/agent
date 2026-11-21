@@ -440,6 +440,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
+| `/rename <title>` | Save a title for the attached session and update the window title after the daemon confirms |
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
@@ -476,6 +477,7 @@ built-in commands:
   /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
+  /rename              save a title for the current session
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
