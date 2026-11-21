@@ -30,6 +30,7 @@ mod runtime;
 mod sessions;
 mod skills;
 mod steer;
+mod swarm;
 
 #[cfg(test)]
 mod jobs_tests;
@@ -48,6 +49,7 @@ mod skills_tests;
 
 pub use jobs::BackgroundJobRow;
 pub use messages::{Command, Incoming};
+pub use swarm::SwarmRow;
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -654,6 +656,10 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         }
         Command::Tools => client.list_tools(session_id).map(|tools| Some(Incoming::Tools(tools))),
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
+        // `/swarm` shows this session's own children; the rows are narrowed to
+        // its lineage before they leave the bridge, so the list cannot name a
+        // session outside the swarm it belongs to.
+        Command::Swarm => Ok(Some(Incoming::Swarm(swarm::rows(client, session_id)?))),
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
@@ -726,6 +732,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Sessions { .. }
         | Command::Tools
         | Command::CheckSessions(_)
+        | Command::Swarm
         | Command::Skills { .. }
         | Command::BackgroundJobs
         | Command::CancelBackgroundTerminal(_)
@@ -780,6 +787,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
+        Command::Swarm => "could not list the swarm children",
         Command::Skills { .. } => "could not list the skills",
         Command::BackgroundJobs => "could not list the background jobs",
         Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",

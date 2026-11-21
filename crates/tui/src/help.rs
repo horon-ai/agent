@@ -290,6 +290,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
+        "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
         "switch" => "move to another stored session, or pick one from the list",
         "tools" => "browse the current session's enabled tools without running them",
         "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
