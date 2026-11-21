@@ -1207,8 +1207,8 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
 
 # Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
 # client a POSIX signal: only a POSIX host can drive either.
-POSIX_ONLY_CASES = {5, 6, 7, 8, 9}
-ALL_CASES = tuple(range(1, 10))
+POSIX_ONLY_CASES = {5, 6, 7, 8, 9, 10}
+ALL_CASES = tuple(range(1, 11))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
     """A client killed by a signal still gives the terminal back (#431).
@@ -1442,6 +1442,22 @@ def run_build_layout(
             with open(transcript, "a", encoding="utf-8") as handle:
                 handle.write("\n--- model preset ---\n" + text)
         log("case 9 passed")
+    if 10 in cases:
+        log("case 10: the terminal names the active launch profile")
+        case_root = os.path.join(root, "profile")
+        launch = build_launch(case_root, agent, tui)
+        home = write_config(launch.home, base_url)
+        env = horon_env(case_root, home)
+        env["HORON_PROFILE"] = "work"
+        terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+        try:
+            terminal.read_until("profile: work", STEP_TIMEOUT, "active profile shown")
+            terminal.send("/quit\r")
+            if terminal.wait(STEP_TIMEOUT) != 0:
+                raise Failure("profile session failed to exit cleanly")
+        finally:
+            terminal.close()
+        log("case 10 passed")
     return 0
 
 

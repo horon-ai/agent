@@ -205,4 +205,5 @@ docker run --rm ghcr.io/horon-ai/agent:latest --version
 - 같은 이름의 다른 프로그램은 덮어쓰지 않는다. 유닉스는 `horon-agent`를 가리키는 심볼릭 링크만, Windows는 이전 런처와 바이트가 같은 복사본만 우리 것으로 보고 교체한다. 그 밖의 파일이 있으면 별칭 없이 설치가 끝난다.
 - `uninstall.sh`와 `uninstall.ps1`도 같은 기준으로 별칭만 지운다.
 - 도움말과 `--version`은 어느 이름으로 실행해도 `horon-agent`로 표시한다(`#[command(name = "horon-agent")]`).
+- `--isolated-profile <name>`은 격리된 로컬 프로필을 고른다. 설정, 인증 자료, 세션은 `$HORON_HOME/profiles/<name>`에 두고, daemon과 API 소켓은 별도 런타임 디렉터리를 쓴다. 이름은 소문자, 숫자, 하이픈으로 1자부터 32자까지다. `--socket`이나 `--ssh`와 함께 쓸 수 없고, 옵션을 생략하면 기존 `HORON_HOME`과 소켓 환경 변수를 그대로 쓴다. `horon --isolated-profile work --show-profile`은 경로와 `alias horon-work='horon --isolated-profile work'`를 출력하며, Horon은 셸 설정 파일을 고치지 않는다. 터미널은 시작할 때 `profile: <name>`을 표시한다.
 - 데이터 디렉터리는 `~/.horon`(`HORON_HOME`)이고 프로젝트 안 설정은 `.horon/`이다. v0.1.1까지의 릴리스는 `~/.horon-agent`를 썼고, 지금 코드는 그 경로를 읽지 않는다.

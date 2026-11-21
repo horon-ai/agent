@@ -133,6 +133,14 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
 
+    /// Isolated local profile: separate config, sessions, credentials and daemon sockets.
+    #[arg(long = "isolated-profile", global = true, value_name = "NAME", conflicts_with_all = ["socket", "ssh"])]
+    pub(crate) isolated_profile: Option<String>,
+
+    /// Print the active profile, its paths and a shell alias example, then exit.
+    #[arg(long, global = true)]
+    pub(crate) show_profile: bool,
+
     /// Model to use (e.g., claude-opus-4-6, gpt-5.5)
     #[arg(short, long, global = true)]
     pub(crate) model: Option<String>,

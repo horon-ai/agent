@@ -70,6 +70,17 @@ async fn run_with_args(args: Args) -> Result<()> {
     if let Some(result) = offline_command(&args) {
         return result;
     }
+    if let Some(name) = args.isolated_profile.as_deref() {
+        let profile = super::launch_profile::select(name)?;
+        super::launch_profile::apply(&profile)?;
+        if args.show_profile {
+            println!("{}", super::launch_profile::describe(&profile));
+            return Ok(());
+        }
+    } else if args.show_profile {
+        println!("profile: none (HORON_HOME and socket environment unchanged)");
+        return Ok(());
+    }
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
     // Snapshot user-supplied provider env before provider init rewrites it.
     super::provider_init::capture_user_openrouter_model_env();
