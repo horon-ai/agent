@@ -269,6 +269,8 @@ Nothing is injected when the user cancels a turn. `inject_soft_interrupts` retur
 
 With `[features] stream_rules` on, a rule violation detected mid-stream injects a message over the same event channel. That path uses the point name `S` (`crates/app-core/src/agent/stream_rules.rs:42`, `crates/app-core/src/agent/turn_streaming_mpsc.rs:738-780`). It is separate from the user input queue, and when the switch is off the matcher is never created (`crates/app-core/src/agent/stream_rules.rs:83-90`).
 
+Run `horon stream-rules` to validate configured rule IDs, patterns, scopes, and path globs offline. `horon stream-rules 'sample response'` previews which text rules match and shows their delivery modes. Pass `-` to read up to 64 KiB of UTF-8 from stdin. The preview uses the runtime's rolling text window and an empty turn history. It runs even with `[features] stream_rules` off, applies no deliveries, and leaves sessions untouched.
+
 ### User experience
 
 The daemon opens no screen of its own; the feedback a client can use is three protocol events.
@@ -666,6 +668,8 @@ newest selection.
 Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The timer starts after setup and accepts positive seconds, including fractions. At expiry, Horon cancels the turn and gives it up to one second to settle. The process exits with status `124`.
 
 Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
+
+With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
 
 ## `--resume` behaviour
 

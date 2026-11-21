@@ -482,3 +482,36 @@ fn effort_picker_opens_on_current() {
         "the level in force lost its mark under the filter"
     );
 }
+
+#[test]
+fn a_pinned_session_says_so_and_the_footer_names_the_pin_key() {
+    let rows = vec![
+        Row::new("the pinned one", "session_pinned").pinned(true),
+        Row::new("the other one", "session_other"),
+    ];
+    let mut picker = Picker::new(Kind::Sessions, "Switch session", rows, "no sessions");
+
+    let buffer = screen(&mut picker, 60, 14, None);
+    let text = buffer_text(&buffer);
+    assert!(
+        text.contains("(pinned)"),
+        "the pinned row says nothing about it:\n{text}"
+    );
+    assert!(
+        text.contains("ctrl-p pin/unpin"),
+        "the footer does not name the pin key:\n{text}"
+    );
+    assert!(!text.contains("(current)"), "no row was marked current:\n{text}");
+}
+
+#[test]
+fn a_pinned_row_stays_above_an_unpinned_row_that_matches_better() {
+    let rows = vec![Row::new("e", "unpinned"), Row::new("zzze", "pinned").pinned(true)];
+    let mut picker = Picker::new(Kind::Sessions, "Switch session", rows, "no sessions");
+    typed(&mut picker, "e");
+    assert_eq!(
+        labels(&picker),
+        vec!["zzze", "e"],
+        "a filter let an unpinned match overtake the pinned row"
+    );
+}

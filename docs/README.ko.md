@@ -35,6 +35,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
 | | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
+| | [`EDIT_DIAGNOSTICS.ko.md`](runtime/EDIT_DIAGNOSTICS.ko.md) | 편집 후 언어 서버 진단 설계 제안 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
 | | [`IRC.ko.md`](runtime/IRC.ko.md) | 에이전트 간 IRC 메일박스 버스, `irc` 도구, 설정, 성능 게이트 |
@@ -44,6 +45,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`PACKAGES.ko.md`](runtime/PACKAGES.ko.md) | 사용자 설치 Rust 패키지: 작성 SDK, 선언과 해시, 두 레이아웃, 대상, 서명과 설치 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
 | `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | 프로파일 `type`이 고른 방식(Chat Completions, Responses, Anthropic Messages, Gemini generateContent)의 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 한 번만 실행되는 `[prewalk]` 핸드오프, 모델 사용 메타데이터 |
+| | [`LOCAL_HELPERS.ko.md`](provider/LOCAL_HELPERS.ko.md) | 오프라인 로컬 모델 보조 기능 설계 제안 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | | [`DIAGNOSTICS.ko.md`](provider/DIAGNOSTICS.ko.md) | 요청 수를 제한하는 프로바이더 스트림 진단 설계 제안 |
 | | [`SAMPLING.ko.md`](provider/SAMPLING.ko.md) | 타입이 정해진 모델 샘플링 설계 제안 |

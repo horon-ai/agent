@@ -149,6 +149,23 @@ pub(super) async fn execute(
             status_only(args)?;
             json!({"enabled": swarm_enabled, "default_enabled": config.features.swarm, "members": swarm_data})
         }
+        RuntimeCommand::ModelPreset => match args {
+            [] => json!({"presets": config.model_presets.keys().collect::<Vec<_>>()}),
+            [action, name] if matches!(action.as_str(), "preview" | "apply") => {
+                let preset = config
+                    .model_presets
+                    .get(name)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown model preset: {name}"))?;
+                let apply = action == "apply";
+                agent.model_preset(preset, apply)?;
+                let data = json!({"name": name, "applied": apply, "preset": preset});
+                if apply {
+                    return Ok((data, format!("Applied model preset '{name}'.")));
+                }
+                data
+            }
+            _ => bail!("Usage: /modelpreset [preview|apply <name>]"),
+        },
         RuntimeCommand::Agents => {
             let (global, args) = match args.split_first() {
                 Some((scope, rest)) if matches!(scope.as_str(), "global" | "default") => (true, rest),
@@ -200,6 +217,19 @@ pub(super) async fn execute(
         RuntimeCommand::Plan => {
             let (data, message) = crate::plan_mode::command(agent.session_id(), args)?;
             return Ok((data, message));
+        }
+        RuntimeCommand::Goal => {
+            let [budget, title @ ..] = args else {
+                bail!("Usage: /goal <token-budget> <objective>");
+            };
+            let budget = budget.parse::<u64>()?;
+            let goal = crate::goal::start_session_goal(
+                agent.session_id(),
+                agent.working_dir().map(std::path::Path::new),
+                title.join(" "),
+                budget,
+            )?;
+            return Ok((serde_json::to_value(&goal)?, crate::goal::render_goal_detail(&goal)));
         }
         RuntimeCommand::Transport => {
             let provider = agent.provider_handle();
@@ -393,6 +423,22 @@ mod tests {
         let provider: Arc<dyn crate::provider::Provider> = Arc::new(NoInferenceProvider::default());
         let registry = crate::tool::Registry::new(provider.clone()).await;
         let mut agent = Agent::new_with_initial_working_dir(provider, registry, home.path().to_str());
+        let goal_args = ["1200".into(), "Ship a fix".into()];
+        let (data, message) = execute(&mut agent, RuntimeCommand::Goal, &goal_args, false, Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(data["title"], "Ship a fix");
+        assert_eq!(data["budget_tokens"], 1200);
+        assert!(message.contains("Ship a fix"));
+        let attached = crate::goal::load_attached_goal(agent.session_id(), Some(home.path()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(attached.title, "Ship a fix");
+        assert!(
+            execute(&mut agent, RuntimeCommand::Goal, &goal_args, false, Value::Null)
+                .await
+                .is_err()
+        );
         for command in [
             RuntimeCommand::Skills,
             RuntimeCommand::Context,

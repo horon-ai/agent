@@ -6,6 +6,7 @@
 //! [`horon_agent_message_types::StreamEvent`] vocabulary ([`stream`]), and one
 //! narrow transport adds the credential and error classification ([`transport`]).
 
+mod model_list;
 pub mod request;
 pub mod schema_recovery;
 pub mod stream;
@@ -299,6 +300,11 @@ impl OpenAiCompatibleProvider {
             WireProtocol::GeminiGenerateContent => self.wire.endpoint(&self.base_url, &self.model()),
             _ => self.wire.endpoint(&self.base_url, ""),
         }
+    }
+
+    /// Fetch model IDs on explicit request using this profile's HTTP authentication.
+    pub async fn fetch_models(&self) -> Result<Vec<String>> {
+        model_list::fetch(self).await
     }
 
     /// The configured base URL, without the request path.

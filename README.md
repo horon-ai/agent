@@ -105,6 +105,7 @@ With no profile configured, a model call stops before the network and names the 
 
 Set `stream_first_event_timeout_secs` and `stream_idle_timeout_secs` in a named profile to limit startup and pauses during a streamed reply independently.
 Set `max_in_flight_requests` to cap concurrent requests across sessions using the same profile.
+Use `/modelpreset` in the terminal to preview and apply a named set of [session model choices](docs/provider/MODEL.md#session-model-presets).
 
 ## Ways to run it
 
@@ -119,6 +120,10 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
+| `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
+| `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
+
+`horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
 
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
@@ -129,6 +134,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect prints that sentence instead, so scripts and CI get the reason rather than a client. When a condition fails, the command names it, prints the install hint for the interactive client, and exits non-zero.
 
 Run `horon --continue` to reopen the most recently active saved session in the current working directory. Use `--resume <id>` to pick a specific session.
+
+Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and token budget to a new session.
 
 The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. That archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
 

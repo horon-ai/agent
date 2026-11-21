@@ -80,6 +80,7 @@
                 "group": "Runtime",
                 "pages": [
                   "reference/runtime/tools",
+                  "reference/runtime/edit-diagnostics",
                   "reference/runtime/tool-scheduling",
                   "reference/runtime/turns",
                   "reference/runtime/prompt",
@@ -94,6 +95,7 @@
                 "group": "Providers",
                 "pages": [
                   "reference/provider/model",
+                  "reference/provider/local-helpers",
                   "reference/provider/diagnostics",
                   "reference/provider/sampling",
                   "reference/provider/integrations"
@@ -191,6 +193,7 @@
                 "group": "런타임",
                 "pages": [
                   "ko/reference/runtime/tools",
+                  "ko/reference/runtime/edit-diagnostics",
                   "ko/reference/runtime/tool-scheduling",
                   "ko/reference/runtime/turns",
                   "ko/reference/runtime/prompt",
@@ -205,6 +208,7 @@
                 "group": "제공자",
                 "pages": [
                   "ko/reference/provider/model",
+                  "ko/reference/provider/local-helpers",
                   "ko/reference/provider/diagnostics",
                   "ko/reference/provider/sampling",
                   "ko/reference/provider/integrations"
