@@ -26,8 +26,11 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]] [--hide-thinking]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
 ```
+
+The three motion flags are per-launch overrides: they outrank every settings file and the environment, are shown as `command line` in the settings screen, and survive a reload of the files under them. A flag outside its range is an argument error, not a warning: `--max-fps 0` prints the expected range and exits with code 2.
 
 | Flag | Meaning |
 | --- | --- |
@@ -36,6 +39,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
 | `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
+| `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |
+| `--spinner-interval <ms>` | Spinner frame length for this launch, `40` to `2000` |
+| `--max-fps <n>` | Stream frame limit for this launch, `1` to `240` |
 | `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
@@ -74,6 +80,9 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
+| `motion.spinner_interval` | number | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
+| `motion.max_fps` | number | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
@@ -93,13 +102,15 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
-The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
+The table is the settings registry (`crates/tui/src/settings/registry.rs`), twenty-one keys in its order, and it is what the settings screen draws.
 
 `statusline.path_max` is the longest directory the `path` segment shows before it is shortened; `0` keeps it whole. A shortened path keeps whole segments from its end and starts with `…/`, so the marker stands for the directories left out; a path with no separator at all is cut inside its only name and marked with the ellipsis alone. `statusline.context_window` is the token count the `context_pct` segment divides by; `0` hides the segment.
 
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`motion.preset` controls the indicator beside `running`. `full` cycles its glyphs, `reduced` holds the first glyph and `static` hides the indicator. `motion.spinner_interval` sets the minimum time a glyph stays visible, from `40` to `2000` milliseconds. `motion.max_fps` caps automatic redraws due to incoming text or spinner ticks in all presets, from `1` to `240` frames per second. At `max_fps = 4`, automatic redraws are at least 250 milliseconds apart. Input, resize and other events that need immediate feedback can redraw sooner. Out-of-range values are rejected with a warning that names the default in use.
 
 `appearance.changes = "accessible"` gives additions and deletions distinct colours in tool diffs and preserves their `+` and `-` marks. It also adjusts positive and negative status colours. Select `theme` to restore the theme's own colours.
 
@@ -113,6 +124,11 @@ The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working dire
 # ~/.horon/tui.toml
 theme = "dark"
 symbols = "nerd"
+
+[motion]
+preset = "reduced"
+spinner_interval = 120
+max_fps = 20
 
 [statusline]
 preset = "custom"
