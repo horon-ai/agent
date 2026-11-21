@@ -2502,6 +2502,7 @@ dependencies = [
 name = "horon-tui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "crossterm",
  "horon-agent-sdk",
  "horon-agent-tool-types",

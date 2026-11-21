@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use horon_agent_sdk::api::{ApiEvent, ApiRequest, PermissionDecision};
+use horon_agent_sdk::api::{ApiEvent, ApiRequest, HandoffCompaction, PermissionDecision};
 use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
@@ -24,11 +24,16 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::context::ContextReport;
 
 mod daemon_settings;
+mod jobs;
 mod messages;
 mod runtime;
 mod sessions;
 mod skills;
 mod steer;
+mod swarm;
+
+#[cfg(test)]
+mod jobs_tests;
 
 #[cfg(test)]
 mod runtime_tests;
@@ -42,7 +47,9 @@ mod sessions_tests;
 #[cfg(test)]
 mod skills_tests;
 
+pub use jobs::BackgroundJobRow;
 pub use messages::{Command, Incoming};
+pub use swarm::SwarmRow;
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -648,10 +655,19 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             }))
         }
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
+        // `/swarm` shows this session's own children; the rows are narrowed to
+        // its lineage before they leave the bridge, so the list cannot name a
+        // session outside the swarm it belongs to.
+        Command::Swarm => Ok(Some(Incoming::Swarm(swarm::rows(client, session_id)?))),
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
         Command::Skills { announce } => skills::read(client, session_id, announce),
+        // `/jobs` asked for this list, so a harness that does not serve it is
+        // an answer rather than a silent skip: the rows are the point of the
+        // request.
+        Command::BackgroundJobs => jobs::read(client, session_id).map(Some),
+        Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id).map(Some),
         // The daemon's allow-listed settings, read when the screen asks. A
         // server too old to answer is a state the screen explains, never an
         // error the worker reports.
@@ -677,6 +693,26 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
+        Command::Context(crate::commands::ContextCommand::Clear) => client
+            .clear(session_id)
+            .map(|()| Some("model context cleared; previous conversation remains in saved history".to_owned())),
+        Command::Context(crate::commands::ContextCommand::Compact) => {
+            client.compact_handoff(session_id).map(|outcome| {
+                let message = match outcome {
+                    HandoffCompaction::Committed { covered } => {
+                        format!("model context compacted: summarized {covered} messages")
+                    }
+                    HandoffCompaction::NothingToCover => {
+                        "model context unchanged: there is nothing to compact".to_owned()
+                    }
+                    HandoffCompaction::ProviderError { detail } => {
+                        format!("model context unchanged: compaction failed: {detail}")
+                    }
+                    HandoffCompaction::Cancelled => "model context unchanged: compaction was cancelled".to_owned(),
+                };
+                Some(message)
+            })
+        }
         Command::Rename(title) => client.rename_session(session_id, Some(title)).map(|()| None),
         Command::Archive { session_id, archived } => {
             if archived {
@@ -694,7 +730,10 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Models
         | Command::Sessions { .. }
         | Command::CheckSessions(_)
+        | Command::Swarm
         | Command::Skills { .. }
+        | Command::BackgroundJobs
+        | Command::CancelBackgroundTerminal(_)
         | Command::DaemonSettings
         | Command::Steer(_)
         | Command::Runtime { .. }
@@ -736,6 +775,8 @@ fn describe(command: &Command) -> &'static str {
     match command {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
+        Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
+        Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
         Command::Model(_) => "could not switch the model",
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
@@ -743,7 +784,10 @@ fn describe(command: &Command) -> &'static str {
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
+        Command::Swarm => "could not list the swarm children",
         Command::Skills { .. } => "could not list the skills",
+        Command::BackgroundJobs => "could not list the background jobs",
+        Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",

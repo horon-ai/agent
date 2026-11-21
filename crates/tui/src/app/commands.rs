@@ -5,6 +5,7 @@ use super::{Action, App};
 use crate::commands::Local;
 use crate::links;
 use crate::overlays::picker::{Kind, Picker, Row};
+use crate::voice::{CONSENT, Outcome, Phase, Start, USAGE};
 
 /// Assistant answers `/links` reads back from the transcript.
 const LINK_ANSWERS: usize = 8;
@@ -65,6 +66,7 @@ impl App {
                 self.transcript.clear();
                 None
             }
+            Local::Context(command) => self.change_context(command, arguments),
             // Copying is answered here and written by the loop: the app decides
             // what a copy carries and never touches the terminal.
             Local::Copy => self.copy_command(arguments),
@@ -104,12 +106,19 @@ impl App {
                 self.open_links();
                 None
             }
+            // `/jobs` reads the live list from the daemon: a job that started
+            // or ended on another client is not in this transcript.
+            Local::Jobs => self.open_jobs(),
             // `/switch` and `/resume` are one flow under two names: the list
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Archived => self.open_archived_sessions(),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
             Local::Rename => self.rename_session(arguments),
+            // `/swarm` opens this session's children; an argument after it still
+            // reaches the harness's own report, so the built-in takes the bare
+            // name rather than the command.
+            Local::Swarm => self.run_swarm(arguments),
             // A note is the reader's own text about a message: it never joins
             // the conversation or a request, so this arm answers entirely in
             // the client except when it asks which noted sessions are gone.
@@ -137,6 +146,13 @@ impl App {
             // `/queue` opens the list of messages waiting for the running turn
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),
+            // `/voice` is entirely local: consent, capture, recognition and
+            // playback stay in this client, and recognized text is inserted as
+            // a draft rather than sent.
+            Local::Voice => {
+                self.run_voice(arguments);
+                None
+            }
         }
     }
 
@@ -278,5 +294,221 @@ fn size_text(bytes: u64) -> String {
         format!("{:.1} KiB", bytes / KIB)
     } else {
         format!("{bytes:.0} B")
+    }
+}
+
+impl App {
+    /// `/voice`: consent, local dictation and local playback, all inside this
+    /// client.
+    pub(crate) fn run_voice(&mut self, arguments: &str) {
+        let arguments = arguments.trim();
+        match arguments {
+            "" => self.toggle_voice(),
+            "consent" => {
+                self.voice.give_consent();
+                self.transcript.push_notice(
+                    "voice: consent recorded for this session; switching sessions, losing the connection or leaving forgets it, and nothing leaves this device",
+                );
+            }
+            "forget" => {
+                self.voice.forget();
+                self.transcript
+                    .push_notice("voice: consent forgotten; any capture, recognition or playback was stopped");
+            }
+            "stop" => self.stop_voice(),
+            "cancel" => {
+                self.voice.abandon();
+                self.transcript.push_notice("voice: cancelled; the draft is unchanged");
+            }
+            "read" => self.read_voice(),
+            "status" => {
+                let status = self.voice.status();
+                self.transcript.push_notice(status);
+            }
+            other => match other.strip_prefix("say ") {
+                Some(text) => self.say_voice(text),
+                None => self.transcript.push_notice(USAGE),
+            },
+        }
+    }
+
+    /// The key and `/voice` share one toggle: start, finish, cancel, or stop
+    /// playback, whichever the phase calls for.
+    pub(crate) fn toggle_voice(&mut self) {
+        match self.voice.phase() {
+            Phase::Idle => match self.voice.start_recording() {
+                Start::Started => {
+                    let key = match self.bindings.first_key(crate::keys::ids::APP_VOICE) {
+                        Some(key) => format!("{key} or /voice stop finishes"),
+                        None => "/voice stop finishes".to_string(),
+                    };
+                    self.transcript
+                        .push_notice(format!("voice: recording; {key}, esc cancels (2 minute limit)"));
+                }
+                Start::NeedsConsent => self.transcript.push_notice(CONSENT),
+                Start::Unavailable(problem) => self.transcript.push_notice(format!("voice: {problem}")),
+                Start::Busy(phase) => {
+                    self.transcript
+                        .push_notice(format!("voice: {} is already running", phase.label()));
+                }
+            },
+            Phase::Recording => {
+                self.voice.stop_recording();
+                self.transcript
+                    .push_notice("voice: recognizing on this device; the draft is not sent");
+            }
+            Phase::Transcribing => {
+                self.voice.abandon();
+                self.transcript.push_notice("voice: cancelled; the draft is unchanged");
+            }
+            Phase::Speaking => {
+                self.voice.abandon();
+                self.transcript.push_notice("voice: playback stopped");
+            }
+        }
+    }
+
+    /// `/voice stop`: finish a capture, or stop playback.
+    fn stop_voice(&mut self) {
+        match self.voice.phase() {
+            Phase::Recording => {
+                self.voice.stop_recording();
+                self.transcript
+                    .push_notice("voice: recognizing on this device; the draft is not sent");
+            }
+            Phase::Transcribing => {
+                self.voice.abandon();
+                self.transcript.push_notice("voice: cancelled; the draft is unchanged");
+            }
+            Phase::Speaking => {
+                self.voice.abandon();
+                self.transcript.push_notice("voice: playback stopped");
+            }
+            Phase::Idle => self.transcript.push_notice("voice: nothing is running"),
+        }
+    }
+
+    /// `esc`: put down whatever is running, keeping the draft as it was.
+    pub(crate) fn cancel_voice(&mut self) {
+        if self.voice.phase() == Phase::Idle {
+            return;
+        }
+        let speaking = self.voice.phase() == Phase::Speaking;
+        self.voice.abandon();
+        if speaking {
+            self.transcript.push_notice("voice: playback stopped");
+        } else {
+            self.transcript.push_notice("voice: cancelled; the draft is unchanged");
+        }
+    }
+
+    /// `/voice say <text>`.
+    fn say_voice(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            self.transcript.push_notice("voice: /voice say needs the text to speak");
+            return;
+        }
+        match self.voice.start_playback(text) {
+            Start::Started => self
+                .transcript
+                .push_notice("voice: speaking locally; /voice stop or esc stops it"),
+            Start::Unavailable(problem) => self.transcript.push_notice(format!("voice: {problem}")),
+            Start::Busy(phase) => {
+                self.transcript.push_notice(format!(
+                    "voice: {} is already running; /voice stop finishes it first",
+                    phase.label()
+                ));
+            }
+            Start::NeedsConsent => self.transcript.push_notice(CONSENT),
+        }
+    }
+
+    /// `/voice read`: speak the newest answer, without asking the model again.
+    fn read_voice(&mut self) {
+        let answer = self.transcript.recent_assistant_text(1).next().map(str::to_string);
+        match answer {
+            Some(answer) if !answer.trim().is_empty() => self.say_voice(&answer),
+            _ => self.transcript.push_notice("voice: there is no answer to read yet"),
+        }
+    }
+
+    /// Collect a finished capture or playback, returning whether anything
+    /// reached the screen.
+    pub(crate) fn tick_voice(&mut self) -> bool {
+        // Consent is for the session that gave it. A lost connection ends that
+        // session, so the microphone is no longer allowed until the user asks
+        // again; `forget` also stops whatever was running.
+        if self.disconnected && (self.voice.consent_given() || self.voice.phase() != Phase::Idle) {
+            self.voice.forget();
+        }
+        let outcomes = self.voice.poll();
+        if outcomes.is_empty() {
+            return false;
+        }
+        for outcome in outcomes {
+            self.apply_voice(outcome);
+        }
+        true
+    }
+
+    /// Put one finished activity on screen: a draft edit or a notice.
+    pub(crate) fn apply_voice(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Draft(text) => self.insert_voice_text(&text),
+            Outcome::Notice(message) => self.transcript.push_notice(format!("voice: {message}")),
+        }
+    }
+
+    /// Insert recognized text at the caret as a draft, never as a message.
+    fn insert_voice_text(&mut self, text: &str) {
+        let cleaned = text.trim();
+        if cleaned.is_empty() {
+            self.transcript.push_notice("voice: no speech was recognized");
+            return;
+        }
+        if self.voice_separator(cleaned) {
+            self.input.insert_text(" ");
+        }
+        self.input.insert_text(cleaned);
+        let words = cleaned.split_whitespace().count();
+        let plural = if words == 1 { "" } else { "s" };
+        self.transcript.push_notice(format!(
+            "voice: {words} word{plural} inserted into the draft (not sent); enter sends it"
+        ));
+    }
+
+    /// Whether an insertion needs a space so it does not join the word before
+    /// the caret.
+    fn voice_separator(&self, next: &str) -> bool {
+        let text = self.input.text();
+        let cursor = self.input.cursor();
+        if cursor == 0 {
+            return false;
+        }
+        let before = text.chars().nth(cursor - 1);
+        let after = next.chars().next();
+        match (before, after) {
+            (Some(before), Some(after)) => {
+                !before.is_whitespace() && !after.is_whitespace() && !",.;:!?)]}".contains(after)
+            }
+            _ => false,
+        }
+    }
+
+    /// The hint under the draft while voice is doing something.
+    pub(crate) fn voice_hint(&self) -> Option<String> {
+        match self.voice.phase() {
+            Phase::Idle => None,
+            Phase::Recording => {
+                let finish = match self.bindings.first_key(crate::keys::ids::APP_VOICE) {
+                    Some(key) => format!("{key} or /voice stop finishes"),
+                    None => "/voice stop finishes".to_string(),
+                };
+                Some(format!("voice: recording; {finish}, esc cancels (2 minute limit)"))
+            }
+            Phase::Transcribing => Some("voice: recognizing on this device; /voice cancel discards it".to_string()),
+            Phase::Speaking => Some("voice: speaking; /voice stop or esc stops it".to_string()),
+        }
     }
 }

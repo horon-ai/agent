@@ -38,6 +38,11 @@ pub enum Kind {
     Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// The swarm children of the attached session, and the parent it returns to.
+    ///
+    /// Its rows are chosen like a session's: `enter` names a session id for the
+    /// attach request the session list already uses.
+    Swarm,
     /// Archived sessions available to restore for this working directory.
     ArchivedSessions,
     /// The skills the harness reports for this session.
@@ -48,6 +53,12 @@ pub enum Kind {
     Copies,
     /// The http(s) links in the newest assistant answers.
     Links,
+    /// The background work the session is running.
+    ///
+    /// Its rows describe work rather than offer a value, so `delete` cancels
+    /// the selected terminal and `enter` changes nothing; the keys are answered
+    /// before the generic list sees them.
+    Jobs,
     /// The messages waiting for the running turn to end.
     ///
     /// This list is not a choice among values: each row is a message the user

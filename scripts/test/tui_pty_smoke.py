@@ -162,7 +162,7 @@ def start_mock_server(retry_denied: bool) -> tuple[subprocess.Popen, str]:
 # ---------------------------------------------------------------------------
 
 
-def write_config(home: str, base_url: str) -> str:
+def write_config(home: str, base_url: str, approval_mode: str = "write") -> str:
     """An isolated HORON_HOME whose only provider is the mock server.
 
     `approval_mode = "write"` is what makes the first tool call ask: the turn
@@ -186,7 +186,7 @@ id = "mock-model"
 context_window = 128000
 
 [tools]
-approval_mode = "write"
+approval_mode = "{approval_mode}"
 """
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as handle:
         handle.write(config)
@@ -574,6 +574,147 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
+    from pathlib import Path
+
+    originals = set(Path(home).glob("sessions/*/events.jsonl"))
+    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(parents) != 1:
+        raise Failure(f"expected one session containing the approved tool call, found {parents}")
+    parent = parents[0].parent.name
+    child_result = subprocess.run([launch.argv0, "run", "swarm fixture result"], cwd=root,
+                                  env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+                                  capture_output=True, text=True, timeout=STEP_TIMEOUT)
+    children = {path.parent.name for path in Path(home).glob("sessions/*/events.jsonl") if path not in originals}
+    if child_result.returncode != 0 or len(children) != 1:
+        raise Failure(f"expected one recorded child: {child_result.stdout}\n{child_result.stderr}")
+    child = next(iter(children))
+    snapshot = Path(env["HORON_AGENT_RUNTIME_DIR"], "durable-state", "swarm", "smoke.json")
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({"updated_at_unix_ms": int(time.time() * 1000) + 600_000, "members": [{
+        "session_id": child,
+        "report_back_to_session_id": parent,
+        "task_label": "Fixture child",
+        "status": "completed",
+    }]}), encoding="utf-8")
+    terminal.send("/swarm\r")
+    terminal.read_until("Swarm children", STEP_TIMEOUT, "swarm picker opened")
+    terminal.read_until("Fixture child", STEP_TIMEOUT, "completed direct child listed")
+
+    def completed_subscriptions(session_id: str) -> int:
+        marker = f"request_kind=subscribe session_id={session_id} "
+        return sum("phase=handled " in line and marker in line for line in daemon_log_tail(home, limit=5000).splitlines())
+
+    def select_session(session_id: str) -> None:
+        previous = completed_subscriptions(session_id)
+        terminal.send("\r")
+        deadline = time.monotonic() + STEP_TIMEOUT
+        while time.monotonic() < deadline:
+            if completed_subscriptions(session_id) > previous:
+                return
+            time.sleep(0.05)
+        raise Failure(f"the daemon did not attach to session {session_id}\n{daemon_log_tail(home)}")
+
+    select_session(child)
+    picker_start = len(terminal.transcript)
+    terminal.send("/swarm\r")
+    terminal.read_until("parent:", STEP_TIMEOUT, "parent return row", since=picker_start)
+    select_session(parent)
+
+
+def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
+    tool_dir = os.path.join(case_root, "voice-bin")
+    os.makedirs(tool_dir)
+    scripts = {
+        "ffmpeg": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "arecord": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "whisper-cli": 'while [ "$1" != -of ]; do shift; done\nprintf "hello from voice\\n" > "$2.txt"',
+        "say": 'cat "$2" > "$(dirname "$0")/played"',
+        "espeak-ng": 'cat "$2" > "$(dirname "$0")/played"',
+    }
+    for name, script in scripts.items():
+        path = os.path.join(tool_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"#!/bin/sh\n{script}\n")
+        os.chmod(path, 0o700)
+    models = os.path.join(home, "models")
+    os.makedirs(models, exist_ok=True)
+    with open(os.path.join(models, "ggml-tiny.en.bin"), "wb") as handle:
+        handle.truncate(1024 * 1024 + 1)
+    env["PATH"] = tool_dir + os.pathsep + env.get("PATH", os.defpath)
+
+
+def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None:
+    from urllib.request import urlopen
+
+    def request_count() -> int:
+        with urlopen(base_url.removesuffix("/v1") + "/__stats", timeout=5) as response:
+            return json.load(response)["request_count"]
+
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
+    count = request_count()
+    terminal.send("/voice\r")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.send("/voice consent\r")
+    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    terminal.send("/voice\r")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    if request_count() != count:
+        raise Failure("voice input sent a request before the user submitted the draft")
+    terminal.send("\x15")
+    terminal.send("/voice say local playback proof\r")
+    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
+    played = os.path.join(case_root, "voice-bin", "played")
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            with open(played, encoding="utf-8") as handle:
+                if handle.read().strip() == "local playback proof":
+                    break
+        except FileNotFoundError:
+            pass
+        time.sleep(0.05)
+    else:
+        raise Failure("the local player did not receive the requested text")
+    if request_count() != count:
+        raise Failure("local playback sent a model request")
+
+
+def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import urlopen
+
+    marker = "[tui:context-proof]"
+
+    def send(label: str, has_original: bool) -> None:
+        prompt = f"{marker} {label}"
+        start = len(terminal.transcript)
+        terminal.send(f"{prompt}\r")
+        terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
+        terminal.read_until("idle", STEP_TIMEOUT, f"turn ended for {label}", since=start)
+        with urlopen(base_url + "/__stats", timeout=5) as response:
+            requests = json.load(response)["requests"]
+        request = next(
+            (entry for entry in reversed(requests) if prompt in entry.get("context_proof_prompt", "")),
+            None,
+        )
+        if request is None:
+            raise Failure(f"the mock recorded no model request for {label}")
+        if request["context_proof_contains_original"] != has_original:
+            raise Failure(f"model request for {label} had original={not has_original}, expected {has_original}")
+
+    send("original", True)
+    terminal.send("/clear\r")
+    send("after display clear", True)
+    start = len(terminal.transcript)
+    terminal.send("/clear-context\r")
+    terminal.read_until("previous conversation remains", STEP_TIMEOUT, "reset model context", since=start)
+    send("after context reset", False)
+    if not any(f"{marker} original" in path.read_text(encoding="utf-8")
+               for path in Path(home).glob("sessions/*/events.jsonl")):
+        raise Failure("the original user message disappeared from the saved event log")
+
+
 def configure_mcp_probe(home: str, case_root: str) -> str:
     fixture = os.path.join(REPO_ROOT, "scripts", "perf", "fixtures", "bench_mcp_server.py")
     calls = os.path.join(case_root, "mcp-tool-called")
@@ -602,6 +743,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        voice_fixture(case_root, home, env)
     archive_label = "archive-pty-fixture"
     seeded = subprocess.run(
         [launch.argv0, "run", archive_label],
@@ -620,7 +763,18 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before MCP inspection")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before the context commands")
+        terminal.send("/compact\r")
+        terminal.read_until("nothing to compact", STEP_TIMEOUT, "empty context is unchanged after compaction")
+        start = len(terminal.transcript)
+        terminal.send("/clear-context\r")
+        terminal.read_until(
+            "previous conversation remains in saved history",
+            STEP_TIMEOUT,
+            "daemon confirmed reset",
+            since=start,
+        )
+
         terminal.send("/mcp\r")
         terminal.read_until("trusted-fixture", STEP_TIMEOUT, "trusted MCP server listed")
         terminal.send("/mcp probe trusted-fixture\r")
@@ -645,6 +799,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+        if POSIX:
+            voice_input_smoke(terminal, case_root, base_url)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
@@ -664,6 +820,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            context_request_smoke(terminal, home, base_url)
+            swarm_picker_smoke(terminal, launch, home, case_root, env)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         terminal.send("/resume\r")
@@ -673,16 +832,26 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
         terminal.send("\x01")
         terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        archive_path = os.path.join(home, "sdk-archive.json")
+        with open(archive_path, encoding="utf-8") as handle:
+            archived_ids = json.load(handle)["sessions"]
+        if len(archived_ids) != 1:
+            raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
+        archived_id = next(iter(archived_ids))
+        archived_start = len(terminal.transcript)
+        terminal.send("/archived\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
+        restore_start = len(terminal.transcript)
+        terminal.send("\r")
+        terminal.read_until("to the recent list", STEP_TIMEOUT, "daemon confirmed restoration", since=restore_start)
+        with open(archive_path, encoding="utf-8") as handle:
+            if archived_id in json.load(handle)["sessions"]:
+                raise Failure(f"restored session {archived_id} remained archived")
+        recent_start = len(terminal.transcript)
         terminal.send("/resume\r")
-        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
-        terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "restored session returned to recent list", since=recent_start)
         terminal.send("\x1b")
         time.sleep(0.15)
-        terminal.send("/archived\r")
-        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
-        terminal.send(f"{archive_label}\r")
-        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
@@ -690,6 +859,26 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
         if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
             raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            previous_log = daemon_log_tail(home, limit=2000)
+            resumed = Terminal([launch.argv0, "--continue"], cwd=case_root, env=env)
+            try:
+                resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
+                resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
+                if selected is None:
+                    raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
+                attached = r"phase=resume_(?:restored|live_attach)_done"
+                receipt = rf"{attached} .*target_session_id={re.escape(selected[1])}(?:\s|$)"
+                current_log = daemon_log_tail(home, limit=2000)
+                if len(re.findall(receipt, current_log)) <= len(re.findall(receipt, previous_log)):
+                    raise Failure(f"continue did not restore session {selected[1]}\n{resumed.transcript}")
+                resumed.send("/quit\r")
+                if resumed.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"continue launch did not exit cleanly\n{resumed.transcript}")
+                return terminal.transcript + resumed.transcript
+            finally:
+                resumed.close()
         return terminal.transcript
     finally:
         terminal.close()
@@ -1022,6 +1211,55 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url, "yolo")
+    env = horon_env(case_root, home)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "background job session ready")
+        terminal.send("[tui:jobs] start\r")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "both background jobs started")
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("the original background job client did not exit")
+        sessions = [name for name in os.listdir(os.path.join(home, "sessions"))
+                    if os.path.isfile(os.path.join(home, "sessions", name, "events.jsonl"))]
+        if len(sessions) != 1 or launch.tui is None:
+            raise Failure(f"expected a single resumable job session, got {sessions}")
+        terminal.close()
+        terminal = Terminal([launch.tui, "--session", sessions[0], "--cwd", case_root], cwd=case_root, env=env)
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "session reattached with live jobs")
+        terminal.send("/jobs\r")
+        terminal.read_until("Background jobs", STEP_TIMEOUT, "current session jobs")
+        terminal.read_until("job-one", STEP_TIMEOUT, "first job listed")
+        terminal.read_until("job-two", STEP_TIMEOUT, "second job listed")
+        terminal.send("job-two")
+        terminal.read_until("output-two", STEP_TIMEOUT, "bounded output of selected job")
+        terminal.send("\x1b[3~")
+        terminal.send("\x1b")
+        terminal.read_until("cancelling background job", STEP_TIMEOUT, "cancel accepted")
+        remaining_start = len(terminal.transcript)
+        terminal.send("/jobs\r")
+        terminal.read_until("job-one", STEP_TIMEOUT, "remaining job list loaded", since=remaining_start)
+        terminal.send("job-one")
+        terminal.read_until("output-one", STEP_TIMEOUT, "other job remains available", since=remaining_start)
+        terminal.send("\x1b[3~")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        refreshed = len(terminal.transcript)
+        terminal.send("/jobs\r")
+        terminal.read_until("running no background work", STEP_TIMEOUT, "both cancelled jobs have exited", since=refreshed)
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure(f"background job client did not exit\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def run_build_layout(
     agent: str, tui: str, root: str, base_url: str, transcript: str | None, cases: set[int]
 ) -> int:
@@ -1036,6 +1274,9 @@ def run_build_layout(
                 source = "--no-title" if from_flag else "title.enabled=false"
                 text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
                 log(f"{source}: no title or title stack sequences")
+            jobs_root = os.path.join(root, "jobs")
+            jobs_launch = build_launch(jobs_root, agent, tui)
+            text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)

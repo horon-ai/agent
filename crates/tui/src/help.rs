@@ -76,6 +76,8 @@ Keys:
   Ctrl-O         show or hide the whole output of the newest cut tool call
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
+  Ctrl-Space     start or finish on-device voice input; /voice has the rest
+                 (consent, stop, cancel, say <text>, read, status)
   Alt-P          pick the model this session uses
   Alt-D          copy the draft to the terminal clipboard
   Alt-K          copy the line under the cursor to the terminal clipboard
@@ -98,12 +100,16 @@ Commands:
   /archived      list archived sessions in this directory; Enter restores one
   /artifact [id] open a retained artifact of this session in $VISUAL or
                  $EDITOR, as a private copy; with no id, list them
-  /clear         clear the transcript pane
+  /clear         clear only the transcript pane
+  /clear-context start fresh model context and keep the saved conversation
+  /compact       summarize older model context and keep the saved conversation
   /copy [last|code]
                  open the list of recent answers and code blocks, or copy
                  the last answer or the newest code block
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
+  /jobs          list this session's background work, and cancel a terminal
+                 with Delete
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
   /mcp [probe <server>] list trusted MCP servers or test one connection
@@ -118,6 +124,9 @@ Commands:
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
+  /voice [consent|forget|stop|cancel|say <text>|read|status]
+                 on-device speech: consent to capture, dictate into the
+                 draft (not sent), or speak text locally
   //text         send the literal message /text
 
 Local shell (runs in this terminal, in the client's working directory; never
@@ -206,6 +215,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_TOGGLE_THINKING,
         "show or hide the model's reasoning for this session",
     ),
+    (ids::APP_VOICE, "start or finish on-device voice input"),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
     (ids::EDITOR_LEFT, "move the cursor one character left"),
@@ -257,11 +267,14 @@ pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "archived" => "list archived sessions in this directory; Enter restores one",
         "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
-        "clear" => "clear the transcript",
+        "clear" => "clear only the transcript pane",
+        "clear-context" => "start fresh model context and keep the saved conversation",
+        "compact" => "summarize older model context and keep the saved conversation",
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",
+        "jobs" => "list the background work this session is running, and cancel a terminal",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
         "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
@@ -276,7 +289,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",
+        "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
         "switch" => "move to another stored session, or pick one from the list",
+        "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",
     }
 }

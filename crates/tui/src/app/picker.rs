@@ -1,5 +1,5 @@
-//! The pickers: the model and session lists the harness owns, the search over
-//! this client's own drafts, and what a chosen row of any of them means.
+//! The pickers: the model, session and swarm lists the harness owns, the search
+//! over this client's own drafts, and what a chosen row of any of them means.
 //!
 //! The screen itself ([`crate::overlays::picker`]) knows only rows; the meaning
 //! of a row is decided here, where the rest of the client state is. A session
@@ -12,7 +12,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
 use crate::scroll::Scroll;
-use crate::sdk_bridge::{AttachedSession, SessionRow};
+use crate::sdk_bridge::{AttachedSession, SessionRow, SwarmRow};
 
 impl App {
     /// Open the model list; the bridge fills it when the catalog answers.
@@ -250,6 +250,34 @@ impl App {
         self.fill(kind, rows);
     }
 
+    /// Fill the open swarm list: this session's children, then the parent row.
+    ///
+    /// The rows arrive already narrowed to the attached session's lineage, so
+    /// nothing here decides what belongs to the swarm. The task the harness
+    /// recorded and the answer the child reported are searchable besides the
+    /// label, and the second column carries the state: a reader looks for a
+    /// child by what it was told to do, what it said it did, or whether it is
+    /// still working.
+    pub fn show_swarm(&mut self, rows: Vec<SwarmRow>) {
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                let mut search: Vec<String> = Vec::with_capacity(2);
+                if let Some(task) = row.task {
+                    search.push(task);
+                }
+                if let Some(report) = row.report {
+                    search.push(report);
+                }
+                Row::new(row.label, row.id)
+                    .with_detail(row.detail)
+                    .with_preview(row.preview)
+                    .with_search(search)
+            })
+            .collect();
+        self.fill(Kind::Swarm, rows);
+    }
+
     /// Replace the rows of the open list, if it is the one that asked.
     pub(super) fn fill(&mut self, kind: Kind, rows: Vec<Row>) {
         let Some(picker) = self.picker.as_mut() else {
@@ -295,6 +323,21 @@ impl App {
                     self.transcript.push_notice(format!("attaching to {label}"));
                     Some(Action::Attach(value))
                 }
+                // A row of the swarm list names a child the harness reported,
+                // and attaching is the same request `/switch` makes: the row
+                // cannot grant access by existing, the harness answers for the
+                // session it serves. The choice is a session change, so it waits
+                // under the rule every other one does.
+                Kind::Swarm => {
+                    if !self.session_change_allowed("swarm") {
+                        return None;
+                    }
+                    let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
+                    self.transcript.push_notice(format!("attaching to {label}"));
+                    Some(Action::Attach(value))
+                }
+                // Restoring an archived session asks the harness for it; the
+                // answer arrives as a session like any attach.
                 Kind::ArchivedSessions => Some(Action::Restore(value)),
                 // A recalled draft is an edit, not a send: the picker closes and
                 // the editor holds the text, and no action leaves the client.
@@ -317,7 +360,9 @@ impl App {
                 // The queue answers its own keys before this list sees them, so
                 // no row is ever chosen from here; a value that arrives anyway
                 // changes nothing rather than acting as some other kind of row.
-                Kind::Queue => None,
+                // The job list is the same shape: `delete` cancels, and the
+                // generic selector never runs for it.
+                Kind::Queue | Kind::Jobs => None,
                 // A link is the one row that leaves the client: the reader
                 // pressed enter on it, so it goes to the platform handler and
                 // the list closes without an action for the bridge.
@@ -357,6 +402,9 @@ impl App {
         let session_id = session.session_id;
         self.description = session.description;
         self.session_id = Some(session_id.clone());
+        // A call id is scoped to the session that started it, so neither the
+        // job rows nor an open job list may follow the client across.
+        self.clear_background_jobs();
         self.todos = Default::default();
         self.session_title = session.title;
         self.new_session_pending = false;
@@ -368,6 +416,10 @@ impl App {
         self.queue.clear();
         self.prompt = None;
         self.waiting_prompts.clear();
+        // A capture belongs to the session being left, and the consent was
+        // given for that session: both go with it, so its audio cannot become
+        // a draft in the session being attached.
+        self.voice.forget();
         self.resend_held = false;
         self.session_status = Some(session.status);
         self.model = session.model;
@@ -409,6 +461,13 @@ impl App {
         self.cost = None;
         self.scroll = Scroll::new();
         self.slash.dismiss();
+        // A list that is still open describes the session being left: its rows
+        // were fetched for that session's swarm or directory, and a selection
+        // from it would attach for a scope the client no longer shows. It goes
+        // with the rest of the old session's state, so a list request that was
+        // in flight when the answer landed cannot put strangers' rows under the
+        // new session.
+        self.picker = None;
         // The candidates were read from the directory of the session being
         // left; the next Tab reads the directory this session reported.
         self.path_cycle = None;

@@ -94,6 +94,7 @@
                 "group": "Providers",
                 "pages": [
                   "reference/provider/model",
+                  "reference/provider/diagnostics",
                   "reference/provider/integrations"
                 ]
               },
@@ -108,6 +109,7 @@
                 "group": "Performance",
                 "pages": [
                   "reference/performance/benchmark",
+                  "reference/performance/eval",
                   "reference/performance/results",
                   "reference/performance/memory"
                 ]
@@ -202,6 +204,7 @@
                 "group": "제공자",
                 "pages": [
                   "ko/reference/provider/model",
+                  "ko/reference/provider/diagnostics",
                   "ko/reference/provider/integrations"
                 ]
               },
@@ -216,6 +219,7 @@
                 "group": "성능",
                 "pages": [
                   "ko/reference/performance/benchmark",
+                  "ko/reference/performance/eval",
                   "ko/reference/performance/results",
                   "ko/reference/performance/memory"
                 ]

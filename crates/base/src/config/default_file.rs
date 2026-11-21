@@ -302,6 +302,8 @@ bash_session_cwd = true
 # managers stop prompting. Without it a command can hang waiting for a
 # terminal answer. Set false to inherit the parent environment unchanged.
 bash_non_interactive_env = true
+# Import new variables from system direnv for a trusted workspace.
+bash_direnv = false
 # Opt-in output minimizer: a single, non-piped `cargo`/package-manager/pytest/go
 # test/git status/tsc/eslint command has its progress lines dropped before the
 # result reaches the model. The full output is saved as a session artifact and
@@ -527,6 +529,11 @@ idle_hibernation_secs = 1800
 # workers inherit the provider-wide reasoning effort.
 # Env override: HORON_AGENT_SWARM_EFFORT
 # swarm_effort = "medium"
+# Zero leaves the corresponding child limit disabled.
+swarm_child_runtime_secs = 0
+swarm_child_request_limit = 0
+swarm_child_request_notice = true
+# swarm_max_spawn_effort = "high"
 #
 # Root model reasoning while /effort swarm or /effort swarm-deep is selected.
 # These are independent of worker swarm_effort. Supported levels:

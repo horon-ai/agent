@@ -27,6 +27,8 @@ pub enum Command {
         command: RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Clear or compact the model context of the session the bridge follows.
+    Context(crate::commands::ContextCommand),
     /// Switch to the model named.
     ///
     /// The list the picker shows is its own command: `/model` with no argument
@@ -62,6 +64,14 @@ pub enum Command {
     Attach(String),
     /// Save a title for the session the bridge follows.
     Rename(String),
+    /// List the background work the attached session is still running.
+    BackgroundJobs,
+    /// Stop one background terminal this session started.
+    ///
+    /// It names the tool call, not the turn: the session and every other job
+    /// keep running, and the daemon answers a job that is not a terminal with
+    /// `not_cancellable` rather than stopping something else.
+    CancelBackgroundTerminal(String),
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one
@@ -81,6 +91,12 @@ pub enum Command {
     /// itself, so there is nothing here for a caller to name: the session the
     /// worker follows is the one asked about.
     DaemonSettings,
+    /// List the swarm children of the session the worker follows, and the
+    /// parent it reports back to.
+    ///
+    /// The rows are narrowed to that lineage by the bridge; a caller names
+    /// nothing because the session in force is the only swarm asked about.
+    Swarm,
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -138,12 +154,29 @@ pub enum Incoming {
     DaemonSettings(crate::settings::DaemonSettings),
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// The swarm children of the attached session, and the parent row after
+    /// them, already narrowed to that lineage by the bridge.
+    Swarm(Vec<super::SwarmRow>),
     /// Only the archived sessions, newest first.
     ArchivedSessions(Vec<SessionRow>),
     /// Noted sessions that no longer exist, and how many could not be checked.
     SessionsChecked { gone: Vec<String>, unverified: usize },
     /// The skills the harness reports for the session it serves.
     Skills(Vec<SkillRow>),
+    /// The background work the session is still running.
+    BackgroundJobs(Vec<super::BackgroundJobRow>),
+    /// One cancellation's verdict, and the list as it stands after it.
+    ///
+    /// The reply to a cancellation only says a stop was started, so the list
+    /// that travels beside it is what says whether the job is gone. A refresh
+    /// that could not be read travels as its sentence: the verdict still shows,
+    /// the rows already on screen stay, and the client says why they are stale.
+    BackgroundJobCancelled {
+        call_id: String,
+        accepted: bool,
+        reason: Option<String>,
+        jobs: Result<Vec<super::BackgroundJobRow>, horon_agent_sdk::Error>,
+    },
     /// The running turn took the text a steer carried, echoed back so the
     /// client knows which held messages it settles.
     Steered { text: String },

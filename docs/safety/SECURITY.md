@@ -47,6 +47,8 @@ When no client is attached there is nobody to ask. So an unknown state is denial
 
 Denial is closure, not failure. The session keeps running and only the MCP servers the project named are dropped.
 
+When `[tools] bash_direnv` is enabled, local shells also require an explicit Horon trust decision before loading a direnv file inside the session workspace. A matching stored decision, `--trust-workspace`, or `HORON_AGENT_WORKSPACE_TRUST=trust` allows the direnv check. `HORON_AGENT_WORKSPACE_TRUST=deny` takes precedence, and direnv must independently approve the file before execution. Horon keeps the direnv output and environment values out of diagnostics.
+
 ### Overrides
 
 | Means | Scope | Recording |

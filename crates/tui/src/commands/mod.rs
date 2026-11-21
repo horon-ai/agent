@@ -4,18 +4,19 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
-//!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record` and `/replay`.
+//!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
+//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
+//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay`, `/swarm` and
+//!    `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
 //!    what that name means for that project.
 //! 3. Every [`RuntimeCommand`] answers under its own `snake_case` name, so the
 //!    list cannot drift from the protocol. The names are read out of serde
-//!    rather than written down twice. The harness's `skills` and `mcp` commands
-//!    are the exceptions: the built-in `/skills` and `/mcp` own those names,
-//!    and a skill itself answers as `/skill:<name>`.
+//!    rather than written down twice. The harness's `skills`, `mcp` and `swarm`
+//!    commands are the exceptions: the built-in `/skills`, `/mcp` and `/swarm`
+//!    own those names, and a skill itself answers as `/skill:<name>`.
 //!
 //! A file whose name a built-in UI command already owns is shadowed: `/help`
 //! lists it with that label and it never runs, because the built-in wins.
@@ -56,6 +57,22 @@ mod tests;
 
 pub use parse::{ParsedCommand, fallback_description, substitute};
 
+/// Changes to the model context of the current session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCommand {
+    Clear,
+    Compact,
+}
+
+impl ContextCommand {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Clear => "clear-context",
+            Self::Compact => "compact",
+        }
+    }
+}
+
 /// A command the client answers itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Local {
@@ -71,6 +88,8 @@ pub enum Local {
     Keys,
     /// Clear the transcript pane.
     Clear,
+    /// Clear or compact model context on the daemon.
+    Context(ContextCommand),
     /// Copy the draft, an answer or a code block to the terminal clipboard.
     Copy,
     /// Open the model picker, or switch to the model named.
@@ -101,12 +120,24 @@ pub enum Local {
     ShellExcluded,
     /// List the http(s) links in the newest assistant answers and open one.
     Links,
+    /// List the background work this session is running, and cancel one.
+    Jobs,
     /// Record the visible conversation to a local file, or stop.
     Record,
     /// Replay a recorded conversation, or stop the replay.
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// List the swarm children of this session and the parent it reports back
+    /// to, and attach to one.
+    ///
+    /// The bare name opens the list; an argument still reaches the harness's
+    /// own `swarm` report, which is why the runtime command no longer answers
+    /// under its own listing.
+    Swarm,
+    /// Record, recognize or speak with on-device programs; nothing leaves the
+    /// client.
+    Voice,
 }
 
 impl Local {
@@ -119,6 +150,8 @@ impl Local {
             "artifact" => Some(Self::Artifact),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
+            "clear-context" => Some(Self::Context(ContextCommand::Clear)),
+            "compact" => Some(Self::Context(ContextCommand::Compact)),
             "copy" => Some(Self::Copy),
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
@@ -132,9 +165,12 @@ impl Local {
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
             "links" => Some(Self::Links),
+            "jobs" => Some(Self::Jobs),
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "swarm" => Some(Self::Swarm),
+            "voice" => Some(Self::Voice),
             _ => None,
         }
     }
@@ -148,6 +184,7 @@ impl Local {
             Self::Artifact => "artifact",
             Self::Keys => "keys",
             Self::Clear => "clear",
+            Self::Context(command) => command.name(),
             Self::Copy => "copy",
             Self::Model => "model",
             Self::Effort => "effort",
@@ -166,9 +203,12 @@ impl Local {
             Self::Shell => "shell",
             Self::ShellExcluded => "shell",
             Self::Links => "links",
+            Self::Jobs => "jobs",
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Swarm => "swarm",
+            Self::Voice => "voice",
         }
     }
 }
@@ -661,9 +701,34 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 22] = [
-    "archived", "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "mcp", "model", "new", "note",
-    "queue", "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 27] = [
+    "archived",
+    "artifact",
+    "clear",
+    "clear-context",
+    "compact",
+    "copy",
+    "effort",
+    "exit",
+    "help",
+    "jobs",
+    "keys",
+    "links",
+    "mcp",
+    "model",
+    "new",
+    "note",
+    "queue",
+    "quit",
+    "record",
+    "rename",
+    "replay",
+    "resume",
+    "settings",
+    "skills",
+    "swarm",
+    "switch",
+    "voice",
 ];
 
 /// Every runtime command, in declaration order.
@@ -713,8 +778,15 @@ fn server_catalog() -> &'static ServerCatalog {
             warnings: Vec::new(),
         };
         for command in SERVER_VARIANTS {
-            // These built-ins own their names and send their own typed requests.
-            if matches!(command, RuntimeCommand::Skills | RuntimeCommand::Mcp) {
+            // The built-in `/skills`, `/mcp` and `/swarm` own those names, so
+            // the harness's own commands are not offered beside them: a listing
+            // with the same name twice would name one command and run another.
+            // Each built-in still sends its own typed request, and `/swarm
+            // status` forwards what is typed after it.
+            if matches!(
+                command,
+                RuntimeCommand::Skills | RuntimeCommand::Mcp | RuntimeCommand::Swarm
+            ) {
                 continue;
             }
             match serde_json::to_value(command) {

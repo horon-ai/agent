@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
 
-use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
+use horon_agent_sdk::api::{ApiEvent, TurnStopReason};
 
 use crate::commands::Registry;
 use crate::history::History;
@@ -28,11 +28,13 @@ use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
 use self::copy::CopyRequest;
 
+mod action;
 mod commands;
 mod copy;
 mod draft_suggestions;
 mod effort;
 mod history_search;
+mod jobs;
 mod keys;
 mod notes;
 mod picker;
@@ -61,6 +63,9 @@ mod effort_cmd_tests;
 mod history_search_tests;
 
 #[cfg(test)]
+mod jobs_tests;
+
+#[cfg(test)]
 mod notes_tests;
 
 #[cfg(test)]
@@ -69,68 +74,7 @@ mod session_switch_tests;
 #[cfg(test)]
 mod steer_tests;
 
-/// What the UI asks the bridge to do after a keystroke.
-///
-/// Not `Eq`: an answer carries protocol selections, which only compare with
-/// `PartialEq`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Action {
-    /// Send this text as a user message.
-    Send(String),
-    /// Send this text into the running turn as one soft interrupt.
-    ///
-    /// It carries the queued messages joined for the harness; what the
-    /// transcript shows is each message's own row, settled when the bridge
-    /// answers.
-    Steer(String),
-    /// Cancel the running turn.
-    Cancel,
-    /// Answer a parked approval.
-    Approval {
-        request_id: String,
-        approved: bool,
-        always: bool,
-    },
-    /// Answer a structured question.
-    Ask {
-        ask_id: String,
-        answers: Vec<AskSelection>,
-    },
-    /// Ask the harness to run one of its own commands.
-    Runtime {
-        command: horon_agent_sdk::RuntimeCommand,
-        arguments: Vec<String>,
-    },
-    /// Switch to the model named.
-    Model(String),
-    /// Set the reasoning effort to the level named.
-    Effort(String),
-    /// Request the model catalog used by the picker and shortlist cycling.
-    Models,
-    /// Ask for the sessions stored for this working directory.
-    Sessions,
-    ArchivedSessions,
-    Archive(String),
-    Restore(String),
-    /// Start a new session in this working directory and follow it.
-    NewSession,
-    /// Attach to another session and replay its stored conversation.
-    Attach(String),
-    /// Save a title for the attached session.
-    Rename(String),
-    /// Ask the harness for the skills it reports for the session.
-    Skills,
-    /// Ask which noted sessions were deleted, including checks for archived sessions.
-    CheckSessions(Vec<String>),
-    /// Hand the draft to the user's editor; the loop answers this one itself,
-    /// because the editor needs the terminal the loop is drawing on.
-    EditDraft,
-    /// Give the terminal to the editor with a private copy of a resolved artifact.
-    OpenArtifact(std::path::PathBuf),
-    /// Ask the daemon for the values the settings screen displays.
-    DaemonSettings,
-    Quit,
-}
+pub use action::Action;
 
 /// One message from the user, before the harness has confirmed it.
 ///
@@ -397,6 +341,12 @@ pub struct App {
     /// picker needs the file and the tool list the harness named, so the report
     /// is kept whole here. It is cleared with the session it belongs to.
     pub skills: Vec<SkillRow>,
+    /// The background work the session reported as running, in its order.
+    ///
+    /// A row's value is its index here, so the selected row names the call id
+    /// the cancel key sends even when two jobs share a command line. It is
+    /// cleared with the session it belongs to.
+    pub(crate) background_jobs: Vec<crate::sdk_bridge::BackgroundJobRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
     /// The daemon values the settings screen shows, or why it has none.
@@ -445,6 +395,7 @@ pub struct App {
     pub(crate) recorder: Option<crate::recording::Recorder>,
     /// The replay playing on screen, which owns the transcript while it runs.
     pub(crate) replay: Option<record::ReplayState>,
+    pub(crate) voice: crate::voice::Voice, // on-device speech; consent is session-only
     /// The conversation identity and answer count a recording already kept.
     ///
     /// The revision says the conversation was replaced (a clear or a session
@@ -525,6 +476,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
@@ -536,6 +488,7 @@ impl App {
             outcome: None,
             pending_copy: None,
             recorder: None,
+            voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
         }
@@ -612,6 +565,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
@@ -623,6 +577,7 @@ impl App {
             outcome: None,
             pending_copy: None,
             recorder: None,
+            voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
         }

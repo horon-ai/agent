@@ -661,12 +661,15 @@ Tests: `crates/app-core/src/agent/tool_result_aging/tests.rs` covers the marker
 guard and the batch gate; `crates/compaction-core/src/pruning.rs` covers the
 newest selection.
 
+## Run deadline
+
+Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The timer starts after setup and accepts positive seconds, including fractions. At expiry, Horon cancels the turn and gives it up to one second to settle. The process exits with status `124`.
+
+Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
+
 ## `--resume` behaviour
 
-This build has no interactive session picker. Session resume is a single global `--resume`
-flag (`src/cli/args.rs:63-68`). Passing `--resume` with no value means the daemon does not
-start and exits with an error. The text is "the interactive session picker is unavailable in
-this headless build; pass an explicit session id to --resume" (`src/cli/dispatch.rs:97-101`).
+Passing `--resume` with no value exits with a session picker error before the daemon starts.
 
 ### Default behaviour
 
@@ -676,6 +679,7 @@ this headless build; pass an explicit session id to --resume" (`src/cli/dispatch
   (`src/cli/dispatch.rs:721`).
 - `--resume` can be combined with other global flags. The session resumes in this process, and
   the connected client decides which display shows it.
+- `--continue` selects the most recently active non-archived session saved in the resolved working directory, including a directory selected with `-C`. It prints the session ID on stderr unless `--quiet` is set. It fails if no session qualifies and cannot be combined with `--resume` or `--ssh`.
 
 ### Displaying a resumed session
 
