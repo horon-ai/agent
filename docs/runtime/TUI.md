@@ -459,12 +459,17 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/voice` | Dictate to the draft or play text on this device |
 
 Use `/diff` to see staged and unstaged changes separately. `/commit <message>` displays the staged files and the content identifier it will commit. `/commit --yes` commits that exact content to the reviewed branch if its previous commit is still current. `/commit --cancel` discards the review. Any change to staging requires a new review. The command works on an attached local branch and performs a local commit only.
 
 If a repository has a commit or reference-transaction hook configured, use `git commit` in the terminal after reviewing the changes. The TUI preserves Git's signing settings. If a checkout races with confirmation, only the reviewed branch can receive the commit.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+Use `/voice consent` in the attached session before recording. Press Ctrl+Space or run `/voice` to start or stop. `/voice cancel` discards the recording and `/voice forget` withdraws consent. Recognized text goes into the draft and only goes to the model if you submit it. `/voice say <text>` and `/voice read` play text on this device.
+
+Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
+
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -506,6 +511,7 @@ built-in commands:
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
+  /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```

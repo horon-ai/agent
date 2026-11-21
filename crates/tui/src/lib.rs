@@ -48,6 +48,7 @@ mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
 mod visual_blocks;
+mod voice;
 mod window;
 mod wrap;
 
@@ -126,6 +127,10 @@ mod path_completion_tests;
 #[cfg(test)]
 #[path = "git_review_tests.rs"]
 mod git_review_tests;
+
+#[cfg(test)]
+#[path = "voice_tests.rs"]
+mod voice_tests;
 
 use ratatui::Terminal;
 use ratatui::backend::Backend;
@@ -571,6 +576,7 @@ where
         // A local command runs on a worker thread; its result joins the same
         // redraw decision as an event from the bridge.
         changed |= crate::commands::shell::drain(app);
+        changed |= app.tick_voice();
         if !app.running {
             break;
         }
@@ -768,7 +774,11 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // The popup lists the same commands the hint names, with their
     // descriptions, so the hint is only the fallback for a popup `esc` closed.
     let popup = app.slash.is_open().then(|| app.slash.len());
-    let hint = if popup.is_some() { None } else { app.completion_hint() };
+    let hint = if popup.is_some() {
+        None
+    } else {
+        app.voice_hint().or_else(|| app.completion_hint())
+    };
     // The input pane grows with the draft, but never past a cap and never at
     // the transcript's expense: three rows of conversation stay readable on a
     // short terminal, and a taller draft scrolls inside its own pane.
