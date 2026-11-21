@@ -490,6 +490,8 @@ where
     // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
     let state_supported = title.state_supported();
+    // The state the window title already carries: `title.start` wrote it, and
+    // the first frame must not write it again.
     let mut shown_state = window::state(app, state_supported);
     loop {
         let mut changed = match loop_io::drain_events(app) {

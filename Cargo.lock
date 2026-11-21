@@ -1852,6 +1852,7 @@ dependencies = [
  "horon-agent-config-types",
  "horon-agent-core",
  "horon-agent-embedding",
+ "horon-agent-extension-types",
  "horon-agent-gateway-types",
  "horon-agent-import-core",
  "horon-agent-logging",
@@ -1993,6 +1994,14 @@ dependencies = [
  "tokenizers",
  "tract-hir",
  "tract-onnx",
+]
+
+[[package]]
+name = "horon-agent-extension-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
