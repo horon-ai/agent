@@ -191,6 +191,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "title.enabled",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TITLE_ENABLED",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Window",
+            label: "Manage window title",
+            description: "Let Horon name the terminal window. Changes apply on the next launch.",
+        },
+    },
+    SettingSpec {
         id: "title.state",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TITLE_STATE",
