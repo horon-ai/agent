@@ -319,24 +319,11 @@ pub struct App {
     new_session_pending: bool,
     /// Working directory the `path` segment shows.
     pub cwd: Option<String>,
-    /// Whether the attached session runs on this machine.
-    ///
-    /// Path completion reads this machine's disk, so it is offered only for
-    /// the client's own daemon: a session behind an explicit socket or a remote
-    /// bridge reports paths that belong to another machine, and a listing here
-    /// would fill names that session does not have.
+    /// Whether path completion may read this session's workspace on this machine.
     pub workspace_is_local: bool,
-    /// Whether `cwd` is the directory of the attached session.
-    ///
-    /// Off when a session reports no directory: the launch directory is then a
-    /// guess about where the session works, and path completion does not read
-    /// it.
+    /// Whether the daemon supplied the workspace directory.
     pub workspace_known: bool,
-    /// The candidates the last Tab filled a path token from.
-    ///
-    /// Kept so the next Tab on the same candidate walks to the next one; any
-    /// other edit makes the token stop matching and the candidates are read
-    /// again.
+    /// The path candidates from the last Tab, for cycling.
     pub(crate) path_cycle: Option<crate::path_completion::Choice>,
     /// The user's home directory, shortened to `~` by the `path` segment.
     pub home: Option<String>,

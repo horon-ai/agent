@@ -21,6 +21,15 @@
 
 use std::path::{Component, Path, PathBuf};
 
+/// The launch directory is a display fallback when the daemon reports none.
+pub(crate) fn launch_directory(explicit: Option<PathBuf>) -> Option<PathBuf> {
+    if explicit.is_some() {
+        return explicit;
+    }
+    let Ok(dir) = std::env::current_dir() else { return None };
+    Some(dir)
+}
+
 /// Entries one Tab may read before the directory is treated as unbounded.
 ///
 /// A partial listing could fill a prefix no candidate actually shares, so past

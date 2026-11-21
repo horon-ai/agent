@@ -290,23 +290,7 @@ where
         eprintln!("horon-tui: keys: {warning}");
     }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
-    // The directory the run starts in, with `--cwd` first: it is the path the
-    // session is created with, so the client's own idea of the workspace and
-    // the session's cannot disagree. Only a daemon that reports no directory
-    // of its own falls back to it.
-    let launch_dir = match args.cwd.clone() {
-        Some(dir) => Some(dir),
-        // A process with no readable working directory has no directory to
-        // fall back to, which is the same absence as not asking for one: the
-        // daemon's own directory is shown and nothing else is reported.
-        None => {
-            let mut dir = None;
-            if let Ok(current) = std::env::current_dir() {
-                dir = Some(current);
-            }
-            dir
-        }
-    };
+    let launch_dir = path_completion::launch_directory(args.cwd);
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
