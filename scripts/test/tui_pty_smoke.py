@@ -617,7 +617,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         terminal.send("/pin\r")
-        terminal.read_until("pinned session_", STEP_TIMEOUT, "pin the current session")
+        terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the current session by its saved name")
         if not os.path.isfile(os.path.join(home, "tui-pins.json")):
             raise Failure("pin confirmation did not persist a local pin file")
         if POSIX:
