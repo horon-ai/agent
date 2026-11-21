@@ -87,6 +87,15 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
+            Local::Mcp => Some(Action::Runtime {
+                command: horon_agent_sdk::RuntimeCommand::Mcp,
+                arguments: arguments
+                    .splitn(2, char::is_whitespace)
+                    .map(str::trim)
+                    .filter(|argument| !argument.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            }),
             Local::Settings => self.open_settings(),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and
@@ -98,6 +107,7 @@ impl App {
             // `/switch` and `/resume` are one flow under two names: the list
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
+            Local::Archived => self.open_archived_sessions(),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
             Local::Rename => self.rename_session(arguments),
             // A note is the reader's own text about a message: it never joins

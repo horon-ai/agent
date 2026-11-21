@@ -95,6 +95,7 @@ Commands:
   /help          list the commands (built-in, harness, command files),
                  the skills and the keys in force; /help <command>
                  describes one of them
+  /archived      list archived sessions in this directory; Enter restores one
   /artifact [id] open a retained artifact of this session in $VISUAL or
                  $EDITOR, as a private copy; with no id, list them
   /clear         clear the transcript pane
@@ -105,6 +106,7 @@ Commands:
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
+  /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
@@ -253,6 +255,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 /// The line that explains one built-in UI command.
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
+        "archived" => "list archived sessions in this directory; Enter restores one",
         "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
         "clear" => "clear the transcript",
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
@@ -261,6 +264,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
+        "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",

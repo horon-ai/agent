@@ -17,8 +17,9 @@ test a package without the engine's internal ABI.
 ## Status
 
 On `dev`, the install command registers both package kinds and the inbox
-reconciler can process completed folders. Child supervision, automatic inbox
-reconciliation and session integration are tracked separately.
+reconciler can process completed folders. The child supervisor runs installed
+copies on Linux and macOS. Automatic inbox reconciliation and session
+integration are tracked separately.
 
 | Surface | State | Check |
 | --- | --- | --- |
@@ -28,7 +29,8 @@ reconciliation and session integration are tracked separately.
 | Author SDK: framing, negotiation, cancellation | Implemented | `cargo test -p horon-agent-extension-sdk` |
 | Worked example in both layouts | Implemented | `cargo test -p horon-package-example --test extension_layouts` |
 | `horon package install` and the inbox reconciler | Implemented | `cargo test --locked --test package_cli` |
-| Child supervision and session application | Not connected yet | Follow-up change on the same wire |
+| Child supervision on Linux and macOS | Implemented | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| Windows child supervision and session integration | Pending | Follow-up changes on the same launch path |
 
 ## Two package kinds
 
@@ -229,6 +231,23 @@ step.
 | `horon package verify <id>` | re-check the recorded bytes |
 | `horon package disable <id>` | keep the copy and stop loading it |
 | `horon package remove <id>` | revoke the record and keep user-held originals |
+
+## Starting the installed executable
+
+The launcher retains a lease on the installed copy and checks the recorded
+executable immediately before starting it. The child starts from that copy,
+with its absolute package root as the first argument. On Linux and macOS, the
+launcher clears the environment and supplies these values.
+
+| Variable | Value |
+| --- | --- |
+| `HORON_PACKAGE_ROOT`, `HORON_PACKAGE_ID`, `HORON_PACKAGE_KIND` | Installed root, package ID, and package kind |
+| `HORON_PACKAGE_STATE`, `HOME` | The package's owner-private state directory |
+| `TMPDIR` | The `tmp` directory under package state |
+| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` | Inherited when set |
+
+Provider keys and other host variables are omitted. The child retains the file
+and network permissions of the user's account.
 
 ## The example
 

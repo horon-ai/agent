@@ -2524,6 +2524,11 @@ pub(super) async fn handle_client(
                         let data = serde_json::json!({"refreshed": true, "models": guard.available_models_for_switching(), "routes": guard.model_routes()});
                         return Ok((data, "Provider model catalog refreshed.".into()));
                     }
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Mcp {
+                        let directory = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry /mcp after the current turn."))?
+                            .working_dir().map(std::path::PathBuf::from);
+                        return super::runtime_commands::mcp::inspect(directory.as_deref(), &args).await;
+                    }
                     if parsed == horon_agent_harness_api::RuntimeCommand::Swarm {
                         if let Some(enabled) = super::runtime_commands::boolean_action(&args, swarm_enabled, false)? {
                             if reject_if_agent_busy_for_request(id, "runtime_command", &client_session_id, client_is_processing, &agent, &client_event_tx).await {

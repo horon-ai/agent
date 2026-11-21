@@ -243,9 +243,10 @@ pub fn row(paths: &SessionPaths, id: &SessionId, probe: ReadProbe) -> Result<Sum
 /// # Errors
 /// Dirty sessions owned by another writer return Busy, never stale success.
 pub fn list_with_skipped(paths: &SessionPaths, probe: ReadProbe) -> Result<SessionListing, StoreError> {
-    crate::legacy_completion::check(paths, &probe)?;
+    crate::legacy_completion::check(paths, &probe)
+        .map_err(|error| catalog_error("check for a legacy session index", error))?;
     let snapshot = {
-        let _lock = lock(paths)?;
+        let _lock = lock(paths).map_err(|error| catalog_error("read the catalog lock", error))?;
         probe
             .read(&paths.root().join(".catalog.index.jsonl"))
             .and_then(|b| rows(&b))
@@ -253,26 +254,38 @@ pub fn list_with_skipped(paths: &SessionPaths, probe: ReadProbe) -> Result<Sessi
     let mut repair_catalog = snapshot.is_err();
     let mut snapshot = snapshot.unwrap_or_default();
     let cache = SessionCache::new(paths.clone(), probe.clone());
-    let scan = sessions(paths)?;
+    let scan = sessions(paths).map_err(|error| catalog_error("scan session directories", error))?;
     let ids = scan.ids;
     let live: std::collections::HashSet<SessionId> = ids.iter().cloned().collect();
     snapshot.retain(|id, _| live.contains(id));
     for id in &ids {
-        let source = Stamp::read(&paths.events_log(id)?)?;
+        let source = paths
+            .events_log(id)
+            .and_then(|path| Stamp::read(&path))
+            .map_err(|error| catalog_error("read the session event stamp", error))?;
         let valid = snapshot.get(id).is_some_and(|s| s.source == source);
-        let summary = paths.session_dir(id)?.join("summary.json");
+        let summary = paths
+            .session_dir(id)
+            .map_err(|error| catalog_error("locate the session summary", error))?
+            .join("summary.json");
         let summary_valid = probe
             .bounded(&summary)
             .and_then(|b| decode::<CatalogEntry>(&b))
             .is_ok_and(|s| s.session_id == *id && s.source == source);
-        if !valid || !summary_valid || crate::cache_io::dirty_present(paths, Some(id))? {
+        let dirty = || {
+            crate::cache_io::dirty_present(paths, Some(id))
+                .map_err(|error| catalog_error("check the session dirty marker", error))
+        };
+        if !valid || !summary_valid || dirty()? {
             repair_catalog |= !valid;
-            let row = cache.catalog_entry(id)?;
+            let row = cache
+                .catalog_entry(id)
+                .map_err(|error| catalog_error("read session metadata", error))?;
             snapshot.insert(id.clone(), row);
         }
     }
     // Final snapshot is a linearization point. Never hold this lock during repair.
-    let _lock = lock(paths)?;
+    let _lock = lock(paths).map_err(|error| catalog_error("take the final catalog lock", error))?;
     if let Ok(current) = probe
         .read(&paths.root().join(".catalog.index.jsonl"))
         .and_then(|b| rows(&b))
@@ -290,7 +303,9 @@ pub fn list_with_skipped(paths: &SessionPaths, probe: ReadProbe) -> Result<Sessi
     // it as contention would let one stale entry block the whole store again.
     let mut due = false;
     for id in &ids {
-        if crate::cache_io::dirty_present(paths, Some(id))? {
+        if crate::cache_io::dirty_present(paths, Some(id))
+            .map_err(|error| catalog_error("check the final catalog dirty marker", error))?
+        {
             due = true;
             break;
         }
@@ -305,18 +320,27 @@ pub fn list_with_skipped(paths: &SessionPaths, probe: ReadProbe) -> Result<Sessi
             &paths.root().join(".catalog.index.jsonl"),
             &row_bytes(&snapshot)?,
             &probe,
-        )?;
+        )
+        .map_err(|error| catalog_error("publish the derived session catalog", error))?;
     }
     drop(_lock);
     let mut result: Vec<_> = snapshot
         .into_values()
         .map(|entry| entry.materialize(paths, &probe))
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<_, _>>()
+        .map_err(|error| catalog_error("read catalog entries", error))?;
     result.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.session_id.cmp(&b.session_id)));
     Ok(SessionListing {
         rows: result,
         skipped: scan.skipped,
     })
+}
+
+fn catalog_error(operation: &str, mut error: StoreError) -> StoreError {
+    if error.code == crate::StoreErrorCode::Io {
+        error.message = format!("could not {operation}: {}", error.message);
+    }
+    error
 }
 
 /// Lists bounded summary metadata; never parses a transcript on a clean hit.
