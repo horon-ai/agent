@@ -623,6 +623,17 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
         if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
             raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            resumed = Terminal([launch.argv0, "--continue"], cwd=case_root, env=env)
+            try:
+                resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
+                resumed.read_until(REPLY_TEXT, STEP_TIMEOUT, "reopened conversation")
+                resumed.send("/quit\r")
+                if resumed.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"continue launch did not exit cleanly\n{resumed.transcript}")
+                return terminal.transcript + resumed.transcript
+            finally:
+                resumed.close()
         return terminal.transcript
     finally:
         terminal.close()
