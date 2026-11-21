@@ -600,6 +600,17 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        terminal.send("/pin\r")
+        terminal.read_until("pinned session_", STEP_TIMEOUT, "pin the current session")
+        if not os.path.isfile(os.path.join(home, "tui-pins.json")):
+            raise Failure("pin confirmation did not persist a local pin file")
+        if POSIX:
+            terminal.send("/switch\r")
+            terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")
+            terminal.send("\x10")
+            terminal.send("\x1b")
+            terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
+
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
