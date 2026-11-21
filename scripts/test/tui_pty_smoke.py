@@ -986,7 +986,10 @@ def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.send("/jobs\r")
         terminal.send("job-one")
         terminal.read_until("output-one", STEP_TIMEOUT, "other job remains available")
-        terminal.send("\x1b[3~\x1b")
+        terminal.send("\x1b[3~")
+        terminal.read_until("running no background work", STEP_TIMEOUT, "both cancelled jobs have exited")
+        terminal.send("\x1b")
+        time.sleep(0.15)
         terminal.send("/quit\r")
         if terminal.wait(STEP_TIMEOUT) != 0:
             raise Failure(f"background job client did not exit\n--- transcript ---\n{terminal.transcript}")
