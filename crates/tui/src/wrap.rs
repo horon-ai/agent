@@ -699,7 +699,7 @@ mod tests {
             head: vec![Indented::plain(Line::from("head"))],
             text: &text,
             prefix: "",
-            style: Style::default(),
+            style: RowStyle::Plain(Style::default()),
             indent: 0,
             tail: Vec::new(),
         };
