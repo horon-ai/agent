@@ -247,8 +247,9 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_end` | `ctrl+k` | 커서부터 그 줄 맨 끝까지 지운다 |
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | 커서 앞 낱말을 지운다 |
 | `editor.complete` | `tab` | 팝업이 고른 명령을 채우거나 입력 중인 이름을 완성한다 |
-| `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
 | `editor.accept_suggestion` | `ctrl+right` | 화면에 보이는 제안을 초안에 넣는다 |
+| `editor.history_search` | `ctrl+r` | 앞서 보낸 초안을 검색한다 |
+| `editor.external` | `ctrl+g` | `VISUAL` 또는 `EDITOR`에서 초안을 편집한다 |
 | `prompt.allow` | `y` | 대기 중인 도구 호출을 한 번 승인한다 |
 | `prompt.allow_always` | `a` | 이 호출과 이후 같은 호출을 승인한다 |
 | `prompt.deny` | `n` | 대기 중인 도구 호출을 거절한다 |
@@ -264,6 +265,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 ## 편집기
 
 `editor.suggestions = true`로 지정하면 현재 세션에서 이미 보낸 글을 참고해 초안에 이어 쓸 내용을 표시합니다. Ctrl+Right로 제안을 초안에 넣고 Esc로 닫습니다. 초안이 바뀌면 이전 제안은 사라집니다. 제안은 로컬에서 만들며 네트워크 요청은 보내지 않습니다.
+
+Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어 있으면 `EDITOR`를 사용합니다. 큰따옴표나 작은따옴표로 묶은 인수를 지원하며 셸 확장은 사용하지 않습니다. Horon은 비공개 임시 파일을 전달하고 편집기가 정상 종료하면 UTF-8로 읽습니다. 편집에 실패하면 기존 초안을 유지합니다. 편집한 글은 직접 전송할 때까지 입력란에 남습니다.
 
 입력 줄은 초안을 따라 자란다. 줄마다 한 행이고 최대 여덟 행까지 자라며, 그보다 긴 초안은 제 안에서 스크롤한다. 초안이 자라는 동안에도 대화는 최소 세 행을 지키므로 긴 메시지가 화면 전체를 가져가지 않는다.
 

@@ -251,8 +251,9 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | Delete the word before the cursor |
 | `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
-| `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
 | `editor.accept_suggestion` | `ctrl+right` | Add the visible suggestion to the draft |
+| `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
+| `editor.external` | `ctrl+g` | Edit the draft in `VISUAL` or `EDITOR` |
 | `prompt.allow` | `y` | Approve the parked tool call once |
 | `prompt.allow_always` | `a` | Approve this call and every later call like it |
 | `prompt.deny` | `n` | Deny the parked tool call |
@@ -268,6 +269,8 @@ Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and
 ## The editor
 
 With `editor.suggestions = true`, the composer can show a continuation from messages you already sent in the current session. Ctrl+Right adds it to the draft and Esc dismisses it. Editing the prefix withdraws a stale suggestion. The suggestion provider runs locally and sends no request.
+
+Press Ctrl+G to edit the draft with `VISUAL`, or `EDITOR` when `VISUAL` is unset. The command accepts quoted arguments without shell expansion. Horon hands the editor a private temporary file and reads it back as UTF-8 after a successful exit. A failed edit leaves the draft intact. The edited text stays in the composer until you send it.
 
 The input line grows with the draft: one row per line, up to eight rows, and a taller draft scrolls inside its own pane. The conversation keeps at least three rows while the draft grows, so a long message never takes the whole screen.
 

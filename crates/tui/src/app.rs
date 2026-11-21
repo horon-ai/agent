@@ -111,6 +111,9 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Hand the draft to the user's editor; the loop answers this one itself,
+    /// because the editor needs the terminal the loop is drawing on.
+    EditDraft,
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.
@@ -1051,13 +1054,7 @@ impl App {
         self.slash.sync(&self.commands, &text);
     }
 
-    /// Bring the local draft suggestion in line with the draft and the setting.
-    ///
-    /// A changed draft starts a new generation and asks the local provider
-    /// again; an unchanged one keeps the answer it has, so a dismiss or an
-    /// accepted line stays put until the next edit. The provider reads only the
-    /// drafts this editor already holds, and the answer is dropped unless it
-    /// names the generation and the exact text it was asked about.
+    /// Refresh local suggestions on edits, rejecting replies for earlier drafts.
     pub fn sync_suggestions(&mut self) {
         if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
             self.suggestions.withdraw();
@@ -1067,8 +1064,7 @@ impl App {
         if self.suggestions.is_synced(fingerprint) {
             return;
         }
-        // The cap is checked before the text is built, so a huge draft costs a
-        // length read rather than a copy.
+        // Check the limit before copying the draft.
         if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
             self.suggestions.skip(fingerprint);
             return;
