@@ -26,6 +26,9 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
+mod artifact_output;
+pub use artifact_output::ArtifactOutputConfig;
+
 const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
     Duration::ZERO
 } else {
@@ -865,13 +868,9 @@ pub struct ToolConfig {
     pub nested_agents_md: bool,
     /// On by default: notice unchanged reads and diff changed whole-file re-reads. `full: true` always prints.
     pub read_dedup: bool,
-    /// On by default: condense large, older tool results in one batch when the
-    /// prompt cache is already cold or compaction is near. Originals stay
-    /// readable through `artifact://`.
     pub tool_result_aging: bool,
-    /// Maximum characters per text preview line, including the truncation marker.
-    /// Zero keeps the original line widths.
     pub output_column_cap: usize,
+    pub artifact_output: ArtifactOutputConfig,
     /// On by default: refuse to edit, replace, delete, or overwrite a file that
     /// a generator produces. A generated file is regenerated from its source,
     /// so an edit to it is silently lost.
@@ -1005,6 +1004,7 @@ impl Default for ToolConfig {
             read_dedup: true,
             tool_result_aging: true,
             output_column_cap: 0,
+            artifact_output: ArtifactOutputConfig::default(),
             block_auto_generated: true,
             bash_pty: BashPtyMode::Auto,
             hashline_edit: false,
