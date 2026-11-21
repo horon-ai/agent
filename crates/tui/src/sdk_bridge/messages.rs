@@ -60,6 +60,8 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// Save a title for the session the bridge follows.
+    Rename(String),
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one
