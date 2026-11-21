@@ -5,6 +5,9 @@
 //! `horon-agent-platform` selects it, and only on macOS.
 #![cfg(target_os = "macos")]
 
+#[path = "../../platform-linux/src/child_exit.rs"]
+mod child_exit;
+
 #[path = "../../platform-linux/src/unix.rs"]
 mod unix;
 
@@ -266,6 +269,10 @@ impl PlatformAdapter for Adapter {
 
     fn terminate_child(child: &mut Child) {
         unix::terminate_child(child);
+    }
+
+    fn wait_child_exit(pid: u32, nonblocking: bool) -> io::Result<bool> {
+        child_exit::wait_child_exit(pid, nonblocking)
     }
 
     fn describe_file_kind(metadata: &Metadata) -> &'static str {
