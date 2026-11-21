@@ -254,7 +254,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | Delete the word before the cursor |
-| `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
+| `editor.complete` | `tab` | Fill the popup's selected command, or complete the command or workspace-path prefix |
 | `editor.accept_suggestion` | `ctrl+right` | Add the visible suggestion to the draft |
 | `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
 | `editor.external` | `ctrl+g` | Edit the draft in `VISUAL` or `EDITOR` |
@@ -268,9 +268,11 @@ The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`, each action with th
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
-`up` and `down` move between the lines of a draft first and reach the input history only at its first and last line, which is why the transcript view moved to `shift+up`, `shift+down` and the page keys. `shift+tab` steps the reasoning effort and plain `tab` still completes the draft, because a binding that names shift answers before the one that does not. While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
+`up` and `down` move between draft lines and enter history at the first or last line. `shift+up`, `shift+down` and the page keys scroll the transcript. `shift+tab` steps the reasoning effort. Plain Tab completes a slash command name or a local path. An open prompt receives its own input before the composer handles keys.
 
 ## The editor
+
+With the default local endpoint, Tab completes paths relative to the session's working directory. Add `@` to insert a file mention. Names with spaces are quoted, and repeated Tab cycles matching filenames. Slash commands take priority. An explicit socket disables this local lookup.
 
 With `editor.suggestions = true`, the composer can show a continuation from messages you already sent in the current session. Ctrl+Right adds it to the draft and Esc dismisses it. Editing the prefix withdraws a stale suggestion. The suggestion provider runs locally and sends no request.
 
@@ -538,7 +540,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - The client asks the harness for the session's skills after every connect, every attach and every new session, and the daemon reads the global skill directories again for each of those answers.
 - A turn the daemon starts by itself sends this client no start event, so the `esc` delivery marker does not move: messages sent with `esc` stay drawn as sent into the turn that ended.
 - Starting with `--session <id>` attaches without drawing the stored conversation; `/resume <id>` replays it.
-- With the popup closed, Tab completes built-in, harness and command-file names only; a skill name is filled from the popup or picked in `/skills`.
+- With the popup closed, Tab completes built-in, harness and command-file names and can complete local workspace paths. Choose a skill from the popup or `/skills`.
 - Only the newest kept tool call expands. Expanding moves the view to the end of the conversation, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
 - A second `/new` typed before the first answer arrives reports its session as resumed, because the client holds one flag for the session it is starting.
 - The session list asks the daemon once or twice for every session it shows, so a directory with many sessions delays the list and the events behind it while they load.

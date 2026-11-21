@@ -138,8 +138,16 @@ pub enum Incoming {
     /// never per frame: the report is a request, and the status line renders far
     /// faster than a socket round trip.
     Usage(crate::statusline::UsageSnapshot),
-    /// The bridge moved to another session, with its stored conversation.
-    Attached(Box<AttachedSession>),
+    /// The bridge moved to another session, with its stored conversation and
+    /// the directory the harness reports for it.
+    ///
+    /// The directory travels beside the session record rather than inside it:
+    /// it decides which folder a draft completes, and the client applies it in
+    /// the handler that receives the switch.
+    Attached {
+        session: Box<AttachedSession>,
+        working_dir: Option<String>,
+    },
     /// A request the harness answered with an error; the client stops waiting.
     RequestFailed(String),
     /// The connection ended; the string says why.
