@@ -90,6 +90,7 @@ horon-agent-build-meta = { path = "../build-meta" }
 horon-agent-compaction-core = { path = "../compaction-core" }
 horon-agent-config-types = { path = "../config-types" }
 horon-agent-core = { path = "../core" }
+horon-agent-extension-types = { path = "../extension-types" }
 horon-agent-memory-types = { path = "../memory-types" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-plan = { path = "../plan" }

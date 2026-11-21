@@ -35,10 +35,12 @@ The main goal is to shrink the root crate's recompile scope so ordinary developm
 - Keep serde compatibility and root re-exports during migration unless every call site is being changed on purpose.
 - Success is measured by compile impact: fewer root edits, fewer root-owned DTOs, smaller dependency spread, and faster `cargo check --profile selfdev` plus reload after common changes.
 
-The planned user-installed Rust packages may add one internal contract crate,
-`extension-types`, for data shared between the host and package authors. It
-uses the existing workspace dependency set. Filesystem validation, process
-supervision, and runtime I/O belong to the host and platform layers.
+`crates/extension-types` holds the shared data contract for user-installed Rust
+packages and uses the existing workspace dependency set. Manifest validation
+and native file checks live in `crates/base/src/packages/` and `crates/platform`.
+Manifest file paths use portable ASCII spelling. Display names and resource
+content can use Unicode.
+Package registration and child-process supervision are separate implementation steps.
 
 ## Platform adapters
 
