@@ -783,7 +783,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
         recent_filter = len(terminal.transcript)
         terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.read_until("nothing match", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
         terminal.send("\x1b")
         time.sleep(0.15)
         archived_start = len(terminal.transcript)
