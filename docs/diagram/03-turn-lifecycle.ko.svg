@@ -100,6 +100,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="574" y="637" font-size="11" class="m mono">fanout_flush.rs · state.rs · client_lifecycle.rs</text>
 
 <line x1="520" y1="331" x2="556" y2="331" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#ah)"/>
+<text x="480" y="665" font-size="12" class="m" text-anchor="middle">자식 턴은 요청 횟수나 실행 시간 한도에서 끝날 수 있다. 코디네이터와 다른 자식은 계속 실행할 수 있다.</text>
 
 <text x="480" y="686" font-size="12" class="m" text-anchor="middle">모델이 도구를 그만 요구하면 턴이 끝난다. 저장소는 로그를, 전달자는 클라이언트를 맞춰 둔다.</text>
 </svg>
