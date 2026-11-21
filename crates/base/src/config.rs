@@ -865,12 +865,11 @@ pub struct ToolConfig {
     pub nested_agents_md: bool,
     /// On by default: notice unchanged reads and diff changed whole-file re-reads. `full: true` always prints.
     pub read_dedup: bool,
-    /// On by default: condense large, older tool results in one batch when the
-    /// prompt cache is already cold or compaction is near. Originals stay
-    /// readable through `artifact://`.
+    /// Maximum lines per default read page, clamped to 1–5,000.
+    pub read_default_limit: usize,
+    /// On by default: condense old results in a batch and keep originals readable through `artifact://`.
     pub tool_result_aging: bool,
-    /// Maximum characters per text preview line, including the truncation marker.
-    /// Zero keeps the original line widths.
+    /// Maximum characters per text preview line, including the marker. Zero disables the cap.
     pub output_column_cap: usize,
     /// On by default: refuse to edit, replace, delete, or overwrite a file that
     /// a generator produces. A generated file is regenerated from its source,
@@ -1003,6 +1002,7 @@ impl Default for ToolConfig {
             redo: false,
             nested_agents_md: true,
             read_dedup: true,
+            read_default_limit: 5000,
             tool_result_aging: true,
             output_column_cap: 0,
             block_auto_generated: true,

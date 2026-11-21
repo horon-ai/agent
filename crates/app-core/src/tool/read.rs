@@ -4,12 +4,12 @@
 // `tool/goal.rs` takes for the identical pattern.
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
-use super::read_selector::{
-    DEFAULT_LIMIT, Rendered, Selector, push_numbered_line, render_markdown_outline, render_range, render_with_selector,
-    split_path_and_selector,
-};
 #[cfg(test)]
 use super::read_selector::{MAX_LINE_LEN, TRUNCATED_TAG};
+use super::read_selector::{
+    Rendered, Selector, default_read_limit, push_numbered_line, render_markdown_outline, render_range,
+    render_with_selector, split_path_and_selector,
+};
 use super::read_state::{self, READ_SNAPSHOT_MAX_BYTES, READ_SNAPSHOT_TOOL, ReadRecord};
 use super::{Tool, ToolContext, ToolEffects, ToolOutput, artifacts, nested_agents};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
@@ -99,7 +99,7 @@ fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
             }
             end_line - start_line + 1
         } else {
-            params.limit.unwrap_or(DEFAULT_LIMIT)
+            params.limit.unwrap_or_else(default_read_limit)
         };
 
         return Ok(NormalizedReadRange {
@@ -111,7 +111,7 @@ fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
 
     Ok(NormalizedReadRange {
         offset: params.offset.unwrap_or(0),
-        limit: params.limit.unwrap_or(DEFAULT_LIMIT),
+        limit: params.limit.unwrap_or_else(default_read_limit),
         style: ReadRangeStyle::OffsetLimit,
     })
 }
@@ -160,7 +160,7 @@ impl Tool for ReadTool {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max text lines to read. Default 5000."
+                    "description": "Max lines; defaults to the configured page size."
                 },
                 "hashline": {
                     "type": "boolean",

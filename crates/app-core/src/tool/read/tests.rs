@@ -971,13 +971,9 @@ async fn a_selector_page_reports_the_next_selector_to_use() {
     // the line cap does.
     assert!(!output.contains("more lines in file"), "output={output:?}");
 
-    let output = read_fixture(
-        &numbered_lines(super::DEFAULT_LIMIT + 5),
-        json!({"file_path": "sample.txt:1-"}),
-    )
-    .await;
+    let output = read_fixture(&numbered_lines(5_005), json!({"file_path": "sample.txt:1-"})).await;
     assert!(
-        output.contains("more lines in file. Use :"),
+        output.contains("more lines in file. Use :5004 to continue"),
         "output tail={:?}",
         &output[output.len().saturating_sub(200)..]
     );

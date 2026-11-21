@@ -1331,7 +1331,7 @@ jobs:
             -- tool::read::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 1 \
+            --timeout 600 --min-passed 2 \
             -- tool::read::options_tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \

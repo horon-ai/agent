@@ -14,9 +14,12 @@ use std::path::Path;
 /// that were dropped.
 pub(crate) const MAX_LINE_LEN: usize = 2000;
 
-/// Default line count for a read without an explicit limit, and for the
-/// open-ended selector `:N-`.
-pub(crate) const DEFAULT_LIMIT: usize = 5000;
+/// Maximum configured default page and fixed cap for the open-ended selector `:N-`.
+const DEFAULT_LIMIT: usize = 5000;
+
+pub(super) fn default_read_limit() -> usize {
+    crate::config::config().tools.read_default_limit.clamp(1, DEFAULT_LIMIT)
+}
 
 /// Hard ceiling on the bytes one page may return, so a file of very long lines
 /// cannot spend a whole context window on a single page.
