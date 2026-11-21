@@ -1669,6 +1669,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- tool::communicate::tests::spawn_execute_rejects_missing_label_before_sending_request --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 3 \
+            -- agent::swarm_budget::tests:: --nocapture
 
       - name: Run turn end race cohort
         shell: bash

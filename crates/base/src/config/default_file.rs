@@ -527,6 +527,11 @@ idle_hibernation_secs = 1800
 # workers inherit the provider-wide reasoning effort.
 # Env override: HORON_AGENT_SWARM_EFFORT
 # swarm_effort = "medium"
+# Zero leaves the corresponding child limit disabled.
+swarm_child_runtime_secs = 0
+swarm_child_request_limit = 0
+swarm_child_request_notice = true
+# swarm_max_spawn_effort = "high"
 #
 # Root model reasoning while /effort swarm or /effort swarm-deep is selected.
 # These are independent of worker swarm_effort. Supported levels:

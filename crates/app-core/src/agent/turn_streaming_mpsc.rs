@@ -1,10 +1,9 @@
 use super::response_recovery::MalformedToolCallInfo;
 use super::*;
-use futures::FutureExt;
-use std::panic::AssertUnwindSafe;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
 
+mod run;
 mod tool_wait;
 
 /// Result text of a call the user cancelled, shared with the blocking turn
@@ -37,59 +36,6 @@ fn incomplete_turn_stop(stop_reason: Option<&str>) -> Option<ServerEvent> {
 }
 
 impl Agent {
-    pub(super) async fn run_turn_streaming_mpsc(&mut self, event_tx: mpsc::UnboundedSender<ServerEvent>) -> Result<()> {
-        // Loop detection is per turn, and a reminder this turn's guard set must
-        // not reach the next turn.
-        self.loop_guard.reset();
-        self.begin_turn_state();
-        // Register this turn's cancel signal for the whole turn, including the
-        // outcome bookkeeping below: the guard resets the signal when it drops,
-        // so a scope that ended before the outcome was named would report every
-        // cancelled turn as a plain stop.
-        let _turn_cancel_guard =
-            crate::turn_cancel_registry::register_active_turn(&self.session.id, self.graceful_shutdown.clone());
-        let mut in_flight = Some(InFlightGuard::new(
-            self.session.id.clone(),
-            self.soft_interrupt_queue.clone(),
-        ));
-        let outcome = AssertUnwindSafe(self.run_turn_streaming_mpsc_inner(event_tx, in_flight.as_mut()))
-            .catch_unwind()
-            .await;
-        self.current_turn_system_reminder = None;
-        match outcome {
-            Ok(result) => {
-                self.settle_soft_interrupt_turn(&mut in_flight, result.is_ok() && !self.is_graceful_shutdown())
-                    .await;
-                self.settle_streaming_turn_outcome(result.is_err());
-                result
-            }
-            Err(payload) => {
-                // A panic never reaches the normal settle point. Roll the
-                // injected messages back here, then let the unwind continue
-                // so the caller still observes the panic it caused.
-                self.settle_soft_interrupt_turn(&mut in_flight, false).await;
-                std::panic::resume_unwind(payload);
-            }
-        }
-    }
-
-    /// Record the streaming turn's exit reason when its loop left one open.
-    fn settle_streaming_turn_outcome(&mut self, failed: bool) {
-        if self.turn_state().outcome().is_some() {
-            return;
-        }
-        let outcome = if failed {
-            TurnOutcome::Error
-        } else if self.is_graceful_shutdown() {
-            TurnOutcome::Aborted
-        } else {
-            TurnOutcome::Stop
-        };
-        if let Err(error) = self.turn_state.finish(outcome) {
-            logging::warn(&format!("Turn outcome not recorded: {error}"));
-        }
-    }
-
     async fn run_turn_streaming_mpsc_inner(
         &mut self,
         event_tx: mpsc::UnboundedSender<ServerEvent>,
@@ -132,6 +78,7 @@ impl Agent {
                 ));
                 break;
             }
+            self.prepare_child_request(&event_tx)?;
             let repaired = self.repair_missing_tool_outputs();
             if repaired > 0 {
                 logging::warn(&format!(
@@ -296,6 +243,12 @@ impl Agent {
             // The provider gets this session's lineage with every call, so it can
             // pin its cache key to the same family on a retry as on the first
             // attempt. Nothing is written to the shared provider state.
+            if self.is_graceful_shutdown() {
+                break;
+            }
+            if let Some(budget) = &mut self.swarm_budget {
+                budget.charge_request();
+            }
             let provider_context = self.provider_request_context();
             let stream = {
                 let mut complete_future = std::pin::pin!(provider.complete_split_with_context(

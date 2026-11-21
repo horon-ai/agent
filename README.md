@@ -248,6 +248,8 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[tools] bash_pty` | `auto` | `off`, `always` |
 | `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
+| `[agents] swarm_child_runtime_secs`, `swarm_child_request_limit` | `0` (disabled) | Positive elapsed seconds or model request count per spawned child |
+| `[agents] swarm_child_request_notice`, `swarm_max_spawn_effort` | `true`, unset | Turn off the final-request notice or set a maximum reasoning effort at spawn |
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0` disables |
 | Update check on `serve` | not run | `--no-update` skips it everywhere |
