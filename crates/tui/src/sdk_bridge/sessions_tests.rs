@@ -13,7 +13,8 @@ use horon_agent_sdk::{ConnectOptions, HistoryMessage, SessionInfo};
 
 use super::AttachedSession;
 use super::sessions::{
-    Dial, belongs, described, first_user_text, follow, history_or_empty, messages, preview, session_of,
+    Dial, belongs, described, first_user_text, follow, history_or_empty, last_assistant_text, messages, preview,
+    session_of,
 };
 
 /// One streamed delta of the session named, as the daemon publishes it.
@@ -359,4 +360,37 @@ fn an_attach_whose_history_read_answered_keeps_the_conversation() {
         history_or_empty(read),
         vec![message("user", "hello"), message("assistant", "hi")]
     );
+}
+
+#[test]
+fn the_newest_assistant_line_is_the_summary_a_finished_child_reports() {
+    let messages = [
+        message("assistant", "an older answer"),
+        message("tool", "the report tool's own row"),
+        message("user", "a later question"),
+        message("assistant", "the final report"),
+    ];
+
+    assert_eq!(
+        last_assistant_text(&messages).as_deref(),
+        Some("the final report"),
+        "the summary must be the newest assistant line, not a tool or user row"
+    );
+
+    // A row that names its answer separately is read from that field: a raw
+    // stored row can carry reasoning and answer as one unmarked string.
+    let named = HistoryMessage {
+        role: "assistant".to_string(),
+        content: "reasoning text\nthe answer".to_string(),
+        answer: Some("the answer".to_string()),
+        response_stats: None,
+        message_id: None,
+    };
+    assert_eq!(last_assistant_text(&[named]).as_deref(), Some("the answer"));
+}
+
+#[test]
+fn a_conversation_with_no_assistant_answer_has_no_summary() {
+    let messages = [message("user", "only the question"), message("assistant", "   \n\t ")];
+    assert_eq!(last_assistant_text(&messages), None);
 }

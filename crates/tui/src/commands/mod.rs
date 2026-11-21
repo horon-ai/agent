@@ -6,16 +6,17 @@
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
-//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
+//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay`, `/swarm` and
+//!    `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
 //!    what that name means for that project.
 //! 3. Every [`RuntimeCommand`] answers under its own `snake_case` name, so the
 //!    list cannot drift from the protocol. The names are read out of serde
-//!    rather than written down twice. The harness's `skills` and `mcp` commands
-//!    are the exceptions: the built-in `/skills` and `/mcp` own those names,
-//!    and a skill itself answers as `/skill:<name>`.
+//!    rather than written down twice. The harness's `skills`, `mcp` and `swarm`
+//!    commands are the exceptions: the built-in `/skills`, `/mcp` and `/swarm`
+//!    own those names, and a skill itself answers as `/skill:<name>`.
 //!
 //! A file whose name a built-in UI command already owns is shadowed: `/help`
 //! lists it with that label and it never runs, because the built-in wins.
@@ -127,6 +128,13 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// List the swarm children of this session and the parent it reports back
+    /// to, and attach to one.
+    ///
+    /// The bare name opens the list; an argument still reaches the harness's
+    /// own `swarm` report, which is why the runtime command no longer answers
+    /// under its own listing.
+    Swarm,
     /// Record, recognize or speak with on-device programs; nothing leaves the
     /// client.
     Voice,
@@ -161,6 +169,7 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "swarm" => Some(Self::Swarm),
             "voice" => Some(Self::Voice),
             _ => None,
         }
@@ -198,6 +207,7 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Swarm => "swarm",
             Self::Voice => "voice",
         }
     }
@@ -691,7 +701,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: [&str; 27] = [
     "archived",
     "artifact",
     "clear",
@@ -716,6 +726,7 @@ const LOCAL_NAMES: [&str; 26] = [
     "resume",
     "settings",
     "skills",
+    "swarm",
     "switch",
     "voice",
 ];
@@ -768,8 +779,15 @@ fn server_catalog() -> &'static ServerCatalog {
             warnings: Vec::new(),
         };
         for command in SERVER_VARIANTS {
-            // These built-ins own their names and send their own typed requests.
-            if matches!(command, RuntimeCommand::Skills | RuntimeCommand::Mcp) {
+            // The built-in `/skills`, `/mcp` and `/swarm` own those names, so
+            // the harness's own commands are not offered beside them: a listing
+            // with the same name twice would name one command and run another.
+            // Each built-in still sends its own typed request, and `/swarm
+            // status` forwards what is typed after it.
+            if matches!(
+                command,
+                RuntimeCommand::Skills | RuntimeCommand::Mcp | RuntimeCommand::Swarm
+            ) {
                 continue;
             }
             match serde_json::to_value(command) {
