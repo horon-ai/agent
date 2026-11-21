@@ -65,6 +65,7 @@ impl App {
                 self.transcript.clear();
                 None
             }
+            Local::Context(command) => self.change_context(command, arguments),
             // Copying is answered here and written by the loop: the app decides
             // what a copy carries and never touches the terminal.
             Local::Copy => self.copy_command(arguments),

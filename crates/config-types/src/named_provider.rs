@@ -137,6 +137,9 @@ pub struct NamedProviderConfig {
     /// Seconds without meaningful progress after the first stream event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_idle_timeout_secs: Option<std::num::NonZeroU32>,
+    /// Maximum concurrent requests in this process across consumers of this profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_in_flight_requests: Option<std::num::NonZeroU16>,
     /// Whether this endpoint accepts the DeepSeek-style top-level
     /// `reasoning_effort` request field (`/effort` support). When unset, horon-agent
     /// auto-detects it from the active model id (DeepSeek-family models

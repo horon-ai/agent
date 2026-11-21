@@ -18,6 +18,8 @@ When a condition fails, the command prints a sentence that names the condition (
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
+`horon --continue` selects the most recently active saved session in the working directory and hands it to the client the same way.
+
 The client reaches the daemon through the harness API bridge, and starts that bridge when no listening socket answers. The bridge serves the terminal that started it and ends with it: while a client is connected it keeps serving, and once none is it stops, as soon as the process that started it exits or after a minute without a client, releasing its single-instance lock and removing the socket file (`horon-agent-api.sock`). The next launch therefore starts a bridge from the installed release instead of reconnecting to one that stayed resident across an upgrade, and the daemon keeps running throughout. A socket file left by a bridge that was killed outright is not taken as a running bridge: `horon` and `horon-tui` check the socket with a connection, and when nothing answers they start the bridge again, which replaces the leftover file. No manual cleanup is needed.
 
 The client takes its own arguments:
@@ -433,7 +435,9 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | --- | --- |
 | `/archived` | Restore a session from this directory's archived list |
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
-| `/clear` | Clear the transcript pane |
+| `/clear` | Clear only the transcript pane |
+| `/clear-context` | Start a fresh context for the model in the current session and keep the saved conversation |
+| `/compact` | Ask the configured model to summarize older context in place and keep the saved conversation |
 | `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
@@ -455,7 +459,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/tools` | Browse the current session's enabled tools without running them |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-three commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-five commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -473,7 +477,9 @@ The harness commands run in the attached runtime and never reach the model as a 
 built-in commands:
   /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
