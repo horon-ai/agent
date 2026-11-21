@@ -2266,15 +2266,14 @@ impl Registry {
         // overflow guard's existing path.
         if resolved_name != "read"
             && !accept_large_output
-            && output.output.len() > artifacts::GENERIC_CONDENSE_BUDGET_BYTES
-        {
-            let text = std::mem::take(&mut output.output);
-            output.output = artifacts::condense_for_context(
+            && let Some(preview) = artifacts::condense_preview(
                 &ctx.session_id,
                 resolved_name,
-                text,
+                &output.output,
                 artifacts::GENERIC_CONDENSE_BUDGET_BYTES,
-            );
+            )
+        {
+            output.output = preview;
             output.verdict = Some(ToolVerdict::after_cut(output.verdict));
         }
         output = self.guard_context_overflow(name, output, accept_large_output).await;
@@ -2532,6 +2531,13 @@ impl Registry {
         }
         msg.push_str(&format!(" Available tools: {}.", names.join(", ")));
         ToolRejected(msg).into()
+    }
+
+    /// Disable PTYs on this registry's built-in shell tool, if enabled.
+    pub async fn disable_bash_pty(&self) {
+        if let Some(tool) = self.tools.write().await.get_mut("bash") {
+            *tool = Arc::new(bash::BashTool::without_pty());
+        }
     }
 
     /// Register a tool dynamically (for MCP tools, etc.)

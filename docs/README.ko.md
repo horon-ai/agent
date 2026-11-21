@@ -2,7 +2,7 @@
 
 언어: [English](README.md) | **한국어**
 
-이 폴더는 horon agent의 현재 동작만 설명한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
+이 폴더는 horon agent의 현재 동작을 설명하고 설계 제안에는 상태를 표시한다. 문서는 같은 폴더의 영어 `X.md`와 한국어 `X.ko.md` 한 쌍으로 두고, 영어가 기본이며 한국어 파일은 `.ko.md` 형제 파일이다. 경로·명령·식별자는 원형을 유지한다. 파일명은 모두 대문자로 쓰고, 주제별 하위 폴더에 둔다.
 
 문서는 빌드할 때 바이너리에 들어가고(`crates/app-core/build.rs`가 하위 폴더까지 읽으며 `.ko.md`는 건너뛴다) `horon_agent_docs` 도구가 읽는다. 문서를 옮기거나 지우면 코드·스크립트·테스트에 남은 경로도 같은 변경에서 고친다. [agent.horon.ai](https://agent.horon.ai) 사이트는 이 문서들을 Reference 탭에 보여 준다. `scripts/ci/sync_docs_site.py`가 이 폴더에서 `packages/docs-site/reference/`를 생성하고, `packages/docs-site`의 나머지 가이드는 손으로 쓰므로, 가이드도 설명하는 동작이 바뀌면 두 곳을 함께 고친다.
 
@@ -31,7 +31,9 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | `protocol/` | [`ACP.ko.md`](protocol/ACP.ko.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
+| | [`COLLABORATION.ko.md`](protocol/COLLABORATION.ko.md) | 실시간 세션 초대와 참가자 권한 설계 제안 |
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
+| | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
@@ -43,9 +45,11 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
 | `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | 프로파일 `type`이 고른 방식(Chat Completions, Responses, Anthropic Messages, Gemini generateContent)의 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 한 번만 실행되는 `[prewalk]` 핸드오프, 모델 사용 메타데이터 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
+| | [`DIAGNOSTICS.ko.md`](provider/DIAGNOSTICS.ko.md) | 요청 수를 제한하는 프로바이더 스트림 진단 설계 제안 |
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.ko.md`](performance/BENCHMARK.ko.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |
+| | [`EVAL.ko.md`](performance/EVAL.ko.md) | 고정 입력을 쓰는 지시 준수 평가 설계 제안 |
 | | [`RESULTS.ko.md`](performance/RESULTS.ko.md) | 측정 결과와 한계 |
 | | [`MEMORY.ko.md`](performance/MEMORY.ko.md) | 메모리 회귀 예산, 유휴 세션 파생 캐시 해제, 사고 대응 절차 |
 | `release/` | [`INSTALL.ko.md`](release/INSTALL.ko.md) | 릴리스 자산 검증과 `install-release`, npm 설치, Linux 서버 실행, TLS 신뢰 집합 |

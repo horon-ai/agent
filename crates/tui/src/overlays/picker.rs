@@ -38,6 +38,8 @@ pub enum Kind {
     Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// Archived sessions available to restore for this working directory.
+    ArchivedSessions,
     /// The skills the harness reports for this session.
     Skills,
     /// The drafts sent before this one.
@@ -46,6 +48,12 @@ pub enum Kind {
     Copies,
     /// The http(s) links in the newest assistant answers.
     Links,
+    /// The background work the session is running.
+    ///
+    /// Its rows describe work rather than offer a value, so `delete` cancels
+    /// the selected terminal and `enter` changes nothing; the keys are answered
+    /// before the generic list sees them.
+    Jobs,
     /// The messages waiting for the running turn to end.
     ///
     /// This list is not a choice among values: each row is a message the user

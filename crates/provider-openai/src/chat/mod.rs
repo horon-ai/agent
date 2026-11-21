@@ -45,6 +45,7 @@ use crate::wire::sse::WireSseStream;
 use crate::wire::turns;
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::StreamExt;
 use horon_agent_message_types::{Message, ToolDefinition, messages_with_dynamic_system_context};
 use horon_agent_provider_core::{
     EventStream, ModelRoute, Provider, ProviderRequestContext, shared_http_client,
@@ -54,6 +55,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tokio::time::{Instant, timeout_at};
 
 /// Stable, machine-facing provider name.
@@ -110,6 +112,7 @@ pub struct OpenAiCompatibleProvider {
     model: Mutex<String>,
     models: Vec<String>,
     reasoning_effort: Mutex<Option<String>>,
+    service_tier: Mutex<Option<&'static str>>,
     /// Reasoning effort each model declares in its profile entry. Selecting a
     /// model that appears here sets `reasoning_effort` to the declared level,
     /// before the first request, unless a later explicit call overrides it.
@@ -118,6 +121,7 @@ pub struct OpenAiCompatibleProvider {
     wire: WireProtocol,
     stream_first_event_timeout: Option<Duration>,
     stream_idle_timeout: Option<Duration>,
+    request_slots: Option<Arc<Semaphore>>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -163,10 +167,12 @@ impl OpenAiCompatibleProvider {
             model: Mutex::new(default_model),
             models,
             reasoning_effort: Mutex::new(None),
+            service_tier: Mutex::new(None),
             model_reasoning_efforts: BTreeMap::new(),
             wire: WireProtocol::default(),
             stream_first_event_timeout: None,
             stream_idle_timeout: None,
+            request_slots: None,
         })
     }
 
@@ -174,6 +180,12 @@ impl OpenAiCompatibleProvider {
     pub fn with_stream_timeouts(mut self, first_event: Option<Duration>, idle: Option<Duration>) -> Self {
         self.stream_first_event_timeout = first_event;
         self.stream_idle_timeout = idle;
+        self
+    }
+
+    /// Share a named profile's request limit across its runtimes and forks.
+    pub fn with_request_slots(mut self, slots: Option<Arc<Semaphore>>) -> Self {
+        self.request_slots = slots;
         self
     }
 
@@ -372,7 +384,23 @@ impl OpenAiCompatibleProvider {
                 target.insert(key.clone(), value.clone());
             }
         }
+        if let Some(tier) = self.service_tier_override()
+            && let Some(body) = body.as_object_mut()
+        {
+            if tier == "off" {
+                body.remove("service_tier");
+            } else {
+                body.insert("service_tier".to_string(), Value::from(tier));
+            }
+        }
         serde_json::to_vec(&body).expect("a JSON object always serializes")
+    }
+
+    fn service_tier_override(&self) -> Option<&'static str> {
+        *self
+            .service_tier
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// The identity an Anthropic native thinking block is stamped with.
@@ -481,6 +509,11 @@ impl OpenAiCompatibleProvider {
             );
         }
 
+        // Dropping this future while queued removes the waiter before any POST.
+        let permit = match &self.request_slots {
+            Some(slots) => Some(Arc::clone(slots).acquire_owned().await?),
+            None => None,
+        };
         let endpoint = self.endpoint();
         let label = self.wire.label();
         let mut attempts = 0u8;
@@ -501,8 +534,18 @@ impl OpenAiCompatibleProvider {
             let status = response.status();
             if status.is_success() {
                 let redact: Option<Arc<str>> = self.api_key.as_deref().map(Arc::from);
-                let stream = self.stream_for(response, redact);
-                return Ok(stream_timeout::apply(stream, first_deadline, self.stream_idle_timeout));
+                let stream = stream_timeout::apply(
+                    self.stream_for(response, redact),
+                    first_deadline,
+                    self.stream_idle_timeout,
+                );
+                return Ok(match permit {
+                    Some(permit) => Box::pin(futures::stream::unfold(
+                        (stream, permit),
+                        |(mut stream, permit)| async move { stream.next().await.map(|event| (event, (stream, permit))) },
+                    )),
+                    None => stream,
+                });
             }
 
             let error_body = horon_agent_provider_core::http_error_body(response, self.wire.error_context()).await;
@@ -815,6 +858,36 @@ impl Provider for OpenAiCompatibleProvider {
         }
     }
 
+    fn service_tier(&self) -> Option<String> {
+        self.service_tier_override()
+            .filter(|tier| *tier != "off")
+            .map(str::to_owned)
+    }
+
+    fn set_service_tier(&self, tier: &str) -> Result<()> {
+        let allowed = self.available_service_tiers();
+        if allowed.is_empty() {
+            anyhow::bail!("service tiers are only supported on OpenAI Chat Completions and Responses");
+        }
+        let tier = if tier == "fast" { "priority" } else { tier };
+        let Some(tier) = allowed.into_iter().find(|allowed| *allowed == tier) else {
+            anyhow::bail!("unsupported service tier {tier:?} for model {}", self.model());
+        };
+        *self
+            .service_tier
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(tier);
+        Ok(())
+    }
+
+    fn available_service_tiers(&self) -> Vec<&'static str> {
+        if matches!(self.wire, WireProtocol::ChatCompletions | WireProtocol::Responses) {
+            horon_agent_provider_core::service_tier::speed_tier_ladder(Some("openai"), Some(&self.model()))
+        } else {
+            Vec::new()
+        }
+    }
+
     fn supports_image_input(&self) -> bool {
         true
     }
@@ -849,10 +922,12 @@ impl OpenAiCompatibleProvider {
             model: Mutex::new(self.model()),
             models: self.models.clone(),
             reasoning_effort: Mutex::new(self.reasoning_effort()),
+            service_tier: Mutex::new(self.service_tier_override()),
             model_reasoning_efforts: self.model_reasoning_efforts.clone(),
             wire: self.wire,
             stream_first_event_timeout: self.stream_first_event_timeout,
             stream_idle_timeout: self.stream_idle_timeout,
+            request_slots: self.request_slots.clone(),
         }
     }
 }

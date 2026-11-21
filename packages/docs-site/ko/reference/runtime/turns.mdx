@@ -629,12 +629,15 @@ method_order = ["handoff", "structured"]
 시험: `crates/app-core/src/agent/tool_result_aging/tests.rs`가 접두어 방지와 묶음 게이트를,
 `crates/compaction-core/src/pruning.rs`가 최신 선택을 다룹니다.
 
+## 실행 시간 제한
+
+`horon run --max-time 30 "..."`는 턴 처리 시간을 30초로 제한합니다. 초기화가 끝나면 시간을 재기 시작하며 양수 초를 소수로도 지정할 수 있습니다. 제한 시간이 지나면 턴을 취소하고 최대 1초 동안 정리를 기다립니다. 프로세스는 종료 상태 `124`를 반환합니다.
+
+텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
+
 ## `--resume` 동작
 
-이 빌드에는 대화형 세션 선택기가 없다. 세션 재개는 전역 `--resume` 플래그 하나로 한다
-(`src/cli/args.rs:63-68`). 값을 주지 않고 `--resume`만 넘기면 데몬은 시작하지 않고 오류로
-끝난다. 문구는 "the interactive session picker is unavailable in this headless build; pass an
-explicit session id to --resume"다(`src/cli/dispatch.rs:97-101`).
+값 없이 `--resume`만 넘기면 데몬을 시작하기 전에 세션 선택기 오류를 표시하고 종료한다.
 
 ### 기본 동작
 
@@ -644,6 +647,7 @@ explicit session id to --resume"다(`src/cli/dispatch.rs:97-101`).
   (`src/cli/dispatch.rs:721`).
 - `--resume`은 다른 전역 플래그와 함께 쓸 수 있다. 세션은 이 프로세스에서 그대로
   재개되고, 그것을 어떤 화면에 보여 줄지는 연결한 클라이언트가 정한다.
+- `--continue`는 같은 실제 작업 디렉터리에서 가장 최근에 활동한 세션을 재개한다. `-C`로 작업 디렉터리를 지정할 수 있다. 보관된 세션은 제외한다. `--quiet`을 주지 않으면 표준 오류에 세션 ID를 표시한다. 조건에 맞는 세션이 없거나 `--resume` 또는 `--ssh`와 함께 쓰면 오류로 끝난다.
 
 ### 재개한 세션의 표시
 

@@ -21,6 +21,8 @@ description: "horon-tui는 TUI 바이너리다. 사람이 터미널에서 세션
 
 재개한 세션도 그대로 넘긴다. `horon --resume <id>`는 클라이언트에 `--session <id>`를 전달하므로, 클라이언트는 새 세션을 만들지 않고 그 세션에 붙는다. 소켓은 명령줄로 넘기지 않는다. 이미 `HORON_AGENT_SOCKET`으로 내보내져 있고, 클라이언트가 하네스 API 소켓을 스스로 찾는다.
 
+`horon --continue`는 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 골라 같은 방식으로 클라이언트에 넘긴다.
+
 클라이언트는 하네스 API 브리지를 거쳐 데몬에 닿고, 응답하는 소켓이 없으면 그 브리지를 띄운다. 브리지는 자기를 띄운 터미널을 위해 일하고 그 터미널과 함께 끝난다. 클라이언트가 붙어 있는 동안은 계속 응답하고, 붙은 클라이언트가 없으면 자기를 띄운 프로세스가 끝나는 즉시, 아니면 클라이언트 없이 1분이 지나면 멈춘다. 이때 단일 인스턴스 잠금을 풀고 소켓 파일(`horon-agent-api.sock`)을 지우므로, 다음 실행은 업그레이드 전에 남아 있던 브리지가 아니라 설치된 릴리스의 브리지를 띄운다. 데몬은 그동안 계속 돈다. 강제로 죽은 브리지가 남긴 소켓 파일은 살아 있는 브리지로 여기지 않는다. `horon`과 `horon-tui`는 연결을 열어 소켓을 확인하고, 아무것도 응답하지 않으면 브리지를 다시 띄우며, 새 브리지가 남은 파일을 대체한다. 손으로 정리할 것은 없다.
 
 클라이언트는 자체 인자를 받는다.
@@ -385,6 +387,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 행을 고르거나 `/switch <id>`, `/resume <id>`를 입력하면 곧바로 붙고, 데몬은 여섯 글자 이상의 유일한 접두사도 받는다. 붙으면 이전 세션의 화면을 지우고 저장된 대화를 사용자 메시지와 어시스턴트 메시지로 다시 그리며, `started a new session <id>` 또는 `resumed <id>`를 남기고, 새 세션의 정체성에서 모델, 프로바이더, 노력 단계, 제목을 받는다. 그래서 상태 줄은 계속 `provider/model`을 보여 준다. `/new`는 이 디렉터리의 세션을 요청해 같은 방식으로 옮겨 가고, 떠나온 세션은 저장된 채로 남는다. 클라이언트는 떠나온 모든 세션의 이벤트를 버리므로 두 대화의 행이 서로에게 닿지 않는다. 세션 변경은 턴이 돌거나 모델이나 노력 단계 변경이 아직 적용 중이면 기다리고, 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
 
+`/switch`나 `/resume`에서 저장한 세션을 선택하고 Ctrl+A를 누르면 보관합니다. 현재 세션을 보관하려면 먼저 다른 세션으로 이동합니다. `/archived`에는 현재 디렉터리에서 보관한 세션이 나옵니다. 행을 선택하고 Enter를 누르면 최근 목록으로 돌아옵니다.
+
 `/skills`는 하네스가 이 세션에 보고한 스킬을 나열한다. 이름, 두 번째 열의 하네스 설명, 그리고 스킬을 읽은 파일과 쓸 수 있는 도구를 적고 `enter`가 초안에 그 호출을 넣는다는 줄로 끝나는 미리보기다. 행을 고르면 `/skill:<name>`과 뒤따르는 공백 하나를 보내지 않고 편집기에 쓰므로, 그 뒤의 요청은 사용자가 적는다.
 
 `/links`는 최근 어시스턴트 답변 8개에서 HTTP와 HTTPS 링크를 최신순으로 표시합니다. 행에서 Enter를 누르면 표시된 주소를 시스템 브라우저에서 엽니다. Esc를 누르면 목록이 닫힙니다. 잘못된 주소, 로컬 파일과 자격 증명이 포함된 링크는 목록에서 빠집니다.
@@ -432,12 +436,16 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 | 명령 | 하는 일 |
 | --- | --- |
+| `/archived` | 현재 디렉터리의 보관 목록에서 세션을 복원한다 |
 | `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
-| `/clear` | 트랜스크립트 창을 지운다 |
+| `/clear` | 대화 화면만 비운다 |
+| `/clear-context` | 현재 세션에서 모델에 보낼 문맥을 새로 시작하고 저장한 대화는 보관한다 |
+| `/compact` | 설정한 모델에 이전 문맥의 요약을 요청하고 저장한 대화는 보관한다 |
 | `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
+| `/jobs` | 현재 세션의 백그라운드 작업을 보고 선택한 터미널 작업을 취소한다 |
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
 | `/mcp [probe <server>]` | 신뢰한 MCP 설정을 조회하거나 이름을 지정해 연결을 검사한다 |
@@ -453,10 +461,17 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
+| `/voice` | 받아쓴 내용을 초안에 넣거나 기기에서 텍스트를 재생한다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물한 명령을 이름 순으로 적었다.
+녹음하기 전에 연결된 세션에서 `/voice consent`를 실행합니다. Ctrl+Space나 `/voice`로 녹음을 시작하거나 멈춥니다. `/voice cancel`은 녹음을 버리고 `/voice forget`은 동의를 철회합니다. 받아쓴 내용은 초안에 들어가며 직접 전송할 때만 모델로 전달됩니다. `/voice say <text>`와 `/voice read`는 기기에서 텍스트를 재생합니다.
+
+받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
+
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물여섯 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
+
+`/jobs`는 현재 세션이 아직 실행 중인 백그라운드 작업을 나열한다. 전사에 남은 알림을 다시 그리는 대신 데몬에 매번 새로 묻기 때문에, 다른 클라이언트에서 시작하거나 끝난 작업도 지금 상태 그대로 보인다. 행마다 명령, 작업 종류와 가장 최근 출력을 보여 준다. Delete는 선택한 백그라운드 터미널을 취소하며, 세션과 다른 작업은 계속 실행된다. Esc는 아무것도 취소하지 않고 목록만 닫는다. 도구 호출 작업은 목록에 나오지만 여기서는 취소할 수 없고, 데몬이 거부할 요청을 보내는 대신 그렇다고 알린다. 세션을 바꾸면 행을 비우는데, 호출 id는 그 작업을 시작한 세션에서만 뜻이 있기 때문이다.
 
 `/artifact`는 현재 로컬 세션에 보관된 산출물을 나열합니다. `/artifact <id>`를 입력하거나 `artifact://<id>` 주소를 붙여넣으면 `VISUAL` 또는 `EDITOR`에서 임시 사본을 편집합니다. 원본은 유지되고 돌아올 때 사본을 지웁니다. 소켓을 직접 지정하거나 원격 브리지에 연결하면 로컬 산출물을 열 수 없습니다.
 
@@ -470,12 +485,16 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 ```text
 built-in commands:
+  /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
+  /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
   /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
@@ -491,6 +510,7 @@ built-in commands:
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
   /switch              move to another stored session, or pick one from the list
+  /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```

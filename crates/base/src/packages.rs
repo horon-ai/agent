@@ -6,11 +6,15 @@
 //! disable, a removal and a verification all observe the same generation.
 //! [`PackageStore::sync_inbox`] installs complete directories dropped into
 //! `inbox/` through the same path.
+//! [`PackageStore::prepare_executable`] verifies the bytes of an installed
+//! executable and [`PackageExecutable::start`] runs it as one supervised child
+//! whose environment the host controls.
 
 mod catalog;
 mod inbox;
 mod manifest;
 mod native_target;
+mod process;
 mod store;
 
 pub use catalog::{
@@ -23,3 +27,4 @@ pub use horon_agent_extension_types::{
 };
 pub use inbox::{InboxEntry, InboxOutcome, InboxReport};
 pub use manifest::{ValidatedPackage, validate_package};
+pub use process::{PackageExecutable, PackageProcess};

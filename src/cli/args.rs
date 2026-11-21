@@ -46,6 +46,17 @@ impl From<ProviderTypeArg> for crate::config::NamedProviderType {
     }
 }
 
+#[derive(clap::Args, Debug)]
+pub(crate) struct RunModelOverrides {
+    /// Reasoning effort for the selected model
+    #[arg(long, value_name = "EFFORT")]
+    pub(crate) thinking: Option<String>,
+
+    /// OpenAI service tier (off, priority, fast, or ultrafast where supported)
+    #[arg(long, value_name = "TIER")]
+    pub(crate) service_tier: Option<String>,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "horon-agent")]
 #[command(version = horon_agent_build_meta::version())]
@@ -94,6 +105,10 @@ pub(crate) struct Args {
     /// Resume a session by ID, or list sessions if no ID provided
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "")]
     pub(crate) resume: Option<String>,
+
+    /// Continue the most recently active saved session in the working directory
+    #[arg(long = "continue", global = true, conflicts_with_all = ["resume", "ssh"])]
+    pub(crate) continue_latest: bool,
 
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
@@ -233,6 +248,17 @@ pub(crate) enum Command {
         /// Emit newline-delimited JSON events while the response streams
         #[arg(long, conflicts_with = "json")]
         ndjson: bool,
+
+        /// Run shell tools without a pseudo-terminal for this invocation
+        #[arg(long)]
+        no_pty: bool,
+
+        /// Cancel the run after this many seconds (fractions are accepted)
+        #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
+        max_time: Option<std::time::Duration>,
+
+        #[command(flatten)]
+        model_overrides: RunModelOverrides,
 
         /// The message to send
         message: String,

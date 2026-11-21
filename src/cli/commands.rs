@@ -4,11 +4,14 @@ use anyhow::Result;
 use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use crate::{gateway, memory, storage};
 
 mod provider_setup;
 mod report_info;
+mod run_deadline;
 mod session_delete;
 mod session_rename;
 
@@ -16,6 +19,7 @@ pub(crate) use session_delete::run_session_delete_command;
 pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;
+pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
 
@@ -840,45 +844,6 @@ Re-run with `--force` if you really want to stop the server.";
     Ok(())
 }
 
-pub async fn run_single_message_command(
-    choice: &super::provider_init::ProviderChoice,
-    model: Option<&str>,
-    resume_session: Option<&str>,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-) -> Result<()> {
-    let provider = super::provider_init::init_provider_for_run(choice, model).await?;
-    let registry = crate::tool::Registry::new(provider.clone()).await;
-    // Load MCP servers from ~/.horon/mcp.json so headless `horon-agent run` has the
-    // same `mcp__*` tools as interactive/server sessions. This is non-blocking:
-    // `register_mcp_tools` advertises cached tool schemas synchronously (so the
-    // first locked tool snapshot already contains MCP tools, for zero
-    // prompt-cache miss) and connects in the background (connect-on-first-call).
-    // For a short single-message run, startup latency is unchanged.
-    // (#390, #206 Phase 2)
-    if run_command_mcp_enabled() {
-        registry.register_mcp_tools(None, None, None).await;
-        // Cold-cache gap: when a configured MCP server has no cached schema yet
-        // (first ever use, or reconfigured), advertise-early registers nothing
-        // for it, and a single-turn `horon-agent run` locks its tool snapshot before
-        // the background connection finishes, so the model would never see those
-        // tools. Long-lived sessions recover on a later turn, but `horon-agent run`
-        // has no later turn. So, only when the cache is cold for some configured
-        // server, briefly wait for the first connection to register tools before
-        // the agent runs. Warm runs skip this entirely and stay instant. (#390)
-        wait_for_cold_cache_mcp_tools(&registry).await;
-    }
-    let mut agent = crate::agent::Agent::for_one_shot_run(provider.clone(), registry).closing_after_run();
-    if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session) {
-        agent.mark_closed();
-        return Err(error);
-    }
-    // User-authored `run` message; later helper turns are synthetic.
-    agent.arm_effort_keywords(message);
-    run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson).await
-}
-
 /// Provider id for `horon-agent run --json`/`--ndjson` output.
 ///
 /// Every direct OpenAI-compatible profile (Ollama, LM Studio, DeepSeek, custom
@@ -897,16 +862,22 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
     name.to_string()
 }
 
-async fn run_single_message_with_agent(
+pub(super) async fn run_single_message_with_agent(
     agent: &mut crate::agent::Agent,
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
     emit_json: bool,
     emit_ndjson: bool,
+    max_time: Option<Duration>,
 ) -> Result<()> {
-    let result: Result<()> = async {
+    let elapsed = AtomicBool::new(false);
+    let deadline = max_time.map(|duration| (duration, agent.graceful_shutdown_signal()));
+    let run = async {
         if emit_json {
             let text = run_single_message_command_capture_with_auto_poke(agent, message).await?;
+            if elapsed.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             let report = RunCommandReport {
                 session_id: agent.session_id().to_string(),
                 provider: run_report_provider_name(provider.as_ref(), agent.session_provider_key().as_deref()),
@@ -916,13 +887,16 @@ async fn run_single_message_with_agent(
             };
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else if emit_ndjson {
-            run_single_message_command_ndjson(agent, provider, message).await?;
+            run_single_message_command_ndjson(agent, provider, message, &elapsed).await?;
         } else {
             run_single_message_command_plain_with_auto_poke(agent, message).await?;
         }
         Ok(())
-    }
-    .await;
+    };
+    let result = match deadline {
+        Some((duration, cancel)) => run_deadline::run_with_deadline(duration, &elapsed, || cancel.fire(), run).await,
+        None => run.await,
+    };
 
     // `Agent::new` and session restore both register this process as the active
     // owner. Unlike the interactive lifecycle, `horon-agent run` has no later quit
@@ -931,6 +905,13 @@ async fn run_single_message_with_agent(
     // one-shot exit from looking like a stale-PID crash on the next startup
     // (issue #988).
     agent.mark_closed();
+    if let Some(error) = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<RunDeadlineExceeded>())
+    {
+        error.report(agent.session_id(), emit_json, emit_ndjson)?;
+    }
     result
 }
 
@@ -947,7 +928,7 @@ fn run_command_auto_poke_enabled() -> bool {
 /// Whether headless `horon-agent run` should load MCP servers from `~/.horon/mcp.json`.
 /// Enabled by default; set `HORON_AGENT_RUN_MCP=0` (or `false`/`off`/`no`) to skip MCP
 /// registration for latency-sensitive scripting. (#390)
-fn run_command_mcp_enabled() -> bool {
+pub(super) fn run_command_mcp_enabled() -> bool {
     std::env::var("HORON_AGENT_RUN_MCP")
         .ok()
         .map(|value| {
@@ -996,7 +977,7 @@ mod mcp_startup_tests;
 /// (or the budget elapses) so the single turn's locked tool snapshot includes
 /// them. Warm caches return immediately because `cold_cache_mcp_servers` is
 /// empty. (#390)
-async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
+pub(super) async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
     let cold_servers = cold_cache_mcp_servers();
     if cold_servers.is_empty() {
         return;
@@ -1321,7 +1302,10 @@ async fn run_single_message_command_capture_with_auto_poke(
     Ok(outputs.join("\n\n"))
 }
 
-fn restore_agent_session_if_requested(agent: &mut crate::agent::Agent, resume_session: Option<&str>) -> Result<()> {
+pub(super) fn restore_agent_session_if_requested(
+    agent: &mut crate::agent::Agent,
+    resume_session: Option<&str>,
+) -> Result<()> {
     if let Some(session_id) = resume_session {
         agent.restore_session_for_one_shot_run(session_id)?;
     }
@@ -1332,6 +1316,7 @@ async fn run_single_message_command_ndjson(
     agent: &mut crate::agent::Agent,
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
+    deadline_elapsed: &AtomicBool,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = agent.session_id().to_string();
@@ -1383,6 +1368,10 @@ async fn run_single_message_command_ndjson(
             }
             run_result.unwrap_or(Ok(()))
         };
+
+        if deadline_elapsed.load(Ordering::Relaxed) {
+            return Ok(());
+        }
 
         if let Err(err) = turn_result {
             result = Err(err);

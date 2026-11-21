@@ -65,6 +65,11 @@ impl App {
         if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue) {
             return self.queue_panel_key(key);
         }
+        // The job list is the same shape: `delete` acts on the selected row,
+        // and every other key stays the list's own.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Jobs) {
+            return self.job_panel_key(key);
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.
@@ -155,6 +160,16 @@ impl App {
                     }
                 }
             }
+        }
+
+        // A capture, a recognition or a playback takes `esc` before the popup
+        // and the editor: the key that means "not this" ends the voice activity,
+        // and the draft it was going to change stays as it was. A live prompt
+        // has already taken every key above, and a prompt arriving cancels the
+        // capture before it gets here.
+        if key.code == KeyCode::Esc && self.voice.phase() != crate::voice::Phase::Idle {
+            self.cancel_voice();
+            return None;
         }
 
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -328,6 +343,10 @@ impl App {
             Some(keys::ids::APP_CYCLE_MODEL_BACK) => return self.cycle_model(false),
             Some(keys::ids::APP_TOGGLE_THINKING) => {
                 self.toggle_thinking();
+                return None;
+            }
+            Some(keys::ids::APP_VOICE) => {
+                self.toggle_voice();
                 return None;
             }
             // Every edit ends a walk through the history: the draft on screen

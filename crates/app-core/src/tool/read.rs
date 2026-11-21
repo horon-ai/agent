@@ -4,11 +4,12 @@
 // `tool/goal.rs` takes for the identical pattern.
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
-use super::read_selector::{
-    DEFAULT_LIMIT, Rendered, Selector, push_numbered_line, render_range, render_with_selector, split_path_and_selector,
-};
 #[cfg(test)]
 use super::read_selector::{MAX_LINE_LEN, TRUNCATED_TAG};
+use super::read_selector::{
+    Rendered, Selector, default_read_limit, push_numbered_line, render_markdown_outline, render_range,
+    render_with_selector, split_path_and_selector,
+};
 use super::read_state::{self, READ_SNAPSHOT_MAX_BYTES, READ_SNAPSHOT_TOOL, ReadRecord};
 use super::{Tool, ToolContext, ToolEffects, ToolOutput, artifacts, nested_agents};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
@@ -98,7 +99,7 @@ fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
             }
             end_line - start_line + 1
         } else {
-            params.limit.unwrap_or(DEFAULT_LIMIT)
+            params.limit.unwrap_or_else(default_read_limit)
         };
 
         return Ok(NormalizedReadRange {
@@ -110,7 +111,7 @@ fn normalize_read_range(params: &ReadInput) -> Result<NormalizedReadRange> {
 
     Ok(NormalizedReadRange {
         offset: params.offset.unwrap_or(0),
-        limit: params.limit.unwrap_or(DEFAULT_LIMIT),
+        limit: params.limit.unwrap_or_else(default_read_limit),
         style: ReadRangeStyle::OffsetLimit,
     })
 }
@@ -159,7 +160,7 @@ impl Tool for ReadTool {
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max text lines to read. Default 5000."
+                    "description": "Max lines; defaults to the configured page size."
                 },
                 "hashline": {
                     "type": "boolean",
@@ -318,7 +319,7 @@ impl Tool for ReadTool {
             return Ok(ToolOutput::new(repeated.output));
         }
 
-        let summary = if matches!(selector, Selector::None) && !explicit_range && !params.hashline {
+        let summary = if matches!(selector, Selector::None) && !explicit_range && !params.hashline && !params.full {
             structural_summary(&content, &authored_path, &path)
         } else {
             None
@@ -442,6 +443,11 @@ fn structural_summary(content: &str, display: &str, path: &Path) -> Option<Rende
     let total_lines = content.lines().count();
     if total_lines <= SUMMARY_MIN_LINES {
         return None;
+    }
+    if path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown") || ext.eq_ignore_ascii_case("mdx")
+    }) {
+        return render_markdown_outline(content, display, total_lines);
     }
     let lang = horon_agent_ast::Lang::from_path(path)?;
     let segments = horon_agent_ast::summarize(content, lang, SUMMARY_MIN_BODY_LINES)?;
@@ -631,6 +637,10 @@ mod read_skill;
 mod read_sqlite;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "read/options_tests.rs"]
+mod options_tests;
 
 /// A path that leaves the filesystem: an `agent://` reference or any URL scheme.
 ///

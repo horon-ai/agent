@@ -162,7 +162,7 @@ def start_mock_server(retry_denied: bool) -> tuple[subprocess.Popen, str]:
 # ---------------------------------------------------------------------------
 
 
-def write_config(home: str, base_url: str) -> str:
+def write_config(home: str, base_url: str, approval_mode: str = "write") -> str:
     """An isolated HORON_HOME whose only provider is the mock server.
 
     `approval_mode = "write"` is what makes the first tool call ask: the turn
@@ -186,7 +186,7 @@ id = "mock-model"
 context_window = 128000
 
 [tools]
-approval_mode = "write"
+approval_mode = "{approval_mode}"
 """
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as handle:
         handle.write(config)
@@ -574,6 +574,99 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
+    tool_dir = os.path.join(case_root, "voice-bin")
+    os.makedirs(tool_dir)
+    scripts = {
+        "ffmpeg": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "arecord": 'for last in "$@"; do :; done\ndd if=/dev/zero of="$last" bs=1600 count=2 2>/dev/null',
+        "whisper-cli": 'while [ "$1" != -of ]; do shift; done\nprintf "hello from voice\\n" > "$2.txt"',
+        "say": 'cat "$2" > "$(dirname "$0")/played"',
+        "espeak-ng": 'cat "$2" > "$(dirname "$0")/played"',
+    }
+    for name, script in scripts.items():
+        path = os.path.join(tool_dir, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"#!/bin/sh\n{script}\n")
+        os.chmod(path, 0o700)
+    models = os.path.join(home, "models")
+    os.makedirs(models, exist_ok=True)
+    with open(os.path.join(models, "ggml-tiny.en.bin"), "wb") as handle:
+        handle.truncate(1024 * 1024 + 1)
+    env["PATH"] = tool_dir + os.pathsep + env.get("PATH", os.defpath)
+
+
+def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None:
+    from urllib.request import urlopen
+
+    def request_count() -> int:
+        with urlopen(base_url.removesuffix("/v1") + "/__stats", timeout=5) as response:
+            return json.load(response)["request_count"]
+
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
+    count = request_count()
+    terminal.send("/voice\r")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.send("/voice consent\r")
+    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    terminal.send("/voice\r")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    if request_count() != count:
+        raise Failure("voice input sent a request before the user submitted the draft")
+    terminal.send("\x15")
+    terminal.send("/voice say local playback proof\r")
+    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
+    played = os.path.join(case_root, "voice-bin", "played")
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        try:
+            with open(played, encoding="utf-8") as handle:
+                if handle.read().strip() == "local playback proof":
+                    break
+        except FileNotFoundError:
+            pass
+        time.sleep(0.05)
+    else:
+        raise Failure("the local player did not receive the requested text")
+    if request_count() != count:
+        raise Failure("local playback sent a model request")
+
+
+def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import urlopen
+
+    marker = "[tui:context-proof]"
+
+    def send(label: str, has_original: bool) -> None:
+        prompt = f"{marker} {label}"
+        start = len(terminal.transcript)
+        terminal.send(f"{prompt}\r")
+        terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
+        terminal.read_until("idle", STEP_TIMEOUT, f"turn ended for {label}", since=start)
+        with urlopen(base_url + "/__stats", timeout=5) as response:
+            requests = json.load(response)["requests"]
+        request = next(
+            (entry for entry in reversed(requests) if prompt in entry.get("context_proof_prompt", "")),
+            None,
+        )
+        if request is None:
+            raise Failure(f"the mock recorded no model request for {label}")
+        if request["context_proof_contains_original"] != has_original:
+            raise Failure(f"model request for {label} had original={not has_original}, expected {has_original}")
+
+    send("original", True)
+    terminal.send("/clear\r")
+    send("after display clear", True)
+    start = len(terminal.transcript)
+    terminal.send("/clear-context\r")
+    terminal.read_until("previous conversation remains", STEP_TIMEOUT, "reset model context", since=start)
+    send("after context reset", False)
+    if not any(f"{marker} original" in path.read_text(encoding="utf-8")
+               for path in Path(home).glob("sessions/*/events.jsonl")):
+        raise Failure("the original user message disappeared from the saved event log")
+
+
 def configure_mcp_probe(home: str, case_root: str) -> str:
     fixture = os.path.join(REPO_ROOT, "scripts", "perf", "fixtures", "bench_mcp_server.py")
     calls = os.path.join(case_root, "mcp-tool-called")
@@ -602,13 +695,38 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        voice_fixture(case_root, home, env)
+    archive_label = "archive-pty-fixture"
+    seeded = subprocess.run(
+        [launch.argv0, "run", archive_label],
+        cwd=case_root,
+        env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=STEP_TIMEOUT,
+        text=True,
+    )
+    if seeded.returncode != 0:
+        raise Failure(f"could not seed a saved session to archive\n{seeded.stdout}")
     tool_calls = configure_mcp_probe(home, case_root)
     env["HORON_AGENT_WORKSPACE_TRUST"] = "deny"
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before MCP inspection")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before the context commands")
+        terminal.send("/compact\r")
+        terminal.read_until("nothing to compact", STEP_TIMEOUT, "empty context is unchanged after compaction")
+        start = len(terminal.transcript)
+        terminal.send("/clear-context\r")
+        terminal.read_until(
+            "previous conversation remains in saved history",
+            STEP_TIMEOUT,
+            "daemon confirmed reset",
+            since=start,
+        )
+
         terminal.send("/mcp\r")
         terminal.read_until("trusted-fixture", STEP_TIMEOUT, "trusted MCP server listed")
         terminal.send("/mcp probe trusted-fixture\r")
@@ -633,12 +751,15 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+        if POSIX:
+            voice_input_smoke(terminal, case_root, base_url)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
         # `approval_mode = "write"` parks that call: the prompt arrives before
         # any reply text, so the answer has to come first.
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
+        reply_start = len(terminal.transcript)
         terminal.send("y")
         terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
@@ -651,6 +772,29 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            context_request_smoke(terminal, home, base_url)
+
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
+        filter_start = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
+        terminal.send("\x01")
+        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
+        recent_filter = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/archived\r")
+        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
+        terminal.send(f"{archive_label}\r")
+        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
@@ -658,6 +802,26 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
         if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
             raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            previous_log = daemon_log_tail(home, limit=2000)
+            resumed = Terminal([launch.argv0, "--continue"], cwd=case_root, env=env)
+            try:
+                resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
+                resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
+                if selected is None:
+                    raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
+                attached = r"phase=resume_(?:restored|live_attach)_done"
+                receipt = rf"{attached} .*target_session_id={re.escape(selected[1])}(?:\s|$)"
+                current_log = daemon_log_tail(home, limit=2000)
+                if len(re.findall(receipt, current_log)) <= len(re.findall(receipt, previous_log)):
+                    raise Failure(f"continue did not restore session {selected[1]}\n{resumed.transcript}")
+                resumed.send("/quit\r")
+                if resumed.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"continue launch did not exit cleanly\n{resumed.transcript}")
+                return terminal.transcript + resumed.transcript
+            finally:
+                resumed.close()
         return terminal.transcript
     finally:
         terminal.close()
@@ -990,6 +1154,55 @@ def selected_cases(requested: str | None) -> set[int]:
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
 
 
+def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url, "yolo")
+    env = horon_env(case_root, home)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "background job session ready")
+        terminal.send("[tui:jobs] start\r")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "both background jobs started")
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("the original background job client did not exit")
+        sessions = [name for name in os.listdir(os.path.join(home, "sessions"))
+                    if os.path.isfile(os.path.join(home, "sessions", name, "events.jsonl"))]
+        if len(sessions) != 1 or launch.tui is None:
+            raise Failure(f"expected a single resumable job session, got {sessions}")
+        terminal.close()
+        terminal = Terminal([launch.tui, "--session", sessions[0], "--cwd", case_root], cwd=case_root, env=env)
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "session reattached with live jobs")
+        terminal.send("/jobs\r")
+        terminal.read_until("Background jobs", STEP_TIMEOUT, "current session jobs")
+        terminal.read_until("job-one", STEP_TIMEOUT, "first job listed")
+        terminal.read_until("job-two", STEP_TIMEOUT, "second job listed")
+        terminal.send("job-two")
+        terminal.read_until("output-two", STEP_TIMEOUT, "bounded output of selected job")
+        terminal.send("\x1b[3~")
+        terminal.send("\x1b")
+        terminal.read_until("cancelling background job", STEP_TIMEOUT, "cancel accepted")
+        remaining_start = len(terminal.transcript)
+        terminal.send("/jobs\r")
+        terminal.read_until("job-one", STEP_TIMEOUT, "remaining job list loaded", since=remaining_start)
+        terminal.send("job-one")
+        terminal.read_until("output-one", STEP_TIMEOUT, "other job remains available", since=remaining_start)
+        terminal.send("\x1b[3~")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        refreshed = len(terminal.transcript)
+        terminal.send("/jobs\r")
+        terminal.read_until("running no background work", STEP_TIMEOUT, "both cancelled jobs have exited", since=refreshed)
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure(f"background job client did not exit\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def run_build_layout(
     agent: str, tui: str, root: str, base_url: str, transcript: str | None, cases: set[int]
 ) -> int:
@@ -1004,6 +1217,9 @@ def run_build_layout(
                 source = "--no-title" if from_flag else "title.enabled=false"
                 text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
                 log(f"{source}: no title or title stack sequences")
+            jobs_root = os.path.join(root, "jobs")
+            jobs_launch = build_launch(jobs_root, agent, tui)
+            text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)

@@ -861,18 +861,16 @@ pub struct ToolConfig {
     /// Opt-in `redo`: expose the tool that re-applies the mutation the last
     /// `undo` removed. Off by default; `undo` is always available.
     pub redo: bool,
-    /// On by default: append the `AGENTS.md` of a read file's ancestor
-    /// directories to `read` results, so a session sees the rules of the
-    /// directories it actually reads from.
+    /// On by default: append the `AGENTS.md` files in a read file's ancestor directories.
     pub nested_agents_md: bool,
-    /// On by default: answer a repeated `read` of unchanged lines with a
-    /// one-line notice, and a whole-file re-read of a changed file with a diff
-    /// against the earlier read. `full: true` on a call always prints.
+    /// On by default: notice unchanged reads and diff changed whole-file re-reads. `full: true` always prints.
     pub read_dedup: bool,
-    /// On by default: condense large, older tool results in one batch when the
-    /// prompt cache is already cold or compaction is near. Originals stay
-    /// readable through `artifact://`.
+    /// Maximum lines per default read page, clamped to 1–5,000.
+    pub read_default_limit: usize,
+    /// On by default: condense old results in a batch and keep originals readable through `artifact://`.
     pub tool_result_aging: bool,
+    /// Maximum characters per text preview line, including the marker. Zero disables the cap.
+    pub output_column_cap: usize,
     /// On by default: refuse to edit, replace, delete, or overwrite a file that
     /// a generator produces. A generated file is regenerated from its source,
     /// so an edit to it is silently lost.
@@ -929,17 +927,15 @@ pub struct ToolConfig {
     /// Which calls ask before they run. `yolo` auto-approves ordinary calls.
     /// See [`ApprovalMode`] for the modes and their restrictions.
     pub approval_mode: ApprovalMode,
-    /// Let `bash` remember the directory the last command ended in and start
-    /// the next call there. On by default because an agent that has to prefix
-    /// every command with `cd` misreads its own working directory; set it to
-    /// `false` to pin every call to the session's working directory.
+    /// Start the next `bash` call where the last command ended. On by default.
+    /// Set to `false` to pin every call to the session's working directory.
     pub bash_session_cwd: bool,
-    /// Give every `bash` child a non-interactive environment: pagers and
-    /// editors resolve to no-ops, `CI=true` asks tools for plain output, and
-    /// package managers stop prompting. On by default so a command cannot
-    /// hang waiting for a terminal answer; set it to `false` to inherit the
-    /// parent environment unchanged.
+    /// Disable pagers, editors, and package-manager prompts for `bash` children.
+    /// Defaults to enabled and includes `CI=true` for plain output.
+    /// Set to `false` to inherit the parent environment unchanged.
     pub bash_non_interactive_env: bool,
+    /// Load an approved direnv environment for local shell commands.
+    pub bash_direnv: bool,
     /// Opt-in output minimizer for `bash`: a single, non-piped command that is
     /// a known build or package-manager invocation has its progress lines
     /// dropped before the result reaches the model, and the full output is
@@ -1004,7 +1000,9 @@ impl Default for ToolConfig {
             redo: false,
             nested_agents_md: true,
             read_dedup: true,
+            read_default_limit: 5000,
             tool_result_aging: true,
+            output_column_cap: 0,
             block_auto_generated: true,
             bash_pty: BashPtyMode::Auto,
             hashline_edit: false,
@@ -1022,6 +1020,7 @@ impl Default for ToolConfig {
             approval_mode: ApprovalMode::default(),
             bash_session_cwd: true,
             bash_non_interactive_env: true,
+            bash_direnv: false,
             bash_minimizer: false,
             bash_interceptor: BashInterceptorMode::Off,
             bash_patterns: Vec::new(),
