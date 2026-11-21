@@ -113,6 +113,12 @@ Commands:
                  draft
   /switch [id]   move to another stored session, or pick one from the list
   //text         send the literal message /text
+
+Local shell (runs in this terminal, in the client's working directory; never
+sent to the model, the session or the daemon):
+  !command       run command and keep its output in the transcript
+  !!command      run command without keeping the command or its output
+                 (exit status is still shown); a command is stopped after 10s
 ";
 
 /// Rows the popup may show at once.

@@ -142,6 +142,7 @@ mod export;
 mod handoff;
 mod launch;
 mod message_modes;
+pub mod process;
 mod reports;
 mod ssh;
 mod structured;
