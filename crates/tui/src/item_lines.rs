@@ -30,6 +30,9 @@ use crate::wrap::{self, Indented};
 /// so both kinds of continuation line up on the same column.
 pub(crate) const INDENT: usize = 2;
 
+/// Columns a note's continuation rows keep, under the text after `note: `.
+pub(crate) const NOTE_INDENT: usize = 6;
+
 /// What one item's lines are drawn with, gathered once per block.
 pub(crate) struct Look<'a> {
     pub(crate) theme: &'a Theme,
@@ -198,6 +201,9 @@ pub(crate) fn source<'a>(item: &Item, look: &Look<'_>, expand: Option<&tool_expa
             prefix: tool_line::OUTPUT_PREFIX,
             style,
             indent: INDENT,
+            // A note never lands on a tool row: only user and assistant
+            // messages can be addressed, so there is nothing below the output.
+            tail: Vec::new(),
         },
     }
 }
@@ -220,6 +226,25 @@ fn indented(lines: Vec<Line<'static>>) -> Vec<Indented> {
             }
         })
         .collect()
+}
+
+/// The reader's note on one message, drawn under it.
+///
+/// A note is one line by construction (`crate::notes::NoteStore::set`), so this
+/// makes one [`Indented`] rather than a list. The label is the accent colour so
+/// the note reads as the reader's mark rather than as part of the message, and
+/// the text is dim so it never competes with the conversation it describes.
+pub(crate) fn note(text: &str, look: &Look<'_>) -> Indented {
+    let line = Line::from(vec![
+        Span::styled("note: ", Style::default().fg(look.theme.core.accent)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(look.theme.transcript.notice)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ]);
+    Indented::new(line, NOTE_INDENT)
 }
 
 /// An assistant message, committed or still streaming.

@@ -5,7 +5,7 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/new`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
+//!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
 //!    `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -87,6 +87,8 @@ pub enum Local {
     Skills,
     /// Switch to another session, by id or from the list.
     Switch,
+    /// Attach, edit, list or remove a local note on a transcript message.
+    Note,
     /// Run `!command` in this client, keeping its output in the transcript.
     Shell,
     /// Run `!!command` in this client, keeping neither the command nor its output.
@@ -119,6 +121,7 @@ impl Local {
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
+            "note" => Some(Self::Note),
             "links" => Some(Self::Links),
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
@@ -144,6 +147,7 @@ impl Local {
             Self::Resume => "resume",
             Self::Skills => "skills",
             Self::Switch => "switch",
+            Self::Note => "note",
             // The shell forms are typed with a `!` prefix, not a slash, so
             // these names are only what a listing would call them. They are
             // deliberately absent from `LOCAL_NAMES`.
@@ -645,9 +649,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 18] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "queue", "quit", "record",
-    "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 19] = [
+    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
+    "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

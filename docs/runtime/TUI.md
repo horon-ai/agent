@@ -55,7 +55,7 @@ Set `title.state = true` to append `running`, `waiting` or `idle` to the title o
 
 ## User files
 
-Five files shape the client. Four live under `$HORON_HOME` (`~/.horon` unless `HORON_HOME` is set) and one under the project.
+Six files shape the client. Five live under `$HORON_HOME` (`~/.horon` unless `HORON_HOME` is set) and one under the project.
 
 | File | Scope | Purpose |
 | --- | --- | --- |
@@ -63,9 +63,10 @@ Five files shape the client. Four live under `$HORON_HOME` (`~/.horon` unless `H
 | `$HORON_HOME/themes/<name>.json` | Every project | A colour theme and its glyph preset |
 | `$HORON_HOME/keybindings.toml` | Every project | Remapped keys |
 | `$HORON_HOME/commands/<name>.md` | Every project | A slash command |
+| `$HORON_HOME/tui-notes.json` | Every project | Local notes on transcript messages, written by `/note` |
 | `<cwd>/.horon/commands/<name>.md` | One project | A slash command for that project |
 
-All five are read at startup and re-read while the client runs: the settings files are checked once a second, and the theme and key files follow the same cadence.
+The five configuration files are read at startup and re-read while the client runs: the settings files are checked once a second, and the theme and key files follow the same cadence. `tui-notes.json` is read once at startup and written by `/note`; it is created readable by the owner only (`0600`), and a file found with wider permissions is narrowed on the next read.
 
 `/info` shows the daemon's `approval mode` for TUI calls. It defaults to `yolo`; change `[tools] approval_mode` in the daemon's `config.toml`.
 
@@ -315,6 +316,10 @@ A `diagram` fence can draw a one-line flow such as `load -> parse -> render`. It
 
 `transcript.markdown = false` turns the rendering off and draws the same text with its markers as typed.
 
+Every message can carry one short note of the reader's own, drawn under it as `note: …` in the accent colour. `/note <text>` notes the newest message. `/note add [<address>] <text>` notes the addressed message or the newest one. `/note edit <address> <text>` replaces an existing note and refuses a message that has none. `/note remove [<address>]` deletes a note. `/note` lists the notes of the session with their address and a quote of the message. An address is `u<n>` or `a<n>`, the message's position among user or assistant messages in this session. Each note stores the session id and, when available, the stored message id. If either side lacks that id, as with live messages and older daemons, the client matches whitespace-normalised text and its occurrence number among identical messages. The client refuses an absent address when adding a note. A note whose message is gone can still be removed by its original address. The client uses the separate answer from a history reply when present and recognises the daemon's reasoning markup in older replies. `transcript.show_reasoning` continues to control reasoning visibility.
+
+Notes are the reader's own file: no command sends them, they never join the conversation, and they are not part of a session record. `/note prune` asks the harness about every session that holds a note and drops the notes of ids it no longer knows; a session that only answers because it is archived keeps its notes. A save reads the file again under a lock and merges only the sessions this client changed, so a second `horon-tui` writing at the same moment keeps its own. A file this build cannot read is moved to `tui-notes.json.corrupt` instead of being overwritten, and a file from a newer schema is reported and left untouched.
+
 ## Session todos
 
 The `Todos` panel shows the attached session's saved tasks, starting with the active item and then blocked items. A label shows each item's group and a blocked item includes its reason. The heading counts completed items and reports how many open items are outside the visible rows. On a short terminal the panel yields space to the conversation and input.
@@ -428,6 +433,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/links` | List links from recent assistant answers and open the selected URL |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
+| `/note [add\|edit\|remove\|list\|prune] [address] [text]` | Keep, list or remove a local note on a transcript message |
 | `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
@@ -437,7 +443,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table lists the built-in commands the client handles (`Local` in `crates/tui/src/commands/mod.rs`), in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -463,6 +469,8 @@ built-in commands:
   /links               list the http(s) links in recent answers and open one
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
+  /note                note, list or remove a local note on a transcript message
+  /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
   /replay              play a recorded conversation (path, stop), or the newest one

@@ -227,6 +227,18 @@ export interface HistoryMessage {
   /** "user" | "assistant" | "tool" */
   role: string;
   content: string;
+  /**
+   * Visible answer of an assistant row that also carries a reasoning trace.
+   * `content` keeps its historical value (every typed block joined);
+   * `answer` joins only `text` blocks and is absent on other rows.
+   */
+  answer?: string;
+  /**
+   * The session's stored id for the message this row shows, when the client
+   * asked for stored message ids and the daemon rendered the row from one.
+   * Absent on rows from a daemon that reports none, and on synthetic rows.
+   */
+  message_id?: string;
 }
 
 /** Durable token usage for one session. A metric no request recorded is `null`. */

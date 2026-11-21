@@ -82,7 +82,7 @@ const MAX_WALK_FILES: usize = 20_000;
 const MAX_WALK_ENTRIES: usize = 50_000;
 const MAX_SEARCH_BYTES: u64 = 64 * 1024 * 1024;
 
-pub(crate) use crate::message_content::flatten_content;
+pub(crate) use crate::message_content::{answer_without_reasoning, flatten_content, history_message};
 use serde_json::{Value, json};
 
 /// Where a translated client request should go.
@@ -613,6 +613,11 @@ impl BridgeState {
                     "id": id,
                     "supports_user_response": self.supports_user_response,
                     "supports_ask_requests": self.supports_ask_requests,
+                    // The transcript this bridge serves keys annotations by the
+                    // stored message each row came from. Ask for the ids alone:
+                    // negotiating ACP would also switch on the v2-only event
+                    // surface and the ACP tool bridges, which this client is not.
+                    "history_message_ids": true,
                 });
                 if self.crash_on_disconnect {
                     subscribe["crash_on_disconnect"] = json!(true);
@@ -2174,16 +2179,7 @@ impl BridgeState {
                 };
                 let mut messages: Vec<HistoryMessage> = event["messages"]
                     .as_array()
-                    .map(|messages| {
-                        messages
-                            .iter()
-                            .map(|m| HistoryMessage {
-                                response_stats: serde_json::from_value(m["response_stats"].clone()).unwrap_or(None),
-                                role: m["role"].as_str().unwrap_or("").to_string(),
-                                content: m["content"].as_str().unwrap_or("").to_string(),
-                            })
-                            .collect()
-                    })
+                    .map(|messages| messages.iter().map(history_message).collect())
                     .unwrap_or_default();
                 // A stored terminal-looking row can still belong to a running
                 // turn (e.g. an automatic continuation). Do not show a footer yet.
@@ -3650,6 +3646,8 @@ impl BridgeState {
                     response_stats: None,
                     role: role.to_string(),
                     content,
+                    answer: answer_without_reasoning(&message["content"]),
+                    message_id: message["id"].as_str().map(str::to_string),
                 })
             })
             .take(limit)

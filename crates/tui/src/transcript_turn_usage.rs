@@ -57,10 +57,13 @@ impl Transcript {
         // last line of the turn rather than sitting above streaming text.
         self.finish_stream();
         let elapsed_ms = u64::try_from(turn.started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        self.items.push(Item::TurnUsage(TurnMetrics {
-            elapsed_ms,
-            tokens: turn.reported.then_some((turn.input, turn.output)),
-        }));
+        self.push_item(
+            Item::TurnUsage(TurnMetrics {
+                elapsed_ms,
+                tokens: turn.reported.then_some((turn.input, turn.output)),
+            }),
+            None,
+        );
     }
 
     /// Stop measuring the turn without drawing anything.

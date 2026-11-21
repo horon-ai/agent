@@ -15,6 +15,9 @@ pub use recording::{OUTPUT_NOT_RECORDED, WARNING_NOT_RECORDED};
 #[path = "transcript_turn_usage.rs"]
 mod turn_usage;
 
+#[path = "transcript_activity.rs"]
+mod activity;
+
 use crate::tool_expand::{self, ExpandState};
 use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
 
@@ -317,6 +320,14 @@ struct Reasoned {
 #[derive(Debug)]
 pub struct Transcript {
     items: Vec<Item>,
+    /// The stored message each item came from, aligned with `items`.
+    ///
+    /// Only rows replayed from a harness that reports stored message ids carry
+    /// one; a row drawn from the live stream, or from a harness that reports
+    /// none, holds `None`. Every push and removal goes through
+    /// [`Transcript::push_item`] and [`Transcript::remove_item`] so the two
+    /// vectors cannot drift apart.
+    stored: Vec<Option<String>>,
     streaming: Streaming,
     reasoned: Reasoned,
     /// The value `transcript.show_reasoning` last resolved to.
@@ -389,6 +400,7 @@ impl Default for Transcript {
     fn default() -> Self {
         Self {
             items: Vec::new(),
+            stored: Vec::new(),
             streaming: Streaming::default(),
             reasoned: Reasoned::default(),
             setting_show_reasoning: false,
@@ -472,6 +484,29 @@ impl Transcript {
         &self.items
     }
 
+    /// Each item's stored message id, aligned with [`Self::items`].
+    pub(crate) fn stored_ids(&self) -> &[Option<String>] {
+        debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
+        &self.stored
+    }
+
+    /// Append an item, recording the stored message it came from.
+    ///
+    /// The only way an item enters the transcript, so `items` and `stored`
+    /// cannot drift apart.
+    fn push_item(&mut self, item: Item, stored: Option<String>) {
+        debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
+        self.items.push(item);
+        self.stored.push(stored);
+    }
+
+    /// Remove the item at `index`, and the stored message recorded for it.
+    fn remove_item(&mut self, index: usize) -> Item {
+        debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
+        self.stored.remove(index);
+        self.items.remove(index)
+    }
+
     /// The assistant text still streaming, if any.
     ///
     /// `None` once the message is committed by [`finish_stream`](Self::finish_stream),
@@ -497,8 +532,13 @@ impl Transcript {
 
     /// Record a user message, closing any partly streamed reply first.
     pub fn push_user(&mut self, text: impl Into<String>) {
+        self.push_user_stored(text.into(), None);
+    }
+
+    /// Record a user message the harness named a stored message for.
+    pub fn push_user_stored(&mut self, text: impl Into<String>, stored: Option<String>) {
         self.finish_stream();
-        self.items.push(Item::User(text.into()));
+        self.push_item(Item::User(text.into()), stored);
     }
 
     /// Record a completed assistant message that was not streamed here.
@@ -506,8 +546,13 @@ impl Transcript {
     /// Reading a stored session back goes through this: the daemon hands over
     /// whole messages, so there are no deltas to accumulate.
     pub fn push_assistant(&mut self, text: impl Into<String>) {
+        self.push_assistant_stored(text.into(), None);
+    }
+
+    /// Record a replayed assistant answer the harness named a stored message for.
+    pub fn push_assistant_stored(&mut self, text: impl Into<String>, stored: Option<String>) {
         self.finish_stream();
-        self.items.push(Item::Assistant(text.into()));
+        self.push_item(Item::Assistant(text.into()), stored);
     }
 
     /// Empty the conversation, keeping the display settings.
@@ -518,6 +563,7 @@ impl Transcript {
     pub fn clear(&mut self) {
         self.revision += 1;
         self.items.clear();
+        self.stored.clear();
         self.streaming = Streaming::default();
         self.reasoned = Reasoned::default();
         self.starts.clear();
@@ -535,96 +581,15 @@ impl Transcript {
         &self.expand
     }
 
-    /// Show, or hide again, the whole output of the selected cut call.
-    ///
-    /// Answers whether there was anything to toggle: the caller says so when
-    /// there was not, rather than leaving the key silently doing nothing. A
-    /// selection the activity setting hides is not expanded: the press would
-    /// change text no frame draws.
-    pub(crate) fn toggle_expand(&mut self) -> bool {
-        let Some(call_id) = self.expand.selected().map(str::to_string) else {
-            return false;
-        };
-        if self.tool_hidden(&call_id) {
-            return false;
-        }
-        self.expand.toggle()
-    }
-
-    /// Make the call the view shows the one the expand key acts on.
-    ///
-    /// `heights` are the wrapped rows of each item as the last held frame
-    /// measured them, and `top` is the first row of the content the pane shows.
-    /// The first call whose rows cross that window is selected; a window that
-    /// shows no call leaves nothing selected, so the key does not open a line
-    /// the reader cannot see.
-    pub(crate) fn select_tool_at(&mut self, heights: &[usize], top: usize, view: usize) {
-        if heights.len() != self.items.len() {
-            return;
-        }
-        let bottom = top.saturating_add(view);
-        let mut row = 0usize;
-        let mut chosen: Option<String> = None;
-        for (item, height) in self.items.iter().zip(heights) {
-            let start = row;
-            row = row.saturating_add(*height);
-            if row <= top {
-                continue;
-            }
-            if start >= bottom {
-                break;
-            }
-            if let Item::Tool(call) = item
-                && self.expand.holds(&call.call_id)
-                && !self.tool_hidden(&call.call_id)
-            {
-                chosen = Some(call.call_id.clone());
-                break;
-            }
-        }
-        match chosen {
-            Some(call_id) => {
-                self.expand.select(&call_id);
-            }
-            None => self.expand.select_none(),
-        }
-    }
-
-    /// Make the newest call the selection again, as following the end does.
-    pub(crate) fn select_newest_tool(&mut self) {
-        self.expand.follow_newest();
-    }
-
-    /// Whether the activity setting hides `call_id`'s line.
-    fn tool_hidden(&self, call_id: &str) -> bool {
-        self.items
-            .iter()
-            .any(|item| matches!(item, Item::Tool(call) if call.call_id == call_id && call.finished_activity()))
-            && !self.expand.shows_activity()
-    }
-
-    /// Draw, or stop drawing, the calls that finished.
-    ///
-    /// A call in progress and one waiting for approval stay on screen: the
-    /// setting is about the record of what ran, not about the work itself.
-    pub(crate) fn set_tool_activity(&mut self, show: bool) {
-        self.expand.set_activity(show);
-    }
-
-    /// Whether finished calls are drawn.
-    pub(crate) fn show_tool_activity(&self) -> bool {
-        self.expand.shows_activity()
-    }
-
     /// Record an informational line.
     pub fn push_notice(&mut self, text: impl Into<String>) {
         self.finish_stream();
-        self.items.push(Item::Notice(text.into()));
+        self.push_item(Item::Notice(text.into()), None);
     }
 
     /// Display a live notice immediately before any open streaming message.
     pub(crate) fn push_live_notice(&mut self, text: String) {
-        self.items.push(Item::Notice(text));
+        self.push_item(Item::Notice(text), None);
     }
 
     /// Record the `/context` breakdown.
@@ -633,7 +598,7 @@ impl Transcript {
     /// measured together, and a held view scrolls past them as one unit.
     pub fn push_context(&mut self, report: crate::context::ContextReport) {
         self.finish_stream();
-        self.items.push(Item::Context(Box::new(report)));
+        self.push_item(Item::Context(Box::new(report)), None);
     }
 
     /// Record another runtime command's answer.
@@ -642,13 +607,13 @@ impl Transcript {
     /// are one block, measured together and scrolled past as one unit.
     pub fn push_report(&mut self, report: crate::report::Report) {
         self.finish_stream();
-        self.items.push(Item::Report(Box::new(report)));
+        self.push_item(Item::Report(Box::new(report)), None);
     }
 
     /// Record a warning line.
     pub fn push_warning(&mut self, text: impl Into<String>) {
         self.finish_stream();
-        self.items.push(Item::Warning(text.into()));
+        self.push_item(Item::Warning(text.into()), None);
     }
 
     /// Record an avoidable cache miss at the boundary of the request it belongs
@@ -669,7 +634,7 @@ impl Transcript {
         if self.items.last() == Some(&item) {
             return;
         }
-        self.items.push(item);
+        self.push_item(item, None);
     }
 
     /// Record a message waiting for the running turn to end.
@@ -678,7 +643,7 @@ impl Transcript {
     /// problem: the text is already accepted and will be sent.
     pub fn push_queued(&mut self, text: impl Into<String>) {
         self.finish_stream();
-        self.items.push(Item::Queued(text.into()));
+        self.push_item(Item::Queued(text.into()), None);
     }
 
     /// Turn the oldest queued line for `text` into the message that was sent.
@@ -692,6 +657,7 @@ impl Transcript {
             .position(|item| matches!(item, Item::Queued(queued) if queued == text));
         if let Some(index) = found {
             self.items[index] = Item::User(text.to_string());
+            self.stored[index] = None;
         }
     }
 
@@ -713,7 +679,7 @@ impl Transcript {
             _ => false,
         });
         if let Some(index) = found {
-            self.items.remove(index);
+            self.remove_item(index);
         }
     }
 
@@ -730,7 +696,7 @@ impl Transcript {
             .iter()
             .rposition(|item| matches!(item, Item::User(sent) if sent == text));
         if let Some(index) = found {
-            self.items.remove(index);
+            self.remove_item(index);
         }
     }
 
@@ -791,7 +757,7 @@ impl Transcript {
                 return;
             }
             if let Some(index) = self.last_assistant_index() {
-                self.items.remove(index);
+                self.remove_item(index);
             }
             return;
         }
@@ -804,6 +770,19 @@ impl Transcript {
     /// A message ended; the next delta starts a new one.
     pub fn text_done(&mut self) {
         self.finish_stream();
+    }
+
+    /// Split a rendered history body into its reasoning and its answer.
+    ///
+    /// The daemon re-renders persisted reasoning with the markup the live
+    /// stream used, and the terminal reads it back with the daemon's own
+    /// helper instead of keeping a second copy of the convention. A body with
+    /// no reasoning markup is all answer, including its leading blank lines.
+    pub(crate) fn split_rendered_assistant(content: &str) -> (Option<String>, String) {
+        match horon_agent_sdk::transcript_text::split_rendered_reasoning(content) {
+            Some((reasoning, answer)) => (Some(reasoning), answer),
+            None => (None, content.to_string()),
+        }
     }
 
     /// Reasoning text arrived for the message being assembled.
@@ -842,7 +821,7 @@ impl Transcript {
         }
         let reasoned = std::mem::take(&mut self.reasoned);
         if !reasoned.text.trim().is_empty() {
-            self.items.push(Item::Reasoning(reasoned.text));
+            self.push_item(Item::Reasoning(reasoned.text), None);
         }
     }
 
@@ -871,7 +850,7 @@ impl Transcript {
             name: name.to_string(),
             at: Instant::now(),
         });
-        self.items.push(Item::Tool(ToolCall::new(call_id, name)));
+        self.push_item(Item::Tool(ToolCall::new(call_id, name)), None);
     }
 
     /// Whether a refusal line names `request_id`.
@@ -1087,7 +1066,7 @@ impl Transcript {
             // its text is never kept: a key that expanded nothing would be a key
             // that did nothing.
             let draws = !Self::settled(&call.state);
-            self.items.push(Item::Tool(call));
+            self.push_item(Item::Tool(call), None);
             return draws && hides && self.keep_output(call_id, output);
         };
         // A call finishes once, but the same result can reach the client twice
@@ -1178,7 +1157,7 @@ impl Transcript {
         }
         let streaming = std::mem::take(&mut self.streaming);
         if !streaming.text.trim().is_empty() {
-            self.items.push(Item::Assistant(streaming.text));
+            self.push_item(Item::Assistant(streaming.text), None);
         }
     }
 

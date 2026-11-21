@@ -148,6 +148,11 @@
     },
     {
       "package": "horon-agent-base",
+      "target": "package_catalog",
+      "min_passed": 8
+    },
+    {
+      "package": "horon-agent-base",
       "target": "package_manifest",
       "min_passed": 9
     },

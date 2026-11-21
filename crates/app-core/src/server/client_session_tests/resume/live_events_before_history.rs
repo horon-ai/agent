@@ -150,7 +150,7 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
                         &event_history,
                         &event_counter,
                         &swarm_event_tx,
-                                                false,
+                        crate::server::foreground_state::HistoryIds::default(),
                     )
                     .await
                 })
@@ -160,9 +160,7 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
 
     tokio::time::timeout(std::time::Duration::from_secs(1), registered_rx)
         .await
-        .map_err(|_| {
-            anyhow!("live event sender should register before history replay completes")
-        })??;
+        .map_err(|_| anyhow!("live event sender should register before history replay completes"))??;
     assert!(
         swarm_members
             .read()
@@ -178,9 +176,7 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
 
     drop(writer_guard);
 
-    resume_task
-        .await
-        .map_err(|e| anyhow!("resume task join: {e}"))??;
+    resume_task.await.map_err(|e| anyhow!("resume task join: {e}"))??;
 
     let events = collect_events_until_done(&mut client_event_rx, 46).await;
     assert!(
@@ -190,9 +186,7 @@ async fn handle_resume_session_registers_live_events_before_history_replay() -> 
         "expected Done event for restore resume, got {events:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, ServerEvent::Error { .. })),
+        !events.iter().any(|event| matches!(event, ServerEvent::Error { .. })),
         "restore resume should not emit error events: {events:?}"
     );
 

@@ -86,6 +86,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             } => app.runtime_info(provider, model, effort, level),
             Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
+            Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
             Incoming::Skills(rows) => app.show_skills(rows),
             // The answer names the text it settles, so a steer the client no
             // longer holds is dropped rather than restored into another turn.
@@ -141,6 +142,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        Action::CheckSessions(sessions) => Command::CheckSessions(sessions),
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },

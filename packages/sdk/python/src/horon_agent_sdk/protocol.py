@@ -253,6 +253,14 @@ class HistoryMessage(TypedDict, total=False):
     response_stats: ResponseStats
     role: str
     content: str
+    # Visible answer of an assistant row that also carries a reasoning trace.
+    # ``content`` keeps its historical value (every typed block joined);
+    # ``answer`` joins only ``text`` blocks and is absent on other rows.
+    answer: str
+    # The session's stored id for the message this row shows, when the client
+    # asked for stored message ids and the daemon rendered the row from one.
+    # Absent on rows from a daemon that reports none, and on synthetic rows.
+    message_id: str
 
 
 class UsageSession(TypedDict, total=False):

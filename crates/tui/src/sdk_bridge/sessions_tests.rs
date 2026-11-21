@@ -35,6 +35,8 @@ fn message(role: &str, content: &str) -> HistoryMessage {
         role: role.to_string(),
         content: content.to_string(),
         response_stats: None,
+        answer: None,
+        message_id: None,
     }
 }
 

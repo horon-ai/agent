@@ -20,6 +20,21 @@ pub fn set_file_permissions_owner_only(path: &Path) -> io::Result<()> {
     Current::set_file_permissions_owner_only(path)
 }
 
+/// Restore owner write access without changing other Unix permission bits.
+pub fn make_owner_writable(path: &Path, mut permissions: std::fs::Permissions) -> io::Result<()> {
+    if !permissions.readonly() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(permissions.mode() | 0o200);
+    }
+    #[cfg(not(unix))]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(path, permissions)
+}
+
 /// Restrict a directory to read/write/execute by its owner (`0o700`, or an
 /// inheritable owner-only DACL on Windows).
 pub fn set_dir_permissions_owner_only(path: &Path) -> io::Result<()> {

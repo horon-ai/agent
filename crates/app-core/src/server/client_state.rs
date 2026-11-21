@@ -1,4 +1,5 @@
 use super::ClientConnectionInfo;
+use super::foreground_state::HistoryIds;
 use super::server_has_newer_binary;
 use crate::agent::Agent;
 use crate::bus::Bus;
@@ -146,7 +147,7 @@ pub(super) async fn handle_get_history(
     server_name: &str,
     server_icon: &str,
     was_interrupted: Option<bool>,
-    include_message_ids: bool,
+    ids: HistoryIds,
 ) -> Result<()> {
     let history_start = Instant::now();
     let activity = session_activity_snapshot(client_connections, client_session_id, client_is_processing).await;
@@ -170,7 +171,7 @@ pub(super) async fn handle_get_history(
             server_icon,
             was_interrupted,
             activity,
-            include_message_ids,
+            ids,
         )
         .await?;
         crate::logging::info(&format!(
@@ -194,7 +195,7 @@ pub(super) async fn handle_get_history(
         activity,
         HistoryPayloadMode::Full,
         true,
-        include_message_ids,
+        ids,
     )
     .await?;
     let send_history_ms = history_start.elapsed().as_millis();
@@ -482,7 +483,7 @@ async fn send_history_from_persisted_session(
     server_icon: &str,
     was_interrupted: Option<bool>,
     activity: Option<SessionActivitySnapshot>,
-    include_message_ids: bool,
+    ids: HistoryIds,
 ) -> Result<()> {
     let session = match crate::session::Session::load_for_remote_startup(session_id)
         .or_else(|_| crate::session::Session::load_startup_stub(session_id))
@@ -505,7 +506,7 @@ async fn send_history_from_persisted_session(
     // Stored ids are read before the transcript is dropped below.
     let messages: Vec<crate::protocol::HistoryMessage> = rendered_messages
         .into_iter()
-        .map(|msg| super::foreground_state::history_message(msg, session.active_context(), include_message_ids))
+        .map(|msg| super::foreground_state::history_message(msg, session.active_context(), ids.rows))
         .collect();
     // Extract the small metadata fields we need, then drop the full Session
     // (including its message transcript) before building and serializing the
@@ -565,7 +566,7 @@ async fn send_history_from_persisted_session(
         service_tier: provider.service_tier(),
         compaction_mode: crate::config::config().compaction.mode.clone(),
         activity,
-        acp_protocol_version: include_message_ids.then_some(2),
+        acp_protocol_version: ids.acp_v2.then_some(2),
     };
 
     write_event(writer, &history_event).await
@@ -610,7 +611,7 @@ async fn send_history_with_guard(
     activity: Option<SessionActivitySnapshot>,
     payload_mode: HistoryPayloadMode,
     include_model_catalog: bool,
-    include_message_ids: bool,
+    ids: HistoryIds,
 ) -> Result<()> {
     let history_start = Instant::now();
     let catalog_provider = include_model_catalog.then(|| agent_guard.provider_handle());
@@ -645,7 +646,7 @@ async fn send_history_with_guard(
         let provider = agent_guard.provider_handle();
 
         let history_snapshot_start = Instant::now();
-        let (messages, images) = agent_guard.get_history_and_rendered_images(include_message_ids);
+        let (messages, images) = agent_guard.get_history_and_rendered_images(ids.rows);
         let history_snapshot_ms = history_snapshot_start.elapsed().as_millis();
         let image_render_ms = 0;
 
@@ -797,7 +798,7 @@ async fn send_history_with_guard(
         service_tier,
         compaction_mode,
         activity,
-        acp_protocol_version: include_message_ids.then_some(2),
+        acp_protocol_version: ids.acp_v2.then_some(2),
     };
     let encode_start = Instant::now();
     let json = encode_event(&history_event);

@@ -288,8 +288,10 @@ fn minor_fourteen_events_roundtrip_and_the_marker_is_a_stream_event() {
                 state,
                 messages: vec![HistoryMessage {
                     response_stats: None,
+                    answer: None,
                     role: "user".into(),
                     content: "hi".into(),
+                    message_id: None,
                 }],
                 next_history_cursor: None,
                 truncated: true,
@@ -480,8 +482,10 @@ fn replication_events_roundtrip() {
             head: "h1".into(),
             messages: vec![HistoryMessage {
                 response_stats: None,
+                answer: None,
                 role: "user".into(),
                 content: "hi".into(),
+                message_id: None,
             }],
             next_cursor: Some("e1".into()),
         },

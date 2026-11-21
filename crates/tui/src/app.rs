@@ -34,6 +34,7 @@ mod draft_suggestions;
 mod effort;
 mod history_search;
 mod keys;
+mod notes;
 mod picker;
 mod prompts;
 pub(crate) mod record;
@@ -58,6 +59,9 @@ mod effort_cmd_tests;
 
 #[cfg(test)]
 mod history_search_tests;
+
+#[cfg(test)]
+mod notes_tests;
 
 #[cfg(test)]
 mod session_switch_tests;
@@ -112,13 +116,12 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask which noted sessions were deleted, including checks for archived sessions.
+    CheckSessions(Vec<String>),
     /// Hand the draft to the user's editor; the loop answers this one itself,
     /// because the editor needs the terminal the loop is drawing on.
     EditDraft,
-    /// Open a retained artifact of this session as a private copy in the
-    /// editor. The path is resolved before the action leaves the app, so only a
-    /// file this session's store holds can arrive here; like `EditDraft`, the
-    /// loop answers it because the editor needs the terminal.
+    /// Give the terminal to the editor with a private copy of a resolved artifact.
     OpenArtifact(std::path::PathBuf),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
@@ -166,6 +169,9 @@ pub(crate) struct PendingSteer {
 pub struct App {
     /// The conversation so far.
     pub transcript: Transcript,
+    /// The reader's own notes on transcript messages, in a file of this
+    /// client's own. Never part of a message or a harness request.
+    pub(crate) notes: crate::notes::NoteStore,
     pub(crate) todos: crate::todo_panel::TodoPanel,
     /// The line being edited.
     pub input: Input,
@@ -448,6 +454,9 @@ impl App {
     pub fn new(description: String, events: Receiver<Incoming>) -> Self {
         Self {
             transcript: Transcript::new(),
+            // In memory until `run` gives the client the file it owns: a test
+            // or an embedded user of `App` must not read or write `$HORON_HOME`.
+            notes: crate::notes::NoteStore::memory(),
             todos: Default::default(),
             input: Input::new(),
             history: History::new(),
@@ -535,6 +544,7 @@ impl App {
         let (_sender, receiver) = mpsc::channel();
         Self {
             transcript: Transcript::new(),
+            notes: crate::notes::NoteStore::memory(),
             todos: Default::default(),
             input: Input::new(),
             history: History::new(),

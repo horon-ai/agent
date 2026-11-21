@@ -1701,6 +1701,14 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- single_instance_tests:: --nocapture
 
+      - name: Run stored message content cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 3 \
+            -- message_content::tests:: --nocapture
+
       - name: Run session id prefix cohort
         shell: bash
         # Both suites only run through filters, so a prefix resolver that
@@ -2254,6 +2262,20 @@ jobs:
               -Name 'Windows package manifest contracts' `
               -TimeoutSeconds 900 `
               -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_manifest')
+          } finally {
+            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
+          }
+
+      - name: Run Windows package catalog contracts
+        shell: pwsh
+        run: |
+          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
+          try {
+            & ./scripts/ci/cargo_with_timeout.ps1 `
+              -Name 'Windows package catalog contracts' `
+              -TimeoutSeconds 900 `
+              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_catalog')
           } finally {
             Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
           }

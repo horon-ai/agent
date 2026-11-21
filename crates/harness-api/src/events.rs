@@ -954,6 +954,24 @@ pub struct HistoryMessage {
     /// "user" | "assistant" | "tool".
     pub role: String,
     pub content: String,
+    /// The visible answer of an assistant row that also carries a reasoning
+    /// trace, with the reasoning left out.
+    ///
+    /// `content` keeps its historical value: every typed block's text in
+    /// storage order, which can put reasoning beside the answer with no
+    /// marker. This field is additive and only set on such rows, so a client
+    /// that needs the answer itself does not have to interpret the daemon's
+    /// reasoning markup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
+    /// The session's stored id for the message this row shows.
+    ///
+    /// Present only when the client asked for stored message ids and the row
+    /// was rendered from a stored message, so it names the exact original a
+    /// reader can key an annotation by. Rows from a daemon that predates the
+    /// request, and synthetic rows, omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

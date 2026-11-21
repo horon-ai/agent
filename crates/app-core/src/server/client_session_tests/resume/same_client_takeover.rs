@@ -1,6 +1,5 @@
 #[tokio::test]
-async fn handle_resume_session_allows_same_client_instance_takeover_without_local_history()
--> Result<()> {
+async fn handle_resume_session_allows_same_client_instance_takeover_without_local_history() -> Result<()> {
     let _guard = crate::storage::lock_test_env();
     let (_runtime, prev_runtime) = setup_runtime_dir()?;
 
@@ -115,7 +114,7 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
@@ -127,9 +126,7 @@ async fn handle_resume_session_allows_same_client_instance_takeover_without_loca
         "expected Done event for live attach, got {events:?}"
     );
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, ServerEvent::Error { .. })),
+        !events.iter().any(|event| matches!(event, ServerEvent::Error { .. })),
         "same-instance attach should not queue an error event: {events:?}"
     );
     assert_eq!(client_session_id, target_session_id);

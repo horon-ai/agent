@@ -4,6 +4,7 @@ use super::client_disconnect_cleanup::{
     ColdResumeClaimGuard, SessionCloseGuard, await_pending_close, blocking_session_io, claim_cold_resume,
 };
 use super::client_state::{handle_get_history, spawn_model_prefetch_update};
+use super::foreground_state::HistoryIds;
 use super::swarm::notify_owner_of_unrestored_idle_workers;
 use super::{
     ClientConnectionInfo, FileTouchService, SessionInterruptQueues, SwarmEvent, SwarmMember, SwarmState, VersionedPlan,
@@ -1238,7 +1239,7 @@ pub(super) async fn handle_resume_session(
     event_history: &Arc<RwLock<std::collections::VecDeque<SwarmEvent>>>,
     event_counter: &Arc<std::sync::atomic::AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
-    include_message_ids: bool,
+    ids: HistoryIds,
 ) -> Result<Arc<Mutex<Agent>>> {
     let resume_start = Instant::now();
     let incoming_client_instance_id = client_instance_id.map(str::to_string);
@@ -1413,7 +1414,7 @@ pub(super) async fn handle_resume_session(
             server_name,
             server_icon,
             None,
-            include_message_ids,
+            ids,
         )
         .await?;
         let history_ms = history_start.elapsed().as_millis();
@@ -1788,7 +1789,7 @@ pub(super) async fn handle_resume_session(
                 server_name,
                 server_icon,
                 Some(was_interrupted),
-                include_message_ids,
+                ids,
             )
             .await;
             let history_ms = history_start.elapsed().as_millis();

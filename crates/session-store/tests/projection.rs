@@ -323,6 +323,7 @@ fn rendered(role: &str, stored_index: Option<usize>) -> RenderedMessage {
     RenderedMessage {
         role: role.into(),
         stored_index,
+        stored_id: None,
         response_stats: None,
         content: String::new(),
         tool_calls: vec![],

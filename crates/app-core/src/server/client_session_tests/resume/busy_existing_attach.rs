@@ -123,7 +123,7 @@ async fn handle_resume_session_allows_live_attach_when_existing_agent_is_busy() 
         &event_history,
         &event_counter,
         &swarm_event_tx,
-        false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
@@ -279,7 +279,7 @@ async fn live_attach_owed_target(
         &Arc::new(RwLock::new(VecDeque::<SwarmEvent>::new())),
         &Arc::new(std::sync::atomic::AtomicU64::new(0)),
         &swarm_event_tx,
-        false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
