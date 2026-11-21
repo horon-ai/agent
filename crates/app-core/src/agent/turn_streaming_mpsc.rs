@@ -143,7 +143,7 @@ impl Agent {
             // compacting the request history. This is the first point where the
             // stable request settings are available.
             let mut tools = self.tool_definitions().await;
-            let mut split_prompt = self.build_system_prompt_split(None);
+            let mut split_prompt = self.build_request_system_prompt(&tools);
             self.provider
                 .prewarm_with_context(&tools, &split_prompt.static_part, &self.provider_request_context())
                 .await;
@@ -172,7 +172,7 @@ impl Agent {
                 // Compaction clears the tool lock, so rebuild the foreground
                 // request metadata rather than relying on the pre-compaction snapshot.
                 tools = self.tool_definitions().await;
-                split_prompt = self.build_system_prompt_split(None);
+                split_prompt = self.build_request_system_prompt(&tools);
             }
 
             // `messages` is this turn's single owned request snapshot. Memory,

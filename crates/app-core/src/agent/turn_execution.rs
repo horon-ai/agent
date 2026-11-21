@@ -434,7 +434,7 @@ impl Agent {
             Some(tools) => Arc::clone(tools),
             None => self.build_filtered_tool_definitions().await.into(),
         };
-        let prompt = self.build_system_prompt_split(None);
+        let prompt = self.build_request_system_prompt(&tools);
         self.provider
             .prewarm_with_context(&tools, &prompt.static_part, &self.provider_request_context())
             .await;
