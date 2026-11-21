@@ -2035,14 +2035,10 @@ impl Registry {
         }
 
         let working_dir = ctx.working_dir.as_ref().map(|dir| dir.display().to_string());
-        // The dispatch clock starts before the hooks. A transformer or gate that
-        // queues on `HOOK_SERIAL` or runs long is time the caller waited, and
-        // starting at `Tool::execute` made that wait invisible.
+        // Include time spent waiting for and running hooks in dispatch latency.
         let dispatch_started_at = std::time::Instant::now();
-        // User-configured input transformer: may replace the tool input before
-        // anything reads it, so it is serialized with the other awaited hooks;
-        // see `HOOK_SERIAL`. It is skipped entirely when not configured, and for
-        // the dispatcher, whose payload the target's own transformer rewrites.
+        // Serialize input transforms with other hooks. The dispatcher leaves
+        // its payload for the target's own transformer.
         let input = if policy_on_self {
             let _serial = HOOK_SERIAL.lock().await;
             if crate::hooks::hook_configured("pre_tool_transform") {
