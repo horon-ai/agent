@@ -387,8 +387,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             }
         },
         Some(Command::Model(subcmd)) => match subcmd {
-            ModelCommand::List { json, verbose } => {
-                commands::run_model_command(&args.provider, args.model.as_deref(), json, verbose).await?;
+            ModelCommand::List { json, verbose, filter } => {
+                commands::run_model_command(&args.provider, args.model.as_deref(), json, verbose, &filter).await?;
             }
         },
         None => run_default_command(args).await?,
