@@ -444,6 +444,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
+| `/swarm` | 연결된 세션의 직계 자식을 살펴보고 부모 세션으로 돌아간다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
 이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열일곱 명령을 이름 순으로 적었다.
@@ -480,6 +481,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
+  /swarm               browse child sessions; add status for the daemon's swarm report
   /switch              move to another stored session, or pick one from the list
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

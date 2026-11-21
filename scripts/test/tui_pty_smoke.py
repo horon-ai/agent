@@ -574,6 +574,42 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
+    from pathlib import Path
+
+    def session_ids() -> set[str]:
+        return {event.parent.name for event in Path(home).glob("sessions/*/events.jsonl")}
+
+    parents = session_ids()
+    if len(parents) != 1:
+        raise Failure(f"expected the active parent session, found {parents}")
+    parent = next(iter(parents))
+    child_result = subprocess.run([launch.argv0, "run", "swarm fixture result"], cwd=root,
+                                  env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+                                  capture_output=True, text=True, timeout=STEP_TIMEOUT)
+    children = session_ids() - parents
+    if child_result.returncode != 0 or len(children) != 1:
+        raise Failure(f"expected one recorded child: {child_result.stdout}\n{child_result.stderr}")
+    child = next(iter(children))
+    snapshot = Path(env["HORON_AGENT_RUNTIME_DIR"], "durable-state", "swarm", "smoke.json")
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.write_text(json.dumps({"members": [{
+        "session_id": child,
+        "report_back_to_session_id": parent,
+        "task_label": "Fixture child",
+        "status": "completed",
+    }]}), encoding="utf-8")
+    terminal.send("/swarm\r")
+    terminal.read_until("Swarm children", STEP_TIMEOUT, "swarm picker opened")
+    terminal.read_until("Fixture child", STEP_TIMEOUT, "completed direct child listed")
+    terminal.send("\r")
+    terminal.read_until(child, STEP_TIMEOUT, "opened the recorded child")
+    terminal.send("/swarm\r")
+    terminal.read_until("parent:", STEP_TIMEOUT, "parent return row")
+    terminal.send("\r")
+    terminal.read_until(parent, STEP_TIMEOUT, "returned to the original session")
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
@@ -600,6 +636,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            swarm_picker_smoke(terminal, launch, home, case_root, env)
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

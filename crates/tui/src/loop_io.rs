@@ -86,6 +86,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             } => app.runtime_info(provider, model, effort, level),
             Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
+            Incoming::Swarm(rows) => app.show_swarm(rows),
             Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
             Incoming::Skills(rows) => app.show_skills(rows),
             // The answer names the text it settles, so a steer the client no
@@ -136,6 +137,10 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         Action::Sessions => Command::Sessions {
             working_dir: app.cwd.clone(),
         },
+        // The swarm is the attached session's own: the bridge narrows the rows
+        // to its children before the list reaches the screen, so no directory
+        // or filter is passed for it.
+        Action::Swarm => Command::Swarm,
         // The new session starts where the client is working, so the list of
         // sessions it appears in is the one `/switch` shows.
         Action::NewSession => Command::NewSession {

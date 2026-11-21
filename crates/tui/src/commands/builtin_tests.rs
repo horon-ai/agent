@@ -406,6 +406,7 @@ fn builtin_help_lists_every_built_in_command() {
         "/quit",
         "/resume",
         "/settings",
+        "/swarm",
         "/switch",
     ] {
         assert!(

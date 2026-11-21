@@ -444,6 +444,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
+| `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
 The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
@@ -480,6 +481,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
+  /swarm               browse child sessions; add status for the daemon's swarm report
   /switch              move to another stored session, or pick one from the list
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

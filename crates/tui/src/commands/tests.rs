@@ -189,15 +189,33 @@ fn commands_server_names_follow_the_protocol() {
         }
         other => panic!("expected a server command: {other:?}"),
     }
+    // `/swarm` is a built-in under its bare name too: it opens this session's
+    // children. Anything typed after the name still reaches the harness's own
+    // command, which the built-in forwards, so the command is not lost.
+    assert_eq!(
+        state.resolve("/swarm"),
+        Invocation::Local {
+            command: Local::Swarm,
+            arguments: String::new()
+        }
+    );
+    assert_eq!(
+        state.resolve("/swarm status"),
+        Invocation::Local {
+            command: Local::Swarm,
+            arguments: "status".to_string()
+        }
+    );
     // The names come from serde, so every variant is reachable and unique,
-    // apart from the one the built-in list took over.
+    // apart from the two the built-in list took over.
     let names = server_commands();
     assert_eq!(
-        names.len() + 1,
+        names.len() + 2,
         SERVER_VARIANTS.len(),
-        "the built-in `/skills` owns exactly one harness name"
+        "the built-in `/skills` and `/swarm` own exactly two harness names"
     );
     assert!(!names.iter().any(|(name, _)| name == "skills"));
+    assert!(!names.iter().any(|(name, _)| name == "swarm"));
     let mut unique: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
     unique.sort_unstable();
     unique.dedup();

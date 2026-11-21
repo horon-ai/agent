@@ -29,6 +29,7 @@ mod runtime;
 mod sessions;
 mod skills;
 mod steer;
+mod swarm;
 
 #[cfg(test)]
 mod runtime_tests;
@@ -43,6 +44,7 @@ mod sessions_tests;
 mod skills_tests;
 
 pub use messages::{Command, Incoming};
+pub use swarm::SwarmRow;
 
 /// How long the bridge waits for a command before it pumps the event stream
 /// again. Short enough that keystrokes feel instant.
@@ -644,6 +646,10 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             Ok(Some(Incoming::Sessions(rows)))
         }
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
+        // `/swarm` shows this session's own children; the rows are narrowed to
+        // its lineage before they leave the bridge, so the list cannot name a
+        // session outside the swarm it belongs to.
+        Command::Swarm => Ok(Some(Incoming::Swarm(swarm::rows(client, session_id)?))),
         // `/skills` asked for this list, so every failure is shown: a harness
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
@@ -680,6 +686,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Models
         | Command::Sessions { .. }
         | Command::CheckSessions(_)
+        | Command::Swarm
         | Command::Skills { .. }
         | Command::DaemonSettings
         | Command::Steer(_)
@@ -727,6 +734,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
         Command::CheckSessions(_) => "could not check the noted sessions",
+        Command::Swarm => "could not list the swarm children",
         Command::Skills { .. } => "could not list the skills",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",

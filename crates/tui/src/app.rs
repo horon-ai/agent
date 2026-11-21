@@ -110,6 +110,8 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Ask for the swarm children of the attached session, and its parent row.
+    Swarm,
     /// Start a new session in this working directory and follow it.
     NewSession,
     /// Attach to another session and replay its stored conversation.

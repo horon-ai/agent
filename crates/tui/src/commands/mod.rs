@@ -6,7 +6,7 @@
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
 //!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record` and `/replay`.
+//!    `/queue`, `/record`, `/replay` and `/swarm`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -101,6 +101,13 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// List the swarm children of this session and the parent it reports back
+    /// to, and attach to one.
+    ///
+    /// The bare name opens the list; an argument still reaches the harness's
+    /// own `swarm` report, which is why the runtime command no longer answers
+    /// under its own listing.
+    Swarm,
 }
 
 impl Local {
@@ -126,6 +133,7 @@ impl Local {
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "swarm" => Some(Self::Swarm),
             _ => None,
         }
     }
@@ -157,6 +165,7 @@ impl Local {
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Swarm => "swarm",
         }
     }
 }
@@ -649,9 +658,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
+const LOCAL_NAMES: [&str; 20] = [
     "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+    "record", "replay", "resume", "settings", "skills", "swarm", "switch",
 ];
 
 /// Every runtime command, in declaration order.
@@ -700,10 +709,12 @@ fn server_catalog() -> &'static ServerCatalog {
             warnings: Vec::new(),
         };
         for command in SERVER_VARIANTS {
-            // The built-in `/skills` list owns this name, so the harness's own
-            // `skills` command is not offered beside it: a listing with the
-            // same name twice would name one command and run another.
-            if *command == RuntimeCommand::Skills {
+            // The built-in `/skills` and `/swarm` lists own those names, so the
+            // harness's own commands are not offered beside them: a listing
+            // with the same name twice would name one command and run another.
+            // `/swarm status` still reaches the harness command through the
+            // built-in, which forwards what is typed after it.
+            if matches!(*command, RuntimeCommand::Skills | RuntimeCommand::Swarm) {
                 continue;
             }
             match serde_json::to_value(command) {
