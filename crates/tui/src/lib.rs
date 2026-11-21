@@ -25,6 +25,7 @@ mod markdown;
 pub mod overlays;
 pub mod paste;
 pub mod prompts;
+pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
@@ -80,6 +81,10 @@ mod scroll_tests;
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "recording_tests.rs"]
+mod recording_tests;
 
 #[cfg(test)]
 #[path = "report_tests.rs"]
@@ -542,6 +547,9 @@ where
         // Command directories are only stat-ed here; a file is re-read when its
         // own stamp moved.
         changed |= app.tick_commands();
+        // A replay is a clock over the conversation: each frame plays the events
+        // that became due and reports whether the pane changed.
+        changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }

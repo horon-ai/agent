@@ -52,8 +52,6 @@ open = "5"
 # clock it already gets from `time` through the SDK's dependency graph and asks
 # for the local offset itself; the epoch-to-local conversion is this crate's.
 time = { version = "0.3.55", default-features = false, features = ["local-offset", "std"] }
-
-[dev-dependencies]
 tempfile = "3"
 
 # Restoring the terminal from a signal handler (#431) needs the C library's
