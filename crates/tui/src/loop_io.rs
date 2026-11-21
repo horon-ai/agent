@@ -144,6 +144,9 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
+        // The frame loop answers this one: the editor needs the terminal that
+        // loop is drawing on, so the action never reaches the bridge thread.
+        Action::EditDraft => return,
         Action::DaemonSettings => Command::DaemonSettings,
         Action::Quit => {
             app.running = false;
@@ -156,6 +159,80 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // waiting, and a list left on screen would swallow every key.
         app.request_failed(&format!("the harness bridge stopped: {error}"));
     }
+}
+
+/// Hand the draft to the user's editor, then take the draft back.
+///
+/// The program is resolved before the screen is given up: a client with no
+/// `VISUAL` or `EDITOR` has nothing to hand the terminal to, and must not blink
+/// it to say so. A missing program, a failed exit, a file that cannot be read,
+/// a path the editor swapped for a link or text that is not UTF-8 all leave the
+/// draft on screen exactly as it was, because the alternative is losing what the
+/// user typed to a program that never saved it.
+///
+/// Nothing is sent when the text comes back: the draft is where an edit ends,
+/// and the key that sends it is still the user's to press.
+///
+/// Returns the sentence that ends the session when the screen did not come back.
+/// A terminal that refused raw mode or the alternate screen cannot be drawn on
+/// or read from, so the loop stops rather than painting escapes over the shell;
+/// a refused paste or title is a warning and the client keeps running.
+pub(crate) fn hand_over_draft<B>(
+    terminal: &mut ratatui::Terminal<B>,
+    app: &mut App,
+    title: &mut crate::title::WindowTitle,
+    mouse_captured: &mut bool,
+) -> Option<String>
+where
+    B: ratatui::backend::Backend,
+    B::Error: std::fmt::Display,
+{
+    let program = match crate::editor::Program::from_environment() {
+        Ok(program) => program,
+        Err(problem) => {
+            app.warn(format!("editor: {problem}"));
+            return None;
+        }
+    };
+    let draft = app.input.text();
+    crate::terminal::hand_over();
+    let outcome = crate::editor::edit(&draft, &program);
+    let resumed = crate::terminal::take_back(terminal);
+    // The hand-over released the wheel; the frame loop captures it again at the
+    // top of the next pass when the setting asks for it.
+    *mouse_captured = false;
+    if let Err(error) = resumed {
+        // Nothing on this terminal is trustworthy any more: the screen, its
+        // modes and the keyboard belong to whoever owns it now, so the session
+        // ends here rather than painting escapes over the shell. The edit is not
+        // applied, because there is no frame left to show it in; the caller
+        // restores what it can and prints this sentence on the shell's screen.
+        return Some(format!("cannot take the terminal back after the editor: {error}"));
+    }
+    // A refusal is a warning, not a reason to stop, exactly as at startup: the
+    // paste then arrives as ordinary keystrokes the editor already handles.
+    if let Err(error) = crate::paste::enable() {
+        app.warn(format!("paste: {error}"));
+    }
+    // The editor may have named the window itself, and the title writer only
+    // skips a label it believes is already up; a fresh one writes this client's
+    // name again without touching the stack entry the exit will pop. The state
+    // goes back with it: the fresh writer has shown nothing yet, and the frame
+    // loop only rewrites the name when the state moves.
+    *title = crate::title::WindowTitle::stdout();
+    let state_supported = title.state_supported();
+    if let Err(error) = title.show(&crate::window::label(app, state_supported)) {
+        app.warn(format!("title: {error}"));
+    }
+    match outcome {
+        Ok(text) => {
+            app.history.reset();
+            app.input.set_text(&text);
+            app.sync_slash();
+        }
+        Err(problem) => app.warn(format!("editor: {problem}")),
+    }
+    None
 }
 
 /// Keep the terminal's mouse capture in step with `transcript.mouse_scroll`.
