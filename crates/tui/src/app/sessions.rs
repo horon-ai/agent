@@ -1,5 +1,6 @@
-//! `/new`, `/switch`, `/resume` and `/swarm`: what changing the session refuses,
-//! and the new session or child the bridge is asked for.
+//! `/new`, `/switch`, `/resume`, `/clear-context`, `/compact`, `/rename` and
+//! `/swarm`: what changing the session refuses, and the new session or child
+//! the bridge is asked for.
 //!
 //! The commands that change the session share one refusal rule and one warning:
 //! a running turn's events would arrive for a session the client no longer
@@ -56,6 +57,21 @@ impl App {
         }
         self.picker = Some(Picker::loading(Kind::Sessions, title, NO_SESSIONS));
         Some(Action::Sessions)
+    }
+
+    /// `/clear-context` and `/compact`: ask the daemon to reset or compact the
+    /// model context of the attached session.
+    pub(crate) fn change_context(
+        &mut self,
+        command: crate::commands::ContextCommand,
+        arguments: &str,
+    ) -> Option<Action> {
+        if !arguments.trim().is_empty() {
+            self.warn(format!("/{} takes no arguments", command.name()));
+            return None;
+        }
+        self.session_change_allowed(command.name())
+            .then_some(Action::Context(command))
     }
 
     /// `/swarm`: the children of the attached session, or the harness's report.
