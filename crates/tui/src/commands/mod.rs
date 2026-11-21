@@ -681,6 +681,7 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Auth,
     RuntimeCommand::Logout,
     RuntimeCommand::Plan,
+    RuntimeCommand::Observations,
 ];
 
 /// Every runtime command under the name the protocol serialises it to.

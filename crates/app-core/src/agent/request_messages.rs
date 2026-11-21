@@ -33,6 +33,9 @@ pub(super) async fn project(
     let base = masked.as_deref().unwrap_or(messages);
     // The hook sees the masked text and nothing raw, and an unset hook returns
     // before the payload is built.
+    if crate::hooks::hook_configured("pre_request") {
+        crate::server::session_notes::note_hook(context.session_id, "pre_request", None);
+    }
     let rewritten = crate::hooks::pre_request::rewrite(context, base).await;
     if rewritten.is_some() {
         record_request_extra_clone(base);

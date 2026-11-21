@@ -578,10 +578,18 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        env["HORON_AGENT_HOOK_TURN_END"] = "true"
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        if POSIX:
+            terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before observing work")
+            terminal.send("/observations\r")
+            terminal.read_until("recording  no", STEP_TIMEOUT, "observation recording defaults off")
+            terminal.send("/observations on\r")
+            terminal.read_until("recording  yes", STEP_TIMEOUT, "observation recording enabled explicitly")
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
@@ -600,6 +608,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        if POSIX:
+            terminal.send("/observations\r")
+            terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)

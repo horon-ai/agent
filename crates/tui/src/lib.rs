@@ -48,6 +48,7 @@ pub mod tool_line;
 pub mod transcript;
 mod visual_blocks;
 mod window;
+mod work_notes;
 mod wrap;
 
 #[cfg(test)]

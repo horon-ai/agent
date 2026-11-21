@@ -30,6 +30,12 @@ pub enum RuntimeCommand {
     Auth,
     Logout,
     Plan,
+    /// Bounded notes about this session's visible work and lifecycle hooks.
+    ///
+    /// The reply is the observation view for the session that asked, never
+    /// another session's, and it is a client report: nothing in it is added to
+    /// the conversation or sent to the model.
+    Observations,
 }
 
 /// Structured runtime data plus a human-readable rendering. Data is command

@@ -417,5 +417,6 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Auth => "runtime authentication",
         RuntimeCommand::Logout => "logout",
         RuntimeCommand::Plan => "plan mode",
+        RuntimeCommand::Observations => "work observations",
     }
 }
