@@ -19,6 +19,10 @@ impl App {
     /// decides what each key means; a printable character that no action claims
     /// is inserted, so a text field cannot lose a letter to a binding.
     pub fn on_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // A key means the user is at the client: a mark a finished or failed
+        // turn left on the terminal tab has been seen, so it goes before this
+        // key changes the state the next report carries.
+        self.note_user_attention();
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
         // the draft leaves a list that belongs to the text it left behind. A
@@ -234,6 +238,8 @@ impl App {
                 // The draft is remembered before it is resolved: a slash line
                 // that turns out to be an error is still a line the user typed.
                 self.history.record(&text);
+                // The candidates belonged to the token that was just sent.
+                self.path_cycle = None;
                 return self.submit(&text);
             }
             Some(keys::ids::EDITOR_COMPLETE) => {
@@ -244,6 +250,10 @@ impl App {
                 self.open_history_search();
                 return None;
             }
+            // Only an idle screen reaches this arm: a prompt, an overlay and a
+            // picker each take every key before the map is read, so the editor
+            // is never opened on top of a question waiting for an answer.
+            Some(keys::ids::EDITOR_EXTERNAL) => return Some(Action::EditDraft),
             Some(keys::ids::APP_CANCEL) => {
                 // Cancel whenever a turn is actually running, which includes
                 // the stretch after a mid-turn error: the daemon has not

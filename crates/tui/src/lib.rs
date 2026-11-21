@@ -13,6 +13,7 @@ pub mod app;
 mod clipboard;
 pub mod commands;
 pub mod context;
+mod editor;
 mod fuzzy;
 pub mod gallery;
 pub mod help;
@@ -24,7 +25,10 @@ mod links;
 mod loop_io;
 mod markdown;
 pub mod overlays;
+mod pane;
 pub mod paste;
+mod path_completion;
+mod progress;
 pub mod prompts;
 pub mod recording;
 pub mod report;
@@ -41,6 +45,7 @@ mod tool_expand;
 pub mod tool_line;
 pub mod transcript;
 mod visual_blocks;
+mod window;
 mod wrap;
 
 #[cfg(test)]
@@ -58,6 +63,10 @@ mod tool_expand_tests;
 #[cfg(test)]
 #[path = "title_tests.rs"]
 mod title_tests;
+
+#[cfg(test)]
+#[path = "progress_tests.rs"]
+mod progress_tests;
 
 #[cfg(test)]
 #[path = "turn_state_tests.rs"]
@@ -103,6 +112,10 @@ mod help_tests;
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
 
+#[cfg(test)]
+#[path = "path_completion_tests.rs"]
+mod path_completion_tests;
+
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -111,14 +124,17 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::App;
+use crate::pane::transcript_pane;
+use crate::progress::Channels;
 use crate::sdk_bridge::{Command, Runtime};
-use crate::terminal::{show_failure, window_label, window_state};
+use crate::terminal::show_failure;
 use crate::theme::changes::{self, ChangePalette};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
 #[cfg(test)]
 use crate::theme::Symbols;
+#[cfg(test)]
 use crate::transcript::Item;
 
 pub use help::USAGE;
@@ -289,12 +305,13 @@ where
         eprintln!("horon-tui: keys: {warning}");
     }
     let working_dir = args.cwd.as_ref().map(|dir| dir.display().to_string());
+    let launch_dir = path_completion::launch_directory(args.cwd);
     match sdk_bridge::connect(
         connect_options(args.socket),
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, args.hide_thinking),
+        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking),
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -306,16 +323,23 @@ where
 }
 
 /// Drive the real terminal until the user leaves.
+///
+/// `launch_dir` is the directory the session was asked for, used only when the
+/// daemon's answer names none, so `--cwd` and the session keep one workspace.
 fn run_interactive(
     runtime: Runtime,
     reloader: &mut settings::Reloader,
     keys: &mut keys::Loader,
+    launch_dir: Option<std::path::PathBuf>,
     hide_thinking: bool,
 ) -> i32 {
     let mut themes = ThemeLoader::new();
+    let workspace = runtime.workspace.clone();
+    // Read before the events travel with the app: the flag decides whether a
+    // keystroke may read this machine's disk for the session.
+    let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
-    // The stderr copy of these warnings is wiped by the alternate screen, so
-    // the transcript carries them for the person using the interface.
+    // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
     }
@@ -339,10 +363,20 @@ fn run_interactive(
         app.transcript
             .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
     }
-    match std::env::current_dir() {
-        Ok(directory) => app.cwd = Some(directory.display().to_string()),
-        Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+    // The session's own directory names the workspace: `--cwd` is what the
+    // create was asked for, and a resumed session reports the directory it
+    // already has. A daemon that names none still gets the launch directory on
+    // screen, but path completion stays off, because where the session works
+    // is then only a guess.
+    app.workspace_known = workspace.is_some();
+    app.cwd = workspace.or_else(|| launch_dir.map(|dir| dir.display().to_string()));
+    if app.cwd.is_none() {
+        match std::env::current_dir() {
+            Ok(directory) => app.cwd = Some(directory.display().to_string()),
+            Err(error) => app.warn(format!("cannot read the working directory: {error}")),
+        }
     }
+    app.workspace_is_local = local;
     app.reload_commands();
     // `try_init` installs the restoring panic hook itself, so a panic inside
     // the alternate screen still leaves the terminal usable.
@@ -361,6 +395,7 @@ fn run_interactive(
     paste::guard_panics();
     scroll::guard_panics();
     title::guard_panics();
+    progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
@@ -371,9 +406,11 @@ fn run_interactive(
     // change while the client runs, and a terminal that has none is left as it
     // was before `title.state` existed.
     let state_supported = title.state_supported();
-    if let Err(error) = title.start(&window_label(&app, state_supported)) {
+    if let Err(error) = title.start(&window::label(&app, state_supported)) {
         app.warn(format!("title: {error}"));
     }
+    // Writes nothing until a different state reaches the terminal.
+    let mut signals = progress::Signals::stdout();
     // Installed once the modes it restores are on: a signal before this point
     // had nothing to undo. A refusal is reported and the client keeps running.
     if let Err(error) = terminal::guard_signals() {
@@ -382,16 +419,26 @@ fn run_interactive(
     let (code, failure) = event_loop(
         &mut terminal,
         &mut app,
-        &mut title,
+        Channels {
+            title: &mut title,
+            signals: &mut signals,
+        },
         &runtime.commands,
         reloader,
         &mut themes,
         keys,
     );
+    // The tab indicator and the status record come down before the alternate screen, from the
+    // writer that knows what it put on the wire; the panic and signal paths go through
+    // `terminal::restore`, which has no writer left.
+    let signals_error = signals.clear().err();
     // The same sequence the signal path runs: see `terminal::restore`.
     terminal::restore();
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
+    }
+    if let Some(error) = signals_error {
+        eprintln!("horon-tui: terminal signals: {error}");
     }
     code
 }
@@ -410,8 +457,7 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    // The palette is applied to the copy the renderer reads, never to the
-    // theme file, so clearing the setting restores the selected theme exactly.
+    // Apply the palette to a copy so reloading can restore the theme exactly.
     app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
     let mut status_symbols = app.symbols;
@@ -461,7 +507,7 @@ pub(crate) fn flush_setting_change(app: &mut App, reloader: &mut settings::Reloa
 fn event_loop<B>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    title: &mut title::WindowTitle,
+    channels: Channels<'_>,
     commands: &std::sync::mpsc::Sender<Command>,
     reloader: &mut settings::Reloader,
     themes: &mut ThemeLoader,
@@ -473,17 +519,15 @@ where
 {
     let mut failure = None;
     let mut mouse_captured = false;
-    // The scheduler draws the first frame and sets the cadence after that.
     let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
-    // The minute the status line's clock last showed, so the frame that turns
-    // it over is drawn and no other idle frame is.
+    // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
     // Whether the terminal keeps a title worth adding the state to; asked once,
     // because the answer is the terminal's and does not change while it runs.
-    let state_supported = title.state_supported();
+    let state_supported = channels.title.state_supported();
     // The state the window title already carries: `title.start` wrote it, and
     // the first frame must not write it again.
-    let mut shown_state = window_state(app, state_supported);
+    let mut shown_state = window::state(app, state_supported);
     loop {
         let mut changed = match loop_io::drain_events(app) {
             loop_io::Redraw::Immediate => true,
@@ -505,25 +549,30 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
+        // Titles can change on either a daemon event or local input.
         // A cycle pressed before the model catalog was known asked for it
         // instead; that press walks now that the answer is in.
         if let Some(action) = app.take_model_cycle() {
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
+        // Only changed signals reach the terminal.
+        let signal = app.terminal_signal();
+        if let Err(error) = channels.signals.sync(signal, app.terminal_signals) {
+            app.warn(format!("terminal signals: {error}"));
+            changed = true;
+        }
         // Titles can change on either a daemon event or local input.
-        let state = window_state(app, state_supported);
+        let state = window::state(app, state_supported);
         if changed || state != shown_state {
             shown_state = state;
-            let label = window_label(app, state_supported);
-            if let Err(error) = title.show(&label) {
+            let label = window::label(app, state_supported);
+            if let Err(error) = channels.title.show(&label) {
                 app.warn(format!("title: {error}"));
                 changed = true;
             }
         }
-        // The reloader throttles itself to one file check per second; the
-        // theme loader, the key bindings and the command directories share
-        // that cadence for their own files.
+        // Reloaders check for changes once per second.
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
@@ -546,21 +595,15 @@ where
             app.bindings = reload.bindings;
             changed = true;
         }
-        // Command directories are only stat-ed here; a file is re-read when its
-        // own stamp moved.
+        // Reread command files only when their stamps change.
         changed |= app.tick_commands();
-        // A replay is a clock over the conversation: each frame plays the events
-        // that became due and reports whether the pane changed.
         changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }
         // The one place a copy reaches standard output: the app decided what it
-        // carries, and the terminal is asked here, after the frame is measured
-        // and before it is drawn.
-        if loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment()) {
-            changed = true;
-        }
+        // carries, and the terminal is asked here, after the frame is measured and before it is drawn.
+        changed |= loop_io::flush_copy(app, &mut std::io::stdout().lock(), clipboard::environment());
         let minute = statusline::local_minute();
         if minute != clock {
             clock = minute;
@@ -573,9 +616,8 @@ where
             failure = Some(message);
             break;
         }
-        // The header has been drawn, so the command may start. This is after
-        // the frame, not inside the key handler, which is what makes the
-        // target visible before the command can print anything.
+        // The header has been drawn, so the command may start: after the frame,
+        // not inside the key handler, so the target shows before any output.
         crate::commands::shell::start_pending();
         match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
@@ -587,18 +629,34 @@ where
                 break;
             }
         }
-        // Every input event can change what is on screen: a key edits the
-        // draft or moves the selection, a paste inserts, the wheel scrolls and a
-        // resize remakes the whole layout.
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
-                // Windows always reports a key's release as its own event; acting
-                // on both would send every message twice.
+                // Windows key releases must not submit another message.
                 if key.is_release() {
                     continue;
                 }
                 if let Some(action) = app.on_key(key) {
-                    loop_io::dispatch(app, commands, action);
+                    match action {
+                        // The child needs the terminal this loop draws on, so
+                        // the hand-over happens here rather than on the bridge
+                        // thread: the screen is given up, the editor runs, and
+                        // the frame that follows repaints all of it.
+                        crate::app::Action::EditDraft => {
+                            if let Some(message) =
+                                loop_io::hand_over_draft(terminal, app, channels.title, &mut mouse_captured)
+                            {
+                                // The screen could not be taken back, so no
+                                // frame can be drawn and no key can be read:
+                                // the loop ends and the caller restores and
+                                // reports on the shell's screen.
+                                failure = Some(message);
+                                app.running = false;
+                                app.exit_code = 1;
+                                break;
+                            }
+                        }
+                        action => loop_io::dispatch(app, commands, action),
+                    }
                 }
                 flush_setting_change(app, reloader, themes);
             }
@@ -902,286 +960,6 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
     symbols.separator = app.status_separator.unwrap_or(symbols.separator);
     let line = statusline::render(&data, &app.statusline, &app.theme, symbols, width);
     Paragraph::new(line).style(Style::default().bg(app.theme.status.status_bg))
-}
-
-/// The transcript pane: the rows on screen, and the follow-bottom indicator.
-///
-/// Lines are wrapped here rather than by the widget: a logical line that wraps
-/// over the pane width occupies more than one row, so trimming logical lines
-/// first would push the newest rows off the bottom of the pane.
-///
-/// Items are walked from the newest one so the work is bounded by the pane: a
-/// turn in flight redraws as its text arrives, and wrapping the whole
-/// conversation on every one of those frames would cost more as the session
-/// grows.
-///
-/// A message that is still streaming is drawn first as the newest entry, so
-/// text appears while it arrives instead of all at once when the turn ends.
-/// It is not also in `items`, and `finish_stream` moves it there exactly once.
-///
-/// A view held above the end is a different walk: the content is measured once,
-/// the rows below it are skipped by whole blocks, and only the block holding the
-/// bottom edge of the view is wrapped again. That is what keeps a frame's cost at
-/// the visible rows plus the scroll offset rather than the whole conversation.
-fn transcript_pane(app: &mut App, width: u16, height: u16) -> Pane {
-    // Noticed before anything is drawn: a delta that lands between two frames is
-    // what the indicator calls new output, whether or not it added a row.
-    let mark = scroll::Mark::new(
-        app.transcript.items().len(),
-        app.transcript.open_text().map_or(0, str::len),
-        app.transcript.open_reasoning().map_or(0, str::len),
-    );
-    app.scroll.observe(mark);
-    let view = usize::from(height.max(1));
-    // The indicator spends the pane's bottom row while it is drawn, so the
-    // content is measured against the rows it may actually fill.
-    let held_before = app.scroll.offset() > 0;
-    let measure_rows = if held_before {
-        view.saturating_sub(1).max(1)
-    } else {
-        view
-    };
-    if held_before {
-        measure_transcript(app, width, measure_rows);
-    } else {
-        // A frame at the end measures nothing, so it must say so: the next held
-        // frame takes its height baseline fresh rather than trusting the last
-        // scroll's.
-        app.scroll.following_frame();
-    }
-    let offset = app.scroll.offset();
-    let indicator = offset > 0 && view > 1;
-    let capacity = if indicator { view - 1 } else { view };
-    let rows = if offset > 0 {
-        held_rows(app, width, offset, capacity)
-    } else {
-        follow_rows(app, width, capacity)
-    };
-    let indicator = if offset > 0 && view > 1 {
-        Some(indicator_line(app, offset))
-    } else {
-        None
-    };
-    Pane { rows, indicator }
-}
-
-/// The rows the pane shows, and the line that says it is not at the end.
-struct Pane {
-    rows: Vec<Line<'static>>,
-    indicator: Option<Line<'static>>,
-}
-
-/// One block of the conversation, in the order the pane draws them.
-enum Block<'a> {
-    Item(&'a Item),
-    Reasoning(&'a str),
-    Answer(&'a str),
-}
-
-/// The conversation as the pane draws it, oldest first.
-///
-/// Reasoning being assembled sits above the answer it precedes, the same order
-/// the model produced it in, and both sit below everything already committed.
-fn blocks(app: &App) -> Vec<Block<'_>> {
-    let mut blocks: Vec<Block<'_>> = app.transcript.items().iter().map(Block::Item).collect();
-    if let Some(text) = app.transcript.open_reasoning() {
-        blocks.push(Block::Reasoning(text));
-    }
-    if let Some(text) = app.transcript.open_text() {
-        blocks.push(Block::Answer(text));
-    }
-    blocks
-}
-
-/// One block's lines, ready to be asked for the rows the pane shows.
-///
-/// The wrapped height is what the scrollback measures, so a block means the same
-/// thing here and in `measure_transcript`. `first` is the oldest block, which has
-/// nothing above it to be separated from.
-///
-/// A block is not wrapped here: the pane asks its source for the rows it draws,
-/// and a tool call drawing its whole output answers with only the rows near the
-/// end instead of a row for every line it kept.
-fn block_source<'a>(
-    block: &Block<'_>,
-    look: &item_lines::Look<'_>,
-    expand: Option<&tool_expand::Frame<'a>>,
-    first: bool,
-) -> wrap::Source<'a> {
-    let mut source = match block {
-        Block::Item(item) => item_lines::source(item, look, expand),
-        Block::Reasoning(text) => wrap::Source::built(item_lines::reasoning(text, look)),
-        Block::Answer(text) => wrap::Source::built(item_lines::answer(text, look)),
-    };
-    // A turn starts one blank row below the previous one, so a new message is
-    // not read as more of the answer above it. It is a line of the block, so a
-    // window that starts at the block's first row still counts it.
-    if !first && matches!(block, Block::Item(Item::User(_))) {
-        source.prepend(wrap::Indented::plain(Line::default()));
-    }
-    source
-}
-
-/// Count the conversation's rows so a held view knows how far it may move.
-///
-/// The measurement is kept between frames: only items the last one never saw are
-/// wrapped, so a view held during a long turn does not re-wrap the conversation.
-/// The block still streaming is counted every frame, because it is the one block
-/// whose height changes while the view is held.
-fn measure_transcript(app: &mut App, width: u16, view: usize) {
-    let items = app.transcript.items().len();
-    let App {
-        scroll,
-        transcript,
-        theme,
-        symbols,
-        settings,
-        bindings,
-        ..
-    } = app;
-    let look = item_lines::Look {
-        theme,
-        symbols: *symbols,
-        width,
-        markdown: item_lines::markdown_enabled(settings),
-        visual_blocks: item_lines::visual_blocks_enabled(settings),
-    };
-    let open = [
-        open_rows(transcript.open_reasoning(), &look, true),
-        open_rows(transcript.open_text(), &look, false),
-    ];
-    // An expanded call is one row taller per row of its whole output, so the
-    // height measured here has to know about the expansion: a view held above
-    // the end counts this height, and a stale one would leave the offset short.
-    let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
-    scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
-        // Counted, not built: the rows of a block that stays off screen are not
-        // made to measure it.
-        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0).height(width),
-        None => 0,
-    });
-}
-
-/// Wrapped rows of one open buffer, as the pane would draw it.
-fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -> usize {
-    match text {
-        Some(text) if reasoning => wrap::Source::built(item_lines::reasoning(text, look)).height(look.width),
-        Some(text) => wrap::Source::built(item_lines::answer(text, look)).height(look.width),
-        None => 0,
-    }
-}
-
-/// The newest rows, following the end of the conversation.
-fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
-    let look = item_lines::Look::new(app, width);
-    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    let blocks = blocks(app);
-    for (index, block) in blocks.iter().enumerate().rev() {
-        if rows.len() >= capacity {
-            break;
-        }
-        // Only the rows this block contributes to the pane are built, and they
-        // are built from the end: a block taller than the pane costs the pane's
-        // rows, not its own.
-        let source = block_source(block, &look, Some(&expand), index == 0);
-        let wanted = capacity - rows.len();
-        let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
-        rows.extend(window.into_iter().rev());
-    }
-    rows.reverse();
-    placeholder(app, rows, width)
-}
-
-/// The rows a view held `offset` rows above the end shows.
-///
-/// Blocks below the view are skipped by their measured height, so the rows the
-/// user scrolled past are not wrapped again. Only the block that holds the bottom
-/// edge of the view is wrapped, and only for the rows above that edge.
-fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
-    let look = item_lines::Look::new(app, width);
-    let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
-    let blocks = blocks(app);
-    let measured = block_heights(app);
-    // A measurement taken before the block list changed says nothing about this
-    // one, so it is dropped rather than read against the wrong block.
-    let heights: &[usize] = if measured.len() == blocks.len() { &measured } else { &[] };
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    let mut below = offset;
-    for (index, block) in blocks.iter().enumerate().rev() {
-        match heights.get(index) {
-            // Wholly below the view: its height is known, so it is skipped
-            // without wrapping a single line of it.
-            Some(&height) if below >= height && height > 0 => {
-                below -= height;
-                continue;
-            }
-            _ => {}
-        }
-        if rows.len() >= capacity {
-            break;
-        }
-        let source = block_source(block, &look, Some(&expand), index == 0);
-        let wanted = capacity - rows.len();
-        // The rows below the view's bottom edge are counted and dropped; what
-        // is built is the window above them that the pane fills with.
-        let window = source.rows_from_end(width, wrap::FromEnd::new(below, wanted));
-        rows.extend(window.into_iter().rev());
-        below = 0;
-    }
-    rows.reverse();
-    rows
-}
-
-/// The measured height of every block, in the order the pane draws them.
-///
-/// The committed items come from the scrollback's tally; the two open buffers
-/// are blocks only while they are being streamed, so their slots are added only
-/// then, and the list stays aligned with [`blocks`].
-fn block_heights(app: &App) -> Vec<usize> {
-    let mut heights = match app.scroll.heights() {
-        Some(items) => items.to_vec(),
-        None => Vec::new(),
-    };
-    let open = app.scroll.open_heights();
-    if app.transcript.open_reasoning().is_some() {
-        heights.push(open[0]);
-    }
-    if app.transcript.open_text().is_some() {
-        heights.push(open[1]);
-    }
-    heights
-}
-
-/// The line a held view keeps in the pane's bottom row.
-fn indicator_line(app: &App, below: usize) -> Line<'static> {
-    let counted = if below == 1 {
-        "1 row".to_string()
-    } else {
-        format!("{below} rows")
-    };
-    let text = if app.scroll.has_fresh_output() {
-        format!("{} {counted} below · new output", app.symbols.more_below)
-    } else {
-        format!("{} {counted} below", app.symbols.more_below)
-    };
-    Line::from(Span::styled(text, Style::default().fg(app.theme.core.muted)))
-}
-
-/// What an empty transcript says instead of nothing.
-fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    // A conversation whose only rows are hidden tool calls still has content:
-    // asking the reader to send a message would misread what is on screen.
-    if !rows.is_empty() || !app.transcript.items().is_empty() {
-        return rows;
-    }
-    wrap::wrap_line(
-        &Line::from(Span::styled(
-            "Send a message to start. /help lists the commands; /quit leaves.",
-            Style::default().fg(app.theme.core.muted),
-        )),
-        usize::from(width),
-    )
 }
 
 #[cfg(test)]

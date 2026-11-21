@@ -2484,6 +2484,7 @@ dependencies = [
  "open",
  "ratatui",
  "serde_json",
+ "shlex",
  "tempfile",
  "time",
  "toml",

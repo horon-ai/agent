@@ -52,7 +52,12 @@ open = "5"
 # clock it already gets from `time` through the SDK's dependency graph and asks
 # for the local offset itself; the epoch-to-local conversion is this crate's.
 time = { version = "0.3.55", default-features = false, features = ["local-offset", "std"] }
+# Private temporary files for draft editing and recording.
 tempfile = "3"
+# An editor value is a command line, and `shlex` is its POSIX word syntax:
+# quotes and escapes are read, nothing is expanded, and no value can run a
+# second command. It is already in the lock for the build scripts' `cc`.
+shlex = "2"
 
 # Restoring the terminal from a signal handler (#431) needs the C library's
 # `signal`, `pipe` and `write`: the client reaches no platform crate, so the

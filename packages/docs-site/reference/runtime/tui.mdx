@@ -92,6 +92,8 @@ The settings of one process are the registry defaults, then the global file, the
 | `statusline.context_window` | number | `0` | `HORON_TUI_STATUSLINE_CONTEXT_WINDOW` |
 | `statusline.separator` | `preset`, `dot`, `bar` | `preset` | `HORON_TUI_STATUSLINE_SEPARATOR` |
 | `statusline.background` | `theme`, `terminal` | `theme` | `HORON_TUI_STATUSLINE_BACKGROUND` |
+| `terminal.progress` | boolean | `false` | `HORON_TUI_TERMINAL_PROGRESS` |
+| `terminal.program_status` | boolean | `false` | `HORON_TUI_TERMINAL_PROGRAM_STATUS` |
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | boolean | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
@@ -112,6 +114,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
 
 `motion.preset` controls the indicator beside `running`. `full` cycles its glyphs, `reduced` holds the first glyph and `static` hides the indicator. `motion.spinner_interval` sets the minimum time a glyph stays visible, from `40` to `2000` milliseconds. `motion.max_fps` caps automatic redraws due to incoming text or spinner ticks in all presets, from `1` to `240` frames per second. At `max_fps = 4`, automatic redraws are at least 250 milliseconds apart. Input, resize and other events that need immediate feedback can redraw sooner. Out-of-range values are rejected with a warning that names the default in use.
+
+Set `terminal.progress = true` to report progress to terminals that support OSC 9;4. The indicator shows a percentage when available and an indeterminate state otherwise. Set `terminal.program_status = true` to send OSC 7501 updates on terminals that support that protocol. Horon sends changes as they occur and clears its signals on exit.
 
 `appearance.changes = "accessible"` gives additions and deletions distinct colours in tool diffs and preserves their `+` and `-` marks. It also adjusts positive and negative status colours. Select `theme` to restore the theme's own colours.
 
@@ -250,9 +254,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `editor.kill_to_start` | `ctrl+u` | Delete from the start of the line to the cursor |
 | `editor.kill_to_end` | `ctrl+k` | Delete from the cursor to the end of the line |
 | `editor.delete_word` | `ctrl+w`, `alt+backspace` | Delete the word before the cursor |
-| `editor.complete` | `tab` | Fill the popup's selected command, or complete the prefix |
-| `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
+| `editor.complete` | `tab` | Fill the popup's selected command, or complete the command or workspace-path prefix |
 | `editor.accept_suggestion` | `ctrl+right` | Add the visible suggestion to the draft |
+| `editor.history_search` | `ctrl+r` | Search the drafts sent before this one |
+| `editor.external` | `ctrl+g` | Edit the draft in `VISUAL` or `EDITOR` |
 | `prompt.allow` | `y` | Approve the parked tool call once |
 | `prompt.allow_always` | `a` | Approve this call and every later call like it |
 | `prompt.deny` | `n` | Deny the parked tool call |
@@ -263,11 +268,15 @@ The table is `ACTIONS` in `crates/tui/src/keys/bindings.rs`, each action with th
 
 Most terminals send Shift-Enter as a plain Enter, which submits. `alt+enter` and `ctrl+j` are therefore the reliable newline keys, and `shift+enter` answers only where the terminal reports the shifted form.
 
-`up` and `down` move between the lines of a draft first and reach the input history only at its first and last line, which is why the transcript view moved to `shift+up`, `shift+down` and the page keys. `shift+tab` steps the reasoning effort and plain `tab` still completes the draft, because a binding that names shift answers before the one that does not. While a prompt is open it takes every key, so a letter meant for the prompt never reaches the input line. Tab completes only a bare prefix: once the line contains a space the argument position belongs to the user.
+`up` and `down` move between draft lines and enter history at the first or last line. `shift+up`, `shift+down` and the page keys scroll the transcript. `shift+tab` steps the reasoning effort. Plain Tab completes a slash command name or a local path. An open prompt receives its own input before the composer handles keys.
 
 ## The editor
 
+With the default local endpoint, Tab completes paths relative to the session's working directory. Add `@` to insert a file mention. Names with spaces are quoted, and repeated Tab cycles matching filenames. Slash commands take priority. An explicit socket disables this local lookup.
+
 With `editor.suggestions = true`, the composer can show a continuation from messages you already sent in the current session. Ctrl+Right adds it to the draft and Esc dismisses it. Editing the prefix withdraws a stale suggestion. The suggestion provider runs locally and sends no request.
+
+Press Ctrl+G to edit the draft with `VISUAL`, or `EDITOR` when `VISUAL` is unset. The command accepts quoted arguments without shell expansion. Horon hands the editor a private temporary file and reads it back as UTF-8 after a successful exit. A failed edit leaves the draft intact. The edited text stays in the composer until you send it.
 
 The input line grows with the draft: one row per line, up to eight rows, and a taller draft scrolls inside its own pane. The conversation keeps at least three rows while the draft grows, so a long message never takes the whole screen.
 
@@ -531,7 +540,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - The client asks the harness for the session's skills after every connect, every attach and every new session, and the daemon reads the global skill directories again for each of those answers.
 - A turn the daemon starts by itself sends this client no start event, so the `esc` delivery marker does not move: messages sent with `esc` stay drawn as sent into the turn that ended.
 - Starting with `--session <id>` attaches without drawing the stored conversation; `/resume <id>` replays it.
-- With the popup closed, Tab completes built-in, harness and command-file names only; a skill name is filled from the popup or picked in `/skills`.
+- With the popup closed, Tab completes built-in, harness and command-file names and can complete local workspace paths. Choose a skill from the popup or `/skills`.
 - Only the newest kept tool call expands. Expanding moves the view to the end of the conversation, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
 - A second `/new` typed before the first answer arrives reports its session as resumed, because the client holds one flag for the session it is starting.
 - The session list asks the daemon once or twice for every session it shows, so a directory with many sessions delays the list and the events behind it while they load.

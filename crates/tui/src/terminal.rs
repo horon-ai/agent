@@ -1,4 +1,4 @@
-//! Putting the terminal back the way the client found it, and naming its window.
+//! Putting the terminal back the way the client found it.
 //!
 //! The client turns on bracketed paste, takes the alternate screen, and asks
 //! for mouse reporting unless the setting is off; it also pushes the shell's
@@ -11,10 +11,11 @@
 //! The Unix half below runs the same restore sequence from those signals and
 //! then re-raises, so the exit status still reports the signal.
 //!
-//! What the window is named, and the single frame drawn before the client gives
-//! up on a terminal it cannot start, are decided here too: both are what the
-//! client does to a terminal other than drawing into it, and both need the app
-//! state and the real terminal at once.
+//! Handing the screen to the external editor and taking it back lives here too,
+//! because both are the client giving up and reclaiming the terminal it owns.
+//! What the window is named is [`crate::window`]'s job; the single frame drawn
+//! before the client gives up on a terminal it cannot start is here, because it
+//! needs the real terminal and the app state at once.
 
 use crate::{app::App, draw, paste, scroll, title};
 
@@ -24,14 +25,74 @@ use crate::{app::App, draw, paste, scroll, title};
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
 pub(crate) fn restore() {
-    // A local shell command still running when the client leaves or takes a
-    // signal goes with it: the command belongs to this terminal, and a
-    // detached copy would keep writing after the client is gone.
+    // The progress indicator and the status record outlive the process that
+    // wrote them. The normal exit clears them through its own writer, which
+    // knows what it wrote; this covers the panic hook and the signal thread,
+    // which have no writer left, and finds nothing to do after the writer ran.
+    crate::progress::clear_stdout();
+    // The running local command belongs to this terminal and exits with it.
     crate::commands::shell::kill_active_group();
+    release(true);
+}
+
+/// Hand the terminal to a child process that draws on it.
+///
+/// The screen is released exactly as [`restore`] releases it, with one
+/// difference: the window title stays. The title names this client, and the
+/// child is this client's editor, so the stack entry [`restore`] pops is left
+/// for the exit rather than being popped and pushed once per hand-over.
+///
+/// A child that read a terminal still reporting bracketed pastes would take the
+/// client's paste mode into its own text, so nothing is left on.
+pub(crate) fn hand_over() {
+    release(false);
+}
+
+/// Take the terminal back after [`hand_over`].
+///
+/// The inverse of the release, so the next frame paints the whole screen
+/// instead of a difference against rows the editor overwrote. Pastes and the
+/// mouse belong to the caller, which reports their refusals where the startup
+/// path does; the title was never given up.
+///
+/// Attempt every step and report the first failure so the caller can restore
+/// the terminal and exit safely.
+pub(crate) fn take_back<B>(terminal: &mut ratatui::Terminal<B>) -> std::io::Result<()>
+where
+    B: ratatui::backend::Backend,
+    B::Error: std::fmt::Display,
+{
+    let mut failure = None;
+    let mut note = |error: String| {
+        if failure.is_none() {
+            failure = Some(std::io::Error::other(error));
+        }
+    };
+    if let Err(error) = crossterm::terminal::enable_raw_mode() {
+        note(format!("cannot turn raw mode back on: {error}"));
+    }
+    let mut output = std::io::stdout();
+    if let Err(error) = crossterm::execute!(output, crossterm::terminal::EnterAlternateScreen) {
+        note(format!("cannot enter the alternate screen again: {error}"));
+    }
+    if let Err(error) = terminal.clear() {
+        note(format!("cannot clear the screen: {error}"));
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Undo the modes the client turned on, or only step off the screen.
+fn release(pop_title: bool) {
     paste::disable();
     // The stack entry goes back with the screen: the title the shell set is the
-    // one the next prompt should be in.
-    title::pop();
+    // one the next prompt should be in. A hand-over keeps it, because the client
+    // still owns the window and only the screen is lent out.
+    if pop_title {
+        title::pop();
+    }
     // Released on the normal exit as well as the error one: a captured terminal
     // does not hand a drag back to its own text selection.
     scroll::disable_mouse();
@@ -77,31 +138,6 @@ pub(crate) fn show_failure(message: &str) {
             eprintln!("horon-tui: cannot open a terminal: {error}");
         }
     }
-}
-
-/// The name the window carries for the app's state.
-///
-/// The session's own title wins and the working directory names a session the
-/// daemon never titled, so a stack of terminals says which one belongs to which
-/// session and a fresh window still says where it is. With `title.state` on,
-/// the turn state follows the name as a fixed word, so a window seen from
-/// another one says whether its session is busy without being switched to.
-pub(crate) fn window_label(app: &App, state_supported: bool) -> String {
-    let label = title::label(app.session_title.as_deref(), app.cwd.as_deref());
-    title::with_state(label, window_state(app, state_supported))
-}
-
-/// The state the title names, or none when the setting is off or the terminal
-/// keeps no title worth adding to.
-pub(crate) fn window_state(app: &App, state_supported: bool) -> Option<title::RunState> {
-    if !state_supported || !app.title_state {
-        return None;
-    }
-    Some(title::RunState::of(
-        app.prompt.is_some(),
-        app.pending_turn,
-        app.session_status.as_deref(),
-    ))
 }
 
 #[cfg(unix)]

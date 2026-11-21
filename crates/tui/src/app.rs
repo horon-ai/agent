@@ -7,7 +7,6 @@
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, Receiver};
-use std::time::Instant;
 
 use horon_agent_sdk::api::{ApiEvent, AskSelection, TurnStopReason};
 
@@ -31,6 +30,7 @@ use self::copy::CopyRequest;
 
 mod commands;
 mod copy;
+mod draft_suggestions;
 mod effort;
 mod history_search;
 mod keys;
@@ -42,6 +42,7 @@ mod sessions;
 mod settings;
 mod skills;
 mod status;
+mod terminal_signals;
 
 #[cfg(test)]
 mod boundary_tests;
@@ -111,6 +112,9 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Hand the draft to the user's editor; the loop answers this one itself,
+    /// because the editor needs the terminal the loop is drawing on.
+    EditDraft,
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.
@@ -328,6 +332,12 @@ pub struct App {
     new_session_pending: bool,
     /// Working directory the `path` segment shows.
     pub cwd: Option<String>,
+    /// Whether path completion may read this session's workspace on this machine.
+    pub workspace_is_local: bool,
+    /// Whether the daemon supplied the workspace directory.
+    pub workspace_known: bool,
+    /// The path candidates from the last Tab, for cycling.
+    pub(crate) path_cycle: Option<crate::path_completion::Choice>,
     /// The user's home directory, shortened to `~` by the `path` segment.
     pub home: Option<String>,
     /// Latest token totals the daemon reported.
@@ -392,6 +402,19 @@ pub struct App {
     pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
+    /// Which terminal signal channels the settings allow.
+    ///
+    /// Read from `terminal.progress` and `terminal.program_status` when the
+    /// settings are applied, so the loop never reads a setting per frame.
+    pub(crate) terminal_signals: crate::progress::Options,
+    /// How the last turn ended, until the user acts on it.
+    ///
+    /// The status line goes back to `idle` the moment a turn ends, which is
+    /// right for the person already looking at the screen; a terminal tab behind
+    /// another window has no other way to say a turn finished or failed, so the
+    /// outcome is held here until the user does something and the mark is safe
+    /// to drop.
+    pub(crate) outcome: Option<crate::progress::Outcome>,
     /// A copy the app decided on, waiting for the loop to write it.
     ///
     /// It sits here rather than being written from the key handler so that the
@@ -463,6 +486,10 @@ impl App {
             session_title: None,
             new_session_pending: false,
             cwd: None,
+            workspace_is_local: false,
+            // A new session starts in the launch directory until it reports otherwise.
+            workspace_known: true,
+            path_cycle: None,
             home: home_directory(),
             tokens: None,
             capacity: None,
@@ -485,6 +512,8 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            terminal_signals: crate::progress::Options::default(),
+            outcome: None,
             pending_copy: None,
             recorder: None,
             replay: None,
@@ -543,6 +572,9 @@ impl App {
             session_title: None,
             new_session_pending: false,
             cwd: None,
+            workspace_is_local: false,
+            workspace_known: true,
+            path_cycle: None,
             home: home_directory(),
             tokens: None,
             capacity: None,
@@ -565,6 +597,8 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            terminal_signals: crate::progress::Options::default(),
+            outcome: None,
             pending_copy: None,
             recorder: None,
             replay: None,
@@ -753,6 +787,13 @@ impl App {
                 self.transcript.end_running_tools();
                 self.pending_turn = false;
                 self.resend_held = false;
+                // The turn finished; the tab carries the mark until the user
+                // looks at the client again. A failed turn sends `TurnStopped`
+                // before this event, so a failure already on record wins: the
+                // tab must not say the turn finished when it broke.
+                if self.outcome != Some(crate::progress::Outcome::Failed) {
+                    self.outcome = Some(crate::progress::Outcome::Done);
+                }
                 self.session_status = Some("idle".to_string());
                 // An approval outlives the turn that asked for it: the request
                 // stays queued in the daemon (with its own deadline) and the
@@ -796,6 +837,12 @@ impl App {
                 // A cancel is the user's own decision, so it is a notice. Any
                 // other abnormal stop is news about the harness and stays a
                 // warning.
+                //
+                // A cancel is also the user looking at the client, so the tab
+                // has nothing to flag and no mark is left; every other stop is
+                // a failure the user may not have seen yet.
+                self.outcome =
+                    (!matches!(reason, TurnStopReason::Interrupted)).then_some(crate::progress::Outcome::Failed);
                 if matches!(reason, TurnStopReason::Interrupted) {
                     self.transcript.push_notice(message.clone());
                 } else {
@@ -1051,84 +1098,6 @@ impl App {
         self.slash.sync(&self.commands, &text);
     }
 
-    /// Bring the local draft suggestion in line with the draft and the setting.
-    ///
-    /// A changed draft starts a new generation and asks the local provider
-    /// again; an unchanged one keeps the answer it has, so a dismiss or an
-    /// accepted line stays put until the next edit. The provider reads only the
-    /// drafts this editor already holds, and the answer is dropped unless it
-    /// names the generation and the exact text it was asked about.
-    pub fn sync_suggestions(&mut self) {
-        if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
-            self.suggestions.withdraw();
-            return;
-        }
-        let fingerprint = self.input.fingerprint();
-        if self.suggestions.is_synced(fingerprint) {
-            return;
-        }
-        // The cap is checked before the text is built, so a huge draft costs a
-        // length read rather than a copy.
-        if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
-            self.suggestions.skip(fingerprint);
-            return;
-        }
-        let text = self.input.text();
-        let App {
-            history, suggestions, ..
-        } = self;
-        let Some(request) = suggestions.begin(fingerprint, &text) else {
-            return;
-        };
-        let started = Instant::now();
-        let suffix = crate::suggestions::local_suffix(&text, history.drafts());
-        let elapsed = started.elapsed();
-        if let Some(suffix) = suffix {
-            suggestions.finish(&request, &suffix, elapsed);
-        }
-    }
-
-    /// The ghost suffix the editor draws after the caret, when one applies.
-    ///
-    /// The suffix belongs to the exact draft it completes, so it is looked up
-    /// against the text on screen rather than trusted from the last answer.
-    pub fn suggestion_text(&self) -> Option<String> {
-        if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() {
-            return None;
-        }
-        if !self.suggestions.pending() || !self.input.is_at_end() {
-            return None;
-        }
-        let text = self.input.text();
-        self.suggestions.visible(&text).map(str::to_string)
-    }
-
-    /// Accept the suggestion for the draft on screen.
-    ///
-    /// This is the only place the suffix reaches the input: until here the
-    /// draft is exactly what the user typed, and nothing is sent or queued.
-    fn accept_suggestion(&mut self) -> bool {
-        if !self.input.is_at_end() {
-            return false;
-        }
-        let text = self.input.text();
-        let Some(full) = self.suggestions.accept(&text) else {
-            return false;
-        };
-        self.history.reset();
-        self.input.set_text(&full);
-        true
-    }
-
-    /// Whether a suggestion for the draft on screen can take the next key.
-    fn suggestion_available(&self) -> bool {
-        if !self.suggestions.pending() || !self.input.is_at_end() {
-            return false;
-        }
-        let text = self.input.text();
-        self.suggestions.visible(&text).is_some()
-    }
-
     /// Fill the draft from the command the popup has selected.
     ///
     /// The whole line is the command, so nothing of the old prefix survives to
@@ -1138,6 +1107,7 @@ impl App {
             return false;
         };
         self.history.reset();
+        self.path_cycle = None;
         self.input.set_text(&format!("/{name}"));
         // The filled line names the command outright, which is the state the
         // popup has nothing to offer for; syncing here keeps that true for the
@@ -1146,21 +1116,42 @@ impl App {
         true
     }
 
-    /// Complete the line being edited to the longest common prefix, or the
-    /// single match when there is one.
+    /// Complete a slash command first, then a path in the local workspace.
     pub fn complete(&mut self) {
         if self.slash.is_open() && self.complete_selected() {
             return;
         }
         let text = self.input.text();
-        let Some(completion) = self.commands.complete(&text) else {
-            return;
-        };
-        if completion.insert == text {
+        if let Some(completion) = self.commands.complete(&text) {
+            if completion.insert == text {
+                return;
+            }
+            self.history.reset();
+            self.path_cycle = None;
+            self.input.set_text(&completion.insert);
+            self.sync_slash();
             return;
         }
+        // A path completion replaces the last token and leaves the cursor at its end.
+        if self.input.cursor() != text.chars().count() {
+            return;
+        }
+        if text.trim_start().starts_with('/') {
+            return;
+        }
+        // Neither a session that runs elsewhere nor one that never named its
+        // directory leaves a directory here that the session's paths belong to.
+        if !self.workspace_is_local || !self.workspace_known {
+            return;
+        }
+        let filled = crate::path_completion::complete(&text, self.cwd.as_deref(), self.path_cycle.as_ref());
+        let Some((filled, choice)) = filled else {
+            self.path_cycle = None;
+            return;
+        };
         self.history.reset();
-        self.input.set_text(&completion.insert);
+        self.input.set_text(&filled);
+        self.path_cycle = Some(choice);
         self.sync_slash();
     }
 }

@@ -1,8 +1,19 @@
-//! Validation shared by manual installation and inbox discovery.
+//! Validation and installation of user packages.
+//!
+//! [`validate_package`] reads a package directory and selects the executable
+//! for this host. [`PackageStore`] publishes validated copies under their
+//! content digest and records them in one `installed.json`, so an install, a
+//! disable, a removal and a verification all observe the same generation.
 
+mod catalog;
 mod manifest;
 mod native_target;
+mod store;
 
+pub use catalog::{
+    CATALOG_VERSION, CatalogView, CollectionReport, InstallRequest, PackageLease, PackageRecord, PackageScope,
+    PackageState, PackageStore, StoredFile, VerificationReport,
+};
 pub use horon_agent_extension_types::{
     CommandDeclaration, EXTENSION_PROTOCOL, ExtensionManifest, MANIFEST_VERSION, ObserverEvent, PackageKind,
     PackageResources, PluginManifest, TARGETS, ToolDeclaration,
