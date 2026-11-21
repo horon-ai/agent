@@ -101,6 +101,12 @@ pub enum Command {
     /// itself, so there is nothing here for a caller to name: the session the
     /// worker follows is the one asked about.
     DaemonSettings,
+    /// List the swarm children of the session the worker follows, and the
+    /// parent it reports back to.
+    ///
+    /// The rows are narrowed to that lineage by the bridge; a caller names
+    /// nothing because the session in force is the only swarm asked about.
+    Swarm,
 }
 
 /// Something the harness told the UI, or a failure worth showing.
@@ -158,6 +164,9 @@ pub enum Incoming {
     DaemonSettings(crate::settings::DaemonSettings),
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// The swarm children of the attached session, and the parent row after
+    /// them, already narrowed to that lineage by the bridge.
+    Swarm(Vec<super::SwarmRow>),
     /// Only the archived sessions, newest first.
     ArchivedSessions(Vec<SessionRow>),
     /// Noted sessions that no longer exist, and how many could not be checked.

@@ -125,6 +125,8 @@ Commands:
                  ask a separate read-only session a question
   /skills        list the skills the harness reports, and put one in the
                  draft
+  /swarm         list this session's swarm children and the parent it
+                 returns to, and attach to one
   /switch [id]   move to another stored session, or pick one from the list
   /voice [consent|forget|stop|cancel|say <text>|read|status]
                  on-device speech: consent to capture, dictate into the
@@ -294,6 +296,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
             "ask a read-only side session about this conversation (also /btw; --at <id> forks before a stored message), then esc back"
         }
         "skills" => "list the skills the harness reports, and put one in the draft",
+        "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
         "switch" => "move to another stored session, or pick one from the list",
         "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",

@@ -249,6 +249,8 @@ jcode v1.0.1(릴리스 `v1.0.1`, 커밋 `10114429c8133994861d6c915a2483d397c0f7c
 | `[tools] bash_direnv` | `false` | `true`는 신뢰한 작업 폴더에서 승인된 direnv 파일의 새 변수를 가져온다 |
 | `[tools] output_column_cap` | `0`(꺼짐) | 텍스트 미리보기 한 줄에 표시할 유니코드 문자 수(양의 정수) |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
+| `[agents] swarm_child_runtime_secs`, `swarm_child_request_limit` | `0`(꺼짐) | 자식별 실행 시간(초) 또는 모델 요청 횟수를 양의 정수로 지정한다 |
+| `[agents] swarm_child_request_notice`, `swarm_max_spawn_effort` | `true`, 미설정 | 마지막 요청 알림을 끄거나 자식 생성 시 추론 강도 상한을 지정한다 |
 | `[storage] sync` | `full`(정전에도 기록이 남는다) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0`이면 끈다 |
 | `serve`의 업데이트 확인 | 실행하지 않음 | `--no-update`가 어디서든 건너뛴다 |

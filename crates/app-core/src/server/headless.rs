@@ -235,15 +235,26 @@ pub(super) async fn create_headless_session(
         }
     }
 
-    if let Some(effort) = effort_override
+    let requested_effort = effort_override
         .as_deref()
         .map(str::trim)
-        .filter(|effort| !effort.is_empty())
+        .filter(|effort| !effort.is_empty());
+    if let Some(maximum) = crate::config::config().agents.swarm_max_spawn_effort.as_deref()
+        && report_back_to_session_id.is_some()
+    {
+        let inherited = provider.reasoning_effort();
+        let supported = provider.available_efforts();
+        if let Some(effort) =
+            horon_agent_swarm_core::clamp_spawn_effort(requested_effort.or(inherited.as_deref()), maximum, &supported)
+                .map_err(|reason| anyhow::anyhow!("agents.swarm_max_spawn_effort '{maximum}': {reason}"))?
+        {
+            new_agent.set_reasoning_effort(effort)?;
+        }
+    } else if let Some(effort) = requested_effort
         && let Err(e) = new_agent.set_reasoning_effort(effort)
     {
         crate::logging::warn(&format!(
-            "Failed to set headless session reasoning effort override '{}': {}",
-            effort, e
+            "Failed to set headless session reasoning effort override '{effort}': {e}"
         ));
     }
 

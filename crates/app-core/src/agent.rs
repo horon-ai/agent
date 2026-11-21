@@ -73,6 +73,7 @@ mod stream_rules;
 mod streaming;
 #[cfg(test)]
 mod streaming_clone_compaction_tests;
+mod swarm_budget;
 mod tool_markup_recovery;
 mod tool_result_aging;
 mod tool_round;
@@ -429,18 +430,13 @@ pub struct Agent {
     last_serving_model: Option<String>,
     /// Pending swarm alerts to inject into the next turn
     pending_alerts: Vec<String>,
-    /// Transient reminder injected into provider requests for the current turn only.
-    /// Not persisted to session history.
+    /// Turn-local provider reminder, omitted from session history.
     current_turn_system_reminder: Option<String>,
-    /// Loop detection for the current turn: a repeated identical call is warned
-    /// once, refused on the following repeats, and ends the turn after two
-    /// refusals. Reset at the start of every turn, so a loop the model broke
-    /// last turn starts clean.
+    /// Per-turn guard that warns, then refuses identical tool calls and stops after two refusals.
     loop_guard: loop_guard::LoopGuard,
-    /// Progress and exit state of the current (or most recent) turn. Both turn
-    /// loops replace it at turn start and advance it through the recovery
-    /// helpers, so no loop owns a private copy of a recovery counter.
+    /// Shared state for turn progress, exit and recovery counters.
     turn_state: TurnState,
+    swarm_budget: Option<swarm_budget::ChildBudget>,
     /// Tool call ids observed in the current session transcript.
     tool_call_ids: HashSet<String>,
     /// Tool result ids observed in the current session transcript.
@@ -627,8 +623,7 @@ impl Agent {
         let initial_provider_model = provider.model();
         let registration = consult::register(&session, &allowed_tools, &disabled_tools);
         let secret_vault_registration = crate::secrets::register_session_vault(&session.id);
-        // The dispatcher must read the same frozen tier snapshot the tool list
-        // uses, not a later configuration reload.
+        // Dispatch reads the same frozen tier snapshot as the tool list.
         crate::tool::register_session_load_tiers(&session.id, load_tiers.clone());
         let mut agent = Self {
             provider,
@@ -655,6 +650,7 @@ impl Agent {
             current_turn_system_reminder: None,
             loop_guard: loop_guard::LoopGuard::new(),
             turn_state: TurnState::new(),
+            swarm_budget: None,
             tool_call_ids: HashSet::new(),
             tool_result_ids: HashSet::new(),
             tool_output_scan_index: 0,
@@ -893,7 +889,11 @@ impl Agent {
         parent_id: Option<String>,
         narrowed_tools: Option<HashSet<String>>,
     ) -> Self {
-        Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools)
+        let budget = parent_id.as_ref().and_then(|_| swarm_budget::ChildBudget::configured());
+        let mut agent =
+            Self::new_with_initial_ownership(provider, registry, working_dir, parent_id, true, narrowed_tools);
+        agent.swarm_budget = budget;
+        agent
     }
 
     /// Whether a session's allow-list is the untouched default `core` profile. An explicit list,
