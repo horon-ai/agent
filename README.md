@@ -103,6 +103,9 @@ horon run "summarize this repo"
 
 With no profile configured, a model call stops before the network and names the missing `[providers.<name>]` table. [docs/provider/MODEL.md](docs/provider/MODEL.md) lists every key: `headers`, `extra_body`, `context_window`, and built-in profiles such as `openrouter`, `zai`, `kimi` and `ollama`.
 
+Set `stream_first_event_timeout_secs` and `stream_idle_timeout_secs` in a named profile to limit startup and pauses during a streamed reply independently.
+Set `max_in_flight_requests` to cap concurrent requests across sessions using the same profile.
+
 ## Ways to run it
 
 Headless mode covers every subcommand below except bare `horon`, which opens TUI mode. `horon repl` is a plain line prompt served by the agent binary itself, for someone who wants no full-screen client.
@@ -241,6 +244,7 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0` disables |

@@ -385,6 +385,8 @@ Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward 
 
 Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, and the daemon also accepts a unique prefix of six or more characters. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds `started a new session <id>` or `resumed <id>`, and takes the model, provider, effort and title from the new session's identity, so the status line keeps showing `provider/model`. `/new` asks for a session in this directory and moves to it the same way; the session that was left stays stored, and the client drops the events of every session it has left, so neither conversation's rows reach the other. A session change waits while a turn runs or a model or effort change is still being applied, and a new session left without a message cannot be resumed, because the daemon does not keep it.
 
+In `/switch` or `/resume`, select a saved session and press Ctrl+A to archive it. Leave the current session before archiving it. `/archived` lists archived sessions in the current directory. Press Enter on a row to restore it to the recent list.
+
 `/skills` lists the skills the harness reported for this session: the name, the harness's description in the second column, and a preview naming the file the skill was read from and the tools it may use, ending with the line that says `enter` puts the invocation in the draft. Choosing a row writes `/skill:<name>` and a trailing space into the editor without sending it, so the request after it is the user's to type.
 
 `/links` lists HTTP and HTTPS links from the eight most recent assistant answers, newest first. Choose a row with Enter to open the displayed URL in the system browser. Esc closes the list. The picker skips malformed URLs, local files and links with embedded credentials.
@@ -432,6 +434,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 
 | Command | Effect |
 | --- | --- |
+| `/archived` | Restore a session from this directory's archived list |
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
 | `/clear` | Clear the transcript pane |
 | `/copy` | Choose which text to copy |
@@ -454,7 +457,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-one commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-two commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -470,6 +473,7 @@ The harness commands run in the attached runtime and never reach the model as a 
 
 ```text
 built-in commands:
+  /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear the transcript
   /copy                copy a recent answer or code block to the terminal clipboard, or list them

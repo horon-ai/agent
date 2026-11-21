@@ -93,6 +93,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,san
 <text x="676" y="610" font-size="11" class="m">Off in the default configuration, so the</text>
 <text x="676" y="626" font-size="11" class="m">tool is not advertised at all.</text>
 
+<text x="30" y="646" font-size="11" class="m">A profile can cap concurrent model and image requests across sessions.</text>
+<text x="30" y="660" font-size="11" class="m">All four wires can use separate profile timeouts for the first meaningful event and later silence.</text>
 <text x="30" y="680" font-size="11" class="m">One model path. The provider runtime posts directly to the endpoint for the profile's type using the profile's credential.</text>
 <text x="30" y="700" font-size="11" class="m">Every wire reports its own api_method in model routes, while the stored provider identity stays openai-compatible.</text>
 </svg>
