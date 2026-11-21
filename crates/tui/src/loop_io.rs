@@ -104,6 +104,13 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             Incoming::ArchivedSessions(rows) => app.show_archived_sessions(rows),
             Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
             Incoming::Skills(rows) => app.show_skills(rows),
+            Incoming::BackgroundJobs(rows) => app.show_jobs(rows),
+            Incoming::BackgroundJobCancelled {
+                call_id,
+                accepted,
+                reason,
+                jobs,
+            } => app.job_cancelled(&call_id, accepted, reason.as_deref(), jobs),
             // The answer names the text it settles, so a steer the client no
             // longer holds is dropped rather than restored into another turn.
             Incoming::Steered { text } => app.steered(&text),
@@ -132,6 +139,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         Action::Send(text) => Command::Text(text),
         Action::Steer(text) => Command::Steer(text),
         Action::Cancel => Command::Cancel,
+        Action::CancelBackgroundTerminal(call_id) => Command::CancelBackgroundTerminal(call_id),
         Action::Approval {
             request_id,
             approved,
@@ -174,6 +182,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
         Action::Tools => Command::Tools,
+        Action::BackgroundJobs => Command::BackgroundJobs,
         // The frame loop answers these two: the editor needs the terminal that
         // loop is drawing on, so the action never reaches the bridge thread.
         Action::EditDraft | Action::OpenArtifact(_) => return,

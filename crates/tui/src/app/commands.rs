@@ -107,6 +107,9 @@ impl App {
                 self.open_links();
                 None
             }
+            // `/jobs` reads the live list from the daemon: a job that started
+            // or ended on another client is not in this transcript.
+            Local::Jobs => self.open_jobs(),
             // `/switch` and `/resume` are one flow under two names: the list
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),

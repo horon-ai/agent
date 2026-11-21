@@ -1,0 +1,39 @@
+# Instruction-following evaluation
+
+Language: **English** | [한국어](EVAL.ko.md)
+
+Status: proposed design for #553. The existing benchmark workflow exercises latency, resources and structural work against controlled workloads. This design adds a separately selected instruction-following suite with an objective scorer. [Benchmark methodology](BENCHMARK.md)
+
+## Decision
+
+| Option | Consequence |
+| --- | --- |
+| Live provider and model judge | Requires credentials and compounds model variance with scoring variance. |
+| Versioned fixtures and deterministic artifact checks | Lets maintainers exercise the same scoring path without credentials and audit each expected result. Selected. |
+| Add instruction scores to release and benchmark gates | Makes unrelated releases depend on a suite with its own fixture versions and purpose. |
+
+## Fixture and runner contract
+
+Keep project-authored fixtures with an explicit `suite_version`, stable case IDs, prompt, declared input files, allowed outputs and objective assertions. Pin the fixture tree and scorer by digest in every artifact. The runner uses a temporary workspace and `HORON_HOME` per case. Give each fixture a restricted tool profile and no ambient configuration, and recreate the directory for every case. The fixed mock serves loopback only and sends a predetermined sequence of model frames. Reject any attempt to reach a real provider. Keep tool inputs free of credentials and use harmless local file tasks.
+
+For the initial corpus, accept at most 32 cases, one 8 KiB prompt and 64 KiB of inputs and outputs each per case. Stop after 30 seconds or four model requests per case. Reject unknown fixture versions, assertions and path escapes before execution. An infrastructure failure yields an unsuccessful run with no comparable aggregate score. The scorer evaluates declared command outcome, exact output bytes and changed paths. Give each case one pass only when every assertion succeeds. Report passes, total cases, per-case categories, suite and scorer digests, runner commit and mock profile. Keep traces limited to case ID, request count, timing for timeout diagnosis and assertion names.
+
+The fixture mock proves that the harness and scorer distinguish correct and incorrect outputs. Evaluating a model's actual instruction following would require a separately approved adapter and a distinct report. The initial suite has no model-quality verdict and does not alter release gates, benchmark baselines or `suites=all`.
+
+## Implementation boundaries
+
+1. Under `scripts/perf/`, define the versioned fixtures and one pure scorer shared by every runner. Give it hand-written positive and failing outputs with stable expected totals.
+2. Connect the existing loopback mock to the isolated runner and verify the exact same scorer and fixture bytes are used in Actions. Keep mock scripts and results separate from timing benchmarks.
+3. In `.github/workflows/benchmark.yml`, add a named, manual opt-in job and upload the scored report as an artifact. Set checkout read permissions. Keep the suite away from release checks and default benchmark runs. Review licensing before accepting an external corpus.
+
+## Verification
+
+Run `python3 scripts/perf/check_structural.py --help` to verify the existing structural tool still exposes its CLI. Add a GitHub Actions fixture for the scorer and loopback runner with an empty credential environment and no external network.
+
+| Fixture | Mock output | Expected score |
+| --- | --- | --- |
+| Write exactly `hello` followed by a newline to `result.txt` and touch no other file | `result.txt` contains those bytes | Pass |
+| Same instruction | `result.txt` contains `hello` without the newline | Fail |
+| Same instruction | Correct `result.txt` plus `extra.txt` | Fail |
+
+The aggregate is 1/3, with one byte mismatch and one unexpected path. Run the three cases locally against the mock and in Actions with the same fixture and scorer digests. The case verdicts and aggregate must match exactly. Check separately that a mock timeout, a contract version mismatch and an external network attempt return an unsuccessful run without a score.
