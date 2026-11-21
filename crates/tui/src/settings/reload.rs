@@ -26,6 +26,7 @@ pub struct Reloader {
     settings: Settings,
     stamps: Vec<Option<FileStamp>>,
     warnings: Vec<String>,
+    overrides: Vec<(&'static str, SettingValue)>,
     interval: Duration,
     last_check: Instant,
 }
@@ -38,11 +39,20 @@ impl Reloader {
 
     /// Load every layer and start watching with an explicit interval.
     pub fn with_interval(sources: Sources, interval: Duration) -> Self {
+        Self::with_overrides(sources, interval, Vec::new())
+    }
+
+    /// Load every layer with command-line overrides above all of them.
+    ///
+    /// The overrides are kept and reapplied after every resolve, because a
+    /// `--flag` lasts for the process while the files under it keep reloading.
+    pub fn with_overrides(sources: Sources, interval: Duration, overrides: Vec<(&'static str, SettingValue)>) -> Self {
         let mut layers = LayerSet::new(&sources);
         let mut warnings = Vec::new();
         layers.refresh(&mut warnings);
-        let (settings, resolve_warnings) = layers.resolve(resolve_process_env);
+        let (mut settings, resolve_warnings) = layers.resolve(resolve_process_env);
         warnings.extend(resolve_warnings);
+        settings.apply_overrides(&overrides);
         let stamps = layers.stamps();
         Self {
             sources,
@@ -50,6 +60,7 @@ impl Reloader {
             settings,
             stamps,
             warnings,
+            overrides,
             interval,
             last_check: Instant::now(),
         }
@@ -109,8 +120,9 @@ impl Reloader {
     fn reload(&mut self) -> Reload {
         let mut warnings = Vec::new();
         self.layers.refresh(&mut warnings);
-        let (settings, resolve_warnings) = self.layers.resolve(resolve_process_env);
+        let (mut settings, resolve_warnings) = self.layers.resolve(resolve_process_env);
         warnings.extend(resolve_warnings);
+        settings.apply_overrides(&self.overrides);
         self.settings = settings.clone();
         self.warnings = warnings.clone();
         Reload { settings, warnings }

@@ -3,7 +3,7 @@
 
 use super::App;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
-use crate::settings::Settings;
+use crate::settings::{Motion, Settings};
 
 impl App {
     /// Show the settings screen, seeded from the settings in force.
@@ -25,7 +25,9 @@ impl App {
     /// reasoning as it streams, the editor asks before it sends, the mouse
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
     /// says so, the window title carries the turn state only while
-    /// `title.state` says so, and the model cycle walks `models.shortlist`.
+    /// `title.state` says so, and the model cycle walks `models.shortlist`. The
+    /// motion preset is read here too, so the renderer and the frame loop share
+    /// one snapshot.
     /// Whether the terminal is actually captured is the event loop's decision,
     /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
@@ -68,6 +70,15 @@ impl App {
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
+        // The preset decides what the spinner draws and how often a quiet turn
+        // redraws; both are read here so the loop and the renderer agree on one
+        // snapshot. A refused number is reported once, naming the default that
+        // took its place.
+        let (motion, motion_warnings) = Motion::from_settings(settings);
+        self.motion = motion;
+        for warning in motion_warnings {
+            self.warn(format!("motion: {warning}"));
+        }
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }
