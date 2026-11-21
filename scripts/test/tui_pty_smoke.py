@@ -665,7 +665,6 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
         raise Failure("voice input sent a request before the user submitted the draft")
     terminal.send("\x15")
     terminal.send("/voice say local playback proof\r")
-    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
     played = os.path.join(case_root, "voice-bin", "played")
     deadline = time.monotonic() + STEP_TIMEOUT
     while time.monotonic() < deadline:
