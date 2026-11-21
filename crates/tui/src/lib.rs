@@ -15,6 +15,7 @@ pub mod commands;
 pub mod context;
 mod editor;
 mod fuzzy;
+pub mod gallery;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -136,6 +137,11 @@ pub struct Args {
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Gallery scene to preview instead of connecting, if the flag was given.
+    ///
+    /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
+    /// the scene either way and `run` has one branch to take.
+    pub gallery: Option<String>,
     /// Start with the model's reasoning hidden, whatever the setting says.
     pub hide_thinking: bool,
     /// Print the version and exit.
@@ -156,6 +162,7 @@ impl Args {
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
+                "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
                 "--hide-thinking" => parsed.hide_thinking = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
@@ -177,6 +184,10 @@ impl Args {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
+                    Some(("--gallery", "")) => {
+                        return Err("--gallery needs a scene name after '='".to_string());
+                    }
+                    Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
@@ -237,6 +248,13 @@ where
     if args.help {
         print!("{USAGE}");
         return 0;
+    }
+    // The gallery is a viewer over built-in fixtures, so it runs before
+    // settings are read and before a socket is opened: a frame must not depend
+    // on a file on the machine, and a broken settings file is not a reason to
+    // hide the renderer.
+    if let Some(scene) = args.gallery.as_deref() {
+        return gallery::run(scene);
     }
     // Settings load before the connection so a broken settings file is
     // reported even when the daemon is unreachable.
@@ -467,6 +485,12 @@ where
         // A message typed during a turn waits for that turn; this is the one
         // place it is sent, right after the event that ended the turn.
         if let Some(action) = app.take_queued() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
