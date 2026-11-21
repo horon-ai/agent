@@ -435,7 +435,9 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | --- | --- |
 | `/archived` | Restore a session from this directory's archived list |
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
-| `/clear` | Clear the transcript pane |
+| `/clear` | Clear only the transcript pane |
+| `/clear-context` | Start a fresh context for the model in the current session and keep the saved conversation |
+| `/compact` | Ask the configured model to summarize older context in place and keep the saved conversation |
 | `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
@@ -456,7 +458,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-two commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-four commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -474,7 +476,9 @@ The harness commands run in the attached runtime and never reach the model as a 
 built-in commands:
   /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit

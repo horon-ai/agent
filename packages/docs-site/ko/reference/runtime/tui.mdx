@@ -438,7 +438,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | --- | --- |
 | `/archived` | 현재 디렉터리의 보관 목록에서 세션을 복원한다 |
 | `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
-| `/clear` | 트랜스크립트 창을 지운다 |
+| `/clear` | 대화 화면만 비운다 |
+| `/clear-context` | 현재 세션에서 모델에 보낼 문맥을 새로 시작하고 저장한 대화는 보관한다 |
+| `/compact` | 설정한 모델에 이전 문맥의 요약을 요청하고 저장한 대화는 보관한다 |
 | `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
@@ -459,7 +461,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물두 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물네 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -477,7 +479,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 built-in commands:
   /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
