@@ -1234,7 +1234,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 300 --min-passed 14 \
+            --timeout 300 --min-passed 15 \
             -- tool::eval::tests:: --test-threads=1 --nocapture
 
       - name: Run tool surface cohort
@@ -2110,6 +2110,7 @@ jobs:
               'cleanup_socket_pair_removes_main_and_debug_files',
               'build_shell_command_uses_cmd_and_executes_command',
               'eval_opt_in_follows_profile_and_disabled_tools',
+              'eval_accepts_model_tool_arguments',
               'eval_requires_explicit_approval_even_in_permissive_modes',
               'eval_retains_state_until_reset_or_idle_reclamation',
               'eval_bounds_inline_output_and_keeps_a_session_artifact',
