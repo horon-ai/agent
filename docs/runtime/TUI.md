@@ -382,6 +382,8 @@ Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward 
 
 `/switch` and `/resume` open the stored sessions under different titles, newest first. Each row carries the session's title (or its first user line, or its id) and the time it last changed, flush with the row's right edge so the times read down the list; a conversation too narrow for both keeps the name. The session in force is marked `(current)`. The preview opens with the directory and the time and follows with the newest six messages as `you: …` and `assistant: …` lines, taken from the newest twenty stored messages; an injected `<system-reminder>` message is left out, because the user never wrote it. A session the daemon cannot read back shows its title, or its id when it has none, and a head-only preview.
 
+In the session picker, Ctrl+P pins or unpins the selected row. Pinned sessions appear first, with newest sessions first within each group. `/pin [id]` and `/unpin [id]` act on the attached session when the ID is omitted. Pins are saved locally for the connected daemon and survive a client restart.
+
 Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, and the daemon also accepts a unique prefix of six or more characters. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds `started a new session <id>` or `resumed <id>`, and takes the model, provider, effort and title from the new session's identity, so the status line keeps showing `provider/model`. `/new` asks for a session in this directory and moves to it the same way; the session that was left stays stored, and the client drops the events of every session it has left, so neither conversation's rows reach the other. A session change waits while a turn runs or a model or effort change is still being applied, and a new session left without a message cannot be resumed, because the daemon does not keep it.
 
 In `/switch` or `/resume`, select a saved session and press Ctrl+A to archive it. Leave the current session before archiving it. `/archived` lists archived sessions in the current directory. Press Enter on a row to restore it to the recent list.
@@ -451,6 +453,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
 | `/note [add\|edit\|remove\|list\|prune] [address] [text]` | Keep, list or remove a local note on a transcript message |
+| `/pin [id]` | Pin the attached or named session to the top of the session list |
 | `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
@@ -461,6 +464,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/unpin [id]` | Remove a session from the pinned group |
 | `/voice` | Dictate to the draft or play text on this device |
 
 Use `/diff` to see staged and unstaged changes separately. `/commit <message>` displays the staged files and the content identifier it will commit. `/commit --yes` commits that exact content to the reviewed branch if its previous commit is still current. `/commit --cancel` discards the review. Any change to staging requires a new review. The command works on an attached local branch and performs a local commit only.
@@ -471,7 +475,7 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-nine commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-one commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -507,6 +511,7 @@ built-in commands:
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /note                note, list or remove a local note on a transcript message
+  /pin                 keep a session at the top of the list, or pin the attached one
   /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
@@ -517,6 +522,7 @@ built-in commands:
   /skills              list the skills the harness reports, and put one in the draft
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
+  /unpin               take a session out of the pinned group
   /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session

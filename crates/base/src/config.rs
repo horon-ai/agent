@@ -26,6 +26,9 @@ use std::path::PathBuf;
 use std::sync::{LazyLock, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
+mod artifact_output;
+pub use artifact_output::ArtifactOutputConfig;
+
 const CONFIG_CACHE_CHECK_INTERVAL: Duration = if cfg!(test) {
     Duration::ZERO
 } else {
@@ -867,10 +870,9 @@ pub struct ToolConfig {
     pub read_dedup: bool,
     /// Maximum lines per default read page, clamped to 1–5,000.
     pub read_default_limit: usize,
-    /// On by default: condense old results in a batch and keep originals readable through `artifact://`.
     pub tool_result_aging: bool,
-    /// Maximum characters per text preview line, including the marker. Zero disables the cap.
     pub output_column_cap: usize,
+    pub artifact_output: ArtifactOutputConfig,
     /// On by default: refuse to edit, replace, delete, or overwrite a file that
     /// a generator produces. A generated file is regenerated from its source,
     /// so an edit to it is silently lost.
@@ -884,9 +886,7 @@ pub struct ToolConfig {
     /// Opt-in `ast_grep`/`ast_edit`: structural search and rewrite over
     /// tree-sitter grammars. Off by default.
     pub ast_tools: bool,
-    /// Opt-in structural `read` summary for large source files: keep item
-    /// signatures and elide long bodies instead of a full-file page. Off by
-    /// default.
+    /// Opt-in outlines for large source files and Markdown documents.
     pub read_summary: bool,
     /// Opt-in fuzzy `edit`: accept an `old_string` that matches exactly one
     /// location after whitespace and quote normalization. Off by default.
@@ -1003,6 +1003,7 @@ impl Default for ToolConfig {
             read_default_limit: 5000,
             tool_result_aging: true,
             output_column_cap: 0,
+            artifact_output: ArtifactOutputConfig::default(),
             block_auto_generated: true,
             bash_pty: BashPtyMode::Auto,
             hashline_edit: false,
