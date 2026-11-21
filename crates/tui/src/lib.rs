@@ -174,6 +174,8 @@ pub struct Args {
     pub max_fps: Option<i64>,
     /// Start with the model's reasoning hidden, whatever the setting says.
     pub hide_thinking: bool,
+    /// Leave the terminal window title alone for this launch.
+    pub no_title: bool,
     /// Print the version and exit.
     pub version: bool,
     /// Print the usage and exit.
@@ -206,6 +208,7 @@ impl Args {
                 "--help" | "-h" => parsed.help = true,
                 "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
                 "--hide-thinking" => parsed.hide_thinking = true,
+                "--no-title" => parsed.no_title = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
                     None => return Err("--socket needs a path".to_string()),
@@ -296,7 +299,11 @@ where
     // on a file on the machine, and a broken settings file is not a reason to
     // hide the renderer.
     if let Some(scene) = args.gallery.as_deref() {
-        return gallery::run(scene);
+        return if args.no_title {
+            gallery::run_with_title(scene, false)
+        } else {
+            gallery::run(scene)
+        };
     }
     // Settings load before the connection so a broken settings file is
     // reported even when the daemon is unreachable.
@@ -306,7 +313,10 @@ where
     }
     // A launch flag outranks every file, so it rides with the reloader and is
     // reapplied after each resolve instead of being written anywhere.
-    let overrides = settings::motion::launch_overrides(args.motion, args.spinner_interval, args.max_fps);
+    let mut overrides = settings::motion::launch_overrides(args.motion, args.spinner_interval, args.max_fps);
+    if args.no_title {
+        overrides.push(("title.enabled", settings::SettingValue::Bool(false)));
+    }
     let mut reloader = settings::Reloader::with_overrides(sources, std::time::Duration::from_secs(1), overrides);
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
@@ -410,26 +420,31 @@ fn run_interactive(
     // the next program in this terminal.
     paste::guard_panics();
     scroll::guard_panics();
-    title::guard_panics();
     progress::guard_panics();
     // A terminal that refuses the mode is not a reason to stop: a paste then
     // arrives as ordinary keystrokes, which the editor already handles.
     if let Err(error) = paste::enable() {
         app.warn(format!("paste: {error}"));
     }
-    let mut title = title::WindowTitle::stdout();
+    let title_enabled = reloader.settings().boolean("title.enabled").unwrap_or(true);
+    let mut title = title::WindowTitle::stdout(title_enabled);
     // Decided once: the terminal's answer about its own title handling does not
     // change while the client runs, and a terminal that has none is left as it
     // was before `title.state` existed.
     let state_supported = title.state_supported();
-    if let Err(error) = title.start(&window::label(&app, state_supported)) {
+    if state_supported {
+        title::guard_panics();
+    }
+    if title.enabled()
+        && let Err(error) = title.start(&window::label(&app, state_supported))
+    {
         app.warn(format!("title: {error}"));
     }
     // Writes nothing until a different state reaches the terminal.
     let mut signals = progress::Signals::stdout();
     // Installed once the modes it restores are on: a signal before this point
     // had nothing to undo. A refusal is reported and the client keeps running.
-    if let Err(error) = terminal::guard_signals() {
+    if let Err(error) = terminal::guard_signals(state_supported) {
         app.warn(format!("signals: {error}"));
     }
     let (code, failure) = event_loop(
@@ -449,7 +464,7 @@ fn run_interactive(
     // `terminal::restore`, which has no writer left.
     let signals_error = signals.clear().err();
     // The same sequence the signal path runs: see `terminal::restore`.
-    terminal::restore();
+    terminal::restore(state_supported);
     if let Some(message) = failure {
         eprintln!("horon-tui: {message}");
     }
@@ -581,7 +596,7 @@ where
         }
         // Titles can change on either a daemon event or local input.
         let state = window::state(app, state_supported);
-        if changed || state != shown_state {
+        if channels.title.enabled() && (changed || state != shown_state) {
             shown_state = state;
             let label = window::label(app, state_supported);
             if let Err(error) = channels.title.show(&label) {

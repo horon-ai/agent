@@ -24,7 +24,7 @@ use crate::{app::App, draw, paste, scroll, title};
 /// One sequence for the normal exit and the signal path: if the two drift, a
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
-pub(crate) fn restore() {
+pub(crate) fn restore(pop_title: bool) {
     // The progress indicator and the status record outlive the process that
     // wrote them. The normal exit clears them through its own writer, which
     // knows what it wrote; this covers the panic hook and the signal thread,
@@ -34,7 +34,7 @@ pub(crate) fn restore() {
     crate::commands::shell::kill_active_group();
     // The voice recorder, recognizer or player is this terminal's child too.
     crate::voice::kill_active_process();
-    release(true);
+    release(pop_title);
 }
 
 /// Hand the terminal to a child process that draws on it.
@@ -106,18 +106,15 @@ fn release(pop_title: bool) {
 /// Best effort like the rest of the exit path: a client that cannot install
 /// the handlers reports the refusal and keeps running, because losing the
 /// signal path is not a reason to refuse to start.
-pub(crate) fn guard_signals() -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        unix::install()
-    }
-    #[cfg(not(unix))]
-    {
-        // Windows has no signal to catch here: the console is torn down with
-        // the process, and a console-control handler would need a Windows
-        // dependency the client does not carry.
-        Ok(())
-    }
+#[cfg(unix)]
+pub(crate) fn guard_signals(pop_title: bool) -> std::io::Result<()> {
+    unix::install(pop_title)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn guard_signals(_pop_title: bool) -> std::io::Result<()> {
+    // The console is torn down with the process on Windows.
+    Ok(())
 }
 
 /// Draw the connection-failure banner once, when there is a terminal to draw it
@@ -171,7 +168,7 @@ mod unix {
         unsafe { libc::write(fd, (&byte as *const u8).cast(), 1) };
     }
 
-    pub(super) fn install() -> io::Result<()> {
+    pub(super) fn install(pop_title: bool) -> io::Result<()> {
         let mut fds = [0 as libc::c_int; 2];
         if unsafe { libc::pipe(fds.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error());
@@ -209,7 +206,7 @@ mod unix {
                     return;
                 }
             }
-            super::restore();
+            super::restore(pop_title);
             let signal = libc::c_int::from(byte);
             // The default disposition takes the process, so a wrapper sees
             // death by signal (143 through a shell for `SIGTERM`) rather than
