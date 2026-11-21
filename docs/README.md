@@ -48,6 +48,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
 | | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
+| | [`EVAL.md`](performance/EVAL.md) | Proposed fixture-backed instruction-following evaluation |
 | | [`RESULTS.md`](performance/RESULTS.md) | Measured results and their limits |
 | | [`MEMORY.md`](performance/MEMORY.md) | Memory regression budgets, idle session derived-cache release, incident response procedure |
 | `release/` | [`INSTALL.md`](release/INSTALL.md) | Release asset verification and `install-release`, installing from npm, running on a Linux server, the TLS trust set |
