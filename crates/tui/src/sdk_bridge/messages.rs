@@ -55,6 +55,8 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// Save a title for the session the bridge follows.
+    Rename(String),
     /// List the background work the attached session is still running.
     BackgroundJobs,
     /// Stop one background terminal this session started.

@@ -54,6 +54,20 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
         changed = Redraw::Immediate;
         match delivery {
             Incoming::Event(event) => {
+                if let ApiEvent::SessionRenamed {
+                    session_id,
+                    display_title,
+                    ..
+                } = *event
+                {
+                    if app.session_id.as_deref() == Some(session_id.as_str()) {
+                        app.session_title = Some(display_title);
+                        app.transcript.push_notice("session title updated".to_owned());
+                    } else {
+                        changed = previously_changed;
+                    }
+                    continue;
+                }
                 if matches!(&*event, ApiEvent::TextDelta { .. } | ApiEvent::ReasoningDelta { .. })
                     && previously_changed != Redraw::Immediate
                 {
@@ -150,6 +164,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        Action::Rename(title) => Command::Rename(title),
         Action::CheckSessions(sessions) => Command::CheckSessions(sessions),
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
