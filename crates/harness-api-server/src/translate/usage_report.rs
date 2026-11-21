@@ -33,6 +33,9 @@ const PRICING_UNKNOWN: &str = "unknown";
 /// Bucket for sessions whose metadata never named a model.
 const MODEL_UNKNOWN: &str = "unknown";
 
+#[path = "usage_report_local.rs"]
+pub(super) mod local;
+
 /// What the daemon has told this bridge about usage on this connection.
 ///
 /// Kept per connection because every field here is session identity the daemon
@@ -169,6 +172,12 @@ struct StoredUsage {
 struct Reading {
     model: Option<String>,
     sums: Sum,
+}
+
+#[derive(Debug)]
+struct UsageRecord {
+    usage: StoredUsage,
+    group: Option<local::Group>,
 }
 
 /// Build the report for one request on this connection.
@@ -368,9 +377,9 @@ fn read_session(home: Option<&Path>, session_id: &str) -> Reading {
     let root = sessions_root(home);
     let canonical = root.join(session_id).join("events.jsonl");
     if canonical.is_file() {
-        return read_canonical(&canonical);
+        return read_canonical(&canonical, None);
     }
-    read_legacy(&root.join(format!("{session_id}.json")))
+    read_legacy(&root.join(format!("{session_id}.json")), None)
 }
 
 /// Read the canonical event log.
@@ -380,19 +389,31 @@ fn read_session(home: Option<&Path>, session_id: &str) -> Reading {
 /// session on the machine, so a line without a usage record is skipped before
 /// it is parsed: transcripts are mostly message text and tool payloads, and
 /// deserializing all of it would make a usage screen cost seconds.
-fn read_canonical(path: &Path) -> Reading {
+fn read_canonical(path: &Path, mut groups: Option<&mut local::Groups>) -> Reading {
     let Ok(file) = std::fs::File::open(path) else {
         return Reading::default();
     };
     let mut reading = Reading::default();
-    let mut usage: BTreeMap<String, StoredUsage> = BTreeMap::new();
+    let mut usage: BTreeMap<String, UsageRecord> = BTreeMap::new();
+    let mut provider = None;
+    let mut seen_events = BTreeSet::new();
     for line in std::io::BufRead::lines(std::io::BufReader::new(file)).map_while(Result::ok) {
-        if !line.contains("\"token_usage\"") && !line.contains("\"model\"") {
+        if !(line.contains("\"token_usage\"")
+            || line.contains("\"model\"")
+            || line.contains("\"message_revised\"")
+            || (groups.is_some() && line.contains("\"provider_key\"")))
+        {
             continue;
         }
         let Ok(event) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
+        if matches!(event["kind"].as_str(), Some("message_appended" | "message_revised"))
+            && let Some(id) = event["event_id"].as_str()
+            && !seen_events.insert(id.to_owned())
+        {
+            continue;
+        }
         match event["kind"].as_str() {
             Some("session_created" | "metadata_changed") => {
                 if let Some(model) = event["payload"]["metadata"]["model"]
@@ -401,27 +422,53 @@ fn read_canonical(path: &Path) -> Reading {
                 {
                     reading.model = Some(model.to_string());
                 }
+                if groups.is_some()
+                    && let Some(value) = event["payload"]["metadata"]["provider_key"].as_str()
+                {
+                    provider = Some(value.to_owned());
+                }
             }
             Some("message_appended") => {
                 let Some(id) = event["event_id"].as_str() else {
                     continue;
                 };
-                match serde_json::from_value::<StoredUsage>(event["payload"]["message"]["token_usage"].clone()) {
-                    Ok(value) => {
-                        usage.insert(id.to_string(), value);
-                    }
-                    Err(_) => {
-                        usage.remove(id);
-                    }
+                let message = &event["payload"]["message"];
+                if let Ok(value) = serde_json::from_value::<StoredUsage>(message["token_usage"].clone()) {
+                    usage.entry(id.to_owned()).or_insert_with(|| UsageRecord {
+                        usage: value,
+                        group: groups.as_ref().map(|_| {
+                            local::Group::new(
+                                message["timestamp"].as_str().or_else(|| event["timestamp"].as_str()),
+                                provider.as_deref(),
+                                reading.model.as_deref(),
+                            )
+                        }),
+                    });
                 }
             }
             Some("message_revised") => {
                 let Some(target) = event["payload"]["target_event_id"].as_str() else {
                     continue;
                 };
-                match serde_json::from_value::<StoredUsage>(event["payload"]["replacement"]["token_usage"].clone()) {
+                let message = &event["payload"]["replacement"];
+                match serde_json::from_value::<StoredUsage>(message["token_usage"].clone()) {
                     Ok(value) => {
-                        usage.insert(target.to_string(), value);
+                        let record = usage.entry(target.to_owned()).or_insert_with(|| UsageRecord {
+                            usage: StoredUsage {
+                                input_tokens: None,
+                                output_tokens: None,
+                                cache_read_input_tokens: None,
+                                cache_creation_input_tokens: None,
+                            },
+                            group: groups.as_ref().map(|_| {
+                                local::Group::new(
+                                    message["timestamp"].as_str(),
+                                    provider.as_deref(),
+                                    reading.model.as_deref(),
+                                )
+                            }),
+                        });
+                        record.usage = value;
                     }
                     Err(_) => {
                         usage.remove(target);
@@ -431,8 +478,11 @@ fn read_canonical(path: &Path) -> Reading {
             _ => {}
         }
     }
-    for value in usage.values() {
-        reading.sums.record(value);
+    for record in usage.into_values() {
+        reading.sums.record(&record.usage);
+        if let (Some(group), Some(groups)) = (record.group, groups.as_deref_mut()) {
+            groups.record(group, &record.usage);
+        }
     }
     reading
 }
@@ -441,7 +491,7 @@ fn read_canonical(path: &Path) -> Reading {
 ///
 /// Messages are keyed by message id so a message that appears in both the
 /// snapshot and the journal is counted once.
-fn read_legacy(path: &Path) -> Reading {
+fn read_legacy(path: &Path, mut groups: Option<&mut local::Groups>) -> Reading {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Reading::default();
     };
@@ -452,24 +502,46 @@ fn read_legacy(path: &Path) -> Reading {
     if let Some(model) = value["model"].as_str().filter(|model| *model != MODEL_UNKNOWN) {
         reading.model = Some(model.to_string());
     }
-    let mut usage: BTreeMap<String, StoredUsage> = BTreeMap::new();
-    collect_messages(&value["messages"], "snapshot", &mut usage);
+    let mut usage: BTreeMap<String, UsageRecord> = BTreeMap::new();
+    let group = |message: &Value| {
+        groups.as_ref().map(|_| {
+            local::Group::new(
+                message["timestamp"].as_str(),
+                value["provider_key"].as_str(),
+                reading.model.as_deref(),
+            )
+        })
+    };
+    collect_messages(&value["messages"], "snapshot", &mut usage, &group);
     let journal = path.with_extension("journal.jsonl");
     if let Ok(lines) = std::fs::read_to_string(&journal) {
         for (index, line) in lines.lines().enumerate() {
             let Ok(entry) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
-            collect_messages(&entry["append_messages"], &format!("journal{index}"), &mut usage);
+            collect_messages(
+                &entry["append_messages"],
+                &format!("journal{index}"),
+                &mut usage,
+                &group,
+            );
         }
     }
-    for value in usage.values() {
-        reading.sums.record(value);
+    for record in usage.into_values() {
+        reading.sums.record(&record.usage);
+        if let (Some(group), Some(groups)) = (record.group, groups.as_deref_mut()) {
+            groups.record(group, &record.usage);
+        }
     }
     reading
 }
 
-fn collect_messages(messages: &Value, source: &str, usage: &mut BTreeMap<String, StoredUsage>) {
+fn collect_messages(
+    messages: &Value,
+    source: &str,
+    usage: &mut BTreeMap<String, UsageRecord>,
+    group: &impl Fn(&Value) -> Option<local::Group>,
+) {
     let Some(messages) = messages.as_array() else {
         return;
     };
@@ -480,7 +552,13 @@ fn collect_messages(messages: &Value, source: &str, usage: &mut BTreeMap<String,
             .unwrap_or_else(|| format!("{source}:{index}"));
         match serde_json::from_value::<StoredUsage>(message["token_usage"].clone()) {
             Ok(value) => {
-                usage.insert(key, value);
+                usage.insert(
+                    key,
+                    UsageRecord {
+                        usage: value,
+                        group: group(message),
+                    },
+                );
             }
             Err(_) => {
                 usage.remove(&key);

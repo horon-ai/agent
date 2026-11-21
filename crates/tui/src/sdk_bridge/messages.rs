@@ -27,6 +27,8 @@ pub enum Command {
         command: RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Read stored token usage for the attached session.
+    Stats,
     /// Clear or compact the model context of the session the bridge follows.
     Context(crate::commands::ContextCommand),
     /// Switch to the model named.

@@ -118,6 +118,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
+| `horon stats --from 2026-11-01 --through 2026-11-21` | Report stored token usage by UTC date, provider, and model. Add `--json` for structured output. In the terminal client, `/stats` reports the attached session. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
 
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.

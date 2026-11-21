@@ -89,6 +89,7 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
+            Local::Stats => Some(Action::Stats),
             Local::Mcp => Some(Action::Runtime {
                 command: horon_agent_sdk::RuntimeCommand::Mcp,
                 arguments: arguments

@@ -10,6 +10,7 @@ mod search_artifacts;
 mod session_delete;
 mod simple_kind;
 mod usage_report;
+pub use usage_report::local::{LocalUsage, local_usage};
 
 use crate::background_progress::parse_background_notification;
 use horon_agent_harness_api::{

@@ -122,6 +122,8 @@ pub enum Local {
     Links,
     /// List the background work this session is running, and cancel one.
     Jobs,
+    /// Show stored token usage for the attached session.
+    Stats,
     /// Record the visible conversation to a local file, or stop.
     Record,
     /// Replay a recorded conversation, or stop the replay.
@@ -166,6 +168,7 @@ impl Local {
             "note" => Some(Self::Note),
             "links" => Some(Self::Links),
             "jobs" => Some(Self::Jobs),
+            "stats" => Some(Self::Stats),
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
@@ -204,6 +207,7 @@ impl Local {
             Self::ShellExcluded => "shell",
             Self::Links => "links",
             Self::Jobs => "jobs",
+            Self::Stats => "stats",
             Self::Record => "record",
             Self::Replay => "replay",
             Self::Queue => "queue",
@@ -701,7 +705,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 27] = [
+const LOCAL_NAMES: [&str; 28] = [
     "archived",
     "artifact",
     "clear",
@@ -726,6 +730,7 @@ const LOCAL_NAMES: [&str; 27] = [
     "resume",
     "settings",
     "skills",
+    "stats",
     "swarm",
     "switch",
     "voice",

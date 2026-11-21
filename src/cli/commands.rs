@@ -448,6 +448,16 @@ pub async fn run_usage_command(emit_json: bool) -> Result<()> {
     report_info::run_usage_command(emit_json).await
 }
 
+pub(super) fn run_stats_command(from: Option<&str>, through: Option<&str>, json: bool) -> Result<()> {
+    let report = horon_agent_harness_api_server::translate::local_usage(&storage::horon_agent_dir()?, from, through)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{report}");
+    }
+    Ok(())
+}
+
 /// Explicitly pin the daemon's shared-server channel to an installed build.
 /// Promotion and reload intentionally remain separate operations: updates may
 /// advance a shared server that tracks stable, but must not overwrite a build

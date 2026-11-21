@@ -302,6 +302,21 @@ pub(crate) enum Command {
         json: bool,
     },
 
+    /// Report stored local token usage by UTC date, provider and model
+    Stats {
+        /// First UTC day to include (YYYY-MM-DD)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Last UTC day to include (YYYY-MM-DD)
+        #[arg(long)]
+        through: Option<String>,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
