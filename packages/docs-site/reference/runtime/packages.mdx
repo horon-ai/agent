@@ -218,8 +218,9 @@ author, not by that release.
 `horon package install <dir>` and the inbox reconciler use the same catalog
 installer. It validates, copies and registers the package. Installation is
 consent to run the package with the user's permissions. The catalog records
-SHA-256 values for integrity checks. Automatic inbox processing and applying
-catalog changes to open sessions are tracked separately.
+SHA-256 values for integrity checks. A running daemon reconciles the inbox and
+publishes new catalog generations. Applying them to open sessions is a later
+step.
 
 | Command | Effect |
 | --- | --- |

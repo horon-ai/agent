@@ -420,6 +420,11 @@ jobs:
         shell: bash
         run: cargo test --locked -p horon-agent-sdk parity -- --nocapture
 
+      - name: Run daemon package control contracts
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo test --locked --test harness_roundtrip package_daemon
+
       - name: Run Rust SDK tool verdict tests
         if: ${{ !cancelled() }}
         shell: bash

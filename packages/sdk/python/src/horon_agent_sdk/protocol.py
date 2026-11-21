@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 25
+API_VERSION_MINOR = 26
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -35,6 +35,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("background_output_v1", ("background_output",)),
     ("live_todo_v1", ("todo_changed",)),
     ("effective_settings_v1", ("get_effective_settings",)),
+    ("package_control_v1", ("package_control",)),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -722,6 +723,7 @@ ServerFrame: TypeAlias = dict[str, Any]
 #: Every event tag the SDK knows about, for drift checks and routing.
 KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "runtime_command_result",
+    "package_control",
     "hello_ok",
     "ok",
     "error",
@@ -864,6 +866,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "export_session_record_blob",
     "import_session_record_blob",
     "export_session_markdown",
+    "package_control",
     "get_session_record_blob_status",
     "get_runtime_state",
     "apply_control",

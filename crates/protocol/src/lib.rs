@@ -193,8 +193,9 @@ pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 mod wire;
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
-    CompactMethod, FileDiffWire, HandoffCompactionReport, PermissionDecision, PlanEntryWire, Request,
-    RuntimeModelIdentity, ServerEvent, SessionMcpServer,
+    CompactMethod, FileDiffWire, HandoffCompactionReport, PackageControlOperation, PackageControlReceipt,
+    PackageControlRequest, PackageControlScope, PackageControlState, PackageInboxSkip, PackageSummary,
+    PermissionDecision, PlanEntryWire, Request, RuntimeModelIdentity, ServerEvent, SessionMcpServer,
 };
 pub use wire::{SessionToolConfig, SessionToolDefinition, TaskGraphNodeSpec};
 
@@ -639,7 +640,8 @@ impl Request {
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
             | Request::GetEffectiveSettings { id }
-            | Request::GetSnapshot { id, .. } => *id,
+            | Request::GetSnapshot { id, .. }
+            | Request::PackageControl { id, .. } => *id,
             Request::CommMessage { id, .. } => *id,
             Request::CommList { id, .. } => *id,
             Request::CommListSwarms { id, .. } => *id,

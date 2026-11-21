@@ -72,6 +72,22 @@ All four requests are served. The daemon advertises `durable_runtime_api` in its
 
 `unsupported` therefore means **this daemon is older**, not that the surface is unimplemented. The bridge returns it, naming `durable_runtime_v1`, only when the daemon it dialled did not advertise `durable_runtime_api`: an older daemon answers an unknown request with an error frame carrying no id, so forwarding would leave the client waiting out its own timeout. From the client's side that is the same "this server does not offer it" answer as any other missing capability, so no branching changes.
 
+## Package catalog control (protocol 1.26)
+
+The bridge advertises `package_control_v1` when the daemon's `pong` advertises
+`package_control`. A `package_control` request carries an `operation_id` and an
+`operation`. A successful response carries the published generation and its
+catalog, including each package's scope and any removal records. The daemon
+applies catalog changes through the same store lock used by the standalone CLI.
+Clients can continue to use the existing protocol with an older daemon. A
+package control request requires the advertised capability.
+
+The daemon checks for complete inbox folders at startup and during filesystem
+reconciliation. A status request reads the published snapshot. Subscribers
+receive the latest complete snapshot even if they miss intermediate updates.
+When a mutation returns a transport error after sending the request, inspect
+the published state before submitting it again.
+
 ## Handoff compaction
 
 `compact` takes an optional `method`. Absent is the model summary a client has

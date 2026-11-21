@@ -30,6 +30,7 @@ use horon_agent::session::event_store_api as store;
 use horon_agent::tool::Registry;
 use serde_json::{Value, json};
 use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
@@ -410,4 +411,239 @@ async fn serve_api_bridge_ndjson_roundtrip_reaches_turn_done() -> Result<()> {
     let _ = bridge.await;
     let _ = daemon.await;
     result
+}
+
+#[path = "support/package_daemon.rs"]
+mod package_daemon_fixture;
+
+use horon_agent::protocol::{PackageControlOperation, PackageControlRequest, PackageControlScope, PackageControlState};
+use package_daemon_fixture as packages;
+
+/// The CLI, a complete inbox folder and an offline install all publish into one
+/// catalog, and a restart reconciles it without installing anything twice.
+#[test]
+fn package_daemon_cli_inbox_and_offline_catalog_converge() -> Result<()> {
+    let mut daemon = packages::PackageDaemon::start("converge");
+    let store = daemon.store();
+
+    let first = daemon.root.join("src/one");
+    packages::write_extension(&first, "sample.one", "1.0.0");
+    let output = daemon.cli(&["install", &packages::path_text(&first)]);
+    let printed = packages::assert_success(&output);
+    assert!(printed.contains("Installed sample.one"), "{printed}");
+    assert_eq!(daemon.generation(), 1, "the running daemon published the CLI install");
+
+    // The daemon's own authority names the same generation the CLI returned.
+    let status = daemon.request(PackageControlOperation::Status);
+    assert_eq!(status.generation, 1);
+    assert_eq!(status.catalog.len(), 1);
+    assert_eq!(status.catalog[0].id, "sample.one");
+
+    // A complete folder that appears in the inbox is installed by the daemon
+    // alone: no client asks for it.
+    packages::drop_into_inbox(&daemon, "sample.two", |staged| {
+        packages::write_extension(staged, "sample.two", "0.2.0")
+    });
+    let published = daemon.wait_for("the inbox install", || (daemon.generation() == 2).then_some(2));
+    assert_eq!(published, 2);
+    assert!(store.catalog()?.get("sample.two").is_some());
+
+    // With no daemon, the same command publishes through the store's file lock.
+    daemon.stop();
+    let third = daemon.root.join("src/three");
+    packages::write_extension(&third, "sample.three", "3.0.0");
+    let output = daemon.cli(&["install", &packages::path_text(&third)]);
+    let printed = packages::assert_success(&output);
+    assert!(printed.contains("Installed sample.three"), "{printed}");
+    assert_eq!(daemon.generation(), 3, "the offline install published the same catalog");
+
+    // A restart must re-read the catalog and the inbox without a second install.
+    daemon.restart();
+    let status = daemon.request(PackageControlOperation::Status);
+    assert_eq!(status.generation, 3, "startup must not advance the generation again");
+    assert_eq!(status.catalog.len(), 3);
+    let listed = packages::assert_success(&daemon.cli(&["list"]));
+    for id in ["sample.one", "sample.two", "sample.three"] {
+        assert!(listed.contains(id), "`package list` is missing {id}:\n{listed}");
+    }
+    Ok(())
+}
+
+/// A package that does not validate is refused and publishes nothing, whether it
+/// arrives through the CLI or as an inbox folder.
+#[test]
+fn package_daemon_invalid_folder_is_rejected() -> Result<()> {
+    let daemon = packages::PackageDaemon::start("invalid");
+
+    let broken = daemon.root.join("src/broken");
+    packages::write_broken_extension(&broken);
+    let output = daemon.cli(&["install", &packages::path_text(&broken)]);
+    assert!(!output.status.success(), "a broken manifest must be refused");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("extension.toml") || stderr.to_lowercase().contains("toml"),
+        "the refusal must name what could not be read:\n{stderr}"
+    );
+    assert_eq!(daemon.generation(), 0, "a refused install publishes nothing");
+    assert!(daemon.catalog_ids().is_empty());
+
+    // A folder whose directory name is not the ID it declares is skipped, left in
+    // place, and never installed. A valid entry behind it proves the pass ran.
+    packages::drop_into_inbox(&daemon, "wrong.name", |staged| {
+        packages::write_extension(staged, "declared.other", "1.0.0")
+    });
+    packages::drop_into_inbox(&daemon, "sample.ok", |staged| {
+        packages::write_extension(staged, "sample.ok", "1.0.0")
+    });
+    daemon.wait_for("the valid inbox entry", || (daemon.generation() == 1).then_some(1));
+    let status = daemon.request(PackageControlOperation::Status);
+    assert_eq!(status.catalog.len(), 1);
+    assert_eq!(status.catalog[0].id, "sample.ok");
+    assert!(
+        daemon.store().inbox_dir().join("wrong.name").is_dir(),
+        "a refused entry stays exactly where the operator put it"
+    );
+    Ok(())
+}
+
+/// One operation id applies once, survives a daemon restart, and an install made
+/// by another process while the daemon runs still becomes a published generation.
+#[test]
+fn package_daemon_replay_restart_and_lost_notification_recovery() -> Result<()> {
+    let mut daemon = packages::PackageDaemon::start("replay").with_bridge();
+    let source = daemon.root.join("src/one");
+    packages::write_extension(&source, "sample.one", "1.0.0");
+    let install = PackageControlRequest {
+        operation_id: "op-install-one".into(),
+        operation: PackageControlOperation::Install {
+            directory: packages::path_text(&source),
+            scope: PackageControlScope::Global,
+            replace: false,
+        },
+    };
+
+    let client = daemon.connect_sdk();
+    let receipt = client.package_control(install.clone())?;
+    assert_eq!(receipt.generation, 1);
+    assert_eq!(receipt.changed, vec!["sample.one".to_string()]);
+    assert!(!receipt.replayed, "the first application is not a replay");
+
+    // A retry with the same id reports the recorded outcome; it never installs a
+    // second copy and never advances the generation.
+    let replay = client.package_control(install.clone())?;
+    assert!(replay.replayed, "the same operation id must replay");
+    assert_eq!(replay.generation, 1);
+    assert_eq!(
+        replay.catalog.iter().filter(|record| record.id == "sample.one").count(),
+        1
+    );
+
+    let conflicting = client.package_control(PackageControlRequest {
+        operation_id: "op-install-one".into(),
+        operation: PackageControlOperation::Disable {
+            id: "sample.one".into(),
+        },
+    });
+    let message = format!("{}", conflicting.expect_err("a reused id must be refused"));
+    assert!(message.contains("already used"), "{message}");
+
+    // Restart: the catalog and the inbox are re-read, and the published
+    // generation is the one already on disk.
+    daemon.restart_with_bridge();
+    let client = daemon.connect_sdk();
+    let status = client.package_control(PackageControlRequest {
+        operation_id: "op-status-after-restart".into(),
+        operation: PackageControlOperation::Status,
+    })?;
+    assert_eq!(status.generation, 1);
+
+    // A complete folder dropped while no daemon runs is installed at startup.
+    daemon.stop();
+    packages::drop_into_inbox(&daemon, "sample.two", |staged| {
+        packages::write_extension(staged, "sample.two", "0.2.0")
+    });
+    daemon.restart_with_bridge();
+    let client = daemon.connect_sdk();
+    let status = client.package_control(PackageControlRequest {
+        operation_id: "op-status-after-inbox".into(),
+        operation: PackageControlOperation::Status,
+    })?;
+    assert_eq!(status.generation, 2, "startup installs the folder the daemon missed");
+    assert!(status.catalog.iter().any(|record| record.id == "sample.two"));
+
+    // Another process replaces the catalog atomically while the daemon runs. No
+    // client tells the daemon; its own change detection must publish the new
+    // generation, tombstone and scope included.
+    let store = daemon.store();
+    assert_eq!(store.remove("sample.one")?, 3);
+    let published = daemon.wait_for_published_generation(&client, 3);
+    let removed = published
+        .catalog
+        .iter()
+        .find(|record| record.id == "sample.one")
+        .expect("the removed record stays as a tombstone");
+    assert_eq!(removed.state, PackageControlState::Revoked);
+    assert_eq!(removed.scope, PackageControlScope::Global);
+    assert_eq!(daemon.generation(), published.generation, "the daemon and disk agree");
+    Ok(())
+}
+
+/// A client that predates package management keeps working, and the daemon's
+/// legacy ping advertises the new capability additively.
+#[test]
+fn package_daemon_old_client_request_still_succeeds() -> Result<()> {
+    let daemon = packages::PackageDaemon::start("oldclient").with_bridge();
+    let client = daemon.connect_sdk();
+
+    client.ping()?;
+    let sessions = client.list_sessions()?;
+    assert!(sessions.len() <= 1, "a fresh home has at most the provisional session");
+    let modes = client.get_message_modes("no-such-session")?;
+    assert!(!modes.follow_up_mode.is_empty());
+
+    let pong = packages::legacy_ping(&daemon.socket);
+    assert_eq!(pong["type"], "pong");
+    let capabilities = pong["capabilities"].as_array().expect("the pong lists capabilities");
+    assert!(
+        capabilities
+            .iter()
+            .any(|capability| capability.as_str() == Some("package_control")),
+        "the daemon must advertise package management: {capabilities:?}"
+    );
+    Ok(())
+}
+
+/// A connect that fails for a reason other than "nothing is listening" is an
+/// error, never a silent offline publish behind a daemon this command could not
+/// reach.
+#[test]
+fn package_daemon_cli_permission_failure_is_not_offline() -> Result<()> {
+    let daemon = packages::PackageDaemon::start("permission");
+    daemon.stop();
+
+    let denied = daemon.root.join("denied");
+    let runtime = denied.join("runtime");
+    std::fs::create_dir_all(&runtime)?;
+    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000))?;
+    if std::fs::read_dir(&runtime).is_ok() {
+        eprintln!("skipping: this runner ignores directory permissions");
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700))?;
+        return Ok(());
+    }
+    let source = daemon.root.join("src/permission");
+    packages::write_extension(&source, "sample.permission", "1.0.0");
+    let output = daemon.cli_with_runtime(&runtime, &["install", &packages::path_text(&source)]);
+    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700))?;
+
+    assert!(
+        !output.status.success(),
+        "an unreachable socket must fail instead of publishing offline:\n{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !daemon.catalog_ids().iter().any(|(id, _)| id == "sample.permission"),
+        "the refused command must not have written the catalog"
+    );
+    Ok(())
 }
