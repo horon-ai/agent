@@ -265,6 +265,10 @@ pub(crate) enum Command {
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
         max_time: Option<std::time::Duration>,
 
+        /// Wait for background jobs started by this invocation before exiting
+        #[arg(long)]
+        wait_async: bool,
+
         #[command(flatten)]
         model_overrides: RunModelOverrides,
 

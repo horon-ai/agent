@@ -120,6 +120,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
 
+`horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
+
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
 ### Terminal client

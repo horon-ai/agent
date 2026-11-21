@@ -632,6 +632,8 @@ method_order = ["handoff", "structured"]
 
 텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
 
+`--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함합니다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시합니다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보냅니다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보냅니다.
+
 ## `--resume` 동작
 
 값 없이 `--resume`만 넘기면 데몬을 시작하기 전에 세션 선택기 오류를 표시하고 종료한다.

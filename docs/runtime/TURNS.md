@@ -664,6 +664,8 @@ Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The 
 
 Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
 
+With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
+
 ## `--resume` behaviour
 
 Passing `--resume` with no value exits with a session picker error before the daemon starts.

@@ -921,6 +921,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 1 \
             -- cli::startup::tests::startup_goal_requires_budget_and_conflicts_with_resume --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::commands::run_jobs::tests::waits_for_two_owned_jobs_without_waiting_for_another_session --nocapture
 
       - name: Run ACP cohort
         shell: bash
