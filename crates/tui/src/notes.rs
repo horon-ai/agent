@@ -18,10 +18,10 @@
 //! aside as `<name>.corrupt` rather than overwritten, and a file from a newer
 //! schema is reported and left untouched.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -612,7 +612,7 @@ impl NoteStore {
     /// Move an unreadable file out of the way so the notes in it survive.
     fn set_aside(&mut self, path: &Path, reason: &NoteFault, warnings: &mut Vec<String>) {
         let aside = corrupt_path(path);
-        if let Some(error) = discard(&aside) {
+        if let Some(error) = crate::app::state_file::discard(&aside) {
             self.foreign = true;
             warnings.push(format!(
                 "{} is not readable ({reason}) and {}; notes are not saved this run",
@@ -657,32 +657,55 @@ pub(crate) struct Keyed {
 /// per item, aligned with `items`; it is empty or short whenever the caller has
 /// none, and a row without one is keyed exactly as before.
 pub(crate) fn keyed(items: &[Item], stored: &[Option<String>]) -> Vec<Option<Keyed>> {
-    let mut ordinals = [0usize; 2];
-    let mut occurrences: BTreeMap<(Role, u64), usize> = BTreeMap::new();
     let mut out = Vec::with_capacity(items.len());
+    walk(items, |index, key, address| {
+        let (Some(key), Some(address)) = (key, address) else {
+            out.push(None);
+            return;
+        };
+        out.push(Some(Keyed {
+            key,
+            address,
+            stored_id: stored.get(index).cloned().flatten(),
+        }));
+    });
+    out
+}
+
+/// Read every row's identity and address, in conversation order.
+///
+/// Both listings are built from this one walk: the pane needs only the
+/// identities and the commands need both, so neither repeats the fingerprint
+/// and occurrence rule, and the frame path never copies a stored message id it
+/// does not read.
+fn walk(items: &[Item], mut visit: impl FnMut(usize, Option<MessageKey>, Option<Address>)) {
+    let mut ordinals = [0usize; 2];
+    // Counted per role and text rather than per index: a repeated answer is the
+    // second occurrence of its own key, wherever it sits. The map is read one
+    // entry at a time, so its iteration order never reaches the output.
+    let mut occurrences: HashMap<(Role, u64), usize> = HashMap::new();
     for (index, item) in items.iter().enumerate() {
         let Some((role, text)) = addressable(item) else {
-            out.push(None);
+            visit(index, None, None);
             continue;
         };
         ordinals[role.index()] += 1;
         let fingerprint = fingerprint(text);
         let seen = occurrences.entry((role, fingerprint)).or_insert(0);
         *seen += 1;
-        out.push(Some(Keyed {
-            key: MessageKey {
+        visit(
+            index,
+            Some(MessageKey {
                 role,
                 fingerprint,
                 occurrence: *seen,
-            },
-            address: Address {
+            }),
+            Some(Address {
                 role,
                 ordinal: ordinals[role.index()],
-            },
-            stored_id: stored.get(index).cloned().flatten(),
-        }));
+            }),
+        );
     }
-    out
 }
 
 /// The message a note can be attached to, or `None` for any other row.
@@ -753,7 +776,7 @@ impl<'a> Frame<'a> {
     ) -> Self {
         let keys = session
             .filter(|session| store.count(session) > 0)
-            .map(|_| message_keys(items, ids));
+            .map(|_| message_keys(items));
         Self {
             store,
             session,
@@ -768,11 +791,14 @@ impl<'a> Frame<'a> {
     }
 }
 
-pub(crate) fn message_keys(items: &[Item], ids: &[Option<String>]) -> Vec<Option<MessageKey>> {
-    keyed(items, ids)
-        .into_iter()
-        .map(|entry| entry.map(|entry| entry.key))
-        .collect()
+/// The identity of each row that can hold a note, aligned with `items`.
+///
+/// The frame asks only for these, so it takes the shared walk's identities and
+/// drops the addresses: no stored message id is copied to answer a draw.
+pub(crate) fn message_keys(items: &[Item]) -> Vec<Option<MessageKey>> {
+    let mut keys = Vec::with_capacity(items.len());
+    walk(items, |_, key, _| keys.push(key));
+    keys
 }
 
 /// The text a note's listing quotes for one message.
@@ -959,83 +985,22 @@ fn to_value(sessions: &AllNotes) -> Value {
 
 /// `<path>.corrupt`: where an unreadable notes file is kept.
 fn corrupt_path(path: &Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map_or_else(|| std::ffi::OsString::from("tui-notes"), |name| name.to_os_string());
-    name.push(".corrupt");
-    path.with_file_name(name)
+    crate::app::state_file::corrupt_path(path, "tui-notes")
 }
 
 /// `<path>.lock`: the file that keeps two savers apart.
 fn lock_path(path: &Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map_or_else(|| std::ffi::OsString::from("tui-notes"), |name| name.to_os_string());
-    name.push(".lock");
-    path.with_file_name(name)
+    crate::app::state_file::lock_path(path, "tui-notes")
 }
 
 /// Write `sessions` beside `path` and rename it over the file.
 ///
-/// The temporary file is created owner-only and flushed before the rename, so a
-/// reader sees either the old file or the whole new one, never a half-written
-/// one.
+/// The temporary file is created owner-only and flushed before the rename, which
+/// is [`crate::app::state_file::write_atomic`]'s job: the notes file shares its
+/// durability rule with the pins file, so the sequence is written once.
 fn write_atomic(path: &Path, sessions: &AllNotes) -> Result<(), NoteFault> {
-    let directory = path
-        .parent()
-        .ok_or_else(|| NoteFault::new(format!("{} has no directory", path.display())))?;
-    fs::create_dir_all(directory)
-        .map_err(|error| NoteFault::new(format!("cannot create {}: {error}", directory.display())))?;
-    let temp = directory.join(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .map_or("tui-notes", |name| name.to_str().unwrap_or("tui-notes")),
-        std::process::id()
-    ));
     let bytes = serde_json::to_vec_pretty(&to_value(sessions)).map_err(|error| NoteFault::new(error.to_string()))?;
-    if let Err(error) = write_temp(&temp, &bytes) {
-        return Err(with_cleanup(error, &temp));
-    }
-    fs::rename(&temp, path).map_err(|error| {
-        with_cleanup(
-            NoteFault::new(format!("cannot replace {}: {error}", path.display())),
-            &temp,
-        )
-    })
-}
-
-/// Add a failed temp-file cleanup to a write error, so neither goes unreported.
-fn with_cleanup(error: NoteFault, temp: &Path) -> NoteFault {
-    match discard(temp) {
-        Some(cleanup) => NoteFault::new(format!("{error}; {cleanup}")),
-        None => error,
-    }
-}
-
-/// Remove a file that may not exist, reporting a failure that matters.
-fn discard(path: &Path) -> Option<String> {
-    match fs::remove_file(path) {
-        Ok(()) => None,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => Some(format!("{} could not be removed: {error}", path.display())),
-    }
-}
-
-/// Create `temp` owner-only, write `bytes` and flush them.
-fn write_temp(temp: &Path, bytes: &[u8]) -> Result<(), NoteFault> {
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    horon_agent_sdk::private_fs::harden_credential_open(&mut options, temp)
-        .map_err(|error| NoteFault::new(format!("cannot prepare {}: {error}", temp.display())))?;
-    let mut file = options
-        .open(temp)
-        .map_err(|error| NoteFault::new(format!("cannot create {}: {error}", temp.display())))?;
-    horon_agent_sdk::private_fs::set_permissions_owner_only_file(&file)
-        .map_err(|error| NoteFault::new(format!("cannot make {} private: {error}", temp.display())))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| NoteFault::new(format!("cannot write {}: {error}", temp.display())))?;
-    Ok(())
+    crate::app::state_file::write_atomic(path, &bytes, "tui-notes").map_err(NoteFault::new)
 }
 
 /// A held save lock, released when it is dropped.
@@ -1054,10 +1019,11 @@ impl SaveLock {
             match options.open(path) {
                 Ok(file) => {
                     horon_agent_sdk::private_fs::set_permissions_owner_only_file(&file).map_err(|error| {
-                        with_cleanup(
-                            NoteFault::new(format!("cannot make {} private: {error}", path.display())),
-                            path,
-                        )
+                        let error = format!("cannot make {} private: {error}", path.display());
+                        NoteFault::new(match crate::app::state_file::discard(path) {
+                            Some(cleanup) => format!("{error}; {cleanup}"),
+                            None => error,
+                        })
                     })?;
                     return Ok(Self {
                         path: path.to_path_buf(),
@@ -1065,7 +1031,7 @@ impl SaveLock {
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     if stale(path) {
-                        if let Some(cleanup) = discard(path) {
+                        if let Some(cleanup) = crate::app::state_file::discard(path) {
                             return Err(NoteFault::new(format!("cannot break the stale notes lock: {cleanup}")));
                         }
                         continue;

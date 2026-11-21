@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -251,7 +251,7 @@ impl PinStore {
     /// Move an unreadable file out of the way so the pins in it survive.
     fn set_aside(&mut self, path: &Path, reason: &PinFault, warnings: &mut Vec<String>) {
         let aside = corrupt_path(path);
-        if let Some(error) = discard(&aside) {
+        if let Some(error) = crate::app::state_file::discard(&aside) {
             self.foreign = true;
             warnings.push(format!(
                 "{} is not readable ({reason}) and {}; pins are not saved this run",
@@ -369,83 +369,22 @@ fn read_for_merge(path: &Path) -> Result<ByScope, PinFault> {
 
 /// `<path>.corrupt`: where an unreadable pins file is kept.
 fn corrupt_path(path: &Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map_or_else(|| std::ffi::OsString::from("tui-pins"), |name| name.to_os_string());
-    name.push(".corrupt");
-    path.with_file_name(name)
+    crate::app::state_file::corrupt_path(path, "tui-pins")
 }
 
 /// `<path>.lock`: the file that keeps two savers apart.
 fn lock_path(path: &Path) -> PathBuf {
-    let mut name = path
-        .file_name()
-        .map_or_else(|| std::ffi::OsString::from("tui-pins"), |name| name.to_os_string());
-    name.push(".lock");
-    path.with_file_name(name)
+    crate::app::state_file::lock_path(path, "tui-pins")
 }
 
 /// Write `scopes` beside `path` and rename it over the file.
 ///
-/// The temporary file is created owner-only and flushed before the rename, so
-/// a reader sees either the old file or the whole new one, never a half-written
-/// one.
+/// The temporary file is created owner-only and flushed before the rename, which
+/// is [`crate::app::state_file::write_atomic`]'s job: the pins file shares its
+/// durability rule with the notes file, so the sequence is written once.
 fn write_atomic(path: &Path, scopes: &ByScope) -> Result<(), PinFault> {
-    let directory = path
-        .parent()
-        .ok_or_else(|| PinFault::new(format!("{} has no directory", path.display())))?;
-    fs::create_dir_all(directory)
-        .map_err(|error| PinFault::new(format!("cannot create {}: {error}", directory.display())))?;
-    let temp = directory.join(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .map_or("tui-pins", |name| name.to_str().unwrap_or("tui-pins")),
-        std::process::id()
-    ));
     let bytes = serde_json::to_vec_pretty(&to_value(scopes)).map_err(|error| PinFault::new(error.to_string()))?;
-    if let Err(error) = write_temp(&temp, &bytes) {
-        return Err(with_cleanup(error, &temp));
-    }
-    fs::rename(&temp, path).map_err(|error| {
-        with_cleanup(
-            PinFault::new(format!("cannot replace {}: {error}", path.display())),
-            &temp,
-        )
-    })
-}
-
-/// Add a failed temp-file cleanup to a write error, so neither goes unreported.
-fn with_cleanup(error: PinFault, temp: &Path) -> PinFault {
-    match discard(temp) {
-        Some(cleanup) => PinFault::new(format!("{error}; {cleanup}")),
-        None => error,
-    }
-}
-
-/// Remove a file that may not exist, reporting a failure of one that does.
-fn discard(path: &Path) -> Option<String> {
-    match fs::remove_file(path) {
-        Ok(()) => None,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => Some(format!("{} could not be removed: {error}", path.display())),
-    }
-}
-
-/// Create `temp` owner-only, write `bytes` and flush them.
-fn write_temp(temp: &Path, bytes: &[u8]) -> Result<(), PinFault> {
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    horon_agent_sdk::private_fs::harden_credential_open(&mut options, temp)
-        .map_err(|error| PinFault::new(format!("cannot prepare {}: {error}", temp.display())))?;
-    let mut file = options
-        .open(temp)
-        .map_err(|error| PinFault::new(format!("cannot create {}: {error}", temp.display())))?;
-    horon_agent_sdk::private_fs::set_permissions_owner_only_file(&file)
-        .map_err(|error| PinFault::new(format!("cannot make {} private: {error}", temp.display())))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| PinFault::new(format!("cannot write {}: {error}", temp.display())))?;
-    Ok(())
+    crate::app::state_file::write_atomic(path, &bytes, "tui-pins").map_err(PinFault::new)
 }
 
 /// A held save lock, released when its file handle closes.

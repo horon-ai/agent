@@ -344,6 +344,14 @@ pub struct Registry {
     /// session change replaces them, and an empty list is a session whose
     /// harness reports none.
     skills: Vec<Skill>,
+    /// The whole list `/help` and the popup read, assembled when a source
+    /// changes rather than on every keystroke.
+    ///
+    /// A dedicated sync rebuilds it once per changed draft, so building the
+    /// descriptions and sorting the names there would be work per key. The list
+    /// is rebuilt by [`Self::rebuild_entries`], the one place that knows every
+    /// source of a command.
+    entries: Vec<Entry>,
     stamps: [Option<Vec<FileStamp>>; 2],
     last_check: Instant,
     warnings: Vec<String>,
@@ -352,15 +360,18 @@ pub struct Registry {
 impl Registry {
     /// A registry reading `user_commands`, with no project directory yet.
     pub fn new(user_commands: PathBuf) -> Self {
-        Self {
+        let mut registry = Self {
             user: Some(user_commands),
             project: None,
             files: Vec::new(),
             skills: Vec::new(),
+            entries: Vec::new(),
             stamps: [None, None],
             last_check: Instant::now(),
             warnings: Vec::new(),
-        }
+        };
+        registry.rebuild_entries();
+        registry
     }
 
     /// Read every command file now.
@@ -421,6 +432,7 @@ impl Registry {
     /// resolving the moment the client moves.
     pub fn set_skills(&mut self, skills: Vec<Skill>) {
         self.skills = skills;
+        self.rebuild_entries();
     }
 
     /// Every command in force, as `/help` and the slash popup list it.
@@ -429,6 +441,21 @@ impl Registry {
     /// harness's own names, then the command files, then the skills the harness
     /// reported.
     pub fn entries(&self) -> Vec<Entry> {
+        self.entries.clone()
+    }
+
+    /// The list `/help` and the popup read, without copying it.
+    pub fn entry_list(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    /// Reassemble the listing from the sources in force.
+    ///
+    /// The order is the order the sections print in: built-ins first, then the
+    /// harness's own names, then the command files, then the skills the harness
+    /// reported. Called by every path that changes a source, and by no path that
+    /// only reads one.
+    fn rebuild_entries(&mut self) {
         let mut entries: Vec<Entry> = LOCAL_NAMES
             .iter()
             .map(|name| Entry {
@@ -462,7 +489,7 @@ impl Registry {
             group: Group::Skill,
             shadowed: false,
         }));
-        entries
+        self.entries = entries;
     }
 
     /// Take the problems the last read produced.
@@ -577,24 +604,38 @@ impl Registry {
     /// position is the user's to fill.
     pub fn complete(&self, text: &str) -> Option<Completion> {
         let rest = text.trim_start().strip_prefix('/')?;
+        let completion = self.complete_prefix(rest)?;
+        Some(Completion {
+            insert: format!("/{}", completion.insert),
+            matches: completion.matches,
+        })
+    }
+
+    /// [`Self::complete`] for a prefix already separated from its slash.
+    ///
+    /// The popup keeps the prefix of the draft it was last synced against, so a
+    /// caller that has it does not build the whole line to hand it back.
+    pub fn complete_prefix(&self, rest: &str) -> Option<Completion> {
         if rest.contains(char::is_whitespace) {
             return None;
         }
-        let mut names: Vec<&str> = LOCAL_NAMES.to_vec();
-        names.extend(server_commands().iter().map(|(name, _)| name.as_str()));
-        names.extend(
-            self.files
-                .iter()
-                .filter(|file| !file.shadowed)
-                .map(|file| file.name.as_str()),
-        );
-        names.sort_unstable();
-        names.dedup();
-        let matches: Vec<String> = names
+        // The built-ins and the harness commands never move while the process
+        // runs, so their sorted, deduplicated list is built once. The command
+        // files are the only source that changes, so their names are merged
+        // into the matches rather than into a list rebuilt per keystroke.
+        let mut matches: Vec<String> = STABLE_NAMES
             .iter()
             .filter(|name| name.starts_with(rest))
-            .map(|name| (*name).to_string())
+            .map(|name| name.clone())
             .collect();
+        for file in self.files.iter().filter(|file| !file.shadowed) {
+            if !file.name.starts_with(rest) {
+                continue;
+            }
+            if let Err(at) = matches.binary_search_by(|name| name.as_str().cmp(file.name.as_str())) {
+                matches.insert(at, file.name.clone());
+            }
+        }
         if matches.is_empty() {
             return None;
         }
@@ -602,10 +643,7 @@ impl Registry {
             1 => matches[0].clone(),
             _ => common_prefix(&matches),
         };
-        Some(Completion {
-            matches,
-            insert: format!("/{insert}"),
-        })
+        Some(Completion { matches, insert })
     }
 
     /// The `/help` text: every command with its summary, then the keys.
@@ -618,7 +656,7 @@ impl Registry {
 
     /// The `/help` text against the key map in force.
     pub fn help_with(&self, bindings: &crate::keys::Bindings) -> String {
-        crate::help::text(&self.entries(), bindings)
+        crate::help::text(self.entry_list(), bindings)
     }
 
     /// Re-read both directories and rebuild the file list.
@@ -642,6 +680,7 @@ impl Registry {
         }
         files.sort_by(|left, right| left.name.cmp(&right.name));
         self.files = files;
+        self.rebuild_entries();
     }
 
     /// Every readable markdown file in one command directory.
@@ -740,6 +779,20 @@ const LOCAL_NAMES: [&str; 29] = [
     "unpin",
     "voice",
 ];
+
+/// The built-in and harness names completion filters, sorted and deduplicated.
+///
+/// Neither source changes while the process runs, so the list is built once,
+/// lazily, and every keystroke filters it instead of sorting the same names
+/// again. The command files are the only source that moves, and they are merged
+/// into the matches by [`Registry::complete_prefix`].
+static STABLE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let mut names: Vec<String> = LOCAL_NAMES.iter().map(|name| (*name).to_string()).collect();
+    names.extend(server_commands().iter().map(|(name, _)| name.clone()));
+    names.sort_unstable();
+    names.dedup();
+    names
+});
 
 /// Every runtime command, in declaration order.
 const SERVER_VARIANTS: &[RuntimeCommand] = &[
