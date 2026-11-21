@@ -23,8 +23,11 @@
 클라이언트는 자체 인자를 받는다.
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]] [--hide-thinking]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
 ```
+
+모션 플래그 셋은 실행 단위 재정의다. 모든 설정 파일과 환경 변수보다 우선하고, 설정 화면에는 `command line`으로 나오며, 그 아래 파일을 다시 읽어도 유지된다. 범위를 벗어난 플래그는 경고가 아니라 인자 오류다. `--max-fps 0`은 기대 범위를 출력하고 종료 코드 2로 끝난다.
 
 | 플래그 | 뜻 |
 | --- | --- |
@@ -33,6 +36,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--cwd <dir>` | 이 클라이언트가 만드는 세션의 작업 디렉터리 |
 | `--config <file>` | 설정 파일을 하나 더 읽는다. 여러 번 쓸 수 있다 |
 | `--gallery[=<scene>]` | 터미널 렌더러를 오프라인에서 미리 보기 |
+| `--motion <mode>` | 이번 실행에서 `motion.preset` 대신 쓸 `full`, `reduced`, `static` |
+| `--spinner-interval <ms>` | 이번 실행의 스피너 프레임 길이, `40`부터 `2000`까지 |
+| `--max-fps <n>` | 이번 실행의 스트림 프레임 상한, `1`부터 `240`까지 |
 | `--hide-thinking` | `transcript.show_reasoning`과 무관하게 이 세션에서 모델 추론을 숨긴 채 시작한다. `ctrl+t`(기본값)로 다시 켜고 끌 수 있다 |
 | `-V`, `--version` | 버전을 출력하고 끝낸다 |
 | `-h`, `--help` | 사용법을 출력하고 끝낸다 |
@@ -71,6 +77,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | --- | --- | --- | --- |
 | `theme` | 문자열 | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
+| `motion.spinner_interval` | 숫자 | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
+| `motion.max_fps` | 숫자 | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | 참·거짓 | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
@@ -83,6 +92,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | 참·거짓 | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.show_tool_activity` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY` |
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
@@ -90,7 +100,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | 모델 ID 배열 | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
-이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
+이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 스물한 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
 
 `statusline.path_max`는 `path` 세그먼트가 줄이기 전에 보여 줄 디렉터리의 최대 길이이고, `0`이면 줄이지 않는다. 줄인 경로는 뒤에서부터 온전한 세그먼트만 남기고 `…/`로 시작하므로, 표시가 생략한 디렉터리를 뜻한다. 구분자가 아예 없는 경로는 하나뿐인 이름 안에서 잘리고 말줄임표만 붙는다. `statusline.context_window`는 `context_pct` 세그먼트가 나누는 토큰 수이며 `0`이면 이 세그먼트를 숨긴다.
 
@@ -98,6 +108,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
 
+`motion.preset`은 `running` 옆의 표시를 제어한다. `full`은 표시 문자를 순서대로 바꾸고 `reduced`는 첫 문자를 유지하며 `static`은 표시를 숨긴다. `motion.spinner_interval`은 같은 문자를 유지하는 최소 시간이며 `40`부터 `2000`밀리초까지 설정할 수 있다. `motion.max_fps`는 모든 모드에서 본문이 도착하거나 회전 표시가 바뀔 때 자동으로 다시 그리는 횟수를 초당 `1`부터 `240`까지 제한한다. `max_fps = 4`이면 자동 갱신 간격은 최소 250밀리초다. 키 입력, 화면 크기 변경처럼 즉시 응답해야 하는 이벤트는 그보다 빨리 화면을 갱신할 수 있다. 범위를 벗어난 값은 거부하며 경고에 대신 적용한 기본값을 표시한다.
 `appearance.changes = "accessible"`로 지정하면 도구 출력에서 추가와 삭제를 서로 다른 색으로 표시하며 `+`와 `-` 표식을 유지합니다. 긍정과 부정 상태의 색도 조정합니다. `theme`을 선택하면 테마의 원래 색으로 돌아갑니다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
@@ -110,6 +121,11 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 # ~/.horon/tui.toml
 theme = "dark"
 symbols = "nerd"
+
+[motion]
+preset = "reduced"
+spinner_interval = 120
+max_fps = 20
 
 [statusline]
 preset = "custom"
@@ -204,8 +220,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | 트랜스크립트를 한 줄 위에 붙잡아 둔다 |
 | `app.scroll_down` | `shift+down` | 트랜스크립트를 한 줄 끝 쪽으로 옮긴다 |
 | `app.scroll_bottom` | `ctrl+end` | 다시 대화의 끝을 따라간다 |
-| `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
-| `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
+| `app.expand_tool` | `ctrl+o` | 선택한 보존 도구 결과를 펼치거나 접는다 |
+| `app.toggle_tool_activity` | `alt+t` | 현재 세션에서 완료된 도구 활동을 표시하거나 숨긴다 |
 | `app.copy_code` | `alt+c` | 최근 답변의 마지막 코드 블록을 복사한다 |
 | `app.copy_last` | `alt+l` | 최근 답변을 복사한다 |
 | `app.copy_draft` | `alt+d` | 초안 전체를 복사한다 |
@@ -214,6 +230,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
 | `app.cycle_model` | `ctrl+p` | 모델 후보 목록에서 다음 모델로 옮긴다 |
 | `app.cycle_model_back` | `ctrl+alt+p` | 모델 후보 목록에서 이전 모델로 옮긴다 |
+| `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
 | `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
 | `editor.delete` | `delete` | 커서 자리 글자를 지운다 |
@@ -279,6 +296,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 피할 수 있었던 프롬프트 캐시 미스는 관련 요청 뒤에 표시됩니다. 원인과 다시 보낸 토큰의 대략적인 수가 표시되며 프롬프트 원문과 캐시 식별자는 빠집니다. 모델이나 프로바이더 변경, 만료 또는 이유가 기록된 무효화에는 표식을 붙이지 않습니다. 데몬의 `config.toml`에서 `[features] kv_cache_miss_notices = false`를 지정하면 보고를 끌 수 있습니다.
 
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
+
+이전에 보존된 도구 결과까지 스크롤한 뒤 Ctrl+O를 눌러 펼치거나 접습니다. Alt+T로 완료된 도구 행을 숨기거나 되살립니다. 실행 중인 호출과 대기 중인 승인은 화면에 남습니다.
 
 어시스턴트 글은 마크다운으로 그린다. 제목, 강조, 인라인 코드, 목록, 인용, 펜스 코드, 가로줄을 다룬다. 목록은 최대 여섯 단계까지 중첩되고, 단계마다 두 칸 또는 탭 하나를 쓰며, 모델이 적은 들여쓰기에서 중첩을 그린다. 펜스 코드는 적힌 글자를 그대로 두고, 여는 펜스 줄이 완성되면 그 첫 낱말을 언어 표시로 그리므로, 절반만 도착한 ` ```ru `가 잠깐 표시를 띄웠다가 바뀌지 않는다. 표, 링크, 렌더러가 다루지 않는 문법은 모델이 적은 원문 그대로 남는다. 글을 지우면 모델이 한 말을 잃기 때문이다. 줄바꿈된 행은 이어지는 행의 들여쓰기를 지키므로, 중첩된 항목은 줄이 바뀐 뒤에도 중첩으로 읽힌다. 새 턴은 앞 턴에서 한 행 비운 아래에서 시작한다.
 
