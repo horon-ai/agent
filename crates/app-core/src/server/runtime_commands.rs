@@ -4,6 +4,8 @@ use anyhow::{Result, bail};
 use horon_agent_harness_api::RuntimeCommand;
 use serde_json::{Value, json};
 
+pub(super) mod mcp;
+
 pub(super) fn boolean_action(args: &[String], current: bool, toggle_empty: bool) -> Result<Option<bool>> {
     match args {
         [] if toggle_empty => Ok(Some(!current)),
@@ -88,7 +90,8 @@ pub(super) async fn execute(
         RuntimeCommand::RefreshModelList
         | RuntimeCommand::Continue
         | RuntimeCommand::ResumeAll
-        | RuntimeCommand::ServerReload => {
+        | RuntimeCommand::ServerReload
+        | RuntimeCommand::Mcp => {
             bail!("Command must be routed through the server control handler")
         }
         RuntimeCommand::Skills => {

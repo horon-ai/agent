@@ -574,15 +574,50 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def configure_mcp_probe(home: str, case_root: str) -> str:
+    fixture = os.path.join(REPO_ROOT, "scripts", "perf", "fixtures", "bench_mcp_server.py")
+    calls = os.path.join(case_root, "mcp-tool-called")
+    wrapper = os.path.join(case_root, "mcp_probe_fixture.py")
+    with open(wrapper, "w", encoding="utf-8") as handle:
+        handle.write(
+            "import json, pathlib, runpy, sys\n"
+            "handle = runpy.run_path(sys.argv[1])['handle']\n"
+            "for line in sys.stdin:\n"
+            "    request = json.loads(line)\n"
+            "    if request.get('method') == 'tools/call':\n"
+            "        pathlib.Path(sys.argv[2]).touch()\n"
+            "    response = handle(request)\n"
+            "    if response is not None:\n"
+            "        print(json.dumps(response), flush=True)\n"
+        )
+    server = {"command": sys.executable, "args": [wrapper, fixture, calls]}
+    for path, name in ((os.path.join(home, "mcp.json"), "trusted-fixture"),
+                       (os.path.join(case_root, ".mcp.json"), "denied-fixture")):
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"mcpServers": {name: server}}, handle)
+    return calls
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    tool_calls = configure_mcp_probe(home, case_root)
+    env["HORON_AGENT_WORKSPACE_TRUST"] = "deny"
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before rename")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before MCP inspection")
+        terminal.send("/mcp\r")
+        terminal.read_until("trusted-fixture", STEP_TIMEOUT, "trusted MCP server listed")
+        terminal.send("/mcp probe trusted-fixture\r")
+        terminal.read_until("Transport: stdio", STEP_TIMEOUT, "MCP probe transport")
+        terminal.read_until("1 available", STEP_TIMEOUT, "MCP probe capability and tool count")
+        terminal.send("/mcp probe denied-fixture\r")
+        terminal.read_until("not in the trusted MCP configuration", STEP_TIMEOUT, "untrusted MCP probe refused")
+        if os.path.exists(tool_calls):
+            raise Failure(f"MCP inspection invoked a fixture tool\n--- transcript ---\n{terminal.transcript}")
 
         name = "PTY review session"
         terminal.send(f"/rename {name}\r")
@@ -617,9 +652,16 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         terminal.send("/pin\r")
-        terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the current session by its saved name")
-        if not os.path.isfile(os.path.join(home, "tui-pins.json")):
-            raise Failure("pin confirmation did not persist a local pin file")
+        pin_path = os.path.join(home, "tui-pins.json")
+        deadline = time.monotonic() + STEP_TIMEOUT
+        while not os.path.isfile(pin_path) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not os.path.isfile(pin_path):
+            raise Failure("pin command did not persist a local pin file")
+        with open(pin_path, encoding="utf-8") as handle:
+            pins = [session_id for ids in json.load(handle)["scopes"].values() for session_id in ids]
+        if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
+            raise Failure(f"expected one saved session to be pinned, got {pins!r}")
         if POSIX:
             terminal.send("/switch\r")
             terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")

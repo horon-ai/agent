@@ -105,6 +105,7 @@ Commands:
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
+  /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /pin [id]      keep a session at the top of the session list, or pin the
@@ -264,6 +265,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
+        "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",

@@ -15,6 +15,7 @@ members = [
     "crates/edit-safety",
     "crates/base",
     "crates/extension-types",
+    "crates/extension-sdk",
     "crates/build-meta",
     "crates/ambient-types",
     "crates/auth-types",
@@ -70,6 +71,12 @@ members = [
     "crates/platform-linux",
     "crates/platform-macos",
     "crates/platform-windows",
+
+    # Author-side packages: the SDK and its worked example live in the workspace
+    # so `cargo test -p horon-agent-extension-sdk` and
+    # `cargo check -p horon-package-example` work from the root. Nothing in the
+    # `horon-agent` graph depends on either one.
+    "examples/packages/example",
 ]
 
 [lib]
