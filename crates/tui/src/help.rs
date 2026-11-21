@@ -67,6 +67,14 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
     (
+        ids::APP_CYCLE_MODEL,
+        "switch to the next model in models.shortlist, wrapping at the last one",
+    ),
+    (
+        ids::APP_CYCLE_MODEL_BACK,
+        "switch to the previous model in models.shortlist, wrapping at the first one",
+    ),
+    (
         ids::APP_REPAINT,
         "paint the whole screen again, keeping the draft, the selection and the view",
     ),

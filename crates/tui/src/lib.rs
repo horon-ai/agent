@@ -518,6 +518,12 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
         // The session and the working directory can change while the client
         // runs, and a key can start a turn, answer a prompt or leave one
         // without any event arriving; the window is renamed only when the name
