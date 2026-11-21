@@ -782,6 +782,10 @@ Set `[tools] output_column_cap = 120` to shorten each text preview line to 120 U
 
 A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
 
+### Markdown heading outlines
+
+With `[tools] read_summary = true`, an unqualified `read` of a Markdown file over 400 lines and up to 2 MiB shows a heading outline. It lists up to 100 headings with inclusive source ranges. Each range ends before the next heading. Headings inside fenced code are skipped. Use `full: true` or an explicit line range to read the original text within the regular read limits.
+
 ### `read` deduplication
 
 Reading a file that was already read in the same session compares content hashes (`crates/app-core/src/tool/read_state.rs`).

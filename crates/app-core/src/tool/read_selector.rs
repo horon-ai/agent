@@ -63,6 +63,78 @@ pub(crate) struct Rendered {
     pub more: bool,
 }
 
+/// Render bounded heading excerpts with inclusive source ranges.
+pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: usize) -> Option<Rendered> {
+    const MAX_HEADINGS: usize = 100;
+    let mut headings = Vec::new();
+    let mut fence = None;
+    let mut previous = None;
+    for (index, line) in text.lines().enumerate() {
+        let number = index + 1;
+        let trimmed = line.trim_start_matches(' ');
+        let marker = trimmed.as_bytes().first().copied();
+        let delimiter = marker.filter(|byte| matches!(byte, b'`' | b'~'));
+        let run = delimiter.map_or(0, |byte| trimmed.bytes().take_while(|&item| item == byte).count());
+        let indented = line.len() - trimmed.len() > 3 || trimmed.starts_with('\t');
+        if let Some((open, width)) = fence {
+            if !indented && delimiter == Some(open) && run >= width && trimmed[run..].trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+        if indented || trimmed.is_empty() {
+            previous = None;
+            continue;
+        }
+        if run >= 3 {
+            fence = delimiter.map(|byte| (byte, run));
+            previous = None;
+            continue;
+        }
+
+        let hashes = trimmed.bytes().take_while(|&byte| byte == b'#').count();
+        let heading = if (1..=6).contains(&hashes) && trimmed[hashes..].starts_with([' ', '\t']) {
+            Some((number, hashes, trimmed[hashes..].trim()))
+        } else if matches!(marker, Some(b'=' | b'-')) && trimmed.trim_end().bytes().all(|byte| Some(byte) == marker) {
+            previous
+                .take()
+                .map(|(line, title)| (line, if marker == Some(b'=') { 1 } else { 2 }, title))
+        } else {
+            None
+        };
+        previous = if heading.is_none() && !trimmed.starts_with(['#', '>', '-', '+', '*']) {
+            Some((number, trimmed.trim_end()))
+        } else {
+            None
+        };
+        if let Some(heading) = heading {
+            headings.push(heading);
+            if headings.len() > MAX_HEADINGS {
+                break;
+            }
+        }
+    }
+
+    let &(first, _, _) = headings.first()?;
+    let mut body = String::from("[Markdown heading outline]\n");
+    for (index, &(start, level, title)) in headings.iter().take(MAX_HEADINGS).enumerate() {
+        let end = headings.get(index + 1).map_or(total_lines, |&(line, _, _)| line - 1);
+        let hashes = &"######"[..level];
+        let title = crate::util::truncate_str(title, 240);
+        body.push_str(&format!("{start}-{end}\t{hashes} {title}\n"));
+    }
+    if headings.len() > MAX_HEADINGS {
+        body.push_str("[More headings omitted]\n");
+    }
+    body.push_str(&format!("\nRead source with path:A-B, e.g. {display}:{first}-{first}."));
+    Some(Rendered {
+        body,
+        total_lines,
+        last_line: total_lines,
+        ..Rendered::default()
+    })
+}
+
 /// Splits a read path into the path itself and its selector.
 ///
 /// The whole string wins when it names an existing file. Otherwise the first

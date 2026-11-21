@@ -2,7 +2,7 @@ use super::*;
 use crate::tool::{ToolContext, ToolExecutionMode};
 use serde_json::json;
 
-fn make_ctx(working_dir: std::path::PathBuf) -> ToolContext {
+pub(super) fn make_ctx(working_dir: std::path::PathBuf) -> ToolContext {
     ToolContext {
         session_id: "test-session".to_string(),
         message_id: "test-message".to_string(),
@@ -1023,13 +1023,13 @@ impl Drop for HomeGuard {
 }
 
 /// Points the process at a temporary `HORON_HOME` with the given config.
-struct ConfigHome {
+pub(super) struct ConfigHome {
     _home: tempfile::TempDir,
     previous: Option<std::ffi::OsString>,
 }
 
 impl ConfigHome {
-    fn with_config(contents: &str) -> Self {
+    pub(super) fn with_config(contents: &str) -> Self {
         let home = tempfile::tempdir().expect("config home");
         let previous = std::env::var_os("HORON_HOME");
         crate::env::set_var("HORON_HOME", home.path());

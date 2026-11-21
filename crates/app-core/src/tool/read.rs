@@ -5,7 +5,8 @@
 #![cfg_attr(test, allow(clippy::await_holding_lock))]
 
 use super::read_selector::{
-    DEFAULT_LIMIT, Rendered, Selector, push_numbered_line, render_range, render_with_selector, split_path_and_selector,
+    DEFAULT_LIMIT, Rendered, Selector, push_numbered_line, render_markdown_outline, render_range, render_with_selector,
+    split_path_and_selector,
 };
 #[cfg(test)]
 use super::read_selector::{MAX_LINE_LEN, TRUNCATED_TAG};
@@ -318,7 +319,7 @@ impl Tool for ReadTool {
             return Ok(ToolOutput::new(repeated.output));
         }
 
-        let summary = if matches!(selector, Selector::None) && !explicit_range && !params.hashline {
+        let summary = if matches!(selector, Selector::None) && !explicit_range && !params.hashline && !params.full {
             structural_summary(&content, &authored_path, &path)
         } else {
             None
@@ -442,6 +443,11 @@ fn structural_summary(content: &str, display: &str, path: &Path) -> Option<Rende
     let total_lines = content.lines().count();
     if total_lines <= SUMMARY_MIN_LINES {
         return None;
+    }
+    if path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown") || ext.eq_ignore_ascii_case("mdx")
+    }) {
+        return render_markdown_outline(content, display, total_lines);
     }
     let lang = horon_agent_ast::Lang::from_path(path)?;
     let segments = horon_agent_ast::summarize(content, lang, SUMMARY_MIN_BODY_LINES)?;
@@ -631,6 +637,10 @@ mod read_skill;
 mod read_sqlite;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "read/options_tests.rs"]
+mod options_tests;
 
 /// A path that leaves the filesystem: an `agent://` reference or any URL scheme.
 ///
