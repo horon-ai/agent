@@ -101,6 +101,7 @@ pub(super) fn is_turn_content(event: &ServerEvent) -> bool {
         | ServerEvent::Compaction { .. }
         | ServerEvent::ProviderGuardrail { .. }
         | ServerEvent::TokenUsage { .. } => true,
+        ServerEvent::SoftInterruptInjected { point, .. } => point == "native_tool_retry",
         ServerEvent::TurnStopped { reason, .. } => !matches!(reason, TurnStopReason::Interrupted),
         _ => false,
     }

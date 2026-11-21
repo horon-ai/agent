@@ -252,6 +252,9 @@ pub enum ApiEvent {
         /// Tools skipped by an urgent interrupt at point C.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tools_skipped: Option<u32>,
+        /// User-facing notice for a native tool retry. Ordinary interrupts omit it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        notice: Option<String>,
         /// `system` or `background_task` for daemon-originated injections.
         /// Absent for user messages.
         #[serde(default, skip_serializing_if = "Option::is_none")]

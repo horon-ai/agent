@@ -743,6 +743,7 @@ fn soft_interrupt_ids_requests_and_events_wire_shape() {
         client_ids: vec!["f1".into(), "f2".into()],
         point: "D".into(),
         tools_skipped: None,
+        notice: None,
         display_role: None,
     });
     assert_eq!(

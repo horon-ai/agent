@@ -81,6 +81,12 @@ The `/judge` command is a different workload. It spawns a reviewer worker inside
 
 Synthetic continuations are capped by `MAX_AUTO_CONTINUATIONS = 2` (`crates/agent-runtime/src/turn_recovery.rs:31`). `TurnState` never exceeds that value (`crates/agent-runtime/src/turn_state.rs:633-636`; `record_auto_continuation` clamps at the ceiling), and a new turn starts at 0 with `TurnState::new()`, so the budget resets (`crates/agent-runtime/src/turn_state.rs:489-491`, test `crates/agent-runtime/src/turn_state_tests.rs:200-208`). Once the limit is used up, recovery stops and the user is told (`crates/app-core/src/agent/turn_recovery_wiring.rs:167-179`).
 
+### Tool calls written as text
+
+Assistant text stays text on every provider wire. An example in prose or a Markdown code block cannot run a tool. When a finished text-only response is a standalone tool attempt and the request offered tools, the agent shows a notice and asks for a native structured call. It tries at most twice per turn. Any native call takes precedence and follows normal validation. If the endpoint keeps emitting text, the turn ends without executing the attempt.
+
+The CLI prints the notice, and ACP and the harness API forward it to clients such as the TUI. This budget is separate from automatic continuations and from retries for malformed arguments on native calls.
+
 ### Soft interrupts survive a restart
 
 A message that arrives during a turn is kept in a per-session store and restored when the session is loaded again (`crates/base/src/soft_interrupt_store.rs`). The restore point is `crates/app-core/src/agent/turn_execution.rs:1170`, and the path saved when a session closes is pinned by the test in `crates/app-core/src/agent_tests.rs:2016`. The injection mechanism itself is described in [`docs/runtime/TURNS.md`](/reference/runtime/turns).

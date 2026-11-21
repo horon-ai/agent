@@ -415,14 +415,18 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/note [add\|edit\|remove\|list\|prune] [address] [text]` | Keep, list or remove a local note on a transcript message |
 | `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
+| `/record [path\|stop\|status]` | Start, stop or inspect a local transcript recording |
+| `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): fifteen commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): seventeen commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
+
+`/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
@@ -439,6 +443,8 @@ built-in commands:
   /note                note, list or remove a local note on a transcript message
   /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
+  /record              record the conversation to a local file, or stop (stop, status)
+  /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft

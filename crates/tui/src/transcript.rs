@@ -8,6 +8,10 @@
 
 use std::time::Instant;
 
+#[path = "transcript_recording.rs"]
+mod recording;
+pub use recording::{OUTPUT_NOT_RECORDED, WARNING_NOT_RECORDED};
+
 #[path = "transcript_turn_usage.rs"]
 mod turn_usage;
 
@@ -346,6 +350,12 @@ pub struct Transcript {
     /// drawn in full. Kept here rather than on the items so a line stays a plain
     /// description of a call, and bounded in `tool_expand`.
     expand: ExpandState,
+    /// How many times the conversation was replaced.
+    ///
+    /// A clear is not an edit: nothing that was on screen before it is part of
+    /// the conversation after it, and a reader that tracks positions (a
+    /// recording counts the answers it already kept) has to start over.
+    revision: u64,
     /// The requests this session has decided, newest last.
     ///
     /// A refusal can reach the client after its prompt was answered, and the
@@ -399,6 +409,7 @@ impl Default for Transcript {
             tool_output_lines: DEFAULT_OUTPUT_LINES,
             starts: Vec::new(),
             expand: ExpandState::default(),
+            revision: 0,
             decided: Vec::new(),
             turn: None,
             turn_usage: false,
@@ -550,6 +561,7 @@ impl Transcript {
     /// reader's settings: the output preview length and the reasoning switch
     /// were chosen for this terminal, not for the session that was open.
     pub fn clear(&mut self) {
+        self.revision += 1;
         self.items.clear();
         self.stored.clear();
         self.streaming = Streaming::default();
