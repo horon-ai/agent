@@ -223,7 +223,11 @@ fn commands_server_names_follow_the_protocol() {
         SERVER_VARIANTS.len(),
         "the built-in `/skills`, `/mcp` and `/swarm` own exactly three harness names"
     );
-    assert!(!names.iter().any(|(name, _)| matches!(name.as_str(), "skills" | "mcp" | "swarm")));
+    assert!(
+        !names
+            .iter()
+            .any(|(name, _)| matches!(name.as_str(), "skills" | "mcp" | "swarm"))
+    );
     let mut unique: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
     unique.sort_unstable();
     unique.dedup();

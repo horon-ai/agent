@@ -723,7 +723,10 @@ fn server_catalog() -> &'static ServerCatalog {
             // with the same name twice would name one command and run another.
             // Each built-in still sends its own typed request, and `/swarm
             // status` forwards what is typed after it.
-            if matches!(command, RuntimeCommand::Skills | RuntimeCommand::Mcp | RuntimeCommand::Swarm) {
+            if matches!(
+                command,
+                RuntimeCommand::Skills | RuntimeCommand::Mcp | RuntimeCommand::Swarm
+            ) {
                 continue;
             }
             match serde_json::to_value(command) {
