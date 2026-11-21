@@ -772,6 +772,52 @@ async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn stats_groups_durable_usage_by_date_and_route_without_double_counting() {
+    let home = Home::new();
+    let seed = |id: &str, events: &[Value]| {
+        let session = home.path().join("sessions").join(id);
+        std::fs::create_dir_all(&session).unwrap();
+        let text = events.iter().map(|event| format!("{event}\n")).collect::<String>();
+        std::fs::write(session.join("events.jsonl"), text).unwrap();
+    };
+    let created = |provider: &str, model: &str| json!({"kind":"session_created","payload":{"metadata":{"provider_key":provider,"model":model}}});
+    let appended = |id: &str, time: &str, input: u64| json!({"kind":"message_appended","event_id":id,"timestamp":time,"payload":{"message":{"token_usage":{"input_tokens":input,"output_tokens":2}}}});
+    let original = appended("a", "2026-11-20T23:50:00Z", 5);
+    let revised = json!({"kind":"message_revised","event_id":"r","timestamp":"2026-11-21T00:01:00Z","payload":{"target_event_id":"a","replacement":{"token_usage":{"input_tokens":12,"output_tokens":3}}}});
+    seed(
+        "s1",
+        &[
+            created("alpha", "m1"),
+            original.clone(),
+            revised.clone(),
+            original,
+            revised,
+            appended("b", "2026-11-21T00:10:00Z", 99),
+        ],
+    );
+    seed(
+        "s2",
+        &[created("beta", "m2"), appended("c", "2026-11-20T18:00:00-05:00", 7)],
+    );
+    let result = home
+        .run(&["stats", "--from", "2026-11-20", "--through", "2026-11-20", "--json"])
+        .await;
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["estimated_cost"], Value::Null);
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        json!({"date":"2026-11-20","provider":"alpha","model":"m1","input":12,"output":3,"cache_read_input":null,"cache_creation_input":null,"requests":1})
+    );
+    assert_eq!(rows[1]["provider"], "beta");
+    assert_eq!(rows[1]["model"], "m2");
+    assert_eq!(rows[1]["input"], 7);
+    assert_eq!(rows[1]["requests"], 1);
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn wait_async_reports_background_status_and_respects_run_deadline() {

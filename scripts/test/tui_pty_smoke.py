@@ -861,6 +861,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
         terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
+        stats_start = len(terminal.transcript)
+        terminal.send("/stats\r")
+        terminal.read_until("Requests:", STEP_TIMEOUT, "session usage counters", since=stats_start)
+        terminal.read_until("Estimated cost: unknown", STEP_TIMEOUT, "unknown cost is preserved", since=stats_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:

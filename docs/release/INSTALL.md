@@ -140,6 +140,7 @@ default_model = "my-model"
 | Ask once and exit | `horon --no-update run "..."` |
 | Limit turn processing to 30 seconds | `horon --no-update run --max-time 30 "..."` |
 | Print shell completions | `horon completions bash` (also `zsh` and `fish`) |
+| Estimate tokens in a UTF-8 file offline | `horon --model gpt-4o tokens --file input.txt` |
 | Stay resident as a daemon | `horon serve` |
 | Open the SDK socket | `horon api-bridge` |
 
