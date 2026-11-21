@@ -578,10 +578,35 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    archive_label = "archive-pty-fixture"
+    seeded = subprocess.run(
+        [launch.argv0, "run", archive_label],
+        cwd=case_root,
+        env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=STEP_TIMEOUT,
+        text=True,
+    )
+    if seeded.returncode != 0:
+        raise Failure(f"could not seed a saved session to archive\n{seeded.stdout}")
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before archiving")
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
+        terminal.send(f"{archive_label}\x01")
+        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
+        terminal.send(archive_label)
+        terminal.read_until("nothing matches that filter", STEP_TIMEOUT, "archived session left recent list")
+        terminal.send("\x1b\x1b/archived\r")
+        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
+        terminal.send(f"{archive_label}\r")
+        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and

@@ -83,6 +83,8 @@ pub enum Local {
     Settings,
     /// Resume a session stored for this working directory.
     Resume,
+    /// Browse archived sessions in this working directory.
+    Archived,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
     /// Switch to another session, by id or from the list.
@@ -119,6 +121,7 @@ impl Local {
             "new" => Some(Self::New),
             "settings" => Some(Self::Settings),
             "resume" => Some(Self::Resume),
+            "archived" => Some(Self::Archived),
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
@@ -145,6 +148,7 @@ impl Local {
             Self::New => "new",
             Self::Settings => "settings",
             Self::Resume => "resume",
+            Self::Archived => "archived",
             Self::Skills => "skills",
             Self::Switch => "switch",
             Self::Note => "note",
@@ -649,9 +653,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 20] = [
+    "archived", "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note",
+    "queue", "quit", "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

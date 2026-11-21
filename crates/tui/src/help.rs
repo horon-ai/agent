@@ -94,6 +94,7 @@ Commands:
   /help          list the commands (built-in, harness, command files),
                  the skills and the keys in force; /help <command>
                  describes one of them
+  /archived      list archived sessions in this directory; Enter restores one
   /artifact [id] open a retained artifact of this session in $VISUAL or
                  $EDITOR, as a private copy; with no id, list them
   /clear         clear the transcript pane
@@ -251,6 +252,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 /// The line that explains one built-in UI command.
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
+        "archived" => "list archived sessions in this directory; Enter restores one",
         "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
         "clear" => "clear the transcript",
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
