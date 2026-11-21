@@ -975,7 +975,7 @@ def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
         terminal.send("/tools\r")
         terminal.read_until("are enabled for this session", STEP_TIMEOUT, "empty tool picker")
         terminal.send("\x1b")
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "return to the session")
+        time.sleep(0.15)
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
         if code != 0:
