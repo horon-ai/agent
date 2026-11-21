@@ -315,10 +315,10 @@ class PosixTerminal:
         )
         os.close(slave)
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if contains(self.transcript, needle):
+            if contains(self.transcript[since:], needle):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -329,7 +329,7 @@ class PosixTerminal:
                 if not chunk:
                     break
                 self.transcript += chunk.decode("utf-8", "replace")
-        if not contains(self.transcript, needle):
+        if not contains(self.transcript[since:], needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
     def send(self, keys: str) -> None:
@@ -426,11 +426,11 @@ class WindowsTerminal:
             with self._lock:
                 self.transcript += chunk
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._lock:
-                if contains(self.transcript, needle):
+                if contains(self.transcript[since:], needle):
                     return
             time.sleep(0.05)
         with self._lock:
@@ -582,6 +582,22 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before rename")
+
+        name = "PTY review session"
+        terminal.send(f"/rename {name}\r")
+        terminal.read_until("session title updated", STEP_TIMEOUT, "saved session title")
+        terminal.send("/rename\r")
+        terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "empty title refusal")
+        if POSIX:
+            terminal.send("/new\r")
+            terminal.read_until("a new session session_", STEP_TIMEOUT, "switch away from the renamed session")
+            picker_start = len(terminal.transcript)
+            terminal.send("/resume\r")
+            terminal.read_until("Resume session", STEP_TIMEOUT, "session picker")
+            terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
+            terminal.send(f"{name}\r")
+            terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
         terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
         terminal.send("/tools\r")
         terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
@@ -612,6 +628,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         code = terminal.wait(STEP_TIMEOUT)
         if code != 0:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
+            raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
         return terminal.transcript
     finally:
         terminal.close()
