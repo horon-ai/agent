@@ -152,7 +152,9 @@ impl ContinuationDecision {
     fn accept(self) {
         // A closed channel means the connection went away; the turn it asked
         // for still runs, and nobody is left to answer.
-        let _ = self.sender.send(ServerEvent::Ack { id: self.id });
+        if self.sender.send(ServerEvent::Ack { id: self.id }).is_err() {
+            logging::debug("Retry started after its requesting connection closed");
+        }
     }
 }
 
