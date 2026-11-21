@@ -590,7 +590,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.send("/rename\r")
         terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "empty title refusal")
         terminal.send("/new\r")
-        terminal.read_until("started a new session", STEP_TIMEOUT, "switch away from the renamed session")
+        terminal.read_until("a new session session_", STEP_TIMEOUT, "switch away from the renamed session")
         picker_start = len(terminal.transcript)
         terminal.send("/resume\r")
         terminal.read_until("Resume session", STEP_TIMEOUT, "session picker")

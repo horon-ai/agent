@@ -52,7 +52,8 @@ impl App {
             self.warn("enter a title without control characters: /rename <title>");
             return None;
         }
-        self.session_change_allowed("rename").then(|| Action::Rename(title.to_owned()))
+        self.session_change_allowed("rename")
+            .then(|| Action::Rename(title.to_owned()))
     }
 
     /// Take the flag that says the next attach answer started a fresh session.
