@@ -420,6 +420,8 @@ The table lists the built-in commands the client handles (`Local` in `crates/tui
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
+Enter `!command` to run a shell command in the TUI process's working directory. The transcript shows the local directory before the command starts. `!!command` leaves only the directory and exit status in the transcript. Both forms keep the command and output out of the model conversation. The client runs one local command at a time and stops it after ten seconds. Retained output is limited to 200 lines and 32 KiB.
+
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.

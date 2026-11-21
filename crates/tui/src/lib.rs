@@ -494,6 +494,9 @@ where
                 false
             }
         };
+        // A local command runs on a worker thread; its result joins the same
+        // redraw decision as an event from the bridge.
+        changed |= crate::commands::shell::drain(app);
         if !app.running {
             break;
         }
@@ -565,6 +568,10 @@ where
             failure = Some(message);
             break;
         }
+        // The header has been drawn, so the command may start. This is after
+        // the frame, not inside the key handler, which is what makes the
+        // target visible before the command can print anything.
+        crate::commands::shell::start_pending();
         match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
