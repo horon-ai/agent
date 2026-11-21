@@ -315,15 +315,12 @@ where
     if let Err(error) = crate::paste::enable() {
         app.warn(format!("paste: {error}"));
     }
-    // The editor may have named the window itself, and the title writer only
-    // skips a label it believes is already up; a fresh one writes this client's
-    // name again without touching the stack entry the exit will pop. The state
-    // goes back with it: the fresh writer has shown nothing yet, and the frame
-    // loop only rewrites the name when the state moves.
-    *title = crate::title::WindowTitle::stdout();
-    let state_supported = title.state_supported();
-    if let Err(error) = title.show(&crate::window::label(app, state_supported)) {
-        app.warn(format!("title: {error}"));
+    if title.enabled() {
+        title.forget_label();
+        let state_supported = title.state_supported();
+        if let Err(error) = title.show(&crate::window::label(app, state_supported)) {
+            app.warn(format!("title: {error}"));
+        }
     }
     Ok(outcome)
 }
