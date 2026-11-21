@@ -10,8 +10,8 @@
 //! claims a pin the next launch would not read.
 
 use super::{Action, App};
-use crate::session_pins::PinStore;
 use crate::sdk_bridge::SessionRow;
+use crate::session_pins::PinStore;
 
 /// The client's pinned sessions and the rows the last list was built from.
 pub(crate) struct SessionPins {

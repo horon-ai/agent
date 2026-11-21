@@ -252,7 +252,11 @@ impl App {
     /// rows it was given. A save that failed never reaches here, so the order
     /// on screen is the order the file holds.
     pub(super) fn refresh_session_picker(&mut self, keep: &str) {
-        if !self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Sessions) {
+        if !self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.kind() == Kind::Sessions)
+        {
             return;
         }
         let rows = self.session_picker_rows();

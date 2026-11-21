@@ -493,7 +493,10 @@ fn a_pinned_session_says_so_and_the_footer_names_the_pin_key() {
 
     let buffer = screen(&mut picker, 60, 14, None);
     let text = buffer_text(&buffer);
-    assert!(text.contains("(pinned)"), "the pinned row says nothing about it:\n{text}");
+    assert!(
+        text.contains("(pinned)"),
+        "the pinned row says nothing about it:\n{text}"
+    );
     assert!(
         text.contains("ctrl-p pin/unpin"),
         "the footer does not name the pin key:\n{text}"
