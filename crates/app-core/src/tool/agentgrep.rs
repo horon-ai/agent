@@ -73,6 +73,8 @@ struct AgentGrepInput {
     debug_score: Option<bool>,
     #[serde(default)]
     paths_only: Option<bool>,
+    #[serde(flatten)]
+    grep_context: args::GrepContext,
 }
 
 /// Default cap on rendered grep matches.
@@ -237,6 +239,14 @@ impl Tool for AgentGrepTool {
                 "max_regions": {
                     "type": "integer",
                     "description": "Maximum matching regions to return."
+                },
+                "before": {
+                    "type": "integer",
+                    "description": "Lines before grep matches (0–20)."
+                },
+                "after": {
+                    "type": "integer",
+                    "description": "Lines after grep matches (0–20)."
                 },
                 "paths_only": {
                     "type": "boolean",
@@ -419,9 +429,16 @@ fn execute_linked_agentgrep(
             // benchmark transcripts produced 923k chars in a single call. The
             // header still reports the true total, so the caller sees that more
             // matches exist and can raise the cap deliberately.
-            let max_regions = params.max_regions.or(Some(DEFAULT_GREP_MAX_REGIONS));
-            let rendered = render_grep_output(&result, &args, max_regions);
+            let max_regions = params.max_regions.unwrap_or(DEFAULT_GREP_MAX_REGIONS);
+            let (before, after) = params.grep_context.bounded();
+            let with_context = !args.paths_only && (before, after) != (0, 0);
+            let rendered = if with_context {
+                render_grep_context(&root, &result, max_regions, before, after)
+            } else {
+                render_grep_output(&result, &args, Some(max_regions))
+            };
             let rendered = match regex_note {
+                Some(note) if with_context => format!("{}\n{rendered}", util::truncate_str(&note, 512)),
                 Some(note) => format!("{note}\n{rendered}"),
                 None => rendered,
             };
@@ -453,6 +470,94 @@ fn execute_linked_agentgrep(
             params.mode
         )),
     }
+}
+
+fn render_grep_context(root: &Path, result: &GrepResult, max_regions: usize, before: usize, after: usize) -> String {
+    use std::collections::BTreeMap;
+    use std::fmt::Write as _;
+    use std::io::Read as _;
+
+    const FILE_BYTES: usize = 2 * 1024 * 1024;
+    const OMITTED: &str = "\n[More grep results omitted: output limit reached.]";
+    let mut read_bytes_left = FILE_BYTES * 4;
+    let mut out = format!(
+        "query: {}\nmatches: {} in {} files",
+        util::truncate_str(&result.query, 1024),
+        result.total_matches,
+        result.total_files
+    );
+    let mut displayed = 0;
+    // Leave room for the regex fallback note and a truncation notice.
+    let out_limit = super::artifacts::GENERIC_CONDENSE_BUDGET_BYTES - 513 - OMITTED.len();
+    for file in &result.files {
+        let count = file
+            .matches
+            .len()
+            .min(max_regions.saturating_sub(displayed))
+            .min(DEFAULT_GREP_MAX_REGIONS);
+        if count == 0 {
+            break;
+        }
+        if out.len() + 1100 > out_limit {
+            out.push_str(OMITTED);
+            return out;
+        }
+
+        let path = root.join(&file.path);
+        let text = if file.path_bytes.is_none() && read_bytes_left != 0 && path.is_file() {
+            let mut bytes = Vec::new();
+            let bytes_limit = read_bytes_left.min(FILE_BYTES);
+            let read =
+                std::fs::File::open(&path).and_then(|file| file.take(bytes_limit as u64).read_to_end(&mut bytes));
+            read_bytes_left -= bytes.len();
+            if read.is_ok() && bytes.len() < bytes_limit && !bytes.contains(&0) {
+                Some(bytes)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut selected = BTreeMap::new();
+        for matched in &file.matches[..count] {
+            if text.is_some() {
+                let first = matched.line_number.saturating_sub(before).max(1);
+                let last = matched.line_number.saturating_add(after);
+                for line in first..=last {
+                    selected.entry(line).or_insert(None);
+                }
+            }
+            selected.insert(matched.line_number, Some(matched.line_text.as_str()));
+        }
+
+        let source = text.as_deref().map(String::from_utf8_lossy);
+        let mut lines = source.as_deref().unwrap_or_default().lines();
+        let mut previous = 0;
+        let _ = write!(out, "\n\n{}", util::truncate_str(&file.path, 1024));
+        if source.is_none() {
+            out.push_str("\n  [Context unavailable within the file-read budget.]");
+        }
+        for (line, matched_text) in selected {
+            let source_line = lines.nth(line - previous - 1);
+            previous = line;
+            let (marker, text) = match (matched_text, source_line) {
+                (Some(text), _) => ('@', text),
+                (None, Some(text)) => (' ', text),
+                (None, None) => continue,
+            };
+            let text = util::truncate_str(text, 240);
+            if out.len() + text.len() + 32 > out_limit {
+                out.push_str(OMITTED);
+                return out;
+            }
+            let _ = write!(out, "\n  {marker} {line} {text}");
+            displayed += usize::from(matched_text.is_some());
+        }
+    }
+    if displayed < result.total_matches {
+        let _ = write!(out, "\n\n... {} more matches omitted", result.total_matches - displayed);
+    }
+    out
 }
 
 fn resolve_path_arg(ctx: &ToolContext, path: &str) -> PathBuf {
