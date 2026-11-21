@@ -32,10 +32,12 @@ The main goal is to shrink the root crate's recompile scope so ordinary developm
 - Success is measured by compile impact: fewer root edits, fewer root-owned DTOs, smaller dependency spread, and faster `cargo check --profile selfdev` plus reload after common changes.
 
 `crates/extension-types` holds the shared data contract for user-installed Rust
-packages and uses the existing workspace dependency set. Manifest validation
-and native file checks live in `crates/base/src/packages/` and `crates/platform`.
-Manifest file paths use portable ASCII spelling. Display names and resource
-content can use Unicode.
+packages and uses the existing workspace dependency set. Its `wire` module is
+the JSON-RPC framing, version range, declaration digest check and typed payloads
+both sides speak; the host half that reads, writes and correlates frames lives in
+`crates/app-core/src/extensions/`. Manifest validation and native file checks
+live in `crates/base/src/packages/` and `crates/platform`. Manifest file paths use
+portable ASCII spelling. Display names and resource content can use Unicode.
 Package registration and child-process supervision are separate implementation steps.
 
 ## Platform adapters

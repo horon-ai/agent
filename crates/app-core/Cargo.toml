@@ -95,6 +95,8 @@ horon-agent-base = { path = "../base", default-features = false }
 horon-agent-command-risk = { path = "../command-risk" }
 horon-agent-core = { path = "../core" }
 horon-agent-edit-safety = { path = "../edit-safety" }
+# Shared data contract for user-installed Rust packages (manifests, targets, wire).
+horon-agent-extension-types = { path = "../extension-types" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-overnight-core = { path = "../overnight-core" }
 horon-agent-perf-counters = { path = "../perf-counters" }
