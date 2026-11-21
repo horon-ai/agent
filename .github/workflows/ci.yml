@@ -1361,6 +1361,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 2 \
             -- tool::artifacts::render_tests::preview_column_cap_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- tool::agentgrep::tests::grep_context_merges_overlaps_and_preserves_paths_only --nocapture
 
       - name: Run instant handling cohort
         shell: bash
