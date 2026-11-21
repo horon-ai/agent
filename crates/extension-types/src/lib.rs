@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub mod wire;
+
 pub const MANIFEST_VERSION: u32 = 1;
 pub const EXTENSION_PROTOCOL: &str = "1.0";
 

@@ -238,12 +238,15 @@ This section is not a re-measurement of the table above; it only counts whether 
 
 2026-11-04: the native plugin model path was removed too, so model requests now go directly to an OpenAI-compatible endpoint from `[providers.<name>]`.
 
-The approved design for user-installed Rust packages is pending implementation.
+The user-installed Rust package design is being implemented step by step.
 An extension declares a Rust executable and a plugin adds resources to that
 extension. The user installs either package through `horon package install` or
 places it in the user-owned `$HORON_HOME/packages/inbox/<id>/` directory.
-Installation is consent. Horon will register the package after validation and
-refresh open sessions at their next turn. SHA-256 is an internal integrity check.
-Tool calls and executable commands will use the existing tool policy. Child
-processes run with the user's OS permissions. The host checks cannot restrict
-direct file or network access inside the child, so install only trusted packages.
+Installation is consent. Manifest and target validation, and the versioned
+JSON-RPC wire both package kinds speak, exist; registration, child spawning and
+session refresh land in later steps. SHA-256 is an internal integrity check, and
+`initialize` compares the declaration digest the child reports before any call
+is dispatched. Tool calls and executable commands will use the existing tool
+policy. Child processes run with the user's OS permissions. The host checks
+cannot restrict direct file or network access inside the child, so install only
+trusted packages.

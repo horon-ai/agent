@@ -1869,6 +1869,28 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --kind test --target-name package_manifest --min-passed 9 --timeout 900
 
+      - name: Run extension wire contracts with an isolated home
+        shell: bash
+        # The extension wire owns the framing, deadlines and correlation a
+        # user-installed Rust child speaks. It is a lib module in
+        # `horon-agent-app-core`, so no other cohort filter reaches it: the
+        # `--min-passed` count is the guard against a filter that matches
+        # nothing and reports `0 passed` with exit 0. One test starts this very
+        # test executable as a real child process over stdin and stderr, so the
+        # framing crosses real OS pipes.
+        #
+        # `HORON_HOME` selects a fresh owner-private directory for Horon state,
+        # so the tests and the child they start never touch the user's Horon
+        # home. It sets no other limit on what a process can open.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --min-passed 34 --timeout 900 -- extensions::wire::tests --nocapture
+
       # e2e runs inside `Run integration contracts` above, through the same
       # artifacts file: its binary is built by the compile step, and a second
       # `cargo test --test e2e` here would rebuild the selection set (#19).
@@ -2276,6 +2298,70 @@ jobs:
               -Name 'Windows package catalog contracts' `
               -TimeoutSeconds 900 `
               -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '-p', 'horon-agent-base', '--test', 'package_catalog')
+          } finally {
+            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
+          }
+
+      - name: Run Windows extension wire contracts
+        shell: pwsh
+        # The same lib module the Linux/macOS job runs, on the one OS whose pipes
+        # and process model differ. The targeted-validation prepare step above
+        # already compiled and located this crate's lib test executable, so this
+        # step starts that binary directly instead of asking cargo again (#413).
+        # The filter is checked against the executable's own `--list` first,
+        # because a filter that selects nothing reports `0 passed` and exits 0.
+        # `HORON_HOME` selects a fresh per-run directory for Horon state.
+        run: |
+          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
+          try {
+            $executables = @{}
+            Get-Content -LiteralPath $env:TARGETED_VALIDATION_ARTIFACTS | ForEach-Object {
+              if ([string]::IsNullOrWhiteSpace($_)) { return }
+              $message = $_ | ConvertFrom-Json
+              if ($message.reason -ne 'compiler-artifact') { return }
+              if (-not ($message.target.kind -contains 'lib')) { return }
+              if (-not $message.profile.test) { return }
+              if (-not $message.executable) { return }
+              $packageId = [string]$message.package_id
+              if ($packageId.Contains('#')) {
+                $fragment = $packageId.Substring($packageId.LastIndexOf('#') + 1)
+                $at = $fragment.IndexOf('@')
+                $package = if ($at -ge 0) { $fragment.Substring(0, $at) } else { $fragment }
+              } else {
+                $package = $packageId.Split(' ')[0]
+              }
+              if ($executables.ContainsKey($package)) {
+                throw "cargo reported two lib test executables for $package"
+              }
+              $executables[$package] = [pscustomobject]@{
+                Executable = [string]$message.executable
+                Directory  = Split-Path -Parent ([string]$message.manifest_path)
+              }
+            }
+            if (-not $executables.ContainsKey('horon-agent-app-core')) {
+              throw 'the prepared artifacts hold no lib test executable for horon-agent-app-core'
+            }
+            $entry = $executables['horon-agent-app-core']
+            $listed = & $entry.Executable --list 'extensions::wire::tests' 2>&1 | ForEach-Object { "$_" }
+            if ($LASTEXITCODE -ne 0) {
+              $listed | ForEach-Object { Write-Host $_ }
+              throw 'could not list the extension wire contracts'
+            }
+            $selected = ($listed | Select-String -Pattern ': test$').Count
+            if ($selected -lt 34) {
+              throw "the extension wire filter selected $selected tests, expected at least 34"
+            }
+            Write-Host "extension wire contracts selected: $selected"
+            $env:CARGO_MANIFEST_DIR = $entry.Directory
+            $env:CARGO_PKG_NAME = 'horon-agent-app-core'
+            $env:CARGO = (Get-Command cargo -ErrorAction Stop).Source
+            & ./scripts/ci/run_with_timeout.ps1 `
+              -Name 'Windows extension wire contracts' `
+              -TimeoutSeconds 900 `
+              -FilePath $entry.Executable `
+              -WorkingDirectory $entry.Directory `
+              -Arguments (@('extensions::wire::tests', '--nocapture'))
           } finally {
             Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
           }

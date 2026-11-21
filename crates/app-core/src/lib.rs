@@ -41,6 +41,7 @@ pub mod approval_grants;
 pub mod build;
 pub mod catchup;
 pub mod durable_input_runtime;
+pub mod extensions;
 pub use horon_agent_base::external_auth;
 pub mod network_retry;
 pub mod notifications;

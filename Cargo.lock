@@ -1760,6 +1760,7 @@ dependencies = [
  "horon-agent-command-risk",
  "horon-agent-core",
  "horon-agent-edit-safety",
+ "horon-agent-extension-types",
  "horon-agent-harness-api",
  "horon-agent-import-core",
  "horon-agent-irc-core",
