@@ -144,6 +144,10 @@ fn scene_label(name: &str) -> String {
 /// mode the alternate screen and raw mode took, so a viewer that ends here
 /// leaves the shell the way `/quit` does.
 pub fn run(start: &str) -> i32 {
+    run_with_title(start, true)
+}
+
+pub(crate) fn run_with_title(start: &str, title_enabled: bool) -> i32 {
     let Some(mut index) = SCENES.iter().position(|scene| scene.name == start) else {
         eprintln!("horon-tui: unknown gallery scene: {start}");
         eprintln!("horon-tui: scenes: {}", names());
@@ -169,8 +173,10 @@ pub fn run(start: &str) -> i32 {
     // The frame says nothing about which fixture it is, so the window title
     // does. `terminal::restore` pops this entry on the way out, the same pair
     // the interactive client pushes and pops.
-    let mut title = crate::title::WindowTitle::stdout();
-    if let Err(error) = title.start(&scene_label(SCENES[index].name)) {
+    let mut title = crate::title::WindowTitle::stdout(title_enabled);
+    if title.enabled()
+        && let Err(error) = title.start(&scene_label(SCENES[index].name))
+    {
         app.warn(format!("title: {error}"));
     }
     let mut code = 0;
@@ -238,7 +244,9 @@ pub fn run(start: &str) -> i32 {
         match fixture(scene.name) {
             Some(next) => {
                 app = next;
-                if let Err(error) = title.show(&scene_label(scene.name)) {
+                if title.enabled()
+                    && let Err(error) = title.show(&scene_label(scene.name))
+                {
                     app.warn(format!("title: {error}"));
                 }
             }
@@ -252,7 +260,7 @@ pub fn run(start: &str) -> i32 {
         }
         redraw = true;
     }
-    crate::terminal::restore();
+    crate::terminal::restore(title.state_supported());
     code
 }
 

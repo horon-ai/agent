@@ -1238,13 +1238,35 @@ pub(super) async fn handle_client(
             let ack = ServerEvent::Ack { id: request.id() };
             let json = encode_event(&ack);
             {
-            let ack_start = Instant::now();
-            let mut w = writer.lock().await;
-            if w.write_all(json.as_bytes()).await.is_err() {
+                let ack_start = Instant::now();
+                let mut w = writer.lock().await;
+                if w.write_all(json.as_bytes()).await.is_err() {
+                    if request_lifecycle_logged {
+                        let mut fields =
+                            server_request_lifecycle_fields(ServerRequestLifecycleFields {
+                                phase: "ack_write_failed",
+                                request_id,
+                                request_kind: &request_kind,
+                                client_session_id: &client_session_id,
+                                client_connection_id: &client_connection_id,
+                                client_instance_id: current_client_instance_id.as_deref(),
+                                client_is_processing,
+                                message_id: processing_message_id,
+                                processing_session_id: processing_session_id.as_deref(),
+                                line_bytes: line.len(),
+                            });
+                        fields.push((
+                            "ack_write_ms".to_string(),
+                            ack_start.elapsed().as_millis().to_string(),
+                        ));
+                        crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
+                    }
+                    break;
+                }
                 if request_lifecycle_logged {
                     let mut fields =
                         server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                            phase: "ack_write_failed",
+                            phase: "acked",
                             request_id,
                             request_kind: &request_kind,
                             client_session_id: &client_session_id,
@@ -1259,33 +1281,12 @@ pub(super) async fn handle_client(
                         "ack_write_ms".to_string(),
                         ack_start.elapsed().as_millis().to_string(),
                     ));
-                    crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
+                    fields.push((
+                        "since_decode_ms".to_string(),
+                        request_decoded_at.elapsed().as_millis().to_string(),
+                    ));
+                    crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
                 }
-                break;
-            }
-            if request_lifecycle_logged {
-                let mut fields = server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                    phase: "acked",
-                    request_id,
-                    request_kind: &request_kind,
-                    client_session_id: &client_session_id,
-                    client_connection_id: &client_connection_id,
-                    client_instance_id: current_client_instance_id.as_deref(),
-                    client_is_processing,
-                    message_id: processing_message_id,
-                    processing_session_id: processing_session_id.as_deref(),
-                    line_bytes: line.len(),
-                });
-                fields.push((
-                    "ack_write_ms".to_string(),
-                    ack_start.elapsed().as_millis().to_string(),
-                ));
-                fields.push((
-                    "since_decode_ms".to_string(),
-                    request_decoded_at.elapsed().as_millis().to_string(),
-                ));
-                crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
-            }
             }
         }
 
@@ -2523,6 +2524,11 @@ pub(super) async fn handle_client(
                         let guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Catalog refreshed, but session is busy. Open the model picker after the turn."))?;
                         let data = serde_json::json!({"refreshed": true, "models": guard.available_models_for_switching(), "routes": guard.model_routes()});
                         return Ok((data, "Provider model catalog refreshed.".into()));
+                    }
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Mcp {
+                        let directory = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry /mcp after the current turn."))?
+                            .working_dir().map(std::path::PathBuf::from);
+                        return super::runtime_commands::mcp::inspect(directory.as_deref(), &args).await;
                     }
                     if parsed == horon_agent_harness_api::RuntimeCommand::Swarm {
                         if let Some(enabled) = super::runtime_commands::boolean_action(&args, swarm_enabled, false)? {

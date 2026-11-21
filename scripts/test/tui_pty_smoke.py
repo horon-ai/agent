@@ -315,10 +315,10 @@ class PosixTerminal:
         )
         os.close(slave)
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if contains(self.transcript, needle):
+            if contains(self.transcript[since:], needle):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -329,7 +329,7 @@ class PosixTerminal:
                 if not chunk:
                     break
                 self.transcript += chunk.decode("utf-8", "replace")
-        if not contains(self.transcript, needle):
+        if not contains(self.transcript[since:], needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
     def send(self, keys: str) -> None:
@@ -426,11 +426,11 @@ class WindowsTerminal:
             with self._lock:
                 self.transcript += chunk
 
-    def read_until(self, needle: str, timeout: float, what: str) -> None:
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._lock:
-                if contains(self.transcript, needle):
+                if contains(self.transcript[since:], needle):
                     return
             time.sleep(0.05)
         with self._lock:
@@ -604,14 +604,65 @@ def retry_turn_smoke(terminal: Terminal, home: str, base_url: str) -> None:
         raise Failure(f"expected one stored user prompt across retry, found {len(matching)}")
 
 
+def configure_mcp_probe(home: str, case_root: str) -> str:
+    fixture = os.path.join(REPO_ROOT, "scripts", "perf", "fixtures", "bench_mcp_server.py")
+    calls = os.path.join(case_root, "mcp-tool-called")
+    wrapper = os.path.join(case_root, "mcp_probe_fixture.py")
+    with open(wrapper, "w", encoding="utf-8") as handle:
+        handle.write(
+            "import json, pathlib, runpy, sys\n"
+            "handle = runpy.run_path(sys.argv[1])['handle']\n"
+            "for line in sys.stdin:\n"
+            "    request = json.loads(line)\n"
+            "    if request.get('method') == 'tools/call':\n"
+            "        pathlib.Path(sys.argv[2]).touch()\n"
+            "    response = handle(request)\n"
+            "    if response is not None:\n"
+            "        print(json.dumps(response), flush=True)\n"
+        )
+    server = {"command": sys.executable, "args": [wrapper, fixture, calls]}
+    for path, name in ((os.path.join(home, "mcp.json"), "trusted-fixture"),
+                       (os.path.join(case_root, ".mcp.json"), "denied-fixture")):
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"mcpServers": {name: server}}, handle)
+    return calls
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    tool_calls = configure_mcp_probe(home, case_root)
+    env["HORON_AGENT_WORKSPACE_TRUST"] = "deny"
     server = prime_server(launch, case_root, env) if not POSIX else None
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before MCP inspection")
+        terminal.send("/mcp\r")
+        terminal.read_until("trusted-fixture", STEP_TIMEOUT, "trusted MCP server listed")
+        terminal.send("/mcp probe trusted-fixture\r")
+        terminal.read_until("Transport: stdio", STEP_TIMEOUT, "MCP probe transport")
+        terminal.read_until("1 available", STEP_TIMEOUT, "MCP probe capability and tool count")
+        terminal.send("/mcp probe denied-fixture\r")
+        terminal.read_until("not in the trusted MCP configuration", STEP_TIMEOUT, "untrusted MCP probe refused")
+        if os.path.exists(tool_calls):
+            raise Failure(f"MCP inspection invoked a fixture tool\n--- transcript ---\n{terminal.transcript}")
+
+        name = "PTY review session"
+        terminal.send(f"/rename {name}\r")
+        terminal.read_until("session title updated", STEP_TIMEOUT, "saved session title")
+        terminal.send("/rename\r")
+        terminal.read_until("enter a title without control characters", STEP_TIMEOUT, "empty title refusal")
+        if POSIX:
+            terminal.send("/new\r")
+            terminal.read_until("a new session session_", STEP_TIMEOUT, "switch away from the renamed session")
+            picker_start = len(terminal.transcript)
+            terminal.send("/resume\r")
+            terminal.read_until("Resume session", STEP_TIMEOUT, "session picker")
+            terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
+            terminal.send(f"{name}\r")
+            terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
@@ -637,6 +688,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         code = terminal.wait(STEP_TIMEOUT)
         if code != 0:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
+            raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
         return terminal.transcript
     finally:
         terminal.close()
@@ -929,6 +982,30 @@ def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) 
         terminal.close()
 
 
+def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
+    """The opt-out keeps the shell title in place from startup through exit."""
+    if launch.tui is None:
+        raise Failure("the title opt-out needs the TUI binary")
+    config = os.path.join(root, "title.toml")
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write(f"[title]\nenabled = {str(from_flag).lower()}\nstate = true\n")
+    argv = [launch.tui, "--config", config]
+    if from_flag:
+        argv.append("--no-title")
+    env = horon_env(root, launch.home)
+    env.pop("HORON_TUI_TITLE_ENABLED", None)
+    terminal = Terminal(argv, cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
+        terminal.send("/quit\r")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
+            raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def selected_cases(requested: str | None) -> set[int]:
     """The cases to run, defaulting to what this platform can drive."""
     if requested:
@@ -952,6 +1029,13 @@ def run_build_layout(
         log("case 1: bare horon hands a terminal over to horon-tui")
         launch = build_launch(os.path.join(root, "happy"), agent, tui)
         text = happy_path(launch, os.path.join(root, "happy"), base_url)
+        if POSIX:
+            if TITLE_POP not in text or "\x1b[22;2t" not in text or "\x1b]0;horon" not in text:
+                raise Failure(f"default title was not set and restored\n--- transcript ---\n{text}")
+            for from_flag in (True, False):
+                source = "--no-title" if from_flag else "title.enabled=false"
+                text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
+                log(f"{source}: no title or title stack sequences")
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)

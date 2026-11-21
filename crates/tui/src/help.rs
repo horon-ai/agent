@@ -25,7 +25,7 @@ Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]... [--gallery[=<scene>]]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
-                 [--hide-thinking]
+                 [--hide-thinking] [--no-title]
 
 Options:
   --socket <path>           Harness API socket to connect to (default: the
@@ -48,6 +48,7 @@ Options:
   --hide-thinking           Hide the model's reasoning for this session,
                             whatever `transcript.show_reasoning` says; ctrl+t
                             toggles it again
+  --no-title                Leave the terminal window title alone for this launch
   -V, --version             Print the version and exit
   -h, --help                Print this help and exit
 
@@ -104,10 +105,12 @@ Commands:
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
+  /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
   /record [path] record the conversation to a local file (stop, status)
+  /rename <title> save a title for the current session
   /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
@@ -259,12 +262,14 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
+        "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
+        "rename" => "save a title for the current session",
         "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "retry" => "continue the last failed turn of this session, keeping its one prompt",

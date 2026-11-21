@@ -1,0 +1,12 @@
+schema_version = 1
+id = "hello"
+version = "0.1.0"
+name = "Hello package example"
+extension = "extension/extension.toml"
+
+[resources]
+skills = ["resources/skills/greeting/SKILL.md"]
+commands = ["resources/commands/greeting.md"]
+mcp = ["resources/mcp/servers.json"]
+rules = ["resources/rules/greeting.md"]
+prompts = ["resources/prompts/greeting.md"]

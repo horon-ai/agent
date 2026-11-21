@@ -25,6 +25,8 @@ fn a_continuation_is_answered_by_the_daemon_decision() {
 
     // The decision arrives as the daemon's ack of that request.
     let accepted = state.legacy_event_to_api(&json!({"type": "ack", "id": legacy_id}));
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(accepted[0].reply_to, Some(7));
     assert!(
         matches!(&accepted[0].event, ApiEvent::Ok),
         "a started continuation is answered `ok` on its request, not as a stream event"
@@ -49,8 +51,12 @@ fn a_continuation_is_answered_by_the_daemon_decision() {
     let refused = state.legacy_event_to_api(&json!({
         "type": "error", "id": refused_id, "message": "the run named is no longer current"
     }));
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0].reply_to, Some(8));
     assert!(
         matches!(&refused[0].event, ApiEvent::Error { message, .. } if message.contains("no longer current")),
         "a refusal is a correlated error reply, not a turn event"
     );
+    let unrelated_done = state.legacy_event_to_api(&json!({"type": "done", "id": 999}));
+    assert!(unrelated_done.iter().all(|frame| !matches!(frame.event, ApiEvent::TurnDone { .. })));
 }

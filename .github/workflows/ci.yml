@@ -201,6 +201,22 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings
 
+      - name: Run clippy on the author SDK and example
+        # Same reason as horon-tui above: these are workspace members the root
+        # package's clippy selection never reaches.
+        if: ${{ !cancelled() }}
+        run: cargo clippy --locked --all-targets --all-features -p horon-agent-extension-sdk -p horon-package-example -- -D warnings
+
+      - name: Run the author SDK issue verification commands
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          cargo test --locked -p horon-agent-extension-sdk
+          cargo check --locked -p horon-package-example
+
       - name: Enforce Cargo.lock is up to date
         if: ${{ !cancelled() }}
         shell: bash
@@ -336,6 +352,36 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_headless_graph.py
+
+      - name: Keep the author SDK out of the agent binary
+        if: ${{ !cancelled() }}
+        shell: bash
+        # `horon-agent-extension-sdk` and its example are workspace members so
+        # `-p` builds reach them; they are never dependencies of `horon-agent`.
+        # `cargo tree -i` names a package the graph does not hold instead of
+        # printing an empty tree, so the absence itself is asserted here.
+        run: |
+          set -euo pipefail
+          for package in horon-agent-extension-sdk horon-package-example; do
+            if tree="$(cargo tree --locked -p horon-agent -e normal,build,dev -i "$package" 2>&1)"; then
+              echo "::error::$package reached the horon-agent graph"
+              echo "$tree"
+              exit 1
+            fi
+            case "$tree" in
+              *"did not match any packages"*) ;;
+              *)
+                echo "::error::cargo tree could not decide for $package"
+                echo "$tree"
+                exit 1
+                ;;
+            esac
+          done
+          sdk="$(cargo tree --locked -p horon-agent-extension-sdk -e normal,build,dev --prefix none)"
+          if printf '%s\n' "$sdk" | grep -Eq '^(horon-agent-(app-core|base)|horon-tui) v'; then
+            echo "::error::the author SDK reaches the agent runtime"
+            exit 1
+          fi
 
       - name: Test runner contract tests
         # The cohort steps trust `run_lib_tests.py` to turn a libtest run that
@@ -715,7 +761,7 @@ jobs:
           # Every package that owns a target in
           # `scripts/ci/integration_targets.json` must be built here, or
           # `run_integration_targets.py` finds no executable for it.
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types -p horon-agent-extension-sdk)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -1898,6 +1944,38 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --min-passed 34 --timeout 900 -- extensions::wire::tests --nocapture
+
+      - name: Run the extension author SDK contracts with an isolated home
+        shell: bash
+        # The author SDK is a workspace member outside the agent binary's graph,
+        # so no other cohort reaches its lib tests. `--min-passed 11` is the
+        # measured count: a filter that matched nothing would report `0 passed`
+        # with exit 0. The example package's real child process runs in the next
+        # step; `HORON_HOME` is a fresh owner-private directory for both.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-extension-sdk \
+            --min-passed 11 --timeout 900
+
+      - name: Run the package example in both installed layouts
+        shell: bash
+        # The example package is the artifact an author ships: the test starts
+        # the built binary under the standalone extension layout and under the
+        # plugin layout over real OS pipes, with an isolated `HORON_HOME`. The
+        # target is named with `--test` so `scripts/ci/check_test_targets.py`
+        # sees it run rather than allowlisting it.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          cargo test --locked -p horon-package-example --test extension_layouts -- --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/package-example.log"
+          grep -Eq 'test result: ok\. 3 passed' "$RUNNER_TEMP/package-example.log"
 
       # e2e runs inside `Run integration contracts` above, through the same
       # artifacts file: its binary is built by the compile step, and a second

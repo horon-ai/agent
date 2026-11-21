@@ -1238,7 +1238,32 @@ impl HoronAgentClient {
     ) -> Result<()> {
         // Subscribe *before* writing: an ack that lands between the write and
         // the subscribe would otherwise be missed and time out a healthy turn.
-        self.send_message_with_reminder_continuing(session_id, content, images, system_reminder, wait_for_accept, None)
+        let stream = wait_for_accept.map(|_| self.events(Some(session_id)));
+        self.notify(ApiRequest::SendMessage {
+            session_id: session_id.to_string(),
+            content: content.to_string(),
+            system_reminder: system_reminder
+                .map(str::trim)
+                .filter(|reminder| !reminder.is_empty())
+                .map(str::to_owned),
+            images,
+            no_reply: false,
+            expected_run_id: None,
+        })?;
+        if let (Some(stream), Some(timeout)) = (stream, wait_for_accept) {
+            let deadline = std::time::Instant::now() + timeout;
+            while let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) {
+                match stream.next_timeout(remaining) {
+                    // Returning on timeout rather than failing keeps a missing
+                    // ack from failing an otherwise healthy turn: the stream is
+                    // the source of truth.
+                    None => break,
+                    Some(ApiEvent::MessageAccepted { .. }) => break,
+                    Some(_) => continue,
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn cancel(&self, session_id: &str) -> Result<()> {
