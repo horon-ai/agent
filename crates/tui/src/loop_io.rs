@@ -77,6 +77,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 }
             }
             Incoming::Models { models, current } => app.show_models(models, current),
+            Incoming::Usage(snapshot) => app.usage(snapshot),
             Incoming::RuntimeInfo {
                 provider,
                 model,
