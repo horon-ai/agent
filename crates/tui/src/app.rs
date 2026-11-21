@@ -109,6 +109,9 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    ArchivedSessions,
+    Archive(String),
+    Restore(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
     /// Attach to another session and replay its stored conversation.

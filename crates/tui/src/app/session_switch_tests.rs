@@ -89,6 +89,12 @@ fn todo_panel_updates_and_clears_when_the_session_changes() {
         ..TodoItem::default()
     };
     sender
+        .send(Incoming::Attached {
+            session: Box::new(created("session_a", None)),
+            working_dir: None,
+        })
+        .unwrap();
+    sender
         .send(Incoming::Todos {
             session_id: "session_a".into(),
             items: vec![active.clone(), blocked.clone()],

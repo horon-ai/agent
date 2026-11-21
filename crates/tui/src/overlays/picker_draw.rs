@@ -229,8 +229,13 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
             picker.visible_indices().len()
         )
     } else {
+        let action = match picker.kind() {
+            Kind::Sessions => "enter attach · ctrl+a archive",
+            Kind::ArchivedSessions => "enter restore",
+            _ => "enter select",
+        };
         format!(
-            " {}/{} · enter select · esc close · ↑↓ move · type to filter",
+            " {}/{} · {action} · esc close · ↑↓ move · type to filter",
             picker.selection() + 1,
             picker.visible_indices().len()
         )

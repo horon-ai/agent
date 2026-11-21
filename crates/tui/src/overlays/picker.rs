@@ -38,6 +38,8 @@ pub enum Kind {
     Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// Archived sessions available to restore for this working directory.
+    ArchivedSessions,
     /// The skills the harness reports for this session.
     Skills,
     /// The drafts sent before this one.
