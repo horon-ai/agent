@@ -101,11 +101,7 @@ pub enum Action {
     Model(String),
     /// Set the reasoning effort to the level named.
     Effort(String),
-    /// Ask for the model list the picker offers.
-    ///
-    /// The answer fills an open list and is also the catalog a cycle checks
-    /// `models.shortlist` against, so a cycle pressed before the list was read
-    /// asks for it the same way and opens nothing.
+    /// The model catalog used by the picker and shortlist cycling.
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
@@ -114,6 +110,8 @@ pub enum Action {
     /// Attach to another session and replay its stored conversation.
     Attach(String),
     SideQuestion { id: u64, question: String, boundary: Option<String> },
+    /// Save a title for the attached session.
+    Rename(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
     /// Ask which noted sessions were deleted, including checks for archived sessions.

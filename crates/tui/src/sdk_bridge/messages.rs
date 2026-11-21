@@ -61,6 +61,8 @@ pub enum Command {
     /// keeps following the parent: the parent's stream, transcript and tools
     /// are untouched while the child answers.
     SideQuestion { id: u64, question: String, boundary: Option<String> },
+    /// Save a title for the session the bridge follows.
+    Rename(String),
     /// List the skills the harness reports for the session.
     ///
     /// `announce` is the difference between a list the user asked for and one
