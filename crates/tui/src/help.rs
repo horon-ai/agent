@@ -340,6 +340,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "memory" => "show the memory status; `memory extract` schedules an extraction",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
+        "observations" => "show, enable, disable or clear work and hook notes for this session",
         "productivity" => "generate the productivity report",
         "refresh_model_list" => "re-read the provider's model catalog",
         "remote" => "show or change the remote access settings",
