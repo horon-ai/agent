@@ -8,6 +8,9 @@
 
 use std::time::Instant;
 
+#[path = "transcript_turn_usage.rs"]
+mod turn_usage;
+
 use crate::tool_expand::{self, ExpandState};
 use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
 
@@ -120,6 +123,33 @@ impl ToolCall {
     fn is_call(&self, call_id: &str) -> bool {
         !call_id.is_empty() && self.call_id == call_id
     }
+
+    /// Whether the call has stopped and its line is only a record of what ran.
+    ///
+    /// A call in progress and one waiting for approval are still the work the
+    /// reader follows, so hiding tool activity leaves them on screen.
+    pub(crate) fn finished_activity(&self) -> bool {
+        matches!(
+            self.state,
+            ToolState::Done | ToolState::Failed(_) | ToolState::Settled(_, _)
+        )
+    }
+}
+
+/// What one completed turn cost, drawn under its last line.
+///
+/// The figures are taken once, when the turn ends, and kept with the item: the
+/// renderer never reads a clock or asks the turn again, so a frame costs the
+/// same whether or not the footer is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnMetrics {
+    /// Wall time from the message being sent to the turn ending, in
+    /// milliseconds.
+    pub elapsed_ms: u64,
+    /// Input and output tokens the turn's provider calls reported, added
+    /// together. `None` when no call reported usage, which is not the same as
+    /// a turn that spent none.
+    pub tokens: Option<(u64, u64)>,
 }
 
 /// One line of conversation.
@@ -150,6 +180,9 @@ pub enum Item {
     /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
     /// large, and most items carry a message instead.
     Report(Box<crate::report::Report>),
+    /// What one completed turn cost, drawn under it when
+    /// `transcript.turn_usage` is on.
+    TurnUsage(TurnMetrics),
     /// A request boundary the provider had to serve without its cached prefix.
     ///
     /// Drawn under the request it belongs to, and only for an avoidable miss:
@@ -308,6 +341,13 @@ pub struct Transcript {
     /// row still has to say what happened to the call. Bounded because it is
     /// only ever read for the refusal in hand.
     decided: Vec<(String, Decision)>,
+    /// The turn being measured, between the message being sent and the turn
+    /// ending. `None` when the client is not the one measuring, which is why a
+    /// turn another surface started draws no footer.
+    turn: Option<Turn>,
+    /// Whether a finished turn's time and usage are drawn, as
+    /// `transcript.turn_usage` resolves.
+    turn_usage: bool,
 }
 
 /// When one call started.
@@ -316,6 +356,23 @@ struct Start {
     call_id: String,
     name: String,
     at: Instant,
+}
+
+/// The turn in progress, while the client is measuring it.
+#[derive(Debug)]
+struct Turn {
+    /// When the message was handed to the harness.
+    started: Instant,
+    /// Input tokens the turn's provider calls reported so far.
+    ///
+    /// Added as they arrive rather than read as a difference of session totals,
+    /// so a counter that resets or moves backwards can never subtract here.
+    input: u64,
+    /// Output tokens the turn's provider calls reported so far.
+    output: u64,
+    /// Whether any call reported usage. A turn that reported none draws no
+    /// token field rather than a misleading zero.
+    reported: bool,
 }
 
 impl Default for Transcript {
@@ -331,6 +388,8 @@ impl Default for Transcript {
             starts: Vec::new(),
             expand: ExpandState::default(),
             decided: Vec::new(),
+            turn: None,
+            turn_usage: false,
         }
     }
 }
@@ -454,6 +513,9 @@ impl Transcript {
         // reuse an id, and text from the old conversation must not be drawn
         // under it.
         self.expand.clear();
+        // The turn being measured belongs to the conversation being replaced,
+        // and the rows its footer would sit under are gone with it.
+        self.turn = None;
     }
 
     /// The kept outputs, for the pane to draw the calls they belong to.
@@ -461,12 +523,85 @@ impl Transcript {
         &self.expand
     }
 
-    /// Show, or hide again, the whole output of the newest cut call.
+    /// Show, or hide again, the whole output of the selected cut call.
     ///
     /// Answers whether there was anything to toggle: the caller says so when
-    /// there was not, rather than leaving the key silently doing nothing.
+    /// there was not, rather than leaving the key silently doing nothing. A
+    /// selection the activity setting hides is not expanded: the press would
+    /// change text no frame draws.
     pub(crate) fn toggle_expand(&mut self) -> bool {
+        let Some(call_id) = self.expand.selected().map(str::to_string) else {
+            return false;
+        };
+        if self.tool_hidden(&call_id) {
+            return false;
+        }
         self.expand.toggle()
+    }
+
+    /// Make the call the view shows the one the expand key acts on.
+    ///
+    /// `heights` are the wrapped rows of each item as the last held frame
+    /// measured them, and `top` is the first row of the content the pane shows.
+    /// The first call whose rows cross that window is selected; a window that
+    /// shows no call leaves nothing selected, so the key does not open a line
+    /// the reader cannot see.
+    pub(crate) fn select_tool_at(&mut self, heights: &[usize], top: usize, view: usize) {
+        if heights.len() != self.items.len() {
+            return;
+        }
+        let bottom = top.saturating_add(view);
+        let mut row = 0usize;
+        let mut chosen: Option<String> = None;
+        for (item, height) in self.items.iter().zip(heights) {
+            let start = row;
+            row = row.saturating_add(*height);
+            if row <= top {
+                continue;
+            }
+            if start >= bottom {
+                break;
+            }
+            if let Item::Tool(call) = item
+                && self.expand.holds(&call.call_id)
+                && !self.tool_hidden(&call.call_id)
+            {
+                chosen = Some(call.call_id.clone());
+                break;
+            }
+        }
+        match chosen {
+            Some(call_id) => {
+                self.expand.select(&call_id);
+            }
+            None => self.expand.select_none(),
+        }
+    }
+
+    /// Make the newest call the selection again, as following the end does.
+    pub(crate) fn select_newest_tool(&mut self) {
+        self.expand.follow_newest();
+    }
+
+    /// Whether the activity setting hides `call_id`'s line.
+    fn tool_hidden(&self, call_id: &str) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, Item::Tool(call) if call.call_id == call_id && call.finished_activity()))
+            && !self.expand.shows_activity()
+    }
+
+    /// Draw, or stop drawing, the calls that finished.
+    ///
+    /// A call in progress and one waiting for approval stay on screen: the
+    /// setting is about the record of what ran, not about the work itself.
+    pub(crate) fn set_tool_activity(&mut self, show: bool) {
+        self.expand.set_activity(show);
+    }
+
+    /// Whether finished calls are drawn.
+    pub(crate) fn show_tool_activity(&self) -> bool {
+        self.expand.shows_activity()
     }
 
     /// Record an informational line.

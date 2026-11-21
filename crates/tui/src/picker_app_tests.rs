@@ -434,3 +434,320 @@ fn a_preview_a_row_of_another_kind_carries_is_not_a_match_target() {
         "a model row matched a preview body it never offered as searchable text"
     );
 }
+
+/// One keystroke with modifiers, the way a terminal reports a chord.
+fn chord(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
+    KeyEvent::new(code, modifiers)
+}
+
+/// The notices and warnings the transcript now holds, newest last.
+fn said(app: &App) -> Vec<String> {
+    app.transcript
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            Item::Notice(text) | Item::Warning(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_cycle_keys_wrap_forward_and_backward_over_the_shortlist() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "beta", "gamma"]));
+    app.show_models(models(&["alpha", "beta", "gamma"]), Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string()))
+    );
+    // The harness has not confirmed yet: the status line keeps the model it
+    // has, and the next press still steps from the one just asked for.
+    assert_eq!(app.model.as_deref(), Some("alpha"));
+    app.runtime_info(None, Some("beta".to_string()), None, None);
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("gamma".to_string()))
+    );
+    app.runtime_info(None, Some("gamma".to_string()), None, None);
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("alpha".to_string())),
+        "the forward walk did not wrap past the last entry"
+    );
+    app.runtime_info(None, Some("alpha".to_string()), None, None);
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::ALT | KeyModifiers::CONTROL)),
+        Some(Action::Model("gamma".to_string())),
+        "the backward walk did not wrap past the first entry"
+    );
+    app.runtime_info(None, Some("gamma".to_string()), None, None);
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::ALT | KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string()))
+    );
+}
+
+#[test]
+fn an_entry_the_catalog_does_not_list_is_skipped_and_named_once() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "ghost", "beta"]));
+    app.show_models(models(&["alpha", "beta"]), Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string())),
+        "the unsupported entry was asked for instead of skipped"
+    );
+    let named = said(&app);
+    assert!(
+        named
+            .iter()
+            .any(|line| line.contains("ghost") && line.contains("skipped")),
+        "the skipped entry was not named: {named:?}"
+    );
+
+    // The second press skips the same entry again: one notice for the file,
+    // not one per step.
+    app.runtime_info(None, Some("beta".to_string()), None, None);
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("alpha".to_string()))
+    );
+    assert_eq!(
+        said(&app).iter().filter(|line| line.contains("ghost")).count(),
+        1,
+        "the skip was reported again: {:?}",
+        said(&app)
+    );
+}
+
+#[test]
+fn a_shortlist_the_catalog_cannot_serve_changes_nothing() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["ghost"]));
+    app.show_models(models(&["alpha", "beta"]), Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    assert_eq!(app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)), None);
+    assert_eq!(app.model.as_deref(), Some("alpha"), "a refused entry moved the session");
+    let named = said(&app);
+    assert!(
+        named
+            .iter()
+            .any(|line| line.contains("models.shortlist") && line.contains("ghost")),
+        "the unusable shortlist was not explained: {named:?}"
+    );
+}
+
+#[test]
+fn a_press_before_the_catalog_is_read_asks_for_it_and_then_walks() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "beta"]));
+    app.model = Some("alpha".to_string());
+
+    // Nothing has listed the models yet, so the press cannot tell whether
+    // `beta` exists: it reads the catalog rather than sending a guess.
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Models)
+    );
+    assert_eq!(app.model.as_deref(), Some("alpha"), "the press moved the session");
+    assert_eq!(app.take_model_cycle(), None, "a walk ran before the answer");
+
+    // The answer arrives; the walk follows in the direction the press named.
+    app.show_models(models(&["alpha", "beta"]), Some("alpha".to_string()));
+    assert_eq!(app.take_model_cycle(), Some(Action::Model("beta".to_string())));
+    assert_eq!(app.take_model_cycle(), None, "the press walked twice");
+}
+
+#[test]
+fn a_backward_press_before_the_catalog_keeps_its_direction() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "beta", "gamma"]));
+    app.model = Some("beta".to_string());
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::ALT | KeyModifiers::CONTROL)),
+        Some(Action::Models)
+    );
+    app.show_models(models(&["alpha", "beta", "gamma"]), Some("beta".to_string()));
+    assert_eq!(
+        app.take_model_cycle(),
+        Some(Action::Model("alpha".to_string())),
+        "the deferred walk did not keep the direction of the press"
+    );
+}
+
+#[test]
+fn a_catalog_that_lists_nothing_is_read_again_on_the_next_press() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha"]));
+    app.model = Some("alpha".to_string());
+
+    // The harness named nothing, which is not a catalog to walk: the press
+    // reads the list again instead of refusing every entry for good.
+    app.show_models(Vec::new(), None);
+    assert_eq!(app.take_model_cycle(), None, "a walk ran on an empty catalog");
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Models),
+        "the empty answer was taken as the final word"
+    );
+    assert_eq!(app.model.as_deref(), Some("alpha"), "the press moved the session");
+}
+
+#[test]
+fn a_catalog_that_lists_other_models_only_skips_every_entry_and_says_so() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha"]));
+    app.show_models(models(&["gamma"]), Some("gamma".to_string()));
+    app.model = Some("gamma".to_string());
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        None,
+        "an entry was asked for that the catalog does not list"
+    );
+    let named = said(&app);
+    assert!(
+        named
+            .iter()
+            .any(|line| line.contains("models.shortlist") && line.contains("none of the models")),
+        "the unusable shortlist was not explained: {named:?}"
+    );
+}
+
+#[test]
+fn a_refused_switch_is_reported_and_the_session_keeps_its_model() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "beta"]));
+    app.show_models(models(&["alpha", "beta"]), Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string()))
+    );
+    app.request_failed("could not switch the model: unknown model `beta`");
+    assert_eq!(
+        app.model.as_deref(),
+        Some("alpha"),
+        "a refused switch moved the session"
+    );
+    // The refusal dropped the model that was on its way, so the next press
+    // steps from the one the status line still shows.
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string()))
+    );
+}
+
+#[test]
+fn an_empty_shortlist_explains_how_to_fill_it() {
+    let mut app = app();
+    app.model = Some("alpha".to_string());
+
+    assert_eq!(app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)), None);
+    assert_eq!(app.model.as_deref(), Some("alpha"));
+    let named = said(&app);
+    assert!(
+        named.iter().any(|line| line.contains("models.shortlist is empty")),
+        "an empty shortlist said nothing: {named:?}"
+    );
+}
+
+#[test]
+fn a_blank_or_repeated_shortlist_entry_is_named_and_dropped() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "alpha", "", "beta"]));
+    app.show_models(models(&["alpha", "beta"]), Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    let named = said(&app);
+    assert!(
+        named.iter().any(|line| line.contains("`alpha` twice")),
+        "the repeated entry was not named: {named:?}"
+    );
+    assert!(
+        named.iter().any(|line| line.contains("empty entry")),
+        "the blank entry was not named: {named:?}"
+    );
+
+    // The walk visits each model once: from `alpha` the next is `beta`.
+    assert_eq!(
+        app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string()))
+    );
+}
+
+#[test]
+fn a_shortlist_that_does_not_hold_the_current_model_starts_at_its_near_end() {
+    // `alpha` has no position in the list, so there is nothing to step from:
+    // each direction starts at its own end.
+    let mut backward = app();
+    backward.apply_model_shortlist(&models(&["beta", "gamma"]));
+    backward.show_models(models(&["alpha", "beta", "gamma"]), Some("alpha".to_string()));
+    backward.model = Some("alpha".to_string());
+    assert_eq!(
+        backward.on_key(chord(KeyCode::Char('p'), KeyModifiers::ALT | KeyModifiers::CONTROL)),
+        Some(Action::Model("gamma".to_string())),
+        "a backward press from outside the shortlist did not start at its last entry"
+    );
+
+    let mut forward = app();
+    forward.apply_model_shortlist(&models(&["beta", "gamma"]));
+    forward.show_models(models(&["alpha", "beta", "gamma"]), Some("alpha".to_string()));
+    forward.model = Some("alpha".to_string());
+    assert_eq!(
+        forward.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        Some(Action::Model("beta".to_string())),
+        "a forward press from outside the shortlist did not start at its first entry"
+    );
+}
+
+#[test]
+fn a_waiting_model_change_is_where_the_cycle_steps_from() {
+    let mut app = app();
+    app.apply_model_shortlist(&models(&["alpha", "beta", "gamma"]));
+    app.show_models(models(&["alpha", "beta", "gamma"]), Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+    app.pending_turn = true;
+
+    assert_eq!(app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)), None);
+    assert_eq!(app.on_key(chord(KeyCode::Char('p'), KeyModifiers::CONTROL)), None);
+    app.pending_turn = false;
+    assert_eq!(app.take_queued(), Some(Action::Model("gamma".to_string())));
+    assert!(app.queue.is_empty(), "a model change was queued as a message");
+}
+
+#[test]
+fn the_cycle_keys_ship_on_ctrl_p_and_ctrl_alt_p() {
+    let bindings = crate::keys::Bindings::default();
+    let forward = crate::keys::Key::parse("ctrl+p").expect("a key");
+    let backward = crate::keys::Key::parse("ctrl+alt+p").expect("a key");
+    assert_eq!(
+        bindings.resolve_editing(&forward),
+        Some(crate::keys::ids::APP_CYCLE_MODEL)
+    );
+    assert_eq!(
+        bindings.resolve_editing(&backward),
+        Some(crate::keys::ids::APP_CYCLE_MODEL_BACK)
+    );
+    // The list key keeps its own binding, and `ctrl+f`/`ctrl+b` stay with the
+    // editor.
+    assert_eq!(
+        bindings.resolve_editing(&crate::keys::Key::parse("alt+p").expect("a key")),
+        Some(crate::keys::ids::APP_PICK_MODEL)
+    );
+    assert_eq!(
+        bindings.resolve_editing(&crate::keys::Key::parse("ctrl+f").expect("a key")),
+        Some(crate::keys::ids::EDITOR_RIGHT)
+    );
+}

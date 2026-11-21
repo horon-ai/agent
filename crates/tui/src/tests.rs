@@ -5,6 +5,8 @@
 //! `lib.rs` is at its code-size budget and production code keeps the room;
 //! `streaming_tests.rs` is the same arrangement for streamed text.
 
+use std::time::Duration;
+
 use super::*;
 use crate::app::Action;
 use crate::transcript::ToolState;
@@ -107,6 +109,27 @@ fn args_parse_repeated_config_files() {
     }
     assert!(Args::parse(["--config".to_string()]).is_err());
     assert!(Args::parse(["--config=".to_string()]).is_err());
+}
+
+#[test]
+fn args_parse_motion_flags_with_both_spellings() {
+    let parsed = Args::parse([
+        "--motion".to_string(),
+        "reduced".to_string(),
+        "--spinner-interval=120".to_string(),
+        "--max-fps".to_string(),
+        "12".to_string(),
+    ])
+    .expect("a parse");
+    assert_eq!(parsed.motion, Some(crate::settings::MotionMode::Reduced));
+    assert_eq!(parsed.spinner_interval, Some(120));
+    assert_eq!(parsed.max_fps, Some(12));
+
+    assert!(Args::parse(["--motion".to_string(), "slow".to_string()]).is_err());
+    assert!(Args::parse(["--motion".to_string()]).is_err());
+    assert!(Args::parse(["--spinner-interval".to_string(), "10".to_string()]).is_err());
+    assert!(Args::parse(["--max-fps".to_string(), "0".to_string()]).is_err());
+    assert!(Args::parse(["--max-fps".to_string()]).is_err());
 }
 
 #[test]
@@ -788,6 +811,87 @@ fn clear_keeps_the_display_settings_the_transcript_owns() {
     );
 }
 
+#[test]
+fn args_parse_the_gallery_flag() {
+    let parsed = Args::parse(["--gallery".to_string()]);
+    assert_eq!(
+        parsed.map(|args| args.gallery),
+        Ok(Some(gallery::FIRST.to_string())),
+        "--gallery alone did not open the first scene"
+    );
+    let parsed = Args::parse(["--gallery=prompt".to_string()]);
+    assert_eq!(
+        parsed.map(|args| args.gallery),
+        Ok(Some("prompt".to_string())),
+        "--gallery=<scene> did not carry the scene name"
+    );
+    assert!(
+        Args::parse(["--gallery=".to_string()]).is_err(),
+        "an empty scene name was accepted and would draw nothing"
+    );
+}
+
+#[test]
+fn every_gallery_scene_draws_the_same_frame_twice() {
+    // The acceptance is a stable preview at a fixed width: a second frame from
+    // the same fixture has to match the first, or nothing on it can be compared.
+    for scene in gallery::SCENES {
+        for (width, height) in [(100u16, 40u16), (60, 20), (32, 10), (20, 6)] {
+            let first =
+                gallery::frame(scene.name, width, height).unwrap_or_else(|message| panic!("{}: {message}", scene.name));
+            let second =
+                gallery::frame(scene.name, width, height).unwrap_or_else(|message| panic!("{}: {message}", scene.name));
+            assert_eq!(
+                first, second,
+                "{} drew a different frame at {width}x{height}",
+                scene.name
+            );
+        }
+    }
+}
+
+#[test]
+fn each_gallery_scene_names_itself_and_unknown_names_are_refused() {
+    // The viewer draws no chrome of its own, so the marker row is the only thing
+    // on screen that says which fixture is showing.
+    for scene in gallery::SCENES {
+        let screen = gallery::frame(scene.name, 100, 40).unwrap_or_else(|message| panic!("{}: {message}", scene.name));
+        assert!(
+            screen.contains(&format!("gallery · {}", scene.name)),
+            "{} is on screen without its marker:\n{screen}",
+            scene.name
+        );
+    }
+    let refusal = gallery::frame("nope", 80, 24).expect_err("unknown scene accepted");
+    assert!(
+        refusal.to_string().contains("nope"),
+        "an unknown scene was refused without naming it: {refusal}"
+    );
+}
+
+#[test]
+fn the_unicode_fixture_keeps_every_row_inside_a_narrow_pane() {
+    // Double-width text is where a layout that counts characters instead of
+    // cells puts a row past the pane edge, which the terminal then wraps or
+    // clips under the status line.
+    const WIDTH: u16 = 32;
+    let screen = gallery::frame("unicode", WIDTH, 14).unwrap_or_else(|message| panic!("{message}"));
+    for row in screen.lines() {
+        // The backend appends a diagnostic for cells hidden by wide glyphs.
+        // It follows the quoted screen row and is never displayed in the pane.
+        let (cells, _) = row.split_once("\" Hidden by multi-width symbols:").unwrap_or((row, ""));
+        let inner = cells.trim_matches('"');
+        assert!(
+            unicode_width::UnicodeWidthStr::width(inner) <= usize::from(WIDTH),
+            "a row is wider than the pane ({WIDTH}): {inner}"
+        );
+    }
+    assert!(
+        screen.contains("漢字"),
+        "the wide characters did not reach the frame:\n{screen}"
+    );
+}
+
 fn control(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
     crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::CONTROL)
 }
@@ -899,7 +1003,7 @@ fn the_repaint_key_answers_under_every_surface_without_taking_its_keys() {
     // points it at an empty one instead of the user's own themes folder.
     let themes = tempfile::tempdir().expect("a temporary theme directory");
     app.themes_dir = themes.path().to_path_buf();
-    app.open_settings();
+    let _ = app.open_settings();
     app.on_key(key(crossterm::event::KeyCode::Down));
     let selected = app
         .overlay

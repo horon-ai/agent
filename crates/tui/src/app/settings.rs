@@ -3,7 +3,7 @@
 
 use super::{Action, App};
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
-use crate::settings::{DaemonSettings, Settings};
+use crate::settings::{DaemonSettings, Motion, Settings};
 
 impl App {
     /// Show the settings screen, seeded from the settings in force.
@@ -46,9 +46,12 @@ impl App {
     /// here rather than in each drawing call: the transcript keeps or drops
     /// reasoning as it streams, the editor asks before it sends, the mouse
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
-    /// says so, and the window title carries the turn state only while
-    /// `title.state` says so. Whether the terminal is actually captured is the
-    /// event loop's decision, because a capture is a terminal mode.
+    /// says so, the window title carries the turn state only while
+    /// `title.state` says so, and the model cycle walks `models.shortlist`. The
+    /// motion preset is read here too, so the renderer and the frame loop share
+    /// one snapshot.
+    /// Whether the terminal is actually captured is the event loop's decision,
+    /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
         // Markdown and its visual blocks change how many rows an item takes, and
         // the scrollback keeps the counts it measured: a view held across the
@@ -63,6 +66,10 @@ impl App {
         self.settings = settings.clone();
         let show_reasoning = settings.boolean("transcript.show_reasoning").unwrap_or(false);
         self.transcript.apply_settings_show_reasoning(show_reasoning);
+        // The footer is drawn when the turn ends, so this value is what the
+        // turn in progress will use: a switch flipped mid-turn applies to it.
+        self.transcript
+            .set_turn_usage(settings.boolean("transcript.turn_usage").unwrap_or(false));
         // The setting is a number, so it can hold a `-1` that is not a row
         // count: anything that does not fit falls back to the default instead
         // of reading as "hide the preview".
@@ -71,13 +78,36 @@ impl App {
             None => crate::tool_line::DEFAULT_OUTPUT_LINES,
         };
         self.transcript.set_tool_output_lines(output_lines);
+        // Finished tool lines take rows or give them back, which a held view
+        // has to recount the same way the expand key does.
+        let show_tool_activity = settings.boolean("transcript.show_tool_activity").unwrap_or(true);
+        if show_tool_activity != self.transcript.show_tool_activity() {
+            self.transcript.set_tool_activity(show_tool_activity);
+            self.scroll.reflow();
+        }
         // A terminal that already reported the wheel keeps doing so until the
         // loop releases the capture; the events are dropped here once the
         // setting is off, so a stale report cannot scroll a captured terminal.
         self.mouse_scroll = settings.boolean("transcript.mouse_scroll").unwrap_or(true);
+        // The list the model cycle keys walk belongs to the settings, not to a
+        // session, so every refresh replaces it; the cycle itself reads it on
+        // the press, which keeps a file edit one keypress away from the walk.
+        // A missing list is the same as an empty one: the press reports it,
+        // and a reload must not leave the previous file's names in the walk.
+        let shortlist = settings.list("models.shortlist").unwrap_or(&[]);
+        self.apply_model_shortlist(shortlist);
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
+        // The preset decides what the spinner draws and how often a quiet turn
+        // redraws; both are read here so the loop and the renderer agree on one
+        // snapshot. A refused number is reported once, naming the default that
+        // took its place.
+        let (motion, motion_warnings) = Motion::from_settings(settings);
+        self.motion = motion;
+        for warning in motion_warnings {
+            self.warn(format!("motion: {warning}"));
+        }
         if let Some(overlay) = self.overlay.as_mut() {
             overlay.refresh(settings);
         }

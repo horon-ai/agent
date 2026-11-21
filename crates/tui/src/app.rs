@@ -20,7 +20,7 @@ use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
-use crate::settings::Settings;
+use crate::settings::{Motion, Settings};
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
@@ -91,6 +91,10 @@ pub enum Action {
     /// Set the reasoning effort to the level named.
     Effort(String),
     /// Ask for the model list the picker offers.
+    ///
+    /// The answer fills an open list and is also the catalog a cycle checks
+    /// `models.shortlist` against, so a cycle pressed before the list was read
+    /// asks for it the same way and opens nothing.
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
@@ -240,6 +244,51 @@ pub struct App {
     /// turn releases the agent. It leaves before the effort, because the report
     /// that follows a switch clears an effort it does not name.
     model_after_turn: Option<String>,
+    /// The model the client last asked for, until an answer names it.
+    ///
+    /// The cycle keys step from here rather than from the model last reported,
+    /// so two presses in quick succession walk two models instead of asking for
+    /// the same one twice. It is cleared when a report names that model or a
+    /// request fails.
+    model_requested: Option<String>,
+    /// The models `models.shortlist` names, in file order, without repeats.
+    ///
+    /// The cycle keys walk this list; the model list key still opens the whole
+    /// catalog. It is read from the settings on every refresh, so editing
+    /// `tui.toml` changes the next press.
+    model_shortlist: Vec<String>,
+    /// The `models.shortlist` entries the file actually listed, repeats and
+    /// blank entries included.
+    ///
+    /// Kept only to tell a file that changed from a settings save that re-read
+    /// the same file: the warnings for a repeated or blank entry are printed
+    /// once per edit, not once per save.
+    model_shortlist_source: Vec<String>,
+    /// The unsupported shortlist entries already named in the transcript.
+    ///
+    /// A press that skips the same entries again stays quiet; a change in what
+    /// is skipped is reported, so an entry the harness never lists is not
+    /// silently unavailable.
+    model_shortlist_skipped: Vec<String>,
+    /// The catalog the harness last reported for the session's provider.
+    ///
+    /// Kept from the model list answer so a cycle can tell an entry the harness
+    /// supports from one it does not without asking again, and so a switch is
+    /// never made on a guess. A session change clears it with the provider it
+    /// described.
+    model_catalog: Vec<String>,
+    /// Whether `model_catalog` is the harness's answer rather than its absence.
+    ///
+    /// An empty catalog is a real answer, so a separate flag is what keeps the
+    /// cycle from asking again on every press and from treating "not read yet"
+    /// as "the harness lists nothing".
+    model_catalog_loaded: bool,
+    /// The direction a cycle press asked for while the catalog was unread.
+    ///
+    /// The first press reads the list and waits for it; the walk then follows
+    /// in the direction that press asked for, which keeps a single keypress
+    /// from becoming a request the harness was never shown.
+    model_cycle_pending: Option<bool>,
     /// The queued messages a steer handed to the running turn, until the bridge
     /// answers.
     ///
@@ -285,6 +334,17 @@ pub struct App {
     pub symbols: Symbols,
     /// What keystrokes mean, replaced when `keybindings.toml` changes.
     pub bindings: Bindings,
+    /// How much the screen animates, and how often a streaming turn draws.
+    ///
+    /// The cadence is the event loop's, but the glyph a running turn shows is
+    /// drawn here, so the frame the loop just made is what picks it.
+    pub motion: Motion,
+    /// The animation frame the frame being drawn uses.
+    ///
+    /// The loop sets it before each draw; a draw made outside the loop (a test,
+    /// or the connection-failure screen) uses frame zero, which is the same
+    /// glyph a `reduced` preset freezes on.
+    pub motion_frame: usize,
     /// The slash command popup: the commands the draft offers, and its row.
     pub slash: crate::help::SlashPopup,
     /// The local draft suggestion: a ghost suffix offered from drafts already
@@ -355,6 +415,13 @@ impl App {
             effort_requested: None,
             effort_after_turn: None,
             model_after_turn: None,
+            model_requested: None,
+            model_shortlist: Vec::new(),
+            model_shortlist_source: Vec::new(),
+            model_shortlist_skipped: Vec::new(),
+            model_catalog: Vec::new(),
+            model_catalog_loaded: false,
+            model_cycle_pending: None,
             steer_pending: None,
             steer_left_behind: VecDeque::new(),
             session_status: None,
@@ -368,6 +435,8 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            motion: Motion::default(),
+            motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
             suggestions: Suggestions::new(),
             commands: Registry::default(),
@@ -418,6 +487,13 @@ impl App {
             effort_requested: None,
             effort_after_turn: None,
             model_after_turn: None,
+            model_requested: None,
+            model_shortlist: Vec::new(),
+            model_shortlist_source: Vec::new(),
+            model_shortlist_skipped: Vec::new(),
+            model_catalog: Vec::new(),
+            model_catalog_loaded: false,
+            model_cycle_pending: None,
             steer_pending: None,
             steer_left_behind: VecDeque::new(),
             session_status: None,
@@ -431,6 +507,8 @@ impl App {
             theme: Theme::default(),
             symbols: Symbols::default(),
             bindings: Bindings::default(),
+            motion: Motion::default(),
+            motion_frame: 0,
             slash: crate::help::SlashPopup::new(),
             suggestions: Suggestions::new(),
             commands: Registry::default(),
@@ -491,10 +569,17 @@ impl App {
         self.exit_code = 1;
         self.disconnected = true;
         self.pending_turn = false;
+        // No end-of-turn frame can arrive over a dead socket, so the turn being
+        // measured has no completed turn to describe.
+        self.transcript.discard_turn();
         // A change that was waiting for the turn can never leave: there is no
         // connection left to send it over.
         self.effort_after_turn = None;
         self.model_after_turn = None;
+        self.model_cycle_pending = None;
+        // A switch that was already on its way can never be confirmed now, so
+        // the cycle keys step from the model the status line still shows.
+        self.model_requested = None;
         // A list that is still waiting for rows will never get them: with the
         // connection gone it can only swallow keys, so it goes with it.
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
@@ -546,6 +631,7 @@ impl App {
     /// the app state never holds a time that goes stale.
     pub fn status_data(&self) -> StatusData<'_> {
         StatusData {
+            spinner: self.spinner_glyph(),
             provider: self.provider.as_deref(),
             model: self.model.as_deref(),
             effort: self.reasoning_effort.as_deref(),
@@ -559,6 +645,28 @@ impl App {
             tokens: self.tokens,
             now: None,
         }
+    }
+
+    /// Whether the screen animates on its own right now.
+    ///
+    /// A turn in flight is the only source of motion, and only a `full` preset
+    /// draws a moving spinner for it: `reduced` leaves one still mark, `static`
+    /// none, and a parked prompt or a lost connection draws none, so the loop
+    /// has no reason to add frames for any of them.
+    pub fn animating(&self) -> bool {
+        self.motion.turns() && self.spinner_glyph().is_some()
+    }
+
+    /// The spinner glyph the status segment draws, if any.
+    ///
+    /// Only a turn in flight animates, and only while the preset allows it: a
+    /// prompt or a lost connection already says more than a turning mark, and
+    /// `reduced` freezes on the first frame while `static` draws none.
+    fn spinner_glyph(&self) -> Option<&'static str> {
+        if !self.pending_turn || self.disconnected || self.prompt.is_some() || !self.running {
+            return None;
+        }
+        self.motion.glyph(self.symbols, self.motion_frame)
     }
 
     /// Fold one protocol event into the state.
@@ -604,7 +712,9 @@ impl App {
                     .transcript
                     .tool_done(call_id, name, Some(output.as_str()), error.as_deref())
                 {
-                    self.scroll.invalidate();
+                    // A fold is a block changing height with no output
+                    // arriving; the held view keeps the row it was reading.
+                    self.scroll.reflow();
                 }
                 // A refusal can reach the client before the event that parks
                 // it, so the line is parked from this side too: any request
@@ -645,6 +755,9 @@ impl App {
                         "the turn ended before reading everything sent into it; the next turn carries the rest",
                     );
                 }
+                // Last, so the footer sits under everything the turn produced
+                // and is not pushed above a notice that arrives with the end.
+                self.transcript.end_turn();
             }
             ApiEvent::TurnStopped { reason, message, .. } => {
                 self.transcript.end_running_tools();
@@ -668,6 +781,9 @@ impl App {
                 } else {
                     self.warn(message.clone());
                 }
+                // A stopped turn is still a turn that ran: the footer says how
+                // long and how much, and comes after the reason it stopped.
+                self.transcript.end_turn();
             }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::BackgroundOutput { session_id, text } => {
@@ -692,6 +808,9 @@ impl App {
                 // it was refused because the mode asks first, and the failure
                 // wording is for a call that broke.
                 self.transcript.park_request(request_id);
+                // The line changed rows without output arriving; a held view
+                // keeps the row it was reading.
+                self.scroll.reflow();
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -721,6 +840,7 @@ impl App {
                 // way one made here does.
                 self.transcript
                     .decide_request(request_id, if *approved { Decision::Allowed } else { Decision::Denied });
+                self.scroll.reflow();
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
@@ -736,9 +856,22 @@ impl App {
             } => {
                 self.session_id = Some(session_id.clone());
                 if let Some(model) = model {
+                    // The identity event names the model the daemon now serves,
+                    // so it is the confirmation a switch was waiting for: the
+                    // cycle keys step from here again.
+                    if self.model_requested.as_deref() == Some(model.as_str()) {
+                        self.model_requested = None;
+                    }
                     self.model = Some(model.clone());
                 }
                 if let Some(provider) = provider {
+                    // Same reason as in `App::runtime_info`: the model catalog
+                    // is the old provider's list.
+                    if self.provider.as_deref() != Some(provider.as_str()) {
+                        self.model_catalog.clear();
+                        self.model_catalog_loaded = false;
+                        self.model_shortlist_skipped.clear();
+                    }
                     self.provider = Some(provider.clone());
                 }
                 // The effort describes the model this report names, so a
@@ -777,6 +910,10 @@ impl App {
                     cache_read: optional_count(cache_read_input),
                     cache_creation: optional_count(cache_creation_input),
                 });
+                // The status line shows this request alone; the turn's footer
+                // adds each request of the turn together, so a tool loop's
+                // several provider calls are all counted.
+                self.transcript.note_usage(*input, *output);
             }
             // The daemon classifies one miss per completed provider request and
             // reports it right after that request's usage, so the mark lands
@@ -851,6 +988,7 @@ impl App {
             });
         if let Some(request) = request {
             self.transcript.park_request(&request);
+            self.scroll.reflow();
         }
     }
 
@@ -1010,75 +1148,5 @@ fn optional_count(value: &Option<u64>) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn app() -> App {
-        let (_sender, receiver) = mpsc::channel();
-        App::new("socket · session".to_string(), receiver)
-    }
-
-    #[test]
-    fn status_line_shows_model_and_state() {
-        let mut app = app();
-        app.apply_event(&ApiEvent::ModelInfo {
-            session_id: "s1".into(),
-            provider: Some("anthropic".into()),
-            model: Some("claude-sonnet-4".into()),
-            reasoning_effort: None,
-            auth_method: None,
-        });
-        assert_eq!(
-            app.status_line(),
-            "socket · session · claude-sonnet-4 · anthropic · idle".to_string()
-        );
-        app.pending_turn = true;
-        assert!(app.status_line().ends_with("running"));
-    }
-
-    #[test]
-    fn approval_resolves_only_for_its_own_request() {
-        let mut app = app();
-        app.apply_event(&ApiEvent::ApprovalPending {
-            session_id: "s1".into(),
-            request_id: "r1".into(),
-            action: "bash".into(),
-            expires_at: None,
-        });
-        app.apply_event(&ApiEvent::ApprovalResolved {
-            session_id: "s1".into(),
-            request_id: "other".into(),
-            approved: true,
-            via: "file".into(),
-            resolved_by: "tool".into(),
-        });
-        assert!(app.prompt.is_some(), "an unrelated resolution closed the prompt");
-        app.apply_event(&ApiEvent::ApprovalResolved {
-            session_id: "s1".into(),
-            request_id: "r1".into(),
-            approved: false,
-            via: "inline".into(),
-            resolved_by: "tool".into(),
-        });
-        assert!(app.prompt.is_none());
-    }
-
-    #[test]
-    fn turn_stopped_clears_the_pending_flag() {
-        let mut app = app();
-        app.pending_turn = true;
-        app.apply_event(&ApiEvent::TurnStopped {
-            session_id: "s1".into(),
-            reason: horon_agent_sdk::api::TurnStopReason::Failure,
-            message: "provider failed".into(),
-            provider_stop_reason: None,
-        });
-        assert!(!app.pending_turn);
-        assert!(
-            app.transcript
-                .items()
-                .iter()
-                .any(|item| item == &crate::transcript::Item::Warning("provider failed".to_string()))
-        );
-    }
-}
+#[path = "app/app_tests.rs"]
+mod tests;
