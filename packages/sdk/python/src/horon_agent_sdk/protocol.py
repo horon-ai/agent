@@ -57,6 +57,7 @@ RuntimeCommand: TypeAlias = Literal[
     "memory",
     "swarm",
     "agents",
+    "modelpreset",
     "subagent_model",
     "autoreview",
     "autojudge",
@@ -76,6 +77,7 @@ RuntimeCommand: TypeAlias = Literal[
     "auth",
     "logout",
     "plan",
+    "goal",
     "mcp",
 ]
 

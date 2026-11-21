@@ -9,6 +9,9 @@ use super::{
     dispatch, hot_exec, output, terminal,
 };
 
+mod completions;
+mod stream_rule_preview;
+
 fn sync_output_style_from_config() {
     crate::output_style::set_emoji_enabled(crate::config::config().display.emoji);
 }
@@ -17,6 +20,9 @@ fn sync_output_style_from_config() {
 /// errors during parsing, before any worker threads or TLS state are needed.
 pub fn run_standalone() -> Result<()> {
     let args = Args::parse();
+    if let Some(result) = offline_command(args.command.as_ref()) {
+        return result;
+    }
     // A provider install that loses to one already installed process-wide is the
     // intended no-op, so drop the returned handle instead of keeping it.
     drop(rustls::crypto::aws_lc_rs::default_provider().install_default());
@@ -36,7 +42,18 @@ pub async fn run() -> Result<()> {
     run_with_args(Args::parse()).await
 }
 
+fn offline_command(command: Option<&Command>) -> Option<Result<()>> {
+    match command {
+        Some(Command::Completions { shell }) => Some(completions::write(*shell, std::io::stdout().lock())),
+        Some(Command::StreamRules { sample }) => Some(stream_rule_preview::run(sample.as_deref())),
+        _ => None,
+    }
+}
+
 async fn run_with_args(args: Args) -> Result<()> {
+    if let Some(result) = offline_command(args.command.as_ref()) {
+        return result;
+    }
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
     // Snapshot user-supplied provider env before provider init rewrites it.
     super::provider_init::capture_user_openrouter_model_env();
@@ -380,6 +397,19 @@ mod tests {
 
     fn parse_args(argv: &[&str]) -> Args {
         Args::parse_from(argv)
+    }
+
+    #[test]
+    fn startup_goal_requires_budget_and_conflicts_with_resume() {
+        let goal = ["horon", "--goal", "Ship a fix", "--goal-budget", "1200"];
+        let parsed = parse_args(&goal);
+        assert_eq!(parsed.goal.as_deref(), Some("Ship a fix"));
+        assert_eq!(parsed.goal_budget, Some(1200));
+        for resume in [["--resume", "session-1"].as_slice(), ["--continue"].as_slice()] {
+            let error = Args::try_parse_from(goal.iter().chain(resume)).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+        assert!(Args::try_parse_from(["horon", "--goal", "Ship a fix"]).is_err());
     }
 
     #[test]

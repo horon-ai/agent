@@ -127,6 +127,19 @@ A model's `reasoning_effort` is applied when that model becomes active. The sess
 
 `horon run --thinking <effort>` overrides the selected model's effort for the run. `--service-tier <tier>` applies to OpenAI Chat Completions and Responses. Use `priority` (also `fast`), `off` to omit the request field, or `ultrafast` for a supported model. The command rejects unsupported values before sending the prompt. These flags leave the profile configuration unchanged.
 
+## Session model presets
+
+Add a named preset to `config.toml` and use `/modelpreset preview focus` to inspect it before `/modelpreset apply focus` changes the current session.
+
+```toml
+[model_presets.focus]
+model = "daily-model"
+effort = "high"
+roles = { swarm = "worker-model", review = "daily-model" }
+```
+
+Each field is optional. `roles` accepts the session targets `swarm`, `review`, `judge`, `memory` and `ambient`. A role value of `inherit` uses the session model where the workload supports inheritance. Models must be available in the current provider profile and effort must be supported by the resulting session model. An invalid preset leaves the current choices in force.
+
 ## Model roles
 
 A model role is a named workload-to-model mapping shared by every feature that needs a model other than the session's own. Roles are configuration only: a file without a role table resolves models exactly as this build does today.

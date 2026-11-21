@@ -11,6 +11,15 @@ use serde::{Deserialize, Serialize};
 #[path = "model_roles_tests.rs"]
 mod tests;
 
+/// Session model choices grouped under one user-defined name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SessionModelPreset {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub roles: std::collections::BTreeMap<String, String>,
+}
+
 /// A workload that can name its own model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelRole {

@@ -11,6 +11,8 @@ pub enum RuntimeCommand {
     Memory,
     Swarm,
     Agents,
+    #[serde(rename = "modelpreset")]
+    ModelPreset,
     SubagentModel,
     Autoreview,
     Autojudge,
@@ -30,6 +32,7 @@ pub enum RuntimeCommand {
     Auth,
     Logout,
     Plan,
+    Goal,
     Mcp,
 }
 
