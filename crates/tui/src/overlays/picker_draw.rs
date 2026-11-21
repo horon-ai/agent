@@ -220,6 +220,15 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
             picker.selection() + 1,
             picker.visible_indices().len()
         )
+    } else if picker.kind() == Kind::Sessions {
+        // A session row is pinned where it is read, so the key belongs beside
+        // the one that would attach: no id has to be remembered to keep a
+        // session at the top.
+        format!(
+            " {}/{} · enter select · ctrl-p pin/unpin · esc close · ↑↓ move · type to filter",
+            picker.selection() + 1,
+            picker.visible_indices().len()
+        )
     } else {
         format!(
             " {}/{} · enter select · esc close · ↑↓ move · type to filter",
@@ -355,10 +364,12 @@ fn row_line(row: &Row, chosen: bool, filter: &str, theme: &Theme, symbols: Symbo
     };
     let lead = format!(" {mark} ");
     let lead_width = UnicodeWidthStr::width(lead.as_str());
+    let pinned = if row.pinned { " (pinned)" } else { "" };
+    let pinned_width = UnicodeWidthStr::width(pinned);
     let current = if row.current { " (current)" } else { "" };
     let current_width = UnicodeWidthStr::width(current);
     let available = usize::from(width).saturating_sub(lead_width);
-    let name_room = available.saturating_sub(current_width);
+    let name_room = available.saturating_sub(pinned_width + current_width);
     let detail_width = UnicodeWidthStr::width(row.detail.as_str());
     let column = if detail_width > 0 && name_room > detail_width + COLUMN_GAP + MIN_LABEL {
         Some(detail_width + COLUMN_GAP)
@@ -372,13 +383,16 @@ fn row_line(row: &Row, chosen: bool, filter: &str, theme: &Theme, symbols: Symbo
     let matched = fuzzy::find(filter, &row.label);
     let mut spans = vec![Span::styled(lead, Style::default().fg(theme.core.accent))];
     spans.extend(label_spans(&label, matched.as_ref(), base));
+    if row.pinned {
+        spans.push(Span::styled(pinned, Style::default().fg(theme.core.accent)));
+    }
     if row.current {
         spans.push(Span::styled(current, Style::default().fg(theme.core.accent)));
     }
     if column.is_some() {
         // The pad is what puts the second column on the right edge; it
         // carries the row's own style so a selected row stays one block.
-        let used = lead_width + UnicodeWidthStr::width(label.as_str()) + current_width + detail_width;
+        let used = lead_width + UnicodeWidthStr::width(label.as_str()) + pinned_width + current_width + detail_width;
         let pad = usize::from(width).saturating_sub(used);
         spans.push(Span::styled(" ".repeat(pad), base));
         let detail = if chosen {

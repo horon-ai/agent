@@ -5,8 +5,8 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
-//!    `/queue`, `/record` and `/replay`.
+//!    `/effort`, `/new`, `/note`, `/pin`, `/settings`, `/resume`, `/skills`,
+//!    `/switch`, `/unpin`, `/links`, `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -89,6 +89,10 @@ pub enum Local {
     Switch,
     /// Attach, edit, list or remove a local note on a transcript message.
     Note,
+    /// Keep a session at the top of the session list, or the attached one.
+    Pin,
+    /// Take a session out of the pinned group.
+    Unpin,
     /// Run `!command` in this client, keeping its output in the transcript.
     Shell,
     /// Run `!!command` in this client, keeping neither the command nor its output.
@@ -122,6 +126,8 @@ impl Local {
             "skills" => Some(Self::Skills),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
+            "pin" => Some(Self::Pin),
+            "unpin" => Some(Self::Unpin),
             "links" => Some(Self::Links),
             "record" => Some(Self::Record),
             "replay" => Some(Self::Replay),
@@ -148,6 +154,8 @@ impl Local {
             Self::Skills => "skills",
             Self::Switch => "switch",
             Self::Note => "note",
+            Self::Pin => "pin",
+            Self::Unpin => "unpin",
             // The shell forms are typed with a `!` prefix, not a slash, so
             // these names are only what a listing would call them. They are
             // deliberately absent from `LOCAL_NAMES`.
@@ -649,9 +657,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 21] = [
+    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "pin", "queue",
+    "quit", "record", "replay", "resume", "settings", "skills", "switch", "unpin",
 ];
 
 /// Every runtime command, in declaration order.

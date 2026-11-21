@@ -106,6 +106,8 @@ Commands:
   /links         list the http(s) links in recent answers and open one
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
+  /pin [id]      keep a session at the top of the session list, or pin the
+                 one attached
   /quit          leave
   /record [path] record the conversation to a local file (stop, status)
   /replay [path] play a recording, or the newest one (stop)
@@ -114,6 +116,7 @@ Commands:
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
+  /unpin [id]    take a session out of the pinned group
   //text         send the literal message /text
 
 Local shell (runs in this terminal, in the client's working directory; never
@@ -262,6 +265,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
+        "pin" => "keep a session at the top of the list, or pin the attached one",
+        "unpin" => "take a session out of the pinned group",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",

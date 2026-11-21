@@ -403,10 +403,12 @@ fn builtin_help_lists_every_built_in_command() {
         "/links",
         "/model",
         "/new",
+        "/pin",
         "/quit",
         "/resume",
         "/settings",
         "/switch",
+        "/unpin",
     ] {
         assert!(
             listing.contains(name),
