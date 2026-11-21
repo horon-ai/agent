@@ -267,6 +267,8 @@ impl App {
             }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
+            Some(keys::ids::APP_CYCLE_MODEL) => return self.cycle_model(true),
+            Some(keys::ids::APP_CYCLE_MODEL_BACK) => return self.cycle_model(false),
             Some(keys::ids::APP_TOGGLE_THINKING) => {
                 self.toggle_thinking();
                 return None;

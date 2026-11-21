@@ -13,6 +13,7 @@ pub mod app;
 pub mod commands;
 pub mod context;
 mod fuzzy;
+pub mod gallery;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -108,6 +109,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
 use crate::terminal::{show_failure, window_label, window_state};
+use crate::theme::changes::{self, ChangePalette};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -128,6 +130,11 @@ pub struct Args {
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Gallery scene to preview instead of connecting, if the flag was given.
+    ///
+    /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
+    /// the scene either way and `run` has one branch to take.
+    pub gallery: Option<String>,
     /// Start with the model's reasoning hidden, whatever the setting says.
     pub hide_thinking: bool,
     /// Print the version and exit.
@@ -148,6 +155,7 @@ impl Args {
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
+                "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
                 "--hide-thinking" => parsed.hide_thinking = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
@@ -169,6 +177,10 @@ impl Args {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
+                    Some(("--gallery", "")) => {
+                        return Err("--gallery needs a scene name after '='".to_string());
+                    }
+                    Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
@@ -229,6 +241,13 @@ where
     if args.help {
         print!("{USAGE}");
         return 0;
+    }
+    // The gallery is a viewer over built-in fixtures, so it runs before
+    // settings are read and before a socket is opened: a frame must not depend
+    // on a file on the machine, and a broken settings file is not a reason to
+    // hide the renderer.
+    if let Some(scene) = args.gallery.as_deref() {
+        return gallery::run(scene);
     }
     // Settings load before the connection so a broken settings file is
     // reported even when the daemon is unreachable.
@@ -366,7 +385,9 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    app.theme = themes.theme().clone();
+    // The palette is applied to the copy the renderer reads, never to the
+    // theme file, so clearing the setting restores the selected theme exactly.
+    app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
     // The status line's own two choices sit on top of the theme and the glyph
     // preset, so they are applied here where every snapshot arrives rather than
@@ -455,6 +476,12 @@ where
         // A message typed during a turn waits for that turn; this is the one
         // place it is sent, right after the event that ended the turn.
         if let Some(action) = app.take_queued() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
             loop_io::dispatch(app, commands, action);
             changed = true;
         }

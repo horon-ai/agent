@@ -348,6 +348,10 @@ Each cell needs explicit approval before it runs, including in `yolo` and `off`.
 
 Tool output has a 50 KiB maximum inline size. Read longer retained output with `read` and the returned `artifact://` address. Collection keeps at most 4 MiB and marks output above that limit.
 
+Inside a cell, use `await tool.read(file_path="notes.txt")` to get a tool's text, or `await tool.bash(command="echo ready")` to run an allowed foreground command. A refusal or failure raises `RuntimeError` in the cell. Calls run serially, with up to 64 per cell and a 256 KiB frame limit. The cell's deadline includes time spent waiting for a tool or its approval.
+
+The session's usual tool restrictions and audit trail apply. Dispatchers and recursive `eval` calls are unavailable through the bridge. Bridge shell calls run in the foreground with closed input. Cancellation and timeout stop the running process tree. On Unix, the process group also stops when the shell exits. A process that detaches from the group, or outlives the shell on Windows, can remain running. If an approval is queued, rerunning the cell after granting it can repeat earlier side effects.
+
 ## `generate_image`
 
 The one tool whose model does not speak Chat Completions. Registered only when
@@ -782,6 +786,7 @@ Reading a file that was already read in the same session compares content hashes
 - When the content changed, the earlier read covered the whole file, and this read also covers the whole file, a unified diff against the earlier read is returned. If the diff is larger than 40% of the file, the whole file is sent. The baseline snapshot is kept only for files up to 1 MiB and is not readable through `artifact://`.
 - `full: true` always sends the body. When the `hashline` format differs from the earlier read, it is rendered again.
 - Applying compaction, rewinding or editing the conversation, urgent truncation, aging old results, and ending the session all drop that session's records. The deduplication is only correct while the earlier output is still in the context.
+- Python cell reads bypass these records. Python receives the result directly and decides what to print into the model context.
 
 The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
 

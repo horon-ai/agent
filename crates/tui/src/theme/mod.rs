@@ -9,11 +9,15 @@
 //!
 //! The render path reads the values through [`App`](crate::app::App)'s `theme`
 //! and `symbols` fields, so a test can draw with a theme it built itself.
+//! [`changes`] turns the opt-in accessible change pair on for that copy without
+//! touching the file.
 
+pub mod changes;
 pub mod load;
 pub mod schema;
 pub mod symbols;
 
+pub use changes::{Change, ChangePalette};
 pub use load::ThemeLoader;
 pub use schema::{CoreColors, PromptColors, StatusColors, Theme, TranscriptColors, builtin_source, parse};
 pub use symbols::{SymbolPreset, Symbols};
