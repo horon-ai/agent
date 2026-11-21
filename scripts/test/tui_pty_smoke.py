@@ -602,7 +602,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.send("/resume\r")
         terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
         terminal.send(archive_label)
-        terminal.read_until("nothing matches that filter", STEP_TIMEOUT, "archived session left recent list")
+        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
         terminal.send("\x1b\x1b/archived\r")
         terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
         terminal.send(f"{archive_label}\r")

@@ -138,8 +138,14 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
             archived: matches!(action, Action::ArchivedSessions),
         },
-        Action::Archive(session_id) => Command::Archive { session_id, archived: true },
-        Action::Restore(session_id) => Command::Archive { session_id, archived: false },
+        Action::Archive(session_id) => Command::Archive {
+            session_id,
+            archived: true,
+        },
+        Action::Restore(session_id) => Command::Archive {
+            session_id,
+            archived: false,
+        },
         // The new session starts where the client is working, so the list of
         // sessions it appears in is the one `/switch` shows.
         Action::NewSession => Command::NewSession {
