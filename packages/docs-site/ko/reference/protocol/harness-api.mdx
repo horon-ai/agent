@@ -315,6 +315,8 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 알 수 없음으로 다룹니다. SDK는 이 호출을 `get_message_modes`(Rust, Python)와
 `getMessageModes`(TypeScript)로 제공합니다.
 
+텍스트 도구 호출을 재시도할 때 `soft_interrupt_injected`는 `point: "native_tool_retry"`와 화면에 표시할 선택 필드 `notice`를 보냅니다. 안내는 이어질 재시도를 설명합니다. 표시할 안내가 없는 인터럽트는 이 필드를 생략합니다.
+
 ## 도구 판정(프로토콜 1.19)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼습니다. 아래 내용은 모두
