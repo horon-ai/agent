@@ -134,7 +134,7 @@ fn remote_working_dir_option_parses() {
 fn model_list_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "model", "list", "--json", "--verbose"]).unwrap();
     match args.command {
-        Some(Command::Model(ModelCommand::List { json, verbose })) => {
+        Some(Command::Model(ModelCommand::List { json, verbose, .. })) => {
             assert!(json);
             assert!(verbose);
         }

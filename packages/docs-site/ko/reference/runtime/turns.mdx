@@ -265,6 +265,8 @@ CancelSoftInterrupts {
 
 `[features] stream_rules`가 켜져 있으면 스트리밍 중간에 규칙 위반을 잡아 같은 이벤트 채널로 메시지를 넣는다. 이 경로는 지점 이름 `S`를 쓴다(`crates/app-core/src/agent/stream_rules.rs:42`, `crates/app-core/src/agent/turn_streaming_mpsc.rs:738-780`). 사용자 입력 대기열과 별개이며, 켜지 않으면 매처 자체가 만들어지지 않는다(`crates/app-core/src/agent/stream_rules.rs:83-90`).
 
+`horon stream-rules`는 설정에 적힌 규칙 ID, 정규식, 적용 범위와 경로 패턴을 오프라인에서 검사합니다. `horon stream-rules '답변 예시'`는 예시에 맞는 텍스트 규칙과 적용 방식을 표시합니다. `-`를 지정하면 표준 입력에서 UTF-8 텍스트를 최대 64 KiB까지 읽습니다. 실제 실행과 같은 최근 텍스트 범위를 빈 턴 기록에 적용합니다. `[features] stream_rules`가 꺼져 있어도 검사할 수 있으며 규칙을 실행하거나 세션을 바꾸지 않습니다.
+
 ### 사용자 경험
 
 데몬은 스스로 화면을 열지 않는다. 클라이언트가 쓸 수 있는 피드백은 프로토콜 이벤트 세 가지다.
@@ -634,6 +636,8 @@ method_order = ["handoff", "structured"]
 `horon run --max-time 30 "..."`는 턴 처리 시간을 30초로 제한합니다. 초기화가 끝나면 시간을 재기 시작하며 양수 초를 소수로도 지정할 수 있습니다. 제한 시간이 지나면 턴을 취소하고 최대 1초 동안 정리를 기다립니다. 프로세스는 종료 상태 `124`를 반환합니다.
 
 텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
+
+`--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함합니다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시합니다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보냅니다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보냅니다.
 
 ## `--resume` 동작
 

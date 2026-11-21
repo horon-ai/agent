@@ -44,6 +44,7 @@ export type RuntimeCommand =
   | "memory"
   | "swarm"
   | "agents"
+  | "modelpreset"
   | "subagent_model"
   | "autoreview"
   | "autojudge"
@@ -63,6 +64,7 @@ export type RuntimeCommand =
   | "auth"
   | "logout"
   | "plan"
+  | "goal"
   | "mcp";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";

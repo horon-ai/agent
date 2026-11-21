@@ -57,6 +57,10 @@ pub struct DirectOpenAiCompatibleSpec {
 
 /// Build the direct provider runtime for a resolved profile.
 pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<Arc<dyn Provider>> {
+    Ok(Arc::new(build_direct_runtime(spec)?))
+}
+
+fn build_direct_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<OpenAiCompatibleProvider> {
     let configured_retention = spec.prompt_cache_retention;
     let model_reasoning_efforts = spec.model_reasoning_efforts;
     let mut provider =
@@ -78,7 +82,7 @@ pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) 
     if let Some(extra_body) = spec.extra_body {
         provider = provider.with_extra_body(extra_body);
     }
-    Ok(Arc::new(provider))
+    Ok(provider)
 }
 
 /// Build the runtime for one built-in `OpenAiCompatibleProfile`.
@@ -164,6 +168,29 @@ pub fn build_named_openai_compatible_runtime(
     profile_name: &str,
     profile: &crate::config::NamedProviderConfig,
 ) -> anyhow::Result<Arc<dyn Provider>> {
+    Ok(Arc::new(build_named_runtime(profile_name, profile)?))
+}
+
+/// `None` indicates a wire that does not use the OpenAI model-list format.
+pub async fn fetch_named_openai_models(
+    profile_name: &str,
+    profile: &crate::config::NamedProviderConfig,
+) -> anyhow::Result<Option<Vec<String>>> {
+    if !matches!(
+        named_provider_wire(&profile.provider_type),
+        Some(WireProtocol::ChatCompletions | WireProtocol::Responses)
+    ) {
+        return Ok(None);
+    }
+    let runtime = build_named_runtime(profile_name, profile)
+        .map_err(|_| anyhow::anyhow!("profile endpoint or authentication is invalid"))?;
+    runtime.fetch_models().await.map(Some)
+}
+
+fn build_named_runtime(
+    profile_name: &str,
+    profile: &crate::config::NamedProviderConfig,
+) -> anyhow::Result<OpenAiCompatibleProvider> {
     let Some(wire) = named_provider_wire(&profile.provider_type) else {
         anyhow::bail!(
             "Provider profile '{}' has type \"{}\", which is not supported. \
@@ -259,7 +286,7 @@ pub fn build_named_openai_compatible_runtime(
         ));
     }
 
-    build_direct_openai_compatible_runtime(DirectOpenAiCompatibleSpec {
+    build_direct_runtime(DirectOpenAiCompatibleSpec {
         base_url,
         auth,
         wire,
