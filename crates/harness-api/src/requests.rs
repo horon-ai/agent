@@ -139,6 +139,16 @@ pub enum ApiRequest {
     /// reply does not depend on the session existing.
     GetMessageModes { session_id: String },
 
+    /// Read the allow-listed daemon values a settings screen displays, each
+    /// with the layer that supplied it. Requires `effective_settings_v1`.
+    ///
+    /// Read-only by construction: the reply carries [`EffectiveSettings`]
+    /// rows for a fixed list of keys and nothing else, so no credential and no
+    /// raw config text can travel. A client that cannot read it keeps working
+    /// against the daemon defaults, because the request is additive and an old
+    /// server answers `unknown_request`.
+    GetEffectiveSettings { session_id: String },
+
     /// Complete a client-executed custom tool call. Acknowledged with `Ok`.
     ToolResult {
         session_id: String,
@@ -663,6 +673,7 @@ impl ApiRequest {
             Self::FailoverAck { session_id, .. } => Some(session_id.as_str()),
             Self::ListModels { session_id, .. } => Some(session_id.as_str()),
             Self::GetRuntimeInfo { session_id, .. } => Some(session_id.as_str()),
+            Self::GetEffectiveSettings { session_id, .. } => Some(session_id.as_str()),
             Self::UsageReport { session_id, .. } => session_id.as_deref(),
             Self::RuntimeCommand { session_id, .. } => Some(session_id.as_str()),
             Self::ReadFile { session_id, .. } => Some(session_id.as_str()),
@@ -722,6 +733,7 @@ impl ApiRequest {
             // Only the optional field is gated: an `ask_response` without an
             // `answer_id` is the legacy request and needs no negotiation.
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),
+            Self::GetEffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
             _ => None,
         }
     }

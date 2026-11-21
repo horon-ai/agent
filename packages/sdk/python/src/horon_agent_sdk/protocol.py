@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 24
+API_VERSION_MINOR = 25
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -34,6 +34,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("background_output_v1", ("background_output",)),
     ("live_todo_v1", ("todo_changed",)),
+    ("effective_settings_v1", ("get_effective_settings",)),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -357,6 +358,24 @@ class MessageModes(TypedDict):
     follow_up_mode: str
     steering_mode: str
     interrupt_mode: str
+
+
+SettingSource: TypeAlias = Literal["default", "cli", "file", "env"]
+
+
+class EffectiveSetting(TypedDict, total=False):
+    """One daemon value a settings screen may display.
+
+    ``key``, ``label``, ``value`` and ``source`` are always present; ``origin``
+    names the flag, variable or file path behind the source and is absent when
+    the shipped default supplied the value.
+    """
+
+    key: str
+    label: str
+    value: str
+    source: SettingSource
+    origin: str
 
 
 class SessionToolDefinition(TypedDict):
@@ -712,6 +731,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "tool_start",
     "tools",
     "message_modes",
+    "effective_settings",
     "tool_call",
     "tool_input_delta",
     "tool_exec",
@@ -789,6 +809,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "configure_tools",
     "list_tools",
     "get_message_modes",
+    "get_effective_settings",
     "tool_result",
     "send_message",
     "cancel",
