@@ -687,6 +687,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::CheckSessions(_)
         | Command::Skills { .. }
         | Command::DaemonSettings
+        | Command::Retry
         | Command::Steer(_)
         | Command::Runtime { .. }
         | Command::NewSession { .. }

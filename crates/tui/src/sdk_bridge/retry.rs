@@ -15,24 +15,17 @@
 //! request: the continuation itself travels as a hidden reminder, which keeps the
 //! visible history at the one user prompt the failed turn already stored.
 
-use horon_agent_sdk::{HoronAgentClient, RuntimeStateSummary};
+use horon_agent_sdk::{Error, ErrorKind, HoronAgentClient, RuntimeStateSummary};
 
 use super::Incoming;
-
-/// What a refusal reads as when the reason is not a sentence this module wrote.
-const REFUSAL: &str = "could not continue the failed turn";
 
 /// Continue the run the daemon reports as the last one to stop.
 ///
 /// An idle session answers with a notice saying nothing failed, and a stop that
 /// no retry may resume is named by the daemon's own reason rather than by a
 /// guess here.
-pub(super) fn retry(client: &HoronAgentClient, session_id: &str) -> Result<Incoming, String> {
-    let state = client
-        .get_runtime_state(session_id)
-        // A daemon without the runtime journal cannot name the run that failed,
-        // so it cannot be asked to continue one either.
-        .map_err(|error| format!("{REFUSAL}: {error}"))?;
+pub(super) fn retry(client: &HoronAgentClient, session_id: &str) -> Result<Incoming, Error> {
+    let state = client.get_runtime_state(session_id)?;
     let run_id = eligible_run(&state)?;
     // The answer is the daemon's, not an assumption: a stale run, a run still
     // executing, or a stop no retry can fix comes back as an error here, and the
@@ -40,7 +33,6 @@ pub(super) fn retry(client: &HoronAgentClient, session_id: &str) -> Result<Incom
     client
         .continue_run(session_id, run_id)
         .map(|()| Incoming::Info("continuing the failed turn".to_string()))
-        .map_err(|error| format!("{REFUSAL}: {error}"))
 }
 
 /// The run the runtime state says may be continued, or the sentence saying why
@@ -50,14 +42,15 @@ pub(super) fn retry(client: &HoronAgentClient, session_id: &str) -> Result<Incom
 /// daemon's own table rather than from anything this client inferred. The set of
 /// causes is the same one the daemon enforces when the continuation arrives; the
 /// check here only spares a request that the daemon would refuse.
-fn eligible_run(state: &RuntimeStateSummary) -> Result<&str, String> {
+fn eligible_run(state: &RuntimeStateSummary) -> Result<&str, Error> {
+    let refusal = |message| Error::new(ErrorKind::InvalidOption, message);
     // An open run means a turn is executing now, so the stop `last_stop` names
     // belongs to earlier work and continuing it would run the wrong thing.
     if !state.runs.is_empty() {
-        return Err("a turn is running, so there is no failed turn to continue".to_string());
+        return Err(refusal("a turn is running, so there is no failed turn to continue".to_string()));
     }
     let Some(stop) = state.last_stop.as_ref() else {
-        return Err("nothing has failed in this session; there is no turn to continue".to_string());
+        return Err(refusal("nothing has failed in this session; there is no turn to continue".to_string()));
     };
     // These are the causes the daemon itself accepts for a continuation, read
     // from the stop it recorded. The daemon re-decides the same question when
@@ -65,8 +58,8 @@ fn eligible_run(state: &RuntimeStateSummary) -> Result<&str, String> {
     // cause added later is refused here rather than acted on by mistake.
     match stop.cause.as_str() {
         "provider_error" | "timeout" | "interrupted_unknown" => Ok(stop.run_id.as_str()),
-        other => Err(format!(
+        other => Err(refusal(format!(
             "the last turn ended as `{other}`, which retrying would not change; nothing was started"
-        )),
+        ))),
     }
 }
