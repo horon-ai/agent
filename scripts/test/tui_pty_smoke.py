@@ -904,6 +904,30 @@ def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) 
         terminal.close()
 
 
+def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
+    """The opt-out keeps the shell title in place from startup through exit."""
+    if launch.tui is None:
+        raise Failure("the title opt-out needs the TUI binary")
+    config = os.path.join(root, "title.toml")
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write(f"[title]\nenabled = {str(from_flag).lower()}\nstate = true\n")
+    argv = [launch.tui, "--config", config]
+    if from_flag:
+        argv.append("--no-title")
+    env = horon_env(root, launch.home)
+    env.pop("HORON_TUI_TITLE_ENABLED", None)
+    terminal = Terminal(argv, cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
+        terminal.send("/quit\r")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
+            raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def selected_cases(requested: str | None) -> set[int]:
     """The cases to run, defaulting to what this platform can drive."""
     if requested:
@@ -951,6 +975,12 @@ def run_build_layout(
         launch = build_launch(os.path.join(root, "happy"), agent, tui)
         text = happy_path(launch, os.path.join(root, "happy"), base_url)
         if POSIX:
+            if TITLE_POP not in text or "\x1b[22;2t" not in text or "\x1b]0;horon" not in text:
+                raise Failure(f"default title was not set and restored\n--- transcript ---\n{text}")
+            for from_flag in (True, False):
+                source = "--no-title" if from_flag else "title.enabled=false"
+                text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
+                log(f"{source}: no title or title stack sequences")
             text += "\n--- empty tool profile ---\n" + empty_tool_picker(launch, os.path.join(root, "empty-tools"), base_url)
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:

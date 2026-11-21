@@ -25,7 +25,7 @@ Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]... [--gallery[=<scene>]]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
-                 [--hide-thinking]
+                 [--hide-thinking] [--no-title]
 
 Options:
   --socket <path>           Harness API socket to connect to (default: the
@@ -48,6 +48,7 @@ Options:
   --hide-thinking           Hide the model's reasoning for this session,
                             whatever `transcript.show_reasoning` says; ctrl+t
                             toggles it again
+  --no-title                Leave the terminal window title alone for this launch
   -V, --version             Print the version and exit
   -h, --help                Print this help and exit
 
