@@ -23,7 +23,7 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]] [--hide-thinking]
 ```
 
 | Flag | Meaning |
@@ -32,9 +32,12 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
+| `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
 | `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
+
+Run `horon-tui --gallery=unicode` to see how the renderer wraps wide characters, or start with `horon-tui --gallery` to see the first fixture. Use `n` and `p` or the arrow keys to change scenes and `q` to leave. The preview uses fixed data and requires no daemon or model connection.
 
 A connection that never opened ends the client. The banner carries the sentence the event stream produced (for example `the event stream ended: ...`), the loop stops, and the process exits with code 1 so a wrapper sees the failure.
 
