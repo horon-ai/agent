@@ -105,6 +105,7 @@ horon run "summarize this repo"
 
 이름 있는 프로파일에 `stream_first_event_timeout_secs`와 `stream_idle_timeout_secs`를 두면 첫 응답과 응답 도중 대기 시간을 따로 제한할 수 있다.
 `max_in_flight_requests`를 지정하면 같은 프로파일을 쓰는 여러 세션의 동시 요청 수를 제한할 수 있다.
+터미널에서 `/modelpreset`으로 이름을 붙인 [세션 모델 설정](docs/provider/MODEL.ko.md#세션-모델-프리셋)을 미리 보고 적용할 수 있다.
 
 ## 실행 방법
 

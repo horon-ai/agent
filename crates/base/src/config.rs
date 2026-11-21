@@ -3,7 +3,7 @@
 //! Config is loaded from `~/.horon/config.toml` (or `$HORON_HOME/config.toml`)
 //! Environment variables override config file settings.
 
-pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, resolve_role_model};
+pub use horon_agent_config_types::model_roles::{ModelRole, ModelRoles, SessionModelPreset, resolve_role_model};
 pub use horon_agent_config_types::parse_model_reference;
 pub use horon_agent_config_types::rewind_summary;
 pub use horon_agent_config_types::{
@@ -357,13 +357,11 @@ pub struct Config {
     pub provider: ProviderConfig,
 
     /// Named provider profiles, keyed by profile name.
-    ///
-    /// Example; `type` picks the wire: `openai-compatible` (default),
-    /// `openai-responses`, `anthropic-compatible`, or `gemini-compatible`:
-    /// [providers.my-gateway]
-    /// type = "openai-compatible"
-    /// base_url = "https://llm.example.com/v1", api_key_env = "MY_GATEWAY_API_KEY"
     pub providers: BTreeMap<String, NamedProviderConfig>,
+
+    /// Named sets of session model and effort overrides.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_presets: BTreeMap<String, SessionModelPreset>,
 
     /// Agent-specific model defaults
     pub agents: AgentsConfig,

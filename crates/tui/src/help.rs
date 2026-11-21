@@ -356,6 +356,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "judge" => "spawn a judge that checks the work against the request",
         "logout" => "drop the stored provider credentials",
         "memory" => "show the memory status; `memory extract` schedules an extraction",
+        "modelpreset" => "list, preview or apply a named set of model choices",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
         "productivity" => "generate the productivity report",

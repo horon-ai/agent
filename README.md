@@ -105,6 +105,7 @@ With no profile configured, a model call stops before the network and names the 
 
 Set `stream_first_event_timeout_secs` and `stream_idle_timeout_secs` in a named profile to limit startup and pauses during a streamed reply independently.
 Set `max_in_flight_requests` to cap concurrent requests across sessions using the same profile.
+Use `/modelpreset` in the terminal to preview and apply a named set of [session model choices](docs/provider/MODEL.md#session-model-presets).
 
 ## Ways to run it
 
