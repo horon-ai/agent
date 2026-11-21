@@ -69,6 +69,13 @@ impl App {
     /// between the decision and the draft it is about.
     pub(crate) fn show_prompt(&mut self, prompt: Prompt) {
         self.slash.dismiss();
+        // A question takes the keys, so a capture cannot be finished while one
+        // is on screen. It is dropped here instead of running on behind it.
+        if self.voice.phase() != crate::voice::Phase::Idle {
+            self.voice.abandon();
+            self.transcript
+                .push_notice("voice: capture cancelled because a prompt arrived");
+        }
         match &self.prompt {
             Some(_) => self.waiting_prompts.push_back(prompt),
             None => self.prompt = Some(prompt),

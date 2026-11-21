@@ -398,6 +398,7 @@ pub struct App {
     pub(crate) recorder: Option<crate::recording::Recorder>,
     /// The replay playing on screen, which owns the transcript while it runs.
     pub(crate) replay: Option<record::ReplayState>,
+    pub(crate) voice: crate::voice::Voice, // on-device speech; consent is session-only
     /// The conversation identity and answer count a recording already kept.
     ///
     /// The revision says the conversation was replaced (a clear or a session
@@ -491,6 +492,7 @@ impl App {
             outcome: None,
             pending_copy: None,
             recorder: None,
+            voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
         }
@@ -580,6 +582,7 @@ impl App {
             outcome: None,
             pending_copy: None,
             recorder: None,
+            voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
         }
