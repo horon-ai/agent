@@ -582,6 +582,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before context commands")
+        terminal.send("/compact\r")
+        terminal.read_until("model context unchanged", STEP_TIMEOUT, "empty context is unchanged after compaction")
+        terminal.send("/clear-context\r")
+        terminal.read_until("model context cleared", STEP_TIMEOUT, "daemon confirmed a fresh model context")
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and

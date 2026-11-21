@@ -46,6 +46,19 @@ impl App {
         Some(Action::Sessions)
     }
 
+    pub(crate) fn change_context(
+        &mut self,
+        command: crate::commands::ContextCommand,
+        arguments: &str,
+    ) -> Option<Action> {
+        if !arguments.trim().is_empty() {
+            self.warn(format!("/{} takes no arguments", command.name()));
+            return None;
+        }
+        self.session_change_allowed(command.name())
+            .then_some(Action::Context(command))
+    }
+
     /// Take the flag that says the next attach answer started a fresh session.
     pub(crate) fn take_pending_new_session(&mut self) -> bool {
         std::mem::take(&mut self.new_session_pending)

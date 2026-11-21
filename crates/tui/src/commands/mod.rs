@@ -56,6 +56,22 @@ mod tests;
 
 pub use parse::{ParsedCommand, fallback_description, substitute};
 
+/// Changes to the model context of the current session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCommand {
+    Clear,
+    Compact,
+}
+
+impl ContextCommand {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Clear => "clear-context",
+            Self::Compact => "compact",
+        }
+    }
+}
+
 /// A command the client answers itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Local {
@@ -71,6 +87,8 @@ pub enum Local {
     Keys,
     /// Clear the transcript pane.
     Clear,
+    /// Clear or compact model context on the daemon.
+    Context(ContextCommand),
     /// Copy the draft, an answer or a code block to the terminal clipboard.
     Copy,
     /// Open the model picker, or switch to the model named.
@@ -113,6 +131,8 @@ impl Local {
             "artifact" => Some(Self::Artifact),
             "keys" => Some(Self::Keys),
             "clear" => Some(Self::Clear),
+            "clear-context" => Some(Self::Context(ContextCommand::Clear)),
+            "compact" => Some(Self::Context(ContextCommand::Compact)),
             "copy" => Some(Self::Copy),
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
@@ -139,6 +159,7 @@ impl Local {
             Self::Artifact => "artifact",
             Self::Keys => "keys",
             Self::Clear => "clear",
+            Self::Context(command) => command.name(),
             Self::Copy => "copy",
             Self::Model => "model",
             Self::Effort => "effort",
@@ -649,9 +670,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 21] = [
+    "artifact", "clear", "clear-context", "compact", "copy", "effort", "exit", "help", "keys", "links", "model", "new",
+    "note", "queue", "quit", "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.

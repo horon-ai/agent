@@ -98,6 +98,7 @@ pub enum Action {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
+    Context(crate::commands::ContextCommand),
     /// Switch to the model named.
     Model(String),
     /// Set the reasoning effort to the level named.

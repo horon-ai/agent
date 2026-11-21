@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use horon_agent_sdk::api::{ApiEvent, PermissionDecision};
+use horon_agent_sdk::api::{ApiEvent, HandoffCompaction, PermissionDecision};
 use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
@@ -673,6 +673,26 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
+        Command::Context(crate::commands::ContextCommand::Clear) => client
+            .clear(session_id)
+            .map(|()| Some("model context cleared; previous conversation remains in saved history".to_owned())),
+        Command::Context(crate::commands::ContextCommand::Compact) => {
+            client.compact_handoff(session_id).map(|outcome| {
+                let message = match outcome {
+                    HandoffCompaction::Committed { covered } => {
+                        format!("model context compacted: summarized {covered} messages")
+                    }
+                    HandoffCompaction::NothingToCover => {
+                        "model context unchanged: there is nothing to compact".to_owned()
+                    }
+                    HandoffCompaction::ProviderError { detail } => {
+                        format!("model context unchanged: compaction failed: {detail}")
+                    }
+                    HandoffCompaction::Cancelled => "model context unchanged: compaction was cancelled".to_owned(),
+                };
+                Some(message)
+            })
+        }
         // Answered before they reach this point: they carry a structure rather
         // than a line. The attach retargets the connection the worker holds and
         // a create replaces it, so neither can produce a line here.
@@ -722,6 +742,8 @@ fn describe(command: &Command) -> &'static str {
     match command {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
+        Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
+        Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
         Command::Model(_) => "could not switch the model",
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",

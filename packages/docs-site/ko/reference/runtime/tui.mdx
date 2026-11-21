@@ -427,7 +427,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | 명령 | 하는 일 |
 | --- | --- |
 | `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
-| `/clear` | 트랜스크립트 창을 지운다 |
+| `/clear` | 대화 화면만 비운다 |
+| `/clear-context` | 현재 세션에서 모델에 보낼 문맥을 새로 시작하고 저장한 대화는 보관한다 |
+| `/compact` | 설정한 모델에 이전 문맥의 요약을 요청하고 저장한 대화는 보관한다 |
 | `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
@@ -463,7 +465,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 ```text
 built-in commands:
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
