@@ -604,6 +604,18 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     env.pop("HORON_NO_TUI", None)
     if POSIX:
         env["HORON_AGENT_HOOK_TURN_END"] = "true"
+    archive_label = "archive-pty-fixture"
+    seeded = subprocess.run(
+        [launch.argv0, "run", archive_label],
+        cwd=case_root,
+        env={**env, "HORON_AGENT_TOOL_PROFILE": "none"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=STEP_TIMEOUT,
+        text=True,
+    )
+    if seeded.returncode != 0:
+        raise Failure(f"could not seed a saved session to archive\n{seeded.stdout}")
     tool_calls = configure_mcp_probe(home, case_root)
     env["HORON_AGENT_WORKSPACE_TRUST"] = "deny"
     server = prime_server(launch, case_root, env) if not POSIX else None
@@ -646,6 +658,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         # `approval_mode = "write"` parks that call: the prompt arrives before
         # any reply text, so the answer has to come first.
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
+        reply_start = len(terminal.transcript)
         terminal.send("y")
         terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
@@ -661,6 +674,25 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if POSIX:
             terminal.send("/observations\r")
             terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook")
+
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
+        filter_start = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
+        terminal.send("\x01")
+        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
+        terminal.send(archive_label)
+        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/archived\r")
+        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
+        terminal.send(f"{archive_label}\r")
+        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
