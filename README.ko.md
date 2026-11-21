@@ -243,6 +243,7 @@ jcode v1.0.1(릴리스 `v1.0.1`, 커밋 `10114429c8133994861d6c915a2483d397c0f7c
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] output_column_cap` | `0`(꺼짐) | 텍스트 미리보기 한 줄에 표시할 유니코드 문자 수(양의 정수) |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full`(정전에도 기록이 남는다) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0`이면 끈다 |
