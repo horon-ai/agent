@@ -313,8 +313,7 @@ fn answer(
     boundary: Option<&str>,
     events: &Sender<Incoming>,
 ) -> Result<(), SideFault> {
-    let client = HoronAgentClient::connect(dial.options())
-        .map_err(|cause| SideFault::step(CONNECT_FAILED, cause))?;
+    let client = HoronAgentClient::connect(dial.options()).map_err(|cause| SideFault::step(CONNECT_FAILED, cause))?;
     // Unfiltered: the child's id is not known until the fork answers, and an
     // attach retargets this connection to the child before the question.
     let stream = client.events(None);
