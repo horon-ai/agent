@@ -102,8 +102,6 @@ mod fuzzy_tests;
 #[path = "path_completion_tests.rs"]
 mod path_completion_tests;
 
-use std::time::Duration;
-
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
