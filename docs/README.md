@@ -35,6 +35,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`RPC.md`](protocol/RPC.md) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
 | | [`SHARING.md`](protocol/SHARING.md) | Proposed encrypted session sharing and revocation |
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
+| | [`EDIT_DIAGNOSTICS.md`](runtime/EDIT_DIAGNOSTICS.md) | Proposed post-edit language diagnostics |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
