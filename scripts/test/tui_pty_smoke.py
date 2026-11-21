@@ -574,6 +574,40 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import urlopen
+
+    marker = "[tui:context-proof]"
+
+    def send(label: str, has_original: bool) -> None:
+        prompt = f"{marker} {label}"
+        start = len(terminal.transcript)
+        terminal.send(f"{prompt}\r")
+        terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
+        with urlopen(base_url + "/__stats", timeout=5) as response:
+            requests = json.load(response)["requests"]
+        request = next(
+            (entry for entry in reversed(requests) if prompt in entry.get("context_proof_prompt", "")),
+            None,
+        )
+        if request is None:
+            raise Failure(f"the mock recorded no model request for {label}")
+        if request["context_proof_contains_original"] != has_original:
+            raise Failure(f"model request for {label} had original={not has_original}, expected {has_original}")
+
+    send("original", True)
+    terminal.send("/clear\r")
+    send("after display clear", True)
+    start = len(terminal.transcript)
+    terminal.send("/clear-context\r")
+    terminal.read_until("previous conversation remains", STEP_TIMEOUT, "reset model context", since=start)
+    send("after context reset", False)
+    if not any(f"{marker} original" in path.read_text(encoding="utf-8")
+               for path in Path(home).glob("sessions/*/events.jsonl")):
+        raise Failure("the original user message disappeared from the saved event log")
+
+
 def configure_mcp_probe(home: str, case_root: str) -> str:
     fixture = os.path.join(REPO_ROOT, "scripts", "perf", "fixtures", "bench_mcp_server.py")
     calls = os.path.join(case_root, "mcp-tool-called")
@@ -620,7 +654,18 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before MCP inspection")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before the context commands")
+        terminal.send("/compact\r")
+        terminal.read_until("nothing to compact", STEP_TIMEOUT, "empty context is unchanged after compaction")
+        start = len(terminal.transcript)
+        terminal.send("/clear-context\r")
+        terminal.read_until(
+            "previous conversation remains in saved history",
+            STEP_TIMEOUT,
+            "daemon confirmed reset",
+            since=start,
+        )
+
         terminal.send("/mcp\r")
         terminal.read_until("trusted-fixture", STEP_TIMEOUT, "trusted MCP server listed")
         terminal.send("/mcp probe trusted-fixture\r")
@@ -678,6 +723,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             parent_start = len(terminal.transcript)
             terminal.send("\r")
             terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
+            terminal.read_until("resumed ", STEP_TIMEOUT, "parent session reattached", since=parent_start)
+            context_request_smoke(terminal, home, base_url)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         terminal.send("/resume\r")
@@ -706,6 +753,26 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"happy path exited {code}\n--- transcript ---\n{terminal.transcript}")
         if POSIX and f"\x1b]0;horon · {name}" not in terminal.transcript:
             raise Failure(f"window title did not change to {name!r}\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            previous_log = daemon_log_tail(home, limit=2000)
+            resumed = Terminal([launch.argv0, "--continue"], cwd=case_root, env=env)
+            try:
+                resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
+                resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
+                if selected is None:
+                    raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
+                attached = r"phase=resume_(?:restored|live_attach)_done"
+                receipt = rf"{attached} .*target_session_id={re.escape(selected[1])}(?:\s|$)"
+                current_log = daemon_log_tail(home, limit=2000)
+                if len(re.findall(receipt, current_log)) <= len(re.findall(receipt, previous_log)):
+                    raise Failure(f"continue did not restore session {selected[1]}\n{resumed.transcript}")
+                resumed.send("/quit\r")
+                if resumed.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"continue launch did not exit cleanly\n{resumed.transcript}")
+                return terminal.transcript + resumed.transcript
+            finally:
+                resumed.close()
         return terminal.transcript
     finally:
         terminal.close()

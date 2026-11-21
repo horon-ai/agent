@@ -13,6 +13,10 @@ use crate::{agent, auth, build, provider_catalog, server, session, startup_profi
 use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal};
 use provider_init::ProviderChoice;
 
+mod continue_latest;
+#[cfg(test)]
+use continue_latest::latest_workspace_session;
+
 fn is_file_controlled_debug_client() -> bool {
     std::env::var_os("HORON_AGENT_DEBUG_CMD_PATH").is_some()
 }
@@ -62,15 +66,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         };
         return super::install_release::run(assets, agent_version, source_binary).await;
     }
-    // The standalone picker is the entire command, not a resume ID lookup.
-    // In particular, cancelling it must not continue into provider/agent startup
-    // with an empty session ID.
-    if args.resume.as_deref() == Some("") {
-        anyhow::bail!(
-            "the interactive session picker is unavailable in this headless build; pass an explicit session id to --resume"
-        );
-    }
-    resolve_resume_arg(&mut args)?;
+    continue_latest::resolve(&mut args)?;
 
     // One-time config migration: users whose config.toml still carries the old
     // baked-in `swarm_spawn_mode = "visible"` default get flipped to the

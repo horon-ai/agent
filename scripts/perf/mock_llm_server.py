@@ -533,6 +533,8 @@ def _plan_name(body: dict, prompt: str) -> str:
         return "skill"
     if MCP_MARKER in blob:
         return "mcp"
+    if "[tui:context-proof]" in prompt:
+        return "context-proof"
     return "ls"
 
 
@@ -723,7 +725,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name == "hint" or fork_fixture:
+        if plan_name in {"hint", "context-proof"} or fork_fixture:
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -858,6 +860,10 @@ class Handler(BaseHTTPRequestHandler):
             "tool_choice_prop": next(iter(arguments), None),
             "via": via,
             "sentinel_seen": sentinel_seen,
+            **({
+                "context_proof_prompt": prompt,
+                "context_proof_contains_original": "[tui:context-proof] original" in transcript,
+            } if plan_name == "context-proof" else {}),
             "capped": capped,
             "bench_echo_exposed": plan_name == "mcp"
             and bool(
@@ -892,7 +898,8 @@ class Handler(BaseHTTPRequestHandler):
             "arguments": arguments,
             "namespace": namespace if calls_tool else None,
             "text": (
-                "fork-boundary-ready" if fork_fixture
+                f"context-verified-{prompt.rsplit(' ', 1)[-1]}" if plan_name == "context-proof"
+                else "fork-boundary-ready" if fork_fixture
                 else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT
             ),
             "model": body.get("model") or MOCK_MODEL,

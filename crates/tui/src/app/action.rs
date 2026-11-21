@@ -3,6 +3,7 @@
 //! The list lives apart from [`super::App`] so the action boundary — the one
 //! shape every key, command and picker produces — stays readable on its own.
 //! It is re-exported from `crate::app`, so callers keep naming `Action` there.
+use horon_agent_sdk::api::AskSelection;
 
 /// What the UI asks the bridge to do after a keystroke.
 ///
@@ -27,15 +28,14 @@ pub enum Action {
         always: bool,
     },
     /// Answer a structured question.
-    Ask {
-        ask_id: String,
-        answers: Vec<horon_agent_sdk::api::AskSelection>,
-    },
+    Ask { ask_id: String, answers: Vec<AskSelection> },
     /// Ask the harness to run one of its own commands.
     Runtime {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Clear or compact the model context on the daemon.
+    Context(crate::commands::ContextCommand),
     /// Switch to the model named.
     Model(String),
     /// Set the reasoning effort to the level named.
@@ -48,11 +48,11 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
-    /// Ask for the sessions that were archived, so one can be restored.
+    /// Ask for the sessions stored for this working directory, archived ones included.
     ArchivedSessions,
-    /// Archive the named session.
+    /// Archive the session named.
     Archive(String),
-    /// Restore the named archived session.
+    /// Restore the archived session named.
     Restore(String),
     /// Ask for the recorded message boundaries this session can fork from.
     Forks,
