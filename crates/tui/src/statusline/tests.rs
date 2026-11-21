@@ -10,8 +10,8 @@ use time::Time;
 use unicode_width::UnicodeWidthStr;
 
 use super::{
-    Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, apply_appearance, compact, render, shorten_path,
-    status_word,
+    Layout, Preset, SEGMENT_IDS, SegmentId, StatusData, TokenTotals, UsageTotals, apply_appearance, compact, render,
+    shorten_path, status_word,
 };
 use crate::settings::{Reloader, Settings, Sources};
 use crate::theme::schema::BUILTIN_DARK;
@@ -53,6 +53,11 @@ fn sample() -> StatusData<'static> {
             cache_read: 0,
             cache_creation: 0,
         }),
+        // Unknown to the runtime in the sample, so every test that expects a
+        // percentage supplies the capacity itself.
+        capacity: None,
+        usage: None,
+        cost: None,
         now: Some(time(9, 5)),
         spinner: None,
     }
@@ -463,6 +468,125 @@ fn the_path_cut_never_passes_the_limit_and_never_panics() {
 fn a_lone_name_carries_no_separator_marker() {
     assert_eq!(shorten_path("namewithoutseparator", None, 6), "…rator");
     assert_eq!(shorten_path("~/alpha", None, 6), "…/lpha");
+}
+
+#[test]
+fn the_context_percentage_follows_the_runtime_window_until_the_setting_overrides_it() {
+    let data = StatusData {
+        capacity: Some(200_000),
+        ..sample()
+    };
+    let layout = Layout {
+        left: Vec::new(),
+        right: vec![SegmentId::ContextPct],
+        ..Layout::default()
+    };
+    // 250 tokens of 200 000 rounded down is zero percent, and a zero percent
+    // somebody measured is still a reading.
+    assert_eq!(rendered(&data, &layout, 40), "0%");
+
+    // The manual override wins over the report: a user who knows the route
+    // better than this daemon's catalog does gets the number they typed.
+    let override_ = Layout {
+        context_window: 1_000,
+        ..layout.clone()
+    };
+    assert_eq!(rendered(&data, &override_, 40), "25%");
+
+    // Neither known draws nothing: an unknown window is not a zero percent.
+    let unknown = StatusData {
+        capacity: None,
+        ..sample()
+    };
+    assert_eq!(rendered(&unknown, &layout, 40), "");
+}
+
+#[test]
+fn cumulative_usage_shows_only_the_metrics_the_runtime_recorded() {
+    let layout = Layout {
+        left: Vec::new(),
+        right: vec![SegmentId::Usage],
+        ..Layout::default()
+    };
+    let with_cache = StatusData {
+        usage: Some(UsageTotals {
+            input: Some(12_345),
+            output: Some(678),
+            cache_read: Some(4_000),
+            cache_creation: None,
+        }),
+        ..sample()
+    };
+    assert_eq!(rendered(&with_cache, &layout, 40), "Σ↑12.3k ↓678 ⚡4.0k");
+
+    // A provider that never reported cache accounting gets no cache column,
+    // and not a zero one.
+    let no_cache = StatusData {
+        usage: Some(UsageTotals {
+            input: Some(2_000),
+            output: None,
+            cache_read: None,
+            cache_creation: None,
+        }),
+        ..sample()
+    };
+    assert_eq!(rendered(&no_cache, &layout, 40), "Σ↑2.0k");
+
+    // Nothing reported draws nothing at all.
+    assert_eq!(rendered(&sample(), &layout, 40), "");
+}
+
+#[test]
+fn a_spend_estimate_is_drawn_only_when_one_was_published() {
+    let layout = Layout {
+        left: Vec::new(),
+        right: vec![SegmentId::Cost],
+        ..Layout::default()
+    };
+    let priced = StatusData {
+        cost: Some(1.5),
+        ..sample()
+    };
+    assert_eq!(rendered(&priced, &layout, 40), "$1.50");
+
+    // This build carries no price table, so every report leaves the estimate
+    // absent; the segment then hides rather than claiming a free session.
+    assert_eq!(rendered(&sample(), &layout, 40), "");
+    let nonsense = StatusData {
+        cost: Some(f64::NAN),
+        ..sample()
+    };
+    assert_eq!(rendered(&nonsense, &layout, 40), "");
+}
+
+#[test]
+fn opt_in_segments_are_dropped_before_the_preset_segments_under_width_pressure() {
+    let layout = Layout {
+        preset: Preset::Custom,
+        left: vec![SegmentId::Model],
+        right: vec![SegmentId::Time, SegmentId::Usage, SegmentId::Cost],
+        ..Layout::default()
+    };
+    let data = StatusData {
+        usage: Some(UsageTotals {
+            input: Some(9_000),
+            output: Some(1_000),
+            cache_read: None,
+            cache_creation: None,
+        }),
+        cost: Some(0.25),
+        ..sample()
+    };
+    let wide = rendered(&data, &layout, 120);
+    assert!(wide.contains("Σ↑9.0k"), "the usage vanished: {wide:?}");
+    assert!(wide.contains("$0.25"), "the estimate vanished: {wide:?}");
+
+    // The clock goes first, then the estimate, then the usage: the preset's
+    // own segments outlive both opt-in ones, which is what makes them opt-in.
+    let narrow = rendered(&data, &layout, 20);
+    assert!(narrow.starts_with("anthropic/claude-sonnet-4"), "{narrow:?}");
+    assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
+    assert!(!narrow.contains('$'), "the estimate should go second: {narrow:?}");
 }
 
 #[test]
