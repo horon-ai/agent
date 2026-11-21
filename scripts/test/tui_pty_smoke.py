@@ -611,8 +611,9 @@ def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> N
     if git(root, env, "rev-parse", "HEAD") != before:
         raise Failure("confirming a stale review moved HEAD")
     git(root, env, "restore", "--staged", "--", "b.txt")
-    terminal.send("/commit Confirmed test change\r")
-    terminal.read_until("Confirmed test change", STEP_TIMEOUT, "fresh review")
+    fresh_start = len(terminal.transcript)
+    terminal.send("/commit Review proof zebra\r")
+    terminal.read_until("proof zebra", STEP_TIMEOUT, "fresh review", since=fresh_start)
     terminal.send("/commit --yes\r")
     terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed")
     changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
