@@ -594,20 +594,6 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
     try:
         terminal.read_until(FIRST_SCREEN, STARTUP_TIMEOUT, "first screen")
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before archiving")
-        terminal.send("/resume\r")
-        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
-        terminal.send(f"{archive_label}\x01")
-        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
-        terminal.send("/resume\r")
-        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
-        terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
-        terminal.send("\x1b\x1b/archived\r")
-        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
-        terminal.send(f"{archive_label}\r")
-        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
-
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
         # `approval_mode = "write"` parks that call: the prompt arrives before
@@ -625,6 +611,20 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before archiving")
+        terminal.send("/resume\r")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
+        terminal.send(f"{archive_label}\x01")
+        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
+        terminal.send(archive_label)
+        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
+        terminal.send("\x1b\x1b/archived\r")
+        terminal.read_until("enter restore", STEP_TIMEOUT, "archived picker loaded")
+        terminal.send(f"{archive_label}\r")
+        terminal.read_until("session restored", STEP_TIMEOUT, "daemon confirmed restoration")
 
         terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
