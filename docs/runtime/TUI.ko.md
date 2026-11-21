@@ -410,6 +410,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
 | `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
+| `/record [path\|stop\|status]` | 로컬 대화 기록을 시작하거나 멈추거나 확인한다 |
+| `/replay [path\|stop]` | 로컬에서 기록을 재생하거나 현재 세션으로 돌아온다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
@@ -418,6 +420,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 이 표에는 클라이언트가 처리하는 내장 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아옵니다. Delete로 메시지를 삭제하고 Alt+위쪽 또는 Alt+아래쪽 방향 키로 순서를 바꿉니다. 이미 전송 중인 메시지는 목록에서 빠집니다. 편집한 초안은 준비됐을 때 다시 보낼 수 있습니다.
+
+`/record`는 보낸 메시지, 완료된 답변과 도구 실행 결과를 비공개 로컬 파일에 기록합니다. `stop`으로 기록을 끝냅니다. 미전송 초안, 승인 답변, 추론과 도구 출력은 저장하지 않으며 파일은 최대 2 MiB입니다. `/replay`는 녹화된 입력을 보내지 않고 파일을 재생합니다. 재생은 로컬에서만 이뤄지므로 화면에 그리는 내용은 하네스로 보내지 않습니다. 스페이스로 일시 정지하고 방향 키로 앞뒤로 이동하며 `+`와 `-`로 속도를 조절합니다. Esc를 누르면 현재 대화로 돌아옵니다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 
@@ -432,6 +436,8 @@ built-in commands:
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /quit                leave
+  /record              record the conversation to a local file, or stop (stop, status)
+  /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
