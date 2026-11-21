@@ -96,7 +96,7 @@ fn enter_changes_nothing_and_a_tool_call_cannot_be_cancelled_here() {
 fn an_accepted_cancellation_refreshes_only_the_job_that_left() {
     let mut app = app();
     open(&mut app, vec![job("call-1", "terminal"), job("call-2", "terminal")]);
-    app.job_cancelled("call-1", true, None, Some(vec![job("call-2", "terminal")]));
+    app.job_cancelled("call-1", true, None, Ok(vec![job("call-2", "terminal")]));
     assert_eq!(app.background_jobs.len(), 1);
     assert_eq!(app.background_jobs[0].call_id, "call-2");
     let picker = app.picker.as_ref().expect("the refreshed list closed");
@@ -105,6 +105,21 @@ fn an_accepted_cancellation_refreshes_only_the_job_that_left() {
         last_line(&app).contains("cancelling background job call-1"),
         "the verdict is not drawn: {}",
         last_line(&app)
+    );
+}
+
+#[test]
+fn an_unreadable_refresh_keeps_the_rows_and_says_why_they_are_stale() {
+    let mut app = app();
+    open(&mut app, vec![job("call-1", "terminal")]);
+    app.job_cancelled("call-1", true, None, Err("the harness connection closed".to_string()));
+    // The verdict and the failure are both useful: the row stays because the
+    // client could not learn whether the stop landed, and the sentence says so.
+    assert_eq!(app.background_jobs.len(), 1);
+    let line = last_line(&app);
+    assert!(
+        line.contains("could not refresh the background jobs") && line.contains("the harness connection closed"),
+        "the refresh failure was swallowed: {line}"
     );
 }
 

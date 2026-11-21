@@ -59,14 +59,15 @@ impl App {
     /// One cancellation's verdict, and the list as it stands after it.
     ///
     /// A refusal is the daemon's own reason, and a refresh that could not be
-    /// read is not the cancellation's failure: the verdict still shows, and the
-    /// rows already on screen stay until the next `/jobs` reads them.
+    /// read is not the cancellation's failure: the verdict still shows, the
+    /// rows already on screen stay, and the failure explains why they may be
+    /// stale.
     pub fn job_cancelled(
         &mut self,
         call_id: &str,
         accepted: bool,
         reason: Option<&str>,
-        jobs: Option<Vec<BackgroundJobRow>>,
+        jobs: Result<Vec<BackgroundJobRow>, String>,
     ) {
         if accepted {
             self.transcript
@@ -76,8 +77,11 @@ impl App {
             self.transcript
                 .push_notice(format!("could not cancel background job {call_id}: {refusal}"));
         }
-        if let Some(jobs) = jobs {
-            self.show_jobs(jobs);
+        match jobs {
+            Ok(jobs) => self.show_jobs(jobs),
+            Err(error) => self.warn(format!(
+                "could not refresh the background jobs; the rows may be stale: {error}"
+            )),
         }
     }
 
@@ -112,11 +116,7 @@ impl App {
     /// the rows nor an open list may survive a switch.
     pub(crate) fn clear_background_jobs(&mut self) {
         self.background_jobs.clear();
-        if self
-            .picker
-            .as_ref()
-            .is_some_and(|picker| picker.kind() == Kind::Jobs)
-        {
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Jobs) {
             self.picker = None;
         }
     }
@@ -126,7 +126,13 @@ impl App {
         let (label, index) = {
             let picker = self.picker.as_ref()?;
             let row = picker.selected_row()?;
-            (row.label.clone(), row.value.parse::<usize>().ok()?)
+            let index = match row.value.parse::<usize>() {
+                Ok(index) => index,
+                // The value is this module's own row index; a value that is not
+                // one cannot name a job, so the key changes nothing.
+                Err(_) => return None,
+            };
+            (row.label.clone(), index)
         };
         let Some(job) = self.background_jobs.get(index) else {
             return None;

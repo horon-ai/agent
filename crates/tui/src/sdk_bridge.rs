@@ -656,8 +656,8 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // `/jobs` asked for this list, so a harness that does not serve it is
         // an answer rather than a silent skip: the rows are the point of the
         // request.
-        Command::BackgroundJobs => jobs::read(client, session_id),
-        Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id),
+        Command::BackgroundJobs => jobs::read(client, session_id).map(Some),
+        Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id).map(Some),
         // The daemon's allow-listed settings, read when the screen asks. A
         // server too old to answer is a state the screen explains, never an
         // error the worker reports.

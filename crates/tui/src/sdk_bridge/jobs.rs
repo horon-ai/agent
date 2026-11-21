@@ -66,11 +66,14 @@ pub(super) fn read(client: &HoronAgentClient, session_id: &str) -> Result<Incomi
 ///
 /// The cancel reply only says a stop was started; the refreshed list is what
 /// says whether the job is still running. A refresh that fails is not the
-/// cancellation's failure, so it is reported as an absent list rather than as
-/// an error that would hide the verdict.
+/// cancellation's failure, so its sentence travels beside the verdict and the
+/// client reports it without hiding either.
 pub(super) fn cancel(client: &HoronAgentClient, session_id: &str, call_id: &str) -> Result<Incoming, Error> {
     let outcome = client.cancel_background_terminal(session_id, call_id)?;
-    let jobs = client.list_background_work(session_id).ok().map(rows);
+    let jobs = client
+        .list_background_work(session_id)
+        .map(rows)
+        .map_err(|error| error.to_string());
     Ok(Incoming::BackgroundJobCancelled {
         call_id: outcome.call_id,
         accepted: outcome.accepted,
@@ -95,7 +98,10 @@ fn row(item: BackgroundWorkItem) -> BackgroundJobRow {
         kind: field(&item.kind),
         command: item.command.as_deref().map(field).filter(|text| !text.is_empty()),
         cwd: item.cwd.as_deref().map(field).filter(|text| !text.is_empty()),
-        output: item.output.as_deref().map(output_lines).unwrap_or_default(),
+        output: match item.output.as_deref() {
+            Some(encoded) => output_lines(encoded),
+            None => Vec::new(),
+        },
     }
 }
 
@@ -124,7 +130,9 @@ fn output_lines(encoded: &str) -> Vec<String> {
 
 /// A command, directory or id as one visible line.
 fn field(text: &str) -> String {
-    let first = text.lines().next().unwrap_or_default();
+    let Some(first) = text.lines().next() else {
+        return String::new();
+    };
     sanitized(first).chars().take(FIELD_CHARS).collect()
 }
 

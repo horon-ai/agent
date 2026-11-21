@@ -8,8 +8,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use horon_agent_sdk::api::BackgroundWorkItem;
 
-use super::jobs::rows;
 use super::BackgroundJobRow;
+use super::jobs::rows as build_rows;
 
 fn item(call_id: &str, kind: &str, output: Option<&str>) -> BackgroundWorkItem {
     BackgroundWorkItem {
@@ -24,12 +24,9 @@ fn item(call_id: &str, kind: &str, output: Option<&str>) -> BackgroundWorkItem {
 
 #[test]
 fn a_terminal_row_keeps_the_command_and_the_last_four_output_lines() {
+    let listed = build_rows(vec![item("call-1", "terminal", Some("one\ntwo\nthree\nfour\nfive\n"))]);
     assert_eq!(
-        rows(vec![item(
-            "call-1",
-            "terminal",
-            Some("one\ntwo\nthree\nfour\nfive\n"),
-        )]),
+        listed,
         vec![BackgroundJobRow {
             call_id: "call-1".to_string(),
             task_id: "task-call-1".to_string(),
@@ -48,18 +45,18 @@ fn a_terminal_row_keeps_the_command_and_the_last_four_output_lines() {
 
 #[test]
 fn a_tool_call_row_is_listed_and_is_not_cancellable() {
-    let rows = rows(vec![item("call-2", "tool_call", None)]);
-    assert_eq!(rows.len(), 1);
-    assert!(!rows[0].cancellable(), "a tool call was offered as a terminal");
-    assert!(rows[0].output.is_empty(), "a row with no output invented lines");
-    assert!(rows(vec![item("call-1", "terminal", None)])[0].cancellable());
+    let listed = build_rows(vec![item("call-2", "tool_call", None)]);
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].cancellable(), "a tool call was offered as a terminal");
+    assert!(listed[0].output.is_empty(), "a row with no output invented lines");
+    assert!(build_rows(vec![item("call-1", "terminal", None)])[0].cancellable());
 }
 
 #[test]
 fn an_output_escape_never_reaches_the_row() {
     // A job's output is daemon data, and a terminal sequence in it would act on
     // the screen the row is drawn on rather than be read.
-    let row = &rows(vec![item("call-3", "terminal", Some("\x1b[31mred\x1b[0m\nplain"))])[0];
+    let row = &build_rows(vec![item("call-3", "terminal", Some("\x1b[31mred\x1b[0m\nplain"))])[0];
     assert_eq!(row.output, vec!["red".to_string(), "plain".to_string()]);
 }
 
@@ -67,12 +64,12 @@ fn an_output_escape_never_reaches_the_row() {
 fn output_that_is_not_base64_is_an_empty_tail() {
     let mut broken = item("call-4", "terminal", None);
     broken.output = Some("not base64!".to_string());
-    assert!(rows(vec![broken])[0].output.is_empty());
+    assert!(build_rows(vec![broken])[0].output.is_empty());
 }
 
 #[test]
 fn one_long_line_is_cut_to_what_a_preview_keeps() {
     let long = "x".repeat(400);
-    let row = &rows(vec![item("call-5", "terminal", Some(&long))])[0];
+    let row = &build_rows(vec![item("call-5", "terminal", Some(&long))])[0];
     assert_eq!(row.output[0].chars().count(), 160);
 }

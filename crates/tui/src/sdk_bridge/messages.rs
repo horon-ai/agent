@@ -149,13 +149,13 @@ pub enum Incoming {
     ///
     /// The reply to a cancellation only says a stop was started, so the list
     /// that travels beside it is what says whether the job is gone. A refresh
-    /// that could not be read is `None` rather than an empty list, and the rows
-    /// already on screen stay.
+    /// that could not be read travels as its sentence: the verdict still shows,
+    /// the rows already on screen stay, and the client says why they are stale.
     BackgroundJobCancelled {
         call_id: String,
         accepted: bool,
         reason: Option<String>,
-        jobs: Option<Vec<super::BackgroundJobRow>>,
+        jobs: Result<Vec<super::BackgroundJobRow>, String>,
     },
     /// The running turn took the text a steer carried, echoed back so the
     /// client knows which held messages it settles.
