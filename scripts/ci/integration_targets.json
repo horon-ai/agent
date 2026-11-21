@@ -163,6 +163,13 @@
     },
     {
       "package": "horon-agent-base",
+      "target": "package_spawn",
+      "min_passed": 10,
+      "skipped": ["package_child_probe"],
+      "skip_reason": "The installed executable selects this probe as a child process of the package supervisor tests."
+    },
+    {
+      "package": "horon-agent-base",
       "target": "prompt_guidance_integration",
       "min_passed": 1
     },

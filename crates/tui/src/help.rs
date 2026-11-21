@@ -98,7 +98,9 @@ Commands:
   /archived      list archived sessions in this directory; Enter restores one
   /artifact [id] open a retained artifact of this session in $VISUAL or
                  $EDITOR, as a private copy; with no id, list them
-  /clear         clear the transcript pane
+  /clear         clear only the transcript pane
+  /clear-context start fresh model context and keep the saved conversation
+  /compact       summarize older model context and keep the saved conversation
   /copy [last|code]
                  open the list of recent answers and code blocks, or copy
                  the last answer or the newest code block
@@ -260,7 +262,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "archived" => "list archived sessions in this directory; Enter restores one",
         "artifact" => "open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy",
-        "clear" => "clear the transcript",
+        "clear" => "clear only the transcript pane",
+        "clear-context" => "start fresh model context and keep the saved conversation",
+        "compact" => "summarize older model context and keep the saved conversation",
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",

@@ -1,4 +1,7 @@
 //! Process primitives: group signalling, child placement and diagnostics.
+//!
+//! [`package_child`] owns the launch of one installed package executable: its
+//! activation environment, its pipes, and the stop-and-reap of its group.
 
 use std::io;
 use std::process::Command;
@@ -8,6 +11,8 @@ pub use horon_agent_platform_api::{ReadyChild, StopRequest};
 
 use crate::Current;
 use crate::PlatformAdapter;
+
+pub mod package_child;
 
 /// Place `command`'s child in its own process group so the whole tree can be
 /// signalled as a unit.
@@ -123,6 +128,17 @@ pub fn kill_process_group(pid: u32) {
 /// Windows terminates at once. The child never survives this call.
 pub fn terminate_child(child: &mut std::process::Child) {
     Current::terminate_child(child);
+}
+
+/// Wait for child process `pid` to exit without reaping it.
+///
+/// `nonblocking` reports whether the child has already exited and returns at
+/// once. Unix reports the exit with `waitid(WNOWAIT)`, which leaves the child
+/// waitable and its process-group id reserved, so a descendant that outlived it
+/// can still be signalled before the caller reaps it. A platform without that
+/// primitive reports `Unsupported`.
+pub fn wait_child_exit(pid: u32, nonblocking: bool) -> io::Result<bool> {
+    Current::wait_child_exit(pid, nonblocking)
 }
 
 /// Whether this platform has POSIX process groups that a signal can reach as a

@@ -1024,7 +1024,7 @@ id = "effort-none"
     });
 }
 
-async fn stalled_profile_stream(initial_events: &str, first: u32, idle: u32) -> EventStream {
+async fn stalled_stream_endpoint(initial_events: &str) -> String {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1057,8 +1057,13 @@ async fn stalled_profile_stream(initial_events: &str, first: u32, idle: u32) -> 
         // Keep the connection open without finishing the chunked body.
         std::future::pending::<()>().await;
     });
+    format!("http://{address}/v1")
+}
+
+async fn stalled_profile_stream(initial_events: &str, first: u32, idle: u32) -> EventStream {
+    let base_url = stalled_stream_endpoint(initial_events).await;
     let config = toml::from_str(&format!(
-        "base_url = 'http://{address}/v1'\nauth = 'none'\ndefault_model = 'fixture'\n\
+        "base_url = '{base_url}'\nauth = 'none'\ndefault_model = 'fixture'\n\
          stream_first_event_timeout_secs = {first}\nstream_idle_timeout_secs = {idle}"
     ))
     .expect("parse profile settings");
@@ -1104,4 +1109,69 @@ async fn profile_idle_timeout_uses_its_own_budget_after_text() {
         .expect("stream reports an error")
         .expect_err("the established stream went silent");
     assert!(next.to_string().contains("idle timeout"), "{next}");
+}
+
+#[tokio::test]
+async fn profile_request_limit_queues_across_runtimes_and_drops_cancelled_waiters() {
+    use std::time::Duration;
+
+    let stalled_url = stalled_stream_endpoint(": keepalive\n\n").await;
+    let fixture = RecordingServer::start();
+    let runtime = |profile_name: &str, base_url: &str| {
+        let config = toml::from_str(&format!(
+            "base_url = '{base_url}'\nauth = 'none'\ndefault_model = 'fixture'\nmax_in_flight_requests = 1"
+        ))
+        .expect("parse profile limit");
+        external::build_named_openai_compatible_runtime(profile_name, &config).expect("build profile")
+    };
+    let first = runtime("limited-fixture", &stalled_url).fork();
+    let second = runtime("limited-fixture", &fixture.base_url);
+    let independent = runtime("other-limited-fixture", &fixture.base_url);
+    let first_message = [Message::user("hold the slot")];
+    let active = first
+        .complete(&first_message, &[], "", None)
+        .await
+        .expect("the first request gets the slot");
+
+    let cancelled_message = [Message::user("cancel this waiter")];
+    let surviving_message = [Message::user("send after release")];
+    let mut cancelled = second.complete(&cancelled_message, &[], "", None);
+    let mut surviving = second.complete(&surviving_message, &[], "", None);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), &mut cancelled)
+            .await
+            .is_err(),
+        "a full profile leaves the request waiting"
+    );
+    drop(cancelled);
+    assert!(futures::poll!(&mut surviving).is_pending());
+
+    let other_message = [Message::user("independent profile")];
+    drop(
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            independent.complete(&other_message, &[], "", None),
+        )
+        .await
+        .expect("another profile can send while this slot is full")
+        .expect("the independent profile gets a response"),
+    );
+    assert_eq!(
+        fixture.request_count(),
+        1,
+        "only the independent profile sent a request"
+    );
+
+    drop(active);
+    drop(
+        tokio::time::timeout(Duration::from_secs(3), surviving)
+            .await
+            .expect("the surviving waiter takes the released slot")
+            .expect("the surviving request gets a response"),
+    );
+    assert_eq!(fixture.request_count(), 2);
+    assert_eq!(
+        fixture.last_request_body()["messages"][0]["content"],
+        "send after release"
+    );
 }
