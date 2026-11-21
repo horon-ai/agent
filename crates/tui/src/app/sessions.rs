@@ -1,7 +1,7 @@
-//! `/new`, `/switch` and `/resume`: what changing the session refuses, and the
-//! new session the bridge is asked for.
+//! `/new`, `/switch`, `/resume`, `/clear-context`, `/compact` and `/rename`:
+//! what changing the session refuses, and the new session the bridge asks for.
 //!
-//! The three commands share one refusal rule and one warning: a running turn's
+//! The commands share one refusal rule and one warning: a running turn's
 //! events would arrive for a session the client no longer shows, and the queue
 //! that turn is still working through belongs to it, so the change waits. A
 //! model or an effort still waiting for its turn-end pass waits for the same
@@ -57,6 +57,16 @@ impl App {
         }
         self.session_change_allowed(command.name())
             .then_some(Action::Context(command))
+    }
+
+    pub(crate) fn rename_session(&mut self, arguments: &str) -> Option<Action> {
+        let title = arguments.trim();
+        if title.is_empty() || title.chars().any(char::is_control) {
+            self.warn("enter a title without control characters: /rename <title>");
+            return None;
+        }
+        self.session_change_allowed("rename")
+            .then(|| Action::Rename(title.to_owned()))
     }
 
     /// Take the flag that says the next attach answer started a fresh session.
