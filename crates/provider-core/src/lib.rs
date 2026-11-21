@@ -6,7 +6,7 @@ pub mod degradation;
 pub mod failover;
 pub mod fallback_pick;
 pub mod fingerprint;
-mod http_tls;
+pub mod http_tls;
 pub mod judge;
 pub mod model_id;
 pub mod model_names;
@@ -42,7 +42,6 @@ pub use fallback_pick::{
     pick_next_fallback_route_with_options,
 };
 pub use fingerprint::{log_provider_canonical_input, stable_hash_json, stable_hash_str};
-pub use http_tls::with_platform_tls;
 pub use models::{
     ALL_CLAUDE_MODELS, ALL_OPENAI_MODELS, CHATGPT_WEB_MODEL, DEFAULT_CLAUDE_MODEL, DEFAULT_CONTEXT_LIMIT,
     DEFAULT_OPENAI_MODEL, ModelCapabilities, OPENAI_API_ONLY_PRO_MODELS, context_limit_for_model,

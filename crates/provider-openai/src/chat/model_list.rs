@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
-use horon_agent_provider_core::{HORON_AGENT_USER_AGENT, with_platform_tls};
+use horon_agent_provider_core::{HORON_AGENT_USER_AGENT, http_tls::with_platform_tls};
 use reqwest::{Client, Url, redirect::Policy};
 use serde::Deserialize;
 
