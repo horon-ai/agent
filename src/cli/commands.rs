@@ -840,45 +840,6 @@ Re-run with `--force` if you really want to stop the server.";
     Ok(())
 }
 
-pub async fn run_single_message_command(
-    choice: &super::provider_init::ProviderChoice,
-    model: Option<&str>,
-    resume_session: Option<&str>,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-) -> Result<()> {
-    let provider = super::provider_init::init_provider_for_run(choice, model).await?;
-    let registry = crate::tool::Registry::new(provider.clone()).await;
-    // Load MCP servers from ~/.horon/mcp.json so headless `horon-agent run` has the
-    // same `mcp__*` tools as interactive/server sessions. This is non-blocking:
-    // `register_mcp_tools` advertises cached tool schemas synchronously (so the
-    // first locked tool snapshot already contains MCP tools, for zero
-    // prompt-cache miss) and connects in the background (connect-on-first-call).
-    // For a short single-message run, startup latency is unchanged.
-    // (#390, #206 Phase 2)
-    if run_command_mcp_enabled() {
-        registry.register_mcp_tools(None, None, None).await;
-        // Cold-cache gap: when a configured MCP server has no cached schema yet
-        // (first ever use, or reconfigured), advertise-early registers nothing
-        // for it, and a single-turn `horon-agent run` locks its tool snapshot before
-        // the background connection finishes, so the model would never see those
-        // tools. Long-lived sessions recover on a later turn, but `horon-agent run`
-        // has no later turn. So, only when the cache is cold for some configured
-        // server, briefly wait for the first connection to register tools before
-        // the agent runs. Warm runs skip this entirely and stay instant. (#390)
-        wait_for_cold_cache_mcp_tools(&registry).await;
-    }
-    let mut agent = crate::agent::Agent::for_one_shot_run(provider.clone(), registry).closing_after_run();
-    if let Err(error) = restore_agent_session_if_requested(&mut agent, resume_session) {
-        agent.mark_closed();
-        return Err(error);
-    }
-    // User-authored `run` message; later helper turns are synthetic.
-    agent.arm_effort_keywords(message);
-    run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson).await
-}
-
 /// Provider id for `horon-agent run --json`/`--ndjson` output.
 ///
 /// Every direct OpenAI-compatible profile (Ollama, LM Studio, DeepSeek, custom
@@ -897,7 +858,7 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
     name.to_string()
 }
 
-async fn run_single_message_with_agent(
+pub(super) async fn run_single_message_with_agent(
     agent: &mut crate::agent::Agent,
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
@@ -947,7 +908,7 @@ fn run_command_auto_poke_enabled() -> bool {
 /// Whether headless `horon-agent run` should load MCP servers from `~/.horon/mcp.json`.
 /// Enabled by default; set `HORON_AGENT_RUN_MCP=0` (or `false`/`off`/`no`) to skip MCP
 /// registration for latency-sensitive scripting. (#390)
-fn run_command_mcp_enabled() -> bool {
+pub(super) fn run_command_mcp_enabled() -> bool {
     std::env::var("HORON_AGENT_RUN_MCP")
         .ok()
         .map(|value| {
@@ -996,7 +957,7 @@ mod mcp_startup_tests;
 /// (or the budget elapses) so the single turn's locked tool snapshot includes
 /// them. Warm caches return immediately because `cold_cache_mcp_servers` is
 /// empty. (#390)
-async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
+pub(super) async fn wait_for_cold_cache_mcp_tools(registry: &crate::tool::Registry) {
     let cold_servers = cold_cache_mcp_servers();
     if cold_servers.is_empty() {
         return;
@@ -1321,7 +1282,10 @@ async fn run_single_message_command_capture_with_auto_poke(
     Ok(outputs.join("\n\n"))
 }
 
-fn restore_agent_session_if_requested(agent: &mut crate::agent::Agent, resume_session: Option<&str>) -> Result<()> {
+pub(super) fn restore_agent_session_if_requested(
+    agent: &mut crate::agent::Agent,
+    resume_session: Option<&str>,
+) -> Result<()> {
     if let Some(session_id) = resume_session {
         agent.restore_session_for_one_shot_run(session_id)?;
     }

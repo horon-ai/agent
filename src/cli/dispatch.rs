@@ -14,6 +14,7 @@ use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal
 use provider_init::ProviderChoice;
 
 mod continue_latest;
+mod one_shot;
 #[cfg(test)]
 use continue_latest::latest_workspace_session;
 
@@ -267,22 +268,12 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 commands::run_server_stop_command(force, json).await?;
             }
         },
-        Some(Command::Run { message, json, ndjson }) => {
-            register_on_demand_server_spawner_for_run(
-                args.provider.clone(),
-                args.model.clone(),
-                args.provider_profile.clone(),
-            );
-            commands::run_single_message_command(
-                &args.provider,
-                args.model.as_deref(),
-                args.resume.as_deref(),
-                &message,
-                json,
-                ndjson,
-            )
-            .await?;
-        }
+        Some(Command::Run {
+            ref message,
+            json,
+            ndjson,
+            ref model_overrides,
+        }) => one_shot::run(&args, message, json, ndjson, model_overrides).await?,
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref()).await?;

@@ -46,6 +46,17 @@ impl From<ProviderTypeArg> for crate::config::NamedProviderType {
     }
 }
 
+#[derive(clap::Args, Debug)]
+pub(crate) struct RunModelOverrides {
+    /// Reasoning effort for the selected model
+    #[arg(long, value_name = "EFFORT")]
+    pub(crate) thinking: Option<String>,
+
+    /// OpenAI service tier (off, priority, fast, or ultrafast where supported)
+    #[arg(long, value_name = "TIER")]
+    pub(crate) service_tier: Option<String>,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "horon-agent")]
 #[command(version = horon_agent_build_meta::version())]
@@ -237,6 +248,9 @@ pub(crate) enum Command {
         /// Emit newline-delimited JSON events while the response streams
         #[arg(long, conflicts_with = "json")]
         ndjson: bool,
+
+        #[command(flatten)]
+        model_overrides: RunModelOverrides,
 
         /// The message to send
         message: String,

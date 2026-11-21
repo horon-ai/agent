@@ -469,6 +469,32 @@ impl Recorder {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn run_sets_validated_model_options_before_requesting_the_model() {
+    let recorder = Recorder::start(Wire::Responses).await;
+    let home = Home::new();
+    home.add_profile("qa-wire", Wire::Responses, recorder.base_url()).await;
+    for (flags, success) in [
+        (&[][..], true),
+        (&["--thinking", "high", "--service-tier", "priority"][..], true),
+        (&["--thinking", "unsupported"][..], false),
+        (&["--service-tier", "auto"][..], false),
+    ] {
+        let mut args = vec!["--provider-profile", "qa-wire", "run", PROMPT, "--no-update"];
+        args.extend_from_slice(flags);
+        let output = home.run_with_env(&args, &[(KEY_ENV, FAKE_KEY)]).await;
+        assert_eq!(output.status.success(), success, "{}", text(&output.stderr));
+    }
+    let requests = recorder.requests();
+    assert_eq!(requests.len(), 2, "unsupported values made a model request");
+    let default: Value = serde_json::from_str(&requests[0].body).unwrap();
+    let changed: Value = serde_json::from_str(&requests[1].body).unwrap();
+    assert!(default.get("service_tier").is_none());
+    assert!(default.get("reasoning").is_none());
+    assert_eq!(changed["service_tier"], "priority");
+    assert_eq!(changed["reasoning"]["effort"], "high");
+}
+
 /// Registers `wire` through `provider add`, runs one prompt through the real
 /// binary, and checks the recorded request and the printed answer together: a
 /// passing run that never reached the mock would prove nothing.
