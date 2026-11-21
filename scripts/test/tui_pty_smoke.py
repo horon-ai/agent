@@ -608,10 +608,7 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
     parent_start = len(terminal.transcript)
     terminal.send("\r")
     terminal.read_until("attaching to parent:", STEP_TIMEOUT, "selected the original session", since=parent_start)
-    parent_picker = len(terminal.transcript)
-    terminal.send("/swarm\r")
-    terminal.read_until("Fixture child", STEP_TIMEOUT, "the parent lists its child again", since=parent_picker)
-    terminal.send("\x1b")
+    terminal.read_until(f"resumed {parent}", STEP_TIMEOUT, "parent session attached", since=parent_start)
 
 
 def configure_mcp_probe(home: str, case_root: str) -> str:
