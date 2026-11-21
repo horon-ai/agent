@@ -76,17 +76,28 @@ Keys:
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
   Alt-P          pick the model this session uses
+  Alt-D          copy the draft to the terminal clipboard
+  Alt-K          copy the line under the cursor to the terminal clipboard
+  Alt-L          copy the last answer to the terminal clipboard
+  Alt-C          copy the newest code block to the terminal clipboard
   While a replay plays, space pauses, left/right seek five seconds,
   +/- change the speed, home/end jump to the start or the end, and esc
   stops it.
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
-  the keys in force.
+  the keys in force. Copying uses the terminal's OSC 52 sequence: a
+  terminal or a multiplexer that does not take it keeps the text on
+  screen for selection. HORON_TUI_OSC52=0 turns copying off, and
+  HORON_TUI_OSC52=1 sends it anyway for a multiplexer or ssh session that
+  was configured to forward it.
 
 Commands:
   /help          list the commands (built-in, harness, command files),
                  the skills and the keys in force; /help <command>
                  describes one of them
   /clear         clear the transcript pane
+  /copy [last|code]
+                 open the list of recent answers and code blocks, or copy
+                 the last answer or the newest code block
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
@@ -163,6 +174,16 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (ids::APP_COPY_DRAFT, "copy the draft to the terminal clipboard"),
+    (
+        ids::APP_COPY_LINE,
+        "copy the line under the cursor to the terminal clipboard",
+    ),
+    (ids::APP_COPY_LAST, "copy the last answer to the terminal clipboard"),
+    (
+        ids::APP_COPY_CODE,
+        "copy the newest code block to the terminal clipboard",
+    ),
     (
         ids::APP_CYCLE_MODEL,
         "switch to the next model in models.shortlist, wrapping at the last one",
@@ -225,6 +246,7 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
 pub(crate) fn local_description(name: &str) -> &'static str {
     match name {
         "clear" => "clear the transcript",
+        "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
         "help" => "list the commands and the keys in force",

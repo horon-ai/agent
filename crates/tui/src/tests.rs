@@ -520,7 +520,7 @@ fn ctrl_t_hides_later_reasoning_and_the_choice_outlives_an_unrelated_reload() {
 fn the_settings_screen_keeps_the_toggle_key_to_itself() {
     let mut app = app_with(None);
     app.refresh_settings(&settings_with(&[("HORON_TUI_TRANSCRIPT_SHOW_REASONING", "true")]));
-    app.open_settings();
+    let _ = app.open_settings();
 
     assert_eq!(app.on_key(ctrl('t')), None);
     assert!(
@@ -1003,7 +1003,7 @@ fn the_repaint_key_answers_under_every_surface_without_taking_its_keys() {
     // points it at an empty one instead of the user's own themes folder.
     let themes = tempfile::tempdir().expect("a temporary theme directory");
     app.themes_dir = themes.path().to_path_buf();
-    app.open_settings();
+    let _ = app.open_settings();
     app.on_key(key(crossterm::event::KeyCode::Down));
     let selected = app
         .overlay

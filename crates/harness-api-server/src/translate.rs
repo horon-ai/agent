@@ -4,6 +4,7 @@
 mod cancellable_work;
 mod compact_handoff;
 mod credentials;
+pub(crate) mod effective_settings;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
@@ -32,9 +33,7 @@ pub(crate) fn horon_agent_home_test_lock() -> std::sync::MutexGuard<'static, ()>
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Default number of messages a `peek_session` returns. A preview is a glance,
-/// so this is a tail rather than a transcript: enough to recognise which
-/// conversation it is, few enough that peeking a dozen sessions stays cheap.
+/// A `peek_session` returns a short tail so browsing many sessions stays cheap.
 const PEEK_LIMIT: u64 = 12;
 
 /// Requests the daemon only accepts on an attached (subscribed) connection.
@@ -104,10 +103,8 @@ pub enum Outbound {
 type SessionFileStatus = (bool, String, Option<u64>, Option<u64>);
 type SessionFileStatusResult = Result<SessionFileStatus, (ErrorCode, String)>;
 
-// Legacy daemon replies are broadcast to every connected client. Request ids
-// must therefore be unique across bridge connections, not merely within one
-// `BridgeState`, or two panels issuing the same numbered request can each
-// mistake the other's reply for their own.
+// Daemon replies reach every connection, so request ids must be unique across
+// bridge connections to keep each reply with the request that caused it.
 static NEXT_LEGACY_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_TEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -1476,6 +1473,7 @@ impl BridgeState {
                     "operation_id": operation_id,
                 }))]
             }
+            "get_effective_settings" => effective_settings::request(self, request, api_id, req),
             "get_snapshot" => {
                 let Some(session_id) = Self::request_session(request, api_id) else {
                     return Self::error_reply(api_id, ErrorCode::InvalidRequest, "session_id must not be empty");
@@ -2379,6 +2377,7 @@ impl BridgeState {
                     None => vec![],
                 }
             }
+            "effective_settings" => return effective_settings::reply(self, event),
             "runtime_state" => {
                 let id = event["id"].as_u64().unwrap_or(0);
                 let Some(api_id) = self.take_simple(id, SimpleKind::RuntimeState) else {

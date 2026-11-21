@@ -27,7 +27,10 @@ use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
+use self::copy::CopyRequest;
+
 mod commands;
+mod copy;
 mod effort;
 mod history_search;
 mod keys;
@@ -45,6 +48,9 @@ mod boundary_tests;
 
 #[cfg(test)]
 mod cache_miss_tests;
+
+#[cfg(test)]
+mod copy_tests;
 
 #[cfg(test)]
 mod effort_cmd_tests;
@@ -105,6 +111,8 @@ pub enum Action {
     Attach(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask the daemon for the values the settings screen displays.
+    DaemonSettings,
     /// Leave.
     Quit,
 }
@@ -365,6 +373,12 @@ pub struct App {
     pub skills: Vec<SkillRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
+    /// The daemon values the settings screen shows, or why it has none.
+    ///
+    /// Read only when the screen opens or `r` is pressed, because the daemon
+    /// owns these values and this client never changes one: a stale copy is
+    /// worse than a fresh read the user asked for.
+    pub daemon_settings: crate::settings::DaemonSettings,
     /// Where user theme files are read from, offered by the settings screen.
     pub themes_dir: std::path::PathBuf,
     /// The open settings screen, if one is showing.
@@ -376,6 +390,12 @@ pub struct App {
     pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
+    /// A copy the app decided on, waiting for the loop to write it.
+    ///
+    /// It sits here rather than being written from the key handler so that the
+    /// app keeps knowing nothing about a terminal: the loop that owns standard
+    /// output is the one place a sequence is written.
+    pending_copy: Option<CopyRequest>,
     /// The recording the user turned on with `/record`.
     ///
     /// Off until asked for: nothing is written to disk unless a recording was
@@ -441,11 +461,8 @@ impl App {
             session_title: None,
             new_session_pending: false,
             cwd: None,
-            // Off until the connection says otherwise: a client that cannot
-            // prove where the session runs does not read a local directory.
             workspace_is_local: false,
-            // On until a session reports no directory of its own: the launch
-            // directory is the create's workspace, which is all this asks for.
+            // A new session starts in the launch directory until it reports otherwise.
             workspace_known: true,
             path_cycle: None,
             home: home_directory(),
@@ -461,10 +478,12 @@ impl App {
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
             picker: None,
             pending_change: None,
+            pending_copy: None,
             recorder: None,
             replay: None,
             record_scan: (0, 0),
@@ -522,11 +541,7 @@ impl App {
             session_title: None,
             new_session_pending: false,
             cwd: None,
-            // Off until the connection says otherwise: a client that cannot
-            // prove where the session runs does not read a local directory.
             workspace_is_local: false,
-            // On until a session reports no directory of its own: the launch
-            // directory is the create's workspace, which is all this asks for.
             workspace_known: true,
             path_cycle: None,
             home: home_directory(),
@@ -542,10 +557,12 @@ impl App {
             commands: Registry::default(),
             skills: Vec::new(),
             settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
             overlay: None,
             picker: None,
             pending_change: None,
+            pending_copy: None,
             recorder: None,
             replay: None,
             record_scan: (0, 0),
@@ -1115,14 +1132,7 @@ impl App {
         true
     }
 
-    /// Complete the line being edited to the longest common prefix, or the
-    /// single match when there is one.
-    ///
-    /// The slash popup comes first and the command registry second: a line that
-    /// names a command keeps the completion it had, and only a draft that is
-    /// not a command line is read as a workspace path. A line starting with
-    /// the command marker stops there, because its argument — a model id, a
-    /// session id, a prompt — is the user's to fill rather than a path.
+    /// Complete a slash command first, then a path in the local workspace.
     pub fn complete(&mut self) {
         if self.slash.is_open() && self.complete_selected() {
             return;
@@ -1138,15 +1148,10 @@ impl App {
             self.sync_slash();
             return;
         }
-        // A path fills the token at the end of the draft. The editor can only
-        // replace the whole text, which leaves the cursor after the fill, so a
-        // cursor in the middle of it is left alone rather than moved.
+        // A path completion replaces the last token and leaves the cursor at its end.
         if self.input.cursor() != text.chars().count() {
             return;
         }
-        // A line that starts with the command marker belongs to the registry:
-        // its argument is the user's to fill (a model id, a session id, a
-        // prompt), and an unknown command's first token is an absolute path.
         if text.trim_start().starts_with('/') {
             return;
         }

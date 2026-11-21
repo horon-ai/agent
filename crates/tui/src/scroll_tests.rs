@@ -601,7 +601,7 @@ fn the_settings_screen_keeps_the_wheel_and_the_keys() {
     let mut app = app_with_lines(60);
     draw_at(&mut app, 40, 12);
     app.mouse_scroll = true;
-    app.open_settings();
+    let _ = app.open_settings();
     app.on_mouse(wheel(MouseEventKind::ScrollUp));
     assert!(
         app.scroll.is_following(),
