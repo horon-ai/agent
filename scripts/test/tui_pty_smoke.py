@@ -674,9 +674,12 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
                     break
         except FileNotFoundError:
             pass
-        time.sleep(0.05)
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            terminal.transcript += chunk.decode("utf-8", "replace")
     else:
-        raise Failure("the local player did not receive the requested text")
+        raise Failure(f"the local player did not receive the requested text\n--- transcript ---\n{terminal.transcript}")
     if request_count() != count:
         raise Failure("local playback sent a model request")
 
