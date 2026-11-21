@@ -48,6 +48,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`LOCAL_HELPERS.ko.md`](provider/LOCAL_HELPERS.ko.md) | 오프라인 로컬 모델 보조 기능 설계 제안 |
 | | [`INTEGRATIONS.ko.md`](provider/INTEGRATIONS.ko.md) | 원격 MCP, 사용자 정의 웹 검색 |
 | | [`DIAGNOSTICS.ko.md`](provider/DIAGNOSTICS.ko.md) | 요청 수를 제한하는 프로바이더 스트림 진단 설계 제안 |
+| | [`SAMPLING.ko.md`](provider/SAMPLING.ko.md) | 타입이 정해진 모델 샘플링 설계 제안 |
 | `safety/` | [`SAFETY.ko.md`](safety/SAFETY.ko.md) | 안전 시스템, 무인 승인과 자동 전환 |
 | | [`SECURITY.ko.md`](safety/SECURITY.ko.md) | 워크스페이스 신뢰, 크래시 번들, 의존성 보안 분류 |
 | `performance/` | [`BENCHMARK.ko.md`](performance/BENCHMARK.ko.md) | jcode를 이기는 목표와 측정 기준, OS별(Linux·macOS·Windows) 벤치마크, 구조 게이트, A/B 측정, 스킬·MCP 설정 로딩 A/B |

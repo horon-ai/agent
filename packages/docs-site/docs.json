@@ -97,6 +97,7 @@
                   "reference/provider/model",
                   "reference/provider/local-helpers",
                   "reference/provider/diagnostics",
+                  "reference/provider/sampling",
                   "reference/provider/integrations"
                 ]
               },
@@ -209,6 +210,7 @@
                   "ko/reference/provider/model",
                   "ko/reference/provider/local-helpers",
                   "ko/reference/provider/diagnostics",
+                  "ko/reference/provider/sampling",
                   "ko/reference/provider/integrations"
                 ]
               },
