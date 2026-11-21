@@ -38,7 +38,7 @@ impl Transcript {
         } else {
             ToolState::Done
         };
-        self.items.push(Item::Tool(call));
+        self.push_item(Item::Tool(call), None);
     }
 
     /// Append the line a recording kept for one warning.
@@ -47,7 +47,7 @@ impl Transcript {
     /// row states the boundary instead of repeating text the file never held.
     pub fn push_recorded_warning(&mut self) {
         self.finish_stream();
-        self.items.push(Item::Warning(WARNING_NOT_RECORDED.to_string()));
+        self.push_item(Item::Warning(WARNING_NOT_RECORDED.to_string()), None);
     }
 
     /// How the call `call_id` names stands, without its body.
