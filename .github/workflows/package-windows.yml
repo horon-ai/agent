@@ -131,8 +131,8 @@ jobs:
       - name: Run the Job Object contract tests
         shell: pwsh
         run: |
-          # 1 test: a host inside a job that forbids nesting is refused before
-          # the child runs.
+          # 1 test: a host job with no room for another process refuses the
+          # package child before it runs.
           $expected = 1
           $output = & cargo test --locked --target $env:TARGET `
             -p horon-agent-platform-windows --lib package_child::tests -- --nocapture

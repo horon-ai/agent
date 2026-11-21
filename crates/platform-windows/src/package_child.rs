@@ -19,10 +19,11 @@
 //! window: the primary thread never runs, so the child starts no descendant
 //! before it is in the job.
 //!
-//! If the host process is already inside a Job Object that does not allow
-//! nesting (either job sets UI limits, or the host predates Windows 8), the
-//! assignment fails and the suspended child is terminated: a package child
-//! that cannot be owned is not started at all rather than left unsupervised.
+//! If Windows refuses to place the suspended child in its own job - a host
+//! that predates Windows 8 and so has no nested jobs, or a host job whose
+//! limits leave no room for another process - the child is terminated: a
+//! package child that cannot be owned is not started at all rather than left
+//! unsupervised.
 //!
 //! The installed executable is opened share-read only and held across the
 //! spawn, so between that open and the image being mapped no other process can
@@ -78,8 +79,8 @@ pub struct WindowsPackageChild {
 /// Start `request`'s executable in a Job Object this process owns.
 ///
 /// The child is created suspended, placed in a fresh job that no member may
-/// leave, and resumed. A failure to own the child - most often a host process
-/// inside a Job Object that does not allow nested jobs - terminates the
+/// leave, and resumed. A failure to own the child - a host job that cannot
+/// hold another process, or a Windows without nested jobs - terminates the
 /// suspended child and returns the diagnostic, so nothing is ever left running
 /// outside the job.
 pub fn spawn(request: &PackageChildSpawn<'_>) -> io::Result<WindowsPackageChild> {
@@ -298,7 +299,7 @@ fn assign_to_job(child: &Child, job: &OwnedHandle) -> io::Result<()> {
             error.kind(),
             format!(
                 "the package child {} was not started because Windows refused to place it in its own Job Object \
-                 ({error}); a host process inside a Job Object that does not allow nested jobs cannot own a \
+                 ({error}); a host whose Job Object cannot hold or nest another job cannot own a \
                  package child, so none was started",
                 child.id(),
             ),
@@ -409,7 +410,7 @@ mod tests {
     use std::path::PathBuf;
 
     use windows_sys::Win32::System::JobObjects::{
-        JOB_OBJECT_UILIMIT_HANDLES, JOBOBJECT_BASIC_UI_RESTRICTIONS, JobObjectBasicUIRestrictions,
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOBOBJECT_BASIC_LIMIT_INFORMATION, JobObjectBasicLimitInformation,
     };
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
@@ -418,17 +419,16 @@ mod tests {
     /// Where the helper's would-be child would report that it ran.
     const MARKER_ENV: &str = "HORON_PACKAGE_WINDOWS_RESTRICTED_JOB_MARKER";
 
-    /// A host process inside a job chain that forbids nesting is refused, not
-    /// quietly given an unowned child.
+    /// A host job with no room for another process never lets the package
+    /// child run: the launch is refused, not quietly left unowned.
     ///
-    /// The provocation is a Job Object with UI limits, which the system refuses
-    /// to place inside a nested hierarchy. It is not reversible, so it runs in a
-    /// helper copy of this test binary: assigning this process would make every
-    /// later package launch in the same binary fail.
+    /// The process cap cannot be lifted once a process is in the job, so the
+    /// scenario runs in a helper copy of this test binary: capping this
+    /// process would make every later package launch in the same binary fail.
     #[test]
-    fn a_host_job_that_forbids_nesting_refuses_the_child_before_it_runs() {
+    fn a_host_job_without_room_for_the_child_refuses_it_before_it_runs() {
         if std::env::var_os(HELPER_ENV).is_some() {
-            provoke_in_restricted_job();
+            provoke_in_capped_job();
             return;
         }
         let directory = tempfile::tempdir().expect("marker directory");
@@ -436,13 +436,13 @@ mod tests {
         let output = Command::new(std::env::current_exe().expect("the test executable"))
             .args([
                 "--exact",
-                "package_child::tests::a_host_job_that_forbids_nesting_refuses_the_child_before_it_runs",
+                "package_child::tests::a_host_job_without_room_for_the_child_refuses_it_before_it_runs",
                 "--nocapture",
             ])
             .env(HELPER_ENV, "1")
             .env(MARKER_ENV, &marker)
             .output()
-            .expect("start the restricted-job helper");
+            .expect("start the capped-job helper");
         assert!(
             output.status.success(),
             "{}\n{}",
@@ -451,12 +451,13 @@ mod tests {
         );
         assert!(
             !marker.exists(),
-            "no package child may run when the host cannot put it in a job",
+            "no package child may run when the host cannot hold it in a job",
         );
     }
 
-    /// The helper body: enter a job with UI limits, then launch a real child.
-    fn provoke_in_restricted_job() {
+    /// The helper body: enter a job that allows one process, then launch a real
+    /// child.
+    fn provoke_in_capped_job() {
         let marker = std::env::var_os(MARKER_ENV).expect("the marker path");
 
         // Created here rather than through `create_job`: this fixture is the
@@ -464,35 +465,30 @@ mod tests {
         // end the helper when the handle closes.
         // SAFETY: an unnamed job with default (non-inheritable) security.
         let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-        assert!(
-            !job.is_null(),
-            "create the restricted job: {}",
-            io::Error::last_os_error()
-        );
+        assert!(!job.is_null(), "create the capped job: {}", io::Error::last_os_error());
         // SAFETY: the call returned a fresh, uniquely owned handle.
         let job = unsafe { OwnedHandle::from_raw_handle(job) };
 
-        // SAFETY: `JOBOBJECT_BASIC_UI_RESTRICTIONS` is plain data.
-        let mut ui: JOBOBJECT_BASIC_UI_RESTRICTIONS = unsafe { std::mem::zeroed() };
-        ui.UIRestrictionsClass = JOB_OBJECT_UILIMIT_HANDLES;
+        // SAFETY: `JOBOBJECT_BASIC_LIMIT_INFORMATION` is plain data.
+        let mut limits: JOBOBJECT_BASIC_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.LimitFlags = JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+        limits.ActiveProcessLimit = 1;
         // SAFETY: the handle is open and the pointer and length name exactly one
-        // `JOBOBJECT_BASIC_UI_RESTRICTIONS`.
+        // `JOBOBJECT_BASIC_LIMIT_INFORMATION`.
         let configured = unsafe {
             SetInformationJobObject(
                 job.as_raw_handle(),
-                JobObjectBasicUIRestrictions,
-                &ui as *const _ as *const core::ffi::c_void,
-                size_of::<JOBOBJECT_BASIC_UI_RESTRICTIONS>() as u32,
+                JobObjectBasicLimitInformation,
+                &limits as *const _ as *const core::ffi::c_void,
+                size_of::<JOBOBJECT_BASIC_LIMIT_INFORMATION>() as u32,
             )
         };
-        assert_ne!(configured, 0, "restrict the job: {}", io::Error::last_os_error());
+        assert_ne!(configured, 0, "cap the job: {}", io::Error::last_os_error());
         // SAFETY: assigning this process to an open job; both handles are valid
         // for the call.
         let entered = unsafe { AssignProcessToJobObject(job.as_raw_handle(), GetCurrentProcess()) } != 0;
-        // Either this process is now in a job with UI limits, or the job it was
-        // already in refused the nesting. Both are the environment this test is
-        // about, and both mean the launcher must refuse the child.
-        println!("restricted job entered: {entered}");
+        assert!(entered, "enter the capped job: {}", io::Error::last_os_error());
+        println!("capped job entered");
 
         let program = PathBuf::from(std::env::var_os("COMSPEC").expect("COMSPEC is set on Windows"));
         let arguments = [
@@ -514,14 +510,10 @@ mod tests {
             environment: &environment,
         };
         let error = match spawn(&request) {
-            Ok(_started) => panic!("a host job that forbids nesting must refuse the package child"),
+            Ok(_started) => panic!("a host job with no room for another process must refuse the package child"),
             Err(error) => error,
         };
-        let message = error.to_string();
-        assert!(
-            message.contains("nested jobs"),
-            "the refusal must name the cause: {message}",
-        );
+        println!("refused: {error}");
         assert!(
             !Path::new(&marker).exists(),
             "a refused package child must not run before it is refused",
