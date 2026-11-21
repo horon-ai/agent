@@ -744,6 +744,16 @@ pub(crate) enum SessionCommand {
         json: bool,
     },
 
+    /// Preview what restoring one session and its owned children would touch,
+    /// read-only. Resuming stays with `--resume`.
+    Recovery {
+        /// Session ID
+        session: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Validate session originals without repairing them
     Doctor {
         /// Check this session only. Defaults to every stored session.
