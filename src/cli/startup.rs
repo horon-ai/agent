@@ -11,6 +11,7 @@ use super::{
 
 mod completions;
 mod stream_rule_preview;
+mod tokens;
 
 fn sync_output_style_from_config() {
     crate::output_style::set_emoji_enabled(crate::config::config().display.emoji);
@@ -20,7 +21,7 @@ fn sync_output_style_from_config() {
 /// errors during parsing, before any worker threads or TLS state are needed.
 pub fn run_standalone() -> Result<()> {
     let args = Args::parse();
-    if let Some(result) = offline_command(args.command.as_ref()) {
+    if let Some(result) = offline_command(&args) {
         return result;
     }
     // A provider install that loses to one already installed process-wide is the
@@ -42,16 +43,25 @@ pub async fn run() -> Result<()> {
     run_with_args(Args::parse()).await
 }
 
-fn offline_command(command: Option<&Command>) -> Option<Result<()>> {
-    match command {
+fn offline_command(args: &Args) -> Option<Result<()>> {
+    match &args.command {
         Some(Command::Completions { shell }) => Some(completions::write(*shell, std::io::stdout().lock())),
         Some(Command::StreamRules { sample }) => Some(stream_rule_preview::run(sample.as_deref())),
+        Some(Command::Tokens { .. }) if args.ssh.is_some() => {
+            Some(Err(anyhow::anyhow!("tokens runs locally without --ssh")))
+        }
+        Some(Command::Tokens { text, file }) => Some(tokens::run(
+            text.as_deref(),
+            file.as_deref(),
+            args.cwd.as_deref().map(std::path::Path::new),
+            args.model.as_deref(),
+        )),
         _ => None,
     }
 }
 
 async fn run_with_args(args: Args) -> Result<()> {
-    if let Some(result) = offline_command(args.command.as_ref()) {
+    if let Some(result) = offline_command(&args) {
         return result;
     }
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
