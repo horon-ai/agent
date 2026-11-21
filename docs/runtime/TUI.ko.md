@@ -382,6 +382,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 행을 고르거나 `/switch <id>`, `/resume <id>`를 입력하면 곧바로 붙고, 데몬은 여섯 글자 이상의 유일한 접두사도 받는다. 붙으면 이전 세션의 화면을 지우고 저장된 대화를 사용자 메시지와 어시스턴트 메시지로 다시 그리며, `started a new session <id>` 또는 `resumed <id>`를 남기고, 새 세션의 정체성에서 모델, 프로바이더, 노력 단계, 제목을 받는다. 그래서 상태 줄은 계속 `provider/model`을 보여 준다. `/new`는 이 디렉터리의 세션을 요청해 같은 방식으로 옮겨 가고, 떠나온 세션은 저장된 채로 남는다. 클라이언트는 떠나온 모든 세션의 이벤트를 버리므로 두 대화의 행이 서로에게 닿지 않는다. 세션 변경은 턴이 돌거나 모델이나 노력 단계 변경이 아직 적용 중이면 기다리고, 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
 
+`/switch`나 `/resume`에서 저장한 세션을 선택하고 Ctrl+A를 누르면 보관합니다. 현재 세션을 보관하려면 먼저 다른 세션으로 이동합니다. `/archived`에는 현재 디렉터리에서 보관한 세션이 나옵니다. 행을 선택하고 Enter를 누르면 최근 목록으로 돌아옵니다.
+
 `/skills`는 하네스가 이 세션에 보고한 스킬을 나열한다. 이름, 두 번째 열의 하네스 설명, 그리고 스킬을 읽은 파일과 쓸 수 있는 도구를 적고 `enter`가 초안에 그 호출을 넣는다는 줄로 끝나는 미리보기다. 행을 고르면 `/skill:<name>`과 뒤따르는 공백 하나를 보내지 않고 편집기에 쓰므로, 그 뒤의 요청은 사용자가 적는다.
 
 `/links`는 최근 어시스턴트 답변 8개에서 HTTP와 HTTPS 링크를 최신순으로 표시합니다. 행에서 Enter를 누르면 표시된 주소를 시스템 브라우저에서 엽니다. Esc를 누르면 목록이 닫힙니다. 잘못된 주소, 로컬 파일과 자격 증명이 포함된 링크는 목록에서 빠집니다.
@@ -429,6 +431,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 | 명령 | 하는 일 |
 | --- | --- |
+| `/archived` | 현재 디렉터리의 보관 목록에서 세션을 복원한다 |
 | `/artifact [id]` | 로컬 세션에 보관된 산출물을 나열하거나 비공개 사본을 연다 |
 | `/clear` | 대화 화면만 비운다 |
 | `/clear-context` | 현재 세션에서 모델에 보낼 문맥을 새로 시작하고 저장한 대화는 보관한다 |
@@ -453,7 +456,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물세 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물네 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -469,6 +472,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 ```text
 built-in commands:
+  /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear only the transcript pane
   /clear-context       start fresh model context and keep the saved conversation

@@ -100,6 +100,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             } => app.runtime_info(provider, model, effort, level),
             Incoming::DaemonSettings(settings) => app.show_daemon_settings(settings),
             Incoming::Sessions(rows) => app.show_sessions(rows),
+            Incoming::ArchivedSessions(rows) => app.show_archived_sessions(rows),
             Incoming::SessionsChecked { gone, unverified } => app.sessions_checked(&gone, unverified),
             Incoming::Skills(rows) => app.show_skills(rows),
             // The answer names the text it settles, so a steer the client no
@@ -148,8 +149,17 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The directory is the one the client is working in, which is what
         // makes the list the sessions of this project rather than of the
         // daemon's whole history.
-        Action::Sessions => Command::Sessions {
+        Action::Sessions | Action::ArchivedSessions => Command::Sessions {
             working_dir: app.cwd.clone(),
+            archived: matches!(action, Action::ArchivedSessions),
+        },
+        Action::Archive(session_id) => Command::Archive {
+            session_id,
+            archived: true,
+        },
+        Action::Restore(session_id) => Command::Archive {
+            session_id,
+            archived: false,
         },
         // The new session starts where the client is working, so the list of
         // sessions it appears in is the one `/switch` shows.

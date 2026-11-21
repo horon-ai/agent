@@ -15,7 +15,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-use horon_agent_sdk::api::{ApiEvent, HandoffCompaction, PermissionDecision};
+use horon_agent_sdk::api::{ApiEvent, ApiRequest, HandoffCompaction, PermissionDecision};
 use horon_agent_sdk::{
     ConnectOptions, Error, ErrorKind, EventStream, HistoryMessage, HoronAgentClient, RuntimeCommand, SessionInfo,
 };
@@ -639,9 +639,13 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             let (models, current) = client.list_models(session_id)?;
             Ok(Some(Incoming::Models { models, current }))
         }
-        Command::Sessions { working_dir } => {
-            let rows = session_rows(client, session_id, working_dir.as_deref())?;
-            Ok(Some(Incoming::Sessions(rows)))
+        Command::Sessions { working_dir, archived } => {
+            let rows = session_rows(client, session_id, working_dir.as_deref(), archived)?;
+            Ok(Some(if archived {
+                Incoming::ArchivedSessions(rows)
+            } else {
+                Incoming::Sessions(rows)
+            }))
         }
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
         // `/skills` asked for this list, so every failure is shown: a harness
@@ -694,6 +698,15 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             })
         }
         Command::Rename(title) => client.rename_session(session_id, Some(title)).map(|()| None),
+        Command::Archive { session_id, archived } => {
+            if archived {
+                client.archive_session(&session_id)?;
+                Ok(Some("session archived; open /archived to restore it".to_owned()))
+            } else {
+                client.restore_session(&session_id)?;
+                Ok(Some("session restored to the recent list".to_owned()))
+            }
+        }
         // Answered before they reach this point: they carry a structure rather
         // than a line. The attach retargets the connection the worker holds and
         // a create replaces it, so neither can produce a line here.
@@ -749,6 +762,8 @@ fn describe(command: &Command) -> &'static str {
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Archive { archived: true, .. } => "could not archive the session",
+        Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
         Command::Skills { .. } => "could not list the skills",
         Command::DaemonSettings => "could not read the daemon settings",
@@ -770,9 +785,35 @@ const LABEL_CHARS: usize = 80;
 /// The stored history is read once per session: a row's label, when the record
 /// carries no title, and its preview both come from those messages, so the list
 /// costs one read per row rather than one per thing a row shows.
-fn session_rows(client: &HoronAgentClient, current: &str, working_dir: Option<&str>) -> Result<Vec<SessionRow>, Error> {
-    let mut sessions = client.list_sessions()?;
-    sessions.retain(|session| in_directory(session, working_dir));
+fn session_rows(
+    client: &HoronAgentClient,
+    current: &str,
+    working_dir: Option<&str>,
+    archived: bool,
+) -> Result<Vec<SessionRow>, Error> {
+    let mut sessions = if archived {
+        match client
+            .request(ApiRequest::ListSessions {
+                include_archived: true,
+                limit: None,
+            })?
+            .event
+        {
+            ApiEvent::Sessions { sessions } => sessions,
+            ApiEvent::Error { code, message, details } => {
+                return Err(Error::new(ErrorKind::Harness(code), message).with_details(details));
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::UnexpectedReply,
+                    "the daemon did not return a session list",
+                ));
+            }
+        }
+    } else {
+        client.list_sessions()?
+    };
+    sessions.retain(|session| session.archived == archived && in_directory(session, working_dir));
     sessions.sort_by_key(|session| std::cmp::Reverse(activity(session)));
     let mut rows = Vec::with_capacity(sessions.len());
     for session in &sessions {

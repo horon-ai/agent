@@ -44,7 +44,12 @@ pub enum Command {
     /// List the models the picker offers, with the one in force.
     Models,
     /// List the sessions stored for a working directory.
-    Sessions { working_dir: Option<String> },
+    Sessions {
+        working_dir: Option<String>,
+        archived: bool,
+    },
+    /// Move a stored session between recent and archived lists.
+    Archive { session_id: String, archived: bool },
     /// Ask which of these session ids the harness no longer stores.
     ///
     /// The client asks per id rather than reading one list, because a list
@@ -135,6 +140,8 @@ pub enum Incoming {
     DaemonSettings(crate::settings::DaemonSettings),
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// Only the archived sessions, newest first.
+    ArchivedSessions(Vec<SessionRow>),
     /// Noted sessions that no longer exist, and how many could not be checked.
     SessionsChecked { gone: Vec<String>, unverified: usize },
     /// The skills the harness reports for the session it serves.

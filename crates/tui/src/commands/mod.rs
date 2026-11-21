@@ -4,7 +4,7 @@
 //! A typed line is resolved against three sources, in this order:
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
-//!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/clear-context`,
+//!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
 //!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
@@ -103,6 +103,8 @@ pub enum Local {
     Rename,
     /// Resume a session stored for this working directory.
     Resume,
+    /// Browse archived sessions in this working directory.
+    Archived,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
     /// List trusted MCP servers or explicitly probe one by name.
@@ -144,6 +146,7 @@ impl Local {
             "settings" => Some(Self::Settings),
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
+            "archived" => Some(Self::Archived),
             "skills" => Some(Self::Skills),
             "mcp" => Some(Self::Mcp),
             "switch" => Some(Self::Switch),
@@ -173,6 +176,7 @@ impl Local {
             Self::Settings => "settings",
             Self::Rename => "rename",
             Self::Resume => "resume",
+            Self::Archived => "archived",
             Self::Skills => "skills",
             Self::Mcp => "mcp",
             Self::Switch => "switch",
@@ -678,7 +682,8 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 23] = [
+const LOCAL_NAMES: [&str; 24] = [
+    "archived",
     "artifact",
     "clear",
     "clear-context",

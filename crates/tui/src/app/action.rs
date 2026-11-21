@@ -43,6 +43,12 @@ pub enum Action {
     Models,
     /// Ask for the sessions stored for this working directory.
     Sessions,
+    /// Ask for the sessions stored for this working directory, archived ones included.
+    ArchivedSessions,
+    /// Archive the session named.
+    Archive(String),
+    /// Restore the archived session named.
+    Restore(String),
     /// Start a new session in this working directory and follow it.
     NewSession,
     /// Attach to another session and replay its stored conversation.
