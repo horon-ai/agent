@@ -218,18 +218,23 @@ fn portable_component(name: &str) -> bool {
         })
 }
 
+/// The package ID grammar, shared with the names accepted in the inbox.
+///
+/// An inbox entry is installed under its directory name, so the name has to be
+/// a valid ID before the entry is read at all.
+pub(super) fn is_package_id(id: &str) -> bool {
+    (1..=32).contains(&id.len())
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 fn check_identity(schema: u32, id: &str, version: &str, name: &str) -> Result<()> {
     ensure!(
         schema == MANIFEST_VERSION,
         "unsupported package schema version: {schema}"
     );
-    ensure!(
-        (1..=32).contains(&id.len())
-            && id
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-        "invalid package ID: {id}"
-    );
+    ensure!(is_package_id(id), "invalid package ID: {id}");
     ensure!(valid_version(version), "invalid SemVer package version: {version}");
     ensure!(
         !name.trim().is_empty() && !name.chars().any(char::is_control),

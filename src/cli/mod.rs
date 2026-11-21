@@ -9,6 +9,7 @@ pub mod index_import;
 pub mod install_release;
 pub mod mcp;
 pub mod output;
+pub mod packages;
 pub mod proctitle;
 pub mod provider_init;
 pub mod rpc;

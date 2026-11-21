@@ -32,13 +32,23 @@ async fn run_with_args(args: Args) -> Result<()> {
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
     // Snapshot user-supplied provider env before provider init rewrites it.
     super::provider_init::capture_user_openrouter_model_env();
-    // Credential import and explicit MCP management do not need normal agent
-    // startup hardening, migrations, or provider discovery.
-    if args.ssh.is_none() && matches!(args.command, Some(Command::Mcp { .. } | Command::Approvals { .. })) {
-        if let Some(cwd) = &args.cwd {
-            std::env::set_current_dir(cwd)?;
+    if args.ssh.is_none() {
+        // Standalone management works without provider or daemon startup.
+        match args.command {
+            Some(Command::Package { action }) => {
+                if let Some(cwd) = &args.cwd {
+                    std::env::set_current_dir(cwd)?;
+                }
+                return super::packages::run(action);
+            }
+            Some(Command::Mcp { .. } | Command::Approvals { .. }) => {
+                if let Some(cwd) = &args.cwd {
+                    std::env::set_current_dir(cwd)?;
+                }
+                return dispatch::run_main(args).await;
+            }
+            _ => {}
         }
-        return dispatch::run_main(args).await;
     }
     startup_profile::init();
 
