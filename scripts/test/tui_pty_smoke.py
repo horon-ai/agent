@@ -645,7 +645,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
-        staged_review_smoke(terminal, case_root, env)
+        if POSIX:
+            staged_review_smoke(terminal, case_root, env)
+        else:
+            terminal.send("/diff\r")
+            terminal.read_until("workspace is not this machine's", STEP_TIMEOUT, "explicit socket refused local Git")
 
         terminal.send("ping\r")
         # The default mock plan starts with a shell call, and
