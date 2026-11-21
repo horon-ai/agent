@@ -36,10 +36,10 @@ pub(super) struct Tool {
 /// What this machine can do, decided without starting anything.
 #[derive(Debug, Clone)]
 pub(crate) struct Capability {
-    capture: Option<Tool>,
-    recognize: Option<Tool>,
-    model: Option<PathBuf>,
-    speak: Option<Tool>,
+    pub(super) capture: Option<Tool>,
+    pub(super) recognize: Option<Tool>,
+    pub(super) model: Option<PathBuf>,
+    pub(super) speak: Option<Tool>,
     unsupported: Option<String>,
 }
 

@@ -37,9 +37,9 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use horon_agent_sdk::process;
@@ -87,7 +87,8 @@ const STALE_SCRATCH: Duration = Duration::from_secs(60 * 60);
 pub(crate) const CONSENT: &str = "voice: local speech uses this device's microphone and programs installed on this computer. Audio and recognized text stay on this device: nothing is sent to the harness, the model or the network, and the system may ask for microphone access. Denying that leaves text input unchanged. Type /voice consent to allow capture for this session.";
 
 /// What an unknown `/voice` argument shows.
-pub(crate) const USAGE: &str = "voice: /voice starts or finishes dictation; also consent, forget, stop, cancel, say <text>, read, status";
+pub(crate) const USAGE: &str =
+    "voice: /voice starts or finishes dictation; also consent, forget, stop, cancel, say <text>, read, status";
 
 /// The process group of the program in flight, for the exit path.
 ///
@@ -160,8 +161,8 @@ pub(crate) enum Outcome {
 
 pub(crate) mod capability;
 
-use capability::{Flavor, Tool, model_files, models_dir};
 pub(crate) use capability::{Capability, probe};
+use capability::{Flavor, Tool, model_files, models_dir};
 
 /// The directory captures and speech files are written to.
 fn scratch_dir() -> PathBuf {
@@ -296,13 +297,7 @@ impl Voice {
                 let attempt = capture_and_recognize(&job, &cancel, &sender);
                 match attempt {
                     Attempt::Done(text) => {
-                        report_to(
-                            &sender,
-                            Event::Transcribed {
-                                generation,
-                                text,
-                            },
-                        );
+                        report_to(&sender, Event::Transcribed { generation, text });
                     }
                     Attempt::Failed(message) => {
                         report_to(&sender, Event::Failed { generation, message });
@@ -384,7 +379,13 @@ impl Voice {
             .spawn(move || match play_text(&job, &spoken, &cancel) {
                 None => {}
                 Some(Ok(())) => {
-                    report_to(&sender, Event::Spoken { generation, error: None });
+                    report_to(
+                        &sender,
+                        Event::Spoken {
+                            generation,
+                            error: None,
+                        },
+                    );
                 }
                 Some(Err(error)) => {
                     report_to(
@@ -461,9 +462,7 @@ impl Voice {
                 self.finish = None;
                 Some(Outcome::Notice(message))
             }
-            Event::Spoken { generation, error }
-                if generation == self.current && self.phase == Phase::Speaking =>
-            {
+            Event::Spoken { generation, error } if generation == self.current && self.phase == Phase::Speaking => {
                 self.phase = Phase::Idle;
                 self.cancel = None;
                 self.recorder = None;
@@ -481,7 +480,11 @@ impl Voice {
         } else {
             "no consent yet; /voice consent allows capture"
         };
-        format!("voice: {}; {consent}; {}", self.phase.label(), self.capability.describe())
+        format!(
+            "voice: {}; {consent}; {}",
+            self.phase.label(),
+            self.capability.describe()
+        )
     }
 }
 
@@ -505,8 +508,10 @@ pub(crate) fn kill_active_process() {
 
 /// Send a result to the app, or drop it when the client is gone.
 fn report_to(sender: &Sender<Event>, event: Event) {
-    if let Err(error) = sender.send(event) {
-        drop(error);
+    match sender.send(event) {
+        Ok(()) => {}
+        // The app is gone; the worker has nobody left to report to.
+        Err(_) => {}
     }
 }
 
@@ -677,7 +682,10 @@ fn run_child(
                 }
                 reap(&mut child);
                 active.disarm();
-                return Err(VoiceError::new(format!("cannot wait for {}: {error}", tool.path.display())));
+                return Err(VoiceError::new(format!(
+                    "cannot wait for {}: {error}",
+                    tool.path.display()
+                )));
             }
         }
     }
@@ -704,13 +712,7 @@ fn capture_and_recognize(job: &Job, cancel: &AtomicBool, sender: &Sender<Event>)
 }
 
 /// Capture, then recognize, removing nothing: the caller owns cleanup.
-fn record_then_recognize(
-    job: &Job,
-    raw: &Path,
-    wav: &Path,
-    cancel: &AtomicBool,
-    sender: &Sender<Event>,
-) -> Attempt {
+fn record_then_recognize(job: &Job, raw: &Path, wav: &Path, cancel: &AtomicBool, sender: &Sender<Event>) -> Attempt {
     let (Some(capture), Some(recognize), Some(model)) = (&job.capture, &job.recognize, &job.model) else {
         return Attempt::Failed("local speech is not available".to_string());
     };
@@ -726,11 +728,16 @@ fn record_then_recognize(
     ) {
         // A recorder that was stopped or failed still wrote what it could; the
         // length check below decides whether that is worth recognizing.
-        Ok(ChildEnd::Exited(_status)) | Ok(ChildEnd::Stopped) => {}
+        Ok(ChildEnd::Exited(_)) | Ok(ChildEnd::Stopped) => {}
         Ok(ChildEnd::Cancelled) => return Attempt::Cancelled,
         Err(error) => return Attempt::Failed(error.into_message()),
     }
-    report_to(sender, Event::Captured { generation: job.generation });
+    report_to(
+        sender,
+        Event::Captured {
+            generation: job.generation,
+        },
+    );
     if cancel.load(Ordering::SeqCst) {
         return Attempt::Cancelled;
     }
@@ -840,7 +847,7 @@ pub(crate) fn write_wav(raw: &Path, wav: &Path) -> Result<(), VoiceError> {
     if let Err(error) = output.write_all(&wav_header(data_len)) {
         return Err(VoiceError::new(format!("cannot write the WAV header: {error}")));
     }
-    let mut limited = input.by_ref().take(data_len);
+    let mut limited = Read::by_ref(&mut input).take(data_len);
     if let Err(error) = std::io::copy(&mut limited, &mut output) {
         return Err(VoiceError::new(format!("cannot copy the captured audio: {error}")));
     }
@@ -877,7 +884,7 @@ fn read_recognized(path: &Path) -> Result<String, VoiceError> {
         Err(error) => return Err(VoiceError::new(format!("whisper-cli wrote no text: {error}"))),
     };
     let mut bytes = Vec::new();
-    let mut limited = file.by_ref().take(MAX_TEXT_BYTES);
+    let mut limited = Read::by_ref(&mut file).take(MAX_TEXT_BYTES);
     if let Err(error) = limited.read_to_end(&mut bytes) {
         return Err(VoiceError::new(format!("cannot read the recognized text: {error}")));
     }
@@ -893,7 +900,10 @@ pub(crate) fn clean_recognition(raw: &str) -> String {
         if trimmed.is_empty() || is_annotation(trimmed) {
             continue;
         }
-        let clean: String = trimmed.chars().filter(|character| *character == '\t' || !character.is_control()).collect();
+        let clean: String = trimmed
+            .chars()
+            .filter(|character| *character == '\t' || !character.is_control())
+            .collect();
         let clean = clean.trim();
         if clean.is_empty() {
             continue;
@@ -1007,5 +1017,3 @@ fn discard(path: &Path) {
         Err(_) => {}
     }
 }
-
-

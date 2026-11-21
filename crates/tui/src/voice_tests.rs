@@ -167,9 +167,18 @@ fn wav_header_declares_the_captured_length() {
     assert_eq!(&header[0..4], b"RIFF");
     assert_eq!(&header[8..16], b"WAVEfmt ");
     assert_eq!(&header[36..40], b"data");
-    assert_eq!(u32::from_le_bytes([header[4], header[5], header[6], header[7]]), 36 + 3200);
-    assert_eq!(u32::from_le_bytes([header[40], header[41], header[42], header[43]]), 3200);
-    assert_eq!(u32::from_le_bytes([header[24], header[25], header[26], header[27]]), 16_000);
+    assert_eq!(
+        u32::from_le_bytes([header[4], header[5], header[6], header[7]]),
+        36 + 3200
+    );
+    assert_eq!(
+        u32::from_le_bytes([header[40], header[41], header[42], header[43]]),
+        3200
+    );
+    assert_eq!(
+        u32::from_le_bytes([header[24], header[25], header[26], header[27]]),
+        16_000
+    );
 }
 
 #[test]
