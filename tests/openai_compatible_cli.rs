@@ -687,7 +687,7 @@ async fn no_pty_overrides_shell_allocation_for_one_run() {
     for (flags, expected) in [(&["--no-pty"][..], "pipe-shell"), (&[][..], "tty-shell")] {
         let mock = Mock::start_with_tool(
             "bash",
-            r#"{"command":"if test -t 1; then printf tty-shell; else printf pipe-shell; fi"}"#,
+            r#"{"command":"if test -t 1; then state=tty-shell; else state=pipe-shell; fi; printf '%s' \"$state\" > pty-receipt"}"#,
         )
         .await;
         home.write_config(&mock.base_url);
@@ -701,15 +701,9 @@ async fn no_pty_overrides_shell_allocation_for_one_run() {
         args.extend_from_slice(flags);
         let result = home.run(&args).await;
         assert!(result.status.success(), "{}", text(&result.stderr));
-        let bodies = mock.bodies();
-        let next: Value = serde_json::from_str(&bodies[1]).unwrap();
-        let tools = next["messages"].as_array().unwrap();
-        assert!(
-            tools
-                .iter()
-                .any(|message| { message["role"] == "tool" && message["content"].to_string().contains(expected) }),
-            "expected {expected} in the tool output: {next}"
-        );
+        let receipt = home.path().join("pty-receipt");
+        assert_eq!(std::fs::read_to_string(&receipt).unwrap(), expected);
+        std::fs::remove_file(receipt).unwrap();
     }
 }
 
