@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 use horon_agent_sdk::api::{ApiEvent, PermissionDecision};
 use horon_agent_sdk::{EventStream, HistoryMessage, HoronAgentClient};
 
-use super::sessions::Dial;
 use super::Incoming;
+use super::sessions::Dial;
 
 /// How long one stream read waits before the loop checks the connection again.
 ///
@@ -63,7 +63,13 @@ fn deliver(events: &Sender<Incoming>, incoming: Incoming) -> bool {
 
 /// Report a side question that could not be started at all.
 pub(super) fn fail(events: &Sender<Incoming>, id: u64, message: &str) {
-    deliver(events, Incoming::SideFailed { id, message: message.to_string() });
+    deliver(
+        events,
+        Incoming::SideFailed {
+            id,
+            message: message.to_string(),
+        },
+    );
 }
 
 /// The steps a side question takes before its answer.
@@ -199,22 +205,18 @@ pub(super) fn start(
             move || follow(id, dial, parent, question, boundary, events)
         });
     if spawned.is_err() {
-        deliver(&events, Incoming::SideFailed {
-            id,
-            message: "could not start the side question thread".to_string(),
-        });
+        deliver(
+            &events,
+            Incoming::SideFailed {
+                id,
+                message: "could not start the side question thread".to_string(),
+            },
+        );
     }
 }
 
 /// The thread body: connect, open, ask, and reduce the answer's events.
-fn follow(
-    id: u64,
-    dial: Dial,
-    parent: String,
-    question: String,
-    boundary: Option<String>,
-    events: Sender<Incoming>,
-) {
+fn follow(id: u64, dial: Dial, parent: String, question: String, boundary: Option<String>, events: Sender<Incoming>) {
     if let Err(message) = answer(id, &dial, &parent, &question, boundary.as_deref(), &events) {
         deliver(&events, Incoming::SideFailed { id, message });
     }
@@ -235,7 +237,13 @@ fn answer(
     let stream = client.events(None);
     let link = LiveLink { client: &client };
     let mut announce = |child: &str| {
-        deliver(events, Incoming::SideStarted { id, session_id: child.to_string() });
+        deliver(
+            events,
+            Incoming::SideStarted {
+                id,
+                session_id: child.to_string(),
+            },
+        );
     };
     match open_with(&link, parent, boundary, question, &mut announce) {
         Ok((baseline, child)) => drain(id, &client, &stream, &child, baseline, events),
@@ -389,7 +397,9 @@ pub(super) fn observe(event: &ApiEvent, id: u64, child: &str, preview: &mut Prev
                 line: format!("denied a request to {action}: a side question cannot collect an approval"),
             }));
         }
-        ApiEvent::TurnStopped { session_id, message, .. } if session_id.as_str() == child => {
+        ApiEvent::TurnStopped {
+            session_id, message, ..
+        } if session_id.as_str() == child => {
             effects.push(Effect::Send(Incoming::SideNotice {
                 id,
                 line: message.clone(),
@@ -448,7 +458,11 @@ impl Preview {
     pub(super) fn replace(&mut self, message_id: Option<&str>, text: &str) {
         let found = match message_id {
             None => self.segments.last_mut(),
-            Some(id) => self.segments.iter_mut().rev().find(|(known, _)| known.as_deref() == Some(id)),
+            Some(id) => self
+                .segments
+                .iter_mut()
+                .rev()
+                .find(|(known, _)| known.as_deref() == Some(id)),
         };
         match found {
             Some((_, body)) => *body = text.to_string(),

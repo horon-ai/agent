@@ -63,7 +63,10 @@ fn a_streamed_answer_and_its_end_are_shown_with_the_child_id() {
 
     overlay.done("because the cache is cold".to_string());
     let drawn = screen(&mut overlay, 100, 24);
-    assert!(drawn.contains("because the cache is cold"), "the stored answer is not drawn:\n{drawn}");
+    assert!(
+        drawn.contains("because the cache is cold"),
+        "the stored answer is not drawn:\n{drawn}"
+    );
     assert!(
         drawn.contains("done; the answer is stored"),
         "the finished state is not said:\n{drawn}"

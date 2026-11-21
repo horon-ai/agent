@@ -630,7 +630,12 @@ impl Agent {
         // builds one. The flag lives in the stored session, so an attach after a
         // daemon restart gets the same list as the fork that created it.
         let allowed_tools = if session.consult {
-            Some(crate::session_scope::CONSULT_TOOLS.iter().map(|tool| (*tool).to_string()).collect())
+            Some(
+                crate::session_scope::CONSULT_TOOLS
+                    .iter()
+                    .map(|tool| (*tool).to_string())
+                    .collect(),
+            )
         } else {
             allowed_tools
         };

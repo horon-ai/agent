@@ -1,0 +1,16 @@
+[package]
+name = "horon-agent-extension-sdk"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Author SDK for a user-installed horon Rust package: framing, negotiation, declarations and cancellation"
+
+[dependencies]
+horon-agent-extension-types = { path = "../extension-types" }
+serde = "1"
+serde_json = "1"
+sha2 = "0.10"
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

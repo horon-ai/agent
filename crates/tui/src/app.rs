@@ -40,8 +40,8 @@ mod prompts;
 pub(crate) mod record;
 mod sending;
 mod sessions;
-mod side;
 mod settings;
+mod side;
 mod skills;
 mod status;
 mod terminal_signals;
@@ -109,7 +109,11 @@ pub enum Action {
     NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
-    SideQuestion { id: u64, question: String, boundary: Option<String> },
+    SideQuestion {
+        id: u64,
+        question: String,
+        boundary: Option<String>,
+    },
     /// Save a title for the attached session.
     Rename(String),
     /// Ask the harness for the skills it reports for the session.

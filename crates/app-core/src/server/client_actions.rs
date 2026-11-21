@@ -501,9 +501,12 @@ fn clone_split_session(
             let boundary = boundary.trim();
             anyhow::ensure!(!boundary.is_empty(), "fork requires a recorded boundary");
             let history = parent.history_messages()?;
-            let index = history.iter().position(|message| message.id == boundary).with_context(|| {
-                format!("boundary {boundary} is not in session {parent_session_id} at its selected head")
-            })?;
+            let index = history
+                .iter()
+                .position(|message| message.id == boundary)
+                .with_context(|| {
+                    format!("boundary {boundary} is not in session {parent_session_id} at its selected head")
+                })?;
             Some(index)
         }
         None => None,
@@ -516,7 +519,11 @@ fn clone_split_session(
     child.inherit_cache_root(&parent);
     // A summary covers a window the boundary may have cut, so a boundary fork
     // starts uncompacted; the full fork keeps the parent's compaction.
-    child.compaction = if kept.is_none() { parent.compaction.clone() } else { None };
+    child.compaction = if kept.is_none() {
+        parent.compaction.clone()
+    } else {
+        None
+    };
     child.system_prompt = parent.system_prompt.clone();
     child.working_dir = parent.working_dir.clone();
     child.model = parent.model.clone();

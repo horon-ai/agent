@@ -139,8 +139,8 @@ fn clone_split_session_uses_persisted_session_state() {
             cache_control: None,
         }],
     );
-    let (child_id, _child_name) = clone_split_session(&parent.id, Some(&unsaved_parent), false, None)
-        .expect("clone split");
+    let (child_id, _child_name) =
+        clone_split_session(&parent.id, Some(&unsaved_parent), false, None).expect("clone split");
     let child = crate::session::Session::load(&child_id).expect("load child");
 
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
@@ -326,9 +326,12 @@ async fn split_busy_session_uses_persisted_state_without_waiting_for_agent() {
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
 
-    timeout(Duration::from_millis(100), handle_split(18, &parent.id, &agent, &tx, false, None))
-        .await
-        .expect("split must not wait on the held streaming Agent lock");
+    timeout(
+        Duration::from_millis(100),
+        handle_split(18, &parent.id, &agent, &tx, false, None),
+    )
+    .await
+    .expect("split must not wait on the held streaming Agent lock");
     let child = split_response(&mut rx, 18);
     assert_eq!(child.active_context().len(), parent.active_context().len() + 1);
     assert_eq!(
@@ -362,9 +365,12 @@ async fn split_busy_unsaved_session_returns_error_without_waiting() {
     let parent_id = busy.session_id().to_owned();
     assert!(!crate::session::session_exists(&parent_id));
     let (tx, mut rx) = mpsc::unbounded_channel();
-    timeout(Duration::from_millis(100), handle_split(19, &parent_id, &agent, &tx, false, None))
-        .await
-        .expect("missing snapshot must not block a busy session");
+    timeout(
+        Duration::from_millis(100),
+        handle_split(19, &parent_id, &agent, &tx, false, None),
+    )
+    .await
+    .expect("missing snapshot must not block a busy session");
     assert!(matches!(rx.try_recv(), Ok(ServerEvent::Error { id: 19, .. })));
     assert!(rx.try_recv().is_err());
     drop(busy);

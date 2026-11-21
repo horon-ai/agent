@@ -49,17 +49,15 @@ fn enter() -> KeyEvent {
 
 /// The transcript's rows, as text, so a test can compare it before and after.
 fn transcript_text(app: &App) -> Vec<String> {
-    app.transcript
-        .items()
-        .iter()
-        .map(|item| format!("{item:?}"))
-        .collect()
+    app.transcript.items().iter().map(|item| format!("{item:?}")).collect()
 }
 
 /// Ask a question and return the client id the deliveries will carry.
 fn open_side(app: &mut App, question: &str) -> u64 {
     match type_line(app, &format!("/side {question}")) {
-        Some(Action::SideQuestion { id, question: asked, .. }) => {
+        Some(Action::SideQuestion {
+            id, question: asked, ..
+        }) => {
             assert_eq!(asked, question, "the question the bridge was given changed");
             id
         }
@@ -76,7 +74,11 @@ fn side_asks_the_bridge_and_opens_the_screen_without_touching_the_transcript() {
         app.side.as_ref().map(|side| side.question()),
         Some("what did we decide about the cache?")
     );
-    assert_eq!(transcript_text(&app), before, "asking a side question wrote to the parent");
+    assert_eq!(
+        transcript_text(&app),
+        before,
+        "asking a side question wrote to the parent"
+    );
 }
 
 #[test]
@@ -92,11 +94,7 @@ fn btw_is_the_same_command_under_the_other_name() {
 fn at_selects_an_earlier_stored_boundary_and_keeps_the_question() {
     let (_user, _project, mut app) = app_fixture();
     match type_line(&mut app, "/side --at msg_12 what changed?") {
-        Some(Action::SideQuestion {
-            boundary,
-            question,
-            ..
-        }) => {
+        Some(Action::SideQuestion { boundary, question, .. }) => {
             assert_eq!(boundary.as_deref(), Some("msg_12"));
             assert_eq!(question, "what changed?");
         }
@@ -184,7 +182,11 @@ fn escape_returns_to_the_untouched_conversation() {
 
     assert_eq!(app.on_key(escape()), None, "esc left the client instead of the screen");
     assert!(app.side.is_none(), "esc did not close the side question");
-    assert_eq!(transcript_text(&app), before, "closing the screen changed the conversation");
+    assert_eq!(
+        transcript_text(&app),
+        before,
+        "closing the screen changed the conversation"
+    );
 }
 
 #[test]
@@ -222,7 +224,11 @@ fn a_failure_is_shown_on_the_screen_and_stays_there_until_it_is_closed() {
         side.failure(),
         Some("the harness refused a side session: no such session")
     );
-    assert_eq!(transcript_text(&app), before, "a failure on the open screen reached the transcript");
+    assert_eq!(
+        transcript_text(&app),
+        before,
+        "a failure on the open screen reached the transcript"
+    );
 
     app.on_key(escape());
     assert!(app.side.is_none());
@@ -256,5 +262,8 @@ fn switching_sessions_closes_the_side_question() {
         title: None,
     };
     app.attach_session(session, false);
-    assert!(app.side.is_none(), "the side question outlived the session it was asked of");
+    assert!(
+        app.side.is_none(),
+        "the side question outlived the session it was asked of"
+    );
 }

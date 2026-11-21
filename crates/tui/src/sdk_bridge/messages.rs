@@ -60,7 +60,11 @@ pub enum Command {
     /// The fork and the question run on a second connection, so the worker
     /// keeps following the parent: the parent's stream, transcript and tools
     /// are untouched while the child answers.
-    SideQuestion { id: u64, question: String, boundary: Option<String> },
+    SideQuestion {
+        id: u64,
+        question: String,
+        boundary: Option<String>,
+    },
     /// Save a title for the session the bridge follows.
     Rename(String),
     /// List the skills the harness reports for the session.

@@ -2,8 +2,8 @@
 //! internal protocol. Kept side-effect free so it is trivially unit-testable.
 
 mod cancellable_work;
-mod consult;
 mod compact_handoff;
+mod consult;
 mod credentials;
 pub(crate) mod effective_settings;
 mod runtime_identity;

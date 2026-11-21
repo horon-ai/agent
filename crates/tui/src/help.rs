@@ -105,6 +105,7 @@ Commands:
   /exit          leave, the same as /quit
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
+  /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
@@ -113,6 +114,8 @@ Commands:
   /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
+  /side [question]
+                 ask a separate read-only session a question
   /skills        list the skills the harness reports, and put one in the
                  draft
   /switch [id]   move to another stored session, or pick one from the list
@@ -261,6 +264,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
+        "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
@@ -271,7 +275,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
-        "side" => "ask a read-only side session about this conversation (also /btw; --at <id> forks before a stored message), then esc back",
+        "side" => {
+            "ask a read-only side session about this conversation (also /btw; --at <id> forks before a stored message), then esc back"
+        }
         "skills" => "list the skills the harness reports, and put one in the draft",
         "switch" => "move to another stored session, or pick one from the list",
         _ => "",

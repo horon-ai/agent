@@ -87,6 +87,15 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
+            Local::Mcp => Some(Action::Runtime {
+                command: horon_agent_sdk::RuntimeCommand::Mcp,
+                arguments: arguments
+                    .splitn(2, char::is_whitespace)
+                    .map(str::trim)
+                    .filter(|argument| !argument.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            }),
             Local::Settings => self.open_settings(),
             // `/side` asks a read-only child of this conversation a question.
             // Nothing leaves the client until the question is non-empty.

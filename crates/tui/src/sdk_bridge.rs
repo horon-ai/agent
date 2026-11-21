@@ -412,14 +412,7 @@ fn run_worker(
                                     "this harness cannot create a read-only side session; update the daemon",
                                 );
                             } else {
-                                side::start(
-                                    &session_id,
-                                    id,
-                                    dial.clone(),
-                                    question,
-                                    boundary,
-                                    events.clone(),
-                                );
+                                side::start(&session_id, id, dial.clone(), question, boundary, events.clone());
                             }
                             Ok(None)
                         }

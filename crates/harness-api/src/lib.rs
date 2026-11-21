@@ -160,7 +160,10 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
-    (CAPABILITY_CONSULT_FORK_V1, &["fork_session.consult", "fork_session.boundary"]),
+    (
+        CAPABILITY_CONSULT_FORK_V1,
+        &["fork_session.consult", "fork_session.boundary"],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.

@@ -184,7 +184,10 @@ impl SideOverlay {
     fn status_line(&self) -> String {
         match &self.state {
             State::Starting => "starting a read-only side session".to_string(),
-            State::Answering => self.progress.clone().unwrap_or_else(|| "the side session is answering".to_string()),
+            State::Answering => self
+                .progress
+                .clone()
+                .unwrap_or_else(|| "the side session is answering".to_string()),
             State::Done => "done; the answer is stored in this side session".to_string(),
             State::Failed(message) => message.clone(),
         }
@@ -309,8 +312,14 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
 
     let (status, style) = match &overlay.state {
         State::Failed(_) => (overlay.status_line(), Style::default().fg(theme.core.error)),
-        State::Done => (overlay.status_line(), Style::default().fg(theme.core.muted).add_modifier(Modifier::ITALIC)),
-        _ => (overlay.status_line(), Style::default().fg(theme.core.warning).add_modifier(Modifier::ITALIC)),
+        State::Done => (
+            overlay.status_line(),
+            Style::default().fg(theme.core.muted).add_modifier(Modifier::ITALIC),
+        ),
+        _ => (
+            overlay.status_line(),
+            Style::default().fg(theme.core.warning).add_modifier(Modifier::ITALIC),
+        ),
     };
     frame.render_widget(Paragraph::new(Line::from(Span::styled(status, style))), status_area);
 
@@ -318,7 +327,10 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
     overlay.rows = rows.len();
     overlay.height = usize::from(body_area.height);
     let top = overlay.top();
-    frame.render_widget(Paragraph::new(rows).scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)), body_area);
+    frame.render_widget(
+        Paragraph::new(rows).scroll((u16::try_from(top).unwrap_or(u16::MAX), 0)),
+        body_area,
+    );
 
     if notices > 0 {
         // The newest notices are the ones that explain the current state, so
@@ -340,7 +352,11 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, overlay: &mut SideOverlay, theme:
     let footer = match overlay.session_id.as_deref() {
         Some(session_id) => format!(
             "{boundary}enter opens {session_id} · esc returns to the conversation{}",
-            if overlay.is_done() && overlay.held.is_some() { " · ↑↓ scroll" } else { "" }
+            if overlay.is_done() && overlay.held.is_some() {
+                " · ↑↓ scroll"
+            } else {
+                ""
+            }
         ),
         None => format!("{boundary}esc returns to the conversation"),
     };

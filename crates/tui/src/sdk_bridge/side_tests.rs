@@ -85,9 +85,10 @@ fn message(role: &str, content: &str, answer: Option<&str>) -> HistoryMessage {
 fn the_child_is_created_narrow_before_the_question_is_sent_and_announced() {
     let link = Recorder::new(None);
     let mut announced = Vec::new();
-    let (baseline, child) =
-        open_with(&link, "parent", None, "what changed?", &mut |child: &str| announced.push(child.to_string()))
-            .expect("the steps succeed");
+    let (baseline, child) = open_with(&link, "parent", None, "what changed?", &mut |child: &str| {
+        announced.push(child.to_string())
+    })
+    .expect("the steps succeed");
     assert_eq!(baseline, 3, "the transcript boundary was not read before the question");
     assert_eq!(child, "child");
     assert_eq!(
@@ -108,10 +109,14 @@ fn the_child_is_created_narrow_before_the_question_is_sent_and_announced() {
 fn a_refused_fork_leaves_the_child_unannounced_and_unasked() {
     let link = Recorder::new(Some("fork"));
     let mut announced = Vec::new();
-    let error =
-        open_with(&link, "parent", None, "what changed?", &mut |child: &str| announced.push(child.to_string()))
-            .expect_err("the refusal must travel");
-    assert!(announced.is_empty(), "a child that was never created was announced anyway");
+    let error = open_with(&link, "parent", None, "what changed?", &mut |child: &str| {
+        announced.push(child.to_string())
+    })
+    .expect_err("the refusal must travel");
+    assert!(
+        announced.is_empty(),
+        "a child that was never created was announced anyway"
+    );
     assert_eq!(error.message, "no");
     assert!(!error.asked, "no turn can have started");
     assert_eq!(error.child, None);
@@ -180,7 +185,13 @@ fn a_text_delta_reaches_the_overlay_as_the_answer_so_far() {
         message_id: Some("m1".to_string()),
     };
     let (effects, _) = observe(&event, 7, "child", &mut preview);
-    assert_eq!(effects, [Effect::Send(Incoming::SideAnswer { id: 7, answer: "the cache".to_string() })]);
+    assert_eq!(
+        effects,
+        [Effect::Send(Incoming::SideAnswer {
+            id: 7,
+            answer: "the cache".to_string()
+        })]
+    );
 }
 
 #[test]
@@ -220,7 +231,13 @@ fn a_stopped_turn_is_reported_and_a_done_turn_finishes() {
     };
     let (effects, progress) = observe(&stopped, 7, "child", &mut preview);
     assert_eq!(progress, Progress::Continue);
-    assert_eq!(effects, [Effect::Send(Incoming::SideNotice { id: 7, line: "the provider failed".to_string() })]);
+    assert_eq!(
+        effects,
+        [Effect::Send(Incoming::SideNotice {
+            id: 7,
+            line: "the provider failed".to_string()
+        })]
+    );
 
     let done = ApiEvent::TurnDone {
         session_id: "child".to_string(),
@@ -250,7 +267,11 @@ fn the_stored_answer_skips_the_forked_transcript() {
 fn the_stored_answer_prefers_the_answer_field_over_the_markup_content() {
     let messages = [
         message("user", "q", None),
-        message("assistant", "\u{1b}[2mthinking\u{1b}[0m\n\nthe answer", Some("the answer")),
+        message(
+            "assistant",
+            "\u{1b}[2mthinking\u{1b}[0m\n\nthe answer",
+            Some("the answer"),
+        ),
     ];
     assert_eq!(stored_answer(&messages, 1).as_deref(), Some("the answer"));
 }
