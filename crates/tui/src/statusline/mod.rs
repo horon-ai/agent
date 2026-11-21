@@ -247,6 +247,14 @@ pub struct StatusData<'a> {
     pub usage: Option<UsageTotals>,
     /// The daemon's own spend estimate, when it publishes one.
     pub cost: Option<f64>,
+    /// The spinner glyph for the frame being drawn.
+    ///
+    /// Supplied only while a turn is in flight and only by a motion preset that
+    /// animates: `reduced` always hands the same first frame and `static` hands
+    /// none, which is how those presets suppress the animation without the
+    /// status segment knowing about them. Every frame is a `&'static str`, so a
+    /// caller cannot hand over text that outlives its own draw.
+    pub spinner: Option<&'static str>,
     /// Local time, from the clock.
     pub now: Option<Time>,
 }
@@ -544,7 +552,10 @@ fn segment_text(id: SegmentId, data: &StatusData<'_>, layout: &Layout, symbols: 
             Some(id) => short_id(id),
             None => String::new(),
         },
-        SegmentId::Status => status_word(data).to_string(),
+        SegmentId::Status => match data.spinner {
+            Some(glyph) => format!("{} {glyph}", status_word(data)),
+            None => status_word(data).to_string(),
+        },
         SegmentId::Path => match data.cwd {
             Some(cwd) => shorten_path(cwd, data.home, layout.path_max),
             None => String::new(),

@@ -8,7 +8,10 @@
 //!
 //! The status line's own two choices are checked the same way: a settings
 //! snapshot the client resolves, applied through the path a settings save and a
-//! file reload both take, changes the row the next frame draws. `title.state`
+//! file reload both take, changes the row the next frame draws. The motion
+//! preset is read instead of the spinner, so a still or static one stops the
+//! loop from asking for frames. `models.shortlist` is read from the settings on
+//! every refresh, because the cycle reads it on the press. `title.state`
 //! follows the same path into the app, where the event loop reads it before it
 //! writes the window title.
 
@@ -64,6 +67,72 @@ fn a_countable_tool_output_lines_is_applied() {
     let mut app = app();
     app.refresh_settings(&settings_with(dir.path(), "[transcript]\ntool_output_lines = 6\n"));
     assert_eq!(app.transcript.tool_output_lines(), 6);
+}
+
+/// The glyph the status line draws for a turn in flight, read from the segment
+/// itself rather than from the app's private helper.
+fn spinner(app: &App) -> Option<&'static str> {
+    app.status_data().spinner
+}
+
+#[test]
+fn motion_full_animates_a_running_turn_and_reduced_freezes_it() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), "[motion]\nspinner_interval = 40\n"));
+    app.pending_turn = true;
+
+    app.motion_frame = 0;
+    let first = spinner(&app).expect("a full preset draws a spinner");
+    app.motion_frame = 1;
+    let second = spinner(&app).expect("a full preset draws a spinner");
+    assert_ne!(first, second, "the spinner did not advance between frames");
+
+    app.refresh_settings(&settings_with(dir.path(), "[motion]\npreset = \"reduced\"\n"));
+    assert!(!app.animating(), "a still spinner asked the loop for frames");
+    app.motion_frame = 0;
+    let frozen = spinner(&app).expect("a reduced preset keeps one frame");
+    app.motion_frame = 3;
+    assert_eq!(spinner(&app), Some(frozen), "a reduced preset advanced the spinner");
+    assert_eq!(frozen, app.symbols.spinner[0]);
+}
+
+#[test]
+fn motion_static_draws_no_spinner_and_no_idle_frame() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), "[motion]\npreset = \"static\"\n"));
+    app.pending_turn = true;
+    assert_eq!(spinner(&app), None, "a static preset drew a spinner");
+    assert!(!app.animating(), "a static preset asked the loop for frames");
+
+    // A prompt and a lost connection already say more than a turning mark, so
+    // even a full preset stops drawing one for them.
+    app.refresh_settings(&settings_with(dir.path(), "[motion]\npreset = \"full\"\n"));
+    assert!(spinner(&app).is_some());
+    assert!(app.animating(), "a full preset animating a turn asked for no frame");
+    app.disconnected = true;
+    assert_eq!(spinner(&app), None, "a lost connection kept the spinner");
+    assert!(!app.animating(), "a lost connection kept animating");
+}
+
+#[test]
+fn a_refused_motion_number_is_reported_and_the_default_cadence_stays() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(dir.path(), "[motion]\nmax_fps = 0\n"));
+    let warnings: Vec<&str> = app
+        .transcript
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            crate::transcript::Item::Warning(text) => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("motion.max_fps"), "{warnings:?}");
+    assert_eq!(app.motion, crate::settings::Motion::default());
 }
 
 /// A theme loader reading a directory of its own, so a test never looks at the
@@ -132,6 +201,53 @@ fn a_saved_status_line_style_reaches_the_drawn_bottom_line() {
         backgrounds.iter().all(|background| *background == Color::Reset),
         "the line is still painted: {backgrounds:?}"
     );
+}
+
+#[test]
+fn the_model_shortlist_comes_from_the_settings_file() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(
+        dir.path(),
+        "[models]\nshortlist = [\"alpha\", \"beta\"]\n",
+    ));
+    app.show_models(vec!["alpha".to_string(), "beta".to_string()], Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    // The cycle reads the list the file declared, in its order.
+    assert_eq!(
+        app.on_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        Some(crate::app::Action::Model("beta".to_string()))
+    );
+}
+
+#[test]
+fn a_repeated_shortlist_entry_warns_once_per_file_edit() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    let settings = settings_with(dir.path(), "[models]\nshortlist = [\"alpha\", \"alpha\"]\n");
+    app.refresh_settings(&settings);
+    let warnings = app
+        .transcript
+        .items()
+        .iter()
+        .filter(|item| matches!(item, crate::transcript::Item::Warning(text) if text.contains("twice")))
+        .count();
+    assert_eq!(warnings, 1, "the repeated entry was not named once");
+
+    // A second refresh of the same file is a save, not an edit: the warning is
+    // not repeated for a file that did not change.
+    app.refresh_settings(&settings);
+    let warnings = app
+        .transcript
+        .items()
+        .iter()
+        .filter(|item| matches!(item, crate::transcript::Item::Warning(text) if text.contains("twice")))
+        .count();
+    assert_eq!(warnings, 1, "the same file warned again");
 }
 
 #[test]

@@ -143,6 +143,42 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "motion.preset",
+        kind: SettingKind::Enum(super::motion::MODES),
+        env: "HORON_TUI_MOTION_PRESET",
+        default: DefaultValue::Text("full"),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Motion",
+            label: "Motion",
+            description: "Full animates the spinner, reduced freezes it, static draws no spinner and adds no frames.",
+        },
+    },
+    SettingSpec {
+        id: "motion.spinner_interval",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_MOTION_SPINNER_INTERVAL",
+        default: DefaultValue::Number(super::motion::DEFAULT_SPINNER_INTERVAL),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Motion",
+            label: "Spinner interval",
+            description: "Milliseconds one spinner frame stays, 40 to 2000.",
+        },
+    },
+    SettingSpec {
+        id: "motion.max_fps",
+        kind: SettingKind::Number,
+        env: "HORON_TUI_MOTION_MAX_FPS",
+        default: DefaultValue::Number(super::motion::DEFAULT_MAX_FPS),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Motion",
+            label: "Max FPS",
+            description: "Most frames a second a streaming turn draws, 1 to 240.",
+        },
+    },
+    SettingSpec {
         id: "appearance.changes",
         kind: SettingKind::Enum(CHANGE_PALETTES),
         env: "HORON_TUI_CHANGES",
@@ -287,6 +323,19 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.show_tool_activity",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Show tool activity",
+            description: "Draw the record of finished tool calls; off keeps a call that is running or waiting \
+                          for approval visible.",
+        },
+    },
+    SettingSpec {
         id: "transcript.mouse_scroll",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_MOUSE_SCROLL",
@@ -344,6 +393,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Content",
             label: "Visual blocks",
             description: "Draw a diagram fence's one-line flow; off draws the fence as typed.",
+        },
+    },
+    SettingSpec {
+        id: "models.shortlist",
+        kind: SettingKind::Array,
+        env: "HORON_TUI_MODELS_SHORTLIST",
+        default: DefaultValue::List(&[]),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Models",
+            label: "Cycle list",
+            description: "Model ids the cycle keys step through, in this order; leave empty to disable cycling.",
         },
     },
 ];

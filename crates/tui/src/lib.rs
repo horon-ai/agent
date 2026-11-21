@@ -13,6 +13,7 @@ pub mod app;
 pub mod commands;
 pub mod context;
 mod fuzzy;
+pub mod gallery;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -96,8 +97,6 @@ mod help_tests;
 #[path = "fuzzy_tests.rs"]
 mod fuzzy_tests;
 
-use std::time::Duration;
-
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -116,67 +115,7 @@ use crate::theme::{Theme, ThemeLoader};
 use crate::theme::Symbols;
 use crate::transcript::Item;
 
-/// Program usage, printed by `--help` and after an argument error.
-pub const USAGE: &str = "\
-horon-tui - terminal client for the horon-agent harness
-
-Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
-                 [--config <file>]...
-
-Options:
-  --socket <path>  Harness API socket to connect to (default: the resolved
-                   harness socket for this user)
-  --session <id>   Attach to an existing session instead of creating one
-  --cwd <dir>      Working directory for a newly created session
-  --config <file>  Extra settings file, read after the global and project
-                   files and before the environment (repeatable)
-  --hide-thinking  Hide the model's reasoning for this session, whatever
-                   transcript.show_reasoning says; ctrl+t toggles it again
-  -V, --version    Print the version and exit
-  -h, --help       Print this help and exit
-
-Keys:
-  Enter          send the typed message
-  Alt-Enter      start a new line (Ctrl-J does the same; most terminals
-                 send Shift-Enter as a plain Enter, which sends)
-  Tab            complete the slash command being typed
-  Esc            send the queued messages into the running turn, or
-                 interrupt it when nothing is queued
-  Ctrl-C         cancel a running turn, or leave when nothing is running
-  Ctrl-D         delete at the cursor, or leave with an empty idle draft
-  Ctrl-U, Ctrl-K delete from the start or the end of the line to the cursor
-  Ctrl-W, Alt-Backspace  delete the word before the cursor
-  Ctrl-R         search the drafts sent before this one
-  PgUp, PgDn     scroll the transcript one page
-  Shift-Up/Down  scroll the transcript one row
-  Ctrl-End       follow the end of the conversation again
-  Ctrl-L         redraw the screen without changing the draft or selection
-  Ctrl-O         show or hide the whole output of the newest cut tool call
-  Shift-Tab      step to the next reasoning effort
-  Ctrl-T         show or hide the model's reasoning for this session
-  Alt-P          pick the model this session uses
-  Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
-  the keys in force.
-
-Commands:
-  /help          list the commands (built-in, harness, command files),
-                 the skills and the keys in force; /help <command>
-                 describes one of them
-  /clear         clear the transcript pane
-  /effort        set the reasoning effort, or pick one from the ladder
-  /exit          leave, the same as /quit
-  /keys          list the keys in force and what each does
-  /links         list the http(s) links in recent answers and open one
-  /model [name]  pick a model from a list, or switch to the one named
-  /new           start a new session in this directory
-  /quit          leave
-  /resume [id]   replay a stored session, or pick one from the list
-  /settings      open the settings screen, generated from the registry
-  /skills        list the skills the harness reports, and put one in the
-                 draft
-  /switch [id]   move to another stored session, or pick one from the list
-  //text         send the literal message /text
-";
+pub use help::USAGE;
 
 /// Parsed command line.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -189,6 +128,17 @@ pub struct Args {
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
+    /// Gallery scene to preview instead of connecting, if the flag was given.
+    ///
+    /// `--gallery` alone resolves to [`gallery::FIRST`], so the field carries
+    /// the scene either way and `run` has one branch to take.
+    pub gallery: Option<String>,
+    /// Motion preset for this launch, over every settings file.
+    pub motion: Option<settings::MotionMode>,
+    /// Spinner interval for this launch, in milliseconds.
+    pub spinner_interval: Option<i64>,
+    /// Frame limit for this launch, in frames a second.
+    pub max_fps: Option<i64>,
     /// Start with the model's reasoning hidden, whatever the setting says.
     pub hide_thinking: bool,
     /// Print the version and exit.
@@ -206,9 +156,22 @@ impl Args {
         let mut parsed = Self::default();
         let mut arguments = args.into_iter();
         while let Some(argument) = arguments.next() {
+            // The motion flags share one setting family and take both spellings,
+            // so they are read and converted together instead of one arm per
+            // flag per spelling.
+            if settings::motion::LaunchFlag::read(
+                &argument,
+                &mut arguments,
+                &mut parsed.motion,
+                &mut parsed.spinner_interval,
+                &mut parsed.max_fps,
+            )? {
+                continue;
+            }
             match argument.as_str() {
                 "--version" | "-V" => parsed.version = true,
                 "--help" | "-h" => parsed.help = true,
+                "--gallery" => parsed.gallery = Some(gallery::FIRST.to_string()),
                 "--hide-thinking" => parsed.hide_thinking = true,
                 "--socket" => match arguments.next() {
                     Some(path) => parsed.socket = Some(path.into()),
@@ -230,6 +193,10 @@ impl Args {
                     Some(("--socket" | "--session" | "--cwd" | "--config", "")) => {
                         return Err(format!("{} needs a value", other.trim_end_matches('=')));
                     }
+                    Some(("--gallery", "")) => {
+                        return Err("--gallery needs a scene name after '='".to_string());
+                    }
+                    Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
@@ -291,13 +258,23 @@ where
         print!("{USAGE}");
         return 0;
     }
+    // The gallery is a viewer over built-in fixtures, so it runs before
+    // settings are read and before a socket is opened: a frame must not depend
+    // on a file on the machine, and a broken settings file is not a reason to
+    // hide the renderer.
+    if let Some(scene) = args.gallery.as_deref() {
+        return gallery::run(scene);
+    }
     // Settings load before the connection so a broken settings file is
     // reported even when the daemon is unreachable.
     let (sources, note) = settings::Sources::from_environment(args.config.clone());
     if let Some(note) = note {
         eprintln!("horon-tui: {note}");
     }
-    let mut reloader = settings::Reloader::new(sources);
+    // A launch flag outranks every file, so it rides with the reloader and is
+    // reapplied after each resolve instead of being written anywhere.
+    let overrides = settings::motion::launch_overrides(args.motion, args.spinner_interval, args.max_fps);
+    let mut reloader = settings::Reloader::with_overrides(sources, std::time::Duration::from_secs(1), overrides);
     for warning in reloader.warnings() {
         eprintln!("horon-tui: settings: {warning}");
     }
@@ -491,13 +468,9 @@ where
     B::Error: std::fmt::Display,
 {
     let mut failure = None;
-    // Whether the terminal is currently reporting the mouse, which follows the
-    // `transcript.mouse_scroll` setting rather than being decided once.
     let mut mouse_captured = false;
-    // The screen is redrawn when something on it changed, not twenty times a
-    // second: a draw walks the visible conversation, and an idle client has
-    // nothing new to show. The frame below is the first one.
-    let mut redraw = true;
+    // The scheduler draws the first frame and sets the cadence after that.
+    let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
     // The minute the status line's clock last showed, so the frame that turns
     // it over is drawn and no other idle frame is.
     let mut clock = statusline::local_minute();
@@ -508,7 +481,14 @@ where
     // the first frame must not write it again.
     let mut shown_state = window_state(app, state_supported);
     loop {
-        let mut changed = loop_io::drain_events(app);
+        let mut changed = match loop_io::drain_events(app) {
+            loop_io::Redraw::Immediate => true,
+            loop_io::Redraw::None => false,
+            loop_io::Redraw::Stream => {
+                frames.request_stream();
+                false
+            }
+        };
         if !app.running {
             break;
         }
@@ -518,12 +498,13 @@ where
             loop_io::dispatch(app, commands, action);
             changed = true;
         }
-        // The session and the working directory can change while the client
-        // runs, and a key can start a turn, answer a prompt or leave one
-        // without any event arriving; the window is renamed only when the name
-        // it would carry is not the one on it. The state is one fixed word, so
-        // comparing it every frame costs nothing and a repeated state writes
-        // nothing.
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
+        // Titles can change on either a daemon event or local input.
         let state = window_state(app, state_supported);
         if changed || state != shown_state {
             shown_state = state;
@@ -569,16 +550,14 @@ where
             clock = minute;
             changed = true;
         }
-        // A turn in flight keeps drawing even while its events are quiet: its
-        // rows are where the elapsed time and the streaming text land.
-        if redraw || changed || app.pending_turn {
-            if let Err(message) = draw(terminal, app) {
-                failure = Some(message);
-                break;
-            }
-            redraw = false;
+        // The frame this pass owes: one for a screen that changed, one the
+        // spinner scheduler says is due, and the first after the loop starts.
+        // An idle screen reaches none of those and is left untouched.
+        if let Err(message) = loop_io::draw_due(terminal, app, &mut frames, changed) {
+            failure = Some(message);
+            break;
         }
-        match crossterm::event::poll(Duration::from_millis(50)) {
+        match crossterm::event::poll(loop_io::POLL) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(error) => {
@@ -591,7 +570,6 @@ where
         // Every input event can change what is on screen: a key edits the
         // draft or moves the selection, a paste inserts, the wheel scrolls and a
         // resize remakes the whole layout.
-        redraw = true;
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting
@@ -621,6 +599,9 @@ where
                 app.exit_code = 1;
             }
         }
+        // Asked for after the event was acted on, so one keystroke costs one
+        // frame rather than one per pass.
+        frames.request();
     }
     (if failure.is_some() { 1 } else { app.exit_code }, failure)
 }
@@ -631,18 +612,14 @@ where
 /// resets the frame Ratatui keeps, so the draw below writes every cell instead
 /// of only the rows that differ. That is what recovers a screen something else
 /// has overwritten, and it is the whole of what the repaint key does.
-pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), String>
+pub fn draw<B>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), B::Error>
 where
     B: Backend,
-    B::Error: std::fmt::Display,
 {
     if app.take_repaint_request() {
-        terminal.clear().map_err(|error| error.to_string())?;
+        terminal.clear()?;
     }
-    terminal
-        .draw(|frame| render(frame, app))
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    terminal.draw(|frame| render(frame, app)).map(|_| ())
 }
 
 /// Rows the conversation keeps when a tall draft asks for more.
@@ -1171,7 +1148,9 @@ fn indicator_line(app: &App, below: usize) -> Line<'static> {
 
 /// What an empty transcript says instead of nothing.
 fn placeholder(app: &App, rows: Vec<Line<'static>>, width: u16) -> Vec<Line<'static>> {
-    if !rows.is_empty() {
+    // A conversation whose only rows are hidden tool calls still has content:
+    // asking the reader to send a message would misread what is on screen.
+    if !rows.is_empty() || !app.transcript.items().is_empty() {
         return rows;
     }
     wrap::wrap_line(

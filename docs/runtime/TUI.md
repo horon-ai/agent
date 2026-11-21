@@ -23,8 +23,11 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
 ```
+
+The three motion flags are per-launch overrides: they outrank every settings file and the environment, are shown as `command line` in the settings screen, and survive a reload of the files under them. A flag outside its range is an argument error, not a warning: `--max-fps 0` prints the expected range and exits with code 2.
 
 | Flag | Meaning |
 | --- | --- |
@@ -32,9 +35,15 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
+| `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
+| `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |
+| `--spinner-interval <ms>` | Spinner frame length for this launch, `40` to `2000` |
+| `--max-fps <n>` | Stream frame limit for this launch, `1` to `240` |
 | `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
+
+Run `horon-tui --gallery=unicode` to see how the renderer wraps wide characters, or start with `horon-tui --gallery` to see the first fixture. Use `n` and `p` or the arrow keys to change scenes and `q` to leave. The preview uses fixed data and requires no daemon or model connection.
 
 A connection that never opened ends the client. The banner carries the sentence the event stream produced (for example `the event stream ended: ...`), the loop stops, and the process exits with code 1 so a wrapper sees the failure.
 
@@ -68,6 +77,9 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `motion.preset` | `full`, `reduced`, `static` | `full` | `HORON_TUI_MOTION_PRESET` |
+| `motion.spinner_interval` | number | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
+| `motion.max_fps` | number | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
@@ -80,11 +92,13 @@ The settings of one process are the registry defaults, then the global file, the
 | `editor.submit_on_enter` | boolean | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | boolean | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | number | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.show_tool_activity` | boolean | `true` | `HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY` |
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 | `transcript.turn_usage` | boolean | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
+| `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen. The opt-in `usage` and `cost` segments are chosen with `statusline.left` and `statusline.right` rather than by a key of their own, so the registry gains no key for them.
 
@@ -93,6 +107,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`motion.preset` controls the indicator beside `running`. `full` cycles its glyphs, `reduced` holds the first glyph and `static` hides the indicator. `motion.spinner_interval` sets the minimum time a glyph stays visible, from `40` to `2000` milliseconds. `motion.max_fps` caps automatic redraws due to incoming text or spinner ticks in all presets, from `1` to `240` frames per second. At `max_fps = 4`, automatic redraws are at least 250 milliseconds apart. Input, resize and other events that need immediate feedback can redraw sooner. Out-of-range values are rejected with a warning that names the default in use.
 
 `appearance.changes = "accessible"` gives additions and deletions distinct colours in tool diffs and preserves their `+` and `-` marks. It also adjusts positive and negative status colours. Select `theme` to restore the theme's own colours.
 
@@ -106,6 +122,11 @@ The project file is `<cwd>/.horon/tui.toml`. It is skipped when the working dire
 # ~/.horon/tui.toml
 theme = "dark"
 symbols = "nerd"
+
+[motion]
+preset = "reduced"
+spinner_interval = 120
+max_fps = 20
 
 [statusline]
 preset = "custom"
@@ -200,10 +221,13 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | Hold the transcript one row higher |
 | `app.scroll_down` | `shift+down` | Move the transcript one row back towards the end |
 | `app.scroll_bottom` | `ctrl+end` | Follow the end of the conversation again |
-| `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
-| `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
+| `app.expand_tool` | `ctrl+o` | Expand or fold the selected retained tool result |
+| `app.toggle_tool_activity` | `alt+t` | Show or hide completed tool activity for this session |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
+| `app.cycle_model` | `ctrl+p` | Move forward through the model shortlist |
+| `app.cycle_model_back` | `ctrl+alt+p` | Move backward through the model shortlist |
+| `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
 | `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
 | `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
@@ -270,6 +294,8 @@ The client marks avoidable prompt cache misses after the request that caused the
 
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
 
+Scroll to an older retained tool result and press Ctrl+O to expand or fold it. Alt+T hides or restores completed tool rows. Running calls and pending approvals remain visible.
+
 Assistant text is rendered as Markdown: headings, emphasis, inline code, lists, block quotes, fenced code and horizontal rules. A list is nested up to six levels, two columns or one tab per level, and the nesting is drawn from the indent the model wrote. Fenced code keeps its text as typed, and the opening fence's first word is drawn as a language label once the fence line is complete, so a half-received ` ```ru ` does not flash a label that then changes. A table, a link and any syntax the renderer does not claim stay as the source the model wrote, because dropping the text would lose what it said. Wrapped rows keep the indent of the row they continue, so a nested item still reads as nested after a break. A new turn starts one blank row below the previous one.
 
 A `diagram` fence can draw a one-line flow such as `load -> parse -> render`. It accepts up to eight labels, with at most 24 characters and 24 display cells per label. The source must fit within 4 KiB and the rendered flow must fit the pane. Incomplete, malformed and oversized flows remain readable as source. Set `transcript.visual_blocks = false` to show every flow as source.
@@ -327,6 +353,8 @@ The model list has the model in force marked `(current)` and the selected row ca
 `/model <name>` switches without the list.
 
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
+
+Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.
 
 `/switch` and `/resume` open the stored sessions under different titles, newest first. Each row carries the session's title (or its first user line, or its id) and the time it last changed, flush with the row's right edge so the times read down the list; a conversation too narrow for both keeps the name. The session in force is marked `(current)`. The preview opens with the directory and the time and follows with the newest six messages as `you: …` and `assistant: …` lines, taken from the newest twenty stored messages; an injected `<system-reminder>` message is left out, because the user never wrote it. A session the daemon cannot read back shows its title, or its id when it has none, and a head-only preview.
 

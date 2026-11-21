@@ -59,6 +59,7 @@ fn sample() -> StatusData<'static> {
         usage: None,
         cost: None,
         now: Some(time(9, 5)),
+        spinner: None,
     }
 }
 
@@ -178,6 +179,30 @@ fn statusline_narrow_width_keeps_only_the_highest_priority() {
     let layout = Layout::default();
     let text = rendered(&sample(), &layout, 8);
     assert_eq!(text, "anthropic/claude-sonnet-4");
+}
+
+#[test]
+fn a_spinner_is_drawn_beside_the_state_only_when_it_is_supplied() {
+    let layout = Layout {
+        left: vec![SegmentId::Status],
+        right: Vec::new(),
+        ..Layout::default()
+    };
+    let mut data = StatusData {
+        pending_turn: true,
+        ..StatusData::default()
+    };
+    assert_eq!(rendered(&data, &layout, 80), "running");
+
+    data.spinner = Some(Symbols::default().spinner[1]);
+    assert_eq!(
+        rendered(&data, &layout, 80),
+        format!("running {}", Symbols::default().spinner[1])
+    );
+
+    // A static preset hands no glyph, so the state stands alone again.
+    data.spinner = None;
+    assert_eq!(rendered(&data, &layout, 80), "running");
 }
 
 #[test]

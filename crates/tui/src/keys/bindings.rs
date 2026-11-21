@@ -39,13 +39,19 @@ pub mod ids {
     pub const APP_SCROLL_DOWN: &str = "app.scroll_down";
     /// Follow the end of the conversation again.
     pub const APP_SCROLL_BOTTOM: &str = "app.scroll_bottom";
-    /// Show the whole output of the newest tool call whose preview was cut, and
-    /// the preview again on the next press.
+    /// Show the whole output of the selected tool call whose preview was cut,
+    /// and the preview again on the next press.
     pub const APP_EXPAND_TOOL: &str = "app.expand_tool";
+    /// Draw or hide the record of finished tool calls for this session.
+    pub const APP_TOGGLE_TOOL_ACTIVITY: &str = "app.toggle_tool_activity";
     /// Step to the next reasoning-effort level, wrapping at the last one.
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Step forward to the next model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL: &str = "app.cycle_model";
+    /// Step backward to the previous model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL_BACK: &str = "app.cycle_model_back";
     /// Paint the whole screen again, discarding the frame the terminal holds.
     pub const APP_REPAINT: &str = "app.repaint";
     /// Show or hide the model's reasoning for the rest of the session.
@@ -152,12 +158,22 @@ pub const ACTIONS: &[ActionSpec] = &[
     // The key a cut tool preview names: reading the rest of one call's output
     // is the one thing the transcript cannot do with the scroll keys alone.
     ActionSpec::new(ids::APP_EXPAND_TOOL, Scope::App, &["ctrl+o"]),
+    // The prose-only view: the record of finished calls goes, the work in
+    // progress and the approvals it needs stay. The letter is free in the
+    // shipped map, so no action loses a key to it.
+    ActionSpec::new(ids::APP_TOGGLE_TOOL_ACTIVITY, Scope::App, &["alt+t"]),
     // `shift+tab` walks the effort ladder upwards. `tab` alone still completes
     // the draft: an exact binding is looked up before an unshifted one, and the
     // shift on the event stops `tab` from answering it.
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // Two steps through a shortlist of the user's own, forward and backward.
+    // `ctrl+p` is free of the editor's own keys, and `ctrl+alt+p` is the same
+    // letter with one modifier more, which every terminal reports apart from
+    // `ctrl+p`; either can be rebound in `keybindings.toml`.
+    ActionSpec::new(ids::APP_CYCLE_MODEL, Scope::App, &["ctrl+p"]),
+    ActionSpec::new(ids::APP_CYCLE_MODEL_BACK, Scope::App, &["ctrl+alt+p"]),
     // The one key that changes nothing: it throws away the frame Ratatui kept,
     // so a screen another program wrote over is drawn again in full. It answers
     // before every surface and takes no key from one, because only the frames
