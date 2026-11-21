@@ -23,7 +23,7 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--hide-thinking]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]] [--hide-thinking]
 ```
 
 | Flag | Meaning |
@@ -32,9 +32,12 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
 | `--config <file>` | Extra settings file, repeatable |
+| `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
 | `--hide-thinking` | Start with the model's reasoning hidden for this session, whatever `transcript.show_reasoning` says; `ctrl+t` (default) toggles it again |
 | `-V`, `--version` | Print the version and exit |
 | `-h`, `--help` | Print the usage and exit |
+
+Run `horon-tui --gallery=unicode` to see how the renderer wraps wide characters, or start with `horon-tui --gallery` to see the first fixture. Use `n` and `p` or the arrow keys to change scenes and `q` to leave. The preview uses fixed data and requires no daemon or model connection.
 
 A connection that never opened ends the client. The banner carries the sentence the event stream produced (for example `the event stream ended: ...`), the loop stops, and the process exits with code 1 so a wrapper sees the failure.
 
@@ -83,7 +86,9 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.mouse_scroll` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.turn_usage` | boolean | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
+| `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
 The table follows the settings registry (`crates/tui/src/settings/registry.rs`), which also supplies the settings screen.
 
@@ -203,6 +208,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.expand_tool` | `ctrl+o` | Show the whole output of the newest cut tool call, or hide it again |
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
+| `app.cycle_model` | `ctrl+p` | Move forward through the model shortlist |
+| `app.cycle_model_back` | `ctrl+alt+p` | Move backward through the model shortlist |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
 | `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
 | `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
@@ -266,6 +273,8 @@ A call the approval gate refused is drawn with one short label rather than the d
 
 A `bash` job with `notify_pattern` displays live process-output notices in the launching session's transcript. Each notice identifies the job and its stdout or stderr stream.
 
+Set `transcript.turn_usage = true` to show elapsed time after each turn you start in this client. The footer also shows total input and output tokens when the provider reports them.
+
 The client marks avoidable prompt cache misses after the request that caused them. A marker shows the cause and the approximate number of tokens resent, without prompt text or cache identifiers. A model or provider switch, expiry, or a documented invalidation leaves no marker. Set `[features] kv_cache_miss_notices = false` in the daemon's `config.toml` to turn off the reports.
 
 The conversation can be read back. `pageup`, `pagedown`, `shift+up` and `shift+down` hold the view, `ctrl+end` returns to the end, and the mouse wheel moves three rows a notch while `transcript.mouse_scroll` holds the capture, which is the default. While the view is held the bottom row carries `↓ N rows below`, and it adds `· new output` once a row has arrived that the held view has not shown. Taking the view off the end sets the baseline for that count, so the first `↓ N rows below` counts from the row the user was looking at.
@@ -327,6 +336,8 @@ The model list has the model in force marked `(current)` and the selected row ca
 `/model <name>` switches without the list.
 
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
+
+Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.
 
 `/switch` and `/resume` open the stored sessions under different titles, newest first. Each row carries the session's title (or its first user line, or its id) and the time it last changed, flush with the row's right edge so the times read down the list; a conversation too narrow for both keeps the name. The session in force is marked `(current)`. The preview opens with the directory and the time and follows with the newest six messages as `you: …` and `assistant: …` lines, taken from the newest twenty stored messages; an injected `<system-reminder>` message is left out, because the user never wrote it. A session the daemon cannot read back shows its title, or its id when it has none, and a head-only preview.
 
