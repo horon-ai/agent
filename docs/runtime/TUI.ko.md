@@ -68,6 +68,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | --- | --- | --- | --- |
 | `theme` | 문자열 | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | 참·거짓 | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | 세그먼트 이름 배열 | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
@@ -83,7 +84,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.turn_usage` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
 | `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
+| `models.shortlist` | 모델 ID 배열 | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
 이 표는 설정 화면과 같은 설정 레지스트리(`crates/tui/src/settings/registry.rs`)를 따릅니다.
 
@@ -92,6 +95,8 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 `statusline.separator`는 글리프 프리셋을 따르거나 가운뎃점(`·`)과 세로줄(`|`) 중 하나를 표시합니다. `statusline.background = "terminal"`을 지정하면 상태줄에 터미널 기본 배경을 씁니다.
 
 `editor.submit_on_enter = false`는 전송 키를 떼어 내므로, 그 키를 눌러도 보내지 않고 초안에 새 줄이 시작된다. `transcript.tool_output_lines`는 끝난 도구 호출의 출력을 그 줄 아래에 몇 줄 남길지 정한다. `0`이면 미리보기를 숨기고, `40`을 넘는 값은 `40`으로 자른다. `transcript.mouse_scroll`은 기본으로 켜져 있으므로 클라이언트가 마우스를 캡처하고 휠이 트랜스크립트를 움직인다. 끄면 캡처를 놓아 터미널의 텍스트 선택이 그대로 동작하고 휠도 터미널이 하던 일을 한다. 마우스를 캡처한 상태에서도 대부분의 터미널은 선택 보조 키를 누르는 동안 캡처를 우회한다. 예를 들어 Shift를 누른 채 끌면 된다. `transcript.markdown = false`는 모델의 글을 마크다운 표시까지 그대로 그린다.
+
+`appearance.changes = "accessible"`로 지정하면 도구 출력에서 추가와 삭제를 서로 다른 색으로 표시하며 `+`와 `-` 표식을 유지합니다. 긍정과 부정 상태의 색도 조정합니다. `theme`을 선택하면 테마의 원래 색으로 돌아갑니다.
 
 `transcript.show_reasoning`은 사고 블록을 여닫는 설정이고 설정 화면의 이름은 `Show thinking`이다. `true`이면 모델의 추론을 남겨 그것이 앞서는 답 위에 흐리게 그리고, 스트리밍 조각마다가 아니라 경계(추론 종료, 도구 호출, 첫 답 조각)마다 생각 하나를 항목 하나로 확정한다. 이 설정이 꺼져 있으면 추론 조각은 도착하는 대로 버리므로, 끄면 이후 모든 턴의 사고 블록이 보이지 않는다.
 
@@ -201,6 +206,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.toggle_tool_activity` | `alt+t` | 현재 세션에서 완료된 도구 활동을 표시하거나 숨긴다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
+| `app.cycle_model` | `ctrl+p` | 모델 후보 목록에서 다음 모델로 옮긴다 |
+| `app.cycle_model_back` | `ctrl+alt+p` | 모델 후보 목록에서 이전 모델로 옮긴다 |
 | `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
 | `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
@@ -261,6 +268,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
 
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시합니다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시됩니다.
+
+`transcript.turn_usage = true`로 설정하면 이 클라이언트에서 시작한 턴이 끝날 때 소요 시간을 표시합니다. 프로바이더가 사용량을 보고하면 입력과 출력 토큰의 합계도 표시합니다.
 
 피할 수 있었던 프롬프트 캐시 미스는 관련 요청 뒤에 표시됩니다. 원인과 다시 보낸 토큰의 대략적인 수가 표시되며 프롬프트 원문과 캐시 식별자는 빠집니다. 모델이나 프로바이더 변경, 만료 또는 이유가 기록된 무효화에는 표식을 붙이지 않습니다. 데몬의 `config.toml`에서 `[features] kv_cache_miss_notices = false`를 지정하면 보고를 끌 수 있습니다.
 
@@ -326,6 +335,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 
 노력 사다리 목록은 클라이언트가 제공하는 `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`이고, 지금 단계에 `(current)`를 붙이며 행마다 그 단계가 모델에 무엇을 요구하는지 한 줄로 미리 보여 준다. 커서와 미리보기는 그 표시된 행에서 열리므로 `enter`가 지금 단계를 그대로 확인하고 `none`으로 내려가지 않는다. 세션이 단계를 알리지 않거나 사다리에 없는 단계를 알리면 첫 행에서 연다. 행은 클라이언트의 것이므로 목록은 여는 순간 이미 완성되어 있다.
 
+`models.shortlist`에 순환할 모델 ID를 지정합니다. Ctrl+P는 다음 모델로, Ctrl+Alt+P는 이전 모델로 옮깁니다. 목록 끝을 지나면 반대편으로 돌아갑니다. 클라이언트는 순환 전에 데몬의 모델 목록을 확인하고 목록에 없는 ID는 건너뜁니다.
+
 `/switch`와 `/resume`은 같은 저장 세션 목록을 다른 제목으로 연다. 최신 순이고, 행마다 세션 제목(없으면 첫 사용자 줄, 그것도 없으면 아이디)과 마지막으로 바뀐 시각을 담으며, 시각은 행 오른쪽 끝에 맞춰 두어 목록 아래로 읽힌다. 둘 다 들어가지 않는 좁은 화면은 이름을 남긴다. 지금 붙어 있는 세션에는 `(current)`가 붙는다. 미리보기는 디렉터리와 시각으로 시작하고 이어서 최신 메시지 여섯 개를 `you: …`와 `assistant: …` 줄로 보여 준다. 저장된 메시지 가운데 최신 스무 개를 읽고, 주입된 `<system-reminder>` 메시지는 사용자가 쓴 것이 아니므로 뺀다. 데몬이 다시 읽어 주지 못하는 세션은 제목을, 제목이 없으면 아이디를 이름표로 두고 머리 줄만 있는 미리보기를 쓴다.
 
 행을 고르거나 `/switch <id>`, `/resume <id>`를 입력하면 곧바로 붙고, 데몬은 여섯 글자 이상의 유일한 접두사도 받는다. 붙으면 이전 세션의 화면을 지우고 저장된 대화를 사용자 메시지와 어시스턴트 메시지로 다시 그리며, `started a new session <id>` 또는 `resumed <id>`를 남기고, 새 세션의 정체성에서 모델, 프로바이더, 노력 단계, 제목을 받는다. 그래서 상태 줄은 계속 `provider/model`을 보여 준다. `/new`는 이 디렉터리의 세션을 요청해 같은 방식으로 옮겨 가고, 떠나온 세션은 저장된 채로 남는다. 클라이언트는 떠나온 모든 세션의 이벤트를 버리므로 두 대화의 행이 서로에게 닿지 않는다. 세션 변경은 턴이 돌거나 모델이나 노력 단계 변경이 아직 적용 중이면 기다리고, 메시지 없이 떠난 새 세션은 데몬이 보관하지 않으므로 다시 붙을 수 없다.
@@ -377,13 +388,16 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
+| `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표에는 클라이언트 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
+이 표에는 클라이언트가 처리하는 내장 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
+
+`/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아옵니다. Delete로 메시지를 삭제하고 Alt+위쪽 또는 Alt+아래쪽 방향 키로 순서를 바꿉니다. 이미 전송 중인 메시지는 목록에서 빠집니다. 편집한 초안은 준비됐을 때 다시 보낼 수 있습니다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 

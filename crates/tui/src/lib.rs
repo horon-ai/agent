@@ -108,6 +108,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::sdk_bridge::{Command, Runtime};
 use crate::terminal::{show_failure, window_label, window_state};
+use crate::theme::changes::{self, ChangePalette};
 use crate::theme::{Theme, ThemeLoader};
 // The test modules reach this through `use super::*`; production code draws
 // through `item_lines`, which takes the glyph set from the app itself.
@@ -426,7 +427,9 @@ pub(crate) fn apply_settings(app: &mut App, settings: &settings::Settings, theme
         app.warn(format!("statusline: {warning}"));
     }
     app.refresh_settings(settings);
-    app.theme = themes.theme().clone();
+    // The palette is applied to the copy the renderer reads, never to the
+    // theme file, so clearing the setting restores the selected theme exactly.
+    app.theme = changes::apply(themes.theme(), ChangePalette::from_settings(settings));
     app.symbols = *themes.symbols();
     // The status line's own two choices sit on top of the theme and the glyph
     // preset, so they are applied here where every snapshot arrives rather than
@@ -512,6 +515,12 @@ where
         // A message typed during a turn waits for that turn; this is the one
         // place it is sent, right after the event that ended the turn.
         if let Some(action) = app.take_queued() {
+            loop_io::dispatch(app, commands, action);
+            changed = true;
+        }
+        // A cycle pressed before the model catalog was known asked for it
+        // instead; that press walks now that the answer is in.
+        if let Some(action) = app.take_model_cycle() {
             loop_io::dispatch(app, commands, action);
             changed = true;
         }

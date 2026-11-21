@@ -5,6 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use super::{Action, App};
 use crate::keys::{self, Key};
+use crate::overlays::picker::Kind;
 use crate::overlays::settings::Outcome;
 use crate::prompts::{Prompt, Response};
 use crate::scroll;
@@ -41,6 +42,12 @@ impl App {
         {
             self.request_repaint();
             return None;
+        }
+        // The queue list is a list whose rows are edited rather than chosen,
+        // so it is answered before the generic picker that would read `enter`
+        // as a choice. It still owns every key while it is open.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue) {
+            return self.queue_panel_key(key);
         }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
@@ -265,6 +272,8 @@ impl App {
             }
             Some(keys::ids::APP_CYCLE_EFFORT) => return self.cycle_effort(),
             Some(keys::ids::APP_PICK_MODEL) => return self.pick_model(),
+            Some(keys::ids::APP_CYCLE_MODEL) => return self.cycle_model(true),
+            Some(keys::ids::APP_CYCLE_MODEL_BACK) => return self.cycle_model(false),
             Some(keys::ids::APP_TOGGLE_THINKING) => {
                 self.toggle_thinking();
                 return None;

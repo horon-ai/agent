@@ -1102,7 +1102,7 @@ impl Registry {
                 .as_ref()
                 .is_none_or(|allowed| allowed.contains(eval::NAME))
         {
-            Self::insert_tool(&mut tools_map, eval::NAME, eval::EvalTool);
+            Self::insert_tool(&mut tools_map, eval::NAME, eval::EvalTool::new(registry.downgrade()));
         }
         Self::insert_tool(&mut tools_map, "undo", undo::UndoTool::new());
         Self::insert_tool(&mut tools_map, "ask", ask::AskTool::new());

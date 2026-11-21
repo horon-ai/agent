@@ -20,7 +20,7 @@ use crate::settings::Settings;
 use crate::theme::{Symbols, Theme};
 use crate::tool_expand;
 use crate::tool_line;
-use crate::transcript::Item;
+use crate::transcript::{Item, TurnMetrics};
 use crate::wrap::{self, Indented};
 
 /// Columns a wrapped continuation row keeps under a prefixed item.
@@ -117,6 +117,7 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
         Item::Reasoning(text) => reasoning(text, look),
         Item::Context(report) => crate::context::lines(report, look),
         Item::Report(report) => crate::report::lines(report, look),
+        Item::TurnUsage(metrics) => turn_usage(metrics, look),
         Item::CacheMiss(miss) => cache_miss(miss, look),
     }
 }
@@ -128,6 +129,30 @@ pub(crate) fn lines(item: &Item, look: &Look<'_>, expand: Option<&tool_expand::F
 /// are drawn either way.
 fn hidden(call: &crate::transcript::ToolCall, expand: Option<&tool_expand::Frame<'_>>) -> bool {
     expand.is_some_and(|frame| frame.hides_finished()) && call.finished_activity()
+}
+
+/// A completed turn's footer: how long it ran and what it spent.
+///
+/// Only the fields the turn reported are drawn, and the separator appears only
+/// between two parts: a turn whose calls reported no usage shows its time
+/// alone, and a zero never stands in for a missing count.
+fn turn_usage(metrics: &TurnMetrics, look: &Look<'_>) -> Vec<Indented> {
+    let mut parts = vec![tool_line::format_elapsed(metrics.elapsed_ms)];
+    if let Some((input, output)) = metrics.tokens {
+        parts.push(format!(
+            "↑{} ↓{}",
+            crate::statusline::compact(input),
+            crate::statusline::compact(output)
+        ));
+    }
+    let separator = if look.symbols.separator.is_empty() {
+        "·"
+    } else {
+        look.symbols.separator
+    };
+    let text = parts.join(&format!(" {separator} "));
+    let style = Style::default().fg(look.theme.transcript.notice);
+    vec![Indented::plain(Line::from(Span::styled(text, style)))]
 }
 
 /// The marker a request leaves when the provider had to serve it without its

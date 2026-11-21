@@ -19,7 +19,7 @@ One agent with two equal modes. In headless mode a program drives a session: a o
 | 5 | Two modes, one engine | Headless mode and TUI mode drive the same daemon and sessions. The agent binary has no terminal stack in its dependency graph; TUI mode is a separate package on the SDK, released from the same tag | `AGENTS.md` (Modes, binaries and release units; Fixed requirement 1), `scripts/ci/check_headless_graph.py`, `docs/release/INSTALL.md` |
 | 6 | SDK-first | The harness API is the contract between the engine and any client, including the TUI and server code | `docs/protocol/HARNESS_API.md`, `crates/agent-sdk` |
 | 7 | Tools cost tokens | The `core` profile sends 7 of its 18 tools every request and reaches the rest through `toolbox`; schema bytes are a budget, not free | `AGENTS.md` (What this build is), `docs/runtime/TOOLS.md` |
-| 8 | One model path | Four wires behind one path, chosen by `[providers.<name>] type`: Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent. No second provider runtime, router process, or plugin host. External tools arrive over MCP | `AGENTS.md` (What this build is) |
+| 8 | One model path | `[providers.<name>] type` picks Chat Completions, OpenAI Responses, Anthropic Messages, or Gemini generateContent. One provider runtime posts directly to the endpoint. MCP provides external tools today. Planned user-installed Rust packages run in separate processes outside the model path | `AGENTS.md` (What this build is) |
 | 9 | Clean cutover | Surface that stopped earning its place is deleted with every caller migrated, not kept behind an alias. The home directory moved to `~/.horon` with no compatibility path | commits `738712a2` (#7), `d6a0f81b` (#9), `a3a70db7` (#88) |
 | 10 | Zero CI warnings | A run with warnings is not finished; the cause is fixed, not silenced | `AGENTS.md` (CI warnings), `scripts/ci/run_warnings.py` |
 
@@ -59,7 +59,7 @@ omp2 is a much larger product (about 1.17 million lines of Rust and 1,361 locked
 | Streaming dry-run of arguments | Adds CPU per turn and `compare` cannot show a gain |
 | A `report_issue` tool | One more tool slot is paid on every request, and nothing on the receiving side reads the report; repair records (#151) cover the same need |
 | KDL model catalog | A parser and about 123 data files in omp2 would grow install size; model names stay in config |
-| In-process shell, `dyn` device bus, embedded Python extensions | Rebuilds a plugin host that horon removed (principle 8) |
+| In-process shell, `dyn` device bus, embedded Python extensions | These load in the agent process. The approved Rust package design calls for separate child processes (principle 8) |
 | Wholesale `anyhow` or `SmallVec` replacement | About 2,000 call sites for no measured gain; memory work targets allocations the profile names |
 | Clean cutover of external contracts | Released versions exist; ACP v1, harness API v1, and stored sessions are kept |
 

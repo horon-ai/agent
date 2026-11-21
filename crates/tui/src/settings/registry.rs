@@ -107,6 +107,7 @@ impl SettingSpec {
 
 const SYMBOLS: &[&str] = &["unicode", "nerd", "ascii"];
 const STATUSLINE_PRESETS: &[&str] = &["default", "minimal", "custom"];
+const CHANGE_PALETTES: &[&str] = &["theme", "accessible"];
 const STATUSLINE_SEPARATORS: &[&str] = &["preset", "dot", "bar"];
 const STATUSLINE_BACKGROUNDS: &[&str] = &["theme", "terminal"];
 
@@ -139,6 +140,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Glyphs",
             label: "Symbol set",
             description: "Unicode, Nerd Font or plain ASCII glyphs.",
+        },
+    },
+    SettingSpec {
+        id: "appearance.changes",
+        kind: SettingKind::Enum(CHANGE_PALETTES),
+        env: "HORON_TUI_CHANGES",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Colour",
+            label: "Change colours",
+            description: "Additions and removals in the theme's own pair, or an accessible pair that stays apart for colour-vision differences.",
         },
     },
     SettingSpec {
@@ -323,6 +336,18 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.turn_usage",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_TURN_USAGE",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Turn usage",
+            description: "Show each completed turn's elapsed time and token usage under it; off hides the footer.",
+        },
+    },
+    SettingSpec {
         id: "transcript.visual_blocks",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
@@ -332,6 +357,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Content",
             label: "Visual blocks",
             description: "Draw a diagram fence's one-line flow; off draws the fence as typed.",
+        },
+    },
+    SettingSpec {
+        id: "models.shortlist",
+        kind: SettingKind::Array,
+        env: "HORON_TUI_MODELS_SHORTLIST",
+        default: DefaultValue::List(&[]),
+        ui: UiMeta {
+            tab: "Editor",
+            group: "Models",
+            label: "Cycle list",
+            description: "Model ids the cycle keys step through, in this order; leave empty to disable cycling.",
         },
     },
 ];
