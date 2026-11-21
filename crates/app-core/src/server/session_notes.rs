@@ -218,7 +218,6 @@ impl SessionNotes {
                 })
                 .collect(),
             counts: self.counts.clone(),
-            configured_hooks: configured_hooks(),
             limits: NoteLimits::default(),
         }
     }
