@@ -99,6 +99,16 @@ impl App {
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
+            // `!command` and `!!command` are resolved by the registry, never
+            // by a slash name, and are run by this client alone.
+            Local::Shell => {
+                self.run_local_shell(arguments, false);
+                None
+            }
+            Local::ShellExcluded => {
+                self.run_local_shell(arguments, true);
+                None
+            }
             // Neither asks the harness for anything: a recording is a local
             // file, and a replay is local playback over it.
             Local::Record => {

@@ -25,6 +25,8 @@ use crate::{app::App, draw, paste, scroll, title};
 /// signal would restore less than `/quit` does and leave the next program in a
 /// half-owned terminal.
 pub(crate) fn restore() {
+    // The running local command belongs to this terminal and exits with it.
+    crate::commands::shell::kill_active_group();
     release(true);
 }
 
