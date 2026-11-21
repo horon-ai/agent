@@ -53,6 +53,12 @@ pub enum Kind {
     Copies,
     /// The http(s) links in the newest assistant answers.
     Links,
+    /// The background work the session is running.
+    ///
+    /// Its rows describe work rather than offer a value, so `delete` cancels
+    /// the selected terminal and `enter` changes nothing; the keys are answered
+    /// before the generic list sees them.
+    Jobs,
     /// The messages waiting for the running turn to end.
     ///
     /// This list is not a choice among values: each row is a message the user
