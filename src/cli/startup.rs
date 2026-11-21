@@ -21,7 +21,15 @@ pub fn run_standalone() -> Result<()> {
     // intended no-op, so drop the returned handle instead of keeping it.
     drop(rustls::crypto::aws_lc_rs::default_provider().install_default());
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    runtime.block_on(run_with_args(args))
+    let result = runtime.block_on(run_with_args(args));
+    if result
+        .as_ref()
+        .is_err_and(|error| error.is::<super::commands::RunDeadlineExceeded>())
+    {
+        runtime.shutdown_timeout(std::time::Duration::ZERO);
+        std::process::exit(124);
+    }
+    result
 }
 
 pub async fn run() -> Result<()> {

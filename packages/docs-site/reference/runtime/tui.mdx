@@ -445,6 +445,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
+| `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
 | `/mcp [probe <server>]` | List trusted MCP configuration or explicitly test a named connection |
@@ -467,11 +468,13 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-six commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-seven commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
 `/side <question>` shows the answer in its own panel. Use `/side --at <message-id> <question>` to use the conversation before a saved message. Press Escape to close the panel and continue the parent conversation. Press Enter when the panel offers a saved session to open it again. The daemon keeps the child read-only when reopened.
+
+`/jobs` lists the background work this session is still running, read from the daemon each time rather than replayed from the transcript, so a job that started or ended on another client shows up as it stands. Each row shows the command, the job kind and its newest output. Delete cancels the selected background terminal; the session and every other job keep running, and Esc closes the list without cancelling anything. A tool-call job is listed but cannot be cancelled from this list, and the list says so instead of sending a request the daemon would refuse. Switching sessions clears the rows, because a job's call id only means something in the session that started it.
 
 `/artifact` lists retained artifacts for the current local session. Enter `/artifact <id>` or paste the `artifact://<id>` pointer to edit a temporary copy with `VISUAL` or `EDITOR`. The retained file stays unchanged and the temporary copy is removed on return. An explicit socket or remote bridge disables local artifact access.
 
@@ -494,6 +497,7 @@ built-in commands:
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /help                list the commands and the keys in force
+  /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
   /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>

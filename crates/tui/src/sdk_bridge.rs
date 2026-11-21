@@ -24,12 +24,16 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::context::ContextReport;
 
 mod daemon_settings;
+mod jobs;
 mod messages;
 mod runtime;
 mod sessions;
 mod side;
 mod skills;
 mod steer;
+
+#[cfg(test)]
+mod jobs_tests;
 
 #[cfg(test)]
 mod runtime_tests;
@@ -46,6 +50,7 @@ mod side_tests;
 #[cfg(test)]
 mod skills_tests;
 
+pub use jobs::BackgroundJobRow;
 pub use messages::{Command, Incoming};
 
 /// How long the bridge waits for a command before it pumps the event stream
@@ -675,6 +680,11 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // that does not know the command is an answer the user can act on,
         // unlike the quiet read the client makes for itself.
         Command::Skills { announce } => skills::read(client, session_id, announce),
+        // `/jobs` asked for this list, so a harness that does not serve it is
+        // an answer rather than a silent skip: the rows are the point of the
+        // request.
+        Command::BackgroundJobs => jobs::read(client, session_id).map(Some),
+        Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id).map(Some),
         // The daemon's allow-listed settings, read when the screen asks. A
         // server too old to answer is a state the screen explains, never an
         // error the worker reports.
@@ -738,6 +748,8 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Sessions { .. }
         | Command::CheckSessions(_)
         | Command::Skills { .. }
+        | Command::BackgroundJobs
+        | Command::CancelBackgroundTerminal(_)
         | Command::DaemonSettings
         | Command::Steer(_)
         | Command::Runtime { .. }
@@ -790,6 +802,8 @@ fn describe(command: &Command) -> &'static str {
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
         Command::Skills { .. } => "could not list the skills",
+        Command::BackgroundJobs => "could not list the background jobs",
+        Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",

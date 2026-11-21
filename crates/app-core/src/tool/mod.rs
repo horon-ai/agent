@@ -2543,6 +2543,13 @@ impl Registry {
         ToolRejected(msg).into()
     }
 
+    /// Disable PTYs on this registry's built-in shell tool, if enabled.
+    pub async fn disable_bash_pty(&self) {
+        if let Some(tool) = self.tools.write().await.get_mut("bash") {
+            *tool = Arc::new(bash::BashTool::without_pty());
+        }
+    }
+
     /// Register a tool dynamically (for MCP tools, etc.)
     pub async fn register(&self, name: String, tool: Arc<dyn Tool>) {
         self.lazy_activation

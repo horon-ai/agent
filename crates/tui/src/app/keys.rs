@@ -72,6 +72,11 @@ impl App {
         if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Queue) {
             return self.queue_panel_key(key);
         }
+        // The job list is the same shape: `delete` acts on the selected row,
+        // and every other key stays the list's own.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Jobs) {
+            return self.job_panel_key(key);
+        }
         // A list sits at the top of the precedence order: while it is open no
         // key reaches the settings screen, a prompt, the slash popup, the
         // scroll keys, the history or the draft underneath it.

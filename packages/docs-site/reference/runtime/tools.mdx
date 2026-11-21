@@ -393,6 +393,12 @@ file. The model reads a path with `read` if it needs the contents.
 | A URL-only `data` entry | Error. The tool never fetches a second host. |
 | Call runs past 180 s | Error. An image is slow, so the bound is generous, but it exists. |
 
+## `bash` environment from direnv
+
+Set `[tools] bash_direnv = true` with direnv 2.38 or later on `PATH` to load new environment variables for local POSIX shell calls, including PTY and background calls. Horon looks up the file from the shell's starting directory, only inside the session workspace. Both [Horon workspace trust](/reference/safety/security#workspace-trust) and direnv approval are required. If direnv blocks the file, review it and run `direnv allow` in its directory.
+
+Exports apply only to the local shell child. Variables already in the agent's environment keep their values, including `PATH`. When there are exports to apply, Horon runs the command locally rather than forwarding those values to an ACP client terminal.
+
 ## Executable files that write creates
 
 When `write` creates a new file whose content starts with `#!`, it also grants the execute permission on Unix (`crates/app-core/src/tool/write_shebang.rs` `make_executable`). The point is to stop a freshly written script from burning a turn on a permission error when it is next run as `bash ./script.sh`.
@@ -416,6 +422,8 @@ The `todo` tool accepts `blocked` as a status. Writing a task that cannot procee
 - The tool result JSON includes `blocker`, so whoever reads the list can read the reason.
 
 ## Live background output notices
+
+`horon run --no-pty` uses pipes for shell tools started by that invocation, including background shell jobs. It overrides both `[tools] bash_pty` and the shell call's `pty` argument.
 
 Set `run_in_background: true` and `notify_pattern` to receive matching stdout or stderr lines from a finite `bash` call while it runs. Use a Rust regex of at most 512 bytes. The tool rejects invalid patterns, foreground calls with a pattern, and patterns on named services before starting a process.
 
@@ -784,6 +792,12 @@ Set `[tools] output_column_cap = 120` to shorten each text preview line to 120 U
 | Other tools (MCP, `agentgrep`, and the rest) | 48 KiB, applied in `Registry::execute` just before the context guard |
 
 A call given `accept_large_output: true` and `read`'s text files are not condensed. A text `read` returns at most 64 KiB at once and points at the next `start_line` (or `offset`). The file is on disk, so nothing is stored separately. SDK tool results never pass through the registry and get only the history cap (512 KiB, by bytes).
+
+### `agentgrep` match context
+
+In grep mode, set `before` and `after` to show neighboring lines with their original line numbers. Each value defaults to zero and is capped at 20. Overlapping windows share a single copy of each line. An `@` marks matches. `paths_only: true` keeps the path list format.
+
+Context rendering stays within 48 KiB. If a matching file cannot be reread within the context budget, the result still shows its matching lines and reports that neighboring lines are unavailable.
 
 ### `read` deduplication
 

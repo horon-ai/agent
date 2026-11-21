@@ -34,6 +34,7 @@ mod copy;
 mod draft_suggestions;
 mod effort;
 mod history_search;
+mod jobs;
 mod keys;
 mod notes;
 mod picker;
@@ -61,6 +62,9 @@ mod effort_cmd_tests;
 
 #[cfg(test)]
 mod history_search_tests;
+
+#[cfg(test)]
+mod jobs_tests;
 
 #[cfg(test)]
 mod notes_tests;
@@ -336,6 +340,12 @@ pub struct App {
     /// picker needs the file and the tool list the harness named, so the report
     /// is kept whole here. It is cleared with the session it belongs to.
     pub skills: Vec<SkillRow>,
+    /// The background work the session reported as running, in its order.
+    ///
+    /// A row's value is its index here, so the selected row names the call id
+    /// the cancel key sends even when two jobs share a command line. It is
+    /// cleared with the session it belongs to.
+    pub(crate) background_jobs: Vec<crate::sdk_bridge::BackgroundJobRow>,
     /// The resolved settings last applied, which the settings screen draws.
     pub settings: Settings,
     /// The daemon values the settings screen shows, or why it has none.
@@ -466,6 +476,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
@@ -555,6 +566,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
             themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
