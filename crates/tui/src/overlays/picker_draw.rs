@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use super::picker::{Picker, Row};
+use super::picker::{Kind, Picker, Row};
 use crate::fuzzy::{self, Match};
 use crate::theme::{Symbols, Theme};
 use crate::tool_line::truncate_cells;
@@ -212,6 +212,14 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
 
     let footer = if picker.visible_indices().is_empty() {
         " esc close".to_string()
+    } else if picker.kind() == Kind::Queue {
+        // The queue's rows are edited rather than chosen, so the footer names
+        // the keys that change them instead of the one that would select.
+        format!(
+            " {}/{} · enter edit · delete remove · alt+↑↓ move · esc close · type to filter",
+            picker.selection() + 1,
+            picker.visible_indices().len()
+        )
     } else {
         format!(
             " {}/{} · enter select · esc close · ↑↓ move · type to filter",

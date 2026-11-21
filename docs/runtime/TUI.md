@@ -68,6 +68,7 @@ The settings of one process are the registry defaults, then the global file, the
 | --- | --- | --- | --- |
 | `theme` | text | `dark` | `HORON_TUI_THEME` |
 | `symbols` | `unicode`, `nerd`, `ascii` | `unicode` | `HORON_TUI_SYMBOLS` |
+| `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
 | `title.state` | boolean | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | array of segment names | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
@@ -91,6 +92,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+`appearance.changes = "accessible"` gives additions and deletions distinct colours in tool diffs and preserves their `+` and `-` marks. It also adjusts positive and negative status colours. Select `theme` to restore the theme's own colours.
 
 `transcript.show_reasoning` is the thinking-block control, labelled `Show thinking` in the settings screen: `true` keeps the model's reasoning and draws it dimmed above the answer it precedes, committing one item per thought at a boundary (reasoning finished, a tool call, or the first answer delta) rather than one per streamed chunk. With the setting off, reasoning deltas are dropped when they arrive instead of being stored, so turning it off hides the thinking blocks of every later turn.
 
@@ -201,10 +204,10 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.cycle_effort` | `shift+tab` | Step to the next reasoning effort, wrapping at the last one |
 | `app.pick_model` | `alt+p` | Pick the model this session uses |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
-| `editor.backspace` | `backspace` | Delete the character before the cursor |
-| `editor.delete` | `delete` | Delete the character at the cursor |
-| `editor.left` | `left`, `ctrl+b` | Move the cursor one character left |
-| `editor.right` | `right`, `ctrl+f` | Move the cursor one character right |
+| `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
+| `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
+| `editor.left` | `left`, `ctrl+b` | Move the cursor one grapheme cluster left |
+| `editor.right` | `right`, `ctrl+f` | Move the cursor one grapheme cluster right |
 | `editor.home` | `home`, `ctrl+a` | Move the cursor to the start of its line |
 | `editor.end` | `end`, `ctrl+e` | Move the cursor to the end of its line |
 | `editor.word_left` | `alt+left` | Move to the start of the word before the cursor |
@@ -246,7 +249,7 @@ The last hundred drafts are kept for `up` and `down`. A walk starts from the new
 
 `ctrl+r` opens those drafts as a list, newest first, for reaching a draft that is too many `up` presses back. Each row is the draft's first line, with its line count when it has more than one, and the whole draft in the preview pane. The list is the same picker the model and session commands use, so typing filters it and `enter` puts the chosen draft back in the editor without sending it; `esc` closes the list and keeps the draft that was there. The drafts are the client's own, so the list is complete the moment it opens.
 
-The cursor is placed in display cells rather than bytes, so a wide character counts for two. Text before the cursor is dropped from the left once the draft is wider than the pane, leaving one cell free so the caret stays visible at the right edge.
+The cursor moves between grapheme clusters, so a flag emoji or a syllable made of combining characters stays together. The editor measures these clusters in display cells. With mouse capture enabled, clicking in the editor moves the cursor to the cluster at that cell. When a line exceeds the pane, the editor scrolls horizontally to keep the caret visible.
 
 ## The transcript
 
@@ -379,13 +382,16 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/links` | List links from recent assistant answers and open the selected URL |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
+| `/queue` | Edit, remove or reorder waiting messages |
 | `/quit` | Leave |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table lists the client commands (`Local` in `crates/tui/src/commands/mod.rs`) in name order.
+The table lists the built-in commands the client handles (`Local` in `crates/tui/src/commands/mod.rs`), in name order.
+
+In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 

@@ -14,7 +14,8 @@ use super::{
     shorten_path, status_word,
 };
 use crate::settings::{Reloader, Settings, Sources};
-use crate::theme::{SymbolPreset, Symbols, Theme};
+use crate::theme::schema::BUILTIN_DARK;
+use crate::theme::{ChangePalette, SymbolPreset, Symbols, Theme, changes, parse};
 
 fn settings_from(text: &str) -> Settings {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -561,4 +562,46 @@ fn opt_in_segments_are_dropped_before_the_preset_segments_under_width_pressure()
     assert!(narrow.starts_with("anthropic/claude-sonnet-4"), "{narrow:?}");
     assert!(!narrow.contains("09:05"), "the clock should go first: {narrow:?}");
     assert!(!narrow.contains('$'), "the estimate should go second: {narrow:?}");
+}
+
+#[test]
+fn statusline_state_word_and_colour_move_with_the_change_palette() {
+    let theme = parse(BUILTIN_DARK, "built-in dark").expect("the built-in theme parses");
+    let drawn = changes::apply(&theme, ChangePalette::Accessible);
+    let layout = Layout::default();
+
+    let state_color = |data: &StatusData<'_>, theme: &Theme, word: &str| {
+        let line = render(data, &layout, theme, Symbols::default(), 120);
+        let span = line
+            .spans
+            .iter()
+            .find(|span| span.content.contains(word))
+            .unwrap_or_else(|| panic!("`{word}` is not on the line: {line:?}"));
+        (span.content.to_string(), span.style.fg)
+    };
+
+    // A turn that ended well is a positive change, and one that lost the
+    // harness is a negative one: both take the palette's pair, and both keep
+    // the word that says it without colour.
+    assert_eq!(
+        state_color(&sample(), &drawn, "idle"),
+        ("idle".to_string(), Some(drawn.core.success))
+    );
+    let mut lost = sample();
+    lost.disconnected = true;
+    assert_eq!(
+        state_color(&lost, &drawn, "disconnected"),
+        ("disconnected".to_string(), Some(drawn.core.error))
+    );
+
+    // With the setting off, the selected theme's own pair is back.
+    let plain = changes::apply(&theme, ChangePalette::Theme);
+    assert_eq!(
+        state_color(&sample(), &plain, "idle"),
+        ("idle".to_string(), Some(theme.core.success))
+    );
+    assert_eq!(
+        state_color(&lost, &plain, "disconnected"),
+        ("disconnected".to_string(), Some(theme.core.error))
+    );
 }
