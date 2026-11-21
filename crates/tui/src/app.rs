@@ -42,6 +42,7 @@ mod sessions;
 mod settings;
 mod skills;
 mod status;
+mod terminal_signals;
 
 #[cfg(test)]
 mod boundary_tests;
@@ -401,6 +402,19 @@ pub struct App {
     pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
+    /// Which terminal signal channels the settings allow.
+    ///
+    /// Read from `terminal.progress` and `terminal.program_status` when the
+    /// settings are applied, so the loop never reads a setting per frame.
+    pub(crate) terminal_signals: crate::progress::Options,
+    /// How the last turn ended, until the user acts on it.
+    ///
+    /// The status line goes back to `idle` the moment a turn ends, which is
+    /// right for the person already looking at the screen; a terminal tab behind
+    /// another window has no other way to say a turn finished or failed, so the
+    /// outcome is held here until the user does something and the mark is safe
+    /// to drop.
+    pub(crate) outcome: Option<crate::progress::Outcome>,
     /// A copy the app decided on, waiting for the loop to write it.
     ///
     /// It sits here rather than being written from the key handler so that the
@@ -498,6 +512,8 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            terminal_signals: crate::progress::Options::default(),
+            outcome: None,
             pending_copy: None,
             recorder: None,
             replay: None,
@@ -581,6 +597,8 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            terminal_signals: crate::progress::Options::default(),
+            outcome: None,
             pending_copy: None,
             recorder: None,
             replay: None,
@@ -769,6 +787,13 @@ impl App {
                 self.transcript.end_running_tools();
                 self.pending_turn = false;
                 self.resend_held = false;
+                // The turn finished; the tab carries the mark until the user
+                // looks at the client again. A failed turn sends `TurnStopped`
+                // before this event, so a failure already on record wins: the
+                // tab must not say the turn finished when it broke.
+                if self.outcome != Some(crate::progress::Outcome::Failed) {
+                    self.outcome = Some(crate::progress::Outcome::Done);
+                }
                 self.session_status = Some("idle".to_string());
                 // An approval outlives the turn that asked for it: the request
                 // stays queued in the daemon (with its own deadline) and the
@@ -812,6 +837,12 @@ impl App {
                 // A cancel is the user's own decision, so it is a notice. Any
                 // other abnormal stop is news about the harness and stays a
                 // warning.
+                //
+                // A cancel is also the user looking at the client, so the tab
+                // has nothing to flag and no mark is left; every other stop is
+                // a failure the user may not have seen yet.
+                self.outcome =
+                    (!matches!(reason, TurnStopReason::Interrupted)).then_some(crate::progress::Outcome::Failed);
                 if matches!(reason, TurnStopReason::Interrupted) {
                     self.transcript.push_notice(message.clone());
                 } else {

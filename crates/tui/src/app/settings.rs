@@ -48,8 +48,10 @@ impl App {
     /// wheel belongs to the transcript only while `transcript.mouse_scroll`
     /// says so, the window title carries the turn state only while
     /// `title.state` says so, and the model cycle walks `models.shortlist`. The
-    /// motion preset is read here too, so the renderer and the frame loop share
-    /// one snapshot.
+    /// terminal signal channels are read here rather than per frame, so a
+    /// channel the setting turns off is cleared by the next sync. The motion
+    /// preset is read here too, so the renderer and the frame loop share one
+    /// snapshot.
     /// Whether the terminal is actually captured is the event loop's decision,
     /// because a capture is a terminal mode.
     pub fn refresh_settings(&mut self, settings: &Settings) {
@@ -96,6 +98,10 @@ impl App {
         // and a reload must not leave the previous file's names in the walk.
         let shortlist = settings.list("models.shortlist").unwrap_or(&[]);
         self.apply_model_shortlist(shortlist);
+        // The loop reads the two signal channels here rather than per frame; a
+        // channel turned off is cleared by the next sync, so a report does not
+        // outlive the setting that asked for it.
+        self.terminal_signals = crate::progress::Options::from_settings(settings);
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
