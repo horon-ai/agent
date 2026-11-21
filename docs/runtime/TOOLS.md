@@ -788,6 +788,12 @@ Set `[tools] read_default_limit = 300` to change the default page size for `read
 
 With `[tools] read_summary = true`, an unqualified `read` of a Markdown file over 400 lines and up to 2 MiB shows a heading outline. It lists up to 100 headings with inclusive source ranges. Each range ends before the next heading. Headings inside fenced code are skipped. Use `full: true` or an explicit line range to read the original text within the regular read limits.
 
+### `agentgrep` match context
+
+In grep mode, set `before` and `after` to show neighboring lines with their original line numbers. Each value defaults to zero and is capped at 20. Overlapping windows share a single copy of each line. An `@` marks matches. `paths_only: true` keeps the path list format.
+
+Context rendering stays within 48 KiB. If a matching file cannot be reread within the context budget, the result still shows its matching lines and reports that neighboring lines are unavailable.
+
 ### `read` deduplication
 
 Reading a file that was already read in the same session compares content hashes (`crates/app-core/src/tool/read_state.rs`).
