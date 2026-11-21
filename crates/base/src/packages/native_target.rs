@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 
 pub(super) fn verify_native_target(mut file: File, target: &str, path: &Path) -> Result<()> {
     let arm64 = target.starts_with("aarch64-");
@@ -130,7 +130,9 @@ fn verify_elf(file: &mut File, arm64: bool) -> Result<()> {
         } else {
             b"ld-linux-x86-64.so.2"
         };
-        let interpreter = value.strip_suffix(b"\0").unwrap_or_default();
+        let interpreter = value
+            .strip_suffix(b"\0")
+            .context("ELF interpreter lacks a NUL terminator")?;
         ensure!(
             interpreter.first() == Some(&b'/')
                 && !interpreter.contains(&0)

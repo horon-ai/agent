@@ -209,7 +209,7 @@ fn portable_component(name: &str) -> bool {
     {
         return false;
     }
-    let stem = name.split('.').next().unwrap_or_default();
+    let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
     let stem = stem.to_ascii_uppercase();
     !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
         && !["COM", "LPT"].into_iter().any(|prefix| {
