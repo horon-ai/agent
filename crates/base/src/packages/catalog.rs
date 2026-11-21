@@ -152,6 +152,10 @@ pub struct InstallRequest {
     pub source: PathBuf,
     pub scope: PackageScope,
     pub replace: bool,
+    /// ID the package must declare, checked on the validated source before any
+    /// copy is published. The inbox uses it so a directory named after one ID
+    /// cannot install a manifest that declares another.
+    expected_id: Option<String>,
 }
 
 impl InstallRequest {
@@ -160,12 +164,19 @@ impl InstallRequest {
             source: source.into(),
             scope,
             replace: false,
+            expected_id: None,
         }
     }
 
     /// Permit replacing the record that already holds this package's ID.
     pub fn replacing(mut self) -> Self {
         self.replace = true;
+        self
+    }
+
+    /// Require the package to declare `id`.
+    pub fn expecting(mut self, id: impl Into<String>) -> Self {
+        self.expected_id = Some(id.into());
         self
     }
 }
@@ -341,6 +352,13 @@ impl PackageStore {
             source.display()
         );
         let validated = validate_package(&source)?;
+        if let Some(expected) = request.expected_id.as_deref() {
+            ensure!(
+                validated.extension.id == expected,
+                "package declares ID {}, expected {expected}",
+                validated.extension.id
+            );
+        }
         let layout = self.layout();
         let _lock = store::lock(&layout)?;
         let mut catalog = read_catalog(&layout)?;

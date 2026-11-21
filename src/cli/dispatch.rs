@@ -297,7 +297,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             // The updater uses reqwest's blocking client, which must not run on a runtime thread.
             tokio::task::spawn_blocking(hot_exec::run_update).await??;
         }
-        Some(Command::InstallRelease { .. }) => unreachable!("install-release handled before bootstrap"),
+        Some(Command::InstallRelease { .. } | Command::Package { .. }) => unreachable!("handled before bootstrap"),
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }

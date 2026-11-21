@@ -2366,6 +2366,20 @@ jobs:
             Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
           }
 
+      - name: Run Windows package CLI contracts
+        shell: pwsh
+        run: |
+          $env:HORON_HOME = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $env:HORON_HOME -ErrorAction Stop | Out-Null
+          try {
+            & ./scripts/ci/cargo_with_timeout.ps1 `
+              -Name 'Windows package CLI contracts' `
+              -TimeoutSeconds 900 `
+              -CargoArgs @('test', '--locked', '--target', 'x86_64-pc-windows-msvc', '--test', 'package_cli')
+          } finally {
+            Remove-Item -LiteralPath $env:HORON_HOME -Recurse -Force
+          }
+
       - name: Run Windows e2e smoke tests
         shell: pwsh
         run: |

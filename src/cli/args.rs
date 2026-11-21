@@ -5,6 +5,8 @@ use super::provider_init::ProviderChoice;
 mod mcp;
 #[allow(unused_imports)]
 pub(crate) use mcp::McpCommand;
+mod packages;
+pub(crate) use packages::PackageCommand;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
@@ -175,6 +177,12 @@ pub(crate) enum Command {
     Mcp {
         #[command(subcommand)]
         action: McpCommand,
+    },
+
+    /// Install and manage extension and plugin packages
+    Package {
+        #[command(subcommand)]
+        action: PackageCommand,
     },
 
     /// Start the agent server (background daemon)
