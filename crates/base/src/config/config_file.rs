@@ -58,7 +58,7 @@ impl Config {
 
     /// Load config from file only (no env overrides), preserving parse/read errors.
     pub(crate) fn load_from_file_strict() -> anyhow::Result<Option<Self>> {
-        Ok(Self::load_file_layer()?.map(|(config, _)| config))
+        Ok(Self::read_file_config()?.map(|(_, _, config)| config))
     }
 
     /// The file-only config and the TOML document it came from.
@@ -68,6 +68,23 @@ impl Config {
     /// that does not parse is an error, and one that is absent is `None`; either
     /// way it supplied nothing.
     pub(crate) fn load_file_layer() -> anyhow::Result<Option<(Self, toml::Value)>> {
+        let Some((path, content, config)) = Self::read_file_config()? else {
+            return Ok(None);
+        };
+        // The same text the config came from, kept as a document so a caller can
+        // ask which keys it declared. A failed second parse is impossible after
+        // `Self` parsed, and still reported rather than swallowed.
+        let document = toml::from_str::<toml::Value>(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
+        Ok(Some((config, document)))
+    }
+
+    /// Read the file and parse it into the file-only config.
+    ///
+    /// The path and text come back with the config so a caller that also wants
+    /// the document re-parses the same bytes instead of reading the file twice,
+    /// and a caller that only wants the config never parses it a second time.
+    fn read_file_config() -> anyhow::Result<Option<(PathBuf, String, Self)>> {
         let Some(path) = Self::path() else {
             return Ok(None);
         };
@@ -83,14 +100,7 @@ impl Config {
             .prewalk
             .validate()
             .map_err(|e| anyhow::anyhow!("Invalid [prewalk] section in {}: {e}", path.display()))?;
-        // The same text the config came from, kept as a document so a caller can
-        // ask which keys it declared. A failed second parse is impossible after
-        // `Self` parsed, and still reported rather than swallowed.
-        let document = toml::from_str::<toml::Value>(&content)
-            .map_err(|e| anyhow::anyhow!("Failed to parse config file {}: {}", path.display(), e))?;
-        // An explicit discovery opt-out is authoritative. Older saves wrote the
-        // default endpoint too, so table shape cannot establish user intent.
-        Ok(Some((config, document)))
+        Ok(Some((path, content, config)))
     }
 
     /// Save config to file

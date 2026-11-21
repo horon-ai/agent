@@ -41,6 +41,11 @@ pub fn reasoning_line_content(line: &str) -> Option<String> {
 /// Answers `None` when the body carries no reasoning markup, so a caller can
 /// keep the body as it is for every other row.
 pub fn split_rendered_reasoning(content: &str) -> Option<(String, String)> {
+    // Every reasoning line is wrapped in the sentinel, so a body without one
+    // carries no reasoning: answer before walking lines or filling buffers.
+    if !content.contains(REASONING_SENTINEL) {
+        return None;
+    }
     let mut reasoning: Vec<String> = Vec::new();
     let mut blanks = 0usize;
     let mut answer: Vec<&str> = Vec::new();
@@ -161,5 +166,21 @@ mod tests {
         for text in ["**heading**", r"\*literal\*", "*\u{2063}unfinished", "*ordinary*", ""] {
             assert_eq!(reasoning_line_content(text), None);
         }
+    }
+
+    /// A body without reasoning markup is answered `None`, and one carrying
+    /// the markup the renderer writes splits into its lines and the answer.
+    #[test]
+    fn split_rendered_reasoning_names_the_answer_only_when_reasoning_precedes_it() {
+        assert_eq!(split_rendered_reasoning("the answer\nsecond line"), None);
+        let body = format!(
+            "{}{}the answer",
+            reasoning_line_markup("step one"),
+            reasoning_line_markup("step two"),
+        );
+        assert_eq!(
+            split_rendered_reasoning(&body),
+            Some(("step one\nstep two".to_string(), "the answer".to_string()))
+        );
     }
 }

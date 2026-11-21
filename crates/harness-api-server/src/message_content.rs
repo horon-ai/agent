@@ -3,6 +3,7 @@
 //! Lives outside [`translate`](crate::translate) because several callers flatten
 //! content and that file is at its size budget.
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use horon_agent_harness_api::{HistoryMessage, ResponseStats};
@@ -50,20 +51,22 @@ pub(crate) fn answer_without_reasoning(content: &Value) -> Option<String> {
         "open_a_i_reasoning",
     ];
     let blocks = content.as_array()?;
+    // A row that carries no reasoning keeps its `content`, so nothing is
+    // copied for it: only the text block references are held until the row
+    // proves it has reasoning to leave out.
     let mut reasoning = false;
-    let mut answer = String::new();
+    let mut texts: Vec<&str> = Vec::new();
     for block in blocks {
         match block["type"].as_str().unwrap_or("") {
-            "text" => {
-                if let Some(text) = block["text"].as_str() {
-                    answer.push_str(text);
-                }
-            }
+            "text" => texts.extend(block["text"].as_str()),
             kind if REASONING_KINDS.contains(&kind) => reasoning = true,
             _ => {}
         }
     }
-    reasoning.then_some(answer)
+    if !reasoning {
+        return None;
+    }
+    Some(texts.join(""))
 }
 
 /// One history row from the daemon's flat `role`/`content` event message.
@@ -76,8 +79,9 @@ pub(crate) fn history_message(message: &Value) -> HistoryMessage {
     let content = message["content"].as_str().unwrap_or("").to_string();
     let answer = horon_agent_base::session::split_rendered_reasoning(&content).map(|(_, answer)| answer);
     HistoryMessage {
-        response_stats: serde_json::from_value::<Option<ResponseStats>>(message["response_stats"].clone())
-            .unwrap_or(None),
+        // Deserialized from the borrowed value: the stats object is deep
+        // enough that copying it first would be the row's largest allocation.
+        response_stats: Option::<ResponseStats>::deserialize(&message["response_stats"]).unwrap_or(None),
         role: message["role"].as_str().unwrap_or("").to_string(),
         content,
         answer,

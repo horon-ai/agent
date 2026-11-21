@@ -726,7 +726,9 @@ impl Agent {
                                 }
                             }
                         }
-                        let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
+                        // The delta goes out by value: `text_content` already
+                        // holds its own copy and nothing below reads `text`.
+                        let _ = event_tx.send(ServerEvent::TextDelta { text });
                         if self.is_graceful_shutdown() {
                             logging::info("Graceful shutdown during streaming - checkpointing partial response");
                             let _ = event_tx.send(ServerEvent::TextDelta {
