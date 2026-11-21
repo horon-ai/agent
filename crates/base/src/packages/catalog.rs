@@ -243,7 +243,7 @@ impl PackageLease {
     /// Every digest must name a copy that is on disk right now: installs,
     /// removals and collection are serialized by the same lock, so a digest
     /// that passes this check stays readable until the pin is released.
-    fn pin_locked(&mut self, layout: &Layout, next: BTreeSet<String>) -> Result<()> {
+    pub(super) fn pin_locked(&mut self, layout: &Layout, next: BTreeSet<String>) -> Result<()> {
         for digest in &next {
             ensure!(store::is_digest(digest), "invalid stored copy digest: {digest}");
             ensure!(
@@ -496,6 +496,30 @@ impl PackageStore {
             .filter_map(|record| record.digest.clone())
             .collect();
         lease.pin_locked(&layout, digests)?;
+        Ok(view)
+    }
+
+    /// Read the catalog and pin only the copy `id` names.
+    ///
+    /// A launch pins the one copy it is about to run instead of every installed
+    /// copy, so starting a package does not keep the whole catalog alive. The
+    /// lease is checked against this store exactly as
+    /// [`PackageStore::snapshot`] checks it.
+    pub(super) fn pin_package(&self, lease: &mut PackageLease, id: &str) -> Result<CatalogView> {
+        ensure!(
+            lease.root == self.root,
+            "package reference '{}' belongs to a different package store",
+            lease.owner
+        );
+        let layout = self.layout();
+        let _lock = store::lock(&layout)?;
+        let view = read_catalog(&layout)?.view();
+        let pinned: BTreeSet<String> = view
+            .get(id)
+            .and_then(|record| record.digest.clone())
+            .into_iter()
+            .collect();
+        lease.pin_locked(&layout, pinned)?;
         Ok(view)
     }
 

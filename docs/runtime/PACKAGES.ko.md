@@ -11,7 +11,7 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 
 ## 상태
 
-`dev`에서는 설치 명령으로 두 패키지 유형을 등록할 수 있고 수신함 동기화 함수가 완성된 폴더를 처리한다. 자식 프로세스 감독과 수신함 자동 동기화 및 세션 연결은 후속 이슈에서 다룬다.
+`dev`에서는 설치 명령으로 두 패키지 유형을 등록할 수 있고 수신함 동기화 함수가 완성된 폴더를 처리한다. 자식 프로세스 감독기는 Linux와 macOS에서 설치 사본을 실행한다. 수신함 자동 동기화와 세션 연결은 후속 이슈에서 다룬다.
 
 | 영역 | 상태 | 검사 |
 | --- | --- | --- |
@@ -21,7 +21,8 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 | 작성 SDK: 프레이밍, 교섭, 취소 | 구현됨 | `cargo test -p horon-agent-extension-sdk` |
 | 두 레이아웃의 예제 실행 | 구현됨 | `cargo test -p horon-package-example --test extension_layouts` |
 | `horon package install`과 수신함 동기화 함수 | 구현됨 | `cargo test --locked --test package_cli` |
-| 자식 감독과 세션 반영 | 아직 연결되지 않음 | 같은 통신 계약의 후속 변경 |
+| Linux와 macOS의 자식 프로세스 감독 | 구현됨 | `cargo test --locked -p horon-agent-base --test package_spawn` |
+| Windows의 자식 프로세스 감독과 세션 연결 | 예정 | 같은 실행 경로의 후속 변경 |
 
 ## 두 패키지 유형
 
@@ -204,6 +205,19 @@ SHA256`). Linux 패키지는 서명하지 않고 카탈로그의 SHA-256이 무�
 | `horon package verify <id>` | 기록된 바이트를 다시 검사한다 |
 | `horon package disable <id>` | 사본을 남기고 적재를 멈춘다 |
 | `horon package remove <id>` | 기록을 철회하고 사용자가 보관한 원본을 남긴다 |
+
+## 설치된 실행파일 시작
+
+실행기는 설치 사본의 참조를 잡고 시작 직전에 기록된 실행파일을 검사한다. 자식은 설치 사본을 작업 디렉터리로 쓰고 패키지 루트의 절대 경로를 첫 인자로 받는다. Linux와 macOS에서 실행기는 기존 환경 변수를 비운 뒤 아래 값을 전달한다.
+
+| 변수 | 값 |
+| --- | --- |
+| `HORON_PACKAGE_ROOT`, `HORON_PACKAGE_ID`, `HORON_PACKAGE_KIND` | 설치 루트, 패키지 ID, 패키지 유형 |
+| `HORON_PACKAGE_STATE`, `HOME` | 소유자만 접근하는 패키지 상태 디렉터리 |
+| `TMPDIR` | 패키지 상태 디렉터리 아래 `tmp` |
+| `PATH`, `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ` | 부모에 값이 있으면 상속 |
+
+공급자 키와 나머지 부모 환경 변수는 전달하지 않는다. 자식은 사용자 계정의 파일과 네트워크 권한으로 실행된다.
 
 ## 예제
 

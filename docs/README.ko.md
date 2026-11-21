@@ -31,6 +31,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | `protocol/` | [`ACP.ko.md`](protocol/ACP.ko.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
+| | [`COLLABORATION.ko.md`](protocol/COLLABORATION.ko.md) | 실시간 세션 초대와 참가자 권한 설계 제안 |
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
 | | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |

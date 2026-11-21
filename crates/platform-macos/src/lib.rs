@@ -5,6 +5,9 @@
 //! `horon-agent-platform` selects it, and only on macOS.
 #![cfg(target_os = "macos")]
 
+#[path = "../../platform-linux/src/child_exit.rs"]
+mod child_exit;
+
 #[path = "../../platform-linux/src/unix.rs"]
 mod unix;
 
@@ -45,6 +48,19 @@ use rustls::ClientConfig;
 #[cfg(test)]
 #[path = "term_tests.rs"]
 mod term_tests;
+
+// Darwin reports EPERM when the process group still exists but has no
+// signalable members. Accept it only when this unreaped leader is the sole
+// member. A second slot detects any other member without allocating.
+fn only_exited_group_leader(pid: u32) -> bool {
+    const PROC_PGRP_ONLY: u32 = 2; // <sys/proc_info.h>
+    const PID_BYTES: libc::c_int = size_of::<libc::pid_t>() as libc::c_int;
+    let mut members: [libc::pid_t; 2] = [0; 2];
+    // SAFETY: the buffer is writable for the byte length supplied, and this
+    // selector writes process IDs for the process group named by `pid`.
+    let bytes = unsafe { libc::proc_listpids(PROC_PGRP_ONLY, pid, members.as_mut_ptr().cast(), 2 * PID_BYTES) };
+    bytes == PID_BYTES && u32::try_from(members[0]) == Ok(pid)
+}
 
 /// macOS implementation of [`PlatformAdapter`].
 #[derive(Clone, Copy, Debug, Default)]
@@ -268,6 +284,10 @@ impl PlatformAdapter for Adapter {
         unix::terminate_child(child);
     }
 
+    fn wait_child_exit(pid: u32, nonblocking: bool) -> io::Result<bool> {
+        child_exit::wait_child_exit(pid, nonblocking)
+    }
+
     fn describe_file_kind(metadata: &Metadata) -> &'static str {
         unix::describe_file_kind(metadata)
     }
@@ -350,6 +370,13 @@ impl PlatformAdapter for Adapter {
 
     fn force_stop_process_group(pid: u32) -> io::Result<()> {
         unix::force_stop_process_group(pid)
+    }
+
+    fn force_stop_exited_process_group(pid: u32) -> io::Result<()> {
+        match unix::force_stop_process_group(pid) {
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) && only_exited_group_leader(pid) => Ok(()),
+            result => result,
+        }
     }
 
     fn spawn_with_ready_pipe(cmd: &mut Command, ready_env_var: &str) -> io::Result<ReadyChild> {

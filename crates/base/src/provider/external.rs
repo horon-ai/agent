@@ -6,8 +6,25 @@
 
 use super::Provider;
 use horon_agent_provider_openai::{ChatAuth, OpenAiCompatibleProvider, WireProtocol};
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::num::NonZeroU16;
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::Duration;
+use tokio::sync::Semaphore;
+
+/// All runtimes and image calls for one configured profile share this queue.
+/// The limit is pinned on first use and a daemon restart applies a new limit.
+fn request_slots(profile_name: &str, limit: Option<NonZeroU16>) -> Option<Arc<Semaphore>> {
+    let limit = usize::from(limit?.get());
+    static SLOTS: LazyLock<Mutex<HashMap<String, Arc<Semaphore>>>> = LazyLock::new(Mutex::default);
+    let mut profiles = SLOTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(slots) = profiles.get(profile_name) {
+        return Some(Arc::clone(slots));
+    }
+    let slots = Arc::new(Semaphore::new(limit));
+    profiles.insert(profile_name.to_owned(), Arc::clone(&slots));
+    Some(slots)
+}
 
 /// Everything one direct provider runtime needs, after profile resolution has
 /// produced an endpoint, credential, wire and catalog.
@@ -35,6 +52,7 @@ pub struct DirectOpenAiCompatibleSpec {
     pub model_reasoning_efforts: std::collections::BTreeMap<String, String>,
     pub stream_first_event_timeout: Option<Duration>,
     pub stream_idle_timeout: Option<Duration>,
+    pub request_slots: Option<Arc<Semaphore>>,
 }
 
 /// Build the direct provider runtime for a resolved profile.
@@ -49,6 +67,7 @@ pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) 
             .with_profile_id(spec.profile_id)
             .with_prompt_cache_key_policy(spec.prompt_cache_key)
             .with_stream_timeouts(spec.stream_first_event_timeout, spec.stream_idle_timeout)
+            .with_request_slots(spec.request_slots)
             .with_prompt_cache_retention_resolver(Arc::new(move |model: &str| {
                 super::openai::effective_prompt_cache_retention(model, configured_retention.as_deref())
                     .map(str::to_owned)
@@ -129,6 +148,7 @@ pub fn build_openai_compatible_profile_runtime(
         model_reasoning_efforts: std::collections::BTreeMap::new(),
         stream_first_event_timeout: None,
         stream_idle_timeout: None,
+        request_slots: None,
     })
 }
 
@@ -267,6 +287,7 @@ pub fn build_named_openai_compatible_runtime(
         stream_idle_timeout: profile
             .stream_idle_timeout_secs
             .map(|seconds| Duration::from_secs(seconds.get().into())),
+        request_slots: request_slots(profile_name, profile.max_in_flight_requests),
     })
 }
 
@@ -378,6 +399,7 @@ pub struct ImageEndpoint {
     /// Profile-level body fields, merged into an image request the same way a
     /// chat request merges them.
     pub extra_body: Option<serde_json::Value>,
+    pub(crate) request_slots: Option<Arc<Semaphore>>,
 }
 
 /// Resolve the endpoint the `image` role posts to.
@@ -428,6 +450,7 @@ pub fn image_endpoint(profile_name: &str) -> anyhow::Result<Option<ImageEndpoint
         auth,
         api_key: named_profile_api_key(profile),
         extra_body: profile.extra_body.clone(),
+        request_slots: request_slots(profile_name, profile.max_in_flight_requests),
     }))
 }
 
