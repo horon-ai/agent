@@ -66,6 +66,9 @@ impl App {
         // instead of refusing every entry on the strength of that answer.
         self.model_catalog = models;
         self.model_catalog_loaded = !self.model_catalog.is_empty();
+        if !self.model_catalog_loaded && self.model_cycle_pending.take().is_some() {
+            self.warn("the harness returned no models to cycle");
+        }
         self.fill(Kind::Models, rows);
     }
 
@@ -165,8 +168,7 @@ impl App {
     /// one switch in the direction it named instead of a request for a list
     /// the user never sees.
     pub(crate) fn take_model_cycle(&mut self) -> Option<Action> {
-        // A catalog that named nothing leaves the press waiting: the list is
-        // read again on the next press rather than walking on an empty one.
+        // Between the keypress and its reply, the catalog is still unread.
         if !self.model_catalog_loaded {
             return None;
         }
