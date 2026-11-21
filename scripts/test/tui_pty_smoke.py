@@ -587,9 +587,14 @@ def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
         terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
         with urlopen(base_url + "/__stats", timeout=5) as response:
             requests = json.load(response)["requests"]
-        request = next((entry for entry in reversed(requests) if entry.get("context_proof_prompt") == prompt), None)
-        if request is None or request["context_proof_contains_original"] != has_original:
-            raise Failure(f"unexpected original message visibility in the model request for {label}")
+        request = next(
+            (entry for entry in reversed(requests) if prompt in entry.get("context_proof_prompt", "")),
+            None,
+        )
+        if request is None:
+            raise Failure(f"the mock recorded no model request for {label}")
+        if request["context_proof_contains_original"] != has_original:
+            raise Failure(f"model request for {label} had original={not has_original}, expected {has_original}")
 
     send("original", True)
     terminal.send("/clear\r")
