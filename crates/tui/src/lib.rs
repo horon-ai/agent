@@ -26,6 +26,7 @@ pub mod overlays;
 pub mod paste;
 mod progress;
 pub mod prompts;
+pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
@@ -85,6 +86,10 @@ mod scroll_tests;
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "recording_tests.rs"]
+mod recording_tests;
 
 #[cfg(test)]
 #[path = "report_tests.rs"]
@@ -491,16 +496,10 @@ where
 {
     let mut failure = None;
     let mut mouse_captured = false;
-    // The scheduler draws the first frame and sets the cadence after that.
     let mut frames = loop_io::Frames::new(app.motion, std::time::Instant::now());
-    // The minute the status line's clock last showed, so the frame that turns
-    // it over is drawn and no other idle frame is.
+    // Redraw the idle clock only when its minute changes.
     let mut clock = statusline::local_minute();
-    // Whether the terminal keeps a title worth adding the state to; asked once,
-    // because the answer is the terminal's and does not change while it runs.
     let state_supported = channels.title.state_supported();
-    // The state the window title already carries: `title.start` wrote it, and
-    // the first frame must not write it again.
     let mut shown_state = window_state(app, state_supported);
     loop {
         let mut changed = match loop_io::drain_events(app) {
@@ -542,9 +541,7 @@ where
                 changed = true;
             }
         }
-        // The reloader throttles itself to one file check per second; the
-        // theme loader, the key bindings and the command directories share
-        // that cadence for their own files.
+        // Reloaders check for changes once per second.
         if let Some(reload) = reloader.tick() {
             for warning in reload.warnings {
                 app.warn(format!("settings: {warning}"));
@@ -570,6 +567,9 @@ where
         // Command directories are only stat-ed here; a file is re-read when its
         // own stamp moved.
         changed |= app.tick_commands();
+        // A replay is a clock over the conversation: each frame plays the events
+        // that became due and reports whether the pane changed.
+        changed |= app.tick_replay();
         if loop_io::sync_mouse_capture(app, &mut mouse_captured) {
             changed = true;
         }
@@ -595,9 +595,6 @@ where
                 break;
             }
         }
-        // Every input event can change what is on screen: a key edits the
-        // draft or moves the selection, a paste inserts, the wheel scrolls and a
-        // resize remakes the whole layout.
         match crossterm::event::read() {
             Ok(crossterm::event::Event::Key(key)) => {
                 // Windows always reports a key's release as its own event; acting

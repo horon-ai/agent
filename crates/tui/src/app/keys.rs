@@ -25,12 +25,18 @@ impl App {
         self.note_user_attention();
         // The popup is read against the draft on screen, before this key
         // changes it, and brought up to date again after it: a key that moved
-        // the draft leaves a list that belongs to the text it left behind.
-        self.sync_slash();
-        self.sync_suggestions();
+        // the draft leaves a list that belongs to the text it left behind. A
+        // replay is not editing that draft — no key reaches it — so the lists
+        // stay closed while the recording is on screen.
+        if !self.replaying() {
+            self.sync_slash();
+            self.sync_suggestions();
+        }
         let action = self.handle_key(key);
-        self.sync_slash();
-        self.sync_suggestions();
+        if !self.replaying() {
+            self.sync_slash();
+            self.sync_suggestions();
+        }
         action
     }
 
@@ -45,6 +51,12 @@ impl App {
             .is_some_and(|pressed| self.bindings.resolve_editing(&pressed) == Some(keys::ids::APP_REPAINT))
         {
             self.request_repaint();
+            return None;
+        }
+        // A replay owns the keyboard while it plays: its keys move the playback,
+        // and a letter must not reach the draft behind the recording. The two
+        // keys that leave the client still leave it.
+        if self.replaying() && self.replay_key(key) {
             return None;
         }
         // The queue list is a list whose rows are edited rather than chosen,

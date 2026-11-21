@@ -357,8 +357,14 @@ impl App {
         // answer are drawn below the window until `ctrl+end`. The commands that
         // hold the view on purpose (`/keys`) never reach this function.
         self.scroll.to_bottom();
+        // A line the user typed reaches the recording when it is accepted, not
+        // when the draft is edited: an unsent draft never becomes an event. The
+        // whole line is kept, not the body a command file expands to, because
+        // the line is what the conversation showed.
         if self.pending_turn {
             self.transcript.push_queued(message.display.clone());
+            self.record_new_assistants();
+            self.record_event(crate::recording::Event::User(message.display.clone()));
             self.queue.push(message);
             return None;
         }
@@ -366,6 +372,8 @@ impl App {
         // the conversation reads in the order things were typed, and a line
         // that was never delivered does not survive the refusal.
         self.transcript.push_user(message.display.clone());
+        self.record_new_assistants();
+        self.record_event(crate::recording::Event::User(message.display.clone()));
         self.in_flight = Some(message.clone());
         Some(self.start_turn(message.text))
     }

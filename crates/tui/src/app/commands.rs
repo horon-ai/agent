@@ -96,6 +96,16 @@ impl App {
             // when no id is given, the session itself when one is.
             Local::Resume => self.change_session("resume", "Resume session", arguments),
             Local::Switch => self.change_session("switch", "Switch session", arguments),
+            // Neither asks the harness for anything: a recording is a local
+            // file, and a replay is local playback over it.
+            Local::Record => {
+                self.run_record(arguments);
+                None
+            }
+            Local::Replay => {
+                self.run_replay(arguments);
+                None
+            }
             // `/queue` opens the list of messages waiting for the running turn
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),
