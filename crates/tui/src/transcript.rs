@@ -548,6 +548,28 @@ impl Transcript {
         }
     }
 
+    /// Take back the `occurrence`-th queued line for `text`.
+    ///
+    /// A queued message the user deleted or pulled back into the editor will
+    /// never be sent, so the row that announced it must stop saying it will.
+    /// The occurrence is what keeps two messages with the same text apart: the
+    /// queue list knows which of them the user selected, so the row that
+    /// leaves is the one that belongs to it rather than whichever comes first.
+    pub fn retract_queued(&mut self, text: &str, occurrence: usize) {
+        let mut seen = 0;
+        let found = self.items.iter().position(|item| match item {
+            Item::Queued(queued) if queued == text => {
+                let hit = seen == occurrence;
+                seen += 1;
+                hit
+            }
+            _ => false,
+        });
+        if let Some(index) = found {
+            self.items.remove(index);
+        }
+    }
+
     /// Take back the line drawn for a message the harness refused.
     ///
     /// The newest line with this text is the one the failed send drew: one

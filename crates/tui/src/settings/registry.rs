@@ -107,6 +107,9 @@ impl SettingSpec {
 
 const SYMBOLS: &[&str] = &["unicode", "nerd", "ascii"];
 const STATUSLINE_PRESETS: &[&str] = &["default", "minimal", "custom"];
+const CHANGE_PALETTES: &[&str] = &["theme", "accessible"];
+const STATUSLINE_SEPARATORS: &[&str] = &["preset", "dot", "bar"];
+const STATUSLINE_BACKGROUNDS: &[&str] = &["theme", "terminal"];
 
 /// Every setting the client knows.
 ///
@@ -137,6 +140,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Glyphs",
             label: "Symbol set",
             description: "Unicode, Nerd Font or plain ASCII glyphs.",
+        },
+    },
+    SettingSpec {
+        id: "appearance.changes",
+        kind: SettingKind::Enum(CHANGE_PALETTES),
+        env: "HORON_TUI_CHANGES",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Appearance",
+            group: "Colour",
+            label: "Change colours",
+            description: "Additions and removals in the theme's own pair, or an accessible pair that stays apart for colour-vision differences.",
         },
     },
     SettingSpec {
@@ -212,6 +227,30 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "statusline.separator",
+        kind: SettingKind::Enum(STATUSLINE_SEPARATORS),
+        env: "HORON_TUI_STATUSLINE_SEPARATOR",
+        default: DefaultValue::Text("preset"),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Style",
+            label: "Separator",
+            description: "Mark between the parts: the glyph set's own (`preset`), a dot, or a bar.",
+        },
+    },
+    SettingSpec {
+        id: "statusline.background",
+        kind: SettingKind::Enum(STATUSLINE_BACKGROUNDS),
+        env: "HORON_TUI_STATUSLINE_BACKGROUND",
+        default: DefaultValue::Text("theme"),
+        ui: UiMeta {
+            tab: "Status line",
+            group: "Style",
+            label: "Background",
+            description: "The theme's bottom-line colour, or the terminal's own background unpainted.",
+        },
+    },
+    SettingSpec {
         id: "editor.submit_on_enter",
         kind: SettingKind::Bool,
         env: "HORON_TUI_EDITOR_SUBMIT_ON_ENTER",
@@ -281,6 +320,18 @@ pub const REGISTRY: &[SettingSpec] = &[
             group: "Content",
             label: "Markdown",
             description: "Render the model's Markdown; off draws its text with the markers as typed.",
+        },
+    },
+    SettingSpec {
+        id: "transcript.visual_blocks",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Visual blocks",
+            description: "Draw a diagram fence's one-line flow; off draws the fence as typed.",
         },
     },
 ];

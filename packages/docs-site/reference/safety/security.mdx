@@ -61,6 +61,12 @@ Denial is closure, not failure. The session keeps running and only the MCP serve
 
 The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:363` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
 
+## Python eval
+
+A Python cell needs explicit approval for its code and working directory. A directory grant cannot authorize it. The kernel inherits only selected environment variables. Approved Python runs with the user's filesystem, network and process access, which includes any credential files the user can read. The opt-in setting and approval control when execution starts.
+
+`tool.<name>` sends requests to the current session's tool registry through the kernel's child-process pipes. The agent verifies the active cell and request number, applies the session allow-list and load modes, and runs the named tool's own approvals and hooks. These tool rules govern bridge requests. Python's direct filesystem and process access still follows the OS permissions of the agent user.
+
 ## Crash bundles
 
 When a process panics, horon agent leaves a local diagnostic bundle. The bundle is written to disk only and sent nowhere. This document explains the location, contents, redaction, and the no-transmission guarantee in the current tree.
@@ -231,3 +237,13 @@ This section is not a re-measurement of the table above; it only counts whether 
 2026-10-29: `crates/provider-openai-runtime` and the 8317 default base were removed later.
 
 2026-11-04: the native plugin model path was removed too, so model requests now go directly to an OpenAI-compatible endpoint from `[providers.<name>]`.
+
+The approved design for user-installed Rust packages is pending implementation.
+An extension declares a Rust executable and a plugin adds resources to that
+extension. The user installs either package through `horon package install` or
+places it in the user-owned `$HORON_HOME/packages/inbox/<id>/` directory.
+Installation is consent. Horon will register the package after validation and
+refresh open sessions at their next turn. SHA-256 is an internal integrity check.
+Tool calls and executable commands will use the existing tool policy. Child
+processes run with the user's OS permissions. The host checks cannot restrict
+direct file or network access inside the child, so install only trusted packages.

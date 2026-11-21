@@ -15,6 +15,7 @@ use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::keys::Key;
+use crate::theme::changes::{self, RowStyle};
 use crate::theme::{Symbols, Theme};
 use crate::transcript::{Decision, ToolCall, ToolState};
 
@@ -290,7 +291,7 @@ pub fn lines_with(
             // The whole output, one row at a time: a caller that draws it builds
             // every row, which is what the pane avoids by keeping the text.
             for row in text.lines() {
-                head.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style)));
+                head.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style.of(row))));
             }
             head
         }
@@ -314,8 +315,9 @@ pub(crate) enum CallRows<'a> {
         head: Vec<Line<'static>>,
         /// The whole kept output, one row per line.
         text: &'a str,
-        /// The style every output row is drawn in.
-        style: Style,
+        /// The style every output row is drawn in, or the styles that tell an
+        /// added line and a removed one apart.
+        style: RowStyle,
     },
 }
 
@@ -379,7 +381,12 @@ pub(crate) fn rows_with<'a>(
             Style::default().fg(color),
         )));
     }
-    let style = Style::default().fg(theme.transcript.notice);
+    // The change palette colours an added or removed line and leaves every
+    // other row as the output's own quiet style. The row keeps its own sign
+    // either way, so the colour is never the only thing that marks a change,
+    // and a block without a diff keeps one style: a leading sign means a change
+    // only inside a diff.
+    let plain = Style::default().fg(theme.transcript.notice);
     if let Some(text) = retained.text.filter(|_| !settled) {
         // An expanded call draws every row it kept. That is true even where the
         // preview would have repeated the failure text above it: the press was a
@@ -389,7 +396,7 @@ pub(crate) fn rows_with<'a>(
         return CallRows::Expanded {
             head: rows,
             text,
-            style,
+            style: RowStyle::for_theme(theme, plain, || changes::looks_like_diff_text(text)),
         };
     }
     if let Some(output) = call.output.as_ref().filter(|_| !settled) {
@@ -402,8 +409,9 @@ pub(crate) fn rows_with<'a>(
             !shown.is_empty() && error_text.is_some_and(|message| message.contains(shown))
         });
         if !repeats_error {
+            let style = RowStyle::for_theme(theme, plain, || changes::looks_like_diff(&output.rows));
             for row in &output.rows {
-                rows.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style)));
+                rows.push(Line::from(Span::styled(format!("{OUTPUT_PREFIX}{row}"), style.of(row))));
             }
             // A row cut at its right edge hides output with no rows to count, so
             // the count alone would say the preview is whole. A call whose text
@@ -421,19 +429,19 @@ pub(crate) fn rows_with<'a>(
                 (0, true) => Some(format!("{OUTPUT_PREFIX}cut")),
                 (hidden, _) => Some(format!("{OUTPUT_PREFIX}+{hidden} lines")),
             };
-            let marker = marker.map(|plain| match retained.key {
+            let marker = marker.map(|row| match retained.key {
                 Some(key) => {
-                    let labelled = format!("{plain} · {key} expands");
+                    let labelled = format!("{row} · {key} expands");
                     if UnicodeWidthStr::width(labelled.as_str()) <= usize::from(width) {
                         labelled
                     } else {
-                        plain
+                        row
                     }
                 }
-                None => plain,
+                None => row,
             });
             if let Some(marker) = marker {
-                rows.push(Line::from(Span::styled(marker, style)));
+                rows.push(Line::from(Span::styled(marker, style.plain())));
             }
         }
     }
