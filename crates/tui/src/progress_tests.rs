@@ -339,12 +339,15 @@ fn a_running_turn_reports_the_todo_share() {
         ..TodoItem::default()
     };
     let mut app = app();
-    app.todos = crate::todo_panel::TodoPanel::from_items(&[
-        item("one", "completed"),
-        item("two", "in_progress"),
-        item("three", "completed"),
-        item("four", "pending"),
-    ]);
+    app.todos = crate::todo_panel::TodoPanel::from_snapshot(
+        &[
+            item("one", "completed"),
+            item("two", "in_progress"),
+            item("three", "completed"),
+            item("four", "pending"),
+        ],
+        None,
+    );
     app.pending_turn = true;
     assert_eq!(
         app.terminal_signal().percent,
@@ -353,6 +356,6 @@ fn a_running_turn_reports_the_todo_share() {
     );
 
     // A cancelled item is work nobody still expects, so it is outside the count.
-    app.todos = crate::todo_panel::TodoPanel::from_items(&[item("one", "completed"), item("two", "cancelled")]);
+    app.todos = crate::todo_panel::TodoPanel::from_snapshot(&[item("one", "completed"), item("two", "cancelled")], None);
     assert_eq!(app.terminal_signal().percent, Some(100));
 }

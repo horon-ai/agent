@@ -54,10 +54,6 @@ struct TodoRow {
 }
 
 impl TodoPanel {
-    pub(crate) fn from_items(items: &[TodoItem]) -> Self {
-        Self::from_snapshot(items, None)
-    }
-
     pub(crate) fn from_snapshot(items: &[TodoItem], revision: Option<String>) -> Self {
         let mut panel = Self {
             items: items.to_vec(),
