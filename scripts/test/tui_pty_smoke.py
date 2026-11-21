@@ -712,9 +712,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
@@ -732,10 +731,12 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
         terminal.send("\x01")
         terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        recent_start = len(terminal.transcript)
         terminal.send("/resume\r")
-        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
+        recent_filter = len(terminal.transcript)
         terminal.send(archive_label)
-        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list")
+        terminal.read_until("matches that filter", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
         terminal.send("\x1b")
         time.sleep(0.15)
         terminal.send("/archived\r")
