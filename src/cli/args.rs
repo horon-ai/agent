@@ -249,6 +249,10 @@ pub(crate) enum Command {
         #[arg(long, conflicts_with = "json")]
         ndjson: bool,
 
+        /// Run shell tools without a pseudo-terminal for this invocation
+        #[arg(long)]
+        no_pty: bool,
+
         #[command(flatten)]
         model_overrides: RunModelOverrides,
 

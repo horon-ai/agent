@@ -9,11 +9,15 @@ pub(super) async fn run(
     message: &str,
     emit_json: bool,
     emit_ndjson: bool,
+    no_pty: bool,
     overrides: &RunModelOverrides,
 ) -> Result<()> {
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
     let registry = crate::tool::Registry::new(provider.clone()).await;
+    if no_pty {
+        registry.disable_bash_pty().await;
+    }
     if commands::run_command_mcp_enabled() {
         // Register cached tool schemas before the first request. On a cold
         // cache, wait briefly for the first connection to advertise schemas.

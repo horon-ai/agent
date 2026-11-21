@@ -158,6 +158,10 @@ struct Mock {
 
 impl Mock {
     async fn start() -> Self {
+        Self::start_with_tool("ls", r#"{"path":"."}"#).await
+    }
+
+    async fn start_with_tool(tool: &'static str, arguments: &'static str) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind the mock");
         let port = listener.local_addr().expect("the mock address").port();
         let requests = Arc::new(AtomicUsize::new(0));
@@ -172,7 +176,7 @@ impl Mock {
                 let requests = Arc::clone(&requests_thread);
                 let bodies = Arc::clone(&bodies_thread);
                 tokio::spawn(async move {
-                    let _ = serve(socket, &requests, &bodies).await;
+                    let _ = serve(socket, &requests, &bodies, tool, arguments).await;
                 });
             }
         });
@@ -199,6 +203,8 @@ async fn serve(
     mut socket: tokio::net::TcpStream,
     requests: &AtomicUsize,
     bodies: &std::sync::Mutex<Vec<String>>,
+    tool: &str,
+    arguments: &str,
 ) -> std::io::Result<()> {
     let mut buffer = Vec::new();
     let mut chunk = [0u8; 4096];
@@ -235,7 +241,7 @@ async fn serve(
                 "index": 0,
                 "id": "call_qa_1",
                 "type": "function",
-                "function": {"name": "ls", "arguments": "{\"path\":\".\"}"}
+                "function": {"name": tool, "arguments": arguments}
             }]}),
             Value::Null,
         )
@@ -630,6 +636,41 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
         message["role"] == "user" && message["content"].as_str().is_some_and(|text| text.contains("hi"))
     });
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn no_pty_overrides_shell_allocation_for_one_run() {
+    use std::io::Write as _;
+
+    let home = Home::new();
+    for (flags, expected) in [(&["--no-pty"][..], "pipe-shell"), (&[][..], "tty-shell")] {
+        let mock = Mock::start_with_tool(
+            "bash",
+            r#"{"command":"if test -t 1; then printf tty-shell; else printf pipe-shell; fi"}"#,
+        )
+        .await;
+        home.write_config(&mock.base_url);
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(home.path().join("config.toml"))
+            .unwrap()
+            .write_all(b"\n[tools]\nbash_pty = \"always\"\n")
+            .unwrap();
+        let mut args = vec!["run", "check whether the shell has a terminal", "--no-update"];
+        args.extend_from_slice(flags);
+        let result = home.run(&args).await;
+        assert!(result.status.success(), "{}", text(&result.stderr));
+        let bodies = mock.bodies();
+        let next: Value = serde_json::from_str(&bodies[1]).unwrap();
+        let tools = next["messages"].as_array().unwrap();
+        assert!(
+            tools
+                .iter()
+                .any(|message| { message["role"] == "tool" && message["content"].to_string().contains(expected) }),
+            "expected {expected} in the tool output: {next}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
