@@ -38,6 +38,7 @@ mod jobs;
 mod keys;
 mod notes;
 mod picker;
+mod pins;
 mod prompts;
 pub(crate) mod record;
 mod sending;
@@ -366,6 +367,8 @@ pub struct App {
     /// A picker sits above every other surface: while it is open no key reaches
     /// the settings screen, a prompt, the slash popup or the draft.
     pub picker: Option<Picker>,
+    /// The sessions this reader pinned, and the rows the last list built.
+    pub(crate) pins: pins::SessionPins,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
     /// Which terminal signal channels the settings allow.
@@ -484,6 +487,7 @@ impl App {
             overlay: None,
             side: None,
             picker: None,
+            pins: pins::SessionPins::default(),
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
@@ -574,6 +578,7 @@ impl App {
             overlay: None,
             side: None,
             picker: None,
+            pins: pins::SessionPins::default(),
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,

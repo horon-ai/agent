@@ -843,6 +843,31 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        # The reply text streams before the turn ends, so `/pin` (and the
+        # `/switch` that follows it) would be refused while the turn is still
+        # running on a slow host. Wait for idle from the same `reply_start`.
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before pinning", since=reply_start)
+        pin_start = len(terminal.transcript)
+        terminal.send("/pin\r")
+        pin_path = os.path.join(home, "tui-pins.json")
+        if POSIX:
+            terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the active session", since=pin_start)
+        else:
+            deadline = time.monotonic() + STEP_TIMEOUT
+            while not os.path.isfile(pin_path) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        if not os.path.isfile(pin_path):
+            raise Failure(f"pin command did not persist a local pin file\n--- transcript ---\n{terminal.transcript}")
+        with open(pin_path, encoding="utf-8") as handle:
+            pins = [session_id for ids in json.load(handle)["scopes"].values() for session_id in ids]
+        if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
+            raise Failure(f"expected one saved session to be pinned, got {pins!r}")
+        if POSIX:
+            terminal.send("/switch\r")
+            terminal.read_until("(pinned)", STEP_TIMEOUT, "pinned session appears in the picker")
+            terminal.send("\x10")
+            terminal.send("\x1b")
+            terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
         if POSIX:
             context_request_smoke(terminal, home, base_url)
             # The swarm run comes first: its child starts fresh, while the side

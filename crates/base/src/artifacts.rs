@@ -58,6 +58,11 @@ fn sanitize_tool(tool: &str) -> String {
 /// restart continues after the artifacts already on disk instead of reusing an
 /// id a transcript may still point at.
 pub fn save(session_id: &str, tool: &str, text: &str) -> Result<u64> {
+    save_with_file_cap(session_id, tool, text, None)
+}
+
+/// Save a shared tool preview's original, with an optional lower file cap.
+pub fn save_with_file_cap(session_id: &str, tool: &str, text: &str, cap_mib: Option<usize>) -> Result<u64> {
     let dir = session_dir(session_id)?;
     fs::create_dir_all(&dir).with_context(|| format!("create artifact directory {}", dir.display()))?;
     let tool = sanitize_tool(tool);
@@ -66,7 +71,8 @@ pub fn save(session_id: &str, tool: &str, text: &str) -> Result<u64> {
         let path = dir.join(format!("{id}.{tool}{ARTIFACT_SUFFIX}"));
         match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
-                write_bounded(&mut file, text).with_context(|| format!("write artifact {}", path.display()))?;
+                write_bounded(&mut file, text, cap_mib)
+                    .with_context(|| format!("write artifact {}", path.display()))?;
                 enforce_session_cap(&dir);
                 return Ok(id);
             }
@@ -125,19 +131,26 @@ fn next_id(dir: &Path) -> u64 {
     max.map_or(0, |current| current + 1)
 }
 
-fn write_bounded(file: &mut fs::File, text: &str) -> Result<()> {
+fn write_bounded(file: &mut std::fs::File, text: &str, cap_mib: Option<usize>) -> Result<()> {
     use std::io::Write;
 
-    if text.len() <= ARTIFACT_KEEP_BYTES * 2 {
+    let file_cap = cap_mib.map_or(ARTIFACT_KEEP_BYTES * 2, |mib| mib.clamp(1, 16) * 1024 * 1024);
+    if text.len() <= file_cap {
         file.write_all(text.as_bytes())?;
         return Ok(());
     }
-    let head_end = floor_char_boundary(text, ARTIFACT_KEEP_BYTES);
+    let keep = cap_mib.map_or(ARTIFACT_KEEP_BYTES, |_| (file_cap - 160) / 2);
+    let head_end = floor_char_boundary(text, keep);
     let head_end = match text[..head_end].rfind('\n') {
         Some(newline) => newline + 1,
         None => head_end,
     };
-    let mut tail_start = floor_char_boundary(text, text.len() - ARTIFACT_KEEP_BYTES);
+    let tail_offset = text.len() - keep;
+    let mut tail_start = if cap_mib.is_some() {
+        text.ceil_char_boundary(tail_offset)
+    } else {
+        floor_char_boundary(text, tail_offset)
+    };
     if let Some(offset) = text[tail_start..].find('\n') {
         tail_start += offset + 1;
     }
@@ -147,12 +160,21 @@ fn write_bounded(file: &mut fs::File, text: &str) -> Result<()> {
     if !text[..head_end].ends_with('\n') {
         file.write_all(b"\n")?;
     }
-    writeln!(
-        file,
-        "[ARTIFACT TRUNCATED: kept first 8 MiB + last 8 MiB of {}; {} elided from the middle]",
-        text.len(),
-        dropped
-    )?;
+    if cap_mib.is_some() {
+        writeln!(
+            file,
+            "[ARTIFACT TRUNCATED: {} bytes total, {} elided from the middle]",
+            text.len(),
+            dropped
+        )?;
+    } else {
+        writeln!(
+            file,
+            "[ARTIFACT TRUNCATED: kept first 8 MiB + last 8 MiB of {}; {} elided from the middle]",
+            text.len(),
+            dropped
+        )?;
+    }
     file.write_all(&text.as_bytes()[tail_start..])?;
     Ok(())
 }
