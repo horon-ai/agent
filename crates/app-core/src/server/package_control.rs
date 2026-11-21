@@ -366,7 +366,7 @@ impl PackageControl {
             }
             ticks = ticks.wrapping_add(1);
             let current = self.observe().await;
-            let recheck = ticks % FULL_RECHECK_TICKS == 0;
+            let recheck = ticks.is_multiple_of(FULL_RECHECK_TICKS);
             let catalog_due = current.catalog != last.catalog || recheck;
             let inbox_due = current.inbox != last.inbox || (recheck && current.inbox.is_some());
             if catalog_due || inbox_due {

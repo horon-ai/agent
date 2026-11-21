@@ -48,7 +48,7 @@ pub(super) fn request(state: &mut BridgeState, request: &Value) -> Option<Vec<Ou
     let typed = match serde_json::from_value::<PackageControlRequest>(request.clone()) {
         Ok(typed) => typed,
         Err(error) => {
-            return Some(state.error_reply(
+            return Some(BridgeState::error_reply(
                 api_id,
                 ErrorCode::InvalidRequest,
                 &format!("invalid package_control request: {error}"),
@@ -58,7 +58,7 @@ pub(super) fn request(state: &mut BridgeState, request: &Value) -> Option<Vec<Ou
     let operation = match serde_json::to_value(&typed.operation) {
         Ok(operation) => operation,
         Err(error) => {
-            return Some(state.error_reply(
+            return Some(BridgeState::error_reply(
                 api_id,
                 ErrorCode::Internal,
                 &format!("could not encode the package operation: {error}"),
