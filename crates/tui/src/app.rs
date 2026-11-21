@@ -114,6 +114,8 @@ pub enum Action {
     NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
+    /// Save a title for the attached session.
+    Rename(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
     /// Ask which noted sessions were deleted, including checks for archived sessions.
@@ -127,7 +129,6 @@ pub enum Action {
     DaemonSettings,
     /// Commit one revision-checked todo status change for the attached session.
     TodoStatus(crate::todo_panel::TodoStatusRequest),
-    /// Leave.
     Quit,
 }
 
