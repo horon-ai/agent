@@ -605,10 +605,18 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
     terminal.read_until(f"resumed {child}", STEP_TIMEOUT, "opened the recorded child", since=child_start)
     terminal.send("/swarm\r")
     terminal.read_until("parent:", STEP_TIMEOUT, "parent return row")
+    attach_marker = f"request_kind=subscribe session_id={parent} "
+    previous = daemon_log_tail(home, limit=5000).count(attach_marker)
     parent_start = len(terminal.transcript)
     terminal.send("\r")
     terminal.read_until("attaching to parent:", STEP_TIMEOUT, "selected the original session", since=parent_start)
-    terminal.read_until(f"resumed {parent}", STEP_TIMEOUT, "parent session attached", since=parent_start)
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        if daemon_log_tail(home, limit=5000).count(attach_marker) > previous:
+            break
+        time.sleep(0.05)
+    else:
+        raise Failure(f"the daemon did not reattach to parent {parent}")
 
 
 def configure_mcp_probe(home: str, case_root: str) -> str:
