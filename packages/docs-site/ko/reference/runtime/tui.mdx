@@ -27,7 +27,7 @@ description: "horon-tui는 TUI 바이너리다. 사람이 터미널에서 세션
 
 ```text
 horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
-           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
+           [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking] [--no-title]
 ```
 
 모션 플래그 셋은 실행 단위 재정의다. 모든 설정 파일과 환경 변수보다 우선하고, 설정 화면에는 `command line`으로 나오며, 그 아래 파일을 다시 읽어도 유지된다. 범위를 벗어난 플래그는 경고가 아니라 인자 오류다. `--max-fps 0`은 기대 범위를 출력하고 종료 코드 2로 끝난다.
@@ -43,6 +43,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--spinner-interval <ms>` | 이번 실행의 스피너 프레임 길이, `40`부터 `2000`까지 |
 | `--max-fps <n>` | 이번 실행의 스트림 프레임 상한, `1`부터 `240`까지 |
 | `--hide-thinking` | `transcript.show_reasoning`과 무관하게 이 세션에서 모델 추론을 숨긴 채 시작한다. `ctrl+t`(기본값)로 다시 켜고 끌 수 있다 |
+| `--no-title` | 이번 실행에서 터미널 창 제목을 그대로 둔다 |
 | `-V`, `--version` | 버전을 출력하고 끝낸다 |
 | `-h`, `--help` | 사용법을 출력하고 끝낸다 |
 
@@ -55,6 +56,8 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 클라이언트는 터미널 창의 이름을 `horon · <label>`로 짓는다. 터미널을 여러 개 띄워 두면 어느 창이 어느 세션인지 알 수 있다. label은 세션 자신의 제목이고, 데몬이 제목을 붙이지 않은 세션은 작업 디렉터리의 마지막 구성 요소를 쓴다. 제어 문자는 버리고 label은 여든 글자에서 멈춘다. 셸이 정해 둔 제목은 먼저 터미널의 제목 스택에 밀어 넣었다가 정상 종료, 오류 경로, 패닉 훅 어느 쪽으로 끝나도 되돌린다. 떠난 뒤에도 창은 셸의 것이기 때문이다. 스택 쌍(`CSI 22 ; 2 t`로 넣고 `CSI 23 ; 2 t`로 되돌린다)은 확장 기능이므로 제목 스택을 유지하는 터미널에만 쓴다. xterm 계열(`TERM`이 `dumb`이 아님), Windows Terminal(`WT_SESSION`), ConEmu(`ConEmuANSI`)는 제목을 되돌리고, 그 표시가 없는 Windows 콘솔과 스스로 `dumb`이라 답하는 터미널은 제목만 받으므로 클라이언트가 떠난 뒤에도 창이 `horon · <label>`로 남는다. 표준 출력이 터미널이 아니면 아무것도 쓰지 않는다.
 
 제목 스택을 지원하는 터미널에서는 `title.state = true`로 제목 뒤에 `running`, `waiting` 또는 `idle`을 붙일 수 있습니다. 턴이 시작하거나 끝날 때와 질문 또는 승인을 기다리는 동안 표시가 바뀝니다. 종료하면 기존 제목을 돌려놓습니다.
+
+`tui.toml`에서 `title.enabled = false`로 설정하면 다음 실행부터 터미널 제목을 그대로 둡니다. `--no-title`은 한 번의 실행에서 설정값보다 우선하며 오프라인 갤러리에도 적용됩니다. 저장한 세션 이름은 세션 목록에 계속 표시됩니다.
 
 ## 사용자 파일
 
@@ -85,6 +88,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `motion.spinner_interval` | 숫자 | `50` | `HORON_TUI_MOTION_SPINNER_INTERVAL` |
 | `motion.max_fps` | 숫자 | `30` | `HORON_TUI_MOTION_MAX_FPS` |
 | `appearance.changes` | `theme`, `accessible` | `theme` | `HORON_TUI_CHANGES` |
+| `title.enabled` | 참·거짓 | `true` | `HORON_TUI_TITLE_ENABLED` |
 | `title.state` | 참·거짓 | `false` | `HORON_TUI_TITLE_STATE` |
 | `statusline.preset` | `default`, `minimal`, `custom` | `default` | `HORON_TUI_STATUSLINE_PRESET` |
 | `statusline.left` | 세그먼트 이름 배열 | `["model"]` | `HORON_TUI_STATUSLINE_LEFT` |
@@ -443,13 +447,14 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
 | `/record [path\|stop\|status]` | 로컬 대화 기록을 시작하거나 멈추거나 확인한다 |
+| `/rename <title>` | 연결된 세션 이름을 저장하고 데몬이 확인하면 창 제목을 바꾼다 |
 | `/replay [path\|stop]` | 로컬에서 기록을 재생하거나 현재 세션으로 돌아온다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열일곱 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물한 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -480,6 +485,7 @@ built-in commands:
   /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
+  /rename              save a title for the current session
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen

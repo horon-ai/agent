@@ -3,9 +3,9 @@
 //!
 //! A typed line is resolved against three sources, in this order:
 //!
-//! 1. Built-in UI commands ([`Local`]) never leave the client: `/quit`,
+//! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/copy`, `/keys`, `/clear`, `/model`,
-//!    `/effort`, `/new`, `/note`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
+//!    `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/links`,
 //!    `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -13,9 +13,9 @@
 //!    what that name means for that project.
 //! 3. Every [`RuntimeCommand`] answers under its own `snake_case` name, so the
 //!    list cannot drift from the protocol. The names are read out of serde
-//!    rather than written down twice. The harness's `skills` command is the one
-//!    exception: the built-in `/skills` list owns that name, and the skills
-//!    themselves answer as `/skill:<name>`.
+//!    rather than written down twice. The harness's `skills` and `mcp` commands
+//!    are the exceptions: the built-in `/skills` and `/mcp` own those names,
+//!    and a skill itself answers as `/skill:<name>`.
 //!
 //! A file whose name a built-in UI command already owns is shadowed: `/help`
 //! lists it with that label and it never runs, because the built-in wins.
@@ -81,6 +81,8 @@ pub enum Local {
     New,
     /// Open the settings screen.
     Settings,
+    /// Rename the attached session.
+    Rename,
     /// Resume a session stored for this working directory.
     Resume,
     /// List the skills the harness reports, and put one in the draft.
@@ -120,6 +122,7 @@ impl Local {
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
             "settings" => Some(Self::Settings),
+            "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
             "mcp" => Some(Self::Mcp),
@@ -147,6 +150,7 @@ impl Local {
             Self::Effort => "effort",
             Self::New => "new",
             Self::Settings => "settings",
+            Self::Rename => "rename",
             Self::Resume => "resume",
             Self::Skills => "skills",
             Self::Mcp => "mcp",
@@ -653,9 +657,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 20] = [
+const LOCAL_NAMES: [&str; 21] = [
     "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "mcp", "model", "new", "note", "queue",
-    "quit", "record", "replay", "resume", "settings", "skills", "switch",
+    "quit", "record", "rename", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
