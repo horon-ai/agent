@@ -1,11 +1,12 @@
 //! Opt-in Python cells with a process scoped to the owning session.
 
+mod bridge;
 mod host;
 mod output;
 #[cfg(test)]
 mod tests;
 
-use super::{Tool, ToolContext, ToolEffects, ToolOutput};
+use super::{Tool, ToolContext, ToolEffects, ToolOutput, WeakRegistry};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use horon_agent_tool_types::{ToolRejected, ToolVerdict};
@@ -22,7 +23,18 @@ pub(super) const APPROVAL_REASON: &str =
 const MAX_TIMEOUT: u64 = 3600;
 const DEFAULT_TIMEOUT: u64 = 30;
 
-pub(super) struct EvalTool;
+pub(super) struct EvalTool {
+    registry: WeakRegistry,
+}
+
+impl EvalTool {
+    pub(super) fn new(registry: WeakRegistry) -> Self {
+        Self { registry }
+    }
+}
+
+pub(super) use bridge::{AbortCommandOnDrop, inside_bridge, owns_subcall};
+pub(super) use host::stop_child;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,6 +107,9 @@ pub(super) fn enabled() -> bool {
 }
 
 pub(super) async fn working_dir(ctx: &ToolContext) -> Result<PathBuf> {
+    if inside_bridge(&ctx.tool_call_id) {
+        return Err(ToolRejected("Python tool calls cannot start another Python cell.".into()).into());
+    }
     let (tiers, policy) = super::toolbox::tiers_for_session(&ctx.session_id);
     let config = crate::config::config();
     if !config.tools.eval
@@ -156,10 +171,17 @@ impl Tool for EvalTool {
             .as_deref()
             .context("Python eval needs a validated working directory")?;
         let session = get_session(&ctx.session_id);
+        let bridge = bridge::Bridge {
+            registry: self
+                .registry
+                .upgrade()
+                .context("Python tool registry is no longer available")?,
+            context: &ctx,
+        };
         let mut capture = output::Capture::default();
         let mut restarted = false;
         let mut status = String::new();
-        let active = run_cell(&session, cwd, input, &mut capture, &mut restarted);
+        let active = run_cell(&session, cwd, input, &bridge, &mut capture, &mut restarted);
         let cancelled = async {
             match ctx.graceful_shutdown_signal.as_ref() {
                 Some(signal) => signal.notified().await,
@@ -196,6 +218,7 @@ async fn run_cell(
     session: &SessionKernel,
     cwd: &Path,
     cell: Cell,
+    bridge: &bridge::Bridge<'_>,
     capture: &mut output::Capture,
     restarted: &mut bool,
 ) -> Result<bool> {
@@ -223,7 +246,7 @@ async fn run_cell(
         kernel: Some(current),
     };
     let (_, kernel) = active.kernel.as_mut().context("lost Python eval kernel")?;
-    let result = kernel.execute(&cell.code, capture).await;
+    let result = kernel.execute(&cell.code, bridge, capture).await;
     if result.is_ok() {
         active.slot.kernel = active.kernel.take();
     }

@@ -122,6 +122,22 @@ impl ToolCall {
     }
 }
 
+/// What one completed turn cost, drawn under its last line.
+///
+/// The figures are taken once, when the turn ends, and kept with the item: the
+/// renderer never reads a clock or asks the turn again, so a frame costs the
+/// same whether or not the footer is shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnMetrics {
+    /// Wall time from the message being sent to the turn ending, in
+    /// milliseconds.
+    pub elapsed_ms: u64,
+    /// Input and output tokens the turn's provider calls reported, added
+    /// together. `None` when no call reported usage, which is not the same as
+    /// a turn that spent none.
+    pub tokens: Option<(u64, u64)>,
+}
+
 /// One line of conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
@@ -150,6 +166,9 @@ pub enum Item {
     /// Boxed for the same reason as [`Item::Context`]: the payload behind it is
     /// large, and most items carry a message instead.
     Report(Box<crate::report::Report>),
+    /// What one completed turn cost, drawn under it when
+    /// `transcript.turn_usage` is on.
+    TurnUsage(TurnMetrics),
     /// A request boundary the provider had to serve without its cached prefix.
     ///
     /// Drawn under the request it belongs to, and only for an avoidable miss:
@@ -308,6 +327,13 @@ pub struct Transcript {
     /// row still has to say what happened to the call. Bounded because it is
     /// only ever read for the refusal in hand.
     decided: Vec<(String, Decision)>,
+    /// The turn being measured, between the message being sent and the turn
+    /// ending. `None` when the client is not the one measuring, which is why a
+    /// turn another surface started draws no footer.
+    turn: Option<Turn>,
+    /// Whether a finished turn's time and usage are drawn, as
+    /// `transcript.turn_usage` resolves.
+    turn_usage: bool,
 }
 
 /// When one call started.
@@ -316,6 +342,23 @@ struct Start {
     call_id: String,
     name: String,
     at: Instant,
+}
+
+/// The turn in progress, while the client is measuring it.
+#[derive(Debug)]
+struct Turn {
+    /// When the message was handed to the harness.
+    started: Instant,
+    /// Input tokens the turn's provider calls reported so far.
+    ///
+    /// Added as they arrive rather than read as a difference of session totals,
+    /// so a counter that resets or moves backwards can never subtract here.
+    input: u64,
+    /// Output tokens the turn's provider calls reported so far.
+    output: u64,
+    /// Whether any call reported usage. A turn that reported none draws no
+    /// token field rather than a misleading zero.
+    reported: bool,
 }
 
 impl Default for Transcript {
@@ -331,6 +374,8 @@ impl Default for Transcript {
             starts: Vec::new(),
             expand: ExpandState::default(),
             decided: Vec::new(),
+            turn: None,
+            turn_usage: false,
         }
     }
 }
@@ -397,6 +442,74 @@ impl Transcript {
         }
     }
 
+    /// Keep, or stop keeping, a finished turn's time and token usage.
+    ///
+    /// Read when the turn ends, so a turn already running takes the new value
+    /// and a turn that already ended keeps the footer it was drawn with.
+    pub fn set_turn_usage(&mut self, show: bool) {
+        self.turn_usage = show;
+    }
+
+    /// Start measuring the turn the client is about to send.
+    ///
+    /// A turn already being measured is replaced: one message is in flight at a
+    /// time, so the only way to reach this twice without an end is a send that
+    /// never produced a turn.
+    pub fn begin_turn(&mut self) {
+        self.turn = Some(Turn {
+            started: Instant::now(),
+            input: 0,
+            output: 0,
+            reported: false,
+        });
+    }
+
+    /// Add one provider call's usage to the turn being measured.
+    ///
+    /// Counts are added with saturation and never subtracted, so a provider
+    /// that reports a smaller number than an earlier call, or a counter a
+    /// reconnect restarted, cannot make the turn's usage negative. A call that
+    /// reported no usage adds nothing; a turn with no calls at all keeps its
+    /// token field empty.
+    pub fn note_usage(&mut self, input: u64, output: u64) {
+        let Some(turn) = self.turn.as_mut() else {
+            return;
+        };
+        turn.input = turn.input.saturating_add(input);
+        turn.output = turn.output.saturating_add(output);
+        turn.reported = true;
+    }
+
+    /// Close the turn being measured and draw what it cost under it.
+    ///
+    /// Nothing is drawn for a turn this client did not start, or while
+    /// `transcript.turn_usage` is off. The elapsed time is taken once here and
+    /// stored with the item, so drawing it later reads no clock.
+    pub fn end_turn(&mut self) {
+        let Some(turn) = self.turn.take() else {
+            return;
+        };
+        if !self.turn_usage {
+            return;
+        }
+        // The answer is committed before the footer, so the footer reads as the
+        // last line of the turn rather than sitting above streaming text.
+        self.finish_stream();
+        let elapsed_ms = u64::try_from(turn.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.items.push(Item::TurnUsage(TurnMetrics {
+            elapsed_ms,
+            tokens: turn.reported.then_some((turn.input, turn.output)),
+        }));
+    }
+
+    /// Stop measuring the turn without drawing anything.
+    ///
+    /// Used when there is no completed turn to describe: the send never
+    /// reached the harness, the connection died, or the session changed.
+    pub fn discard_turn(&mut self) {
+        self.turn = None;
+    }
+
     /// Every item in display order.
     pub fn items(&self) -> &[Item] {
         &self.items
@@ -454,6 +567,9 @@ impl Transcript {
         // reuse an id, and text from the old conversation must not be drawn
         // under it.
         self.expand.clear();
+        // The turn being measured belongs to the conversation being replaced,
+        // and the rows its footer would sit under are gone with it.
+        self.turn = None;
     }
 
     /// The kept outputs, for the pane to draw the calls they belong to.

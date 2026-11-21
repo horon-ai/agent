@@ -54,6 +54,10 @@ pub mod ids {
     pub const APP_COPY_LAST: &str = "app.copy_last";
     /// Copy the newest answer's last code block to the terminal clipboard.
     pub const APP_COPY_CODE: &str = "app.copy_code";
+    /// Step forward to the next model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL: &str = "app.cycle_model";
+    /// Step backward to the previous model in `models.shortlist`, wrapping.
+    pub const APP_CYCLE_MODEL_BACK: &str = "app.cycle_model_back";
     /// Paint the whole screen again, discarding the frame the terminal holds.
     pub const APP_REPAINT: &str = "app.repaint";
     /// Show or hide the model's reasoning for the rest of the session.
@@ -177,6 +181,12 @@ pub const ACTIONS: &[ActionSpec] = &[
     // The draft is one message in the editor; a line of it is the unit a user
     // copies out of a long one, so it has its own key rather than a mode.
     ActionSpec::new(ids::APP_COPY_LINE, Scope::App, &["alt+k"]),
+    // Two steps through a shortlist of the user's own, forward and backward.
+    // `ctrl+p` is free of the editor's own keys, and `ctrl+alt+p` is the same
+    // letter with one modifier more, which every terminal reports apart from
+    // `ctrl+p`; either can be rebound in `keybindings.toml`.
+    ActionSpec::new(ids::APP_CYCLE_MODEL, Scope::App, &["ctrl+p"]),
+    ActionSpec::new(ids::APP_CYCLE_MODEL_BACK, Scope::App, &["ctrl+alt+p"]),
     // The one key that changes nothing: it throws away the frame Ratatui kept,
     // so a screen another program wrote over is drawn again in full. It answers
     // before every surface and takes no key from one, because only the frames

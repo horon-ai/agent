@@ -196,7 +196,7 @@ The build's rule is that one model path serves models: a turn posts to the endpo
 
 - It posts `POST {base_url}/images/generations` with a JSON body, or `POST {base_url}/images/edits` with a multipart body, on the **same** profile: same base URL, same credential, same `auth`, same `extra_body`.
 - Only a profile of type `openai-compatible` or `openai-responses` accepts this route. A profile on the Anthropic or Gemini wire cannot serve it, because neither wire carries an Images endpoint: the tool still registers when `roles.image` names a model, and each call fails with an error naming the profile and its type instead of sending a request to a URL that cannot answer (`crates/base/src/provider/external.rs` `image_endpoint`).
-- There is still one provider runtime, no second router and no plugin host. `crates/provider-openai/src/images.rs` is a request builder beside `chat/`, not a runtime.
+- One provider runtime sends requests directly. `crates/provider-openai/src/images.rs` builds image requests beside `chat/`. Planned user-installed Rust packages sit outside the model path.
 - The model comes from `roles.image`, and the tool is registered only when that entry exists **and** `[tools] generate_image = true`. Both conditions are required: the switch alone would advertise a tool whose every call fails, and the role alone would register it for a session that never asked.
 - A call declares `WRITE | NETWORK`, so `approval_mode = "write"` asks first and an unattended run does not spend money without approval.
 - The model never receives image bytes. Files land in `~/.horon/generated-images/` and the result names paths, sizes and MIME types, which keeps a call at a few hundred tokens instead of megabytes in the context and the stored event log.

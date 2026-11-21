@@ -30,20 +30,28 @@ impl App {
     /// A catalog that does not name the model serving the session still gets a
     /// row for it: the list has to say what is in force, or the user cannot
     /// tell whether the top row is a change or the state they are already in.
+    ///
+    /// The answer is also the catalog the cycle keys check `models.shortlist`
+    /// against, so checking an entry costs no second request.
     pub fn show_models(&mut self, models: Vec<String>, current: Option<String>) {
-        let provider = self.provider.clone();
-        let mut rows: Vec<Row> = models
-            .into_iter()
-            .map(|model| {
-                let marked = current.as_deref() == Some(model.as_str());
-                let preview = model_preview(&model, provider.as_deref(), marked);
-                Row::new(model.clone(), model).marked(marked).with_preview(preview)
-            })
-            .collect();
+        let mut rows: Vec<Row> = {
+            let provider = self.provider.as_deref();
+            let shortlist = &self.model_shortlist;
+            models
+                .iter()
+                .map(|model| {
+                    let marked = current.as_deref() == Some(model.as_str());
+                    let preview = model_preview(model.as_str(), provider, marked, shortlist);
+                    Row::new(model.as_str(), model.as_str())
+                        .marked(marked)
+                        .with_preview(preview)
+                })
+                .collect()
+        };
         if let Some(current) = &current
             && !rows.iter().any(|row| row.current)
         {
-            let preview = model_preview(current, provider.as_deref(), true);
+            let preview = model_preview(current, self.provider.as_deref(), true, &self.model_shortlist);
             rows.insert(
                 0,
                 Row::new(current.clone(), current.clone())
@@ -51,7 +59,150 @@ impl App {
                     .with_preview(preview),
             );
         }
+        // The answer is also the catalog the cycle keys check
+        // `models.shortlist` against, so checking an entry costs no second
+        // request. An empty list is the harness saying it has nothing to
+        // switch to yet rather than a catalog: the next press reads it again
+        // instead of refusing every entry on the strength of that answer.
+        self.model_catalog = models;
+        self.model_catalog_loaded = !self.model_catalog.is_empty();
         self.fill(Kind::Models, rows);
+    }
+
+    /// `app.cycle_model` and `app.cycle_model_back`: step through
+    /// `models.shortlist`.
+    ///
+    /// The walk is the configured order, forward wrapping past the last entry
+    /// and backward wrapping past the first. It starts from the model already
+    /// in force, so the first press moves off it rather than onto it; a model
+    /// waiting for the running turn or an answer counts as in force, which is
+    /// what makes two quick presses walk two entries instead of asking for the
+    /// same one twice.
+    ///
+    /// The catalog decides which entries can be asked for: one it does not
+    /// list is skipped and named once, because a switch the harness would
+    /// refuse is better said than sent. A press before the catalog has been
+    /// read asks for it instead and walks once it lands, so the status line
+    /// moves only when a report names the new model and a refused entry never
+    /// replaces the one in force.
+    pub(crate) fn cycle_model(&mut self, forward: bool) -> Option<Action> {
+        if self.disconnected {
+            self.warn("the harness connection is gone; the model cannot change");
+            return None;
+        }
+        if self.model_shortlist.is_empty() {
+            self.warn("models.shortlist is empty; add model ids under [models] in tui.toml to cycle them");
+            return None;
+        }
+        // An entry is only asked for once the harness has listed its models.
+        // Without that answer the client cannot tell a name the provider has
+        // from one it does not, and a switch it guessed would be reported as a
+        // failure the user never asked for. The press is remembered, the list
+        // is read once, and the walk follows the answer in the same direction.
+        if !self.model_catalog_loaded {
+            self.model_cycle_pending = Some(forward);
+            return Some(Action::Models);
+        }
+        self.walk_model(forward)
+    }
+
+    /// The walk itself, once the catalog says which entries the harness has.
+    fn walk_model(&mut self, forward: bool) -> Option<Action> {
+        // One list of the entries the harness lists and one of those it does
+        // not, owned rather than borrowed: the notices below change this
+        // state, and the walk has to read it as it was when the key arrived.
+        let mut supported: Vec<String> = Vec::with_capacity(self.model_shortlist.len());
+        let mut skipped: Vec<String> = Vec::new();
+        for model in &self.model_shortlist {
+            if self.model_catalog.iter().any(|listed| listed == model.as_str()) {
+                supported.push(model.clone());
+            } else {
+                skipped.push(model.clone());
+            }
+        }
+        if supported.is_empty() {
+            self.warn(format!(
+                "none of the models in models.shortlist is in the harness catalog: {}; open the \
+                 model list to see the models it offers",
+                join_names(&skipped)
+            ));
+            return None;
+        }
+        // A press that skips the same entries as the last one stays quiet: the
+        // notice is about the file, and repeating it on every step would bury
+        // the model the press is changing to.
+        if skipped != self.model_shortlist_skipped {
+            if !skipped.is_empty() {
+                self.transcript.push_notice(format!(
+                    "models.shortlist: the harness does not list {}; skipped",
+                    join_names(&skipped)
+                ));
+            }
+            self.model_shortlist_skipped = skipped;
+        }
+        // A waiting change is the newest intent, then one already sent, then
+        // the model the harness last reported.
+        let current = self
+            .model_after_turn
+            .as_deref()
+            .or(self.model_requested.as_deref())
+            .or(self.model.as_deref());
+        let start = current.and_then(|model| supported.iter().position(|entry| entry == model));
+        let next = match (start, forward) {
+            (Some(index), true) => &supported[(index + 1) % supported.len()],
+            (Some(index), false) => &supported[(index + supported.len() - 1) % supported.len()],
+            // A model the shortlist does not hold is exactly when there is no
+            // list position to step from: the walk starts at the near end.
+            (None, true) => &supported[0],
+            (None, false) => &supported[supported.len() - 1],
+        };
+        self.ask_model(next)
+    }
+
+    /// The walk a cycle press asked for while the catalog was being read.
+    ///
+    /// Called by the event loop once the answer landed, so the press becomes
+    /// one switch in the direction it named instead of a request for a list
+    /// the user never sees.
+    pub(crate) fn take_model_cycle(&mut self) -> Option<Action> {
+        // A catalog that named nothing leaves the press waiting: the list is
+        // read again on the next press rather than walking on an empty one.
+        if !self.model_catalog_loaded {
+            return None;
+        }
+        // Taken before the walk: a refused entry reports a failure, and the
+        // press has already been answered by then.
+        let forward = self.model_cycle_pending.take()?;
+        self.walk_model(forward)
+    }
+
+    /// Read `models.shortlist` into the list the cycle keys walk.
+    ///
+    /// A repeated or blank entry is one mistake in a file, not a reason to
+    /// refuse the other entries: it is named once, when the file changes, and
+    /// dropped, so the walk never visits one model twice.
+    pub(crate) fn apply_model_shortlist(&mut self, listed: &[String]) {
+        if listed == self.model_shortlist_source.as_slice() {
+            return;
+        }
+        self.model_shortlist_source = listed.to_vec();
+        let mut names: Vec<String> = Vec::new();
+        for raw in listed {
+            let name = raw.trim();
+            if name.is_empty() {
+                self.warn("models.shortlist has an empty entry; ignored");
+                continue;
+            }
+            if names.iter().any(|kept| kept == name) {
+                self.warn(format!(
+                    "models.shortlist names `{name}` twice; the later entry is ignored"
+                ));
+                continue;
+            }
+            names.push(name.to_string());
+        }
+        self.model_shortlist = names;
+        self.model_shortlist_skipped.clear();
     }
 
     /// Fill the open session list, marking the session in force.
@@ -201,6 +352,14 @@ impl App {
         self.effort_requested = None;
         self.effort_after_turn = None;
         self.model_after_turn = None;
+        // The model a request named belongs to the session being left, and the
+        // catalog was read for its provider: neither describes the one being
+        // attached to, so the next cycle starts from this session's model and
+        // the next model list is the one that fills the catalog.
+        self.model_requested = None;
+        self.model_catalog.clear();
+        self.model_catalog_loaded = false;
+        self.model_cycle_pending = None;
         // A steer still in flight is kept: its answer belongs to the session
         // being left, and its refusal is still worth showing. It stops holding
         // this session's `esc`, which reads the ids instead of clearing it.
@@ -240,8 +399,10 @@ impl App {
     pub fn request_failed(&mut self, message: &str) {
         self.new_session_pending = false;
         // A request that came back as a failure will never be answered, so the
-        // level it asked for must not steer the cycle key.
+        // level or model it asked for must not steer the cycle keys.
         self.effort_requested = None;
+        self.model_requested = None;
+        self.model_cycle_pending = None;
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
             self.picker = None;
         }
@@ -256,7 +417,7 @@ impl App {
 /// time. None of these lines is searchable — the filter matches model names,
 /// and a preview says what a row means rather than being another way to find
 /// it.
-fn model_preview(model: &str, provider: Option<&str>, current: bool) -> Vec<String> {
+fn model_preview(model: &str, provider: Option<&str>, current: bool, shortlist: &[String]) -> Vec<String> {
     let mut lines = vec![format!("model: {model}")];
     if let Some(provider) = provider {
         lines.push(format!("provider: {provider}"));
@@ -266,6 +427,28 @@ fn model_preview(model: &str, provider: Option<&str>, current: bool) -> Vec<Stri
     } else {
         "not the current model".to_string()
     });
+    // Where the model sits in the list the cycle keys walk, so a reader can
+    // tell whether the next press reaches it. An unconfigured shortlist says
+    // nothing rather than repeating one line on every row.
+    if !shortlist.is_empty() {
+        lines.push(match shortlist.iter().position(|entry| entry.as_str() == model) {
+            Some(index) => format!("models.shortlist entry {}", index + 1),
+            // The one in force is the clearest case of this: the walk cannot
+            // start from a model it does not hold, so the first press starts
+            // at the near end instead.
+            None if current => "not in models.shortlist; the next cycle starts at its near end".to_string(),
+            None => "not in models.shortlist".to_string(),
+        });
+    }
     lines.push(format!("enter switches this session to {model}"));
     lines
+}
+
+/// The models of a list as one readable phrase: `a`, `a and b`, `a, b and c`.
+fn join_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
