@@ -395,6 +395,7 @@ fn builtin_help_lists_every_built_in_command() {
     assert_eq!(type_line(&mut app, "/help"), None);
     let listing = last_line(&app);
     for name in [
+        "/archived",
         "/artifact",
         "/clear",
         "/exit",
@@ -403,11 +404,13 @@ fn builtin_help_lists_every_built_in_command() {
         "/links",
         "/model",
         "/new",
+        "/pin",
         "/quit",
         "/rename",
         "/resume",
         "/settings",
         "/switch",
+        "/unpin",
     ] {
         assert!(
             listing.contains(name),

@@ -5,8 +5,9 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
-//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/rename`, `/settings`,
-//!    `/resume`, `/skills`, `/switch`, `/links`, `/queue`, `/record`, `/replay` and `/voice`.
+//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/pin`,
+//!    `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/unpin`, `/voice`,
+//!    `/links`, `/queue`, `/record` and `/replay`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -113,6 +114,10 @@ pub enum Local {
     Switch,
     /// Attach, edit, list or remove a local note on a transcript message.
     Note,
+    /// Keep a session at the top of the session list, or the attached one.
+    Pin,
+    /// Take a session out of the pinned group.
+    Unpin,
     /// Run `!command` in this client, keeping its output in the transcript.
     Shell,
     /// Run `!!command` in this client, keeping neither the command nor its output.
@@ -156,6 +161,8 @@ impl Local {
             "mcp" => Some(Self::Mcp),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
+            "pin" => Some(Self::Pin),
+            "unpin" => Some(Self::Unpin),
             "links" => Some(Self::Links),
             "jobs" => Some(Self::Jobs),
             "record" => Some(Self::Record),
@@ -188,6 +195,8 @@ impl Local {
             Self::Mcp => "mcp",
             Self::Switch => "switch",
             Self::Note => "note",
+            Self::Pin => "pin",
+            Self::Unpin => "unpin",
             // The shell forms are typed with a `!` prefix, not a slash, so
             // these names are only what a listing would call them. They are
             // deliberately absent from `LOCAL_NAMES`.
@@ -691,7 +700,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 26] = [
+const LOCAL_NAMES: [&str; 28] = [
     "archived",
     "artifact",
     "clear",
@@ -708,6 +717,7 @@ const LOCAL_NAMES: [&str; 26] = [
     "model",
     "new",
     "note",
+    "pin",
     "queue",
     "quit",
     "record",
@@ -717,6 +727,7 @@ const LOCAL_NAMES: [&str; 26] = [
     "settings",
     "skills",
     "switch",
+    "unpin",
     "voice",
 ];
 

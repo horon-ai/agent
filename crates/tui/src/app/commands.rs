@@ -119,6 +119,10 @@ impl App {
             // the conversation or a request, so this arm answers entirely in
             // the client except when it asks which noted sessions are gone.
             Local::Note => self.run_note(arguments),
+            // A pin is a client-local preference too: the attached session
+            // when no id is typed, the id otherwise. Nothing is sent.
+            Local::Pin => self.run_pin(arguments, true),
+            Local::Unpin => self.run_pin(arguments, false),
             // `!command` and `!!command` are resolved by the registry, never
             // by a slash name, and are run by this client alone.
             Local::Shell => {
