@@ -773,12 +773,17 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
         if POSIX:
+            boundary_start = len(terminal.transcript)
             terminal.send("tui-fork-boundary-proof\r")
             terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
+            terminal.read_until("idle", STEP_TIMEOUT, "boundary turn ended", since=boundary_start)
             terminal.send("/fork\r")
             terminal.read_until("Fork from a message", STEP_TIMEOUT, "choose a saved message boundary")
+            filter_start = len(terminal.transcript)
+            terminal.send("tui-fork-boundary-proof")
+            terminal.read_until("the branch keeps", STEP_TIMEOUT, "saved boundary selected", since=filter_start)
             fork_start = len(terminal.transcript)
-            terminal.send("tui-fork-boundary-proof\r")
+            terminal.send("\r")
             terminal.read_until("resumed session_", STEP_TIMEOUT, "the fork was saved and attached", since=fork_start)
             return_picker = len(terminal.transcript)
             terminal.send("/fork\r")
