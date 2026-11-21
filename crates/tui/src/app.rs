@@ -42,6 +42,7 @@ mod jobs;
 mod keys;
 mod notes;
 mod picker;
+mod pins;
 mod prompts;
 pub(crate) mod record;
 mod sending;
@@ -379,6 +380,8 @@ pub struct App {
     /// A picker sits above every other surface: while it is open no key reaches
     /// the settings screen, a prompt, the slash popup or the draft.
     pub picker: Option<Picker>,
+    /// The sessions this reader pinned, and the rows the last list built.
+    pub(crate) pins: pins::SessionPins,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
     /// Which terminal signal channels the settings allow.
@@ -475,7 +478,7 @@ impl App {
             // A new session starts in the launch directory until it reports otherwise.
             workspace_known: true,
             path_cycle: None,
-            home: home_directory(),
+            home: crate::path_completion::home_directory(),
             tokens: None,
             capacity: None,
             usage: None,
@@ -498,6 +501,7 @@ impl App {
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
             picker: None,
+            pins: pins::SessionPins::default(),
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
@@ -566,7 +570,7 @@ impl App {
             workspace_is_local: false,
             workspace_known: true,
             path_cycle: None,
-            home: home_directory(),
+            home: crate::path_completion::home_directory(),
             tokens: None,
             capacity: None,
             usage: None,
@@ -589,6 +593,7 @@ impl App {
             artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
             overlay: None,
             picker: None,
+            pins: pins::SessionPins::default(),
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
@@ -1148,15 +1153,6 @@ impl App {
         self.path_cycle = Some(choice);
         self.sync_slash();
     }
-}
-
-/// The status line shortens this home directory to `~`.
-fn home_directory() -> Option<String> {
-    let value = match std::env::var_os("HOME") {
-        Some(home) => home,
-        None => std::env::var_os("USERPROFILE")?,
-    };
-    Some(value.to_string_lossy().into_owned())
 }
 
 /// A token count the protocol left optional.
