@@ -36,6 +36,7 @@ pub enum RuntimeCommand {
     /// another session's, and it is a client report: nothing in it is added to
     /// the conversation or sent to the model.
     Observations,
+    Mcp,
 }
 
 /// Structured runtime data plus a human-readable rendering. Data is command

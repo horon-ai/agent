@@ -76,6 +76,7 @@ RuntimeCommand: TypeAlias = Literal[
     "logout",
     "plan",
     "observations",
+    "mcp",
 ]
 
 PermissionDecision: TypeAlias = Literal["allow", "allow_always", "deny"]
