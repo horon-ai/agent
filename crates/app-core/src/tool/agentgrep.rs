@@ -186,7 +186,7 @@ impl Tool for AgentGrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search code and file names. Defaults to grep mode when mode is omitted."
+        "Search text, file names, outlines or relationships."
     }
 
     fn effects(&self) -> ToolEffects {
@@ -201,44 +201,44 @@ impl Tool for AgentGrepTool {
                 "mode": {
                     "type": "string",
                     "enum": ["grep", "find", "outline", "trace"],
-                    "description": "grep (default), find (file names), outline (one file), trace (relationship DSL)."
+                    "description": "Defaults to grep."
                 },
                 "query": {
                     "type": "string",
-                    "description": "Required for grep (literal unless regex=true); optional ranking terms for find."
+                    "description": "Search text for grep; ranking terms for find."
                 },
                 "file": {
                     "type": "string",
-                    "description": "Single file to inspect. Required for outline."
+                    "description": "Required for outline."
                 },
                 "terms": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Trace DSL terms, e.g. [\"subject:auth_status\"]. Not grep; use query."
+                    "description": "Trace DSL terms, e.g. [\"subject:auth_status\"]."
                 },
                 "regex": {
                     "type": "boolean",
-                    "description": "grep mode: query is a regex. Default false (literal)."
+                    "description": "Use regex in grep; defaults to literal."
                 },
                 "path": {
                     "type": "string",
-                    "description": "Directory or file to search, relative to the workspace; default: all of it."
+                    "description": "File or directory; defaults to workspace."
                 },
                 "glob": {
                     "type": "string",
-                    "description": "File glob filter such as **/*.rs."
+                    "description": "File glob, e.g. **/*.rs."
                 },
                 "type": {
                     "type": "string",
-                    "description": "ripgrep file type filter, such as rs, py, js, ts, or md."
+                    "description": "ripgrep file type, e.g. rs or md."
                 },
                 "max_files": {
                     "type": "integer",
-                    "description": "Maximum files to return in find/trace modes."
+                    "description": "File cap for find/trace."
                 },
                 "max_regions": {
                     "type": "integer",
-                    "description": "Maximum matching regions to return."
+                    "description": "Match limit."
                 },
                 "before": {
                     "type": "integer",
@@ -250,7 +250,7 @@ impl Tool for AgentGrepTool {
                 },
                 "paths_only": {
                     "type": "boolean",
-                    "description": "Return matching paths, not excerpts, where supported."
+                    "description": "Return paths only."
                 }
             }
         })
