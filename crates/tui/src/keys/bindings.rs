@@ -48,6 +48,14 @@ pub mod ids {
     pub const APP_CYCLE_EFFORT: &str = "app.cycle_effort";
     /// Open the list of models this session can switch to.
     pub const APP_PICK_MODEL: &str = "app.pick_model";
+    /// Copy the whole draft to the terminal clipboard.
+    pub const APP_COPY_DRAFT: &str = "app.copy_draft";
+    /// Copy the line the cursor is on to the terminal clipboard.
+    pub const APP_COPY_LINE: &str = "app.copy_line";
+    /// Copy the newest answer to the terminal clipboard.
+    pub const APP_COPY_LAST: &str = "app.copy_last";
+    /// Copy the newest answer's last code block to the terminal clipboard.
+    pub const APP_COPY_CODE: &str = "app.copy_code";
     /// Step forward to the next model in `models.shortlist`, wrapping.
     pub const APP_CYCLE_MODEL: &str = "app.cycle_model";
     /// Step backward to the previous model in `models.shortlist`, wrapping.
@@ -168,6 +176,17 @@ pub const ACTIONS: &[ActionSpec] = &[
     ActionSpec::new(ids::APP_CYCLE_EFFORT, Scope::App, &["shift+tab"]),
     // The model list, one keystroke away from the draft being typed.
     ActionSpec::new(ids::APP_PICK_MODEL, Scope::App, &["alt+p"]),
+    // Copying is on a key because it is asked for while reading: `alt+shift+c`
+    // and `alt+shift+l` are the keys the reference client puts here, and their
+    // shifted characters arrive lower-cased, so the bindings are `alt+c` and
+    // `alt+l`. A terminal that does not report option as meta sends a character
+    // instead, which is why `/copy` reaches the same three targets.
+    ActionSpec::new(ids::APP_COPY_CODE, Scope::App, &["alt+c"]),
+    ActionSpec::new(ids::APP_COPY_LAST, Scope::App, &["alt+l"]),
+    ActionSpec::new(ids::APP_COPY_DRAFT, Scope::App, &["alt+d"]),
+    // The draft is one message in the editor; a line of it is the unit a user
+    // copies out of a long one, so it has its own key rather than a mode.
+    ActionSpec::new(ids::APP_COPY_LINE, Scope::App, &["alt+k"]),
     // Two steps through a shortlist of the user's own, forward and backward.
     // `ctrl+p` is free of the editor's own keys, and `ctrl+alt+p` is the same
     // letter with one modifier more, which every terminal reports apart from
