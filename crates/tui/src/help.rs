@@ -22,7 +22,7 @@ pub const USAGE: &str = "\
 horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
-                 [--config <file>]...
+                 [--config <file>]... [--gallery[=<scene>]]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
                  [--hide-thinking]
@@ -35,6 +35,10 @@ Options:
   --config <file>           Extra settings file, read after the global and
                             project files and before the environment
                             (repeatable)
+  --gallery[=<scene>]       Draw the built-in fixtures through the renderer and
+                            leave; no socket is opened and no session is read.
+                            Scenes: conversation, tools, error, prompt,
+                            unicode (default: conversation)
   --motion <mode>           full, reduced or static; overrides the `motion`
                             setting for this launch
   --spinner-interval <ms>   Milliseconds one spinner frame stays, 40 to 2000;
@@ -46,6 +50,11 @@ Options:
                             toggles it again
   -V, --version             Print the version and exit
   -h, --help                Print this help and exit
+
+Gallery keys:
+  n, Right, Tab     show the next fixture
+  p, Left, BackTab  show the previous fixture
+  q, Esc, Ctrl-C    leave
 
 Keys:
   Enter          send the typed message
@@ -139,6 +148,14 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         "step to the next reasoning effort, wrapping at the last one",
     ),
     (ids::APP_PICK_MODEL, "pick the model this session uses"),
+    (
+        ids::APP_CYCLE_MODEL,
+        "switch to the next model in models.shortlist, wrapping at the last one",
+    ),
+    (
+        ids::APP_CYCLE_MODEL_BACK,
+        "switch to the previous model in models.shortlist, wrapping at the first one",
+    ),
     (
         ids::APP_REPAINT,
         "paint the whole screen again, keeping the draft, the selection and the view",

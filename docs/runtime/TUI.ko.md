@@ -23,7 +23,7 @@
 클라이언트는 자체 인자를 받는다.
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
            [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking]
 ```
 
@@ -35,12 +35,15 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `--session <id>` | 새 세션을 만들지 않고 기존 세션에 붙는다 |
 | `--cwd <dir>` | 이 클라이언트가 만드는 세션의 작업 디렉터리 |
 | `--config <file>` | 설정 파일을 하나 더 읽는다. 여러 번 쓸 수 있다 |
+| `--gallery[=<scene>]` | 터미널 렌더러를 오프라인에서 미리 보기 |
 | `--motion <mode>` | 이번 실행에서 `motion.preset` 대신 쓸 `full`, `reduced`, `static` |
 | `--spinner-interval <ms>` | 이번 실행의 스피너 프레임 길이, `40`부터 `2000`까지 |
 | `--max-fps <n>` | 이번 실행의 스트림 프레임 상한, `1`부터 `240`까지 |
 | `--hide-thinking` | `transcript.show_reasoning`과 무관하게 이 세션에서 모델 추론을 숨긴 채 시작한다. `ctrl+t`(기본값)로 다시 켜고 끌 수 있다 |
 | `-V`, `--version` | 버전을 출력하고 끝낸다 |
 | `-h`, `--help` | 사용법을 출력하고 끝낸다 |
+
+`horon-tui --gallery=unicode`를 실행하면 너비가 넓은 글자의 줄바꿈을 확인할 수 있습니다. `horon-tui --gallery`는 첫 장면부터 엽니다. `n`과 `p` 또는 방향 키로 장면을 바꾸고 `q`로 나갑니다. 미리보기는 고정 예제를 사용하며 데몬이나 모델에 연결할 필요가 없습니다.
 
 한 번도 열리지 않은 연결은 클라이언트를 끝낸다. 이벤트 스트림이 만든 문장(예: `the event stream ended: ...`)이 배너에 남고 루프가 멈추며, 프로세스가 종료 코드 1로 끝나므로 감싼 스크립트도 실패를 알아챈다.
 
@@ -92,7 +95,9 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]...
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
+| `transcript.turn_usage` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
 | `transcript.visual_blocks` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
+| `models.shortlist` | 모델 ID 배열 | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
 이 표가 설정 레지스트리(`crates/tui/src/settings/registry.rs`)이고, 스물한 키를 레지스트리 순서로 적었다. 설정 화면도 이 표를 그린다.
 
@@ -218,6 +223,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
+| `app.cycle_model` | `ctrl+p` | 모델 후보 목록에서 다음 모델로 옮긴다 |
+| `app.cycle_model_back` | `ctrl+alt+p` | 모델 후보 목록에서 이전 모델로 옮긴다 |
 | `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
 | `editor.delete` | `delete` | 커서 자리 글자를 지운다 |
@@ -277,6 +284,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 승인 게이트가 거절한 호출은 데몬의 문장 전체가 아니라 짧은 이름 하나로 그린다. 옆의 프롬프트가 이미 그 질문을 하기 때문이고, 그 이름은 요청의 상태를 따른다. 결정을 기다리는 동안 머리 행은 `◐ needs approval`이고, 답이 나면 그 답을 적는다. `• allowed`, `• allowed always`, `n`이나 `esc`면 `✕ denied`, 답 없이 프롬프트가 사라지면(연결 끊김, 취소된 턴) `✕ not answered`다. 이 셋 중 어느 것도 `failed`가 아니다. 호출은 실행되지 않았고, 게이트가 붙잡았을 뿐이므로 모델이 도구를 다시 불러야 한다. 그 프롬프트에 답해도 호출은 실행되지 않는다. 결정을 기록하고 모델이 도구를 다시 불러야 하며, 트랜스크립트가 그 사실을 적는다.
 
 `notify_pattern`을 지정한 `bash` 작업은 실행한 세션의 트랜스크립트에 일치한 출력을 실시간으로 표시합니다. 각 알림에는 작업과 표준 출력 또는 표준 오류 구분이 표시됩니다.
+
+`transcript.turn_usage = true`로 설정하면 이 클라이언트에서 시작한 턴이 끝날 때 소요 시간을 표시합니다. 프로바이더가 사용량을 보고하면 입력과 출력 토큰의 합계도 표시합니다.
 
 피할 수 있었던 프롬프트 캐시 미스는 관련 요청 뒤에 표시됩니다. 원인과 다시 보낸 토큰의 대략적인 수가 표시되며 프롬프트 원문과 캐시 식별자는 빠집니다. 모델이나 프로바이더 변경, 만료 또는 이유가 기록된 무효화에는 표식을 붙이지 않습니다. 데몬의 `config.toml`에서 `[features] kv_cache_miss_notices = false`를 지정하면 보고를 끌 수 있습니다.
 
@@ -339,6 +348,8 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 `/model <name>`은 목록 없이 바로 전환한다.
 
 노력 사다리 목록은 클라이언트가 제공하는 `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`이고, 지금 단계에 `(current)`를 붙이며 행마다 그 단계가 모델에 무엇을 요구하는지 한 줄로 미리 보여 준다. 커서와 미리보기는 그 표시된 행에서 열리므로 `enter`가 지금 단계를 그대로 확인하고 `none`으로 내려가지 않는다. 세션이 단계를 알리지 않거나 사다리에 없는 단계를 알리면 첫 행에서 연다. 행은 클라이언트의 것이므로 목록은 여는 순간 이미 완성되어 있다.
+
+`models.shortlist`에 순환할 모델 ID를 지정합니다. Ctrl+P는 다음 모델로, Ctrl+Alt+P는 이전 모델로 옮깁니다. 목록 끝을 지나면 반대편으로 돌아갑니다. 클라이언트는 순환 전에 데몬의 모델 목록을 확인하고 목록에 없는 ID는 건너뜁니다.
 
 `/switch`와 `/resume`은 같은 저장 세션 목록을 다른 제목으로 연다. 최신 순이고, 행마다 세션 제목(없으면 첫 사용자 줄, 그것도 없으면 아이디)과 마지막으로 바뀐 시각을 담으며, 시각은 행 오른쪽 끝에 맞춰 두어 목록 아래로 읽힌다. 둘 다 들어가지 않는 좁은 화면은 이름을 남긴다. 지금 붙어 있는 세션에는 `(current)`가 붙는다. 미리보기는 디렉터리와 시각으로 시작하고 이어서 최신 메시지 여섯 개를 `you: …`와 `assistant: …` 줄로 보여 준다. 저장된 메시지 가운데 최신 스무 개를 읽고, 주입된 `<system-reminder>` 메시지는 사용자가 쓴 것이 아니므로 뺀다. 데몬이 다시 읽어 주지 못하는 세션은 제목을, 제목이 없으면 아이디를 이름표로 두고 머리 줄만 있는 미리보기를 쓴다.
 
