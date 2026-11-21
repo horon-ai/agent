@@ -223,15 +223,20 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
     } else if picker.kind() == Kind::Sessions {
         // A session row is pinned where it is read, so the key belongs beside
         // the one that would attach: no id has to be remembered to keep a
-        // session at the top.
+        // session at the top. Archiving is a key on the same list, so the
+        // footer names both.
         format!(
-            " {}/{} · enter select · ctrl-p pin/unpin · esc close · ↑↓ move · type to filter",
+            " {}/{} · enter attach · ctrl-p pin/unpin · ctrl+a archive · esc close · ↑↓ move · type to filter",
             picker.selection() + 1,
             picker.visible_indices().len()
         )
     } else {
+        let action = match picker.kind() {
+            Kind::ArchivedSessions => "enter restore",
+            _ => "enter select",
+        };
         format!(
-            " {}/{} · enter select · esc close · ↑↓ move · type to filter",
+            " {}/{} · {action} · esc close · ↑↓ move · type to filter",
             picker.selection() + 1,
             picker.visible_indices().len()
         )

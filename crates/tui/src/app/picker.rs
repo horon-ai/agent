@@ -7,7 +7,7 @@
 //! parked prompts, the turn flag and the scroll offset all belong to the session
 //! that was open, so they are cleared before the stored conversation is replayed.
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
@@ -227,6 +227,38 @@ impl App {
         self.fill(Kind::Sessions, rows);
     }
 
+    pub(crate) fn show_archived_sessions(&mut self, sessions: Vec<SessionRow>) {
+        self.fill_session_rows(Kind::ArchivedSessions, sessions);
+    }
+
+    pub(crate) fn open_archived_sessions(&mut self) -> Option<Action> {
+        self.picker = Some(Picker::loading(
+            Kind::ArchivedSessions,
+            "Archived sessions",
+            "no archived sessions in this directory",
+        ));
+        Some(Action::ArchivedSessions)
+    }
+
+    fn fill_session_rows(&mut self, kind: Kind, sessions: Vec<SessionRow>) {
+        let rows = sessions
+            .into_iter()
+            .map(|session| {
+                let preview = session.preview;
+                let mut search = Vec::new();
+                if let Some((_head, conversation)) = preview.split_first() {
+                    search.extend_from_slice(conversation);
+                }
+                Row::new(session.label, session.id)
+                    .with_detail(session.detail)
+                    .marked(session.current)
+                    .with_preview(preview)
+                    .with_search(search)
+            })
+            .collect();
+        self.fill(kind, rows);
+    }
+
     /// The session rows in display order: pinned first, newest first in each.
     ///
     /// The split keeps the order the bridge sent inside both groups, so a pin
@@ -282,6 +314,18 @@ impl App {
     /// closes it cannot leave a half-updated screen behind.
     pub(crate) fn picker_key(&mut self, key: KeyEvent) -> Option<Action> {
         let mut picker = self.picker.take()?;
+        if picker.kind() == Kind::Sessions && key.code == KeyCode::Char('a') && key.modifiers == KeyModifiers::CONTROL {
+            let Some(row) = picker.selected_row() else {
+                self.picker = Some(picker);
+                return None;
+            };
+            if row.current {
+                self.picker = Some(picker);
+                self.warn("leave the current session before archiving it");
+                return None;
+            }
+            return Some(Action::Archive(row.value.clone()));
+        }
         match picker.on_key(key) {
             Outcome::Handled => {
                 self.picker = Some(picker);
@@ -312,6 +356,7 @@ impl App {
                     self.transcript.push_notice(format!("attaching to {label}"));
                     Some(Action::Attach(value))
                 }
+                Kind::ArchivedSessions => Some(Action::Restore(value)),
                 // A recalled draft is an edit, not a send: the picker closes and
                 // the editor holds the text, and no action leaves the client.
                 Kind::History => {
