@@ -585,6 +585,7 @@ def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
         start = len(terminal.transcript)
         terminal.send(f"{prompt}\r")
         terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
+        terminal.read_until("idle", STEP_TIMEOUT, f"turn ended for {label}", since=start)
         with urlopen(base_url + "/__stats", timeout=5) as response:
             requests = json.load(response)["requests"]
         request = next(
