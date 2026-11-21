@@ -142,6 +142,7 @@ fn subscribe_request(id: u64, cwd: Option<&std::path::Path>, resume: Option<&str
         continue_on_disconnect: false,
         terminal_env: crate::terminal_launch::snapshot_client_terminal_env(),
         acp: None,
+        history_message_ids: false,
     }
 }
 

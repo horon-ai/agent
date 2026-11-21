@@ -92,6 +92,7 @@ impl Client {
             continue_on_disconnect: false,
             terminal_env: crate::terminal_launch::snapshot_client_terminal_env(),
             acp: None,
+            history_message_ids: false,
         };
         let json = serde_json::to_string(&request)? + "\n";
         self.writer.write_all(json.as_bytes()).await?;

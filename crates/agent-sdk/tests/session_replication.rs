@@ -205,6 +205,8 @@ fn heads_selection_and_history_page_round_trip() {
                 head: head_event_id.clone().unwrap_or_else(|| "h1".into()),
                 messages: vec![horon_agent_harness_api::HistoryMessage {
                     response_stats: None,
+                    answer: None,
+                    message_id: None,
                     role: "user".into(),
                     content: format!("limit={limit:?} before={before_event_id:?}"),
                 }],

@@ -258,6 +258,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "links" => "list the http(s) links in recent answers and open one",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
+        "note" => "note, list or remove a local note on a transcript message",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",

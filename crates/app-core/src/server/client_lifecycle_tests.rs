@@ -1068,7 +1068,6 @@ impl Provider for PanicOnForkProvider {
 fn ping_request_is_lightweight_control_request() {
     assert!((Request::Ping { id: 1 }).is_lightweight_control_request());
 }
-
 fn subscribe_request(working_dir: Option<&str>) -> Request {
     Request::Subscribe {
         system_prompt: None,
@@ -1084,6 +1083,7 @@ fn subscribe_request(working_dir: Option<&str>) -> Request {
         continue_on_disconnect: false,
         terminal_env: Vec::new(),
         acp: None,
+        history_message_ids: false,
     }
 }
 

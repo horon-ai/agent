@@ -113,7 +113,7 @@ async fn handle_resume_session_allows_reconnect_takeover_with_local_history() ->
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
@@ -126,17 +126,12 @@ async fn handle_resume_session_allows_reconnect_takeover_with_local_history() ->
     assert_eq!(client_session_id, target_session_id);
 
     let disconnect_signal = disconnect_rx.recv().await;
-    assert!(
-        disconnect_signal.is_some(),
-        "old client should be told to disconnect"
-    );
+    assert!(disconnect_signal.is_some(), "old client should be told to disconnect");
 
     let connections = client_connections.read().await;
     assert!(!connections.contains_key("conn_existing"));
     assert_eq!(
-        connections
-            .get("conn_new")
-            .map(|info| info.session_id.as_str()),
+        connections.get("conn_new").map(|info| info.session_id.as_str()),
         Some(target_session_id)
     );
 

@@ -193,7 +193,7 @@ async fn cold_resume_with_agent(
         &event_history,
         &event_counter,
         &swarm_event_tx,
-        false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 
@@ -744,7 +744,7 @@ async fn cancelled_resume_releases_the_source_only_with_its_barrier() -> Result<
                     &event_history,
                     &event_counter,
                     &swarm_event_tx,
-                                        false,
+                                        crate::server::foreground_state::HistoryIds::default(),
                 ) => {}
             }
             // The handler owned the reference; a cancelled call leaves nothing.

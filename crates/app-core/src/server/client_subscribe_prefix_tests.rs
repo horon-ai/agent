@@ -29,6 +29,7 @@ fn subscribe_to(target: &str) -> Request {
         continue_on_disconnect: false,
         terminal_env: Vec::new(),
         acp: None,
+        history_message_ids: false,
     }
 }
 

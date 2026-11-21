@@ -24,6 +24,7 @@ pub mod keys;
 mod links;
 mod loop_io;
 mod markdown;
+pub mod notes;
 pub mod overlays;
 mod pane;
 pub mod paste;
@@ -339,6 +340,11 @@ fn run_interactive(
     // keystroke may read this machine's disk for the session.
     let local = runtime.local;
     let mut app = App::new(runtime.description.clone(), runtime.events);
+    // Notes live in a file this client owns, read here so a replay's notes are
+    // on screen with the conversation they describe and never on a path a test
+    // or an embedded `App` writes to.
+    app.notes = notes::NoteStore::owned();
+    app.load_notes();
     // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));

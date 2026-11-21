@@ -14,6 +14,8 @@ use horon_agent_harness_api::{
 use horon_agent_session_store as store;
 use serde::Serialize;
 use serde_json::Value;
+
+use crate::message_content::answer_without_reasoning;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn handle(request: &Value, envelope_bytes: Option<usize>) -> Vec<Outbound> {
@@ -392,6 +394,8 @@ fn history_page(
             response_stats: None,
             role: value["role"].as_str().unwrap_or_default().to_owned(),
             content: flatten_content(&value["content"]),
+            answer: answer_without_reasoning(&value["content"]),
+            message_id: Some(message.message.id.clone()),
         });
     }
     let event = ApiEvent::SessionHistoryPage {

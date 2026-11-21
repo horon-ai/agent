@@ -183,6 +183,8 @@ pub enum Source<'a> {
         style: RowStyle,
         /// Columns a continuation row of the output keeps.
         indent: usize,
+        /// Lines under the output: a reader's note sits here.
+        tail: Vec<Indented>,
     },
 }
 
@@ -200,6 +202,14 @@ impl<'a> Source<'a> {
         }
     }
 
+    /// Put `line` under the block.
+    pub fn append(&mut self, line: Indented) {
+        match self {
+            Self::Built(lines) => lines.push(line),
+            Self::Output { tail, .. } => tail.push(line),
+        }
+    }
+
     /// Rows the block occupies once wrapped, counted without building any.
     pub fn height(&self, width: u16) -> usize {
         let width = usize::from(width);
@@ -212,6 +222,7 @@ impl<'a> Source<'a> {
                 prefix,
                 style,
                 indent,
+                tail,
             } => {
                 let above: usize = head.iter().map(|line| line_height(&mut cells, line, width)).sum();
                 let rows: usize = text
@@ -221,7 +232,8 @@ impl<'a> Source<'a> {
                         break_rows(&cells, width, *indent, |_| {})
                     })
                     .sum();
-                above + rows
+                let below: usize = tail.iter().map(|line| line_height(&mut cells, line, width)).sum();
+                above + rows + below
             }
         }
     }
@@ -260,7 +272,16 @@ impl<'a> Source<'a> {
                 prefix,
                 style,
                 indent,
+                tail,
             } => {
+                for line in tail.iter().rev() {
+                    if take == 0 {
+                        break;
+                    }
+                    fill(&mut cells, line.line());
+                    let window = take_from_line(&cells, line.line(), width, line.indent(), &mut skip, &mut take);
+                    rows.extend(window.into_iter().rev());
+                }
                 for row in text.lines().rev() {
                     if take == 0 {
                         break;
@@ -637,6 +658,7 @@ mod tests {
             prefix: "  ",
             style: RowStyle::Plain(style),
             indent: 2,
+            tail: Vec::new(),
         };
         // The same block with its output rows built: what the pane used to draw.
         let mut eager = vec![head];
@@ -656,6 +678,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn an_appended_line_draws_under_the_block() {
+        // What the transcript pane uses for a note under a message.
+        let mut built = Source::built(vec![Indented::plain(Line::from("message"))]);
+        built.append(Indented::plain(Line::from("note: mine")));
+        assert_eq!(built.height(40), 2);
+        let rows = built.rows_from_end(40, FromEnd::new(0, 2));
+        assert_eq!(
+            rows.iter().map(text_of).collect::<Vec<_>>(),
+            vec!["message", "note: mine"]
+        );
+
+        // A note never lands on an output block, but the tail keeps the same
+        // offer: after the output, not before it.
+        let text = String::from("output");
+        let mut output = Source::Output {
+            head: vec![Indented::plain(Line::from("head"))],
+            text: &text,
+            prefix: "",
+            style: RowStyle::Plain(Style::default()),
+            indent: 0,
+            tail: Vec::new(),
+        };
+        output.append(Indented::plain(Line::from("note: mine")));
+        assert_eq!(output.height(40), 3);
+        let rows = output.rows_from_end(40, FromEnd::new(0, 3));
+        assert_eq!(
+            rows.iter().map(text_of).collect::<Vec<_>>(),
+            vec!["head", "output", "note: mine"]
+        );
     }
 
     #[test]
@@ -688,6 +742,7 @@ mod tests {
             prefix: "  ",
             style: RowStyle::Plain(Style::default()),
             indent: 2,
+            tail: Vec::new(),
         };
         assert_eq!(source.height(120), 2001);
         assert_eq!(built_rows(), 0, "counting a block built rows");

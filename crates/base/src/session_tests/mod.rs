@@ -38,6 +38,34 @@ impl Drop for EnvVarGuard {
 #[path = "cases.rs"]
 pub(super) mod cases;
 
+#[test]
+fn rendered_rows_name_the_stored_message_they_came_from() {
+    let mut session = Session::create(None, None);
+    let prompt = session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "question".to_string(),
+            cache_control: None,
+        }],
+    );
+    let answer = session.add_message(
+        Role::Assistant,
+        vec![
+            ContentBlock::Text {
+                text: "answer".to_string(),
+                cache_control: None,
+            },
+            ContentBlock::ReasoningTrace {
+                text: "thinking".to_string(),
+            },
+        ],
+    );
+
+    let rendered = render_messages(&session);
+    let ids: Vec<Option<&str>> = rendered.iter().map(|row| row.stored_id.as_deref()).collect();
+    assert_eq!(ids, vec![Some(prompt.as_str()), Some(answer.as_str())]);
+}
+
 #[path = "tool_arg_repair.rs"]
 mod tool_arg_repair;
 

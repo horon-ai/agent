@@ -3,7 +3,7 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::{app::App, item_lines, scroll, tool_expand, transcript::Item, wrap};
+use crate::{app::App, item_lines, notes, scroll, tool_expand, transcript::Item, wrap};
 
 /// The transcript pane: the rows on screen, and the follow-bottom indicator.
 ///
@@ -108,12 +108,22 @@ fn block_source<'a>(
     look: &item_lines::Look<'_>,
     expand: Option<&tool_expand::Frame<'a>>,
     first: bool,
+    frame: &notes::Frame<'_>,
+    index: usize,
 ) -> wrap::Source<'a> {
     let mut source = match block {
         Block::Item(item) => item_lines::source(item, look, expand),
         Block::Reasoning(text) => wrap::Source::built(item_lines::reasoning(text, look)),
         Block::Answer(text) => wrap::Source::built(item_lines::answer(text, look)),
     };
+    // The reader's note hangs under the message it describes, separated by one
+    // blank row so it reads as a mark beside the conversation rather than as
+    // more of it. It is part of the block, so the height this source reports
+    // already includes it and a held view keeps its place.
+    if let Some(text) = frame.at(index) {
+        source.append(wrap::Indented::plain(Line::default()));
+        source.append(item_lines::note(text, look));
+    }
     // A turn starts one blank row below the previous one, so a new message is
     // not read as more of the answer above it. It is a line of the block, so a
     // window that starts at the block's first row still counts it.
@@ -138,6 +148,8 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         symbols,
         settings,
         bindings,
+        notes: note_store,
+        session_id,
         ..
     } = app;
     let look = item_lines::Look {
@@ -155,10 +167,16 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
     // height measured here has to know about the expansion: a view held above
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
+    let frame = notes::Frame::from_parts(
+        note_store,
+        session_id.as_deref(),
+        transcript.items(),
+        transcript.stored_ids(),
+    );
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
         // Counted, not built: the rows of a block that stays off screen are not
         // made to measure it.
-        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0).height(width),
+        Some(item) => block_source(&Block::Item(item), &look, Some(&expand), index == 0, &frame, index).height(width),
         None => 0,
     });
 }
@@ -176,6 +194,7 @@ fn open_rows(text: Option<&str>, look: &item_lines::Look<'_>, reasoning: bool) -
 fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
+    let frame = notes::Frame::new(app);
     let mut rows: Vec<Line<'static>> = Vec::new();
     let blocks = blocks(app);
     for (index, block) in blocks.iter().enumerate().rev() {
@@ -185,7 +204,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
         // Only the rows this block contributes to the pane are built, and they
         // are built from the end: a block taller than the pane costs the pane's
         // rows, not its own.
-        let source = block_source(block, &look, Some(&expand), index == 0);
+        let source = block_source(block, &look, Some(&expand), index == 0, &frame, index);
         let wanted = capacity - rows.len();
         let window = source.rows_from_end(width, wrap::FromEnd::new(0, wanted));
         rows.extend(window.into_iter().rev());
@@ -202,6 +221,7 @@ fn follow_rows(app: &App, width: u16, capacity: usize) -> Vec<Line<'static>> {
 fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<'static>> {
     let look = item_lines::Look::new(app, width);
     let expand = tool_expand::Frame::new(app.transcript.expand_state(), &app.bindings);
+    let frame = notes::Frame::new(app);
     let blocks = blocks(app);
     let measured = block_heights(app);
     // A measurement taken before the block list changed says nothing about this
@@ -222,7 +242,7 @@ fn held_rows(app: &App, width: u16, offset: usize, capacity: usize) -> Vec<Line<
         if rows.len() >= capacity {
             break;
         }
-        let source = block_source(block, &look, Some(&expand), index == 0);
+        let source = block_source(block, &look, Some(&expand), index == 0, &frame, index);
         let wanted = capacity - rows.len();
         // The rows below the view's bottom edge are counted and dropped; what
         // is built is the window above them that the pane fills with.

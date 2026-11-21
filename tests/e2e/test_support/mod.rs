@@ -341,6 +341,7 @@ impl WsTestClient {
             allow_session_takeover: false,
             terminal_env: Vec::new(),
             acp: None,
+            history_message_ids: false,
         })
         .await
     }

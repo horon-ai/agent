@@ -96,7 +96,7 @@ async fn handle_resume_session_keeps_the_sink_when_the_id_is_unchanged() -> Resu
         &event_history,
         &event_counter,
         &swarm_event_tx,
-                false,
+        crate::server::foreground_state::HistoryIds::default(),
     )
     .await?;
 

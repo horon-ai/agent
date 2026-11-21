@@ -58,7 +58,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 
 ## 사용자 파일
 
-다섯 파일이 클라이언트의 동작을 정한다. 넷은 `$HORON_HOME`(설정하지 않으면 `~/.horon`) 아래에, 하나는 프로젝트 아래에 둔다.
+여섯 파일이 클라이언트의 동작을 정한다. 다섯은 `$HORON_HOME`(설정하지 않으면 `~/.horon`) 아래에, 하나는 프로젝트 아래에 둔다.
 
 | 파일 | 범위 | 역할 |
 | --- | --- | --- |
@@ -66,9 +66,10 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `$HORON_HOME/themes/<name>.json` | 모든 프로젝트 | 색 테마와 글리프 프리셋 |
 | `$HORON_HOME/keybindings.toml` | 모든 프로젝트 | 다시 배치한 키 |
 | `$HORON_HOME/commands/<name>.md` | 모든 프로젝트 | 슬래시 명령 |
+| `$HORON_HOME/tui-notes.json` | 모든 프로젝트 | 전사 메시지에 붙인 로컬 메모. `/note`가 쓴다 |
 | `<cwd>/.horon/commands/<name>.md` | 프로젝트 하나 | 그 프로젝트의 슬래시 명령 |
 
-다섯 파일은 시작할 때 읽고 클라이언트가 도는 동안 다시 읽는다. 설정 파일은 1초에 한 번 확인하고, 테마 파일과 키 파일도 같은 주기를 따른다.
+설정 파일 다섯은 시작할 때 읽고 클라이언트가 도는 동안 다시 읽는다. 설정 파일은 1초에 한 번 확인하고, 테마 파일과 키 파일도 같은 주기를 따른다. `tui-notes.json`은 시작할 때 한 번 읽고 `/note`가 쓰며, 소유자만 읽을 수 있게(`0600`) 만들고, 더 넓은 권한으로 발견한 파일은 다음 읽기에서 좁힌다.
 
 `/info`는 터미널 호출에 적용되는 데몬의 `approval mode`를 보여 줍니다. 기본값은 `yolo`입니다. 변경하려면 데몬의 `config.toml`에서 `[tools] approval_mode`를 지정합니다.
 
@@ -318,6 +319,10 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 `transcript.markdown = false`는 이 렌더링을 끄고 같은 글을 표시까지 그대로 그린다.
 
+메시지마다 짧은 메모를 하나 붙일 수 있다. 메모는 메시지 아래에 `note: …`로 강조해 표시한다. `/note <text>`는 가장 최근 메시지에 붙인다. `/note add [<주소>] <text>`는 주소가 가리키는 메시지나 가장 최근 메시지에 붙인다. `/note edit <주소> <text>`는 이미 있는 메모만 바꾸고 메모가 없으면 거부한다. `/note remove [<주소>]`는 메모를 지운다. `/note`는 세션에 붙인 메모를 주소와 메시지 인용문과 함께 나열한다. 주소는 `u<n>`이나 `a<n>`으로, 세션에서 사용자 메시지와 어시스턴트 메시지에 각각 매긴 순번이다. 메모는 세션 ID와 조회할 수 있을 때의 저장 메시지 ID를 기록한다. 실시간 메시지나 이전 데몬처럼 어느 한쪽에 저장 ID가 없으면 공백을 정리한 본문과 같은 본문의 등장 순서로 맞춘다. 세션에 없는 주소에는 메모를 붙일 수 없다. 메시지가 사라진 메모는 처음 적은 주소로 지울 수 있다. 이력 응답에 답변 필드가 있으면 클라이언트는 그 필드를 사용하고 이전 응답에서는 데몬의 추론 마크업을 해석한다. 추론 표시 여부는 `transcript.show_reasoning`을 따른다.
+
+메모는 읽는 사람의 파일이다. 어떤 명령도 메모를 보내지 않고, 메모는 대화에 섞이지 않으며, 세션 기록의 일부가 아니다. `/note prune`은 메모를 가진 세션마다 하네스에 물어 더 이상 없는 아이디의 메모를 지운다. 보관(아카이브)된 세션이라서 답하는 경우에는 메모를 남긴다. 저장할 때는 잠금 아래에서 파일을 다시 읽고 이 클라이언트가 바꾼 세션만 합치므로, 같은 순간에 쓰는 두 번째 `horon-tui`도 자기 세션을 지킨다. 이 빌드가 읽을 수 없는 파일은 덮어쓰지 않고 `tui-notes.json.corrupt`로 옮기며, 더 새로운 스키마의 파일은 알리고 그대로 둔다.
+
 ## 세션 할 일
 
 `Todos` 영역은 연결한 세션에 저장된 할 일에서 현재 작업과 차단된 항목을 먼저 보여 줍니다. 각 항목에는 그룹 이름이 표시되고 차단된 항목에는 사유가 붙습니다. 제목에는 완료한 항목 수와 화면에 들어가지 않은 미완료 항목 수가 표시됩니다. 터미널 높이가 낮으면 대화와 입력 줄을 먼저 표시합니다.
@@ -430,6 +435,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/links` | 최근 어시스턴트 답변의 링크를 나열하고 선택한 주소를 연다 |
 | `/model [name]` | 목록에서 모델을 고르거나, 이름을 준 모델로 전환한다 |
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
+| `/note [add\|edit\|remove\|list\|prune] [주소] [text]` | 전사 메시지의 로컬 메모를 남기거나 나열하거나 지운다 |
 | `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
 | `/record [path\|stop\|status]` | 로컬 대화 기록을 시작하거나 멈추거나 확인한다 |
@@ -439,9 +445,9 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 
-이 표에는 클라이언트가 처리하는 내장 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 열일곱 명령을 이름 순으로 적었다.
 
-`/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아옵니다. Delete로 메시지를 삭제하고 Alt+위쪽 또는 Alt+아래쪽 방향 키로 순서를 바꿉니다. 이미 전송 중인 메시지는 목록에서 빠집니다. 편집한 초안은 준비됐을 때 다시 보낼 수 있습니다.
+`/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
 터미널에는 OSC 52로 복사를 요청합니다. `HORON_TUI_OSC52=0`으로 끌 수 있습니다. 멀티플렉서나 SSH에서 터미널로 복사 요청을 전달하도록 설정했다면 `HORON_TUI_OSC52=1`로 사용할 수 있습니다. 터미널이 요청을 처리할 수 없으면 화면에서 텍스트를 직접 선택할 수 있습니다.
 
@@ -462,6 +468,8 @@ built-in commands:
   /links               list the http(s) links in recent answers and open one
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
+  /note                note, list or remove a local note on a transcript message
+  /queue               edit, remove or reorder the messages waiting for the turn to end
   /quit                leave
   /record              record the conversation to a local file, or stop (stop, status)
   /replay              play a recorded conversation (path, stop), or the newest one
