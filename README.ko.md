@@ -103,6 +103,9 @@ horon run "summarize this repo"
 
 프로파일을 정하지 않으면 모델 호출은 네트워크에 닿기 전에 멈추고 빠진 `[providers.<name>]` 표를 알려 준다. `headers`, `extra_body`, `context_window`와 `openrouter`·`zai`·`kimi`·`ollama` 같은 내장 프로파일까지 모든 키는 [docs/provider/MODEL.ko.md](docs/provider/MODEL.ko.md)에 있다.
 
+이름 있는 프로파일에 `stream_first_event_timeout_secs`와 `stream_idle_timeout_secs`를 두면 첫 응답과 응답 도중 대기 시간을 따로 제한할 수 있다.
+`max_in_flight_requests`를 지정하면 같은 프로파일을 쓰는 여러 세션의 동시 요청 수를 제한할 수 있다.
+
 ## 실행 방법
 
 인자 없는 `horon`만 TUI 모드를 열고, 아래 하위 명령은 모두 헤드리스 모드다. `horon repl`은 전체 화면 클라이언트 없이 쓰려는 사람을 위해 에이전트 바이너리가 직접 제공하는 단순한 줄 단위 입력 프롬프트다.
@@ -124,6 +127,8 @@ horon run "summarize this repo"
 `horon-tui`가 TUI 모드다. 거슬러 읽을 수 있고 모델의 마크다운을 렌더링하는 대화 기록 창, 여덟 행까지 자라는 여러 줄 편집기, 도구 호출을 붙잡고 `y`, `a`, `n`, `esc`를 받는 승인 프롬프트, 모델·세션 선택 목록, `/settings` 뒤에 있는 설정 화면을 제공한다. 별도 패키지(`crates/tui`)이고 `horon-agent-sdk`로 만들어 다른 클라이언트와 같은 데몬·세션에 붙는다. 그래서 터미널 라이브러리가 에이전트 바이너리에 들어가지 않는다.
 
 터미널에서 `horon`, `hrn`, `horon-agent`를 인자 없이 실행하면 시작한다. 서버가 없으면 띄운 뒤 자기 프로세스를 에이전트 옆의 `horon-tui`로 넘긴다. 이때 새 세션이 실행한 디렉터리에 속하도록 작업 디렉터리를 넘기고, `--resume <id>`를 줬다면 세션 번호도 넘긴다. 먼저 조건 셋을 확인한다. 표준 입력과 표준 출력이 모두 터미널이고, `HORON_NO_TUI`가 설정되지 않았고, 실행 중인 파일 옆에 `horon-tui`가 있어야 한다. 파이프나 리디렉션이면 클라이언트 대신 그 문장을 남기므로 스크립트와 CI는 이유를 받는다. 조건이 맞지 않으면 어떤 조건인지 알리고, 대화형 클라이언트 설치 명령을 안내한 뒤 0이 아닌 코드로 끝난다.
+
+현재 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 다시 열려면 `horon --continue`를 실행한다. 특정 세션을 고르려면 `--resume <id>`를 사용한다.
 
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 
@@ -241,6 +246,7 @@ jcode v1.0.1(릴리스 `v1.0.1`, 커밋 `10114429c8133994861d6c915a2483d397c0f7c
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] output_column_cap` | `0`(꺼짐) | 텍스트 미리보기 한 줄에 표시할 유니코드 문자 수(양의 정수) |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full`(정전에도 기록이 남는다) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0`이면 끈다 |

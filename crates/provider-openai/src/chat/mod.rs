@@ -12,6 +12,7 @@ pub mod stream;
 pub mod transport;
 
 mod prompt_cache_memo;
+mod stream_timeout;
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -44,6 +45,7 @@ use crate::wire::sse::WireSseStream;
 use crate::wire::turns;
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::StreamExt;
 use horon_agent_message_types::{Message, ToolDefinition, messages_with_dynamic_system_context};
 use horon_agent_provider_core::{
     EventStream, ModelRoute, Provider, ProviderRequestContext, shared_http_client,
@@ -52,6 +54,9 @@ use horon_agent_provider_core::{
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::Semaphore;
+use tokio::time::{Instant, timeout_at};
 
 /// Stable, machine-facing provider name.
 pub const PROVIDER_NAME: &str = "openai-compatible";
@@ -113,6 +118,9 @@ pub struct OpenAiCompatibleProvider {
     model_reasoning_efforts: BTreeMap<String, String>,
     /// Which request and response shape this profile speaks.
     wire: WireProtocol,
+    stream_first_event_timeout: Option<Duration>,
+    stream_idle_timeout: Option<Duration>,
+    request_slots: Option<Arc<Semaphore>>,
 }
 
 impl OpenAiCompatibleProvider {
@@ -160,7 +168,23 @@ impl OpenAiCompatibleProvider {
             reasoning_effort: Mutex::new(None),
             model_reasoning_efforts: BTreeMap::new(),
             wire: WireProtocol::default(),
+            stream_first_event_timeout: None,
+            stream_idle_timeout: None,
+            request_slots: None,
         })
+    }
+
+    /// Set independent limits for startup and silence during a streamed response.
+    pub fn with_stream_timeouts(mut self, first_event: Option<Duration>, idle: Option<Duration>) -> Self {
+        self.stream_first_event_timeout = first_event;
+        self.stream_idle_timeout = idle;
+        self
+    }
+
+    /// Share a named profile's request limit across its runtimes and forks.
+    pub fn with_request_slots(mut self, slots: Option<Arc<Semaphore>>) -> Self {
+        self.request_slots = slots;
+        self
     }
 
     /// Select the request and response shape this profile speaks.
@@ -467,6 +491,11 @@ impl OpenAiCompatibleProvider {
             );
         }
 
+        // Dropping this future while queued removes the waiter before any POST.
+        let permit = match &self.request_slots {
+            Some(slots) => Some(Arc::clone(slots).acquire_owned().await?),
+            None => None,
+        };
         let endpoint = self.endpoint();
         let label = self.wire.label();
         let mut attempts = 0u8;
@@ -474,13 +503,31 @@ impl OpenAiCompatibleProvider {
             // `Bytes` so the failed-request bytes stay available to the
             // classifier without copying what was just serialized.
             let body: bytes::Bytes = self.build_body(messages, tools, system, context).into();
-            let response = self.post_stream(&endpoint, body.clone()).await?;
+            let first_deadline = self.stream_first_event_timeout.map(|budget| Instant::now() + budget);
+            let post = self.post_stream(&endpoint, body.clone());
+            let response = match first_deadline {
+                Some(deadline) => timeout_at(deadline, post)
+                    .await
+                    .map_err(|_| stream_timeout::first_event_error())??,
+                None => post.await?,
+            };
 
             let retry_after = horon_agent_provider_core::retry_after::retry_after(response.headers());
             let status = response.status();
             if status.is_success() {
                 let redact: Option<Arc<str>> = self.api_key.as_deref().map(Arc::from);
-                return Ok(self.stream_for(response, redact));
+                let stream = stream_timeout::apply(
+                    self.stream_for(response, redact),
+                    first_deadline,
+                    self.stream_idle_timeout,
+                );
+                return Ok(match permit {
+                    Some(permit) => Box::pin(futures::stream::unfold(
+                        (stream, permit),
+                        |(mut stream, permit)| async move { stream.next().await.map(|event| (event, (stream, permit))) },
+                    )),
+                    None => stream,
+                });
             }
 
             let error_body = horon_agent_provider_core::http_error_body(response, self.wire.error_context()).await;
@@ -829,6 +876,9 @@ impl OpenAiCompatibleProvider {
             reasoning_effort: Mutex::new(self.reasoning_effort()),
             model_reasoning_efforts: self.model_reasoning_efforts.clone(),
             wire: self.wire,
+            stream_first_event_timeout: self.stream_first_event_timeout,
+            stream_idle_timeout: self.stream_idle_timeout,
+            request_slots: self.request_slots.clone(),
         }
     }
 }

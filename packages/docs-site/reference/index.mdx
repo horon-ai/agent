@@ -6,7 +6,7 @@ description: "How the reference documentation is organized, the fixed requiremen
 
 {/* Generated from docs/README.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
 
-This folder describes only how horon agent behaves today. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
+This folder describes how horon agent behaves today and labels proposed designs separately from current behavior. Every document ships as an English `X.md` and a Korean `X.ko.md` in the same folder; English is the default, and the Korean files are the `.ko.md` siblings. Paths, commands, and identifiers keep their original spelling. File names are uppercase and each topic gets its own subfolder.
 
 The documents are embedded in the binary at build time (`crates/app-core/build.rs` reads the subfolders and skips `.ko.md`) and the `horon_agent_docs` tool reads them. Moving or deleting a document updates the paths left in code, scripts, and tests in the same change. The site at [agent.horon.ai](https://agent.horon.ai) shows them under its Reference tab: `scripts/ci/sync_docs_site.py` writes `packages/docs-site/reference/` from this folder, and the guides in the rest of `packages/docs-site` are written by hand, so a behavior change that a guide also describes is edited in both places.
 
@@ -35,7 +35,9 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | `protocol/` | [`ACP.md`](/reference/protocol/acp) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
 | | [`HARNESS_API.md`](/reference/protocol/harness-api) | Harness API credential setup and the request and event surface |
 | | [`SESSION_STORE.md`](/reference/protocol/session-store) | Session event storage format, delivery contract, writer pool, durable runtime journal |
+| | [`COLLABORATION.md`](/reference/protocol/collaboration) | Proposed live session invitations and participant permissions |
 | | [`RPC.md`](/reference/protocol/rpc) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
+| | [`SHARING.md`](/reference/protocol/sharing) | Proposed encrypted session sharing and revocation |
 | `runtime/` | [`TOOLS.md`](/reference/runtime/tools) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
 | | [`TOOL_SCHEDULING.md`](/reference/runtime/tool-scheduling) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](/reference/runtime/turns) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |

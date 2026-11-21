@@ -103,6 +103,9 @@ horon run "summarize this repo"
 
 With no profile configured, a model call stops before the network and names the missing `[providers.<name>]` table. [docs/provider/MODEL.md](docs/provider/MODEL.md) lists every key: `headers`, `extra_body`, `context_window`, and built-in profiles such as `openrouter`, `zai`, `kimi` and `ollama`.
 
+Set `stream_first_event_timeout_secs` and `stream_idle_timeout_secs` in a named profile to limit startup and pauses during a streamed reply independently.
+Set `max_in_flight_requests` to cap concurrent requests across sessions using the same profile.
+
 ## Ways to run it
 
 Headless mode covers every subcommand below except bare `horon`, which opens TUI mode. `horon repl` is a plain line prompt served by the agent binary itself, for someone who wants no full-screen client.
@@ -124,6 +127,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 `horon-tui` is TUI mode: a transcript pane that scrolls back and renders the model's Markdown, a multi-line editor that grows to eight rows, an approval prompt that parks a tool call and takes `y`, `a`, `n` or `esc`, model and session pickers, and a settings screen behind `/settings`. It is a separate package (`crates/tui`) on `horon-agent-sdk` and attaches to the same daemon and sessions as every other client, which is what keeps terminal libraries out of the agent binary.
 
 It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The command starts the server if none is running, then replaces itself with the `horon-tui` file beside the agent, handing over the working directory so the new session belongs to the directory you ran it from, and the session id when you passed `--resume <id>`. Three conditions are checked first: stdin and stdout are both terminals, `HORON_NO_TUI` is unset, and `horon-tui` sits next to the running executable. A pipe or a redirect prints that sentence instead, so scripts and CI get the reason rather than a client. When a condition fails, the command names it, prints the install hint for the interactive client, and exits non-zero.
+
+Run `horon --continue` to reopen the most recently active saved session in the current working directory. Use `--resume <id>` to pick a specific session.
 
 The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. That archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
 
@@ -241,6 +246,7 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
 | `[server] idle_hibernation_secs` | `1800` | `0` disables |

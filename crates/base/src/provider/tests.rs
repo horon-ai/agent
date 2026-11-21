@@ -1023,3 +1023,155 @@ id = "effort-none"
         assert_eq!(server.request_count(), 3);
     });
 }
+
+async fn stalled_stream_endpoint(initial_events: &str) -> String {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fixture");
+    let address = listener.local_addr().expect("fixture address");
+    let initial_events = initial_events.to_owned();
+    tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.expect("accept request");
+        let mut socket = BufReader::new(socket);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let bytes = socket.read_line(&mut line).await.expect("read request headers");
+            assert_ne!(bytes, 0, "request ended before its headers");
+            if line == "\r\n" {
+                break;
+            }
+        }
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+             Transfer-Encoding: chunked\r\n\r\n{:x}\r\n{}\r\n",
+            initial_events.len(),
+            initial_events
+        );
+        socket
+            .get_mut()
+            .write_all(response.as_bytes())
+            .await
+            .expect("send events");
+        // Keep the connection open without finishing the chunked body.
+        std::future::pending::<()>().await;
+    });
+    format!("http://{address}/v1")
+}
+
+async fn stalled_profile_stream(initial_events: &str, first: u32, idle: u32) -> EventStream {
+    let base_url = stalled_stream_endpoint(initial_events).await;
+    let config = toml::from_str(&format!(
+        "base_url = '{base_url}'\nauth = 'none'\ndefault_model = 'fixture'\n\
+         stream_first_event_timeout_secs = {first}\nstream_idle_timeout_secs = {idle}"
+    ))
+    .expect("parse profile settings");
+    let provider = external::build_named_openai_compatible_runtime("fixture", &config).expect("build profile");
+    provider
+        .fork()
+        .complete(&[Message::user("test")], &[], "", None)
+        .await
+        .expect("fixture returns response headers")
+}
+
+#[tokio::test]
+async fn profile_first_event_timeout_ignores_keepalives_and_role_only_chunks() {
+    use futures::StreamExt;
+    let mut stream = stalled_profile_stream(
+        ": keepalive\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}\n\n",
+        1,
+        5,
+    )
+    .await;
+    let next = tokio::time::timeout(std::time::Duration::from_secs(3), stream.next())
+        .await
+        .expect("first-event deadline expires")
+        .expect("stream reports an error")
+        .expect_err("keepalive is not an answer");
+    assert!(next.to_string().contains("first meaningful event"), "{next}");
+}
+
+#[tokio::test]
+async fn profile_idle_timeout_uses_its_own_budget_after_text() {
+    use crate::message::StreamEvent;
+    use futures::StreamExt;
+    let mut stream = stalled_profile_stream(
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n",
+        5,
+        1,
+    )
+    .await;
+    assert!(matches!(stream.next().await, Some(Ok(StreamEvent::TextDelta(text))) if text == "hello"));
+    let next = tokio::time::timeout(std::time::Duration::from_secs(3), stream.next())
+        .await
+        .expect("idle deadline expires before the startup budget")
+        .expect("stream reports an error")
+        .expect_err("the established stream went silent");
+    assert!(next.to_string().contains("idle timeout"), "{next}");
+}
+
+#[tokio::test]
+async fn profile_request_limit_queues_across_runtimes_and_drops_cancelled_waiters() {
+    use std::time::Duration;
+
+    let stalled_url = stalled_stream_endpoint(": keepalive\n\n").await;
+    let fixture = RecordingServer::start();
+    let runtime = |profile_name: &str, base_url: &str| {
+        let config = toml::from_str(&format!(
+            "base_url = '{base_url}'\nauth = 'none'\ndefault_model = 'fixture'\nmax_in_flight_requests = 1"
+        ))
+        .expect("parse profile limit");
+        external::build_named_openai_compatible_runtime(profile_name, &config).expect("build profile")
+    };
+    let first = runtime("limited-fixture", &stalled_url).fork();
+    let second = runtime("limited-fixture", &fixture.base_url);
+    let independent = runtime("other-limited-fixture", &fixture.base_url);
+    let first_message = [Message::user("hold the slot")];
+    let active = first
+        .complete(&first_message, &[], "", None)
+        .await
+        .expect("the first request gets the slot");
+
+    let cancelled_message = [Message::user("cancel this waiter")];
+    let surviving_message = [Message::user("send after release")];
+    let mut cancelled = second.complete(&cancelled_message, &[], "", None);
+    let mut surviving = second.complete(&surviving_message, &[], "", None);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), &mut cancelled)
+            .await
+            .is_err(),
+        "a full profile leaves the request waiting"
+    );
+    drop(cancelled);
+    assert!(futures::poll!(&mut surviving).is_pending());
+
+    let other_message = [Message::user("independent profile")];
+    drop(
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            independent.complete(&other_message, &[], "", None),
+        )
+        .await
+        .expect("another profile can send while this slot is full")
+        .expect("the independent profile gets a response"),
+    );
+    assert_eq!(
+        fixture.request_count(),
+        1,
+        "only the independent profile sent a request"
+    );
+
+    drop(active);
+    drop(
+        tokio::time::timeout(Duration::from_secs(3), surviving)
+            .await
+            .expect("the surviving waiter takes the released slot")
+            .expect("the surviving request gets a response"),
+    );
+    assert_eq!(fixture.request_count(), 2);
+    assert_eq!(
+        fixture.last_request_body()["messages"][0]["content"],
+        "send after release"
+    );
+}

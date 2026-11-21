@@ -18,6 +18,8 @@ When a condition fails, the command prints a sentence that names the condition (
 
 A resumed session is handed over as well. `horon --resume <id>` passes `--session <id>` to the client, so the client attaches to that session instead of creating one. The socket is not passed on the command line: it is already exported as `HORON_AGENT_SOCKET`, and the client resolves the harness API socket itself.
 
+`horon --continue` selects the most recently active saved session in the working directory and hands it to the client the same way.
+
 The client reaches the daemon through the harness API bridge, and starts that bridge when no listening socket answers. The bridge serves the terminal that started it and ends with it: while a client is connected it keeps serving, and once none is it stops, as soon as the process that started it exits or after a minute without a client, releasing its single-instance lock and removing the socket file (`horon-agent-api.sock`). The next launch therefore starts a bridge from the installed release instead of reconnecting to one that stayed resident across an upgrade, and the daemon keeps running throughout. A socket file left by a bridge that was killed outright is not taken as a running bridge: `horon` and `horon-tui` check the socket with a connection, and when nothing answers they start the bridge again, which replaces the leftover file. No manual cleanup is needed.
 
 The client takes its own arguments:
@@ -382,6 +384,8 @@ Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward 
 
 Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, and the daemon also accepts a unique prefix of six or more characters. Attaching clears the screen of the old session, replays the stored conversation as user and assistant messages, adds `started a new session <id>` or `resumed <id>`, and takes the model, provider, effort and title from the new session's identity, so the status line keeps showing `provider/model`. `/new` asks for a session in this directory and moves to it the same way; the session that was left stays stored, and the client drops the events of every session it has left, so neither conversation's rows reach the other. A session change waits while a turn runs or a model or effort change is still being applied, and a new session left without a message cannot be resumed, because the daemon does not keep it.
 
+In `/switch` or `/resume`, select a saved session and press Ctrl+A to archive it. Leave the current session before archiving it. `/archived` lists archived sessions in the current directory. Press Enter on a row to restore it to the recent list.
+
 `/skills` lists the skills the harness reported for this session: the name, the harness's description in the second column, and a preview naming the file the skill was read from and the tools it may use, ending with the line that says `enter` puts the invocation in the draft. Choosing a row writes `/skill:<name>` and a trailing space into the editor without sending it, so the request after it is the user's to type.
 
 `/links` lists HTTP and HTTPS links from the eight most recent assistant answers, newest first. Choose a row with Enter to open the displayed URL in the system browser. Esc closes the list. The picker skips malformed URLs, local files and links with embedded credentials.
@@ -429,8 +433,11 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 
 | Command | Effect |
 | --- | --- |
+| `/archived` | Restore a session from this directory's archived list |
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
-| `/clear` | Clear the transcript pane |
+| `/clear` | Clear only the transcript pane |
+| `/clear-context` | Start a fresh context for the model in the current session and keep the saved conversation |
+| `/compact` | Ask the configured model to summarize older context in place and keep the saved conversation |
 | `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
@@ -451,7 +458,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/skills` | List the skills the harness reports, and put one in the draft |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-one commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-four commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -467,8 +474,11 @@ The harness commands run in the attached runtime and never reach the model as a 
 
 ```text
 built-in commands:
+  /archived            list archived sessions in this directory; Enter restores one
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
-  /clear               clear the transcript
+  /clear               clear only the transcript pane
+  /clear-context       start fresh model context and keep the saved conversation
+  /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
