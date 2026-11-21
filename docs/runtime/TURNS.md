@@ -658,6 +658,12 @@ Tests: `crates/app-core/src/agent/tool_result_aging/tests.rs` covers the marker
 guard and the batch gate; `crates/compaction-core/src/pruning.rs` covers the
 newest selection.
 
+## Run deadline
+
+Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The timer starts after setup and accepts positive seconds, including fractions. At expiry, Horon cancels the turn and gives it up to one second to settle. The process exits with status `124`.
+
+Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
+
 ## `--resume` behaviour
 
 Passing `--resume` with no value exits with a session picker error before the daemon starts.

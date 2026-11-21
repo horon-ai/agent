@@ -212,6 +212,14 @@ pub fn draw(frame: &mut Frame<'_>, area: Rect, picker: &mut Picker, theme: &Them
 
     let footer = if picker.visible_indices().is_empty() {
         " esc close".to_string()
+    } else if picker.kind() == Kind::Jobs {
+        // The job rows describe running work: the keys that act on one are the
+        // ones named here, because the list itself changes nothing.
+        format!(
+            " {}/{} · delete cancel terminal · esc close · ↑↓ move · type to filter",
+            picker.selection() + 1,
+            picker.visible_indices().len()
+        )
     } else if picker.kind() == Kind::Queue {
         // The queue's rows are edited rather than chosen, so the footer names
         // the keys that change them instead of the one that would select.

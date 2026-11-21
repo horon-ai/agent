@@ -47,6 +47,8 @@
 
 거부는 실패가 아니라 폐쇄입니다. 세션은 계속 돌고, 프로젝트가 지정한 MCP 서버만 빠집니다.
 
+`[tools] bash_direnv`를 켜면 세션 작업 폴더 안의 direnv 파일을 불러오기 전에 Horon이 신뢰 결정을 확인한다. 현재 상태에 맞는 저장 결정, `--trust-workspace` 또는 `HORON_AGENT_WORKSPACE_TRUST=trust`로 direnv 검사를 허용한다. `HORON_AGENT_WORKSPACE_TRUST=deny`가 우선하며 direnv도 실행 전에 파일을 별도로 승인해야 한다. Horon은 direnv의 출력과 환경 변수 값을 진단 메시지에 넣지 않는다.
+
 ### 재정의
 
 | 수단 | 범위 | 기록 |
