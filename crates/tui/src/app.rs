@@ -702,7 +702,9 @@ impl App {
                     .transcript
                     .tool_done(call_id, name, Some(output.as_str()), error.as_deref())
                 {
-                    self.scroll.invalidate();
+                    // A fold is a block changing height with no output
+                    // arriving; the held view keeps the row it was reading.
+                    self.scroll.reflow();
                 }
                 // A refusal can reach the client before the event that parks
                 // it, so the line is parked from this side too: any request
@@ -796,6 +798,9 @@ impl App {
                 // it was refused because the mode asks first, and the failure
                 // wording is for a call that broke.
                 self.transcript.park_request(request_id);
+                // The line changed rows without output arriving; a held view
+                // keeps the row it was reading.
+                self.scroll.reflow();
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -825,6 +830,7 @@ impl App {
                 // way one made here does.
                 self.transcript
                     .decide_request(request_id, if *approved { Decision::Allowed } else { Decision::Denied });
+                self.scroll.reflow();
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
@@ -972,6 +978,7 @@ impl App {
             });
         if let Some(request) = request {
             self.transcript.park_request(&request);
+            self.scroll.reflow();
         }
     }
 
