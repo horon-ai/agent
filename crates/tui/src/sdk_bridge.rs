@@ -420,7 +420,7 @@ fn run_worker(
                             // session runs, so the identity event that follows
                             // it names a model already known and costs no
                             // second report.
-                            if let Incoming::Attached(session) = &incoming {
+                            if let Incoming::Attached { session, .. } = &incoming {
                                 usage_model = session.model.clone();
                             }
                             if events.send(incoming).is_err() {
