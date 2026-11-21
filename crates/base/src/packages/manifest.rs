@@ -158,7 +158,7 @@ fn read_manifest<T: DeserializeOwned>(root: &Path, path: &Path) -> Result<T> {
     toml::from_str(&text).with_context(|| format!("parse {}", path.display()))
 }
 
-fn open_package_file(root: &Path, path: &Path) -> Result<File> {
+pub(super) fn open_package_file(root: &Path, path: &Path) -> Result<File> {
     let mut named = root.to_path_buf();
     let mut components = path.components().peekable();
     while let Some(component) = components.next() {
