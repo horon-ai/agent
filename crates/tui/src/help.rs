@@ -103,8 +103,10 @@ Commands:
                  the last answer or the newest code block
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
+  /fork          start a separate session from a saved history point
   /keys          list the keys in force and what each does
   /links         list the http(s) links in recent answers and open one
+  /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
@@ -258,9 +260,11 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
+        "fork" => "start a separate session from a saved history point",
         "help" => "list the commands and the keys in force",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
+        "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
         "model" => "pick a model, or switch with /model <name>",
         "new" => "start a new session in this directory",
         "note" => "note, list or remove a local note on a transcript message",
