@@ -112,6 +112,8 @@ impl App {
         for request in withdrawn {
             self.transcript.decide_request(&request, Decision::Unanswered);
         }
+        // The rows the withdrawn approvals were drawn on changed height.
+        self.scroll.reflow();
         let plural = if shown == 1 { "" } else { "s" };
         self.transcript
             .push_notice(format!("{reason}; {shown} prompt{plural} withdrawn"));

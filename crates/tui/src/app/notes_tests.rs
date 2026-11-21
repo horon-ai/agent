@@ -135,6 +135,45 @@ fn a_note_never_moves_to_a_message_with_different_text() {
 }
 
 #[test]
+fn a_stale_address_does_not_take_another_messages_note() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let mut app = app_at(directory.path().join("tui-notes.json"));
+    let mut first = attached(
+        "session_a",
+        None,
+        &[("user", "hello"), ("assistant", "the first answer")],
+    );
+    first.history[1].message_id = Some("m1".to_string());
+    app.attach_session(first, false);
+    app.submit("/note add a1 review this answer");
+
+    // The answer at a1 is another stored message now, and the one the note was
+    // written on is still here at a2. Removing a1 must not take that note: it
+    // is drawn under a2, and a1's own note is a different one.
+    let mut moved = attached(
+        "session_a",
+        None,
+        &[
+            ("user", "hello"),
+            ("assistant", "a different answer"),
+            ("assistant", "the first answer"),
+        ],
+    );
+    moved.history[1].message_id = Some("m2".to_string());
+    moved.history[2].message_id = Some("m1".to_string());
+    app.attach_session(moved, false);
+
+    assert_eq!(app.submit("/note remove a1"), None);
+    assert!(last_text(&app).contains("has no note to remove"), "{}", last_text(&app));
+    assert_eq!(note_texts(&app, "session_a"), vec!["review this answer".to_string()]);
+
+    // The address that still holds the note removes it.
+    assert_eq!(app.submit("/note remove a2"), None);
+    assert!(last_text(&app).contains("note removed from a2"), "{}", last_text(&app));
+    assert!(note_texts(&app, "session_a").is_empty());
+}
+
+#[test]
 fn a_note_survives_a_replay_that_carries_reasoning_in_the_same_body() {
     let directory = tempfile::tempdir().expect("a directory");
     let mut app = app_at(directory.path().join("tui-notes.json"));

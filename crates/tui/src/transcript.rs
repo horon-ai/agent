@@ -11,6 +11,9 @@ use std::time::Instant;
 #[path = "transcript_turn_usage.rs"]
 mod turn_usage;
 
+#[path = "transcript_activity.rs"]
+mod activity;
+
 use crate::tool_expand::{self, ExpandState};
 use crate::tool_line::{self, DEFAULT_OUTPUT_LINES, OutputHead};
 
@@ -122,6 +125,17 @@ impl ToolCall {
     /// caller falls back to "the oldest running call of this name".
     fn is_call(&self, call_id: &str) -> bool {
         !call_id.is_empty() && self.call_id == call_id
+    }
+
+    /// Whether the call has stopped and its line is only a record of what ran.
+    ///
+    /// A call in progress and one waiting for approval are still the work the
+    /// reader follows, so hiding tool activity leaves them on screen.
+    pub(crate) fn finished_activity(&self) -> bool {
+        matches!(
+            self.state,
+            ToolState::Done | ToolState::Failed(_) | ToolState::Settled(_, _)
+        )
     }
 }
 
@@ -553,14 +567,6 @@ impl Transcript {
     /// The kept outputs, for the pane to draw the calls they belong to.
     pub(crate) fn expand_state(&self) -> &ExpandState {
         &self.expand
-    }
-
-    /// Show, or hide again, the whole output of the newest cut call.
-    ///
-    /// Answers whether there was anything to toggle: the caller says so when
-    /// there was not, rather than leaving the key silently doing nothing.
-    pub(crate) fn toggle_expand(&mut self) -> bool {
-        self.expand.toggle()
     }
 
     /// Record an informational line.

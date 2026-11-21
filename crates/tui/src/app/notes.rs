@@ -146,13 +146,19 @@ impl App {
                 }
             }
         };
-        let removed = if let Some(target) = key {
-            self.notes.remove(session, target.key, target.stored_id.as_deref())
-        } else if let Some(address) = address {
-            self.notes.remove_at(session, address)
-        } else {
-            false
+        let mut removed = match key {
+            Some(target) => self.notes.remove(session, target.key, target.stored_id.as_deref()),
+            None => false,
         };
+        // A note written on a message this transcript no longer holds — a
+        // compaction, a retracted turn — is reached by the address it was
+        // written at, because the content identity it is listed by cannot be
+        // computed for a message that is gone. It is removed from there only
+        // while no live row holds it: the same address can now name another
+        // answer, and that answer's note is a different one.
+        if !removed && let Some(address) = address {
+            removed = self.remove_unheld_note(session, address);
+        }
         if !removed {
             let named = address.map_or_else(|| "the newest message".to_string(), |address| address.to_string());
             self.transcript
@@ -162,6 +168,37 @@ impl App {
         self.save_notes();
         let named = address.map_or_else(|| "the newest message".to_string(), |address| address.to_string());
         self.transcript.push_notice(format!("note removed from {named}"));
+    }
+
+    /// Remove the note recorded at `address` when no live row holds it.
+    ///
+    /// Answers whether a note was removed. The note is drawn wherever a row
+    /// still matches its identity, and deleting it through an address that has
+    /// moved on to another message would take the text off the row the reader
+    /// is looking at, so a held note is left alone and the caller says there is
+    /// nothing to remove here.
+    fn remove_unheld_note(&mut self, session: &str, address: Address) -> bool {
+        let Some((key, stored_id)) = self
+            .notes
+            .notes(session)
+            .find(|(_, note)| note.address == address)
+            .map(|(key, note)| (key, note.stored_id.clone()))
+        else {
+            return false;
+        };
+        let keyed = notes::keyed(self.transcript.items(), self.transcript.stored_ids());
+        // A row holds the note when it names the same stored message, or when
+        // it carries no id of its own and the note's text identity, which is
+        // the fallback `NoteStore::remove` makes. A note written before stored
+        // ids existed is held by its text identity alone.
+        let held = keyed.iter().flatten().any(|row| match stored_id.as_deref() {
+            Some(id) => row.stored_id.as_deref() == Some(id) || (row.stored_id.is_none() && row.key == key),
+            None => row.key == key,
+        });
+        if held {
+            return false;
+        }
+        self.notes.remove_at(session, address)
     }
 
     /// Draw this session's notes, in the order the conversation holds them.

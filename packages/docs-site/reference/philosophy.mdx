@@ -39,6 +39,13 @@ A proposal fits when the answer to all five is yes. Section "Design principles" 
 4. It does not break ACP v1/v2, the SDKs, or stored sessions.
 5. It does not bring back removed surface under another name.
 
+The user-installed Rust package design may add one internal data-contract crate,
+`extension-types`, using existing workspace dependencies only. The exception
+covers the dependency graph. Keep the no-package performance and binary size
+baselines. Extend the structural performance gate with a binary-size check.
+Preserve ACP v1/v2, SDK and stored-session compatibility, and the TUI
+dependency boundary.
+
 ## Adopted from omp2
 
 omp2 is a much larger product (about 1.17 million lines of Rust and 1,361 locked packages when the adoption plan was written; that plan was a working file outside this repository, so both counts are approximate). Each item below was weighed against the test above. Every issue in the table is closed, and each row says what the code does now.
