@@ -1,7 +1,7 @@
 //! Status line data and animation state.
 
 use super::App;
-use crate::statusline::StatusData;
+use crate::statusline::{StatusData, UsageSnapshot};
 
 impl App {
     /// The one-line status: what we are attached to and what it is doing.
@@ -48,7 +48,27 @@ impl App {
             cwd: self.cwd.as_deref(),
             home: self.home.as_deref(),
             tokens: self.tokens,
+            capacity: self.capacity,
+            usage: self.usage,
+            cost: self.cost,
             now: None,
+        }
+    }
+
+    /// Fold one usage report into the state the status line reads.
+    ///
+    /// The window and the estimate replace what was there, including with
+    /// `None`: a report that names no window or no price is saying the daemon
+    /// knows neither for the route in force, and an old figure would describe a
+    /// model the client already left. The totals replace the running sum the
+    /// token-usage events maintain whenever the report has any, because that
+    /// report is the daemon's own accounting of the same calls; a report with
+    /// none keeps the sum, since it is the newer of the two readings.
+    pub fn usage(&mut self, snapshot: UsageSnapshot) {
+        self.capacity = snapshot.context_window;
+        self.cost = snapshot.cost;
+        if snapshot.totals.is_some() {
+            self.usage = snapshot.totals;
         }
     }
 
