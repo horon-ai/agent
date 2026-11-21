@@ -75,7 +75,12 @@ async fn run_with_args(args: Args) -> Result<()> {
                 if let Some(cwd) = &args.cwd {
                     std::env::set_current_dir(cwd)?;
                 }
-                return super::packages::run(action);
+                // A running daemon owns the catalog, so the command has to reach
+                // the socket the rest of the CLI would use.
+                if let Some(socket) = &args.socket {
+                    server::set_socket_path(socket);
+                }
+                return super::packages::run(action).await;
             }
             Some(Command::Mcp { .. } | Command::Approvals { .. }) => {
                 if let Some(cwd) = &args.cwd {
@@ -403,6 +408,19 @@ mod tests {
 
     fn parse_args(argv: &[&str]) -> Args {
         Args::parse_from(argv)
+    }
+
+    #[test]
+    fn startup_goal_requires_budget_and_conflicts_with_resume() {
+        let goal = ["horon", "--goal", "Ship a fix", "--goal-budget", "1200"];
+        let parsed = parse_args(&goal);
+        assert_eq!(parsed.goal.as_deref(), Some("Ship a fix"));
+        assert_eq!(parsed.goal_budget, Some(1200));
+        for resume in [["--resume", "session-1"].as_slice(), ["--continue"].as_slice()] {
+            let error = Args::try_parse_from(goal.iter().chain(resume)).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+        assert!(Args::try_parse_from(["horon", "--goal", "Ship a fix"]).is_err());
     }
 
     #[test]

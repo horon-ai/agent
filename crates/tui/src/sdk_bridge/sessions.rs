@@ -246,6 +246,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         // rest of the arm list comes from the import above.
         | ApiEvent::Ok
         | Error { .. }
+        | PackageControl { .. }
         | Sessions { .. }
         | Pong
         | DegradationReceipts(_)

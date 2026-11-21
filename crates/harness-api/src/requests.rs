@@ -581,6 +581,22 @@ pub enum ApiRequest {
     /// Liveness check.
     Ping,
 
+    /// Apply one package-management operation to the catalog the daemon owns.
+    ///
+    /// Needs no attached session: the catalog is daemon-wide state, so a client
+    /// can install, disable, remove or read it on a fresh connection. The daemon
+    /// serializes the operation with its own inbox pass and answers only after
+    /// the resulting generation is published, so the reply is authoritative.
+    ///
+    /// `operation_id` is chosen by the caller. A retry that reuses it reports
+    /// the recorded result instead of applying the operation twice, which keeps
+    /// a lost reply from installing the same package again. Requires
+    /// `package_control_v1`.
+    PackageControl {
+        operation_id: String,
+        operation: crate::PackageControlOperation,
+    },
+
     /// Run, queue, receipt, and monitor summary read from this session's
     /// durable runtime journal. Requires `durable_runtime_v1`. Replies
     /// `RuntimeState`.
@@ -734,6 +750,7 @@ impl ApiRequest {
             // `answer_id` is the legacy request and needs no negotiation.
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),
             Self::GetEffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
+            Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
             _ => None,
         }
     }

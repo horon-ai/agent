@@ -23,6 +23,7 @@ horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--config <file>]... [--gallery[=<scene>]]
+                 [--goal <objective> --goal-budget <tokens>]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
                  [--hide-thinking] [--no-title]
@@ -31,6 +32,8 @@ Options:
   --socket <path>           Harness API socket to connect to (default: the
                             resolved harness socket for this user)
   --session <id>            Attach to an existing session instead of creating one
+  --goal <objective>       Attach a goal when creating a new session
+  --goal-budget <tokens>   Set the new goal's token ceiling
   --cwd <dir>               Working directory for a newly created session
   --config <file>           Extra settings file, read after the global and
                             project files and before the environment
@@ -357,6 +360,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "context" => "show what is filling the context window",
         "continue" => "resume every paused session",
         "fast" => "switch the provider's fast (priority) service tier",
+        "goal" => "attach a goal with /goal <token-budget> <objective>",
         "info" => "show the session, provider and usage details",
         "initiatives" => "list the open initiatives",
         "judge" => "spawn a judge that checks the work against the request",
