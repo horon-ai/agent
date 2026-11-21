@@ -92,10 +92,6 @@ HEADLESS_FALLBACK = "horon-agent serve"
 FIRST_SCREEN = "Send a message to start"
 REPLY_TEXT = "mock-ok"
 APPROVAL_PROMPT = "approval needed"
-# The client draws a tool call as its name and status, not its output, so the
-# approved retry is proven by the status line plus the file the command writes
-# (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-APPROVAL_RESOLVED = "approval approved"
 # The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
 # harness sends over the session event stream once the bridge is serving this
 # client, so seeing it means the client is past its first frame and talking to
@@ -767,9 +763,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
-
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
