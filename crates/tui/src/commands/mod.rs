@@ -85,6 +85,8 @@ pub enum Local {
     Resume,
     /// List the skills the harness reports, and put one in the draft.
     Skills,
+    /// List trusted MCP servers or explicitly probe one by name.
+    Mcp,
     /// Switch to another session, by id or from the list.
     Switch,
     /// Attach, edit, list or remove a local note on a transcript message.
@@ -120,6 +122,7 @@ impl Local {
             "settings" => Some(Self::Settings),
             "resume" => Some(Self::Resume),
             "skills" => Some(Self::Skills),
+            "mcp" => Some(Self::Mcp),
             "switch" => Some(Self::Switch),
             "note" => Some(Self::Note),
             "links" => Some(Self::Links),
@@ -146,6 +149,7 @@ impl Local {
             Self::Settings => "settings",
             Self::Resume => "resume",
             Self::Skills => "skills",
+            Self::Mcp => "mcp",
             Self::Switch => "switch",
             Self::Note => "note",
             // The shell forms are typed with a `!` prefix, not a slash, so
@@ -649,9 +653,9 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 19] = [
-    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "model", "new", "note", "queue", "quit",
-    "record", "replay", "resume", "settings", "skills", "switch",
+const LOCAL_NAMES: [&str; 20] = [
+    "artifact", "clear", "copy", "effort", "exit", "help", "keys", "links", "mcp", "model", "new", "note", "queue",
+    "quit", "record", "replay", "resume", "settings", "skills", "switch",
 ];
 
 /// Every runtime command, in declaration order.
@@ -681,6 +685,7 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Auth,
     RuntimeCommand::Logout,
     RuntimeCommand::Plan,
+    RuntimeCommand::Mcp,
 ];
 
 /// Every runtime command under the name the protocol serialises it to.
@@ -700,10 +705,8 @@ fn server_catalog() -> &'static ServerCatalog {
             warnings: Vec::new(),
         };
         for command in SERVER_VARIANTS {
-            // The built-in `/skills` list owns this name, so the harness's own
-            // `skills` command is not offered beside it: a listing with the
-            // same name twice would name one command and run another.
-            if *command == RuntimeCommand::Skills {
+            // These built-ins own their names and send their own typed requests.
+            if matches!(command, RuntimeCommand::Skills | RuntimeCommand::Mcp) {
                 continue;
             }
             match serde_json::to_value(command) {
