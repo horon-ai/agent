@@ -8,9 +8,10 @@
 //!
 //! The status line's own two choices are checked the same way: a settings
 //! snapshot the client resolves, applied through the path a settings save and a
-//! file reload both take, changes the row the next frame draws. `title.state`
-//! follows the same path into the app, where the event loop reads it before it
-//! writes the window title.
+//! file reload both take, changes the row the next frame draws. `models.shortlist`
+//! is read from the settings on every refresh, because the cycle reads it on the
+//! press. `title.state` follows the same path into the app, where the event loop
+//! reads it before it writes the window title.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -132,6 +133,53 @@ fn a_saved_status_line_style_reaches_the_drawn_bottom_line() {
         backgrounds.iter().all(|background| *background == Color::Reset),
         "the line is still painted: {backgrounds:?}"
     );
+}
+
+#[test]
+fn the_model_shortlist_comes_from_the_settings_file() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    app.refresh_settings(&settings_with(
+        dir.path(),
+        "[models]\nshortlist = [\"alpha\", \"beta\"]\n",
+    ));
+    app.show_models(vec!["alpha".to_string(), "beta".to_string()], Some("alpha".to_string()));
+    app.model = Some("alpha".to_string());
+
+    // The cycle reads the list the file declared, in its order.
+    assert_eq!(
+        app.on_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::CONTROL,
+        )),
+        Some(crate::app::Action::Model("beta".to_string()))
+    );
+}
+
+#[test]
+fn a_repeated_shortlist_entry_warns_once_per_file_edit() {
+    let dir = tempfile::tempdir().expect("temporary directory");
+    let mut app = app();
+    let settings = settings_with(dir.path(), "[models]\nshortlist = [\"alpha\", \"alpha\"]\n");
+    app.refresh_settings(&settings);
+    let warnings = app
+        .transcript
+        .items()
+        .iter()
+        .filter(|item| matches!(item, crate::transcript::Item::Warning(text) if text.contains("twice")))
+        .count();
+    assert_eq!(warnings, 1, "the repeated entry was not named once");
+
+    // A second refresh of the same file is a save, not an edit: the warning is
+    // not repeated for a file that did not change.
+    app.refresh_settings(&settings);
+    let warnings = app
+        .transcript
+        .items()
+        .iter()
+        .filter(|item| matches!(item, crate::transcript::Item::Warning(text) if text.contains("twice")))
+        .count();
+    assert_eq!(warnings, 1, "the same file warned again");
 }
 
 #[test]

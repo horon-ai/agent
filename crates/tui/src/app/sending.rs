@@ -24,6 +24,9 @@ impl App {
     /// lost: otherwise the client would keep saying it is ready to send.
     pub fn send_failed(&mut self, text: &str, message: &str, lost: bool) {
         self.pending_turn = false;
+        // The turn never reached the harness, so there is no completed turn to
+        // measure; a later end-of-turn frame must not describe this one.
+        self.transcript.discard_turn();
         self.session_status = Some("idle".to_string());
         let display = self.take_in_flight(text);
         // Only the line this send drew is taken back: another message with the
@@ -74,6 +77,9 @@ impl App {
             return None;
         }
         if let Some(model) = self.model_after_turn.take() {
+            // The cycle keys step from here until an answer names the model,
+            // exactly as one sent straight away does.
+            self.model_requested = Some(model.clone());
             return Some(Action::Model(model));
         }
         if let Some(level) = self.effort_after_turn.take() {
@@ -546,6 +552,9 @@ impl App {
         // the tab has been seen and the next report is the running turn.
         self.note_user_attention();
         self.pending_turn = true;
+        // Measured from the moment the message is handed to the bridge, so the
+        // footer describes the whole turn rather than only its last request.
+        self.transcript.begin_turn();
         self.session_status = Some("generating".to_string());
         Action::Send(text)
     }
