@@ -654,8 +654,8 @@ pub fn parse_openai_response_event(
                 let first = handle_openai_output_item(item, saw_text_delta, saw_thinking_delta, pending);
                 if is_message {
                     // output_item.done, not reasoning or response.completed, is
-                    // the actual assistant-message boundary. Preserve fallback
-                    // text before the marker and reset deduplication per message.
+                    // the actual assistant-message boundary. Finish the text
+                    // and reset deduplication for the next message.
                     pending.push_back(StreamEvent::TextDone);
                     *saw_text_delta = false;
                 }

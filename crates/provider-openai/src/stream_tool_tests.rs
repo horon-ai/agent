@@ -329,6 +329,7 @@ fn tool_call_example_stays_text_in_a_completed_message() {
         }}),
     );
     assert!(matches!(next(&mut stream), StreamEvent::TextDelta(text) if text == example));
+    assert!(matches!(next(&mut stream), StreamEvent::TextDone));
     idle(&mut stream);
 }
 
