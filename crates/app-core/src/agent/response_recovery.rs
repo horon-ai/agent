@@ -1,18 +1,5 @@
-use super::tool_markup_recovery::{
-    MarkupScan, scan_tool_call_markup, unparsed_markup_notice, unparsed_markup_reminder,
-};
+use super::tool_markup_recovery::{text_tool_attempt, unparsed_markup_notice, unparsed_markup_reminder};
 use super::*;
-
-/// Outcome of [`Agent::recover_text_wrapped_tool_call`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TextToolRecovery {
-    /// Nothing tool-call shaped in the text.
-    None,
-    /// One or more tool calls were recovered and appended.
-    Recovered,
-    /// The text holds a tool-call envelope that could not be parsed.
-    Unparseable { reason: String },
-}
 
 /// A tool call that failed schema validation, kept so the correction and
 /// terminal error can repeat exactly what the model did wrong.
@@ -25,162 +12,17 @@ pub(crate) struct MalformedToolCallInfo {
 }
 
 impl Agent {
-    fn parse_text_wrapped_tool_call(text: &str) -> Option<(String, String, serde_json::Value, String)> {
-        let marker = "to=functions.";
-        let marker_idx = text.find(marker)?;
-        let after_marker = &text[marker_idx + marker.len()..];
-
-        let mut tool_name_end = 0usize;
-        for (idx, ch) in after_marker.char_indices() {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                tool_name_end = idx + ch.len_utf8();
-            } else {
-                break;
-            }
-        }
-        if tool_name_end == 0 {
-            return None;
-        }
-
-        let tool_name = after_marker[..tool_name_end].to_string();
-        let remaining = &after_marker[tool_name_end..];
-        let mut fallback: Option<(String, String, serde_json::Value, String)> = None;
-
-        for (brace_idx, ch) in remaining.char_indices() {
-            if ch != '{' {
-                continue;
-            }
-            let slice = &remaining[brace_idx..];
-            let mut stream = serde_json::Deserializer::from_str(slice).into_iter::<serde_json::Value>();
-            let parsed = match stream.next() {
-                Some(Ok(value)) => value,
-                Some(Err(_)) | None => continue,
-            };
-            let consumed = stream.byte_offset();
-            if !parsed.is_object() {
-                continue;
-            }
-
-            let prefix = text[..marker_idx].trim_end().to_string();
-            let suffix = remaining[brace_idx + consumed..].trim().to_string();
-            if suffix.is_empty() {
-                return Some((prefix, tool_name.clone(), parsed, suffix));
-            }
-            if fallback.is_none() {
-                fallback = Some((prefix, tool_name.clone(), parsed, suffix));
-            }
-        }
-
-        fallback
-    }
-
-    /// Recover a tool call the model wrote into its assistant text instead of
-    /// emitting it as a structured tool call. Only runs when the response has
-    /// no structured tool calls, so structured arguments are never touched.
-    ///
-    /// Handles the `to=functions.NAME {json}` form and XML/DSML-style
-    /// `invoke`/`parameter` envelopes (issue #1702). Recovered calls get ids
-    /// starting with `fallback_text_call_`.
-    pub(super) fn recover_text_wrapped_tool_call(
-        &self,
-        text_content: &mut String,
-        tool_calls: &mut Vec<ToolCall>,
-    ) -> TextToolRecovery {
-        Self::recover_text_tool_calls(text_content, tool_calls)
-    }
-
-    pub(super) fn recover_text_tool_calls(
-        text_content: &mut String,
-        tool_calls: &mut Vec<ToolCall>,
-    ) -> TextToolRecovery {
-        if !tool_calls.is_empty() || text_content.trim().is_empty() {
-            return TextToolRecovery::None;
-        }
-
-        let Some((prefix, tool_name, arguments, suffix)) = Self::parse_text_wrapped_tool_call(text_content) else {
-            return Self::recover_markup_tool_calls(text_content, tool_calls);
-        };
-
-        let mut sanitized = String::new();
-        if !prefix.is_empty() {
-            sanitized.push_str(&prefix);
-        }
-        if !suffix.is_empty() {
-            if !sanitized.is_empty() {
-                sanitized.push('\n');
-            }
-            sanitized.push_str(&suffix);
-        }
-        *text_content = sanitized;
-
-        let call_id = format!("fallback_text_call_{}", id::new_id("call"));
-        let recovered_total = RECOVERED_TEXT_WRAPPED_TOOL_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        logging::warn(&format!(
-            "[agent] Recovered text-wrapped tool call for '{}' ({}, total={})",
-            tool_name, call_id, recovered_total
-        ));
-        let intent = ToolCall::intent_from_input(&arguments);
-        tool_calls.push(ToolCall {
-            id: call_id,
-            name: tool_name,
-            input: arguments,
-            intent,
-            thought_signature: None,
-        });
-
-        TextToolRecovery::Recovered
-    }
-
-    fn recover_markup_tool_calls(text_content: &mut String, tool_calls: &mut Vec<ToolCall>) -> TextToolRecovery {
-        match scan_tool_call_markup(text_content) {
-            MarkupScan::None => TextToolRecovery::None,
-            MarkupScan::Unparseable { reason } => {
-                logging::warn(&format!(
-                    "[agent] Assistant text contains an unparseable tool-call markup envelope ({reason})"
-                ));
-                logging::debug(&format!(
-                    "[agent] Unparsed tool-call markup envelope (raw): {}",
-                    text_content
-                ));
-                TextToolRecovery::Unparseable { reason }
-            }
-            MarkupScan::Parsed { calls, sanitized_text } => {
-                *text_content = sanitized_text;
-                for call in calls {
-                    let call_id = format!("fallback_text_call_{}", id::new_id("call"));
-                    let recovered_total =
-                        RECOVERED_TEXT_WRAPPED_TOOL_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                    logging::warn(&format!(
-                        "[agent] Recovered tool-call markup envelope for '{}' ({}, total={})",
-                        call.name, call_id, recovered_total
-                    ));
-                    let intent = ToolCall::intent_from_input(&call.arguments);
-                    tool_calls.push(ToolCall {
-                        id: call_id,
-                        name: call.name,
-                        input: call.arguments,
-                        intent,
-                        thought_signature: None,
-                    });
-                }
-                TextToolRecovery::Recovered
-            }
-        }
-    }
-
-    /// Cap on recovery nudges per turn for unparseable tool-call markup.
+    /// Cap on native-call retries after a tool attempt arrived as text.
     pub(crate) const MAX_UNPARSED_TOOL_MARKUP_NUDGES: u32 = 2;
 
-    /// When the response ended with an unparseable tool-call envelope as its
-    /// only output, ask the model to re-issue the call instead of silently
-    /// ending the turn (issue #1702). Returns the user-visible notice when a
-    /// nudge was injected and the caller should re-issue the request.
+    /// Ask for a native call when the finished response consists of a tool
+    /// attempt written as text. The caller displays the notice before retrying.
     pub(crate) fn maybe_nudge_unparsed_tool_markup(
         &mut self,
-        recovery: &TextToolRecovery,
+        text: &str,
         stop_reason: Option<&str>,
     ) -> Result<Option<String>> {
-        let TextToolRecovery::Unparseable { reason } = recovery else {
+        let Some(reason) = text_tool_attempt(text) else {
             return Ok(None);
         };
         // A truncated response (max_tokens etc.) is handled by the
@@ -193,14 +35,14 @@ impl Agent {
         }
         if self.turn_state.unparsed_tool_markup_nudges() >= Self::MAX_UNPARSED_TOOL_MARKUP_NUDGES {
             logging::warn(&format!(
-                "Unparseable tool-call markup persisted after {} nudges; ending turn",
+                "Tool-call text persisted after {} native-call retries; ending turn",
                 self.turn_state.unparsed_tool_markup_nudges()
             ));
             return Ok(None);
         }
         let attempts = self.turn_state.record_unparsed_tool_markup_nudge();
         logging::warn(&format!(
-            "Requesting re-issue of unparseable tool-call markup (attempt {}/{})",
+            "Requesting native re-issue of textual tool call (attempt {}/{})",
             attempts,
             Self::MAX_UNPARSED_TOOL_MARKUP_NUDGES
         ));

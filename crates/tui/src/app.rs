@@ -775,6 +775,11 @@ impl App {
                 // long and how much, and comes after the reason it stopped.
                 self.transcript.end_turn();
             }
+            ApiEvent::SoftInterruptInjected {
+                notice: Some(notice), ..
+            } => {
+                self.transcript.push_notice(notice.clone());
+            }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::BackgroundOutput { session_id, text } => {
                 // Process output belongs to the session that ran the job. The

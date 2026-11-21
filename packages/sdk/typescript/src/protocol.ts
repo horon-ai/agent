@@ -874,6 +874,7 @@ export type ApiEvent =
       client_ids: string[];
       point: string;
       tools_skipped?: number;
+      notice?: string;
       display_role?: string;
     }
   /** Reply to a filtered `cancel_soft_interrupts`. Decided atomically against delivery. */
