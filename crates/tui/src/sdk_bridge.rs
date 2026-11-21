@@ -680,6 +680,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Model(name) => client
             .set_model(session_id, &name)
             .map(|()| Some(format!("model set to {name}"))),
+        Command::Rename(title) => client.rename_session(session_id, Some(title)).map(|()| None),
         // Answered before they reach this point: they carry a structure rather
         // than a line. The attach retargets the connection the worker holds and
         // a create replaces it, so neither can produce a line here.
@@ -739,6 +740,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Steer(_) => "could not send the queued messages into the turn",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
+        Command::Rename(_) => "could not rename the session",
         Command::Cancel => "could not cancel the turn",
         Command::Approval { .. } => "could not answer the approval",
         Command::Ask { .. } => "could not answer the question",
