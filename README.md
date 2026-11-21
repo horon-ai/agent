@@ -104,6 +104,7 @@ horon run "summarize this repo"
 With no profile configured, a model call stops before the network and names the missing `[providers.<name>]` table. [docs/provider/MODEL.md](docs/provider/MODEL.md) lists every key: `headers`, `extra_body`, `context_window`, and built-in profiles such as `openrouter`, `zai`, `kimi` and `ollama`.
 
 Set `stream_first_event_timeout_secs` and `stream_idle_timeout_secs` in a named profile to limit startup and pauses during a streamed reply independently.
+Set `max_in_flight_requests` to cap concurrent requests across sessions using the same profile.
 
 ## Ways to run it
 
