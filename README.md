@@ -113,7 +113,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | Command | What it does |
 | --- | --- |
 | `horon` (no subcommand) | On a terminal, starts the server and replaces itself with the `horon-tui` client beside it, with keybindings, user files and a settings screen ([docs](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling prints a sentence naming the condition and the install command, then exits non-zero. |
-| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. |
+| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, and [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
@@ -246,6 +246,7 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] bash_direnv` | `false` | `true` imports new variables from approved direnv files in a trusted workspace |
 | `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[storage] sync` | `full` (power-loss durable) | `fast` |
