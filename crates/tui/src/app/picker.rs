@@ -368,6 +368,10 @@ impl App {
         self.queue.clear();
         self.prompt = None;
         self.waiting_prompts.clear();
+        // A capture belongs to the session being left, and the consent was
+        // given for that session: both go with it, so its audio cannot become
+        // a draft in the session being attached.
+        self.voice.forget();
         self.resend_held = false;
         self.session_status = Some(session.status);
         self.model = session.model;

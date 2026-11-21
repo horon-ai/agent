@@ -246,6 +246,7 @@ These are single-commit CI samples, not a guarantee. The full tables for eight t
 | `[acp] profile` | `standard` | `extended`, `full` |
 | `[tools] ask_policy` | `recommended` | `error` |
 | `[tools] bash_pty` | `auto` | `off`, `always` |
+| `[tools] bash_direnv` | `false` | `true` imports new variables from approved direnv files in a trusted workspace |
 | `[tools] output_column_cap` | `0` (disabled) | Positive Unicode character count per text preview line |
 | `[features] turn_recovery` | `conservative` | `aggressive`, `off` |
 | `[agents] swarm_child_runtime_secs`, `swarm_child_request_limit` | `0` (disabled) | Positive elapsed seconds or model request count per spawned child |

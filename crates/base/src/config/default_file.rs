@@ -302,6 +302,8 @@ bash_session_cwd = true
 # managers stop prompting. Without it a command can hang waiting for a
 # terminal answer. Set false to inherit the parent environment unchanged.
 bash_non_interactive_env = true
+# Import new variables from system direnv for a trusted workspace.
+bash_direnv = false
 # Opt-in output minimizer: a single, non-piped `cargo`/package-manager/pytest/go
 # test/git status/tsc/eslint command has its progress lines dropped before the
 # result reaches the model. The full output is saved as a session artifact and
