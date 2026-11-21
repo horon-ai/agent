@@ -651,13 +651,17 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             raise Failure(f"approved tool call left no {TOOL_FILE}: {error}\n--- transcript ---\n{terminal.transcript}")
         if content != TOOL_FILE_TEXT:
             raise Failure(f"{TOOL_FILE} holds {content!r}, expected {TOOL_FILE_TEXT!r}")
+        pin_start = len(terminal.transcript)
         terminal.send("/pin\r")
         pin_path = os.path.join(home, "tui-pins.json")
-        deadline = time.monotonic() + STEP_TIMEOUT
-        while not os.path.isfile(pin_path) and time.monotonic() < deadline:
-            time.sleep(0.05)
+        if POSIX:
+            terminal.read_until(f"pinned {name}", STEP_TIMEOUT, "pin the active session", since=pin_start)
+        else:
+            deadline = time.monotonic() + STEP_TIMEOUT
+            while not os.path.isfile(pin_path) and time.monotonic() < deadline:
+                time.sleep(0.05)
         if not os.path.isfile(pin_path):
-            raise Failure("pin command did not persist a local pin file")
+            raise Failure(f"pin command did not persist a local pin file\n--- transcript ---\n{terminal.transcript}")
         with open(pin_path, encoding="utf-8") as handle:
             pins = [session_id for ids in json.load(handle)["scopes"].values() for session_id in ids]
         if len(pins) != 1 or not os.path.isdir(os.path.join(home, "sessions", pins[0])):
