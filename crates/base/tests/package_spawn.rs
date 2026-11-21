@@ -440,7 +440,13 @@ fn extension_child_starts_with_the_activation_environment() {
     assert_eq!(cwd, expected_cwd.to_string_lossy());
 
     let environment = parse_environment(&wait_for(&state.join(ENV_MARKER), "the received environment"));
-    let keys: BTreeSet<String> = environment.keys().cloned().collect();
+    let keys: BTreeSet<String> = environment
+        .keys()
+        // CoreFoundation may set this key after exec on macOS. The launcher
+        // does not pass it through from the parent.
+        .filter(|key| std::env::consts::OS != "macos" || key.as_str() != "__CF_USER_TEXT_ENCODING")
+        .cloned()
+        .collect();
     assert_eq!(
         keys,
         expected_environment_keys(),

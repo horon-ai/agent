@@ -112,9 +112,8 @@ impl PackageStore {
 
 /// One verified installed executable, ready to start.
 ///
-/// Holding this value pins nothing by itself; starting it consumes a catalog
-/// lease, and the returned [`PackageProcess`] keeps that lease until it is
-/// dropped.
+/// This value holds a lease on the installed copy. Starting it transfers the
+/// lease to the returned [`PackageProcess`], which keeps it until it is dropped.
 pub struct PackageExecutable {
     /// The catalog lease this launch is pinned under; it lives as long as this
     /// value and the process started from it.

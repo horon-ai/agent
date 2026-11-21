@@ -236,7 +236,12 @@ impl PackageChild {
     /// reserved. After the reap below that id may name another process, so it is
     /// never signalled again.
     fn reap_exited(&mut self) -> io::Result<ExitStatus> {
-        self.kill_group(self.child.id())?;
+        match <crate::Current as crate::PlatformAdapter>::force_stop_exited_process_group(self.child.id()) {
+            Ok(()) => {}
+            #[cfg(unix)]
+            Err(error) if group_already_gone(&error) => {}
+            Err(error) => return Err(error),
+        }
         let status = self.child.wait()?;
         self.status = Some(status);
         Ok(status)
@@ -277,12 +282,6 @@ impl PackageChild {
         }
     }
 
-    /// A Windows child has no group to kill before the Job Object supervisor of
-    /// issue #644 exists; the launcher never starts one, so this fails closed.
-    #[cfg(windows)]
-    fn kill_group(&self, _pid: u32) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, WINDOWS_WITHOUT_JOB))
-    }
 }
 
 impl Drop for PackageChild {

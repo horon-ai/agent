@@ -453,6 +453,11 @@ pub trait PlatformAdapter {
     /// own, so this repeats the tree termination.
     fn force_stop_process_group(pid: u32) -> io::Result<()>;
 
+    /// Sweep the group of a leader that has exited and has not been reaped.
+    fn force_stop_exited_process_group(pid: u32) -> io::Result<()> {
+        Self::force_stop_process_group(pid)
+    }
+
     /// Spawn `cmd` and, where the platform passes descriptors to a child, hand
     /// it a readiness pipe.
     ///
