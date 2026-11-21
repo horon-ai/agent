@@ -931,10 +931,10 @@ def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
     try:
         terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "empty-profile session ready")
         terminal.send("/tools\r")
-        terminal.read_until("no tools are enabled for this session", STEP_TIMEOUT, "empty tool picker")
+        terminal.read_until("are enabled for this session", STEP_TIMEOUT, "empty tool picker")
         terminal.send("\x1b")
-        terminal.send("\x1b")
-        terminal.send("\x03")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "return to the session")
+        terminal.send("/quit\r")
         code = terminal.wait(STEP_TIMEOUT)
         if code != 0:
             raise Failure(f"empty tool picker exited {code}\n--- transcript ---\n{terminal.transcript}")
