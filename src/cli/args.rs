@@ -398,6 +398,9 @@ pub(crate) enum Command {
         action: ApprovalsCommand,
     },
 
+    /// Inspect named agent definitions without starting a session
+    Agents,
+
     /// Estimate tokens in UTF-8 text without contacting a model provider
     #[command(alias = "toks")]
     Tokens {

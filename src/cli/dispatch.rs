@@ -283,7 +283,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             tokio::task::spawn_blocking(hot_exec::run_update).await??;
         }
         Some(Command::InstallRelease { .. } | Command::Package { .. }) => unreachable!("handled before bootstrap"),
-        Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. }) => {
+        Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. } | Command::Agents) => {
             unreachable!("handled by startup")
         }
         Some(Command::Version { json }) => {

@@ -9,6 +9,7 @@ use super::{
     dispatch, hot_exec, output, terminal,
 };
 
+mod agent_catalog;
 mod completions;
 mod stream_rule_preview;
 mod tokens;
@@ -56,6 +57,11 @@ fn offline_command(args: &Args) -> Option<Result<()>> {
             args.cwd.as_deref().map(std::path::Path::new),
             args.model.as_deref(),
         )),
+        Some(Command::Agents) if args.ssh.is_some() => Some(Err(anyhow::anyhow!("agents runs locally without --ssh"))),
+        Some(Command::Agents) => {
+            crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
+            Some(agent_catalog::run(args.cwd.as_deref().map(std::path::Path::new)))
+        }
         _ => None,
     }
 }
