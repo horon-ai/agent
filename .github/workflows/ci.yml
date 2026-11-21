@@ -1577,6 +1577,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
             --timeout 600 --min-passed 10 \
             -- request::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-provider-openai \
+            --timeout 600 --min-passed 2 \
+            -- stream::stream_tool_tests::tool_call_example_stays_text --nocapture
 
       - name: Run swarm plan proposal and lightweight comm cohort
         shell: bash
@@ -1646,6 +1650,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
             --timeout 600 --min-passed 1 \
             -- tool_done_carries_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- translate::tests::soft_interrupt_injected_closes_open_text_and_carries_ids --nocapture
 
       - name: Run stale API socket probe cohort
         shell: bash

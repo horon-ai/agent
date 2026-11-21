@@ -1270,32 +1270,32 @@ fn soft_interrupt_injected_closes_open_text_and_carries_ids() {
         "point": "D",
         "client_ids": ["f1", "f2"],
     }));
-    assert_eq!(frames.len(), 2, "{frames:?}");
-    assert!(matches!(frames[0].event, ApiEvent::TextDone { .. }));
-    assert_eq!(
-        frames[1].event,
-        ApiEvent::SoftInterruptInjected {
-            session_id: "s1".into(),
-            client_ids: vec!["f1".into(), "f2".into()],
-            point: "D".into(),
-            tools_skipped: None,
-            display_role: None,
-        }
+    assert!(
+        matches!(&frames[..], [text, interrupt]
+        if matches!(&text.event, ApiEvent::TextDone { .. })
+            && serde_json::to_value(&interrupt.event).unwrap() == json!({
+                "ev": "soft_interrupt_injected", "session_id": "s1",
+                "client_ids": ["f1", "f2"], "point": "D"
+            })),
+        "{frames:?}"
     );
 
-    // Daemon-originated injections are forwarded too, with no ids.
-    let frames = state.legacy_event_to_api(&json!({
-        "type": "soft_interrupt_injected",
-        "content": "[Background Task Completed]",
-        "display_role": "background_task",
-        "point": "B",
-    }));
-    assert!(matches!(
-        &frames[..],
-        [frame] if matches!(&frame.event, ApiEvent::SoftInterruptInjected {
-            client_ids, display_role: Some(role), point, ..
-        } if client_ids.is_empty() && role == "background_task" && point == "B")
-    ));
+    for (point, role, expected_notice) in [
+        ("B", "background_task", None),
+        ("native_tool_retry", "system", Some("Retrying natively")),
+    ] {
+        let frames = state.legacy_event_to_api(&json!({
+            "type": "soft_interrupt_injected", "point": point,
+            "display_role": role, "content": "Retrying natively",
+        }));
+        assert!(
+            matches!(&frames[..], [frame] if matches!(&frame.event,
+            ApiEvent::SoftInterruptInjected { client_ids, display_role, point: actual, notice, .. }
+                if client_ids.is_empty() && display_role.as_deref() == Some(role)
+                    && actual == point && notice.as_deref() == expected_notice)),
+            "{frames:?}"
+        );
+    }
 }
 
 #[test]

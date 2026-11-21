@@ -2627,6 +2627,9 @@ impl BridgeState {
                     client_ids,
                     point: event["point"].as_str().unwrap_or("").to_string(),
                     tools_skipped: event["tools_skipped"].as_u64().map(|n| n as u32),
+                    notice: (event["point"].as_str() == Some("native_tool_retry"))
+                        .then(|| event["content"].as_str().map(str::to_string))
+                        .flatten(),
                     display_role: event["display_role"].as_str().map(str::to_string),
                 }));
                 frames

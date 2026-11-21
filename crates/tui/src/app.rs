@@ -18,15 +18,14 @@ use crate::keys::Bindings;
 use crate::overlays::picker::Picker;
 use crate::overlays::settings::{SettingChange, SettingsOverlay};
 use crate::prompts::Prompt;
+use crate::recording::Event;
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{Incoming, SkillRow};
 use crate::settings::{Motion, Settings};
 use crate::statusline::{Layout, StatusData, TokenTotals};
 use crate::suggestions::Suggestions;
 use crate::theme::{Symbols, Theme};
-use crate::transcript::CacheMiss;
-use crate::transcript::Decision;
-use crate::transcript::Transcript;
+use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
 mod commands;
 mod effort;
@@ -34,6 +33,7 @@ mod history_search;
 mod keys;
 mod picker;
 mod prompts;
+pub(crate) mod record;
 mod sending;
 mod sessions;
 mod settings;
@@ -372,6 +372,19 @@ pub struct App {
     pub picker: Option<Picker>,
     /// A change the settings screen confirmed, waiting for the caller to save.
     pending_change: Option<SettingChange>,
+    /// The recording the user turned on with `/record`.
+    ///
+    /// Off until asked for: nothing is written to disk unless a recording was
+    /// started in this session, and a recording that reaches its limit stops
+    /// itself rather than growing.
+    pub(crate) recorder: Option<crate::recording::Recorder>,
+    /// The replay playing on screen, which owns the transcript while it runs.
+    pub(crate) replay: Option<record::ReplayState>,
+    /// The conversation identity and answer count a recording already kept.
+    ///
+    /// The revision says the conversation was replaced (a clear or a session
+    /// switch), and the count says how many of its answers were recorded.
+    record_scan: (u64, usize),
 }
 
 impl App {
@@ -441,6 +454,9 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            recorder: None,
+            replay: None,
+            record_scan: (0, 0),
         }
     }
 
@@ -512,6 +528,9 @@ impl App {
             overlay: None,
             picker: None,
             pending_change: None,
+            recorder: None,
+            replay: None,
+            record_scan: (0, 0),
         }
     }
 
@@ -534,8 +553,20 @@ impl App {
     }
 
     /// Add a warning line to the transcript.
+    ///
+    /// The fact that a warning was shown is recorded when a recording is
+    /// running: a replay that dropped it would show a turn that failed as one
+    /// that simply produced nothing. The text stays out of the file, because a
+    /// warning can name a private path or echo a harness message.
     pub fn warn(&mut self, text: impl Into<String>) {
+        let text = text.into();
         self.transcript.push_warning(text);
+        // The push closes a streaming answer, and that answer is recorded first,
+        // so the file reads in the order the screen did. The recording keeps that
+        // a warning was shown, not what it said: its text can name a private path
+        // or echo a harness message.
+        self.record_new_assistants();
+        self.record_event(Event::Warning);
     }
 
     /// The connection ended.
@@ -663,7 +694,14 @@ impl App {
     }
 
     /// Fold one protocol event into the state.
+    ///
+    /// A live event that changes the conversation ends a replay rather than
+    /// landing on top of the recording: the pane shows one conversation, and the
+    /// recording is only accurate until the session moves on.
     pub fn apply_event(&mut self, event: &ApiEvent) {
+        if self.replay.is_some() && record::ends_replay(event) {
+            self.stop_replay("ended by live activity");
+        }
         match event {
             ApiEvent::TextDelta { text, message_id, .. } => {
                 self.transcript.text_delta(message_id.as_deref(), text);
@@ -696,6 +734,14 @@ impl App {
                 error,
                 ..
             } => {
+                // A result can reach the client twice after a reconnect: the
+                // transcript keeps one line, and the recording has to keep one
+                // event, so only a call that was not already settled is
+                // recorded.
+                let already_settled = matches!(
+                    self.transcript.tool_state(call_id, name),
+                    Some(ToolState::Done | ToolState::Failed(_) | ToolState::Waiting(_) | ToolState::Settled(_, _))
+                );
                 // Keeping this call's output folds the call that was open, which
                 // shrinks a block nothing else measures again: a held view would
                 // otherwise keep the height it counted while that call was open.
@@ -705,7 +751,9 @@ impl App {
                     .transcript
                     .tool_done(call_id, name, Some(output.as_str()), error.as_deref())
                 {
-                    self.scroll.invalidate();
+                    // A fold is a block changing height with no output
+                    // arriving; the held view keeps the row it was reading.
+                    self.scroll.reflow();
                 }
                 // A refusal can reach the client before the event that parks
                 // it, so the line is parked from this side too: any request
@@ -714,6 +762,19 @@ impl App {
                 // later parks the same line, and parking twice changes nothing.
                 if let Some(message) = error {
                     self.park_line_naming(message);
+                }
+                // The recording keeps the call's name and outcome, never its
+                // arguments or output. A call the gate held or decided is an
+                // approval matter, and the default recording leaves it out.
+                if !already_settled
+                    && self.recorder.is_some()
+                    && let Some(state) = self.transcript.tool_state(call_id, name)
+                    && let Some(outcome) = record::recorded_outcome(&state)
+                {
+                    self.record_event(Event::Tool {
+                        name: name.clone(),
+                        outcome,
+                    });
                 }
             }
             ApiEvent::TurnDone {
@@ -776,6 +837,11 @@ impl App {
                 // long and how much, and comes after the reason it stopped.
                 self.transcript.end_turn();
             }
+            ApiEvent::SoftInterruptInjected {
+                notice: Some(notice), ..
+            } => {
+                self.transcript.push_notice(notice.clone());
+            }
             ApiEvent::MessageAccepted { .. } => {}
             ApiEvent::BackgroundOutput { session_id, text } => {
                 // Process output belongs to the session that ran the job. The
@@ -799,6 +865,9 @@ impl App {
                 // it was refused because the mode asks first, and the failure
                 // wording is for a call that broke.
                 self.transcript.park_request(request_id);
+                // The line changed rows without output arriving; a held view
+                // keeps the row it was reading.
+                self.scroll.reflow();
                 self.transcript.push_notice("a tool call needs your approval");
             }
             ApiEvent::ApprovalResolved {
@@ -828,6 +897,7 @@ impl App {
                 // way one made here does.
                 self.transcript
                     .decide_request(request_id, if *approved { Decision::Allowed } else { Decision::Denied });
+                self.scroll.reflow();
                 let outcome = if *approved { "approved" } else { "denied" };
                 self.transcript.push_notice(format!("approval {outcome} via {via}"));
             }
@@ -941,6 +1011,7 @@ impl App {
             }
             _ => {}
         }
+        self.record_new_assistants();
     }
 
     /// The one-line completion hint drawn under the input, if one applies.
@@ -975,6 +1046,7 @@ impl App {
             });
         if let Some(request) = request {
             self.transcript.park_request(&request);
+            self.scroll.reflow();
         }
     }
 
@@ -999,13 +1071,7 @@ impl App {
         self.slash.sync(&self.commands, &text);
     }
 
-    /// Bring the local draft suggestion in line with the draft and the setting.
-    ///
-    /// A changed draft starts a new generation and asks the local provider
-    /// again; an unchanged one keeps the answer it has, so a dismiss or an
-    /// accepted line stays put until the next edit. The provider reads only the
-    /// drafts this editor already holds, and the answer is dropped unless it
-    /// names the generation and the exact text it was asked about.
+    /// Refresh local suggestions on edits, rejecting replies for earlier drafts.
     pub fn sync_suggestions(&mut self) {
         if !self.settings.boolean("editor.suggestions").unwrap_or(false) {
             self.suggestions.withdraw();
@@ -1015,8 +1081,7 @@ impl App {
         if self.suggestions.is_synced(fingerprint) {
             return;
         }
-        // The cap is checked before the text is built, so a huge draft costs a
-        // length read rather than a copy.
+        // Check the limit before copying the draft.
         if self.input.char_count() > crate::suggestions::MAX_DRAFT_CHARS {
             self.suggestions.skip(fingerprint);
             return;
@@ -1113,10 +1178,7 @@ impl App {
     }
 }
 
-/// The home directory the `path` segment shortens to `~`.
-///
-/// `HOME` is read first and `USERPROFILE` second, which covers Unix and
-/// Windows without an OS-specific block.
+/// The status line shortens this home directory to `~`.
 fn home_directory() -> Option<String> {
     let value = match std::env::var_os("HOME") {
         Some(home) => home,

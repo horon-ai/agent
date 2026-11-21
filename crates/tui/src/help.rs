@@ -76,6 +76,9 @@ Keys:
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
   Alt-P          pick the model this session uses
+  While a replay plays, space pauses, left/right seek five seconds,
+  +/- change the speed, home/end jump to the start or the end, and esc
+  stops it.
   Bindings are remapped in $HORON_HOME/keybindings.toml, and /help lists
   the keys in force.
 
@@ -91,6 +94,8 @@ Commands:
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
   /quit          leave
+  /record [path] record the conversation to a local file (stop, status)
+  /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
   /skills        list the skills the harness reports, and put one in the
@@ -141,7 +146,11 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
     (ids::APP_SCROLL_BOTTOM, "follow the end of the conversation again"),
     (
         ids::APP_EXPAND_TOOL,
-        "show the whole output of the newest cut tool call, or hide it again",
+        "show the whole output of the selected cut tool call, or hide it again",
+    ),
+    (
+        ids::APP_TOGGLE_TOOL_ACTIVITY,
+        "hide or show the record of finished tool calls",
     ),
     (
         ids::APP_CYCLE_EFFORT,
@@ -223,6 +232,8 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "new" => "start a new session in this directory",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
         "quit" => "leave",
+        "record" => "record the conversation to a local file, or stop (stop, status)",
+        "replay" => "play a recorded conversation (path, stop), or the newest one",
         "resume" => "replay a stored session, or pick one from the list",
         "settings" => "open the settings screen",
         "skills" => "list the skills the harness reports, and put one in the draft",

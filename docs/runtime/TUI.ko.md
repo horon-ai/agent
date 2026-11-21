@@ -92,6 +92,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `editor.submit_on_enter` | 참·거짓 | `true` | `HORON_TUI_EDITOR_SUBMIT_ON_ENTER` |
 | `editor.suggestions` | 참·거짓 | `false` | `HORON_TUI_EDITOR_SUGGESTIONS` |
 | `transcript.tool_output_lines` | 숫자 | `3` | `HORON_TUI_TRANSCRIPT_TOOL_OUTPUT_LINES` |
+| `transcript.show_tool_activity` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY` |
 | `transcript.mouse_scroll` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MOUSE_SCROLL` |
 | `transcript.show_reasoning` | 참·거짓 | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | 참·거짓 | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
@@ -219,12 +220,13 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.scroll_up` | `shift+up` | 트랜스크립트를 한 줄 위에 붙잡아 둔다 |
 | `app.scroll_down` | `shift+down` | 트랜스크립트를 한 줄 끝 쪽으로 옮긴다 |
 | `app.scroll_bottom` | `ctrl+end` | 다시 대화의 끝을 따라간다 |
-| `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
-| `app.expand_tool` | `ctrl+o` | 가장 최근에 잘린 도구 호출의 출력 전체를 보여 주거나 다시 접는다 |
+| `app.expand_tool` | `ctrl+o` | 선택한 보존 도구 결과를 펼치거나 접는다 |
+| `app.toggle_tool_activity` | `alt+t` | 현재 세션에서 완료된 도구 활동을 표시하거나 숨긴다 |
 | `app.cycle_effort` | `shift+tab` | 다음 추론 노력 단계로 옮기고, 마지막 단계를 지나면 처음으로 돌아온다 |
 | `app.pick_model` | `alt+p` | 이 세션이 쓰는 모델을 고른다 |
 | `app.cycle_model` | `ctrl+p` | 모델 후보 목록에서 다음 모델로 옮긴다 |
 | `app.cycle_model_back` | `ctrl+alt+p` | 모델 후보 목록에서 이전 모델로 옮긴다 |
+| `app.repaint` | `ctrl+l` | 초안, 선택 항목과 스크롤 위치를 유지하면서 터미널 화면을 지우고 다시 그린다 |
 | `app.toggle_thinking` | `ctrl+t` | 이 세션에서 모델 추론을 보이게 하거나 숨긴다 |
 | `editor.backspace` | `backspace` | 커서 앞 글자를 지운다 |
 | `editor.delete` | `delete` | 커서 자리 글자를 지운다 |
@@ -293,6 +295,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 피할 수 있었던 프롬프트 캐시 미스는 관련 요청 뒤에 표시됩니다. 원인과 다시 보낸 토큰의 대략적인 수가 표시되며 프롬프트 원문과 캐시 식별자는 빠집니다. 모델이나 프로바이더 변경, 만료 또는 이유가 기록된 무효화에는 표식을 붙이지 않습니다. 데몬의 `config.toml`에서 `[features] kv_cache_miss_notices = false`를 지정하면 보고를 끌 수 있습니다.
 
 대화를 거슬러 읽을 수 있다. `pageup`, `pagedown`, `shift+up`, `shift+down`이 보기를 붙잡고 `ctrl+end`가 끝으로 돌아오며, `transcript.mouse_scroll`이 캡처를 쥐고 있는 동안(기본값) 마우스 휠이 한 칸에 세 줄씩 움직인다. 보기를 붙잡은 동안 맨 아래 행이 `↓ N rows below`를 보여 주고, 붙잡은 보기가 아직 보여 주지 않은 행이 도착하면 `· new output`을 덧붙인다. 보기를 끝에서 떼면 그 세기의 기준점을 잡으므로, 첫 `↓ N rows below`는 사용자가 보던 행부터 센다.
+
+이전에 보존된 도구 결과까지 스크롤한 뒤 Ctrl+O를 눌러 펼치거나 접습니다. Alt+T로 완료된 도구 행을 숨기거나 되살립니다. 실행 중인 호출과 대기 중인 승인은 화면에 남습니다.
 
 어시스턴트 글은 마크다운으로 그린다. 제목, 강조, 인라인 코드, 목록, 인용, 펜스 코드, 가로줄을 다룬다. 목록은 최대 여섯 단계까지 중첩되고, 단계마다 두 칸 또는 탭 하나를 쓰며, 모델이 적은 들여쓰기에서 중첩을 그린다. 펜스 코드는 적힌 글자를 그대로 두고, 여는 펜스 줄이 완성되면 그 첫 낱말을 언어 표시로 그리므로, 절반만 도착한 ` ```ru `가 잠깐 표시를 띄웠다가 바뀌지 않는다. 표, 링크, 렌더러가 다루지 않는 문법은 모델이 적은 원문 그대로 남는다. 글을 지우면 모델이 한 말을 잃기 때문이다. 줄바꿈된 행은 이어지는 행의 들여쓰기를 지키므로, 중첩된 항목은 줄이 바뀐 뒤에도 중첩으로 읽힌다. 새 턴은 앞 턴에서 한 행 비운 아래에서 시작한다.
 
@@ -407,6 +411,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/new` | 이 디렉터리에서 새 세션을 시작한다 |
 | `/queue` | 대기 메시지를 편집하거나 삭제하거나 순서를 바꾼다 |
 | `/quit` | 나간다 |
+| `/record [path\|stop\|status]` | 로컬 대화 기록을 시작하거나 멈추거나 확인한다 |
+| `/replay [path\|stop]` | 로컬에서 기록을 재생하거나 현재 세션으로 돌아온다 |
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
@@ -415,6 +421,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 이 표에는 클라이언트가 처리하는 내장 명령(`crates/tui/src/commands/mod.rs`의 `Local`)을 이름순으로 적었습니다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아옵니다. Delete로 메시지를 삭제하고 Alt+위쪽 또는 Alt+아래쪽 방향 키로 순서를 바꿉니다. 이미 전송 중인 메시지는 목록에서 빠집니다. 편집한 초안은 준비됐을 때 다시 보낼 수 있습니다.
+
+`/record`는 보낸 메시지, 완료된 답변과 도구 실행 결과를 비공개 로컬 파일에 기록합니다. `stop`으로 기록을 끝냅니다. 미전송 초안, 승인 답변, 추론과 도구 출력은 저장하지 않으며 파일은 최대 2 MiB입니다. `/replay`는 녹화된 입력을 보내지 않고 파일을 재생합니다. 재생은 로컬에서만 이뤄지므로 화면에 그리는 내용은 하네스로 보내지 않습니다. 스페이스로 일시 정지하고 방향 키로 앞뒤로 이동하며 `+`와 `-`로 속도를 조절합니다. Esc를 누르면 현재 대화로 돌아옵니다.
 
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 
@@ -429,6 +437,8 @@ built-in commands:
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /quit                leave
+  /record              record the conversation to a local file, or stop (stop, status)
+  /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft

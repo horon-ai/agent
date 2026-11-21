@@ -323,6 +323,19 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.show_tool_activity",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_SHOW_TOOL_ACTIVITY",
+        default: DefaultValue::Bool(true),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Show tool activity",
+            description: "Draw the record of finished tool calls; off keeps a call that is running or waiting \
+                          for approval visible.",
+        },
+    },
+    SettingSpec {
         id: "transcript.mouse_scroll",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_MOUSE_SCROLL",

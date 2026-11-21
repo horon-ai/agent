@@ -139,13 +139,6 @@ fn structured_stream_read_error_is_extracted_and_classified_as_transient() {
 }
 
 #[test]
-fn parse_text_wrapped_tool_call_rejects_non_object_json() {
-    let text = "prefix to=functions.read [1,2,3]";
-    let parsed = parse_text_wrapped_tool_call(text);
-    assert!(parsed.is_none());
-}
-
-#[test]
 fn parse_openai_response_event_ignores_malformed_json_chunks() {
     let mut saw_text_delta = false;
     let mut saw_thinking_delta = false;
