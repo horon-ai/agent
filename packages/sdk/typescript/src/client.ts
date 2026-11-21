@@ -1407,7 +1407,7 @@ export class HoronAgentClient extends EventEmitter {
   ): Promise<{ applied: boolean; refusal?: TodoEditRefusal; state: TodoSnapshot; revision: string }> {
     this.requireCapability("todo_edit_v1", "setTodoStatus");
     const frame = await this.expectReply(
-      { req: "set_todo_status", session_id: sessionId, expected_revision: expectedRevision, id, status },
+      { req: "set_todo_status", session_id: sessionId, expected_revision: expectedRevision, todo_id: id, status },
       "todo_edit_result",
     );
     return { applied: frame.applied, refusal: frame.refusal, state: frame.state, revision: frame.revision };

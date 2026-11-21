@@ -47,7 +47,7 @@ fn todo_status_edit_is_forwarded_and_the_daemons_reply_carries_the_refresh() {
     // daemon owns the lock and the `TodoChanged` push.
     let forwarded = state.api_request_to_legacy(&json!({
         "req": "set_todo_status", "id": 95, "session_id": "s1",
-        "expected_revision": revision, "id": "ship", "status": "completed"
+        "expected_revision": revision, "todo_id": "ship", "status": "completed"
     }));
     let Outbound::Legacy(frame) = forwarded.into_iter().next().expect("one forwarded frame") else {
         panic!("the edit must be forwarded to the daemon");
@@ -86,7 +86,7 @@ fn todo_status_edit_is_forwarded_and_the_daemons_reply_carries_the_refresh() {
     // carries the current list for the client to refresh.
     let forwarded = state.api_request_to_legacy(&json!({
         "req": "set_todo_status", "id": 96, "session_id": "s1",
-        "expected_revision": revision, "id": "ship", "status": "cancelled"
+        "expected_revision": revision, "todo_id": "ship", "status": "cancelled"
     }));
     let Outbound::Legacy(frame) = forwarded.into_iter().next().expect("one forwarded frame") else {
         panic!("the edit must be forwarded to the daemon");

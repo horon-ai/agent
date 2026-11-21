@@ -736,7 +736,7 @@ export type ApiRequest =
       req: "set_todo_status";
       session_id: string;
       expected_revision: string;
-      id: string;
+      todo_id: string;
       status: string;
     }
   | { req: "set_model"; session_id: string; model: string }

@@ -44,7 +44,7 @@ pub(super) fn get(api_id: u64, request: &Value) -> Vec<Outbound> {
 /// `TodoChanged`. A direct file write here would bypass both.
 pub(super) fn set(state: &mut BridgeState, api_id: u64, request: &Value) -> Vec<Outbound> {
     let expected_revision = request["expected_revision"].as_str().unwrap_or("");
-    let todo_id = request["id"].as_str().unwrap_or("");
+    let todo_id = request["todo_id"].as_str().unwrap_or("");
     let status = request["status"].as_str().unwrap_or("");
     if expected_revision.trim().is_empty() || todo_id.trim().is_empty() || status.trim().is_empty() {
         return BridgeState::error_reply(

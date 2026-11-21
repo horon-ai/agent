@@ -23,7 +23,7 @@ fn todo_status_edit_and_revision_round_trip() {
     let wire = serde_json::to_string(&request).unwrap();
     assert_eq!(
         wire,
-        r#"{"v":1,"id":21,"req":"set_todo_status","session_id":"s1","expected_revision":"rev-a","id":"t1","status":"completed"}"#
+        r#"{"v":1,"id":21,"req":"set_todo_status","session_id":"s1","expected_revision":"rev-a","todo_id":"t1","status":"completed"}"#
     );
     assert_eq!(serde_json::from_str::<ClientFrame>(&wire).unwrap(), request);
 

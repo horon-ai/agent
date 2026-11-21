@@ -384,6 +384,7 @@ pub enum ApiRequest {
     SetTodoStatus {
         session_id: String,
         expected_revision: String,
+        #[serde(rename = "todo_id")]
         id: String,
         status: String,
     },

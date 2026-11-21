@@ -2154,7 +2154,7 @@ class HoronAgentClient:
                 "req": "set_todo_status",
                 "session_id": session_id,
                 "expected_revision": expected_revision,
-                "id": id,
+                "todo_id": id,
                 "status": status,
             },
             "todo_edit_result",
