@@ -36,6 +36,7 @@ pub mod recording;
 pub mod report;
 pub mod scroll;
 pub mod sdk_bridge;
+mod session_pins;
 pub mod settings;
 pub mod statusline;
 mod suggestions;
@@ -356,6 +357,9 @@ fn run_interactive(
 ) -> i32 {
     let mut themes = ThemeLoader::new();
     let workspace = runtime.workspace.clone();
+    // The endpoint names the list of pins this client reads and writes: two
+    // daemons can issue the same session id, so the file keeps them apart.
+    let pin_scope = runtime.scope.clone();
     // Read before the events travel with the app: the flag decides whether a
     // keystroke may read this machine's disk for the session.
     let local = runtime.local;
@@ -365,6 +369,8 @@ fn run_interactive(
     // or an embedded `App` writes to.
     app.notes = notes::NoteStore::owned();
     app.load_notes();
+    app.pins.store = session_pins::PinStore::owned(pin_scope);
+    app.load_pins();
     // The alternate screen hides stderr, so also show warnings in the transcript.
     for warning in reloader.warnings() {
         app.warn(format!("settings: {warning}"));
