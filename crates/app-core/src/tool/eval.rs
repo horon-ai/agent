@@ -230,7 +230,7 @@ async fn run_cell(
     let mut current = slot.kernel.take();
     if current
         .as_ref()
-        .is_some_and(|(working_dir, _)| cell.reset.unwrap_or_default() || working_dir != cwd)
+        .is_some_and(|(working_dir, _)| cell.reset == Some(true) || working_dir != cwd)
         && let Some((_, kernel)) = current.take()
     {
         slot.stopping = kernel.begin_stop();
