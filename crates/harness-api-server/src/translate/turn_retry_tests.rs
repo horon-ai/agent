@@ -12,7 +12,10 @@ use super::*;
 /// An ordinary message keeps the `message_accepted` it has always produced.
 #[test]
 fn a_continuation_is_answered_by_the_daemon_decision() {
-    let mut state = state_with_session();
+    let mut state = BridgeState {
+        session_id: Some("s1".into()),
+        ..Default::default()
+    };
     let out = state.api_request_to_legacy(&json!({
         "req": "send_message", "id": 7, "session_id": "s1",
         "content": "", "system_reminder": "continue", "expected_run_id": "run-a"
