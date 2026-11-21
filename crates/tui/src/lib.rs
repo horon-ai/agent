@@ -396,7 +396,8 @@ fn run_interactive(
             .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
     }
     if let Some(profile) = std::env::var_os("HORON_PROFILE").filter(|name| !name.is_empty()) {
-        app.transcript.push_notice(format!("profile: {}", profile.to_string_lossy()));
+        app.transcript
+            .push_notice(format!("profile: {}", profile.to_string_lossy()));
     }
     // The session's own directory names the workspace: `--cwd` is what the
     // create was asked for, and a resumed session reports the directory it
