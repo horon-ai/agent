@@ -16,6 +16,10 @@
 //! provider runtime is exercised. Every wait subscribes before sending and is
 //! wrapped in a finite timeout; there are no sleep-based polls of turn state.
 #![cfg(unix)]
+// Like tests/e2e/main.rs, this unoptimized executable links the full agent.
+// Apple's linker falls back to DWARF when __eh_frame exceeds its 16 MB compact
+// unwind limit. Keep that linker exception local to this debug test binary.
+#![cfg_attr(all(debug_assertions, target_os = "macos"), allow(linker_messages))]
 // The env guard is held across awaits on purpose, matching the e2e harness.
 #![allow(clippy::await_holding_lock)]
 
@@ -427,34 +431,34 @@ fn package_daemon_cli_inbox_and_offline_catalog_converge() -> Result<()> {
     let store = daemon.store();
 
     let first = daemon.root.join("src/one");
-    packages::write_extension(&first, "sample.one", "1.0.0");
+    packages::write_extension(&first, "sample-one", "1.0.0");
     let output = daemon.cli(&["install", &packages::path_text(&first)]);
     let printed = packages::assert_success(&output);
-    assert!(printed.contains("Installed sample.one"), "{printed}");
+    assert!(printed.contains("Installed sample-one"), "{printed}");
     assert_eq!(daemon.generation(), 1, "the running daemon published the CLI install");
 
     // The daemon's own authority names the same generation the CLI returned.
     let status = daemon.request(PackageControlOperation::Status);
     assert_eq!(status.generation, 1);
     assert_eq!(status.catalog.len(), 1);
-    assert_eq!(status.catalog[0].id, "sample.one");
+    assert_eq!(status.catalog[0].id, "sample-one");
 
     // A complete folder that appears in the inbox is installed by the daemon
     // alone: no client asks for it.
-    packages::drop_into_inbox(&daemon, "sample.two", |staged| {
-        packages::write_extension(staged, "sample.two", "0.2.0")
+    packages::drop_into_inbox(&daemon, "sample-two", |staged| {
+        packages::write_extension(staged, "sample-two", "0.2.0")
     });
     let published = daemon.wait_for("the inbox install", || (daemon.generation() == 2).then_some(2));
     assert_eq!(published, 2);
-    assert!(store.catalog()?.get("sample.two").is_some());
+    assert!(store.catalog()?.get("sample-two").is_some());
 
     // With no daemon, the same command publishes through the store's file lock.
     daemon.stop();
     let third = daemon.root.join("src/three");
-    packages::write_extension(&third, "sample.three", "3.0.0");
+    packages::write_extension(&third, "sample-three", "3.0.0");
     let output = daemon.cli(&["install", &packages::path_text(&third)]);
     let printed = packages::assert_success(&output);
-    assert!(printed.contains("Installed sample.three"), "{printed}");
+    assert!(printed.contains("Installed sample-three"), "{printed}");
     assert_eq!(daemon.generation(), 3, "the offline install published the same catalog");
 
     // A restart must re-read the catalog and the inbox without a second install.
@@ -463,7 +467,7 @@ fn package_daemon_cli_inbox_and_offline_catalog_converge() -> Result<()> {
     assert_eq!(status.generation, 3, "startup must not advance the generation again");
     assert_eq!(status.catalog.len(), 3);
     let listed = packages::assert_success(&daemon.cli(&["list"]));
-    for id in ["sample.one", "sample.two", "sample.three"] {
+    for id in ["sample-one", "sample-two", "sample-three"] {
         assert!(listed.contains(id), "`package list` is missing {id}:\n{listed}");
     }
     Ok(())
@@ -489,18 +493,18 @@ fn package_daemon_invalid_folder_is_rejected() -> Result<()> {
 
     // A folder whose directory name is not the ID it declares is skipped, left in
     // place, and never installed. A valid entry behind it proves the pass ran.
-    packages::drop_into_inbox(&daemon, "wrong.name", |staged| {
-        packages::write_extension(staged, "declared.other", "1.0.0")
+    packages::drop_into_inbox(&daemon, "wrong-name", |staged| {
+        packages::write_extension(staged, "declared-other", "1.0.0")
     });
-    packages::drop_into_inbox(&daemon, "sample.ok", |staged| {
-        packages::write_extension(staged, "sample.ok", "1.0.0")
+    packages::drop_into_inbox(&daemon, "sample-ok", |staged| {
+        packages::write_extension(staged, "sample-ok", "1.0.0")
     });
     daemon.wait_for("the valid inbox entry", || (daemon.generation() == 1).then_some(1));
     let status = daemon.request(PackageControlOperation::Status);
     assert_eq!(status.catalog.len(), 1);
-    assert_eq!(status.catalog[0].id, "sample.ok");
+    assert_eq!(status.catalog[0].id, "sample-ok");
     assert!(
-        daemon.store().inbox_dir().join("wrong.name").is_dir(),
+        daemon.store().inbox_dir().join("wrong-name").is_dir(),
         "a refused entry stays exactly where the operator put it"
     );
     Ok(())
@@ -512,7 +516,7 @@ fn package_daemon_invalid_folder_is_rejected() -> Result<()> {
 fn package_daemon_replay_restart_and_lost_notification_recovery() -> Result<()> {
     let mut daemon = packages::PackageDaemon::start("replay").with_bridge();
     let source = daemon.root.join("src/one");
-    packages::write_extension(&source, "sample.one", "1.0.0");
+    packages::write_extension(&source, "sample-one", "1.0.0");
     let install = PackageControlRequest {
         operation_id: "op-install-one".into(),
         operation: PackageControlOperation::Install {
@@ -525,7 +529,7 @@ fn package_daemon_replay_restart_and_lost_notification_recovery() -> Result<()> 
     let client = daemon.connect_sdk();
     let receipt = client.package_control(install.clone())?;
     assert_eq!(receipt.generation, 1);
-    assert_eq!(receipt.changed, vec!["sample.one".to_string()]);
+    assert_eq!(receipt.changed, vec!["sample-one".to_string()]);
     assert!(!receipt.replayed, "the first application is not a replay");
 
     // A retry with the same id reports the recorded outcome; it never installs a
@@ -534,14 +538,14 @@ fn package_daemon_replay_restart_and_lost_notification_recovery() -> Result<()> 
     assert!(replay.replayed, "the same operation id must replay");
     assert_eq!(replay.generation, 1);
     assert_eq!(
-        replay.catalog.iter().filter(|record| record.id == "sample.one").count(),
+        replay.catalog.iter().filter(|record| record.id == "sample-one").count(),
         1
     );
 
     let conflicting = client.package_control(PackageControlRequest {
         operation_id: "op-install-one".into(),
         operation: PackageControlOperation::Disable {
-            id: "sample.one".into(),
+            id: "sample-one".into(),
         },
     });
     let message = format!("{}", conflicting.expect_err("a reused id must be refused"));
@@ -559,8 +563,8 @@ fn package_daemon_replay_restart_and_lost_notification_recovery() -> Result<()> 
 
     // A complete folder dropped while no daemon runs is installed at startup.
     daemon.stop();
-    packages::drop_into_inbox(&daemon, "sample.two", |staged| {
-        packages::write_extension(staged, "sample.two", "0.2.0")
+    packages::drop_into_inbox(&daemon, "sample-two", |staged| {
+        packages::write_extension(staged, "sample-two", "0.2.0")
     });
     daemon.restart_with_bridge();
     let client = daemon.connect_sdk();
@@ -569,18 +573,18 @@ fn package_daemon_replay_restart_and_lost_notification_recovery() -> Result<()> 
         operation: PackageControlOperation::Status,
     })?;
     assert_eq!(status.generation, 2, "startup installs the folder the daemon missed");
-    assert!(status.catalog.iter().any(|record| record.id == "sample.two"));
+    assert!(status.catalog.iter().any(|record| record.id == "sample-two"));
 
     // Another process replaces the catalog atomically while the daemon runs. No
     // client tells the daemon; its own change detection must publish the new
     // generation, tombstone and scope included.
     let store = daemon.store();
-    assert_eq!(store.remove("sample.one")?, 3);
+    assert_eq!(store.remove("sample-one")?, 3);
     let published = daemon.wait_for_published_generation(&client, 3);
     let removed = published
         .catalog
         .iter()
-        .find(|record| record.id == "sample.one")
+        .find(|record| record.id == "sample-one")
         .expect("the removed record stays as a tombstone");
     assert_eq!(removed.state, PackageControlState::Revoked);
     assert_eq!(removed.scope, PackageControlScope::Global);
@@ -631,7 +635,7 @@ fn package_daemon_cli_permission_failure_is_not_offline() -> Result<()> {
         return Ok(());
     }
     let source = daemon.root.join("src/permission");
-    packages::write_extension(&source, "sample.permission", "1.0.0");
+    packages::write_extension(&source, "sample-permission", "1.0.0");
     let output = daemon.cli_with_runtime(&runtime, &["install", &packages::path_text(&source)]);
     std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700))?;
 
@@ -642,7 +646,7 @@ fn package_daemon_cli_permission_failure_is_not_offline() -> Result<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        !daemon.catalog_ids().iter().any(|(id, _)| id == "sample.permission"),
+        !daemon.catalog_ids().iter().any(|(id, _)| id == "sample-permission"),
         "the refused command must not have written the catalog"
     );
     Ok(())
