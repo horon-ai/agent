@@ -62,7 +62,8 @@ export type RuntimeCommand =
   | "subagent"
   | "auth"
   | "logout"
-  | "plan";
+  | "plan"
+  | "mcp";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 

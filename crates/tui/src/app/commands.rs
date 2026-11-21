@@ -88,6 +88,15 @@ impl App {
             // them when it comes.
             Local::Skills => self.open_skills(),
             Local::Tools => self.open_tools(),
+            Local::Mcp => Some(Action::Runtime {
+                command: horon_agent_sdk::RuntimeCommand::Mcp,
+                arguments: arguments
+                    .splitn(2, char::is_whitespace)
+                    .map(str::trim)
+                    .filter(|argument| !argument.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            }),
             Local::Settings => self.open_settings(),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and

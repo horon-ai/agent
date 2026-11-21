@@ -189,15 +189,14 @@ fn commands_server_names_follow_the_protocol() {
         }
         other => panic!("expected a server command: {other:?}"),
     }
-    // The names come from serde, so every variant is reachable and unique,
-    // apart from the one the built-in list took over.
+    // Harness names are unique and omit commands reserved by the client.
     let names = server_commands();
     assert_eq!(
-        names.len() + 1,
+        names.len() + 2,
         SERVER_VARIANTS.len(),
-        "the built-in `/skills` owns exactly one harness name"
+        "the built-in `/skills` and `/mcp` own their harness names"
     );
-    assert!(!names.iter().any(|(name, _)| name == "skills"));
+    assert!(!names.iter().any(|(name, _)| matches!(name.as_str(), "skills" | "mcp")));
     let mut unique: Vec<&str> = names.iter().map(|(name, _)| name.as_str()).collect();
     unique.sort_unstable();
     unique.dedup();

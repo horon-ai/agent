@@ -364,7 +364,7 @@ Typing `/` opens a list of the commands the typed letters match: the same comman
 
 ## Pickers
 
-The model, effort, session, skill, link and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
+The model, effort, session, skill, link, tool and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
 
 The filter is the subsequence match the slash popup uses, over a row's name and its second column and, for a session, over the conversation lines its preview carries. Those lines are searchable and a preview's header line is not, because the header names the directory and the time every row of one directory shares. Matches are ranked, and rows that rank the same keep the order the list gave them, so an empty filter shows the list in its own order. A filter that leaves nothing says `nothing matches that filter`.
 
@@ -385,6 +385,8 @@ Choosing a row, or typing `/switch <id>` or `/resume <id>`, attaches at once, an
 `/skills` lists the skills the harness reported for this session: the name, the harness's description in the second column, and a preview naming the file the skill was read from and the tools it may use, ending with the line that says `enter` puts the invocation in the draft. Choosing a row writes `/skill:<name>` and a trailing space into the editor without sending it, so the request after it is the user's to type.
 
 `/links` lists HTTP and HTTPS links from the eight most recent assistant answers, newest first. Choose a row with Enter to open the displayed URL in the system browser. Esc closes the list. The picker skips malformed URLs, local files and links with embedded credentials.
+
+`/mcp` lists servers from the daemon's trusted configuration for the attached workspace. `/mcp probe <server>` opens a separate connection to the named enabled server and reports its transport and advertised capabilities. The probe reads the tool list without calling a tool. An untrusted or disabled server cannot be probed from the TUI.
 
 In a window too small for an overlay, the lists and the settings screen draw one line instead of the panel: `list hidden: window too small, esc closes` or `settings hidden: window too small, esc closes`. The overlay still owns every key, so `esc` closes it.
 
@@ -435,6 +437,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/keys` | List the keys in force and what each does |
 | `/links` | List links from recent assistant answers and open the selected URL |
+| `/mcp [probe <server>]` | List trusted MCP configuration or explicitly test a named connection |
 | `/model [name]` | Pick a model from a list, or switch to the one named |
 | `/new` | Start a new session in this directory |
 | `/note [add\|edit\|remove\|list\|prune] [address] [text]` | Keep, list or remove a local note on a transcript message |
@@ -449,7 +452,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/tools` | Browse the current session's enabled tools without running them |
 
-The table lists the built-in commands (`Local` in `crates/tui/src/commands/mod.rs`) in name order. `/tools` uses the daemon's effective tool list. It labels the loading tier `unknown` when the daemon's tool definitions leave it out.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-two commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -473,6 +476,7 @@ built-in commands:
   /help                list the commands and the keys in force
   /keys                list the keys in force and what each does
   /links               list the http(s) links in recent answers and open one
+  /mcp                 list trusted MCP servers or connect to one with /mcp probe <server>
   /model               pick a model, or switch with /model <name>
   /new                 start a new session in this directory
   /note                note, list or remove a local note on a transcript message
