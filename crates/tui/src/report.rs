@@ -419,6 +419,7 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Logout => "logout",
         RuntimeCommand::Plan => "plan mode",
         RuntimeCommand::Goal => "session goal",
+        RuntimeCommand::Advisor => "advisor",
         RuntimeCommand::Mcp => "MCP servers",
     }
 }

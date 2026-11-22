@@ -33,6 +33,7 @@ pub enum RuntimeCommand {
     Logout,
     Plan,
     Goal,
+    Advisor,
     Mcp,
 }
 
