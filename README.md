@@ -115,7 +115,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | Command | What it does |
 | --- | --- |
 | `horon` (no subcommand) | On a terminal, starts the server and replaces itself with the `horon-tui` client beside it, with keybindings, user files and a settings screen ([docs](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling prints a sentence naming the condition and the install command, then exits non-zero. |
-| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, and [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run. |
+| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, `--no-session` to keep the run in memory, and [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
@@ -132,6 +132,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 `horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
 
 `horon run --system-template <FILE>` renders a text template once as the system prompt for that run. The variables are `{{cwd}}`, `{{date}}` and `{{model}}`. A value is never expanded again. An unknown variable, an unclosed `{{` or a template over 16 KiB is refused before any provider request.
+
+`horon run --no-session "<message>"` keeps the run in memory. It writes no session log, checkpoint, catalog row or run journal under `$HORON_HOME`, so the run cannot be resumed or recovered afterwards, and a failed run leaves nothing behind either. The session id in `--json` and `--ndjson` output names no stored session. Logs, usage records and other non-session state are written as usual. It cannot be combined with `--resume`, `--continue` or `--goal`, which need a stored session. Tools that keep their own per-session files, such as `todo`, are not covered by this guarantee.
 
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 

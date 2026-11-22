@@ -304,13 +304,18 @@ impl Tool for ReadTool {
         // is tracked; a selector read is rendered as asked.
         // Python receives bridge output directly and may discard it without
         // ever putting the file in the model's context.
-        let dedup = crate::config::config().tools.read_dedup && range.is_some() && !super::eval::owns_subcall();
-        let read_key = dedup.then(|| read_state::key_for(&path));
-        let content_hash: Option<[u8; 32]> = dedup.then(|| Sha256::digest(content.as_bytes()).into());
+        let tools = &crate::config::config().tools;
+        let track = range.is_some() && !super::eval::owns_subcall();
+        let edit_evidence = track && tools.enforce_seen_line_guard;
+        let dedup = track && tools.read_dedup;
+        let read_key = (dedup || edit_evidence).then(|| read_state::key_for(&path));
+        let content_hash: Option<[u8; 32]> = read_key.as_ref().map(|_| Sha256::digest(content.as_bytes()).into());
         let previous = read_key
             .as_ref()
             .and_then(|key| read_state::lookup(&ctx.session_id, key));
         if !params.full
+            && dedup
+            && !edit_evidence
             && let (Some(range), Some(key), Some(hash), Some(prev)) =
                 (range, read_key.as_ref(), content_hash, previous.as_ref())
             && let Some(repeated) = repeated_read_response(&params, range, &content, hash, prev, key, &ctx)
@@ -345,6 +350,7 @@ impl Tool for ReadTool {
                 (range.offset, rendered.last_line),
                 rendered.total_lines,
                 params.hashline,
+                edit_evidence,
                 previous,
             );
         }
@@ -562,6 +568,7 @@ fn repeated_read_response(
         key.to_path_buf(),
         ReadRecord {
             hash,
+            edit_evidence: false,
             ranges: vec![(0, total_lines)],
             hashline: false,
             total_lines,
@@ -593,19 +600,21 @@ fn remember_read(
     (start, end): (usize, usize),
     total_lines: usize,
     hashline: bool,
+    edit_evidence: bool,
     previous: Option<ReadRecord>,
 ) {
     if start >= end {
         return;
     }
     let mut record = match previous {
-        Some(prev) if prev.hash == hash && prev.hashline == hashline => prev,
+        Some(prev) if prev.hash == hash && prev.hashline == hashline && prev.edit_evidence == edit_evidence => prev,
         Some(prev) if prev.hash == hash => ReadRecord {
             ranges: Vec::new(),
             ..prev
         },
         _ => ReadRecord {
             hash,
+            edit_evidence,
             ranges: Vec::new(),
             hashline,
             total_lines,
@@ -614,10 +623,16 @@ fn remember_read(
         },
     };
     record.hashline = hashline;
+    record.edit_evidence = edit_evidence;
     record.total_lines = total_lines;
     record.tool_call_id = ctx.tool_call_id.clone();
     record.merge_range(start, end);
-    if record.snapshot_id.is_none() && start == 0 && end >= total_lines && content.len() <= READ_SNAPSHOT_MAX_BYTES {
+    if !edit_evidence
+        && record.snapshot_id.is_none()
+        && start == 0
+        && end >= total_lines
+        && content.len() <= READ_SNAPSHOT_MAX_BYTES
+    {
         record.snapshot_id = artifacts::store(&ctx.session_id, READ_SNAPSHOT_TOOL, content).ok();
     }
     read_state::record(&ctx.session_id, key, record);

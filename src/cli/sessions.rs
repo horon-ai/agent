@@ -16,6 +16,8 @@ use crate::cli::args::SessionCommand;
 use crate::session;
 use crate::session::event_store_api as store;
 
+mod recovery;
+
 const BUNDLE_KIND: &str = "horon-agent-session-bundle";
 const BUNDLE_VERSION: u32 = 1;
 
@@ -28,6 +30,7 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             json,
         } => super::commands::run_session_rename_command(&session, name.as_deref(), clear, json),
         SessionCommand::Inspect { session, json } => inspect(&home()?, &session, json),
+        SessionCommand::Recovery { session, json } => recovery::run(&home()?, &session, json),
         SessionCommand::Doctor { session, json } => doctor(&home()?, session.as_deref(), json),
         SessionCommand::Migrate {
             session,

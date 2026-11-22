@@ -342,6 +342,10 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   세션 재정의를 읽거나 요청한 정책 범위를 유지한다.
 - `subagent_model`: 생성된 워커 정책을 보기/설정/상속.
 - `autoreview`, `autojudge`: 상태를 보여주고 명시적 on/off/toggle을 유지한다.
+- `advisor`: 이 세션의 advisor가 도는지 보여 주고(`enabled`와 설정 기본값 `default_enabled`),
+  `on`/`off`로 이 세션만 켜거나 끈다. 끄면 이 세션의 새 advisor 작업이 바로 멈춘다. 선택은
+  실행 중인 세션에만 적용되며 `[advisor] enabled`나 다른 세션을 바꾸지 않는다.
+  `horon run --advisor on|off`는 한 번 실행에 같은 선택을 적용한다.
 - `plan`: 계획 모드 상태를 읽고 바꾼다. 인자가 없거나 `status`면 현재 상태를,
   `on`/`off`는 계획 모드를 켜고 끄며, `approve`/`reject`는 세션에 대기 중인 계획을
   승인하거나 거절한다. 설정에서 계획 모드가 꺼져 있으면 `on`과 `approve`는 오류로 답한다
@@ -659,6 +663,19 @@ method_order = ["handoff", "structured"]
 `session_picker_enter`나 `[terminal]` 키가 남아 있어도 읽지 않고, 예전 `--fresh-spawn`처럼
 창을 고르는 플래그도 없다. `crates/terminal-launch`에는 클라이언트 터미널 환경 스냅숏과
 훅 명령 파싱만 남아 있다.
+
+### 복구 미리보기
+
+`horon-agent session recovery <id> [--json]`는 세션 하나를 재개하면 무엇이 영향을 받는지 재개하지 않고 보여 준다. 저장된 원본만 읽는다. 데몬을 시작하지 않고, 런타임 저널을 열지 않으며, 아무것도 쓰지 않으므로 다른 프로세스가 그 세션을 쓰는 중에도 안전하다. 세션과 그 세션이 소유한 하위 세션(`parent_id`가 그 세션인 저장된 세션)은 아래 상태 중 하나가 된다.
+
+| 상태 | 의미 | 재개 대상 |
+| --- | --- | --- |
+| `empty` | 메시지 없음 | 아니요 |
+| `complete` | 마지막 메시지가 어시스턴트의 것이고 열린 도구 호출이 없음 | 아니요 |
+| `awaiting_reply` | 마지막 메시지가 사용자 메시지나 도구 결과라서 모델이 답하기 전에 턴이 멈춤 | 예 |
+| `unresolved_tool_calls` | 결과 없는 어시스턴트 도구 호출이 있어 실행 여부를 알 수 없고 부작용이 있을 수 있음 | 아니요, 사람이 결정할 때까지 보류 |
+
+보고서는 보류된 도구 호출마다 이름을 밝히고, 재개 대상과 보류 세션 수를 세며, 기존 재개 명령(`horon-agent --resume <id>`)을 출력한다. 재개 동작 자체는 바뀌지 않는다. 하위 세션 탐색은 저장된 세션을 최대 5000개까지 읽고, 거기서 멈추면 그렇게 알린다. 읽을 수 없는 세션은 `unreadable_sessions`에 나열한다.
 
 ### 저장한 세션
 

@@ -55,6 +55,10 @@ pub(crate) struct RunModelOverrides {
     /// OpenAI service tier (off, priority, fast, or ultrafast where supported)
     #[arg(long, value_name = "TIER")]
     pub(crate) service_tier: Option<String>,
+
+    /// Turn the session advisor on or off for this run, overriding `[advisor] enabled`
+    #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
+    pub(crate) advisor: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -298,6 +302,10 @@ pub(crate) enum Command {
         /// Run shell tools without a pseudo-terminal for this invocation
         #[arg(long)]
         no_pty: bool,
+
+        /// Keep this run in memory only: no session, journal or resume hint is written
+        #[arg(long)]
+        no_session: bool,
 
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
@@ -804,6 +812,16 @@ pub(crate) enum SessionCommand {
 
     /// Show one session's layout, heads, archive state and damage, read-only
     Inspect {
+        /// Session ID
+        session: String,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Preview what restoring one session and its owned children would touch,
+    /// read-only. Resuming stays with `--resume`.
+    Recovery {
         /// Session ID
         session: String,
 

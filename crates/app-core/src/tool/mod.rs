@@ -423,6 +423,7 @@ impl Drop for SessionToolPolicyRegistration {
             policies.remove(&self.session_id);
             sdk::remove_session(&self.session_id);
             eval::forget_session(&self.session_id);
+            crate::extensions::package_snapshot::forget_session(&self.session_id);
         }
     }
 }
