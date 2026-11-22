@@ -7,6 +7,8 @@ mod mcp;
 pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod run_options;
+pub(crate) use run_options::RunModelOverrides;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
@@ -46,21 +48,6 @@ impl From<ProviderTypeArg> for crate::config::NamedProviderType {
     }
 }
 
-#[derive(clap::Args, Debug)]
-pub(crate) struct RunModelOverrides {
-    /// Reasoning effort for the selected model
-    #[arg(long, value_name = "EFFORT")]
-    pub(crate) thinking: Option<String>,
-
-    /// OpenAI service tier (off, priority, fast, or ultrafast where supported)
-    #[arg(long, value_name = "TIER")]
-    pub(crate) service_tier: Option<String>,
-
-    /// Turn the session advisor on or off for this run, overriding `[advisor] enabled`
-    #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
-    pub(crate) advisor: Option<String>,
-}
-
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
     pub(crate) fn one_shot(message: String) -> Self {
@@ -69,8 +56,12 @@ impl Command {
             ndjson: false,
             no_pty: false,
             no_session: false,
+            warn_cost: None,
+            max_cost: None,
             max_time: None,
             wait_async: false,
+            system_template: None,
+            print_thoughts: false,
             model_overrides: RunModelOverrides {
                 thinking: None,
                 service_tier: None,
@@ -339,6 +330,14 @@ pub(crate) enum Command {
         #[arg(long)]
         no_session: bool,
 
+        /// Warn once on stderr when the estimated spend of this run reaches this many US dollars
+        #[arg(long, value_name = "USD", value_parser = super::commands::parse_run_cost)]
+        warn_cost: Option<f64>,
+
+        /// Send no new model request once the estimated spend of this run reaches this many US dollars
+        #[arg(long, value_name = "USD", value_parser = super::commands::parse_run_cost)]
+        max_cost: Option<f64>,
+
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
         max_time: Option<std::time::Duration>,
@@ -350,6 +349,11 @@ pub(crate) enum Command {
         /// Render this template once as the system prompt. Variables: {{cwd}}, {{date}}, {{model}}
         #[arg(long, value_name = "FILE")]
         system_template: Option<std::path::PathBuf>,
+
+        /// Print provider-supplied visible reasoning to stderr under a label
+        /// (text mode only; the answer stays on stdout)
+        #[arg(long, conflicts_with_all = ["json", "ndjson"])]
+        print_thoughts: bool,
 
         #[command(flatten)]
         model_overrides: RunModelOverrides,
@@ -793,6 +797,17 @@ pub(crate) enum CloudCommand {
         session: String,
         #[arg(long)]
         epoch: u64,
+    },
+
+    /// Check that a cloud host is reachable and runs a compatible horon-agent
+    /// before moving a session. It sends no session data and creates nothing
+    /// on the host.
+    Doctor {
+        #[command(flatten)]
+        target: CloudMoveTarget,
+        /// Emit JSON instead of one line of text
+        #[arg(long)]
+        json: bool,
     },
 }
 
