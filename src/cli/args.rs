@@ -76,6 +76,7 @@ impl Command {
             max_time: None,
             wait_async: false,
             system_template: None,
+            print_thoughts: false,
             model_overrides: RunModelOverrides {
                 thinking: None,
                 service_tier: None,
@@ -95,15 +96,12 @@ pub(crate) struct Args {
     /// Provider profile to use: `auto` (follow [provider] default_provider or --provider-profile), `openai-compatible`, or a [providers.<name>] profile id from config.toml.
     #[arg(short, long, default_value = "auto", global = true, value_parser = super::provider_init::parse_provider_choice)]
     pub(crate) provider: ProviderChoice,
-
     /// Working directory for the local client process
     #[arg(short = 'C', long, global = true)]
     pub(crate) cwd: Option<String>,
-
     /// Working directory to send to a remote server when using --socket
     #[arg(long, global = true)]
     pub(crate) remote_working_dir: Option<String>,
-
     /// Extra workspace directory for the session, repeatable. Each path is
     /// resolved and must be an existing directory; the session lists it in its
     /// context, and the directory is never modified or granted wholesale.
@@ -115,15 +113,12 @@ pub(crate) struct Args {
         conflicts_with = "ssh"
     )]
     pub(crate) add_dir: Vec<String>,
-
     /// Remote SSH attach; unavailable in this headless build, so it fails with an explanation
     #[arg(long, global = true, conflicts_with = "socket", value_name = "HOST")]
     pub(crate) ssh: Option<String>,
-
     /// Remote HoronAgent executable name or literal path (requires --ssh)
     #[arg(long, global = true, requires = "ssh", value_name = "PATH")]
     pub(crate) ssh_binary: Option<String>,
-
     /// Remote daemon socket override, for isolated servers (requires --ssh)
     #[arg(long, global = true, requires = "ssh", value_name = "PATH")]
     pub(crate) ssh_server_socket: Option<String>,
@@ -174,8 +169,7 @@ pub(crate) struct Args {
     /// Clients dial this path instead of the shared daemon socket. A headless
     /// `run` hosts its agent in-process, so nothing binds the path until a
     /// tool needs a server (today: `swarm`); the first such tool starts a
-    /// temporary server here that exits with the run, leaving no daemon
-    /// behind on a one-off socket.
+    /// temporary server here that exits with the run, leaving no daemon behind on a one-off socket.
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
 
@@ -196,8 +190,7 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) provider_profile: Option<String>,
 
-    /// Tool profile to expose to the model: core (headless default), full,
-    /// minimal/lite, or none.
+    /// Tool profile to expose to the model: core (headless default), full, minimal/lite, or none.
     #[arg(long, global = true)]
     pub(crate) tool_profile: Option<String>,
 
@@ -239,8 +232,7 @@ impl Args {
     /// Turn `--mode rpc` into the `rpc` subcommand.
     ///
     /// A host that launches the binary directly passes the mode rather than a
-    /// subcommand, so the flag form has to reach the same code. An explicit
-    /// subcommand wins when both are present.
+    /// subcommand, so the flag form has to reach the same code. An explicit subcommand wins when both are present.
     pub(crate) fn promote_rpc_mode(&mut self) {
         if self.command.is_none() && self.mode.as_deref() == Some("rpc") {
             self.command = Some(Command::Rpc { session_dir: None });
@@ -360,6 +352,11 @@ pub(crate) enum Command {
         /// Render this template once as the system prompt. Variables: {{cwd}}, {{date}}, {{model}}
         #[arg(long, value_name = "FILE")]
         system_template: Option<std::path::PathBuf>,
+
+        /// Print provider-supplied visible reasoning to stderr under a label
+        /// (text mode only; the answer stays on stdout)
+        #[arg(long, conflicts_with_all = ["json", "ndjson"])]
+        print_thoughts: bool,
 
         #[command(flatten)]
         model_overrides: RunModelOverrides,
@@ -583,8 +580,7 @@ pub(crate) enum Command {
         api_socket: Option<String>,
 
         /// Serve one API connection on stdin/stdout (for SSH SDK clients).
-        /// Starts the shared daemon if needed; does not create an API socket.
-        /// Unix only.
+        /// Starts the shared daemon if needed; does not create an API socket. Unix only.
         #[arg(long, conflicts_with = "api_socket")]
         stdio: bool,
     },
@@ -688,8 +684,7 @@ pub(crate) enum ServerCommand {
     ///
     /// Prefer `server reload` after an upgrade; it preserves live sessions.
     /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which
-    /// drops any in-flight headless/swarm sessions, so it requires `--force`
-    /// as a deliberate acknowledgement.
+    /// drops any in-flight headless/swarm sessions, so it requires `--force` as a deliberate acknowledgement.
     Stop {
         /// Confirm that terminating the daemon (and dropping live sessions) is intended.
         #[arg(long)]
@@ -810,12 +805,21 @@ pub(crate) enum CloudCommand {
         #[arg(long)]
         epoch: u64,
     },
+
+    /// Check that a cloud host is reachable and runs a compatible horon-agent
+    /// before moving a session. It sends no session data and creates nothing on the host.
+    Doctor {
+        #[command(flatten)]
+        target: CloudMoveTarget,
+        /// Emit JSON instead of one line of text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Parser, Debug, Clone, Default)]
 pub(crate) struct CloudMoveTarget {
-    /// SSH host alias for the cloud machine. Defaults to [cloud] host in config
-    /// or $HORON_AGENT_CLOUD_HOST.
+    /// SSH host alias for the cloud machine. Defaults to [cloud] host in config or $HORON_AGENT_CLOUD_HOST.
     #[arg(long)]
     pub(crate) host: Option<String>,
     /// Remote horon-agent binary (name or path). Defaults to `horon-agent`.

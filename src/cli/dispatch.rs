@@ -32,8 +32,7 @@ fn arm_debug_client_parent_death_signal() {
     if !is_file_controlled_debug_client() {
         return;
     }
-    // The platform arms its parent-death behaviour and re-checks the parent
-    // afterwards, because the launcher can exit before the signal is armed.
+    // The platform arms parent-death behaviour and re-checks the parent, as the launcher can exit first.
     if horon_agent_platform::process::bind_process_lifetime_to_parent() {
         std::process::exit(0);
     }

@@ -682,6 +682,10 @@ Text mode reports the deadline on stderr. `--json` writes a single error object,
 
 With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
 
+## Visible reasoning in text mode
+
+`horon run --print-thoughts "..."` prints reasoning that the provider returns as visible text to stderr under a `[thinking]` label, ahead of the answer. The answer stays on stdout, so piped output is unchanged. Without the option, text output is byte-for-byte the same. Reasoning the provider does not return as visible text is not shown, and the option cannot be combined with `--json` or `--ndjson`, whose formats are unchanged.
+
 ## `--resume` behaviour
 
 Passing `--resume` with no value exits with a session picker error before the daemon starts.
