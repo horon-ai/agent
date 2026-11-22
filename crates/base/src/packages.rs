@@ -11,6 +11,7 @@
 //! whose environment the host controls.
 
 mod catalog;
+mod hook_resources;
 mod inbox;
 mod manifest;
 mod mcp_resources;
@@ -23,6 +24,7 @@ pub use catalog::{
     CATALOG_VERSION, CatalogView, CollectionReport, InstallRequest, PackageLease, PackageRecord, PackageScope,
     PackageState, PackageStore, StoredFile, VerificationReport,
 };
+pub use hook_resources::observation_events;
 pub use horon_agent_extension_types::{
     CommandDeclaration, EXTENSION_PROTOCOL, ExtensionManifest, MANIFEST_VERSION, ObserverEvent, PackageKind,
     PackageResources, PluginManifest, TARGETS, ToolDeclaration,

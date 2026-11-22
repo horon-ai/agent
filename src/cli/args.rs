@@ -11,6 +11,8 @@ mod anonymize_options;
 pub(crate) use anonymize_options::AnonymizeArgs;
 mod provider_args;
 pub(crate) use provider_args::{ProviderAuthArg, ProviderTypeArg};
+mod import_options;
+pub(crate) use import_options::ImportTranscriptArgs;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
 
@@ -913,6 +915,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview a Claude Code or Codex transcript file; import it with --apply
+    ImportTranscript(ImportTranscriptArgs),
 
     /// Import an exported bundle into this store
     Import {
