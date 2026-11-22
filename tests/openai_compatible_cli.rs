@@ -911,3 +911,112 @@ async fn unconfigured_provider_explains_setup() {
     assert!(stderr.contains("[providers."), "{stderr}");
     assert!(!stderr.contains("router"), "{stderr}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn provider_diagnose_separates_missing_config_missing_credential_and_unreachable_endpoint() {
+    let secret = "sk-diagnose-masked-fixture-0123456789";
+    let home = Home::new();
+
+    let none = home.run(&["provider", "diagnose", "--json"]).await;
+    assert_eq!(none.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&none.stdout).unwrap()["status"],
+        "no_providers"
+    );
+
+    let table = |extra: &str| {
+        format!(
+            "{COMPACTION_HEAD}[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\n\
+api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n{extra}"
+        )
+    };
+    std::fs::write(home.path().join("config.toml"), table("")).unwrap();
+    let missing = home.run(&["provider", "diagnose", "--json"]).await;
+    assert_eq!(missing.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["outcome"], "missing_credential");
+
+    // Credential present, local endpoint closed: reachability fails without leaking the key.
+    let local = format!(
+        "{COMPACTION_HEAD}[providers.local]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n\
+api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n"
+    );
+    std::fs::write(home.path().join("config.toml"), local).unwrap();
+    let unreachable = home
+        .run_with_env(&["provider", "diagnose", "--check", "--json"], &[(KEY_ENV, secret)])
+        .await;
+    assert_eq!(unreachable.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&unreachable.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["outcome"], "unreachable");
+    assert!(!text(&unreachable.stdout).contains(secret) && !text(&unreachable.stderr).contains(secret));
+
+    // Without --check no request is made, so the same profile is merely configured.
+    let configured = home
+        .run_with_env(&["provider", "diagnose", "--json"], &[(KEY_ENV, secret)])
+        .await;
+    assert!(configured.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&configured.stdout).unwrap()["profiles"][0]["outcome"],
+        "configured"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_output() {
+    let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+    let home = Home::new();
+    std::fs::write(home.path().join("sample.txt"), "alpha\nneedle one\nbeta\nneeedle two\n").unwrap();
+
+    let read = home.run(&["preview", "read", r#"{"file_path":"sample.txt"}"#]).await;
+    assert!(read.status.success(), "{}", text(&read.stderr));
+    assert!(text(&read.stdout).contains("needle one"));
+
+    let grep = home
+        .run(&[
+            "preview",
+            "agentgrep",
+            r#"{"query":"ne+dle","regex":true,"paths_only":false}"#,
+            "--json",
+        ])
+        .await;
+    assert!(grep.status.success(), "{}", text(&grep.stderr));
+    let grep: Value = serde_json::from_slice(&grep.stdout).unwrap();
+    assert_eq!(grep["tool"], "agentgrep");
+    assert!(grep["output"].as_str().unwrap().contains("needle"));
+
+    assert!(
+        !home.path().join("sessions").exists(),
+        "a preview must not create a session"
+    );
+    let refused = home.run(&["preview", "bash", r#"{"command":"true"}"#]).await;
+    assert!(!refused.status.success());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        read_request(&mut socket).await.unwrap();
+        let body = format!(
+            r#"{{"results":[{{"title":"Found","url":"https://example.org/a","content":"OPENAI_API_KEY={secret}"}}]}}"#
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!("{COMPACTION_HEAD}[websearch]\nengine = \"searxng\"\nfallback_engines = []\nsearxng_url = \"http://127.0.0.1:{port}\"\n"),
+    )
+    .unwrap();
+    let search = home
+        .run(&["preview", "websearch", r#"{"query":"anything"}"#, "--json"])
+        .await;
+    assert!(search.status.success(), "{}", text(&search.stderr));
+    server.await.unwrap();
+    let search: Value = serde_json::from_slice(&search.stdout).unwrap();
+    assert_eq!(search["backend"], "searxng");
+    let output = search["output"].as_str().unwrap();
+    assert!(output.contains("Found") && !output.contains(secret), "{output}");
+}
