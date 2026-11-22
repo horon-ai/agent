@@ -70,5 +70,8 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
         }
         agent.set_reasoning_effort(effort)?;
     }
+    if let Some(choice) = overrides.advisor.as_deref() {
+        agent.set_advisor_enabled(choice == "on");
+    }
     Ok(())
 }

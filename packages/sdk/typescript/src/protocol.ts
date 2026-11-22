@@ -66,6 +66,7 @@ export type RuntimeCommand =
   | "logout"
   | "plan"
   | "goal"
+  | "advisor"
   | "mcp";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
