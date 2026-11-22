@@ -1162,23 +1162,17 @@ async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_a
 async fn config_check_names_the_invalid_section_and_show_never_prints_a_credential() {
     let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
     let home = Home::new();
-    std::fs::write(
-        home.path().join("config.toml"),
-        format!(
-            "{COMPACTION_HEAD}[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\napi_key = \"{secret}\"\ndefault_model = \"m\"\n"
-        ),
-    )
-    .unwrap();
+    let keyed = "[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\n";
+    let config = format!("{COMPACTION_HEAD}{keyed}api_key = \"{secret}\"\ndefault_model = \"m\"\n");
+    std::fs::write(home.path().join("config.toml"), config).unwrap();
     let shown = home.run(&["config", "show", "--json"]).await;
     assert!(shown.status.success(), "{}", text(&shown.stderr));
     let report: Value = serde_json::from_slice(&shown.stdout).unwrap();
     let settings = report["settings"].as_array().unwrap();
     assert!(!settings.is_empty());
-    assert!(
-        settings
-            .iter()
-            .all(|row| row["source"].is_string() && row["key"].is_string())
-    );
+    for row in settings {
+        assert!(row["source"].is_string() && row["key"].is_string());
+    }
     assert!(!text(&shown.stdout).contains(secret));
     assert!(home.run(&["config", "check"]).await.status.success());
 
@@ -1197,10 +1191,7 @@ async fn run_plan_fails_before_any_request_when_plan_mode_is_off() {
     home.write_config(&mock.base_url);
     let result = home.run(&["run", "make a plan", "--no-update", "--plan"]).await;
     assert!(!result.status.success());
-    assert!(
-        text(&result.stderr).contains("Plan mode is off"),
-        "{}",
-        text(&result.stderr)
-    );
+    let stderr = text(&result.stderr);
+    assert!(stderr.contains("Plan mode is off"), "{stderr}");
     assert_eq!(mock.requests(), 0, "a refused plan start must not reach the model");
 }

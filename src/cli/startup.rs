@@ -421,7 +421,7 @@ fn report_main_error(error: &anyhow::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::args::{Args, Command};
+    use crate::cli::args::{Args, Command, RunModelOverrides};
     use clap::Parser;
 
     fn parse_args(argv: &[&str]) -> Args {
