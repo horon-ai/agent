@@ -172,7 +172,7 @@ fn run_kind(scratch: &Path, example: &Path, cli: &Cli, model: &model::Model, kin
     // stop at its own deadline and the child it held must be reaped.
     let wait = format!("PKG-E2E-{label}-wait");
     model.script(&wait, "ext__hello__wait", "{}");
-    let mut pending = pending_run(cli, &wait, CANCEL_AFTER);
+    let pending = pending_run(cli, &wait, CANCEL_AFTER);
     let saw_child = !procs::wait_for(&fragment, CHILD_DEADLINE).is_empty();
     let cancelled = pending.finish(RUN_DEADLINE);
     let cancel = (|| -> Result<(), String> {
