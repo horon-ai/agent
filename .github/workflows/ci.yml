@@ -1161,15 +1161,20 @@ jobs:
         # `tool::session_mcp` owns the editor-supplied MCP servers: the request
         # validation, the overlay that keeps them to the installing connection,
         # the package MCP servers, and the hosted gate that refuses both in a
-        # shared worker (#668). `check_lib_test_coverage.py` listed the module
-        # as selected by no cohort before this step existed. `--min-passed`
-        # pins the measured count so a rename that empties the filter fails
-        # here instead of reporting a green `0 passed`.
+        # shared worker (#668), and the notice queue that carries a refusal into
+        # the next turn (`agent::hosted_notice`). `check_lib_test_coverage.py`
+        # listed `tool::session_mcp` as selected by no cohort before this step
+        # existed. Each `--min-passed` pins the measured count so a rename that
+        # empties a filter fails here instead of reporting a green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 900 --min-passed 16 \
             -- tool::session_mcp --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 300 --min-passed 3 \
+            -- agent::hosted_notice::tests:: --nocapture
 
       - name: Run release notes cohort
         shell: bash
