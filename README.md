@@ -142,6 +142,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 
 `horon run --warn-cost <USD>` prints one warning on stderr when the estimated spend of that run reaches the amount. `--max-cost <USD>` sends no new model request once the estimate reaches it, and the run fails with a spend cap error. The estimate comes from each response's reported tokens and the pricing catalog. A request already sent settles and is counted, so the total can exceed the ceiling by what was in flight. A model with no known price is reported separately and is never counted as free, so a cap does not limit it. Child agents owned by the same process are charged to the same run. Without either option, requests are unchanged.
 
+`horon run --role plan=<model>`, `--prewalk <model|role:<name>>` and `--no-prewalk` change model roles and the `[prewalk]` handoff for that one launch without touching `config.toml`. An unknown role, an empty model, or a model the active profile does not list fails before any request, and `--no-prewalk` wins over both `[prewalk]` and `--prewalk` ([docs](docs/provider/MODEL.md#launch-overrides)).
+
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
 ### Terminal client

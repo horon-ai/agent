@@ -153,6 +153,9 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) tool_profile: Option<String>,
 
+    #[command(flatten)]
+    pub(crate) launch: super::launch_overrides::LaunchOverrideArgs,
+
     /// Run mode for a bare launch. `rpc` speaks the stdio JSONL protocol on
     /// stdin and stdout; every other value runs the normal client.
     #[arg(long, global = true, value_name = "MODE")]
@@ -522,11 +525,11 @@ pub(crate) enum Command {
     /// Model management commands
     #[command(subcommand)]
     Model(ModelCommand),
-    /// Export a session transcript as Markdown
+    /// Export a session transcript as Markdown, or as standalone HTML
     ///
     /// Prints the transcript to stdout, or writes it to a file with `--out`.
-    /// The text matches the `export_session_markdown` harness API reply:
-    /// secrets are redacted and tool results over 4 KiB are truncated.
+    /// Markdown matches `export_session_markdown`, `--html` matches `export_session_html`;
+    /// both redact secrets and truncate tool results over 4 KiB.
     Export {
         /// Session ID to export
         session: String,
@@ -534,6 +537,10 @@ pub(crate) enum Command {
         /// Write the transcript to this file instead of stdout
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+
+        /// Write an offline standalone HTML report (inline style, CSP `default-src 'none'`, escaped text); never overwrites a file
+        #[arg(long)]
+        html: bool,
 
         /// Emit JSON instead of the raw transcript
         #[arg(long)]
@@ -665,8 +672,7 @@ pub(crate) enum ServerCommand {
     /// Stop the running background server and clear its socket.
     ///
     /// Prefer `server reload` after an upgrade; it preserves live sessions.
-    /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which
-    /// drops any in-flight headless/swarm sessions, so it requires `--force` as a deliberate acknowledgement.
+    /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which drops any in-flight headless/swarm sessions, so it requires `--force`.
     Stop {
         /// Confirm that terminating the daemon (and dropping live sessions) is intended.
         #[arg(long)]

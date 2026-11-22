@@ -55,6 +55,7 @@ pub mod server;
 pub mod server_spawn;
 pub mod session_effort;
 pub mod session_export;
+pub mod session_export_html;
 pub mod session_rebuild;
 pub mod startup_profile;
 pub mod tool;

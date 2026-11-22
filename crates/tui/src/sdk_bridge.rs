@@ -24,6 +24,7 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::context::ContextReport;
 
 mod daemon_settings;
+mod export;
 mod jobs;
 mod messages;
 mod package_commands;
@@ -718,6 +719,9 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // an answer rather than a silent skip: the rows are the point of the
         // request.
         Command::BackgroundJobs => jobs::read(client, session_id).map(Some),
+        // The report is the harness's own renderer output, so `/export` asks it
+        // for the document and only writes the file here.
+        Command::Export { path } => export::run(client, session_id, &path).map(|message| Some(Incoming::Info(message))),
         Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id).map(Some),
         // The daemon's allow-listed settings, read when the screen asks. A
         // server too old to answer is a state the screen explains, never an
@@ -794,6 +798,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Swarm
         | Command::Skills { .. }
         | Command::BackgroundJobs
+        | Command::Export { .. }
         | Command::CancelBackgroundTerminal(_)
         | Command::DaemonSettings
         | Command::Steer(_)
@@ -852,6 +857,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Swarm => "could not list the swarm children",
         Command::Skills { .. } => "could not list the skills",
         Command::BackgroundJobs => "could not list the background jobs",
+        Command::Export { .. } => "could not write the HTML report",
         Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",

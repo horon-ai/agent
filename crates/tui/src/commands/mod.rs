@@ -137,6 +137,8 @@ pub enum Local {
     Stats,
     /// Record the visible conversation to a local file, or stop.
     Record,
+    /// Write the conversation to a standalone offline HTML report.
+    Export,
     /// Replay a recorded conversation, or stop the replay.
     Replay,
     /// List the messages waiting for the running turn to end.
@@ -183,6 +185,7 @@ impl Local {
             "jobs" => Some(Self::Jobs),
             "stats" => Some(Self::Stats),
             "record" => Some(Self::Record),
+            "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
             "swarm" => Some(Self::Swarm),
@@ -224,6 +227,7 @@ impl Local {
             Self::Jobs => "jobs",
             Self::Stats => "stats",
             Self::Record => "record",
+            Self::Export => "export",
             Self::Replay => "replay",
             Self::Queue => "queue",
             Self::Swarm => "swarm",
@@ -791,7 +795,7 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 30] = [
+const LOCAL_NAMES: [&str; 31] = [
     "archived",
     "artifact",
     "clear",
@@ -800,6 +804,7 @@ const LOCAL_NAMES: [&str; 30] = [
     "copy",
     "effort",
     "exit",
+    "export",
     "help",
     "jobs",
     "keys",
