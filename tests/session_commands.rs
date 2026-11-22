@@ -986,7 +986,7 @@ fn move_previews_first_and_only_apply_changes_the_stored_working_root() {
     fs::write(target.join("AGENTS.md"), "rules").expect("project guidance");
     let target_arg = target.to_str().expect("utf-8 path");
 
-    let before = tree(&home.join("sessions"));
+    let before = originals(&home.join("sessions"));
     let preview = sandbox.run(&home, &["sessions", "move", "old", target_arg]);
     assert_ok(&preview);
     let text = stdout(&preview);
@@ -997,7 +997,11 @@ fn move_previews_first_and_only_apply_changes_the_stored_working_root() {
         "{text}"
     );
     assert!(text.contains("Preview only"), "{text}");
-    assert_eq!(tree(&home.join("sessions")), before, "a preview writes nothing");
+    assert_eq!(
+        originals(&home.join("sessions")),
+        before,
+        "a preview leaves every original untouched"
+    );
 
     let applied = sandbox.run(&home, &["sessions", "move", "old", target_arg, "--apply"]);
     assert_ok(&applied);
@@ -1013,4 +1017,22 @@ fn move_previews_first_and_only_apply_changes_the_stored_working_root() {
 
     let missing = sandbox.run(&home, &["sessions", "move", "old", "/no/such/root", "--apply"]);
     assert_refused(&missing, "does not exist");
+}
+
+/// The session store's files minus its rebuildable caches. Reading a session may
+/// repair a cache, which is not a change to anything the user owns.
+fn originals(root: &Path) -> BTreeMap<String, String> {
+    let derived = [
+        "checkpoint.json",
+        "sparse-index.jsonl",
+        "facade-cache.json",
+        "summary.json",
+    ];
+    tree(root)
+        .into_iter()
+        .filter(|(name, _)| {
+            let leaf = name.rsplit('/').next().unwrap_or(name);
+            !name.starts_with(".catalog") && !derived.contains(&leaf)
+        })
+        .collect()
 }
