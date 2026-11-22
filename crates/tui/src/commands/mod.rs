@@ -778,6 +778,11 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Advisor,
     RuntimeCommand::Dirs,
     RuntimeCommand::Mcp,
+    // The package command envelopes are addressed by the resolver, never typed:
+    // `/id:command` names one installed command, and these two are how a
+    // client lists and runs it.
+    RuntimeCommand::PackageCommands,
+    RuntimeCommand::PackageCommand,
 ];
 
 /// Every runtime command under the name the protocol serialises it to.
@@ -804,7 +809,11 @@ fn server_catalog() -> &'static ServerCatalog {
             // status` forwards what is typed after it.
             if matches!(
                 command,
-                RuntimeCommand::Skills | RuntimeCommand::Mcp | RuntimeCommand::Swarm
+                RuntimeCommand::Skills
+                    | RuntimeCommand::Mcp
+                    | RuntimeCommand::Swarm
+                    | RuntimeCommand::PackageCommands
+                    | RuntimeCommand::PackageCommand
             ) {
                 continue;
             }

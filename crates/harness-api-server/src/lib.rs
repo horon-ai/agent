@@ -395,6 +395,15 @@ where
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
+                // The package commands ride the runtime-command request, so a
+                // daemon without that surface cannot answer them at all. The
+                // bridge cannot see which variants a daemon's enum holds; the
+                // release keeps them in step, and an older daemon answers the
+                // unknown value with an error the client shows.
+                .chain(
+                    runtime_commands_supported
+                        .then(|| horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1.to_string()),
+                )
                 .chain(session_tools_supported.then(|| "session_tools".to_string()))
                 .chain(
                     ["soft_interrupt_ids", "background_tool_result"]

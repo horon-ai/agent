@@ -57,6 +57,7 @@ mod irc;
 mod lifecycle;
 mod live_turn;
 pub mod package_control;
+mod package_commands;
 mod provider_control;
 pub(crate) mod reload;
 pub(crate) mod reload_recovery;
