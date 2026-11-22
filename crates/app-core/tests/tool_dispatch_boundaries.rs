@@ -390,3 +390,6 @@ async fn an_accepted_large_result_is_returned_whole() {
         assert_eq!(output.verdict, None, "an accepted result carries no cut verdict");
     }
 }
+
+#[path = "support/package_mcp.rs"]
+mod package_mcp;

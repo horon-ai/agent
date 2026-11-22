@@ -732,6 +732,84 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
 }
 
+/// Every `Additional directories:` line the model was sent.
+fn additional_directories_lines(bodies: &[String]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for body in bodies {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            continue;
+        };
+        let Some(messages) = value["messages"].as_array() else {
+            continue;
+        };
+        for message in messages {
+            let text = match &message["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|block| block["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => continue,
+            };
+            lines.extend(
+                text.lines()
+                    .filter_map(|line| line.trim().strip_prefix("Additional directories: "))
+                    .map(|rest| rest.trim().to_string()),
+            );
+        }
+    }
+    lines
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_lists_one_canonical_root_in_the_session_context() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let extra = home.path().join("extra");
+    std::fs::create_dir(&extra).expect("extra directory");
+    let canonical = std::fs::canonicalize(&extra)
+        .expect("canonical extra")
+        .display()
+        .to_string();
+    let alias = format!("{canonical}/.");
+    let output = home
+        .run(&["run", "hi", "--no-update", "--add-dir", &canonical, "--add-dir", &alias])
+        .await;
+    assert!(output.status.success(), "run failed: {}", text(&output.stderr));
+    let lines = additional_directories_lines(&mock.bodies());
+    assert!(!lines.is_empty(), "the session context reached the model");
+    assert!(
+        lines.iter().all(|line| line == &canonical),
+        "one canonical entry: {lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_refuses_a_missing_directory_before_the_model_call() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let missing = home.path().join("missing");
+    let output = home
+        .run(&[
+            "run",
+            "hi",
+            "--no-update",
+            "--add-dir",
+            missing.to_str().expect("utf-8"),
+        ])
+        .await;
+    assert!(!output.status.success(), "a missing directory fails the launch");
+    assert!(
+        text(&output.stderr).contains("no such directory"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(mock.requests(), 0, "no request is made for a path that names nothing");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     let home = Home::new();
@@ -912,209 +990,6 @@ async fn unconfigured_provider_explains_setup() {
     assert!(!stderr.contains("router"), "{stderr}");
 }
 
-fn files_under(root: &Path) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                found.push(path.strip_prefix(root).unwrap().display().to_string());
-            }
-        }
-    }
-    found.sort();
-    found
-}
-
-/// Files a run leaves behind that belong to a session: its log, journal,
-/// checkpoint, catalog and the recovery data built from them.
-fn session_files(root: &Path) -> Vec<String> {
-    files_under(root)
-        .into_iter()
-        .filter(|file| file.starts_with("sessions/") || file.starts_with("durable-runtime/"))
-        .collect()
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn run_without_session_leaves_no_session_files() {
-    let mock = Mock::start().await;
-    let home = Home::new();
-    home.write_config(&mock.base_url);
-
-    let output = home.run(&["run", "hi", "--no-session", "--no-update"]).await;
-    assert!(
-        output.status.success(),
-        "run failed: status={:?}\nstdout={}\nstderr={}",
-        output.status,
-        text(&output.stdout),
-        text(&output.stderr)
-    );
-    assert!(text(&output.stdout).contains(FINAL_TEXT));
-    assert!(tool_round_seen(&mock.bodies()), "the tool round still runs");
-    assert_eq!(session_files(home.path()), Vec::<String>::new());
-    assert!(
-        !text(&output.stderr).to_lowercase().contains("resume"),
-        "no recovery hint: {}",
-        text(&output.stderr)
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn run_without_session_leaves_no_session_files_when_the_provider_fails() {
-    let home = Home::new();
-    home.write_config("http://127.0.0.1:9/v1");
-
-    let output = home.run(&["run", "hi", "--no-session", "--no-update"]).await;
-    assert!(!output.status.success());
-    assert_eq!(session_files(home.path()), Vec::<String>::new());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn run_without_session_refuses_resume() {
-    let mock = Mock::start().await;
-    let home = Home::new();
-    home.write_config(&mock.base_url);
-    let first = home.run(&["run", "hi", "--no-update"]).await;
-    assert!(first.status.success());
-    let session_id = session_files(home.path())
-        .iter()
-        .find_map(|file| {
-            file.strip_suffix("/events.jsonl")
-                .and_then(|dir| dir.strip_prefix("sessions/"))
-        })
-        .expect("the first run stored a session")
-        .to_string();
-
-    let output = home
-        .run(&["--resume", &session_id, "run", "hi", "--no-session", "--no-update"])
-        .await;
-    assert!(!output.status.success());
-    assert!(text(&output.stderr).contains("--no-session cannot be combined"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn default_run_still_stores_its_session() {
-    let mock = Mock::start().await;
-    let home = Home::new();
-    home.write_config(&mock.base_url);
-
-    let output = home.run(&["run", "hi", "--no-update"]).await;
-    assert!(output.status.success());
-    let files = session_files(home.path());
-    assert!(
-        files.iter().any(|file| file.ends_with("/events.jsonl")),
-        "a normal run keeps its event log: {files:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn provider_diagnose_separates_missing_config_missing_credential_and_unreachable_endpoint() {
-    let secret = "sk-diagnose-masked-fixture-0123456789";
-    let home = Home::new();
-
-    let none = home.run(&["provider", "diagnose", "--json"]).await;
-    assert_eq!(none.status.code(), Some(1));
-    assert_eq!(
-        serde_json::from_slice::<Value>(&none.stdout).unwrap()["status"],
-        "no_providers"
-    );
-
-    let table = |extra: &str| {
-        format!(
-            "{COMPACTION_HEAD}[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\n\
-api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n{extra}"
-        )
-    };
-    std::fs::write(home.path().join("config.toml"), table("")).unwrap();
-    let missing = home.run(&["provider", "diagnose", "--json"]).await;
-    assert_eq!(missing.status.code(), Some(1));
-    let report: Value = serde_json::from_slice(&missing.stdout).unwrap();
-    assert_eq!(report["profiles"][0]["outcome"], "missing_credential");
-
-    // Credential present, local endpoint closed: reachability fails without leaking the key.
-    let local = format!(
-        "{COMPACTION_HEAD}[providers.local]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n\
-api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n"
-    );
-    std::fs::write(home.path().join("config.toml"), local).unwrap();
-    let unreachable = home
-        .run_with_env(&["provider", "diagnose", "--check", "--json"], &[(KEY_ENV, secret)])
-        .await;
-    assert_eq!(unreachable.status.code(), Some(1));
-    let report: Value = serde_json::from_slice(&unreachable.stdout).unwrap();
-    assert_eq!(report["profiles"][0]["outcome"], "unreachable");
-    assert!(!text(&unreachable.stdout).contains(secret) && !text(&unreachable.stderr).contains(secret));
-
-    // Without --check no request is made, so the same profile is merely configured.
-    let configured = home
-        .run_with_env(&["provider", "diagnose", "--json"], &[(KEY_ENV, secret)])
-        .await;
-    assert!(configured.status.success());
-    assert_eq!(
-        serde_json::from_slice::<Value>(&configured.stdout).unwrap()["profiles"][0]["outcome"],
-        "configured"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_output() {
-    let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
-    let home = Home::new();
-    std::fs::write(home.path().join("sample.txt"), "alpha\nneedle one\nbeta\nneeedle two\n").unwrap();
-
-    let read = home.run(&["preview", "read", r#"{"file_path":"sample.txt"}"#]).await;
-    assert!(read.status.success(), "{}", text(&read.stderr));
-    assert!(text(&read.stdout).contains("needle one"));
-
-    let grep = home
-        .run(&[
-            "preview",
-            "agentgrep",
-            r#"{"query":"ne+dle","regex":true,"paths_only":false}"#,
-            "--json",
-        ])
-        .await;
-    assert!(grep.status.success(), "{}", text(&grep.stderr));
-    let grep: Value = serde_json::from_slice(&grep.stdout).unwrap();
-    assert_eq!(grep["tool"], "agentgrep");
-    assert!(grep["output"].as_str().unwrap().contains("needle"));
-
-    assert!(
-        !home.path().join("sessions").exists(),
-        "a preview must not create a session"
-    );
-    let refused = home.run(&["preview", "bash", r#"{"command":"true"}"#]).await;
-    assert!(!refused.status.success());
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let server = tokio::spawn(async move {
-        let (mut socket, _) = listener.accept().await.unwrap();
-        read_request(&mut socket).await.unwrap();
-        let body = format!(
-            r#"{{"results":[{{"title":"Found","url":"https://example.org/a","content":"OPENAI_API_KEY={secret}"}}]}}"#
-        );
-        let reply = format!(
-            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        socket.write_all(reply.as_bytes()).await.unwrap();
-    });
-    std::fs::write(
-        home.path().join("config.toml"),
-        format!("{COMPACTION_HEAD}[websearch]\nengine = \"searxng\"\nfallback_engines = []\nsearxng_url = \"http://127.0.0.1:{port}\"\n"),
-    )
-    .unwrap();
-    let search = home
-        .run(&["preview", "websearch", r#"{"query":"anything"}"#, "--json"])
-        .await;
-    assert!(search.status.success(), "{}", text(&search.stderr));
-    server.await.unwrap();
-    let search: Value = serde_json::from_slice(&search.stdout).unwrap();
-    assert_eq!(search["backend"], "searxng");
-    let output = search["output"].as_str().unwrap();
-    assert!(output.contains("Found") && !output.contains(secret), "{output}");
-}
+// Session-less runs, provider diagnose, read-only preview and diagnostics cases.
+#[path = "openai_compatible_cli/offline_runs.rs"]
+mod offline_runs;

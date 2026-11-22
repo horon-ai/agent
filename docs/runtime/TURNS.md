@@ -343,6 +343,15 @@ session's runtime host, including SSH and managed remote runtimes.
   advisor work for this session at once. The choice lives with the running session and does
   not change `[advisor] enabled` or any other session. `horon run --advisor on|off` sets the
   same choice for a single run.
+- `dirs`: list the session's extra workspace directories beside its working directory, or
+  `add <path>` and `remove <path>` one. An added path is resolved (symlinks and `..`
+  included) and must be an existing directory, so a missing path or a file is refused with
+  an error; a second spelling of a directory already listed is not added twice. Removal
+  changes only the list and never touches the directory. The list is part of the session's
+  context, so adding a root shows up in the next prompt's session context (or its one-time
+  reminder once the conversation has started), and it persists with the session metadata.
+  `horon --add-dir <path>` and `horon run --add-dir <path>` (both repeatable) set the list
+  when the session starts; it is a context root, not an approval grant.
 - `plan`: read and change plan mode state. No argument or `status` returns the current
   state, `on`/`off` turn plan mode on and off, and `approve`/`reject` approve or reject the
   plan pending in the session. When configuration has plan mode off, `on` and `approve`
@@ -377,7 +386,7 @@ session's runtime host, including SSH and managed remote runtimes.
   removal of provider credentials. Supported shared credential stores are the target.
 
 The names above are set by the runtime command enum
-(`crates/harness-api/src/runtime_commands.rs:7-33`).
+(`crates/harness-api/src/runtime_commands.rs:7-39`).
 Sending a name that is not in the enum answers with an error.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, and `cache 5m` are not in the enum.
 This build has no runtime command that extends cache TTL and no client request that changes
@@ -672,6 +681,10 @@ Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The 
 Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
 
 With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
+
+## Visible reasoning in text mode
+
+`horon run --print-thoughts "..."` prints reasoning that the provider returns as visible text to stderr under a `[thinking]` label, ahead of the answer. The answer stays on stdout, so piped output is unchanged. Without the option, text output is byte-for-byte the same. Reasoning the provider does not return as visible text is not shown, and the option cannot be combined with `--json` or `--ndjson`, whose formats are unchanged.
 
 ## `--resume` behaviour
 

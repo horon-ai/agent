@@ -9,6 +9,9 @@
 //! It also owns the two session-facing pieces: the revocation registry the daemon
 //! runs callbacks through, and the per-turn package snapshot a session captures.
 
+/// One call to an installed package child, and the child's lifetime.
+pub mod invoke;
+
 /// Revocation dispatch for live package holders.
 pub mod lifecycle;
 
