@@ -54,12 +54,9 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
         ),
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
         SessionCommand::Import { input, json } => import(&home()?, &input, json),
-        SessionCommand::ImportTranscript {
-            file,
-            format,
-            apply,
-            json,
-        } => transcript::run(&file, format.as_deref(), apply, json),
+        SessionCommand::ImportTranscript(options) => {
+            transcript::run(&options.file, options.format.as_deref(), options.apply, options.json)
+        }
         SessionCommand::ExportLegacy {
             session,
             output,
