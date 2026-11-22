@@ -62,7 +62,8 @@
                 "group": "Architecture",
                 "pages": [
                   "reference/architecture/server",
-                  "reference/architecture/crates"
+                  "reference/architecture/crates",
+                  "reference/architecture/hosting"
                 ]
               },
               {
@@ -177,7 +178,8 @@
                 "group": "아키텍처",
                 "pages": [
                   "ko/reference/architecture/server",
-                  "ko/reference/architecture/crates"
+                  "ko/reference/architecture/crates",
+                  "ko/reference/architecture/hosting"
                 ]
               },
               {

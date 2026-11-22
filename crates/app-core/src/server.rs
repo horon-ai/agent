@@ -52,6 +52,7 @@ mod durable_state;
 mod fanout_flush;
 pub mod foreground_state;
 mod headless;
+mod hosted_tenant;
 mod idle_hibernation;
 mod irc;
 mod lifecycle;
@@ -692,6 +693,10 @@ mod reload_marker_scope_tests {
 #[cfg(test)]
 #[path = "server/server_idle_monitor_tests.rs"]
 mod idle_monitor_tests;
+
+#[cfg(all(test, unix))]
+#[path = "server/hosted_tenant_tests.rs"]
+mod hosted_tenant_tests;
 
 /// How often the retained-heap watchdog samples allocator retention.
 const HEAP_RETENTION_CHECK_SECS: u64 = 120;
@@ -2273,6 +2278,9 @@ impl Server {
 
     /// Start the server (both main and debug sockets)
     pub async fn run(&self) -> Result<()> {
+        // A hosted container proves its execution boundary before it binds a
+        // socket; an invalid hosting value is a startup error, not a warning.
+        self::hosted_tenant::enforce_at_startup()?;
         // Pin the binary this server runs before a later install can repoint
         // the channel link it was started through (see running_server_binary).
         if let Some(binary) = self::util::running_server_binary() {

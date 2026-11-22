@@ -838,7 +838,7 @@ jobs:
         # green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-config-types --min-passed 53 --timeout 600
+            --package horon-agent-config-types --min-passed 60 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -850,7 +850,7 @@ jobs:
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-schema-dialect --min-passed 38 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-sdk --min-passed 51 --timeout 600
+            --package horon-agent-sdk --min-passed 59 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-session-store --min-passed 5 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -905,7 +905,7 @@ jobs:
         # that guarded no behavior.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1597 --timeout 1200
+            --package horon-agent-base --min-passed 1612 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -916,7 +916,7 @@ jobs:
         # that guarded no behavior.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1583 --timeout 1200
+            --package horon-agent-base --min-passed 1598 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
@@ -1130,6 +1130,19 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- spend_cap::tests:: --nocapture
+
+      - name: Run hosted tenant cohort
+        if: runner.os != 'Windows'
+        shell: bash
+        # The hosted startup boundary lives in
+        # `crates/app-core/src/server/hosted_tenant.rs` with tests beside it:
+        # the resolver refusals, the operator-home and gateway refusals, the
+        # shared-worker policy, and the accepted per-user container.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 8 \
+            -- hosted_tenant --nocapture
 
       - name: Run release notes cohort
         shell: bash

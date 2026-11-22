@@ -52,6 +52,7 @@ pub mod git_worktree;
 pub mod github;
 pub mod goal;
 pub mod hooks;
+pub mod hosting;
 pub mod id;
 pub mod image_normalize;
 pub mod image_tool;
