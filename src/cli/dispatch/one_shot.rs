@@ -14,6 +14,8 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         model_overrides: overrides,
         max_time,
         wait_async,
+        warn_cost,
+        max_cost,
         system_template,
         print_thoughts,
     }) = &args.command
@@ -37,6 +39,17 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         // cache, wait briefly for the first connection to advertise schemas.
         registry.register_mcp_tools(None, None, None).await;
         commands::wait_for_cold_cache_mcp_tools(&registry).await;
+    }
+    if let (Some(warn), Some(max)) = (warn_cost, max_cost)
+        && warn > max
+    {
+        anyhow::bail!("--warn-cost ({warn}) must not exceed --max-cost ({max})");
+    }
+    if warn_cost.is_some() || max_cost.is_some() {
+        crate::spend_cap::install(crate::spend_cap::Limits {
+            warn_usd: *warn_cost,
+            max_usd: *max_cost,
+        });
     }
     if *no_session && (args.resume.is_some() || args.goal.is_some()) {
         anyhow::bail!(
@@ -80,7 +93,22 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     }
     // User-authored `run` message; later helper turns are synthetic.
     agent.arm_effort_keywords(message);
-    commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, limits).await
+    let result =
+        commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, limits).await;
+    if let Some(summary) = crate::spend_cap::summary() {
+        super::output::stderr_info(format!(
+            "Estimated spend about ${:.4} over {} priced request(s); {} request(s) had no known price and are not counted{}.",
+            summary.spent_usd,
+            summary.priced_requests,
+            summary.unpriced_requests,
+            if summary.stopped {
+                "; the spend cap stopped further requests"
+            } else {
+                ""
+            }
+        ));
+    }
+    result
 }
 
 fn apply_system_template(agent: &mut Agent, path: &std::path::Path) -> Result<()> {
