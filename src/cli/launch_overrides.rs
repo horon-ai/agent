@@ -12,6 +12,7 @@
 //! roles live.
 
 use anyhow::{Result, bail};
+use std::path::{Path, PathBuf};
 
 use super::args::Args;
 
@@ -32,6 +33,14 @@ pub(crate) struct LaunchOverrideArgs {
     /// Enable the `[prewalk]` handoff into this model or `role:<name>` for this launch only.
     #[arg(long = "prewalk", global = true, value_name = "INTO")]
     pub(crate) prewalk: Option<String>,
+
+    /// Skip AGENTS.md discovery (project and global) for this launch only.
+    #[arg(long = "no-context-files", global = true)]
+    pub(crate) no_context_files: bool,
+
+    /// Skip imported rules, prompt overlays and preferred-tools guidance for this launch only.
+    #[arg(long = "no-rules", global = true)]
+    pub(crate) no_rules: bool,
 }
 use super::output;
 use super::provider_init::ProviderChoice;
@@ -67,6 +76,7 @@ struct PrewalkOverride {
 
 /// Apply the launch overrides, or fail before anything reads a model.
 pub(crate) fn apply(args: &mut Args) -> Result<()> {
+    apply_discovery(&args.launch);
     if args.launch.role.is_empty() && args.launch.prewalk.is_none() && !args.launch.no_prewalk {
         return Ok(());
     }
@@ -305,4 +315,58 @@ fn report(roles: &[(ModelRole, String)], prewalk: &PrewalkOverride) {
         },
         _ => {}
     }
+}
+
+/// Turn off optional instruction discovery for this process and name what it skips.
+///
+/// The base system prompt is not optional and is never skipped. Only sources
+/// that exist are reported, so the line says what the default run would have read.
+fn apply_discovery(launch: &LaunchOverrideArgs) {
+    use crate::prompt::{NO_CONTEXT_FILES_ENV, NO_RULES_ENV};
+    if launch.no_context_files {
+        crate::env::set_var(NO_CONTEXT_FILES_ENV, "1");
+        let mut sources = vec![("project AGENTS.md", PathBuf::from("AGENTS.md"))];
+        if let Ok(global) = crate::storage::user_home_path("AGENTS.md") {
+            sources.push(("global AGENTS.md", global));
+        }
+        let skipped = existing(&sources);
+        report_skipped("--no-context-files", &skipped);
+    }
+    if launch.no_rules {
+        crate::env::set_var(NO_RULES_ENV, "1");
+        let mut sources = vec![(
+            ".horon/prompt-overlay.md",
+            Path::new(".horon/prompt-overlay.md").to_path_buf(),
+        )];
+        sources.push((
+            ".horon/preferred-tools.md",
+            Path::new(".horon/preferred-tools.md").to_path_buf(),
+        ));
+        if let Ok(dir) = crate::storage::horon_agent_dir() {
+            sources.push(("~/.horon/prompt-overlay.md", dir.join("prompt-overlay.md")));
+            sources.push(("~/.horon/preferred-tools.md", dir.join("preferred-tools.md")));
+        }
+        let mut skipped = existing(&sources);
+        if crate::config::config().features.foreign_rules {
+            skipped.push("imported foreign rules");
+        }
+        report_skipped("--no-rules", &skipped);
+    }
+}
+
+fn existing(sources: &[(&'static str, PathBuf)]) -> Vec<&'static str> {
+    sources
+        .iter()
+        .filter(|(_, path)| path.is_file())
+        .map(|(label, _)| *label)
+        .collect()
+}
+
+fn report_skipped(flag: &str, skipped: &[&str]) {
+    let list = if skipped.is_empty() {
+        "no source was present".to_string()
+    } else {
+        skipped.join(", ")
+    };
+    output::stderr_info(format!("launch override: {flag} skips {list} (this invocation only)"));
 }

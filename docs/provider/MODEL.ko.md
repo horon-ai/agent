@@ -281,6 +281,8 @@ from = "plan-model"
 
 덮어쓰기는 그 프로세스에만 적용된다. `HORON_AGENT_MODEL_ROLE_DEFAULT`, `HORON_AGENT_MODEL_ROLE_PLAN`, `HORON_AGENT_MODEL_ROLE_AUX`, `HORON_AGENT_MODEL_ROLE_JUDGE`, `HORON_AGENT_MODEL_ROLE_IMAGE`, `HORON_AGENT_PREWALK_ENABLED`, `HORON_AGENT_PREWALK_INTO`를 설정하고, 설정 로더가 역할을 해석하기 전에 읽는다. 설정 저장은 파일 계층만 읽으므로 이 값들은 파일에 쓰이지 않는다. `horon run`은 적용한 값을 표준 오류에 `launch override: role plan -> plan-model (this invocation only)`처럼 알리고, `--quiet`가 그 줄을 감춘다.
 
+`--no-context-files`는 `AGENTS.md`(프로젝트와 전역) 탐색을 건너뛰고, `--no-rules`는 가져온 외부 규칙과 `.horon/prompt-overlay.md`, `.horon/preferred-tools.md`(프로젝트와 `~/.horon`)를 건너뛴다. 둘 다 그 실행에만 적용된다. 기본 시스템 프롬프트와 정책이 정하는 섹션은 항상 적용되고, 건너뛴 출처는 읽지 않을 뿐이라 파일이나 도구 접근이 늘어나지 않으며, 두 옵션이 없으면 실행은 달라지지 않는다. 이 옵션은 프로세스에 `HORON_AGENT_NO_CONTEXT_FILES=1`과 `HORON_AGENT_NO_RULES=1`을 설정하고, `horon run`은 있었다가 건너뛴 출처를 표준 오류에 `launch override: --no-context-files skips project AGENTS.md (this invocation only)`처럼 알린다.
+
 ## 프롬프트 캐시 키
 
 `prompt_cache_key`를 싣는 요청은 같은 세션 계보(포크 계보의 뿌리, 없으면 세션 id)와 같은 시스템 프롬프트, 같은 도구 목록에 대해 언제나 같은 키를 쓴다. 키는 `pck_` 뒤에 sha256 앞 12바이트를 16진수로 붙인 28자이고, 대화 턴이나 압축 결과가 바뀌어도 그대로다. 그래서 압축 뒤에도 앞부분 프롬프트가 같은 캐시 칸에 남고, 다른 계보는 다른 칸을 쓴다.
