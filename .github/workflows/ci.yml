@@ -1441,7 +1441,7 @@ jobs:
             -- agent::round_budget::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 12 \
+            --timeout 600 --min-passed 16 \
             -- agent::prewalk_tests:: --nocapture
 
       - name: Verify Python eval host

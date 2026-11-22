@@ -269,6 +269,7 @@ from = "plan-model"
 | --- | --- |
 | `enabled` | Whether a session hands off at all. Off by default. |
 | `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `planning` | Optional. The model a new session plans on: a bare model id or `role:<name>`. It is applied once, before the session's first assistant message, so a model chosen later, a resumed session and a session already handed off are left alone, and the handoff to `into` then starts from this model. It needs `enabled = true`, and a value the profile does not offer keeps the session model and logs why. |
 | `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
 
 The handoff point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it.
