@@ -146,6 +146,12 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
     if let Some(choice) = overrides.advisor.as_deref() {
         agent.set_advisor_enabled(choice == "on");
     }
+    if let Some(value) = overrides.system_prompt.as_deref() {
+        agent.set_system_prompt(&prompt_text(value)?);
+    }
+    if let Some(value) = overrides.append_system_prompt.as_deref() {
+        agent.set_appended_system_text(&prompt_text(value)?)?;
+    }
     if let Some(mode) = overrides
         .approval
         .as_deref()
@@ -154,4 +160,12 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
         crate::tool::run_approval::set_floor(agent.session_id(), mode);
     }
     Ok(())
+}
+
+/// Prompt text given inline, or read from the file named after `@`.
+fn prompt_text(value: &str) -> Result<String> {
+    match value.strip_prefix('@') {
+        Some(path) => std::fs::read_to_string(path).map_err(|error| anyhow::anyhow!("cannot read {path}: {error}")),
+        None => Ok(value.to_owned()),
+    }
 }

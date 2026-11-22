@@ -17,4 +17,12 @@ pub(crate) struct RunModelOverrides {
     /// Ask before file-changing calls (`write`) or every non-read call (`all`) for this run; never weakens the configured mode
     #[arg(long, value_name = "write|all", value_parser = ["write", "all"])]
     pub(crate) approval: Option<String>,
+
+    /// Replace the system prompt for this run (text, or @file); the tool definitions still apply
+    #[arg(long, value_name = "TEXT|@FILE")]
+    pub(crate) system_prompt: Option<String>,
+
+    /// Add text after the composed system prompt for this run (text, or @file; at most 16 KiB)
+    #[arg(long, value_name = "TEXT|@FILE")]
+    pub(crate) append_system_prompt: Option<String>,
 }

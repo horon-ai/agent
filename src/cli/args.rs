@@ -69,6 +69,8 @@ impl Command {
                 service_tier: None,
                 advisor: None,
                 approval: None,
+                system_prompt: None,
+                append_system_prompt: None,
             },
             message,
         }

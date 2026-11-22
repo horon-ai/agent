@@ -3,7 +3,16 @@ use crate::logging;
 use crate::message::{Message, ToolDefinition};
 use crate::session::StoredMessage;
 
+#[path = "run_prompt.rs"]
+mod run_prompt;
+
 impl Agent {
+    /// Add text after this session's composed system prompt, for this process only.
+    /// Nothing is stored in the session; the text is bounded.
+    pub fn set_appended_system_text(&mut self, text: &str) -> anyhow::Result<()> {
+        run_prompt::set_appended(&self.session.id, text)
+    }
+
     pub(crate) fn runtime_skills_snapshot(&self) -> serde_json::Value {
         let registry = self.current_skills_snapshot();
         let mut loaded = registry.list();
@@ -280,6 +289,9 @@ impl Agent {
             if let Some(section) = listed_tools {
                 Self::append_static_section(&mut static_part, &section);
             }
+            if let Some(extra) = run_prompt::appended(&self.session.id) {
+                Self::append_static_section(&mut static_part, &extra);
+            }
             return crate::prompt::SplitSystemPrompt {
                 static_part,
                 dynamic_part: String::new(),
@@ -333,6 +345,9 @@ impl Agent {
         self.append_todo_hint(&mut split);
         if let Some(section) = listed_tools {
             Self::append_static_section(&mut split.static_part, &section);
+        }
+        if let Some(extra) = run_prompt::appended(&self.session.id) {
+            Self::append_static_section(&mut split.static_part, &extra);
         }
         self.append_yield_instruction(&mut split);
 
