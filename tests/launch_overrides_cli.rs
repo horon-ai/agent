@@ -359,6 +359,7 @@ async fn unusable_role_or_prewalk_values_fail_before_any_request() {
             "is not offered by provider profile",
         ),
         (vec!["run", "--prewalk", "role:judge", "hello"], "is not supported"),
+        (vec!["run", "--skills", "bad pattern", "hello"], "contains"),
     ] {
         let output = home.run(&args).await;
         assert!(!output.status.success(), "{args:?} must fail");
@@ -428,4 +429,68 @@ async fn no_rules_drops_the_prompt_overlay_and_leaves_agents_md() {
         "{}",
         text(&output.stderr)
     );
+}
+
+fn write_skill(home: &Home, name: &str) {
+    let directory = home.path().join("skills").join(name);
+    std::fs::create_dir_all(&directory).expect("create the skill directory");
+    std::fs::write(
+        directory.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: fixture skill {name}\n---\n\nbody of {name}\n"),
+    )
+    .expect("write SKILL.md");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skills_patterns_keep_only_matching_skills_in_the_prompt() {
+    let home = Home::new();
+    let default_mock = Mock::start(None).await;
+    write_launch_config(&home, &default_mock.base_url, "role:plan");
+    write_skill(&home, "alpha-review");
+    write_skill(&home, "beta-deploy");
+
+    let default_run = home.run(&["run", "--provider-profile", "qa", "hello"]).await;
+    assert!(default_run.status.success(), "{}", text(&default_run.stderr));
+    let default_request = default_mock.request_text();
+    assert!(default_request.contains("alpha-review") && default_request.contains("beta-deploy"));
+
+    let limited = Mock::start(None).await;
+    write_launch_config(&home, &limited.base_url, "role:plan");
+    let output = home
+        .run(&["run", "--provider-profile", "qa", "--skills", "alpha-*", "hello"])
+        .await;
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let request = limited.request_text();
+    assert!(request.contains("alpha-review"), "an allowed skill stays");
+    assert!(!request.contains("beta-deploy"), "a filtered skill is hidden");
+    assert!(
+        text(&output.stderr).contains("launch override: skills limited to alpha-*"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_skills_wins_over_skills_and_hides_every_skill() {
+    let home = Home::new();
+    let mock = Mock::start(None).await;
+    write_launch_config(&home, &mock.base_url, "role:plan");
+    write_skill(&home, "alpha-review");
+
+    let output = home
+        .run(&[
+            "run",
+            "--provider-profile",
+            "qa",
+            "--no-skills",
+            "--skills",
+            "alpha-*",
+            "hello",
+        ])
+        .await;
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(!mock.request_text().contains("alpha-review"));
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("launch override: skills off"), "{stderr}");
+    assert!(stderr.contains("--skills alpha-* ignored"), "{stderr}");
 }
