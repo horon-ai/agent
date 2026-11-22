@@ -839,6 +839,12 @@ In grep mode, set `before` and `after` to show neighboring lines with their orig
 
 Context rendering stays within 48 KiB. If a matching file cannot be reread within the context budget, the result still shows its matching lines and reports that neighboring lines are unavailable.
 
+### `agentgrep` locate mode
+
+`mode: "locate"` ranks code locations for a plain-language description in `query`, for example "remove old logins that timed out". The ranking is local and deterministic and needs no model: the description is split into words, each word becomes a concept (its stem plus a small built-in synonym group), and every window of six lines is scored by how rare the concepts it contains are across the scanned files. Nothing is sent to a provider and nothing is stored.
+
+The result lists up to `max_regions` locations (default 5) as `path:first-last` with the matched terms and up to two evidence lines, and starts with a `confidence` line: `ok`, `low` when the best location matches fewer than half of the query terms, or `none` when no scanned line contains any of them. A weak result says so and should be treated as a lead, not an answer. Only files under the searched root are read: symbolic links are not followed, `.gitignore` rules apply, files over 256 KiB and binary files are skipped, and at most `max_files` files (default 2000) are scanned.
+
 ### `read` deduplication
 
 Reading a file that was already read in the same session compares content hashes (`crates/app-core/src/tool/read_state.rs`).
