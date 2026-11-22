@@ -828,3 +828,43 @@ fn transcript_with_an_unknown_format_fails_with_the_source_error() {
     );
     assert!(!home.join("sessions").exists());
 }
+
+#[test]
+fn move_previews_first_and_only_apply_changes_the_stored_working_root() {
+    let sandbox = Sandbox::new("move-root");
+    let home = sandbox.home("a");
+    write_legacy(&home, "old");
+    assert_ok(&sandbox.migrate(&home, "old"));
+    let target = sandbox.path().join("project");
+    fs::create_dir_all(&target).expect("target root");
+    fs::write(target.join("AGENTS.md"), "rules").expect("project guidance");
+    let target_arg = target.to_str().expect("utf-8 path");
+
+    let before = tree(&home.join("sessions"));
+    let preview = sandbox.run(&home, &["sessions", "move", "old", target_arg]);
+    assert_ok(&preview);
+    let text = stdout(&preview);
+    assert!(text.contains(&format!("to    {}", target.display())), "{text}");
+    assert!(text.contains("project guidance at the target: AGENTS.md"), "{text}");
+    assert!(
+        text.contains("scoped approval grants belong to the old workspace root"),
+        "{text}"
+    );
+    assert!(text.contains("Preview only"), "{text}");
+    assert_eq!(tree(&home.join("sessions")), before, "a preview writes nothing");
+
+    let applied = sandbox.run(&home, &["sessions", "move", "old", target_arg, "--apply"]);
+    assert_ok(&applied);
+    assert!(
+        stdout(&applied).contains("Moved the session's working root."),
+        "{}",
+        stdout(&applied)
+    );
+    let again = sandbox.run(&home, &["sessions", "move", "old", target_arg, "--json"]);
+    assert_ok(&again);
+    let report: Value = serde_json::from_slice(&again.stdout).expect("json report");
+    assert_eq!(report["from"], target.to_str().expect("utf-8 path"), "{report}");
+
+    let missing = sandbox.run(&home, &["sessions", "move", "old", "/no/such/root", "--apply"]);
+    assert_refused(&missing, "does not exist");
+}

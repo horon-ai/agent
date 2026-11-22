@@ -30,6 +30,9 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             clear,
             json,
         } => super::commands::run_session_rename_command(&session, name.as_deref(), clear, json),
+        SessionCommand::Move(args) => {
+            super::commands::run_session_move_command(&args.session, &args.to, args.apply, args.json)
+        }
         SessionCommand::Inspect { session, json } => inspect(&home()?, &session, json),
         SessionCommand::Recovery { session, json } => recovery::run(&home()?, &session, json),
         SessionCommand::Doctor { session, json } => doctor(&home()?, session.as_deref(), json),

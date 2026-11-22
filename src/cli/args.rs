@@ -3,8 +3,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use super::provider_init::ProviderChoice;
 
 mod mcp;
+mod session_move;
 #[allow(unused_imports)]
 pub(crate) use mcp::McpCommand;
+pub(crate) use session_move::SessionMoveArgs;
 mod packages;
 pub(crate) use packages::PackageCommand;
 mod import_options;
@@ -875,6 +877,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview, or with --apply change, the working root a saved session resumes in
+    Move(SessionMoveArgs),
 
     /// Show one session's layout, heads, archive state and damage, read-only
     Inspect {

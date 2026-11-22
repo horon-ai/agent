@@ -14,11 +14,13 @@ mod provider_setup;
 mod report_info;
 mod run_deadline;
 mod session_delete;
+mod session_move;
 mod session_rename;
 mod thoughts;
 mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
+pub(crate) use session_move::run_session_move_command;
 pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;
