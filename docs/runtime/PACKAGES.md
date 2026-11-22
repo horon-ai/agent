@@ -6,8 +6,8 @@ A user-installed package is one Rust executable plus declarations. An extension
 ships `extension.toml`; a plugin ships `plugin.toml` that bundles one
 `extension.toml` with resource files. The host starts the installed executable as
 a child process and speaks one newline-delimited JSON-RPC contract with it: the
-package receives tool calls, executable commands and the session events it
-declared. The authoring SDK and the worked example are not dependencies of the
+package receives tool calls and executable commands a session invokes. The
+authoring SDK and the worked example are not dependencies of the
 distributed `horon-agent` binary; they exist so an author can build, package and
 test a package without the engine's internal ABI.
 
@@ -19,9 +19,9 @@ supervisor runs installed copies on Linux, macOS and Windows. A session captures
 one snapshot per turn, so a running turn keeps the generation it started with
 while the next turn and new sessions observe the newest one; a disable or removal
 refuses new loads at once and runs the callbacks registered for the generation
-that is being revoked. Tool, text, MCP and command surfaces are later steps; the
-observation events an installed package and its bundled hook files subscribe to
-are delivered now.
+that is being revoked. The tool, text, MCP and command surfaces all read that
+pinned generation, and the observation events an installed package and its
+bundled hook files subscribe to are delivered now.
 
 | Surface | State | Check |
 | --- | --- | --- |
@@ -35,8 +35,11 @@ are delivered now.
 | Child supervision on Windows | Implemented | `cargo test --locked -p horon-agent-base --test package_spawn_windows` on `.github/workflows/package-windows.yml` (x64 and arm64) |
 | Daemon catalog control and automatic inbox reconciliation | Implemented | `cargo test --locked --test harness_roundtrip package_daemon` |
 | Session snapshot and revocation | Implemented | `cargo test --locked -p horon-agent-app-core --test package_session` |
+| Package tools | Implemented | `cargo test --locked -p horon-agent-app-core --test package_tools` |
+| Package skills, rules and prompts | Implemented | `cargo test --locked -p horon-agent-base --test prompt_guidance_integration` |
+| Package MCP servers | Implemented | `cargo test --locked -p horon-agent-app-core --test tool_dispatch_boundaries` |
+| Package commands: listing, templates, executable dispatch | Implemented | `cargo test --locked -p horon-agent-app-core --test package_commands` |
 | Package observation events and bundled hook files | Implemented | `cargo test --locked -p horon-agent-app-core --lib extensions::observer::tests` |
-| Package tools, text, MCP and commands | Pending | Follow-up changes on the same launch path |
 
 ## Two package kinds
 
@@ -227,8 +230,9 @@ author, not by that release.
 installer. It validates, copies and registers the package. Installation is
 consent to run the package with the user's permissions. The catalog records
 SHA-256 values for integrity checks. A running daemon reconciles the inbox and
-publishes new catalog generations. Applying them to open sessions is a later
-step.
+publishes new catalog generations. An open session uses the new generation from
+its next turn, and answers a management command once the revocation callbacks
+have finished.
 
 | Command | Effect |
 | --- | --- |
@@ -273,12 +277,78 @@ read-only, which denies any concurrent write, rename or delete of that image on
 Windows. The launch is not a sandbox: the child still runs with the user's
 permissions.
 
+## Package commands
+
+A package supplies two kinds of slash command, and a session reaches both through
+`/id:command`, where `id` is the package id and `command` is the declared name.
+A plugin declares Markdown templates under `commands` in `plugin.toml`; the file
+stem becomes the command name. An extension or plugin declares executable
+commands in `[[commands]]` of `extension.toml`. Both kinds run under the same
+typed name space, so one package cannot offer one name twice: an install that
+names one command in both `[[commands]]` and a command file is refused with
+`duplicate public package name`.
+
+```toml
+[resources]
+commands = ["resources/commands/review.md"]
+```
+
+```md
+---
+description: Review a file with the package's own instructions.
+argument-hint: <path>
+---
+
+Review $1 and report what you find.
+```
+
+A template is body text: `$ARGUMENTS` is the whole argument string with its
+outer whitespace removed, `$1`…`$9` are the whitespace-split words, and an
+argument that itself holds a dollar sign is copied, never scanned again. The expanded text is submitted as a user
+message. A file whose frontmatter omits `description` falls back to its first
+non-empty body line, cut at 60 characters with an ellipsis, so a listing always
+has one row.
+
+An executable command sends the raw arguments and their whitespace-split words
+to the child's `command/invoke` (`{"text": "alpha beta", "args": ["alpha",
+"beta"]}`) and returns what the child answered. It reaches the child only after
+the tool policy allows it, in this order:
+
+| Check | Refusal |
+| --- | --- |
+| Plan mode | A process effect is refused while plan mode is on |
+| Disabled names | `ext__<id>__<command>` in `[tools] disabled` or an SDK disabled list |
+| Approval mode | `write` and the tiers above it ask first; `off`/`yolo` do not |
+| `pre_tool` hook | A block answer stops the call, and the hook sees the payload the child receives |
+
+The tool allow-list is deliberately not consulted. It names the tools a model
+may call, and a `/id:command` line is the user's own request; the disabled list
+is consulted because it is an explicit denial. The policy name is
+`ext__<id>__<command>`, the same name a package tool of that name would use, so
+one denial covers both.
+
+Both kinds read the session's captured package generation. A listing and a run
+therefore name the same generation, and a command whose package left that
+generation is refused before any file is read or child started, with a message
+that calls the entry stale. A template's declared path is resolved inside the
+installed package root: an absolute path, a `..` component and a link are
+refused at install, and the recorded length and SHA-256 are checked again each
+time the copy is read.
+
+The terminal client and the SDKs reach the same two operations. Discovery is the
+harness API's `runtime_command` with `package_commands`, and a run is
+`package_command` with `[id, command, …argument words]`; the reply payloads are
+in [the harness API](../protocol/HARNESS_API.md). The TUI lists them under the
+harness section of `/help` and resolves `/id:command` only after every built-in,
+command file and harness name, so an installed package never takes over a name
+another source already answers to.
+
 ## The example
 
 `examples/packages/example` is the worked example: a tool (`greet`), an
-executable command (`hello`) and an observer for `turn.start` and `turn.end`, with
-the plugin resources and both layouts. Its test starts the built binary under each
-layout over real pipes:
+executable command (`hello`), a Markdown command (`greeting`), an observer for
+`turn.start` and `turn.end`, and the plugin resources in both layouts. Its test
+starts the built binary under each layout over real pipes:
 
 ```sh
 cargo test --locked -p horon-package-example --test extension_layouts
@@ -294,3 +364,5 @@ cargo run --locked -p horon-package-example -- package
 | Queued frames in either direction | 128 |
 | Pending requests the host waits for | 64 |
 | Observer reports one call may queue | 128 |
+| One command template | 64 KiB |
+| Every command template one package declares | 256 KiB |

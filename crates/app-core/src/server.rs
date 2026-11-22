@@ -56,6 +56,10 @@ mod idle_hibernation;
 mod irc;
 mod lifecycle;
 mod live_turn;
+/// The package command listing and dispatch the daemon's runtime-command path
+/// reaches through its `RuntimeCommand` dispatch; integration tests drive the
+/// same code with the agent a turn would hand it.
+pub mod package_commands;
 pub mod package_control;
 mod provider_control;
 pub(crate) mod reload;

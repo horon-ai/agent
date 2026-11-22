@@ -79,6 +79,14 @@ HEALTHY_LINES = [
     "gpu_probe_spawns_without_display=0 gpu_reported=0",
     "STRUCTURAL_PERF section=tool_dispatch source=app-core dispatches=200 small_allocs=2000 "
     "small_alloc_bytes=100000 large_allocs=2000 large_alloc_bytes=200000",
+    "STRUCTURAL_PERF section=packages source=empty turns=2 packages=0 area_reads=0 dir_scans=0 "
+    "area_writes=0 snapshot_builds=0 child_starts=0",
+    "STRUCTURAL_PERF section=packages source=turn-warm turns=1 packages=1 area_reads=2 dir_scans=0 "
+    "area_writes=3 snapshot_builds=1 child_starts=0",
+    "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=0 dir_scans=0 "
+    "area_writes=0 snapshot_builds=0 child_starts=0",
+    "STRUCTURAL_PERF section=packages source=call calls=1 area_reads=3 child_starts=1",
+    "STRUCTURAL_PERF section=packages source=call-repeat calls=1 child_starts=0",
 ]
 
 
@@ -767,6 +775,123 @@ class MissingMeasurementTest(unittest.TestCase):
         self.assertEqual(covered, {"page"})
 
 
+class PackageCostTest(unittest.TestCase):
+    """The package section: nothing installed, installed, and actually called."""
+
+    def assert_fails_naming(self, lines, counter, extra_args=()):
+        run = run_gate(lines, extra_args)
+        self.assertEqual(run.code, 1, f"a violated bound must fail the gate:\n{run.stdout}\n{run.stderr}")
+        result = run.result
+        named = {check["counter"] for check in result["checks"] if not check["ok"]}
+        self.assertIn(counter, named, f"the failure must name {counter}, named {sorted(named)}")
+        self.assertIn(counter, run.stderr, "the stderr report must name the counter a human has to fix")
+
+    def test_a_package_free_home_that_reads_a_package_file_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=empty",
+            "STRUCTURAL_PERF section=packages source=empty turns=2 packages=0 area_reads=1 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_reads")
+
+    def test_a_package_free_home_that_grows_a_reference_directory_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=empty",
+            "STRUCTURAL_PERF section=packages source=empty turns=2 packages=0 area_reads=0 dir_scans=0 "
+            "area_writes=2 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_writes")
+
+    def test_a_package_free_home_that_installed_a_child_free_turn_fails_on_a_zero_turn_count(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=empty",
+            "STRUCTURAL_PERF section=packages source=empty turns=0 packages=0 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "turns")
+
+    def test_an_unchanged_turn_that_rebuilt_its_snapshot_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-unchanged",
+            "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=1 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "snapshot_builds")
+
+    def test_an_unchanged_turn_that_read_the_catalog_again_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-unchanged",
+            "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=1 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_reads")
+
+    def test_a_warm_turn_that_measured_nothing_fails_rather_than_passing_on_zeros(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-warm",
+            "STRUCTURAL_PERF section=packages source=turn-warm turns=1 packages=1 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=0",
+        )
+        self.assert_fails_naming(lines, "area_reads")
+
+    def test_a_turn_that_started_a_package_child_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=turn-unchanged",
+            "STRUCTURAL_PERF section=packages source=turn-unchanged turns=1 packages=1 area_reads=0 dir_scans=0 "
+            "area_writes=0 snapshot_builds=0 child_starts=1",
+        )
+        self.assert_fails_naming(lines, "child_starts")
+
+    def test_one_call_that_started_two_children_fails(self):
+        # The marker keeps `source=call` from also matching `source=call-repeat`:
+        # replacing both would drop a situation instead of violating a bound.
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=call",
+            "STRUCTURAL_PERF section=packages source=call calls=1 area_reads=3 child_starts=2",
+            marker="area_reads=3",
+        )
+        self.assert_fails_naming(lines, "child_starts")
+
+    def test_a_second_call_that_started_another_child_fails(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=call-repeat",
+            "STRUCTURAL_PERF section=packages source=call-repeat calls=1 child_starts=1",
+        )
+        self.assert_fails_naming(lines, "child_starts")
+
+    def test_the_packages_section_missing_fails_instead_of_passing_on_nothing(self):
+        lines = [
+            line
+            for line in HEALTHY_LINES
+            if not line.startswith("STRUCTURAL_PERF section=packages")
+        ]
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, run.stderr)
+        self.assertIn("packages", run.stderr, "the report must name the section that did not run")
+
+    def test_a_log_without_the_warm_turn_fails_instead_of_passing_on_the_empty_ones(self):
+        # `empty` reports zeros for everything; on its own it certifies nothing
+        # about a turn over an installed package, so the four remaining lines must
+        # not add up to a pass.
+        lines = [
+            line
+            for line in HEALTHY_LINES
+            if not line.startswith("STRUCTURAL_PERF section=packages source=turn-warm")
+        ]
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, f"a partial package log must not pass:\n{run.stdout}\n{run.stderr}")
+        self.assertIn("turn-warm", run.stderr, "the report must name the situation that did not run")
+
+    def test_an_unknown_package_source_is_refused(self):
+        lines = replace_line(
+            "STRUCTURAL_PERF section=packages source=call-repeat",
+            "STRUCTURAL_PERF section=packages source=unknown calls=1 child_starts=0",
+        )
+        run = run_gate(lines)
+        self.assertEqual(run.code, 2, run.stderr)
+        self.assertIn("unknown source", run.stderr)
+
+
 class BudgetTest(unittest.TestCase):
     def test_the_bounds_file_carries_every_key_the_checks_read(self):
         bounds = gate.load_budget(str(BUDGET_FILE))
@@ -813,6 +938,21 @@ class BudgetTest(unittest.TestCase):
             "tool_dispatch_small_alloc_bytes_per_dispatch_max",
             "tool_dispatch_large_allocs_per_dispatch_max",
             "tool_dispatch_large_alloc_bytes_per_dispatch_max",
+            "packages_empty_area_reads_max",
+            "packages_empty_area_dir_scans_max",
+            "packages_empty_area_writes_max",
+            "packages_empty_area_snapshot_builds_max",
+            "packages_empty_area_child_starts_max",
+            "packages_warm_turn_reads_min",
+            "packages_warm_turn_snapshot_builds_min",
+            "packages_warm_turn_writes_min",
+            "packages_unchanged_turn_reads_max",
+            "packages_unchanged_turn_dir_scans_max",
+            "packages_unchanged_turn_writes_max",
+            "packages_unchanged_turn_snapshot_builds_max",
+            "packages_turn_child_starts_max",
+            "packages_call_child_starts",
+            "packages_call_repeat_child_starts",
         }
         self.assertEqual(set(bounds), expected, "the bounds file and the checks must not drift apart")
 

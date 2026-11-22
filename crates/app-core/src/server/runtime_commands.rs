@@ -100,6 +100,10 @@ pub(super) async fn execute(
             let data = agent.runtime_skills_snapshot();
             return Ok((data.clone(), skills_report(&data)));
         }
+        // Package commands own their own module: both read the session's
+        // captured package generation and never become a model prompt.
+        RuntimeCommand::PackageCommands => return super::package_commands::list(agent).await,
+        RuntimeCommand::PackageCommand => return super::package_commands::run(agent, args).await,
         RuntimeCommand::Context => {
             status_only(args)?;
             agent.runtime_context_snapshot().await
@@ -149,6 +153,7 @@ pub(super) async fn execute(
             status_only(args)?;
             json!({"enabled": swarm_enabled, "default_enabled": config.features.swarm, "members": swarm_data})
         }
+        RuntimeCommand::Trim => return agent.trim_command(args),
         RuntimeCommand::ModelPreset => match args {
             [] => json!({"presets": config.model_presets.keys().collect::<Vec<_>>()}),
             [action, name] if matches!(action.as_str(), "preview" | "apply") => {

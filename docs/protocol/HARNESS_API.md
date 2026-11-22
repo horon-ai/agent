@@ -89,6 +89,55 @@ receive the latest complete snapshot even if they miss intermediate updates.
 When a mutation returns a transport error after sending the request, inspect
 the published state before submitting it again.
 
+## Package commands (protocol 1.27)
+
+The harness API keeps major version 1 and moved from minor version 26 to 27.
+Everything here is additive: a client that never lists a package command reads
+the same frames it did before.
+
+The bridge advertises `package_commands_v1` only when the daemon reported
+`runtime_commands`, because these two values ride that request instead of a
+request of their own. A client checks the capability before sending, and the
+three SDKs refuse the call in the process when it is absent, so an older server
+never receives a value it cannot answer.
+
+| Value | `args` | `data` in `runtime_command_result` |
+| --- | --- | --- |
+| `package_commands` | empty | `PackageCommandList`: the generation, and the commands sorted by name |
+| `package_command` | `[package_id, command, …argument words]` | `PackageCommandOutcome`: the expansion or the child's answer |
+
+One entry carries the typed name, the package that declares it, the declared
+command name, the kind, one description line and the `argument_hint` the
+resource declares when it declares one. `kind` is `template` for a Markdown
+resource that expands into a user message and `executable` for a command the
+package's child answers over the wire.
+
+```json
+{"v":1,"id":9,"req":"runtime_command","session_id":"s-1","command":"package_commands"}
+{"v":1,"reply_to":9,"ev":"runtime_command_result","session_id":"s-1","command":"package_commands","data":{"generation":7,"commands":[{"name":"hello:greet","package_id":"hello","command":"greet","kind":"executable","description":"Report the arguments this executable command was called with."},{"name":"hello:review","package_id":"hello","command":"review","kind":"template","description":"Review a file","argument_hint":"<path>"}]},"message":"..."}
+```
+
+An outcome sets exactly one of `text` and `output`: a template sets `text`, the
+message a client submits, and an executable command sets `output`, the child's
+value rendered as text, beside `data`, the same value unrendered. `message` in
+the result frame repeats whichever one is set, so a client that only prints the
+message needs no new parsing.
+
+Both values read the package generation the session captured at its turn
+boundary. A listing names that generation, and a run refuses an entry whose
+package left it before reading a file or starting a child; the error says the
+entry is stale. Executable commands consult plan mode, the approval mode, the
+session's disabled names and the `pre_tool` hook, and they do not consult the
+tool allow-list, which names the tools a model may call rather than the commands
+a user types. The policy name is `ext__<package id>__<command>`.
+
+The three SDKs expose the pair as `list_package_commands` and
+`run_package_command` in Rust and Python, and as `listPackageCommands` and
+`runPackageCommand` in TypeScript. ACP v1 and v2 are unchanged: their
+`available_commands_update` still carries the client's own `/model`, `/models`
+and `/effort`, because a package command is a harness API surface, not an ACP
+one.
+
 ## Handoff compaction
 
 `compact` takes an optional `method`. Absent is the model summary a client has
@@ -723,6 +772,14 @@ A session holds several heads after a branched import or after a turn is appende
 `export_session_markdown` takes `session_id` and replies with a `session_markdown` event carrying the whole readable transcript in `markdown`. Each turn is a `### User` or `### Assistant` heading followed by its content: text verbatim, a tool call as a fenced JSON block, a tool result as a fenced block, and an image or audio block as a short placeholder. Secrets are redacted with the same pattern table the disk path uses, so a token that never reached the event log cannot appear in the transcript. A tool result longer than 4 KiB is cut at a UTF-8 boundary and replaced with a `… (truncated, N bytes total)` marker.
 
 The reply is not part of the replication protocol and needs no `protocol_version`. It requires `session_replication_v1`, the capability that already gates the other stored-session reads. An unknown session answers `unknown_session`, the same error the other reads use. `horon export <session-id> [--out <path>]` writes identical bytes, because both call one renderer.
+
+### HTML report (protocol 1.27)
+
+`export_session_html` takes `session_id` and replies with a `session_html` event carrying a standalone document in `html`. It renders the same redacted projection as `export_session_markdown`, so a secret or a truncated tool result is identical in both formats; the difference is the presentation. Each turn is a `<section>` with an `<h2>` naming the role, its text in `pre-wrap` blocks that keep the line breaks, and a tool call or result in a `<pre>` block.
+
+The document is meant to be saved and opened later without a connection. Every transcript character is escaped, so stored text that looks like markup renders as characters instead of becoming a node; the stylesheet is inline, with no font, image or script reference; and the head carries `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`, which makes a browser refuse any network load the document might later gain. It requires `session_replication_v1` and answers `unknown_session` for an id the store does not hold.
+
+`horon export <session-id> --html [--out <path>]` writes the same bytes, and `--json` wraps them as `{"session_id": ..., "html": ...}`. Unlike the Markdown form, an `--out` path that already exists is refused rather than overwritten: a report is a destination the reader named by hand.
 
 Two rules a client must not break:
 

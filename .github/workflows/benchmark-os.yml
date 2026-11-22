@@ -41,7 +41,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref built in the build job beside the measured commit; the compare unit measures it as a second horon row and the tools unit as a second daemon"
+        description: "Optional ref built in the build job beside the measured commit; the compare unit measures it as a second horon row, the packages unit runs its three scenarios too, and the tools unit as a second daemon"
         type: string
         required: false
         default: ""
@@ -220,7 +220,7 @@ jobs:
         # cache key. A before/after pair has to be measured on one machine in
         # one job, so the second tree appears only once that key is settled.
         # The `tui` unit uses the tree for the scroll bench pair only.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
+        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.packages == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.baseline_ref }}
@@ -254,7 +254,7 @@ jobs:
         # invalidate the candidate's cached artifacts too. Two separate steps
         # rather than two restores inside one: the action keeps its config in
         # per-step state, so only the second step's post would save anything.
-        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
+        if: ${{ inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.packages == 'true' || steps.sel.outputs.tools == 'true' || steps.sel.outputs.tui == 'true') }}
         with:
           key: benchmark-baseline-${{ runner.os }}
           workspaces: ".bench-baseline -> target"
@@ -267,10 +267,10 @@ jobs:
       - name: Build the baseline release binary
         # The same profile as the candidate step below, from its own checkout
         # and its own target directory, so neither build reuses the other's
-        # artifacts and the two rows stay comparable. Only the compare and tools
-        # units consume this build, so no other selection pays for it. The
-        # binary travels to those jobs inside bench-bin.tar as baseline/.
-        if: ${{ !cancelled() && inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.tools == 'true') }}
+        # artifacts and the two rows stay comparable. Only the compare, packages
+        # and tools units consume this build, so no other selection pays for it.
+        # The binary travels to those jobs inside bench-bin.tar as baseline/.
+        if: ${{ !cancelled() && inputs.baseline_ref != '' && (steps.sel.outputs.compare == 'true' || steps.sel.outputs.packages == 'true' || steps.sel.outputs.tools == 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -329,9 +329,15 @@ jobs:
             cargo build --release --locked -p horon-agent-base --example loading_probe
             cargo build --release --locked -p horon-agent-base --example resume_stage_probe
           fi
+          # The packages unit installs this as a real package; it is built here
+          # so the measure job never compiles.
+          if [[ "${{ steps.sel.outputs.packages }}" == "true" ]]; then
+            cargo build --release --locked -p horon-package-example
+          fi
           exe=""
           [[ "$RUNNER_OS" == "Windows" ]] && exe=".exe"
           files=("horon-agent$exe")
+          [[ -f "target/release/horon-package-example$exe" ]] && files+=("horon-package-example$exe")
           [[ -f "target/release/examples/loading_probe$exe" ]] && files+=("examples/loading_probe$exe")
           [[ -f "target/release/examples/resume_stage_probe$exe" ]] && files+=("examples/resume_stage_probe$exe")
           [[ -f "target/release/horon-tui$exe" ]] && files+=("horon-tui$exe")
@@ -444,6 +450,11 @@ jobs:
           fi
           if [[ -f "bench-bin/baseline/horon-agent$exe" ]]; then
             echo "BASELINE_BIN=$root/bench-bin/baseline/horon-agent$exe" >> "$GITHUB_ENV"
+          fi
+          # Only the packages unit reads this, so an unselected run leaves the
+          # environment exactly as it was.
+          if [[ -f "bench-bin/horon-package-example$exe" ]]; then
+            echo "PACKAGE_BIN=$root/bench-bin/horon-package-example$exe" >> "$GITHUB_ENV"
           fi
           mkdir -p "$RESULTS"
 
@@ -561,6 +572,24 @@ jobs:
             ${install_failures[@]+"${install_failures[@]}"} ${provenance[@]+"${provenance[@]}"} \
             --sessions $SESSIONS --turns "$TURNS" --oneshot-runs "$ONESHOT_RUNS" --syscalls \
             --json-out "$RESULTS/compare.json" --markdown-out "$RESULTS/compare.md"
+
+      - name: "Suite: packages"
+        # Nothing installed, installed but never called, and one real call: the
+        # turn time, first-request time and peak RSS of each, plus the size the
+        # installed area occupies. With a baseline binary the same three
+        # scenarios are measured for that build in this job, alternating, so the
+        # compare cells are a same-machine before/after. `horon-tui` numbers are
+        # never part of this suite.
+        if: ${{ matrix.unit == 'packages' }}
+        shell: bash
+        run: |
+          args=(--binary "$HORON_BIN" --package-binary "${PACKAGE_BIN:-}"
+                --runs "$ONESHOT_RUNS"
+                --json-out "$RESULTS/packages.json" --markdown-out "$RESULTS/packages.md")
+          if [[ -n "${BASELINE_BIN:-}" ]]; then
+            args+=(--baseline-binary "$BASELINE_BIN")
+          fi
+          python scripts/perf/package_workloads.py "${args[@]}"
 
       - name: "Suite: startup"
         if: ${{ matrix.unit == 'startup' }}
@@ -767,7 +796,7 @@ jobs:
             fi
             echo "- suites: \`$SUITES\`, status: \`$(cat "$RESULTS/status.txt")\`"
             echo
-            for f in compare tools reload tui compile; do
+            for f in compare packages tools reload tui compile; do
               if [[ -f "$RESULTS/$f.md" ]]; then cat "$RESULTS/$f.md"; echo; fi
             done
             for f in startup loading-cold loading-warm; do

@@ -63,6 +63,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "launch_overrides_cli",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent",
       "target": "openai_compatible_cli",
       "min_passed": 14
     },
@@ -83,6 +88,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "package_end_to_end",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent",
       "target": "removed_panel_compat",
       "min_passed": 3
     },
@@ -94,7 +104,7 @@
     {
       "package": "horon-agent",
       "target": "session_commands",
-      "min_passed": 16
+      "min_passed": 23
     },
     {
       "package": "horon-agent",
@@ -124,6 +134,16 @@
     {
       "package": "horon-agent-app-core",
       "target": "on_demand_server_spawn",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "package_commands",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "package_cost",
       "min_passed": 1
     },
     {

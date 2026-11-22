@@ -181,6 +181,14 @@ Each OS is measured separately on a different GitHub-hosted runner. The machines
 
 Not measured: this run did not produce `compare.md`.
 
+#### User-installed package cost (headless, mock model)
+
+| Build | Scenario | Turn (median) | Tool round trip |
+| --- | --- | --- | --- |
+| candidate | empty | 120.0 ms | no |
+| candidate | installed | 121.0 ms | no |
+| candidate | called | 168.0 ms | yes |
+
 #### Startup
 
 ```text
@@ -240,6 +248,17 @@ def tui_json() -> str:
     })
 
 
+PACKAGES_MD = """\
+# User-installed package cost (headless, mock model)
+
+| Build | Scenario | Turn (median) | Tool round trip |
+| --- | --- | --- | --- |
+| candidate | empty | 120.0 ms | no |
+| candidate | installed | 121.0 ms | no |
+| candidate | called | 168.0 ms | yes |
+"""
+
+
 def tui_md() -> str:
     return (
         "### TUI (`horon-tui`)\n\n| Metric | Median | Min\u2013max | Samples |\n"
@@ -264,6 +283,7 @@ class TwoVersionSections(unittest.TestCase):
         linux = job_dir(results, "benchmark-linux-1", "linux", files={
             "runner.txt": "ubuntu-24.04\n",
             "horon-version.txt": "horon-agent 0.9.0\n",
+            "packages.md": PACKAGES_MD,
             "startup.txt": "serve ready 12 ms\n",
             "tools.md": "### Tool latency\n\n| case | ms |\n| --- | --- |\n| read | 3.0 |\n",
             "reload.md": "   \n",
@@ -604,7 +624,7 @@ class PartialRuns(unittest.TestCase):
     """A compare-only round must not overwrite the recorded full-run block."""
 
     def all_fragments(self, directory: Path) -> None:
-        for name in ("compare.md", "startup.txt", "loading-cold.txt", "loading-warm.txt",
+        for name in ("compare.md", "packages.md", "startup.txt", "loading-cold.txt", "loading-warm.txt",
                      "tools.md", "reload.md", "compile.md", "tui.md"):
             (directory / name).write_text("# measured\n", encoding="utf-8")
 
@@ -624,7 +644,7 @@ class PartialRuns(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(doc.read_text(encoding="utf-8"), DOC)
             self.assertEqual(bench_docs.missing_suite_groups(bench_docs.find_platform_dirs(results)),
-                             ["startup", "loading", "tools", "reload", "compile", "tui"])
+                             ["packages", "startup", "loading", "tools", "reload", "compile", "tui"])
 
     def test_compare_only_refreshes_versions_without_touching_the_full_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

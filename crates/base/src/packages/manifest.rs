@@ -244,6 +244,7 @@ pub(super) fn open_package_file(root: &Path, path: &Path) -> Result<File> {
         "package path is not a regular file: {}",
         named.display()
     );
+    horon_agent_perf_counters::record_package_area_read();
     Ok(file)
 }
 

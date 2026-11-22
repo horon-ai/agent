@@ -42,7 +42,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`TUI.ko.md`](runtime/TUI.ko.md) | `horon-tui` 터미널 클라이언트: 인자 없는 `horon`의 핸드오프, 사용자 파일(`tui.toml`, 테마, 키 배치, 명령 파일, 상태 줄), 키, 여러 줄 편집기, 트랜스크립트와 스크롤백, 턴 상태, 프롬프트, 슬래시 팝업, 모델·세션 선택 목록, 명령, 설정 화면, 선택 자산 설치, 한계 |
 | | [`PROMPT.ko.md`](runtime/PROMPT.ko.md) | 시스템 프롬프트 구성, 스킬 출처와 호출, 토큰 추정 |
 | | [`HOOKS.ko.md`](runtime/HOOKS.ko.md) | 수명 주기 훅 |
-| | [`PACKAGES.ko.md`](runtime/PACKAGES.ko.md) | 사용자 설치 Rust 패키지: 작성 SDK, 선언과 해시, 두 레이아웃, 대상, 서명과 설치 |
+| | [`PACKAGES.ko.md`](runtime/PACKAGES.ko.md) | 사용자 설치 Rust 패키지: 작성 SDK, 선언과 해시, 두 레이아웃, 대상, 서명, 설치와 패키지가 공급하는 슬래시 명령 |
 | | [`SWARM_TASK_GRAPH.ko.md`](runtime/SWARM_TASK_GRAPH.ko.md) | swarm 태스크 DAG 설계(기본으로 꺼진 기능, `horon-agent-plan` 크레이트의 설계 근거) |
 | `provider/` | [`MODEL.ko.md`](provider/MODEL.ko.md) | 프로파일 `type`이 고른 방식(Chat Completions, Responses, Anthropic Messages, Gemini generateContent)의 엔드포인트 직접 호출, 프로바이더 프로파일과 API 키, 모델 역할과 폴백 순서, 한 번만 실행되는 `[prewalk]` 핸드오프, 모델 사용 메타데이터 |
 | | [`LOCAL_HELPERS.ko.md`](provider/LOCAL_HELPERS.ko.md) | 오프라인 로컬 모델 보조 기능 설계 제안 |

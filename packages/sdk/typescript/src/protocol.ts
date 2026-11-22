@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 26;
+export const API_VERSION_MINOR = 27;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -31,6 +31,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["live_todo_v1", ["todo_changed"]],
   ["effective_settings_v1", ["get_effective_settings"]],
   ["package_control_v1", ["package_control"]],
+  ["package_commands_v1", ["runtime_command.package_commands", "runtime_command.package_command"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -47,6 +48,7 @@ export type RuntimeCommand =
   | "agents"
   | "modelpreset"
   | "subagent_model"
+  | "trim"
   | "autoreview"
   | "autojudge"
   | "transport"
@@ -68,7 +70,51 @@ export type RuntimeCommand =
   | "goal"
   | "advisor"
   | "dirs"
-  | "mcp";
+  | "mcp"
+  | "package_commands"
+  | "package_command";
+
+/** How one package command runs: a Markdown template or a child process. */
+export type PackageCommandKind = "template" | "executable";
+
+/**
+ * One slash command an installed package supplies.
+ *
+ * `name` is what a user types after the slash, `<package id>:<command>`, and
+ * the entries belong to the package generation the session observes.
+ */
+export interface PackageCommandInfo {
+  name: string;
+  package_id: string;
+  command: string;
+  kind: PackageCommandKind;
+  description: string;
+  argument_hint?: string;
+}
+
+/** The reply to a `package_commands` runtime command. */
+export interface PackageCommandList {
+  /** The package catalog generation the entries were read at; 0 for none. */
+  generation: number;
+  commands: PackageCommandInfo[];
+}
+
+/**
+ * The reply to a `package_command` runtime command.
+ *
+ * A template sets `text`, the user message it expands to; an executable
+ * command sets `output` and the child's `data` after the tool policy allowed
+ * the call.
+ */
+export interface PackageCommandOutcome {
+  name: string;
+  package_id: string;
+  command: string;
+  kind: PackageCommandKind;
+  text?: string;
+  output?: string;
+  data?: unknown;
+}
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 
@@ -798,6 +844,7 @@ export type ApiRequest =
       cursor?: string;
     }
   | { req: "export_session_markdown"; session_id: string }
+  | { req: "export_session_html"; session_id: string }
   | {
       req: "import_session_events";
       session_id: string;
@@ -1111,6 +1158,7 @@ export type ApiEvent =
     }
   | { ev: "session_heads"; session_id: string; heads: string[]; selected_head?: string }
   | { ev: "session_markdown"; session_id: string; markdown: string }
+  | { ev: "session_html"; session_id: string; html: string }
   | {
       ev: "session_history_page";
       session_id: string;
@@ -1273,6 +1321,7 @@ export const KNOWN_EVENT_KINDS = [
   "session_heads",
   "session_history_page",
   "session_markdown",
+  "session_html",
   "session_event_page",
   "session_import_result",
   "session_blob_chunk",
@@ -1362,6 +1411,7 @@ export const KNOWN_REQUEST_KINDS = [
   "ping",
   "package_control",
   "export_session_markdown",
+  "export_session_html",
 ] as const;
 
 export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {
