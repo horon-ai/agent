@@ -134,7 +134,7 @@ impl CredentialStore {
         }
         Err(CredentialError::Refused {
             path: self.path.clone(),
-            reason: format!("no API credential exists there; issue one with `horon-agent api-credentials issue`"),
+            reason: "no API credential exists there; issue one with `horon-agent api-credentials issue`".to_string(),
         })
     }
 

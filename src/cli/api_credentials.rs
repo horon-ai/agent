@@ -62,13 +62,13 @@ pub(crate) fn resolve_exposure(
 }
 
 fn credentials_available() -> bool {
-    match CredentialStore::default_store() {
-        Ok(store) => match store.has_any() {
-            Ok(present) => present,
-            Err(_) => false,
-        },
-        Err(_) => false,
-    }
+    let Ok(store) = CredentialStore::default_store() else {
+        // A store this process cannot even locate holds no credential, so the
+        // refusal points at `api-credentials issue`, which reports the real
+        // path problem when it is run.
+        return false;
+    };
+    store.has_any().is_ok_and(|present| present)
 }
 
 fn credential_namespace() -> Option<String> {

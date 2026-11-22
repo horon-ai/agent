@@ -189,7 +189,7 @@ fn the_store_file_and_directory_are_owner_only() {
     let store = scratch.store();
     store.issue(None).expect("issue");
     let file = std::fs::symlink_metadata(store.path()).expect("file metadata");
-    let directory = std::fs::symlink_metadata(&scratch.credential_directory()).expect("directory metadata");
+    let directory = std::fs::symlink_metadata(scratch.credential_directory()).expect("directory metadata");
     // `mode_bits` is `None` where the platform keeps access in an ACL instead of
     // a mode, so the assertion follows the platform rather than a cfg line.
     if let Some(bits) = horon_agent_platform::fs::mode_bits(&file) {
