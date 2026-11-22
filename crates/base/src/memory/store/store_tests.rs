@@ -312,6 +312,7 @@ fn editing_the_frontmatter_id_reindexes_the_page_under_the_new_id() {
     assert_eq!(search_ids(&wiki, "배포"), vec!["mem_2201_w"]);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_symlinked_page_file_is_never_indexed_or_read() {
     let root = TempRoot::new("symlink");
@@ -328,10 +329,7 @@ fn a_symlinked_page_file_is_never_indexed_or_read() {
     )
     .expect("write the outside page");
     let link = root.path().join("wiki").join("facts").join("mem_9999_z.md");
-    #[cfg(unix)]
     std::os::unix::fs::symlink(&target, &link).expect("symlink");
-    #[cfg(not(unix))]
-    return;
 
     let wiki = open(&root);
     assert_eq!(wiki.stats().expect("stats").pages, 1, "the symlink is not a page");
