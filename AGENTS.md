@@ -143,8 +143,10 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
 - Two binaries. The agent binary, `horon-agent`, has these working
   subcommands: `serve` (agent daemon), `run` (send one message and exit),
   `repl` (plain line prompt, no full-screen UI), `api-bridge` (alias `api`;
-  harness API on a local socket, a Unix socket or a Windows named pipe), `acp`
-  (ACP adapter on stdio), and
+  harness API on a local socket, a Unix socket or a Windows named pipe, plus an
+  optional authenticated TCP listener with `--api-bind`), `api-credentials`
+  (issue, rotate, revoke and list the bearer tokens that listener accepts),
+  `acp` (ACP adapter on stdio), and
   `rpc` (stdio JSONL RPC adapter; `--mode rpc` selects the same adapter), plus
   maintenance commands such as `update` and `install-release`. The TUI binary,
   `horon-tui`, is a separate package and binary on `horon-agent-sdk`; it is
@@ -271,6 +273,8 @@ Boundaries, each with the gate that enforces it:
 |`HORON_AGENT_TENANT_ID`|unset|1 to 63 lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit; required by every hosted mode and used only as an audit label|
 |`[hosting] allow_shared_children`|per mode (true only in a per-user container)|`false` narrows; `true` never widens; `[hosting] mode` is ignored with one warning|
 |`[hosting] allowed_mcp_servers`|unset (every server reachable)|a list of exact MCP server names for a hosted process; an empty list refuses every server; narrowing only, never widens a mode, and a process without hosting is unchanged|
+|`HORON_AGENT_API_BIND`, `[harness_api] bind`, `--api-bind`|unset (local socket only)|`IP:PORT` for the authenticated TCP harness API listener; the flag wins over the environment and both win over the file|
+|`HORON_AGENT_API_INSECURE_BEHIND_PROXY`, `[harness_api] insecure_behind_proxy`, `--api-insecure-behind-proxy`|`false`|`true` only when a TLS-terminating proxy fronts a non-loopback bind, which also needs an issued credential (`horon-agent api-credentials issue`)|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is
@@ -566,7 +570,7 @@ still states the old behaviour. To find the pages:
 |`src/cli/tui_handoff.rs`, `crates/tui/`|`docs/runtime/TUI.md`, `docs/diagram/02-run-modes`|
 |`src/cli/acp/`, `src/cli/acp.rs`|`docs/protocol/ACP.md`, `docs/diagram/05-acp-negotiation`|
 |`src/cli/rpc/`|`docs/protocol/RPC.md`|
-|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`|`docs/protocol/HARNESS_API.md`|
+|`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`, `src/cli/api_credentials.rs`, `crates/base/src/harness_api.rs`, `crates/config-types/src/harness_api.rs`|`docs/protocol/HARNESS_API.md`|
 |`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle`|
 |`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
 |`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|

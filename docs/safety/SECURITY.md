@@ -170,6 +170,45 @@ The hook is installed once at startup (`src/cli/startup.rs:38`). Later calls onl
 - Stack traces, full environment variables, and session transcripts are not included. Only the panic location and recent tool calls are.
 - Bundles stay local, so the user has to clean them up.
 
+## API exposure and credentials
+
+The harness API is local by default: a Unix socket or named pipe that only the
+owning OS user can open, or one stdio connection. `--api-bind` adds a TCP
+listener, and that listener is the only harness surface another machine can
+reach.
+
+- Every TCP connection presents `Authorization: Bearer <token>` before `hello`.
+  A failure closes the connection without writing a frame and without dialling
+  the daemon, so the listener never processes a request from an unauthenticated
+  peer. Pre-auth input is limited to 1 KiB and 10 seconds, so a silent or
+  slow-drip peer cannot hold a connection or memory.
+- Tokens are 32 random bytes stored only as `sha256:<hex>` digests in
+  `$HORON_HOME/harness-api/credentials.json`, a `0600` file in a `0700`
+  directory. The plaintext is printed once by
+  `horon-agent api-credentials issue` or `rotate`. The bridge re-reads the file
+  for every connection, so `revoke` and `rotate` apply immediately, and a store
+  that is a symlink, owned by another user, or not owner-only is refused rather
+  than trusted.
+- Built-in TLS is not implemented in this build. A non-loopback bind therefore
+  refuses to start unless the operator acknowledges a TLS-terminating proxy with
+  `--api-insecure-behind-proxy` or `insecure_behind_proxy = true`, and at least
+  one credential exists. Without that proxy the bearer token would travel in
+  cleartext; client certificates at the proxy are the supported mutual
+  authentication path.
+- Credentials are per `HORON_HOME`. A per-user container's home volume is that
+  tenant's, so one tenant's tokens cannot authenticate another tenant's listener.
+- The gateway (`[gateway]`, the WebSocket pairing surface) and the harness API
+  listener are separate surfaces with separate registries; neither surface's
+  token is accepted by the other.
+- Exposure does not authenticate a person, only a credential. On a hosting
+  provider the private network (`6PN` on Fly.io) keeps other organizations out
+  but treats every process on it as trusted, and a public port is public. The
+  token is required on both paths, and no forwarded header (`Fly-Client-IP` or
+  any other) is trusted for authentication or authorization.
+- A bind address is parsed as a literal IPv4 or IPv6 address. `[::]`,
+  `0.0.0.0` and a private `fdaa::/16` address are all non-loopback and all
+  require the proxy acknowledgement; only `127.0.0.0/8` and `::1` are loopback.
+
 ## Dependency security classification
 
 > **Status:** dated record

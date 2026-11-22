@@ -51,6 +51,7 @@ pub mod git_clone_isolation;
 pub mod git_worktree;
 pub mod github;
 pub mod goal;
+pub mod harness_api;
 pub mod hooks;
 pub mod hosting;
 pub mod id;

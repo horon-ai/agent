@@ -60,7 +60,27 @@ description: "호스팅 배포는 고객마다 에이전트 컨테이너 또는 
 3. 고객의 요청을 그 인스턴스의 소켓으로 전달합니다. 소켓은 컨테이너를 떠나지 않고, 어떤 에이전트 엔드포인트도 네트워크 주소로 노출되지 않습니다.
 4. 두 고객의 요청은 한 프로세스에 도달하지 않습니다. 공유 프로세스가 없으므로 검사할 세션별 테넌트 검사도 없습니다.
 
-컨테이너 밖으로 하네스 API를 노출하려면 인증이 필요하고, 이는 별도 변경이며 이 계약에 포함되지 않습니다. 호스팅 이미지는 게이트웨이를 끄고 포트를 게시하지 않습니다.
+호스팅 이미지는 게이트웨이를 끕니다. 하네스 API를 자기 밖으로 서비스해야 하는 컨테이너는
+`horon-agent api-bridge --api-bind`(또는 `HORON_AGENT_API_BIND`)로 시작하고, 그 테넌트 홈
+안에서 자격 증명을 발급하며, 앞단의 TLS 종료 프록시를 확인합니다. 그러면 리스너가 모든 TCP
+연결을 인증하고 로컬 소켓은 기존 핸드셰이크를 유지합니다(`docs/protocol/HARNESS_API.ko.md`).
+자격 증명 파일이 테넌트의 `HORON_HOME`에 있으므로 자격 증명은 구조적으로 고객별입니다.
+
+배포 대상은 Fly Machines이며, 고객마다 Machine 하나와 `/data`로 마운트한 Fly Volume 하나를
+씁니다. 그래서 테넌트에 닿는 길이 둘이고, 위 계약이 둘 다를 덮습니다.
+
+| 경로 | 닿는 방식 | 인증 |
+|---|---|---|
+| 공개 포트 | `services` 항목의 `internal_port`가 `--api-bind` 포트와 같고, Fly Proxy가 443에서 TLS를 종료한 뒤 WireGuard 메시로 평문을 전달하므로 운영자가 `--api-insecure-behind-proxy`를 준다 | 테넌트의 베어러 토큰 |
+| 사설 6PN | 다른 Machine이나 컨트롤 플레인이 테넌트의 6PN 주소나 `<machine>.vm.<app>.internal`로 접속한다. 리스너는 `[::]:PORT`나 `fly-local-6pn`에 바인드한다 | 테넌트의 베어러 토큰 |
+
+6PN은 조직 단위로 사설이지 사용자 단위로 사설이 아니므로 토큰을 대신하지 못합니다.
+`fly-local-6pn`과 `[::]`은 IPv6 주소이므로 루프백이 아닌 바인드이고 같은 확인을 요구합니다.
+정지되거나 유휴 상태인 Machine에는 프로세스가 없어 리스너도 없습니다. 자격 증명 파일은 볼륨에
+남고, 리스너는 유휴 시간으로 스스로 끝나지 않으므로 autostop만이 이를 끝냅니다. 이런 플랫폼
+서술은 Fly.io 문서(`docs.fly.io/networking/tls-termination`,
+`docs.fly.io/networking/app-services`, `docs.fly.io/networking/private-networking`)를 따르며,
+이 저장소는 Fly API 호출도 프록시 헤더 신뢰도 구현하지 않습니다.
 
 ## 정지, 깨우기, 복원
 

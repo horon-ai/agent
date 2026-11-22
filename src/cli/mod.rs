@@ -1,5 +1,7 @@
 pub mod acp;
 pub mod add_dir;
+pub mod api_bridge;
+pub mod api_credentials;
 pub mod args;
 pub mod cloud_doctor;
 pub mod cloud_move;

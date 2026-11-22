@@ -2044,6 +2044,7 @@ name = "horon-agent-harness-api-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "hex",
  "horon-agent-app-core",
  "horon-agent-background-types",
  "horon-agent-base",
@@ -2056,9 +2057,11 @@ dependencies = [
  "horon-agent-todo-policy",
  "horon-agent-transport",
  "libc",
+ "rand 0.9.3",
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tokio",
 ]
 

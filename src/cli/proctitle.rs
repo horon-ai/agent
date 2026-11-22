@@ -41,6 +41,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Ambient(_)) => "horon-agent ambient".to_string(),
         Some(Command::Cloud(_)) => "horon-agent cloud".to_string(),
         Some(Command::Pair { .. }) => "horon-agent pair".to_string(),
+        Some(Command::ApiCredentials(_)) => "horon-agent api-credentials".to_string(),
         Some(Command::Permissions) => "horon-agent permissions".to_string(),
         Some(Command::Approvals { .. }) => "horon-agent approvals".to_string(),
         Some(Command::Model(_)) => "horon-agent model".to_string(),

@@ -30,7 +30,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`CRATES.ko.md`](architecture/CRATES.ko.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
 | | [`HOSTING.ko.md`](architecture/HOSTING.ko.md) | 사용자별 호스팅 경계: `HORON_AGENT_HOSTING_MODE` 계약, 컨테이너 이미지와 볼륨 배치, 컨트롤 플레인 라우팅 계약, 정지와 깨우기, 테넌트 삭제 |
 | `protocol/` | [`ACP.ko.md`](protocol/ACP.ko.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
-| | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정과 요청·이벤트 표면 |
+| | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정, 선택적 인증 TCP 노출, 요청·이벤트 표면 |
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
 | | [`COLLABORATION.ko.md`](protocol/COLLABORATION.ko.md) | 실시간 세션 초대와 참가자 권한 설계 제안 |
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |

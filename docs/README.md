@@ -30,7 +30,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`CRATES.md`](architecture/CRATES.md) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
 | | [`HOSTING.md`](architecture/HOSTING.md) | The per-user hosting boundary: the `HORON_AGENT_HOSTING_MODE` contract, the container image and volume layout, the control-plane routing contract, suspend and wake, and tenant deletion |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
-| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | Harness API credential setup and the request and event surface |
+| | [`HARNESS_API.md`](protocol/HARNESS_API.md) | Harness API credential setup, the optional authenticated TCP exposure, and the request and event surface |
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | Session event storage format, delivery contract, writer pool, durable runtime journal |
 | | [`COLLABORATION.md`](protocol/COLLABORATION.md) | Proposed live session invitations and participant permissions |
 | | [`RPC.md`](protocol/RPC.md) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |

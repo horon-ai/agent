@@ -20,11 +20,13 @@
 pub mod allocator;
 pub mod background_progress;
 mod bridge;
+pub mod credentials;
 mod degradation_receipts;
 mod message_content;
 mod message_modes;
 pub mod replication;
 pub mod session_prefix;
+mod tcp;
 mod tool_args_repaired;
 pub mod translate;
 mod writer;
@@ -44,9 +46,11 @@ mod stdio_tests;
 #[cfg(test)]
 mod writer_tests;
 
-pub use bridge::run_bridge;
+pub use bridge::{run_bridge, run_bridge_exposed};
 #[cfg(test)]
-pub(crate) use bridge::{run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock};
+pub(crate) use bridge::{
+    run_bridge_exposed_on, run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock,
+};
 
 use anyhow::{Context, Result};
 use horon_agent_harness_api::{
