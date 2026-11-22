@@ -64,7 +64,12 @@
     {
       "package": "horon-agent",
       "target": "openai_compatible_cli",
-      "min_passed": 16
+      "min_passed": 14
+    },
+    {
+      "package": "horon-agent",
+      "target": "config_plan_cli",
+      "min_passed": 2
     },
     {
       "package": "horon-agent",
@@ -84,7 +89,7 @@
     {
       "package": "horon-agent",
       "target": "session_commands",
-      "min_passed": 13
+      "min_passed": 22
     },
     {
       "package": "horon-agent",
@@ -115,6 +120,11 @@
       "package": "horon-agent-app-core",
       "target": "on_demand_server_spawn",
       "min_passed": 1
+    },
+    {
+      "package": "horon-agent-app-core",
+      "target": "package_commands",
+      "min_passed": 5
     },
     {
       "package": "horon-agent-app-core",
@@ -174,7 +184,7 @@
     {
       "package": "horon-agent-base",
       "target": "package_manifest",
-      "min_passed": 9
+      "min_passed": 13
     },
     {
       "package": "horon-agent-base",

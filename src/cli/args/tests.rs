@@ -1,4 +1,4 @@
-use super::provider::ProviderTypeArg;
+use super::provider_args::ProviderTypeArg;
 use super::*;
 use crate::cli::provider_init::ProviderChoice;
 

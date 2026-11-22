@@ -6,8 +6,10 @@
 //! parts that need a runtime: the bounded newline reader, the write deadline,
 //! request ids, the pending/queue caps, cancellation and shutdown.
 //!
-//! It also owns the two session-facing pieces: the revocation registry the daemon
-//! runs callbacks through, and the per-turn package snapshot a session captures.
+//! It also owns the three session-facing pieces: the revocation registry the
+//! daemon runs callbacks through, the per-turn package snapshot a session
+//! captures, and the minimal observation events an installed package subscribes
+//! to.
 
 /// One call to an installed package child, and the child's lifetime.
 pub mod invoke;
@@ -22,5 +24,8 @@ pub mod lifecycle;
 /// budget.
 #[path = "agent/package_snapshot.rs"]
 pub mod package_snapshot;
+
+/// Minimal observation events for installed package children.
+pub mod observer;
 
 pub mod wire;

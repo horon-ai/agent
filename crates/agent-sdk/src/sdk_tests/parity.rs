@@ -76,6 +76,8 @@ const CAPABILITIES: &[Capability] = &[
     cap("list_models", "listModels"),
     cap("get_runtime_info", "getRuntimeInfo"),
     cap("runtime_command", "runtimeCommand"),
+    cap("list_package_commands", "listPackageCommands"),
+    cap("run_package_command", "runPackageCommand"),
     cap("set_api_key", "setApiKey"),
     cap("clear_api_key", "clearApiKey"),
     cap("notify_auth_changed", "notifyAuthChanged"),
@@ -327,6 +329,7 @@ fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
         "client.rs",
+        "client/package_commands.rs",
         "client/package_control.rs",
         "handoff.rs",
         "structured.rs",

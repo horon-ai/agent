@@ -92,7 +92,7 @@ fn row(entry: &serde_json::Value) -> Option<SkillRow> {
 ///
 /// A description travels into a listing row and a picker column, both one line
 /// tall: a newline left in it would break the columns they share.
-fn one_line(text: &str) -> String {
+pub(super) fn one_line(text: &str) -> String {
     match text.lines().next() {
         Some(line) => line.trim().to_string(),
         None => String::new(),
