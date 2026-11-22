@@ -304,19 +304,27 @@ impl Agent {
         });
 
         // Frozen per session so skill installs never rewrite the cached
-        // system prefix. Later installs are announced in the transcript.
-        let skills_section = self.prompt_skills_section.as_deref();
+        // system prefix. A package skill is the exception: the section is then
+        // re-rendered from the turn's package generation, so the package set
+        // that did not move still renders the same bytes.
+        let package_text = self.package_text_resources();
+        let skills_section = self.request_skills_section(package_text.as_deref());
 
         let working_dir = self.session.working_dir.as_ref().map(std::path::PathBuf::from);
 
         let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_snapshot(
             skill_prompt.as_deref(),
-            skills_section,
+            skills_section.as_deref(),
             memory_prompt,
             working_dir.as_deref(),
             &self.agents_md_snapshot,
             &self.static_prompt_sources,
         );
+        // Package rules come after every captured section: a labelled, capped,
+        // lowest-priority block that never replaces AGENTS.md or the base prompt.
+        if let Some(resources) = package_text.as_deref() {
+            crate::prompt::append_package_rules(&mut split, resources);
+        }
 
         self.append_current_turn_system_reminder(&mut split);
         self.append_context_notes(&mut split);

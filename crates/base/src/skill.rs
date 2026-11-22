@@ -22,6 +22,7 @@ mod overlay_cache;
 #[cfg(test)]
 #[path = "skill/overlay_cache_tests.rs"]
 mod overlay_cache_tests;
+mod package_source;
 mod sources;
 #[cfg(test)]
 #[path = "skill/sources_tests.rs"]
@@ -182,8 +183,7 @@ impl SkillRegistry {
         effective
     }
 
-    /// Insert or replace one skill. Shared bodies make the clone cheap, and
-    /// `Arc::make_mut` keeps an already handed-out snapshot untouched.
+    /// Insert or replace one skill; `Arc::make_mut` keeps a handed-out snapshot untouched.
     pub(crate) fn insert_skill(&mut self, skill: Skill) {
         Arc::make_mut(&mut self.skills).insert(skill.name.clone(), skill);
     }
