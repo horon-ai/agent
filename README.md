@@ -126,6 +126,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
 | `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
 | `horon tokens [TEXT]` | Estimates UTF-8 tokens offline from inline text, stdin, or `--file`. `--model` selects a known tokenizer family and the output labels any fallback. |
+| `horon session cache [--apply] [--json]` | Lists the regenerable cache files of sessions no running agent owns and their sizes. It writes nothing until `--apply`, and never touches original logs, blobs or the runtime journal. |
 | `horon agents` | Lists named agent definitions, their sources, and configured model and tools without starting a session. |
 | `horon provider status [--json]` | Reports each configured profile's credential source and local status (`authenticated`, `unauthenticated`, or `unknown`) without printing credentials or contacting a provider. |
 | `horon skills list [--json]`, `horon skills install <source> --approve` | Lists skills with the source and commit of installed ones, or installs one through the managed-skill installer from an https, ssh or file source or a local directory. Needs `[tools] managed_skills = true`. |
