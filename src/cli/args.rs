@@ -416,6 +416,12 @@ pub(crate) enum Command {
         delegate: bool,
     },
 
+    /// Inspect the effective configuration (read-only)
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
@@ -1150,3 +1156,19 @@ pub(crate) enum MemoryCommand {
 
 #[cfg(test)]
 mod tests;
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum ConfigCommand {
+    /// Show effective values and the layer behind each, without secrets
+    Show {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate config.toml with the startup loader; exits 1 on an invalid file
+    Check {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+}

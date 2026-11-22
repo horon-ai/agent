@@ -29,6 +29,10 @@ pub(crate) async fn run_early_command(command: &Option<Command>) -> Result<Early
             select,
             delegate,
         }) => diagnostics(files, *json, select, *delegate).await,
+        Some(Command::Config { command }) => {
+            super::config_cli::run(command)?;
+            Ok(Early::Done)
+        }
         _ => Ok(Early::Pass),
     }
 }

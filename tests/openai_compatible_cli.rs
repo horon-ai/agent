@@ -1157,3 +1157,35 @@ async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_a
             .success()
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn config_check_names_the_invalid_section_and_show_never_prints_a_credential() {
+    let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+    let home = Home::new();
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            "{COMPACTION_HEAD}[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\napi_key = \"{secret}\"\ndefault_model = \"m\"\n"
+        ),
+    )
+    .unwrap();
+    let shown = home.run(&["config", "show", "--json"]).await;
+    assert!(shown.status.success(), "{}", text(&shown.stderr));
+    let report: Value = serde_json::from_slice(&shown.stdout).unwrap();
+    let settings = report["settings"].as_array().unwrap();
+    assert!(!settings.is_empty());
+    assert!(
+        settings
+            .iter()
+            .all(|row| row["source"].is_string() && row["key"].is_string())
+    );
+    assert!(!text(&shown.stdout).contains(secret));
+    assert!(home.run(&["config", "check"]).await.status.success());
+
+    std::fs::write(home.path().join("config.toml"), "[prewalk]\nenabled = true\n").unwrap();
+    let bad = home.run(&["config", "check", "--json"]).await;
+    assert_eq!(bad.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&bad.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert!(report["error"].as_str().unwrap().contains("[prewalk]"), "{report}");
+}

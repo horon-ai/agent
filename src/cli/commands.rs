@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{gateway, memory, storage};
 
+mod config_cli;
 mod early_commands;
 mod provider_setup;
 mod report_info;

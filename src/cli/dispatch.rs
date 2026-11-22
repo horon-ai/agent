@@ -44,8 +44,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
     }
     if args.ssh.is_some() {
-        // A remote session ID and working directory belong to the remote host.
-        // Do not run local resume lookup or provider bootstrap.
+        // A remote host owns its session ID and cwd: skip local resume lookup and provider bootstrap.
         return super::ssh::run(args).await;
     }
     match commands::run_early_command(&args.command).await? {
@@ -53,8 +52,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         commands::Early::Rewrite(next) => args.command = Some(next),
         commands::Early::Pass => {}
     }
-    // Explicit MCP management is independent of provider profiles, sessions,
-    // and the daemon. In particular, list must remain offline and scriptable.
+    // MCP management is independent of providers, sessions and the daemon; list stays offline and scriptable.
     if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
@@ -294,7 +292,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Usage { json }) => {
             commands::run_usage_command(json).await?;
         }
-        Some(Command::Stats { .. } | Command::Preview { .. } | Command::Diagnostics { .. }) => {
+        Some(
+            Command::Stats { .. } | Command::Preview { .. } | Command::Diagnostics { .. } | Command::Config { .. },
+        ) => {
             unreachable!("handled before bootstrap")
         }
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,

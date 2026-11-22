@@ -121,6 +121,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | Report stored token usage by UTC date, provider, and model. Add `--json` for structured output. In the terminal client, `/stats` reports the attached session. |
+| `horon config show` / `horon config check` | Read-only. `show` lists the effective settings with the layer behind each (default, file, env, cli) and never prints credentials; `--json` for structured output. `check` validates `config.toml` with the startup loader, names the invalid section, and exits 1 when it is invalid. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
 | `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
 | `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
