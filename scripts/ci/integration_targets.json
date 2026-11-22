@@ -78,6 +78,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "package_end_to_end",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent",
       "target": "removed_panel_compat",
       "min_passed": 3
     },

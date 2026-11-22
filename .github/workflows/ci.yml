@@ -407,6 +407,15 @@ jobs:
             scripts/ci/test_check_test_targets.py \
             scripts/ci/test_check_lib_test_coverage.py
 
+      - name: Package compat gate contract tests
+        # `scripts/ci/package_compat.py` decides whether a native report proves
+        # its target and whether the install guide may advertise it, so its
+        # rejection paths (cross-compiled evidence, a missing step, a failed
+        # step, an unproven claim) are proved here rather than assumed.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: python3 -m unittest -v scripts/ci/test_package_compat.py
+
       - name: Enforce every integration target runs
         # #226: the compile step builds every integration target and, before this
         # guard, nothing started most of them. Static check (workflow plus
