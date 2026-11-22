@@ -22,6 +22,7 @@ mod communicate;
 mod config_edit_notice;
 mod context_notes;
 mod conversation_search;
+pub mod diagnostics_list;
 mod discover;
 mod discover_secrets;
 mod edit;
