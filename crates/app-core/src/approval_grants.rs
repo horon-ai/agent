@@ -27,6 +27,9 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod listing;
+pub use listing::{GrantView, list, revoke, revoke_all};
+
 /// Which effect a grant was issued for.
 ///
 /// A write grant answers an append call, because replacing a file's contents is

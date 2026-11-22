@@ -378,9 +378,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Cloud(subcmd)) => {
             super::cloud_move::run_cli(subcmd)?;
         }
-        Some(Command::Pair { list, revoke }) => {
-            commands::run_pair_command(list, revoke)?;
-        }
+        Some(Command::Pair { list, revoke }) => commands::run_pair_command(list, revoke)?,
         Some(Command::Permissions) => {
             anyhow::bail!("the interactive permissions editor is unavailable in this headless build");
         }
@@ -394,6 +392,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 let store = crate::ambient::BlockedApprovalStore::open_default()?;
                 resolve_blocked_approval(&store, &request_id, &tool_call_id, verdict, note.as_deref())?;
             }
+            ApprovalsCommand::Grants(_) => unreachable!("handled by startup"),
         },
         Some(Command::Model(subcmd)) => match subcmd {
             ModelCommand::List { json, verbose, filter } => {
