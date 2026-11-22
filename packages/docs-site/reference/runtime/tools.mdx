@@ -1021,3 +1021,9 @@ report that replaces the branch, and undo.
 ### Preview a read-only tool
 
 `horon preview <read|agentgrep|websearch> '<json input>'` runs one of these three built-ins once, without a model, a session or an approval prompt. The input is the tool's own JSON object, and the tool applies its normal path checks. Output is redacted for credentials and capped at 32 KiB. `--json` returns `tool`, `output`, `truncated` and, for `websearch`, the configured engine order as `backend`; the search endpoint and any key are never shown. Any other tool name is refused.
+
+### Diagnostics before delegating a fix
+
+`horon diagnostics <file>...` asks each file's language server for its diagnostics and lists them grouped by file, errors before warnings, with a number per entry. A file that cannot be checked (missing, no language server for its type, server not installed) stays in the list with the reason. Nothing is edited. `--json` returns the same list.
+
+`horon diagnostics <file>... --select 1,3 --delegate` prints the files of the selected entries and then runs a normal one-shot `horon run` that is asked to fix only those diagnostics, so its approvals, tool policy and isolation apply as for any run. A number that is not in the listing is refused before any model call. `--select` and `--delegate` go together.

@@ -61,6 +61,26 @@ pub(crate) struct RunModelOverrides {
     pub(crate) advisor: Option<String>,
 }
 
+impl Command {
+    /// A plain `run` of `message`, as if typed on the command line with no other flags.
+    pub(crate) fn one_shot(message: String) -> Self {
+        Self::Run {
+            json: false,
+            ndjson: false,
+            no_pty: false,
+            no_session: false,
+            max_time: None,
+            wait_async: false,
+            model_overrides: RunModelOverrides {
+                thinking: None,
+                service_tier: None,
+                advisor: None,
+            },
+            message,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "horon-agent")]
 #[command(version = horon_agent_build_meta::version())]
@@ -375,6 +395,25 @@ pub(crate) enum Command {
         /// Emit JSON instead of plain text
         #[arg(long)]
         json: bool,
+    },
+
+    /// List language-server diagnostics before any edit, or hand chosen ones to a normal run
+    Diagnostics {
+        /// Files to check, relative to the working directory
+        #[arg(required = true, num_args = 1..)]
+        files: Vec<String>,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+
+        /// Diagnostic numbers from the listing to delegate, e.g. 1,3
+        #[arg(long, value_delimiter = ',', requires = "delegate")]
+        select: Vec<usize>,
+
+        /// Fix the selected diagnostics in a normal run, under its usual approvals and isolation
+        #[arg(long, requires = "select")]
+        delegate: bool,
     },
 
     /// Inspect and settle durable pending inputs

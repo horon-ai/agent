@@ -1118,3 +1118,28 @@ async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_outpu
     let output = search["output"].as_str().unwrap();
     assert!(output.contains("Found") && !output.contains(secret), "{output}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_any_model_call() {
+    let home = Home::new();
+    std::fs::write(home.path().join("notes.txt"), "plain text").unwrap();
+
+    let listing = home.run(&["diagnostics", "notes.txt", "missing.rs", "--json"]).await;
+    assert!(listing.status.success(), "{}", text(&listing.stderr));
+    let reports: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(reports[0]["path"], "notes.txt");
+    assert_eq!(reports[0]["note"], "no language server for this file type");
+    assert_eq!(reports[1]["note"], "file not found");
+
+    // A number that is not in the listing is refused, so no run (and no model call) starts.
+    let mock = Mock::start().await;
+    home.write_config(&mock.base_url);
+    let bad = home.run(&["diagnostics", "notes.txt", "--select", "1", "--delegate"]).await;
+    assert!(!bad.status.success());
+    assert!(text(&bad.stderr).contains("no diagnostic [1]"), "{}", text(&bad.stderr));
+    assert_eq!(mock.requests(), 0, "a refused delegation must not reach the model");
+
+    // Delegating needs a selection and a selection needs --delegate.
+    assert!(!home.run(&["diagnostics", "notes.txt", "--delegate"]).await.status.success());
+    assert!(!home.run(&["diagnostics", "notes.txt", "--select", "1"]).await.status.success());
+}
