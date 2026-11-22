@@ -22,7 +22,6 @@ pub struct ReleaseNotes {
 struct RawRelease {
     tag_name: String,
     name: Option<String>,
-    html_url: String,
     published_at: Option<String>,
     body: Option<String>,
 }
