@@ -28,7 +28,7 @@ pub use horon_agent_extension_types::{
     PackageResources, PluginManifest, TARGETS, ToolDeclaration,
 };
 pub use inbox::{InboxEntry, InboxOutcome, InboxReport};
-pub use manifest::{ValidatedPackage, validate_package};
+pub use manifest::{ValidatedPackage, read_recorded_declaration, validate_package};
 pub use mcp_resources::{PackageMcpKind, PackageMcpServer};
 pub use process::{PackageExecutable, PackageProcess};
 pub use text_resources::{
