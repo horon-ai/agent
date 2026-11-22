@@ -82,6 +82,7 @@ pub fn validate_package(root: &Path) -> Result<ValidatedPackage> {
         None => (extension.name.clone(), PackageResources::default()),
     };
     check_public_names(&extension, &resources)?;
+    super::text_resources::validate_resources(root, &resources)?;
     files.insert(extension_path.clone());
     let directory = extension_path.parent().context("extension manifest needs a parent")?;
     let host = native_package_target().context("this host does not support native packages")?;
@@ -189,7 +190,7 @@ pub(super) fn open_package_file(root: &Path, path: &Path) -> Result<File> {
     Ok(file)
 }
 
-fn relative_path(raw: &str) -> Result<PathBuf> {
+pub(super) fn relative_path(raw: &str) -> Result<PathBuf> {
     ensure!(
         raw.split('/').all(portable_component),
         "invalid package-relative path: {raw}"

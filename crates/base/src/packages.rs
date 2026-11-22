@@ -17,6 +17,7 @@ mod mcp_resources;
 mod native_target;
 mod process;
 mod store;
+mod text_resources;
 
 pub use catalog::{
     CATALOG_VERSION, CatalogView, CollectionReport, InstallRequest, PackageLease, PackageRecord, PackageScope,
@@ -30,3 +31,7 @@ pub use inbox::{InboxEntry, InboxOutcome, InboxReport};
 pub use manifest::{ValidatedPackage, validate_package};
 pub use mcp_resources::{PackageMcpKind, PackageMcpServer};
 pub use process::{PackageExecutable, PackageProcess};
+pub use text_resources::{
+    MAX_PACKAGE_RULE_BYTES, MAX_PROMPT_BYTES, MAX_PUBLIC_NAME, MAX_RULE_BYTES, MAX_SKILL_BYTES, PackagePrompt,
+    PackageRule, PackageSkill, PackageText, PackageTextCache, PackageTextResources, validate_resources,
+};
