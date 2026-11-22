@@ -416,9 +416,44 @@ pub struct McpClient {
 /// What actually carries the JSON-RPC messages for a client.
 enum Backend {
     /// Local child process speaking newline-delimited JSON over stdio.
-    Stdio(Child),
+    Stdio(StdioChild),
     /// Remote server over Streamable HTTP or legacy SSE.
     Remote(super::remote::RemoteConnection),
+}
+
+/// The stdio child one connection owns.
+pub(crate) enum StdioChild {
+    /// Started by this client from the configured command.
+    Direct(Child),
+    /// Started by the host's package supervision. The process owns its tree,
+    /// its pipes' descriptors and the catalog lease that keeps its copy on
+    /// disk, so this connection keeps it alive and never signals the tree
+    /// itself.
+    Supervised(Box<crate::packages::PackageProcess>),
+}
+
+impl StdioChild {
+    /// Whether the child is still running, without blocking.
+    fn is_running(&mut self) -> bool {
+        match self {
+            Self::Direct(child) => matches!(child.try_wait(), Ok(None)),
+            Self::Supervised(process) => matches!(process.try_wait(), Ok(None)),
+        }
+    }
+
+    /// Stop the child after the wire's shutdown frame was sent.
+    fn stop(&mut self) {
+        match self {
+            Self::Direct(child) => {
+                let _ = child.start_kill();
+            }
+            Self::Supervised(process) => {
+                if let Err(error) = process.terminate() {
+                    crate::logging::warn(&format!("MCP: could not stop the package child: {error:#}"));
+                }
+            }
+        }
+    }
 }
 
 impl McpClient {
@@ -470,6 +505,65 @@ impl McpClient {
         let stdout = child.stdout.take().context("No stdout")?;
         let stderr = child.stderr.take().context("No stderr")?;
 
+        Self::connect_stdio(
+            name,
+            config,
+            stdin,
+            stdout,
+            stderr,
+            StdioChild::Direct(child),
+            resolve_roots(working_dir),
+        )
+        .await
+    }
+
+    /// Connect to a package's declared MCP mode over the host's package child
+    /// supervision.
+    ///
+    /// `process` was started by
+    /// [`crate::packages::PackageExecutable::start_with_arguments`]: it is
+    /// already digest-checked, pinned and inside the package's own process
+    /// scope, and this connection only adopts its pipes. A package child
+    /// declares no MCP roots: its working directory is the installed copy, so
+    /// the host's project root is not what the server was pointed at.
+    pub async fn connect_package(
+        name: String,
+        config: &McpServerConfig,
+        mut process: crate::packages::PackageProcess,
+    ) -> Result<Self> {
+        crate::logging::info(&format!(
+            "MCP: Connecting to package server '{name}' (pid {})",
+            process.pid()
+        ));
+        let stdin = process.take_stdin().context("the package child has no stdin")?;
+        let stdout = process.take_stdout().context("the package child has no stdout")?;
+        let stderr = process.take_stderr().context("the package child has no stderr")?;
+        let stdin = tokio::process::ChildStdin::from_std(stdin).context("adopt the package child's stdin")?;
+        let stdout = tokio::process::ChildStdout::from_std(stdout).context("adopt the package child's stdout")?;
+        let stderr = tokio::process::ChildStderr::from_std(stderr).context("adopt the package child's stderr")?;
+        Self::connect_stdio(
+            name,
+            config,
+            stdin,
+            stdout,
+            stderr,
+            StdioChild::Supervised(Box::new(process)),
+            None,
+        )
+        .await
+    }
+
+    /// Wire one stdio transport: stderr logging, the writer, the reader, the
+    /// shared handle and the handshake.
+    async fn connect_stdio(
+        name: String,
+        config: &McpServerConfig,
+        mut stdin: tokio::process::ChildStdin,
+        stdout: tokio::process::ChildStdout,
+        stderr: tokio::process::ChildStderr,
+        child: StdioChild,
+        roots: Option<Vec<McpRoot>>,
+    ) -> Result<Self> {
         // Spawn stderr reader
         let server_name = name.clone();
         tokio::spawn(async move {
@@ -495,7 +589,6 @@ impl McpClient {
         let (writer_tx, mut writer_rx) = mpsc::channel::<String>(32);
 
         // Spawn writer task
-        let mut stdin = stdin;
         tokio::spawn(async move {
             while let Some(msg) = writer_rx.recv().await {
                 if stdin.write_all(msg.as_bytes()).await.is_err() {
@@ -522,7 +615,6 @@ impl McpClient {
         let reader_prompts = Arc::clone(&prompts);
         let mut reader = BufReader::new(stdout);
         let reader_replies = writer_tx.clone();
-        let roots = resolve_roots(working_dir);
         let reader_roots = roots.clone();
         tokio::spawn(async move {
             let mut line = String::new();
@@ -853,7 +945,7 @@ impl McpClient {
     /// Check if server is still running
     pub fn is_running(&mut self) -> bool {
         match &mut self.backend {
-            Backend::Stdio(child) => matches!(child.try_wait(), Ok(None)),
+            Backend::Stdio(child) => child.is_running(),
             Backend::Remote(connection) => connection.is_running(),
         }
     }
@@ -875,7 +967,7 @@ impl McpClient {
 
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-                let _ = child.kill().await;
+                child.stop();
             }
             Backend::Remote(connection) => connection.shutdown().await,
         }
@@ -935,7 +1027,10 @@ fn mcp_child_env(
 
 impl Drop for McpClient {
     fn drop(&mut self) {
-        if let Backend::Stdio(child) = &mut self.backend {
+        // A supervised child is stopped by the process that owns it: dropping
+        // its `PackageProcess` terminates the package's own process group, so
+        // this connection signals nothing there.
+        if let Backend::Stdio(StdioChild::Direct(child)) = &mut self.backend {
             let _ = child.start_kill();
         }
     }
