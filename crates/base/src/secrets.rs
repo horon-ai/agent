@@ -87,7 +87,7 @@ pub(crate) mod rules {
         r"(?m)^\s*(AZURE_OPENAI_API_KEY\s*=\s*)([^\r\n]+)",
         r"(?m)^\s*(CURSOR_API_KEY\s*=\s*)([^\r\n]+)",
         r"(?m)^\s*(GITHUB_TOKEN\s*=\s*)([^\r\n]+)",
-        r"(?im)^\s*([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
+        r"(?im)^\s*((?:export\s+)?[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
         r"(?im)^\s*(AUTHORIZATION\s*[:=]\s*)([^\r\n]+)",
     ];
 
@@ -878,6 +878,22 @@ mod restore_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exported_assignment_is_masked_like_a_bare_one() {
+        let mut vault = SecretVault::new();
+        let value = "sk-ant-abcdefghijklmnopqrstuvwxyz";
+        let masked = obfuscate(
+            &format!("export API_KEY={value}\nexport PATH=/usr/bin\n"),
+            &mut vault,
+            &[],
+        );
+        assert!(!masked.contains(value), "{masked}");
+        assert!(
+            masked.contains("export PATH=/usr/bin"),
+            "an ordinary export stays readable: {masked}"
+        );
+    }
 
     #[test]
     fn obfuscate_replaces_known_shapes_with_stable_placeholders() {
