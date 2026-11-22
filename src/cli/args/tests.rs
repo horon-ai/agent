@@ -1,5 +1,6 @@
 use super::*;
 use crate::cli::provider_init::ProviderChoice;
+use super::provider::ProviderTypeArg;
 
 #[test]
 fn native_ssh_attach_arguments_parse_and_do_not_steal_local_socket() {

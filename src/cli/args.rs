@@ -8,7 +8,7 @@ pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
 mod provider;
-pub(crate) use provider::{ProviderAuthArg, ProviderCommand, ProviderTypeArg};
+pub(crate) use provider::{ProviderAuthArg, ProviderCommand};
 
 #[derive(clap::Args, Debug)]
 pub(crate) struct RunModelOverrides {
