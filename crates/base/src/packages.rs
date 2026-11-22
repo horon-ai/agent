@@ -11,6 +11,7 @@
 //! whose environment the host controls.
 
 mod catalog;
+mod child_gate;
 mod command_resources;
 mod hook_resources;
 mod inbox;

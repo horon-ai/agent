@@ -42,6 +42,7 @@ impl Agent {
         // One turn, one package generation: the snapshot is captured here, as
         // the tool list and its index are frozen on the first request of a turn.
         self.enter_package_generation().await;
+        self.report_hosted_refusals();
         self.resolve_armed_effort(false, None);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
@@ -80,6 +81,7 @@ impl Agent {
         display_role: Option<crate::session::StoredDisplayRole>,
     ) -> Result<String> {
         self.enter_package_generation().await;
+        self.report_hosted_refusals();
         self.resolve_armed_effort(false, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
@@ -160,6 +162,7 @@ impl Agent {
             reminder => (std::borrow::Cow::Borrowed(user_message), reminder, display_role, false),
         };
         self.current_turn_system_reminder = system_reminder;
+        self.report_hosted_refusals();
 
         self.resolve_armed_effort(continues_turn, display_role);
         self.announce_late_mcp_tools().await;
@@ -906,6 +909,19 @@ impl Agent {
         } else {
             tools.retain(|tool| !matches!(tool.name.as_str(), "mcp_search" | "mcp_call"));
         }
+    }
+
+    /// Carry a hosted-policy refusal into this turn's system reminder.
+    ///
+    /// The refusal was queued while the turn's MCP and package servers were
+    /// planned. The model reads it once per turn, so it can tell the user why a
+    /// configured server's tools are missing instead of the refusal ending as a
+    /// log line nobody reads.
+    fn report_hosted_refusals(&mut self) {
+        let Some(notice) = crate::agent::hosted_notice::take(self.session_id()) else {
+            return;
+        };
+        Self::merge_system_reminder(&mut self.current_turn_system_reminder, &notice);
     }
 
     /// Announce MCP tools that became available after the tool list locked,

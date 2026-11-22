@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](HOSTING.ko.md)
 
-A hosted deployment runs one agent container per customer with one home volume, and never puts two customers in one daemon. This page states the flag contract, the image and volume layout, the routing contract the control plane owns, the suspend and delete procedures, and the limits that remain.
+A hosted deployment runs one agent container or Fly Machine per customer, each with one home volume, and never puts two customers in one daemon. This page states the flag contract, the image and volume layout, the routing contract the control plane owns, the suspend and delete procedures, and the limits that remain.
 
 ## The hosting flag contract
 
@@ -13,9 +13,12 @@ The environment is the only authority for the hosting mode. A tenant can write i
 | Hosting mode | `HORON_AGENT_HOSTING_MODE` | `per-user-container` or `shared-worker`. An absent variable means no hosting. Any other value is a startup error that names the two allowed values |
 | Tenant id | `HORON_AGENT_TENANT_ID` | A validated audit label: 1 to 63 bytes of lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit. It is a directory name and a log label, never a session lookup key |
 | `[hosting] allow_shared_children` | `config.toml` | `false` refuses MCP servers and extension children even in a mode that would allow them. `true` never widens a mode that forbids them |
+| `[hosting] allowed_mcp_servers` | `config.toml` | Names of MCP servers a hosted process may connect. Absent leaves all of them reachable, an empty list reaches none, and the match is exact. Never widens a mode and leaves a process without hosting unchanged; narrowed further in [hosted MCP and extension isolation](../safety/SECURITY.md) |
 | `[hosting] mode` | `config.toml` | Ignored with one warning. Set `HORON_AGENT_HOSTING_MODE` instead |
 
-The resolved policy is a single process-wide value. `HostingPolicy::mode()`, `tenant_id()`, `is_hosted()`, `is_per_user_container()`, `is_shared_worker()`, `allows_shared_children()` and `inherits_operator_logins()` are the supported reads; the MCP and extension gate and the non-local exposure check consume them rather than re-reading the environment.
+The resolved policy is a single process-wide value. `HostingPolicy::mode()`, `tenant_id()`, `is_hosted()`, `is_per_user_container()`, `is_shared_worker()`, `allows_shared_children()`, `allowed_mcp_servers()`, `permits_mcp_server()` and `inherits_operator_logins()` are the supported reads; the MCP and extension gate and the non-local exposure check consume them rather than re-reading the environment.
+
+What each mode does with an MCP server or a package child, the `HOSTED_POLICY` audit event, and the limits of the gate are in [hosted MCP and extension isolation](../safety/SECURITY.md).
 
 ## The startup boundary
 
@@ -29,11 +32,13 @@ A per-user container refuses to start unless all of the following hold. The daem
 | `HORON_AGENT_TENANT_ID` is set and valid | Every hosted process carries its audit label |
 | `[gateway] enabled` is false | The TCP gateway binds an address outside the container's socket boundary |
 
-A shared worker starts without those checks so its own gate can refuse the operations it must not run: it never allows child processes for a customer, whatever `config.toml` says.
+A shared worker starts without those checks so its own gate can refuse the operations it must not run: it never allows child processes or remote MCP connections for a customer, whatever `config.toml` says.
 
 ## Image, volume and runtime layout
 
 `scripts/hosting/Containerfile` builds the hosted image from the same published release archives as the release image. It keeps UID `10001`, declares `/data` as the volume, sets `HORON_HOME=/data/home` and `HORON_AGENT_RUNTIME_DIR=/run/horon`, and starts `scripts/hosting/entrypoint.sh`, which validates the hosting variables and execs `horon-agent --no-update serve`.
+
+The same image runs unchanged on a Fly Machine, where a Fly Volume mounted at `/data` is that customer's home. The image is not tied to one host: what the boundary needs is the volume, the environment and the absence of a TCP gateway, not a particular runtime.
 
 | Path | Contents |
 | --- | --- |

@@ -142,6 +142,10 @@ pub struct HostingSection {
     /// `false` refuses shared children even in a mode that would allow them.
     /// `true` never widens a mode that forbids them.
     pub allow_shared_children: Option<bool>,
+    /// Names of MCP servers a hosted process may run. Absent leaves every
+    /// server allowed; an empty list refuses every server. Exact match, and it
+    /// narrows only: a process without hosting is unchanged.
+    pub allowed_mcp_servers: Option<Vec<String>>,
     /// Ignored, with one warning. Present so the reader can name the mistake.
     pub mode: Option<String>,
 }
@@ -152,6 +156,7 @@ pub struct HostingPolicy {
     mode: HostingMode,
     tenant_id: Option<TenantId>,
     shared_children_allowed: bool,
+    allowed_mcp_servers: Option<Vec<String>>,
 }
 
 impl Default for HostingPolicy {
@@ -160,6 +165,7 @@ impl Default for HostingPolicy {
             mode: HostingMode::None,
             tenant_id: None,
             shared_children_allowed: true,
+            allowed_mcp_servers: None,
         }
     }
 }
@@ -183,10 +189,23 @@ impl HostingPolicy {
             // whatever the file says; the gate reads this value.
             HostingMode::SharedWorker | HostingMode::None => false,
         };
+        // Normalized once so a blank entry cannot match a real server and an
+        // empty list keeps its meaning: refuse every server.
+        let allowed_mcp_servers = section.allowed_mcp_servers.as_ref().map(|servers| {
+            let mut servers: Vec<String> = servers
+                .iter()
+                .map(|server| server.trim().to_string())
+                .filter(|server| !server.is_empty())
+                .collect();
+            servers.sort_unstable();
+            servers.dedup();
+            servers
+        });
         Ok(Self {
             mode,
             tenant_id,
             shared_children_allowed,
+            allowed_mcp_servers,
         })
     }
 
@@ -226,6 +245,22 @@ impl HostingPolicy {
     /// Whether the process may reuse the operator's login files.
     pub fn inherits_operator_logins(&self) -> bool {
         !self.is_hosted()
+    }
+
+    /// The narrowed MCP server names, `None` when the section did not narrow.
+    pub fn allowed_mcp_servers(&self) -> Option<&[String]> {
+        self.allowed_mcp_servers.as_deref()
+    }
+
+    /// Whether this policy permits the MCP server `server`.
+    ///
+    /// Absent leaves every server permitted, an empty list permits none, and
+    /// the match is exact against the name a source or an editor registered.
+    pub fn permits_mcp_server(&self, server: &str) -> bool {
+        match &self.allowed_mcp_servers {
+            None => true,
+            Some(allowed) => allowed.iter().any(|name| name == server),
+        }
     }
 }
 

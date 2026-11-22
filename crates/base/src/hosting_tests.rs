@@ -141,6 +141,7 @@ fn tenant_ids_that_could_leave_the_volume_root_are_refused_at_resolution() {
 fn the_config_section_can_only_narrow_the_children_policy() {
     let section = HostingSection {
         allow_shared_children: Some(false),
+        allowed_mcp_servers: None,
         mode: Some("shared-worker".to_string()),
     };
     let policy = resolve(&HostingInputs {

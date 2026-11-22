@@ -1,11 +1,11 @@
 ---
 title: "Security"
-description: "Workspace trust gates, local crash bundles, and dependency security classification."
+description: "Workspace trust gates, hosted MCP and extension isolation, local crash bundles, and dependency security classification."
 ---
 
 {/* Generated from docs/safety/SECURITY.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
 
-Workspace trust gates, local crash bundles, and dependency security classification.
+Workspace trust gates, hosted MCP and extension isolation, local crash bundles, and dependency security classification.
 
 ## Workspace trust
 
@@ -62,6 +62,48 @@ When `[tools] bash_direnv` is enabled, local shells also require an explicit Hor
 | Explicit commands such as `mcp test` and `mcp list` | That command | Records nothing. The command itself is the consent. |
 
 The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:363` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
+
+## Hosted MCP and extension isolation
+
+A hosted deployment gives one customer one process, either a container or a Fly
+Machine with that customer's volume mounted as its home. The daemon runs under
+one of the modes in [hosting](/reference/architecture/hosting). The mode decides which
+MCP servers and child processes it may run for a customer, and one module makes
+that decision (`crates/base/src/mcp/hosted.rs`).
+
+| Mode | MCP stdio child | Package or extension child | Editor-supplied stdio server | Shared-pool stdio connect | Remote MCP connection |
+| --- | --- | --- | --- | --- | --- |
+| No hosting (the ordinary process) | allowed | allowed | allowed | allowed | allowed |
+| `per-user-container` | allowed | allowed | allowed | allowed | allowed |
+| `per-user-container` with `[hosting] allow_shared_children = false` | refused | refused | refused | refused | allowed |
+| `shared-worker` | refused | refused | refused | refused | refused |
+
+- A shared worker refuses all five. A child process and the remote credential store would belong to one customer while the process serves every customer, so there is no per-user environment, process tree or token to prove.
+- A per-user container or Fly Machine keeps its own servers: the home volume, the OAuth store under it, and the process environment a `${VAR}` expansion reads are that customer's own. `allow_shared_children = false` closes its child processes and leaves remote connections alone, because a remote connection starts none.
+- `[hosting] allowed_mcp_servers` narrows the MCP servers a hosted process may connect: absent leaves all of them reachable, an empty list reaches none, and the match is exact against the name a source or an editor registered. It never widens a mode, and a process without hosting is unchanged, so a key left over on a reused volume does not take the operator's own servers away.
+- Package children pass one gate (`crates/base/src/packages/child_gate.rs`, called from `PackageExecutable::start_with_arguments`), so a package's MCP stdio server, its extension child, its declared commands and its observers are all covered by the same decision.
+
+A refusal is explicit and recorded once. The caller gets a typed error that names
+the policy and the operation, and the daemon writes one audit event:
+
+**`HOSTED_POLICY`** carries `policy` (`shared-worker`, `per-user-container`, or
+`unresolved`), `operation` (`mcp-stdio`, `session-mcp-stdio`,
+`pooled-mcp-stdio`, `mcp-remote`, `package-child`), `subject` (the server or
+package name, `-` when the gate knows none), `reason` (`shared-worker`,
+`children-disabled`, `not-allowed`, `unresolved-policy`) and `tenant` (the audit
+label, `-` outside hosting). It never carries a command argument, an environment
+value, a header, a URL or a token.
+
+A refused package MCP server is also queued for the session's next turn, so the
+model can tell the user why the tools are missing instead of the refusal ending
+as a log line. An editor whose server list is refused receives the request error
+itself, because the whole list is refused rather than silently reduced.
+
+Limits: this gate covers MCP servers and package children only. `bash`, `eval`
+and hook commands are outside it; a hosted deployment keeps those behind the
+per-user boundary from [hosting](/reference/architecture/hosting) (a container or a
+Fly Machine, a dedicated `HORON_HOME`, a separate runtime directory, and no TCP
+gateway), not behind this gate.
 
 ## Python eval
 

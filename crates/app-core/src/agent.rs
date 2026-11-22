@@ -23,6 +23,7 @@ mod goal_continuation;
 mod goal_continuation_tests;
 mod handoff_compaction;
 pub use handoff_compaction::HandoffOutcome;
+pub(crate) mod hosted_notice;
 mod idle_hibernation;
 mod inline_tail;
 mod interrupts;

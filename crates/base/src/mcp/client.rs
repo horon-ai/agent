@@ -471,7 +471,17 @@ impl McpClient {
         config: &McpServerConfig,
         working_dir: Option<&std::path::Path>,
     ) -> Result<Self> {
-        if let Some(transport) = config.remote_transport() {
+        // One gate covers every non-package MCP connection: a configured
+        // server, a manager reconnect, the shared pool, `mcp connect`, and a
+        // package's remote entry all arrive here.
+        let transport = config.remote_transport();
+        let operation = if transport.is_some() {
+            crate::mcp::hosted::HostedOperation::Remote
+        } else {
+            crate::mcp::hosted::HostedOperation::Stdio
+        };
+        crate::mcp::hosted::check_current(&crate::mcp::hosted::HostedRequest::server(operation, &name))?;
+        if let Some(transport) = transport {
             return Self::connect_remote(name, config, transport, resolve_roots(working_dir)).await;
         }
         let working_dir = working_dir.filter(|dir| dir.is_dir());

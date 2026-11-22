@@ -247,6 +247,10 @@ impl PackageExecutable {
     /// step, and a process that can rewrite the published copy can rewrite this
     /// host's files as well, so the check is integrity, not isolation.
     pub fn start_with_arguments(self, extra: &[OsString]) -> Result<PackageProcess> {
+        // A hosted process refuses here, before the bytes are checked and before
+        // any process exists: this is the one path a package's MCP server, its
+        // extension child, its commands and its observers all take.
+        super::child_gate::ensure(&self.id)?;
         // Verify again: the catalog record was read before this call, and the
         // bytes that run are the ones checked here.
         verify_executable(&self.root, &self.record)?;
