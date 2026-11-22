@@ -566,6 +566,7 @@ still states the old behaviour. To find the pages:
 |`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
 |`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
 |`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
+|`crates/base/src/memory*`, `crates/memory-types/`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`|
 |`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|
 |`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
 |`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|

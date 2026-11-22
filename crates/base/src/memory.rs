@@ -26,6 +26,7 @@ mod consolidation;
 mod pending;
 #[path = "memory_prompt.rs"]
 mod prompt_support;
+pub mod store;
 
 pub use crate::memory_types::{
     MemoryCategory, MemoryEntry, MemoryScope, MemoryStore, Reinforcement, TrustLevel, format_relevant_display_prompt,

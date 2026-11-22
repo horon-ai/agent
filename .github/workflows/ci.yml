@@ -790,7 +790,7 @@ jobs:
           # Every package that owns a target in
           # `scripts/ci/integration_targets.json` must be built here, or
           # `run_integration_targets.py` finds no executable for it.
-          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types -p horon-agent-extension-sdk)
+          packages=(-p horon-agent -p horon-agent-app-core -p horon-agent-base -p horon-agent-protocol -p horon-agent-harness-api -p horon-agent-harness-api-server -p horon-agent-irc-core -p horon-agent-todo-policy -p horon-agent-tool-types -p horon-agent-memory-types -p horon-agent-message-types -p horon-agent-productivity-core -p horon-agent-provider-openai -p horon-agent-session-store -p horon-agent-sdk -p horon-tui -p horon-agent-time -p horon-agent-token-estimate -p horon-agent-platform -p horon-agent-import-core -p horon-agent-schema-dialect -p horon-agent-session-types -p horon-agent-logging -p horon-agent-config-types -p horon-agent-extension-sdk)
           if [ "$RUNNER_OS" = "Linux" ]; then
             packages+=(-p horon-agent-embedding)
           fi
@@ -843,6 +843,11 @@ jobs:
             --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-logging --min-passed 28 --timeout 600
+          # The memory wiki's shared page model and its graph tests existed but
+          # no step named this package, so its lib tests were compiled and never
+          # run (#664). 24 graph cases plus 10 page cases make the measured 34.
+          python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
+            --package horon-agent-memory-types --min-passed 34 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-platform --min-passed 11 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -902,10 +907,12 @@ jobs:
         # The five staged-import regressions and the filesystem refusal test
         # bring that floor to 1611. The three ignored benchmarks are separate.
         # It moved 1611 -> 1597 when prune-tests (#419) removed fourteen tests
-        # that guarded no behavior.
+        # that guarded no behavior, and the hosting boundary (#663) brought it
+        # to 1612. The forty-eight memory wiki store cases (#664) bring it to
+        # 1660.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1612 --timeout 1200
+            --package horon-agent-base --min-passed 1660 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -913,10 +920,12 @@ jobs:
         # The previous macOS suite passed 1592 cases. Include the five
         # staged-import regressions in the minimum for the complete suite.
         # It moved 1597 -> 1583 when prune-tests (#419) removed fourteen tests
-        # that guarded no behavior.
+        # that guarded no behavior, and the hosting boundary (#663) brought it
+        # to 1598. The forty-eight memory wiki store cases (#664) bring it to
+        # 1646.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1598 --timeout 1200
+            --package horon-agent-base --min-passed 1646 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''

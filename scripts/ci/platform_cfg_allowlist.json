@@ -435,6 +435,10 @@
     "src/main.rs": {
       "count": 1,
       "reason": "Apple's linker reports the unoptimized `horon-agent` binary's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for debug links on macOS and is not actionable from source."
+    },
+    "crates/base/src/memory/store/store_tests.rs": {
+      "count": 3,
+      "reason": "the memory wiki's file-safety tests: page files and directories are chmod 0600/0700, and a symlinked page file must not be followed. A hosted Windows runner has neither POSIX modes nor the privilege to create a file symlink, so those cases are Unix-only and the rest of the file runs everywhere."
     }
   },
   "version": 1
