@@ -7,48 +7,14 @@ mod mcp;
 pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod anonymize_options;
+pub(crate) use anonymize_options::AnonymizeArgs;
+mod provider_args;
+pub(crate) use provider_args::{ProviderAuthArg, ProviderTypeArg};
 mod import_options;
 pub(crate) use import_options::ImportTranscriptArgs;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum ProviderAuthArg {
-    /// Send the API key as Authorization: Bearer <key> (default for openai-compatible and openai-responses)
-    Bearer,
-    /// Send the API key in a header: api-key for the OpenAI wires, x-api-key for anthropic-compatible and x-goog-api-key for gemini-compatible
-    ApiKey,
-    /// Do not send authentication, useful for localhost model servers
-    None,
-}
-
-/// Request/response shape of the endpoint a profile points at.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum ProviderTypeArg {
-    /// OpenAI Chat Completions: POST <base-url>/chat/completions, Bearer auth by default
-    #[value(name = "openai-compatible")]
-    OpenAiCompatible,
-    /// OpenAI Responses: POST <base-url>/responses, Bearer auth by default
-    #[value(name = "openai-responses")]
-    OpenAiResponses,
-    /// Anthropic Messages: POST <base-url>/messages, x-api-key header by default
-    #[value(name = "anthropic-compatible")]
-    AnthropicCompatible,
-    /// Gemini generateContent: POST <base-url>/models/{model}:streamGenerateContent?alt=sse, x-goog-api-key header by default
-    #[value(name = "gemini-compatible")]
-    GeminiCompatible,
-}
-
-impl From<ProviderTypeArg> for crate::config::NamedProviderType {
-    fn from(value: ProviderTypeArg) -> Self {
-        match value {
-            ProviderTypeArg::OpenAiCompatible => Self::OpenAiCompatible,
-            ProviderTypeArg::OpenAiResponses => Self::OpenAiResponses,
-            ProviderTypeArg::AnthropicCompatible => Self::AnthropicCompatible,
-            ProviderTypeArg::GeminiCompatible => Self::GeminiCompatible,
-        }
-    }
-}
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -932,6 +898,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Write a structure-preserving anonymized export of a session for diagnostics
+    Anonymize(AnonymizeArgs),
 
     /// Export one session's original events and blobs to a directory
     Export {
