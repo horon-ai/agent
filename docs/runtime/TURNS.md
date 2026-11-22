@@ -699,6 +699,19 @@ an old config file are not read, and there is no window-selecting flag such as t
 `crates/terminal-launch` keeps only the client terminal environment snapshot and hook
 command parsing.
 
+### Previewing a recovery
+
+`horon-agent session recovery <id> [--json]` shows what resuming one session would touch, without resuming it. It reads the stored originals only: it starts no daemon, opens no runtime journal and writes nothing, so it is safe while another process uses the session. The session and every child it owns (a stored session whose `parent_id` is that session) fall into one state:
+
+| State | Meaning | Offered for resume |
+| --- | --- | --- |
+| `empty` | No messages | No |
+| `complete` | The last message is the assistant's and no tool call is open | No |
+| `awaiting_reply` | The last message is the user's or a tool result, so the turn stopped before the model answered | Yes |
+| `unresolved_tool_calls` | An assistant tool call has no result; whether it ran is unknown and it may have side effects | No, parked until a human decides |
+
+The report names each parked tool call, counts eligible and parked sessions, and prints the existing resume command (`horon-agent --resume <id>`). Resuming itself is unchanged. Looking for children reads at most 5000 stored sessions and says so when it stops; a session it cannot read is listed under `unreadable_sessions`.
+
 ### Saved sessions
 
 `/save` and `/unsave` are slash commands of a client, and the shipped client does not have them. The
