@@ -327,15 +327,16 @@ async fn start(
     );
     let store = session.store().clone();
     let prepared = record.clone();
+    let launch_id = package_id.clone();
     let started = tokio::task::spawn_blocking(move || -> Result<Started> {
         let lease = store.lease(&owner)?;
         let mut process = store.prepare_record_executable(lease, &prepared)?.start()?;
         let stdin = process
             .take_stdin()
-            .with_context(|| format!("package {package_id} has no standard input pipe"))?;
+            .with_context(|| format!("package {launch_id} has no standard input pipe"))?;
         let stdout = process
             .take_stdout()
-            .with_context(|| format!("package {package_id} has no standard output pipe"))?;
+            .with_context(|| format!("package {launch_id} has no standard output pipe"))?;
         Ok(Started { process, stdin, stdout })
     })
     .await
