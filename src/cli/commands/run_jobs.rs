@@ -86,6 +86,7 @@ pub(super) fn print_statuses(jobs: &[JobReport]) {
 pub(in crate::cli) struct RunLimits {
     pub max_time: Option<Duration>,
     pub wait_async: bool,
+    pub print_thoughts: bool,
 }
 
 pub(in crate::cli) async fn run_single_message_with_agent(
@@ -126,7 +127,7 @@ pub(in crate::cli) async fn run_single_message_with_agent(
         } else if emit_ndjson {
             run_single_message_command_ndjson(agent, provider, message, &elapsed, jobs.as_mut()).await?;
         } else {
-            run_single_message_command_plain_with_auto_poke(agent, message).await?;
+            run_single_message_command_plain_with_auto_poke(agent, message, limits.print_thoughts).await?;
             if let Some(jobs) = jobs.as_mut() {
                 let statuses = jobs.settle(agent.session_id()).await;
                 if !elapsed.load(Ordering::Relaxed) {

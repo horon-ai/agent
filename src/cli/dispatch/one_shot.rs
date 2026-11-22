@@ -15,6 +15,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         max_time,
         wait_async,
         system_template,
+        print_thoughts,
     }) = &args.command
     else {
         anyhow::bail!("Expected a run command");
@@ -23,6 +24,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     let limits = commands::RunLimits {
         max_time: *max_time,
         wait_async: *wait_async,
+        print_thoughts: *print_thoughts,
     };
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
