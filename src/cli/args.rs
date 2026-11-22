@@ -69,6 +69,9 @@ impl Command {
             ndjson: false,
             no_pty: false,
             no_session: false,
+            warn_cost: None,
+            max_cost: None,
+            system_template: None,
             max_time: None,
             wait_async: false,
             model_overrides: RunModelOverrides {
