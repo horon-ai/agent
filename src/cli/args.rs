@@ -17,6 +17,8 @@ mod provider_args;
 pub(crate) use provider_args::ProviderAuthArg;
 mod import_options;
 pub(crate) use import_options::ImportTranscriptArgs;
+mod skills;
+pub(crate) use skills::SkillsCommand;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
 
@@ -462,6 +464,10 @@ pub(crate) enum Command {
     /// Provider discovery and selection helpers
     #[command(subcommand)]
     Provider(ProviderCommand),
+
+    /// List skills with their provenance, or install one from an approved source
+    #[command(subcommand)]
+    Skills(SkillsCommand),
 
     /// Memory management commands
     #[command(subcommand)]

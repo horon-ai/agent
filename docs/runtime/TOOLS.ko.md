@@ -569,6 +569,10 @@ config 하위 디렉터리 규칙 본문
 
 `{"action": "install", "name": "<추천 이름>"}`은 추천 목록 항목이 밝힌 고정 저장소에서 설치합니다. 모델이 명령을 넘기지 않습니다. `{"action": "install", "source": "<git URL 또는 경로>", "ref": "<브랜치, 태그, 커밋>"}`은 그 밖의 스킬을 설치하고, `source`와 함께 준 `name`은 스킬이 여럿 든 저장소에서 하나를 고릅니다. 복제는 얕게 하고 대상 옆 준비 디렉터리에 받은 뒤, `SKILL.md` 해석과 이름 검증을 마쳐야 이름 하나로 제자리에 옮깁니다. 그래서 거절된 설치는 아무것도 쓰지 않습니다. 이름과 설명은 frontmatter에서 읽고, 관리 디렉터리의 `install-lock.json`이 설치마다 이름, 출처, 요청한 ref, 확정된 커밋을 기록합니다. 설치기는 `crates/base/src/skill_install.rs`에 있습니다.
 
+명령줄에서는 `horon skills list [--json]`이 스킬마다 경로를 보여 주고, 설치한 스킬은 설치 잠금에 기록된 출처와 커밋도 보여 준다. `horon skills install <출처> [--ref REF] [--name NAME] --approve`는 `skill_manage install`과 같은 설치기를 실행한다. `--approve`가 없으면 아무것도 쓰지 않는다. `[tools] managed_skills = true`도 필요하다.
+
+출처는 `https://`, `ssh://`, `file://` URL, `user@host:path` 원격, 이미 있는 로컬 폴더만 받는다. 앞이 `-`인 값, `ext::` 같은 `transport::address` 원격, 암호화하지 않은 `http://`와 `git://`은 폴더를 만들기 전에 거절하므로 거절된 출처는 일부만 설치된 스킬을 남기지 않는다. 복제는 임시 폴더에서 하고 이름 변경 한 번으로 완성된 스킬을 제자리에 둔다. 설치 스크립트는 실행하지 않고 기존 스킬을 덮어쓰지 않는다. 레지스트리 검색과 게시는 이 명령에 포함하지 않는다.
+
 `delete`의 안전 규칙은 `crates/base/src/managed_skills.rs`의 `remove` 한 곳에 모여 있습니다.
 
 - 이름을 다시 검증하므로 `..`이나 경로 구분자로 관리 디렉터리 밖에 닿지 못합니다.
