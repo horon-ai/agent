@@ -42,7 +42,11 @@ pub(super) fn run(version: Option<&str>, json: bool) -> Result<()> {
 
 fn report(tag: &str, running: &str, lookup: Result<ReleaseNotes>, json: bool, mut out: impl Write) -> Result<()> {
     let failure = lookup.as_ref().err().map(|error| error.to_string());
-    let (notes, reason) = (lookup.as_ref().ok(), failure.as_deref());
+    let notes = match &lookup {
+        Ok(notes) => Some(notes),
+        Err(_) => None,
+    };
+    let reason = failure.as_deref();
     if json {
         let report = Report {
             version: tag,
