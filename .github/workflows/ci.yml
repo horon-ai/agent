@@ -1463,6 +1463,10 @@ jobs:
             -- tool::artifacts::render_tests::shared_output_budget_ --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::run_approval::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- tool::agentgrep::tests::grep_context_merges_overlaps_and_preserves_paths_only --nocapture
 

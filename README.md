@@ -147,6 +147,8 @@ Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and to
 
 Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
 
+`horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
+
 The installer fetches `horon-tui-<platform suffix>.tar.gz` beside the agent archive and verifies it against `SHA256SUMS`. That archive is optional: a release that does not publish one, a digest that does not match, a source build and FreeBSD all install or keep the agent alone with one warning line. User files are `$HORON_HOME/tui.toml`, `themes/<name>.json`, `keybindings.toml`, `commands/<name>.md` and the project's `.horon/commands/<name>.md`; every key is in [docs/runtime/TUI.md](docs/runtime/TUI.md).
 
 ### Editors (ACP)

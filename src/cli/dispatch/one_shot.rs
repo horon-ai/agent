@@ -87,5 +87,12 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
     if let Some(choice) = overrides.advisor.as_deref() {
         agent.set_advisor_enabled(choice == "on");
     }
+    if let Some(mode) = overrides
+        .approval
+        .as_deref()
+        .and_then(crate::config::ApprovalMode::parse)
+    {
+        crate::tool::run_approval::set_floor(agent.session_id(), mode);
+    }
     Ok(())
 }

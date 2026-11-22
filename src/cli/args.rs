@@ -59,6 +59,10 @@ pub(crate) struct RunModelOverrides {
     /// Turn the session advisor on or off for this run, overriding `[advisor] enabled`
     #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
     pub(crate) advisor: Option<String>,
+
+    /// Ask before file-changing calls (`write`) or every non-read call (`all`) for this run; never weakens the configured mode
+    #[arg(long, value_name = "write|all", value_parser = ["write", "all"])]
+    pub(crate) approval: Option<String>,
 }
 
 impl Command {
@@ -75,6 +79,7 @@ impl Command {
                 thinking: None,
                 service_tier: None,
                 advisor: None,
+                approval: None,
             },
             message,
         }
