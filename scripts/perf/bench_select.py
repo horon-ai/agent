@@ -23,13 +23,17 @@ from __future__ import annotations
 import json
 import sys
 
-SUITES = ("compare", "startup", "loading", "tools", "reload", "tui", "compile")
+SUITES = ("compare", "packages", "startup", "loading", "tools", "reload", "tui", "compile")
 
 # The units a suite is measured as. `loading` is two units, and `compile` is not
 # a measurement unit of the prebuilt binary: it rebuilds from source. `tui` is
-# the second binary's suite and runs as one unit like the others.
+# the second binary's suite and runs as one unit like the others. `compare`
+# carries `packages` because the before/after dispatch that owns the competitor
+# cells is the one that must also record what packages cost; naming `packages`
+# alone runs only that unit.
 SUITE_UNITS = {
-    "compare": ("compare",),
+    "compare": ("compare", "packages"),
+    "packages": ("packages",),
     "startup": ("startup",),
     "loading": ("loading-cold", "loading-warm"),
     "tools": ("tools",),
@@ -58,7 +62,13 @@ def select(raw: str) -> dict[str, bool]:
     unknown = sorted(names - set(SUITES))
     if unknown:
         raise SystemExit(f"unknown suite(s): {', '.join(unknown)}; known: all, {', '.join(SUITES)}")
-    return {suite: suite in names for suite in SUITES}
+    chosen = {suite: suite in names for suite in SUITES}
+    # `compare` is measured as `compare` plus `packages`, so the same selection
+    # must also switch the packages steps on: the build job reads this flag to
+    # know it has to build the example package, and a unit that runs without its
+    # binary would fail instead of measuring.
+    chosen["packages"] = chosen["packages"] or chosen["compare"]
+    return chosen
 
 
 def platforms(raw: str) -> list[dict[str, str]]:
@@ -77,8 +87,11 @@ def expected_units(raw: str) -> list[str]:
     chosen = select(raw)
     units: list[str] = []
     for suite in SUITES:
-        if chosen[suite]:
-            units.extend(SUITE_UNITS[suite])
+        if not chosen[suite]:
+            continue
+        # `compare` carries `packages`, and `all` selects both names: a unit is
+        # measured once however many suites asked for it.
+        units.extend(unit for unit in SUITE_UNITS[suite] if unit not in units)
     return units
 
 
