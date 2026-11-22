@@ -87,7 +87,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
         args.provider = provider_choice_for_named_profile(profile_name);
     }
-
+    super::launch_overrides::apply(&mut args)?;
     if let Some(tool_profile) = args.tool_profile.as_deref() {
         crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
         crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
@@ -305,6 +305,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         }) => {
             debug::run_debug_command(&command, &arg, session, socket, wait).await?;
         }
+        Some(Command::Skills(subcmd)) => commands::run_skills_command(subcmd).await?,
         Some(Command::Provider(subcmd)) => match subcmd {
             ProviderCommand::List { json } => commands::run_provider_list_command(json)?,
             ProviderCommand::Current { json } => {
@@ -357,16 +358,19 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             commands::run_memory_command(map_memory_subcommand(subcmd)).await?;
         }
         Some(Command::Session(subcmd)) => match subcmd {
-            // `delete` talks to the daemon, so it cannot go through the
-            // synchronous session dispatcher that handles every other
-            // subcommand.
+            // `delete` talks to the daemon, so it cannot use the synchronous session dispatcher.
             SessionCommand::Delete { session, yes, json } => {
                 commands::run_session_delete_command(&session, yes, json).await?;
             }
             other => commands::run_session_command(other)?,
         },
-        Some(Command::Export { session, out, json }) => {
-            super::sessions::export_markdown(&session, out.as_deref(), json)?;
+        Some(Command::Export {
+            session,
+            out,
+            json,
+            html,
+        }) => {
+            super::sessions::export_transcript(&session, out.as_deref(), json, html)?;
         }
         Some(Command::Ambient(subcmd)) => {
             commands::run_ambient_command(map_ambient_subcommand(subcmd)).await?;
@@ -450,8 +454,7 @@ fn apply_default_tool_profile(flag_profile: Option<&str>) {
 /// carries the profile's base URL, auth and model.
 fn provider_choice_for_named_profile(_profile_name: &str) -> ProviderChoice {
     // Deliberately independent of the profile's `type`: the runtime identity is
-    // `openai-compatible[:profile]` for every wire, so no config lookup happens
-    // here.
+    // `openai-compatible[:profile]` for every wire, so no config lookup happens here.
     ProviderChoice::OpenaiCompatible
 }
 
@@ -1137,9 +1140,8 @@ fn resolve_blocked_approval(
     let message = human_verdict_message(verdict, tool_call_id, note);
     match system.record_decision(request_id, approved, outcome, Some(message)) {
         Ok(crate::safety::RecordDecisionOutcome::Recorded(decision)) => {
-            // A corrupt history records a denial whatever was asked for, so the
-            // waiter must be told what it will actually receive rather than
-            // what this command asked for.
+            // A corrupt history records a denial whatever was asked for, so the waiter
+            // must be told what it will actually receive rather than what was asked.
             if decision.approved != approved {
                 crate::logging::warn(&format!(
                     "human verdict for request {request_id} was recorded as a denial in the decision history ({})",

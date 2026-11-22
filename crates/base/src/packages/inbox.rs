@@ -79,6 +79,7 @@ impl PackageStore {
         if !root.is_dir() {
             bail!("the package inbox is not a directory: {}", inbox.display());
         }
+        horon_agent_perf_counters::record_package_dir_scan();
         let mut candidates = Vec::new();
         for entry in fs::read_dir(&inbox).with_context(|| format!("read {}", inbox.display()))? {
             let entry = entry.with_context(|| format!("read {}", inbox.display()))?;

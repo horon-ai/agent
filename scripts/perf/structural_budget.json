@@ -12,7 +12,8 @@
     "prefix: the provider's core request contains 8975 bytes of tool definitions for eight eager tools (structural-perf run 44190404248, previously 9151 bytes). The gate checks both the serialized byte count and the number of tools.",
     "prompt: the core static prompt with no prompt files is at most 1322 bytes (ci.yml run 43656656999, down from 1367), a request after the session captured its prompt sources reads none of them (54 probes over nine requests before the snapshot, 0 after), and at most one listed-tool index row is cut mid-sentence (todo keeps its text; 5 rows were cut before).",
     "session context: describing a directory outside any repository starts no git process (1 before), a work tree starts one (3 before), and a machine whose PCI list has no display controller starts no GPU probe (1 before); structural-perf run 43654214186.",
-    "tool dispatch: one Registry::execute call of a fixture tool, counted by the allocator of the tool_dispatch_perf target, for a small file-write input and for one carrying 10 KB of content. The four ceilings are the measured values: 39 allocations and 5553 requested bytes per dispatch for the small input, 39 and 15777 for the 10 KB one, read from structural-perf run 43793155330 after the in-flight mark kept one copy of the call id. Earlier values: 40 and 5562, 40 and 15786 after the lifecycle and event fields were rendered without owned strings (run 43784453888); 170 and 15851, 170 and 26162 once a structured log line was assembled in one buffer (run 43776618956); 632 and 28926, 632 and 39313 once a prepared schema was found without building its text (run 43775715090); 638 and 29430, 638 and 39817 once the lifecycle fields were built once per dispatch (run 43774864729); 682 and 32002, 696 and 107420 before any change (runs 43770373891 and 43772274944)."
+    "tool dispatch: one Registry::execute call of a fixture tool, counted by the allocator of the tool_dispatch_perf target, for a small file-write input and for one carrying 10 KB of content. The four ceilings are the measured values: 39 allocations and 5553 requested bytes per dispatch for the small input, 39 and 15777 for the 10 KB one, read from structural-perf run 43793155330 after the in-flight mark kept one copy of the call id. Earlier values: 40 and 5562, 40 and 15786 after the lifecycle and event fields were rendered without owned strings (run 43784453888); 170 and 15851, 170 and 26162 once a structured log line was assembled in one buffer (run 43776618956); 632 and 28926, 632 and 39313 once a prepared schema was found without building its text (run 43775715090); 638 and 29430, 638 and 39817 once the lifecycle fields were built once per dispatch (run 43774864729); 682 and 32002, 696 and 107420 before any change (runs 43770373891 and 43772274944).",
+    "packages: a home with no package area reads no package file, scans no directory, writes nothing and starts no child across two turns; a turn at the catalog generation the session already captured reads no package file, rebuilds no snapshot and starts no child (the first turn over the same catalog reads the catalog and its declaration and builds exactly one snapshot, which is the floor that proves the counters record); one real call starts exactly one child and the next call starts none."
   ],
   "bounds": {
     "queue_depth_high_water": 64,
@@ -56,6 +57,21 @@
     "tool_dispatch_small_allocs_per_dispatch_max": 39,
     "tool_dispatch_small_alloc_bytes_per_dispatch_max": 5553,
     "tool_dispatch_large_allocs_per_dispatch_max": 39,
-    "tool_dispatch_large_alloc_bytes_per_dispatch_max": 15777
+    "tool_dispatch_large_alloc_bytes_per_dispatch_max": 15777,
+    "packages_empty_area_reads_max": 0,
+    "packages_empty_area_dir_scans_max": 0,
+    "packages_empty_area_writes_max": 0,
+    "packages_empty_area_snapshot_builds_max": 0,
+    "packages_empty_area_child_starts_max": 0,
+    "packages_warm_turn_reads_min": 1,
+    "packages_warm_turn_snapshot_builds_min": 1,
+    "packages_warm_turn_writes_min": 1,
+    "packages_unchanged_turn_reads_max": 0,
+    "packages_unchanged_turn_dir_scans_max": 0,
+    "packages_unchanged_turn_writes_max": 0,
+    "packages_unchanged_turn_snapshot_builds_max": 0,
+    "packages_turn_child_starts_max": 0,
+    "packages_call_child_starts": 1,
+    "packages_call_repeat_child_starts": 0
   }
 }

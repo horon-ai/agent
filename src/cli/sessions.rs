@@ -197,31 +197,47 @@ fn layout_name(layout: store::reader::SourceLayout) -> &'static str {
     }
 }
 
-/// Write a session's Markdown transcript to stdout or a file.
+/// Write a session's transcript to stdout or a file, as Markdown or as a
+/// standalone HTML report.
 ///
-/// The text comes from the same renderer the `export_session_markdown` harness
-/// API reply uses, so a script and an SDK client see identical bytes.
-pub(crate) fn export_markdown(session: &str, out: Option<&Path>, json_output: bool) -> Result<()> {
+/// The text comes from the same renderers the `export_session_markdown` and
+/// `export_session_html` harness API replies use, so a script and an SDK client
+/// see identical bytes.
+pub(crate) fn export_transcript(session: &str, out: Option<&Path>, json_output: bool, html: bool) -> Result<()> {
     let id = session::find_session_by_name_or_id(session)?;
     let loaded = session::Session::load(&id)?;
-    let markdown = crate::session_export::export_session_markdown(&loaded)?;
+    let document = if html {
+        crate::session_export_html::export_session_html(&loaded)?
+    } else {
+        crate::session_export::export_session_markdown(&loaded)?
+    };
 
     if json_output {
-        let value = json!({ "session_id": id, "markdown": markdown });
+        let value = if html {
+            json!({ "session_id": id, "html": document })
+        } else {
+            json!({ "session_id": id, "markdown": document })
+        };
         println!("{}", serde_json::to_string_pretty(&value)?);
         return Ok(());
     }
 
     match out {
         Some(path) => {
+            // A report is a destination the reader typed: an existing file is
+            // theirs, so it is refused rather than replaced. Markdown keeps the
+            // overwrite its scripts already rely on.
+            if html && path.symlink_metadata().is_ok() {
+                bail!("output path already exists; refusing to overwrite {}", path.display());
+            }
             if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
             }
-            std::fs::write(path, markdown.as_bytes()).with_context(|| format!("failed to write {}", path.display()))?;
+            std::fs::write(path, document.as_bytes()).with_context(|| format!("failed to write {}", path.display()))?;
         }
         None => {
             let mut stdout = std::io::stdout().lock();
-            stdout.write_all(markdown.as_bytes())?;
+            stdout.write_all(document.as_bytes())?;
             stdout.flush()?;
         }
     }

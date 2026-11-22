@@ -82,6 +82,22 @@ impl ModelRole {
     pub fn accepts_text_default(self) -> bool {
         !matches!(self, Self::Image)
     }
+
+    /// Environment key that overrides this role for one launch.
+    ///
+    /// The CLI sets it from `--role <name>=<model>` and the config loader reads
+    /// it before anything resolves a role. It is never written back to the file
+    /// because a settings save reads the file layer only, so the override lasts
+    /// exactly as long as the process that set it.
+    pub fn launch_env_key(self) -> &'static str {
+        match self {
+            Self::Default => "HORON_AGENT_MODEL_ROLE_DEFAULT",
+            Self::Plan => "HORON_AGENT_MODEL_ROLE_PLAN",
+            Self::Aux => "HORON_AGENT_MODEL_ROLE_AUX",
+            Self::Judge => "HORON_AGENT_MODEL_ROLE_JUDGE",
+            Self::Image => "HORON_AGENT_MODEL_ROLE_IMAGE",
+        }
+    }
 }
 
 impl std::fmt::Display for ModelRole {
@@ -117,6 +133,22 @@ impl ModelRoles {
             && self.aux.is_none()
             && self.judge.is_none()
             && self.image.is_none()
+    }
+
+    /// Set one role entry, replacing what the config file declared.
+    ///
+    /// Only the launch override layer writes here: it patches the loaded config
+    /// from the `--role` environment keys, so the value is used by every
+    /// resolver for this process and never persisted.
+    pub fn set(&mut self, role: ModelRole, model: impl Into<String>) {
+        let model = model.into();
+        match role {
+            ModelRole::Default => self.default = Some(model),
+            ModelRole::Plan => self.plan = Some(model),
+            ModelRole::Aux => self.aux = Some(model),
+            ModelRole::Judge => self.judge = Some(model),
+            ModelRole::Image => self.image = Some(model),
+        }
     }
 
     fn value_for(&self, role: ModelRole) -> Option<&str> {

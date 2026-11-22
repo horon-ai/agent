@@ -676,6 +676,7 @@ impl PackageStore {
 }
 
 fn store_entries(layout: &Layout) -> Result<Vec<String>> {
+    horon_agent_perf_counters::record_package_dir_scan();
     let mut entries = Vec::new();
     for entry in fs::read_dir(layout.store()).with_context(|| format!("read {}", layout.store().display()))? {
         let entry = entry.with_context(|| format!("read {}", layout.store().display()))?;
@@ -705,6 +706,7 @@ fn remove_staging(layout: &Layout, entries: &[String]) -> Result<usize> {
 }
 
 fn remove_catalog_temporaries(layout: &Layout) -> Result<usize> {
+    horon_agent_perf_counters::record_package_dir_scan();
     let mut removed = 0;
     for entry in fs::read_dir(layout.root()).with_context(|| format!("read {}", layout.root().display()))? {
         let entry = entry.with_context(|| format!("read {}", layout.root().display()))?;
@@ -783,7 +785,10 @@ impl CatalogFile {
 fn read_catalog(layout: &Layout) -> Result<CatalogFile> {
     let path = layout.catalog();
     let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
+        Ok(bytes) => {
+            horon_agent_perf_counters::record_package_area_read();
+            bytes
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(CatalogFile::default());
         }
@@ -813,6 +818,7 @@ fn read_catalog(layout: &Layout) -> Result<CatalogFile> {
 /// more.
 fn write_catalog(layout: &Layout, catalog: &CatalogFile) -> Result<()> {
     let bytes = serde_json::to_vec(catalog).context("serialize the package catalog")?;
+    horon_agent_perf_counters::record_package_area_write();
     let mut temp = NamedTempFile::with_prefix_in(CATALOG_TEMP_PREFIX, layout.root())
         .with_context(|| format!("create a temporary catalog in {}", layout.root().display()))?;
     let mut buffer = bytes.as_slice();

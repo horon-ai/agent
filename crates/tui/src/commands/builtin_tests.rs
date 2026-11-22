@@ -589,3 +589,21 @@ fn builtin_artifact_lists_the_store_when_no_id_is_given() {
         "the second artifact is missing from the listing:\n{listing}"
     );
 }
+
+#[test]
+fn builtin_export_sends_the_destination_and_asks_for_one_when_missing() {
+    let (_user, _project, mut app) = app_fixture();
+    assert_eq!(
+        type_line(&mut app, "/export reports/session.html"),
+        Some(Action::Export("reports/session.html".to_string())),
+        "the destination the reader typed must reach the bridge unchanged"
+    );
+    // No destination is a question for the reader, not a write somewhere they
+    // did not name.
+    assert_eq!(type_line(&mut app, "/export"), None);
+    assert!(
+        last_line(&app).contains("/export <path>"),
+        "the usage line did not name the argument: {}",
+        last_line(&app)
+    );
+}

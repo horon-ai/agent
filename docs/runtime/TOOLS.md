@@ -183,6 +183,12 @@ State lives in a process-global map keyed by session id. It is not a field on th
 
 Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:283`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
+### Reviewing a plan before approval
+
+While a plan is `PendingApproval`, `/plan review` reads it and prints findings. The review is read-only and local: it sends no model request, records no verdict and leaves the plan waiting, so only `/plan approve` or `/plan reject` (or the approval policy) decides. Each review names a revision, the first 12 hex digits of a SHA-256 over the plan text and its file list. The same plan always gets the same revision and any edit changes it, so a verdict can be tied to exactly the text that was reviewed.
+
+The findings are structural: a plan that lists no files, a listed path that is absolute or climbs out of the workspace (`..`), a file listed twice, a text that names no test, check or build step, and a plan over 20,000 characters. The last three are advisory, because they are heuristics. `/plan review` with no pending plan is an error (`crates/app-core/src/plan_review.rs`).
+
 ### Approval tiers
 
 `[tools] approval_mode` defaults to `"yolo"` (`crates/base/src/config.rs:1023`). It auto-approves ordinary calls. Explicit `"off"` keeps its equivalent policy. To require prompts, set `approval_mode = "write"` or `approval_mode = "all"` under `[tools]` in `$HORON_HOME/config.toml` and reload the daemon configuration.
@@ -579,6 +585,10 @@ The path-denial policy (`path_policy`) never treats the literal `skill://` as a 
 ### Installing a skill
 
 `{"action": "install", "name": "<endorsed name>"}` installs an endorsed catalog entry from the fixed repository its source names; the model never supplies a command. `{"action": "install", "source": "<git URL or path>", "ref": "<branch, tag, or commit>"}` installs any other skill, and `name` beside `source` chooses one skill inside a repository that holds several. The clone is shallow, lands in a staging directory beside the target, and moves into place with one rename only after its `SKILL.md` parsed and its name validated, so a refused install writes nothing. The name comes from the frontmatter, a description is taken from it as well, and `install-lock.json` in the managed directory records the name, source, requested ref, and resolved commit of every install. The installer lives in `crates/base/src/skill_install.rs`.
+
+From the command line, `horon skills list [--json]` shows each skill with its path and, for an installed one, the source and commit recorded in the install lock. `horon skills install <source> [--ref REF] [--name NAME] --approve` runs the same installer as `skill_manage install`. Without `--approve` nothing is written. It also needs `[tools] managed_skills = true`.
+
+A source is accepted only as an `https://`, `ssh://` or `file://` URL, a `user@host:path` remote, or an existing local directory. A leading `-`, a `transport::address` remote such as `ext::`, and unencrypted `http://` or `git://` are refused before any directory is created, so a refused source leaves no partial skill. The clone lands in a staging directory and one rename moves the finished skill into place. No install script runs, and an existing skill is never overwritten. Registry search and publication are not part of this command.
 
 The safety rules for `delete` live in one place, `remove` in `crates/base/src/managed_skills.rs`.
 

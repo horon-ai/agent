@@ -237,6 +237,7 @@ impl PackageSession {
     }
 
     async fn acquire(&self, workspace: Option<PathBuf>) -> Result<Arc<PackageSnapshot>> {
+        horon_agent_perf_counters::record_package_snapshot_build();
         let store = self.store.clone();
         let owner = lease_owner(&self.owner, next_lease_token());
         let acquired = tokio::task::spawn_blocking(move || read_turn(&store, &owner))
