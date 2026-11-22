@@ -133,6 +133,7 @@ horon run "summarize this repo"
 | `horon compact-text <FILE\|->` | UTF-8 텍스트 파일(또는 표준 입력, 48KiB 이하)을 요약해 표준 출력에 내고 생략한 항목을 표준 오류에 나열한다. 원본은 고치지 않는다. `--max-tokens`로 요약 길이를 제한한다. |
 | `horon cloud doctor [--host <별칭>]` | 세션을 옮기기 전에 SSH 호스트에 접속할 수 있고 `cloud move`를 지원하는 horon-agent가 있는지 확인한다. 다음 조치와 함께 `ready`, `unreachable`, `incompatible` 중 한 줄을 표시하고 세션 데이터는 보내지 않으며 준비되지 않았으면 0이 아닌 코드로 종료한다. |
 | `horon changelog [VERSION] [--json]` | VERSION(기본값은 실행 중인 릴리스)의 공개된 릴리스 노트를 업데이트나 설치 없이 표시한다. 노트를 읽지 못하면 버전과 릴리스 페이지를 대신 표시한다. 노트의 제어 문자는 제거한다. |
+| `horon images --session <id> [--json] [--copy <번호> <대상>]` | 세션이 생성한 이미지를 그 세션에 저장된 `generate_image` 결과에서 읽어 나열한다. `generated-images/` 바로 아래의 일반 파일만 나열하며, 그 밖의 경로, 심볼릭 링크, 없는 파일은 거부로 표시하고 복사할 수 없다. `--copy`는 이미지 하나를 새 로컬 파일로 쓰며 덮어쓰지 않는다. 업로드는 하지 않는다. |
 
 `horon run --wait-async "<메시지>"`는 해당 실행이 시작한 작업을 기다리고 각 작업의 최종 상태를 한 번씩 표시합니다. `--max-time`은 응답과 작업 대기를 합친 시간을 제한합니다. 시간을 넘기면 확인한 작업 상태를 표시하고 0이 아닌 코드로 종료합니다.
 

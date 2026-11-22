@@ -25,6 +25,8 @@ mod skills;
 pub(crate) use skills::SkillsCommand;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
+mod images;
+pub(crate) use images::ImagesArgs;
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -381,6 +383,8 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List a session's generated images, or copy one (read-only)
+    Images(ImagesArgs),
 
     /// Show usage limits for connected providers
     Usage {
