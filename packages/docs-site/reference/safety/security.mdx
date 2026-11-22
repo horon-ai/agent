@@ -65,10 +65,11 @@ The environment variable is case-insensitive and recognizes only `trust` and `de
 
 ## Hosted MCP and extension isolation
 
-A hosted daemon runs under one of the modes in
-[hosting](/reference/architecture/hosting). The mode decides which MCP servers and
-child processes it may run for a customer, and one module makes that decision
-(`crates/base/src/mcp/hosted.rs`).
+A hosted deployment gives one customer one process, either a container or a Fly
+Machine with that customer's volume mounted as its home. The daemon runs under
+one of the modes in [hosting](/reference/architecture/hosting). The mode decides which
+MCP servers and child processes it may run for a customer, and one module makes
+that decision (`crates/base/src/mcp/hosted.rs`).
 
 | Mode | MCP stdio child | Package or extension child | Editor-supplied stdio server | Shared-pool stdio connect | Remote MCP connection |
 | --- | --- | --- | --- | --- | --- |
@@ -78,7 +79,7 @@ child processes it may run for a customer, and one module makes that decision
 | `shared-worker` | refused | refused | refused | refused | refused |
 
 - A shared worker refuses all five. A child process and the remote credential store would belong to one customer while the process serves every customer, so there is no per-user environment, process tree or token to prove.
-- A per-user container keeps its own servers: the home volume, the OAuth store under it, and the process environment a `${VAR}` expansion reads are that customer's own. `allow_shared_children = false` closes its child processes and leaves remote connections alone, because a remote connection starts none.
+- A per-user container or Fly Machine keeps its own servers: the home volume, the OAuth store under it, and the process environment a `${VAR}` expansion reads are that customer's own. `allow_shared_children = false` closes its child processes and leaves remote connections alone, because a remote connection starts none.
 - `[hosting] allowed_mcp_servers` narrows every MCP server any mode may connect: absent leaves all of them reachable, an empty list reaches none, and the match is exact against the name a source or an editor registered. It never widens a mode.
 - Package children pass one gate (`crates/base/src/packages/child_gate.rs`, called from `PackageExecutable::start_with_arguments`), so a package's MCP stdio server, its extension child, its declared commands and its observers are all covered by the same decision.
 
@@ -100,9 +101,9 @@ itself, because the whole list is refused rather than silently reduced.
 
 Limits: this gate covers MCP servers and package children only. `bash`, `eval`
 and hook commands are outside it; a hosted deployment keeps those behind the
-container boundary from [hosting](/reference/architecture/hosting) (a dedicated
-`HORON_HOME`, a separate runtime directory, and no TCP gateway), not behind this
-gate.
+per-user boundary from [hosting](/reference/architecture/hosting) (a container or a
+Fly Machine, a dedicated `HORON_HOME`, a separate runtime directory, and no TCP
+gateway), not behind this gate.
 
 ## Python eval
 

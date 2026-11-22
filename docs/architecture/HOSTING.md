@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](HOSTING.ko.md)
 
-A hosted deployment runs one agent container per customer with one home volume, and never puts two customers in one daemon. This page states the flag contract, the image and volume layout, the routing contract the control plane owns, the suspend and delete procedures, and the limits that remain.
+A hosted deployment runs one agent container or Fly Machine per customer, each with one home volume, and never puts two customers in one daemon. This page states the flag contract, the image and volume layout, the routing contract the control plane owns, the suspend and delete procedures, and the limits that remain.
 
 ## The hosting flag contract
 
@@ -37,6 +37,8 @@ A shared worker starts without those checks so its own gate can refuse the opera
 ## Image, volume and runtime layout
 
 `scripts/hosting/Containerfile` builds the hosted image from the same published release archives as the release image. It keeps UID `10001`, declares `/data` as the volume, sets `HORON_HOME=/data/home` and `HORON_AGENT_RUNTIME_DIR=/run/horon`, and starts `scripts/hosting/entrypoint.sh`, which validates the hosting variables and execs `horon-agent --no-update serve`.
+
+The same image runs unchanged on a Fly Machine, where a Fly Volume mounted at `/data` is that customer's home. The image is not tied to one host: what the boundary needs is the volume, the environment and the absence of a TCP gateway, not a particular runtime.
 
 | Path | Contents |
 | --- | --- |
