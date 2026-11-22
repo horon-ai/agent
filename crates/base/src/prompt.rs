@@ -5,6 +5,7 @@ use std::path::Path;
 mod git_context;
 mod hardware;
 mod static_sources;
+pub mod template;
 
 use git_context::get_git_info;
 use hardware::hardware_context;

@@ -295,6 +295,10 @@ pub(crate) enum Command {
         #[arg(long)]
         wait_async: bool,
 
+        /// Render this template once as the system prompt. Variables: {{cwd}}, {{date}}, {{model}}
+        #[arg(long, value_name = "FILE")]
+        system_template: Option<std::path::PathBuf>,
+
         #[command(flatten)]
         model_overrides: RunModelOverrides,
 
