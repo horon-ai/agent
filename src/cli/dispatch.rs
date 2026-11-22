@@ -40,8 +40,8 @@ fn arm_debug_client_parent_death_signal() {
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
-    if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
-        anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
+    if (args.goal.is_some() || args.plan) && !matches!(args.command, None | Some(Command::Run { .. })) {
+        anyhow::bail!("--goal and --plan only apply when opening the terminal client or running one message");
     }
     super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
@@ -50,16 +50,13 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     }
     match commands::run_early_command(&args.command).await? {
         commands::Early::Done => return Ok(()),
-        commands::Early::Rewrite(next) => args.command = Some(next),
+        commands::Early::Rewrite(next) => args.command = Some(*next),
         commands::Early::Pass => {}
     }
-    // MCP management is independent of providers, sessions and the daemon; list stays offline and scriptable.
+    // MCP management is independent of providers and the daemon; list stays offline.
     if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
-    // Release installation is a standalone filesystem operation. Installers run
-    // it on machines with no configuration yet, and it must not load provider
-    // profiles, migrate config, or start the daemon before it installs.
     if let Some(Command::InstallRelease { .. }) = &args.command {
         let Some(Command::InstallRelease {
             assets,
@@ -204,10 +201,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                     "api-bridge --stdio is Unix only; connect to the API socket instead (a named pipe on Windows)"
                 );
             }
-            // The daemon must be up for the bridge to translate onto, and a
-            // user running this to try the SDK has usually never started one.
-            // Starting it here turns "connection refused, good luck" into a
-            // working socket.
+            // The daemon must be up for the bridge to translate onto, and a user trying the SDK
+            // has usually never started one. Starting it here avoids "connection refused".
             //
             // Best-effort on purpose: a spawn can legitimately fail while a
             // usable daemon exists (another build already holds the runtime
@@ -294,7 +289,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Usage { json }) => {
             commands::run_usage_command(json).await?;
         }
-        Some(Command::Stats { .. } | Command::Preview { .. } | Command::Diagnostics { .. }) => {
+        Some(
+            Command::Stats { .. } | Command::Preview { .. } | Command::Diagnostics { .. } | Command::Config { .. },
+        ) => {
             unreachable!("handled before bootstrap")
         }
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,
@@ -610,6 +607,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
         &args.add_dir,
+        args.plan,
     )
 }
 

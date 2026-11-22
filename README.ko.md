@@ -121,6 +121,7 @@ horon run "summarize this repo"
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. |
 | `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | 저장한 토큰 사용량을 UTC 날짜, 제공자와 모델별로 표시합니다. `--json`으로 구조화된 결과를 받고, 터미널 클라이언트에서는 `/stats`로 연결된 세션의 사용량을 봅니다. |
+| `horon config show` / `horon config check` | 읽기 전용입니다. `show`는 유효 설정과 각 값의 출처(default, file, env, cli)를 표시하며 자격 증명은 표시하지 않습니다. `--json`으로 구조화된 결과를 받습니다. `check`는 시작 때 쓰는 로더로 `config.toml`을 검증하고, 잘못된 섹션을 알리며 종료 코드 1을 돌려줍니다. |
 | `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
 | `horon completions <bash\|zsh\|fish>` | 데몬을 시작하지 않고 셸 자동완성 스크립트를 출력한다. |
 | `horon stream-rules [TEXT]` | 스트림 규칙을 검사하고 모델 답변 예시에 맞는 규칙을 오프라인에서 확인한다. |
@@ -149,6 +150,10 @@ horon run "summarize this repo"
 현재 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 다시 열려면 `horon --continue`를 실행한다. 특정 세션을 고르려면 `--resume <id>`를 사용한다.
 
 `horon --goal "Ship a fix" --goal-budget 1200`으로 새 세션에 목표와 토큰 예산을 설정할 수 있습니다.
+
+`horon --plan`으로 새 터미널 세션을 읽기 전용 플랜 모드로 열 수 있고, `horon run --plan "<메시지>"`로 계획만 세우는 한 번 실행도 가능합니다. `[tools] plan_mode = true`가 필요하며 `--resume`, `--continue`와 함께 쓸 수 없고, 조건이 맞지 않으면 모델 요청 전에 실패합니다. `/plan approve`로 읽기 전용 상태를 끝냅니다.
+
+`horon run --approval write|all "<메시지>"`는 그 실행 한 번에 한해 파일을 바꾸는 호출(`write`) 또는 읽기 전용이 아닌 모든 호출(`all`) 전에 승인을 요청합니다. 승인 수준을 높이기만 하고 설정된 더 엄격한 모드는 낮추지 않으며, 다른 세션은 자기 설정을 유지합니다.
 
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 

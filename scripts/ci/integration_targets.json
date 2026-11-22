@@ -64,7 +64,12 @@
     {
       "package": "horon-agent",
       "target": "openai_compatible_cli",
-      "min_passed": 16
+      "min_passed": 14
+    },
+    {
+      "package": "horon-agent",
+      "target": "config_plan_cli",
+      "min_passed": 2
     },
     {
       "package": "horon-agent",

@@ -61,6 +61,7 @@ mod read_selector;
 pub(crate) mod read_state;
 pub(crate) mod repair_event;
 mod replace;
+pub mod run_approval;
 pub(crate) mod sdk;
 pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
@@ -2067,12 +2068,12 @@ impl Registry {
         // inner call applies the same mode to the tool it runs, so one prompt
         // names that tool and its arguments.
         let refusal = if policy_on_self {
-            // An ACP connection may set the mode for the turns it starts; every other
-            // turn, including a desktop or daemon turn on the same session, keeps the
-            // configured mode.
+            // An ACP connection may set the mode for its own turns; any other turn keeps the configured mode.
             let approval_effects = plan_effects.unwrap_or(ToolEffects::write());
-            let approval_mode =
-                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode);
+            let approval_mode = run_approval::stricter(
+                &ctx.session_id,
+                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode),
+            );
             let dual_confirm = crate::config::config().tools.dual_confirm_classes.clone();
             let danger = crate::approval::danger_class(resolved_name, &input, ctx.working_dir.as_deref());
             // Explicit `[[tools.bash_patterns]]` rules are the user's own policy,
