@@ -991,4 +991,5 @@ async fn unconfigured_provider_explains_setup() {
 }
 
 // Session-less runs, provider diagnose, read-only preview and diagnostics cases.
+#[path = "openai_compatible_cli/offline_runs.rs"]
 mod offline_runs;
