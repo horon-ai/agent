@@ -159,6 +159,7 @@ Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and to
 
 Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
 
+`horon run --config overlay.toml "<message>"` layers a TOML file over `config.toml` for that run only. The flag is repeatable. Later files win per key, omitted keys inherit, and tables merge key by key. A file that does not parse names itself, and the merged result is validated before any provider work.
 
 `horon run --plan --approve-plan "<message>"` approves the plan the model submits instead of waiting for an answer, so the run continues to its configured execution model (`[prewalk]`) under the normal approval policy. It requires `--plan`.
 `horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.

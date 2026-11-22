@@ -47,6 +47,7 @@ impl Command {
                 service_tier: None,
                 advisor: None,
                 approval: None,
+                config_overlay: Vec::new(),
                 approve_plan: false,
             },
             message,
