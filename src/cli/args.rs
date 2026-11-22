@@ -351,6 +351,11 @@ pub(crate) enum Command {
         #[arg(long, value_name = "FILE")]
         system_template: Option<std::path::PathBuf>,
 
+        /// Print provider-supplied visible reasoning to stderr under a label
+        /// (text mode only; the answer stays on stdout)
+        #[arg(long, conflicts_with_all = ["json", "ndjson"])]
+        print_thoughts: bool,
+
         #[command(flatten)]
         model_overrides: RunModelOverrides,
 
