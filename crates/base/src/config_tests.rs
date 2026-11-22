@@ -235,6 +235,7 @@ fn new_feature_and_tool_toggles_default_and_parse() {
     assert_eq!(defaults.features.foreign_rules_mode, ForeignRulesMode::Inline);
     assert!(defaults.features.crash_bundles);
     assert!(!defaults.features.stream_rules);
+    assert!(!defaults.features.repeat_guard);
     assert_eq!(defaults.features.turn_recovery, TurnRecoveryMode::Conservative);
     assert!(!defaults.tools.redo);
     assert!(!defaults.tools.hashline_edit);

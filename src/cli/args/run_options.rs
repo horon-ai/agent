@@ -17,4 +17,8 @@ pub(crate) struct RunModelOverrides {
     /// Ask before file-changing calls (`write`) or every non-read call (`all`) for this run; never weakens the configured mode
     #[arg(long, value_name = "write|all", value_parser = ["write", "all"])]
     pub(crate) approval: Option<String>,
+
+    /// With `--plan`, approve the plan the model submits instead of waiting for an answer
+    #[arg(long, requires = "plan")]
+    pub(crate) approve_plan: bool,
 }

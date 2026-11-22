@@ -3,8 +3,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use super::provider_init::ProviderChoice;
 
 mod mcp;
+mod session_move;
 #[allow(unused_imports)]
 pub(crate) use mcp::McpCommand;
+pub(crate) use session_move::SessionMoveArgs;
 mod model_filter;
 pub(crate) use model_filter::ModelListFilter;
 mod packages;
@@ -43,6 +45,7 @@ impl Command {
                 service_tier: None,
                 advisor: None,
                 approval: None,
+                approve_plan: false,
             },
             message,
         }
@@ -860,6 +863,8 @@ pub(crate) enum SessionCommand {
 
     /// Preview or reclaim regenerable cache files of inactive sessions
     Cache(CacheArgs),
+    /// Preview, or with --apply change, the working root a saved session resumes in
+    Move(SessionMoveArgs),
 
     /// Show one session's layout, heads, archive state and damage, read-only
     Inspect {
