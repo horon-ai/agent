@@ -223,6 +223,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_TOGGLE_THINKING,
         "show or hide the model's reasoning for this session",
     ),
+    (
+        ids::APP_PLAN_MODE,
+        "put this session in read-only plan mode, like /plan on",
+    ),
     (ids::APP_VOICE, "start or finish on-device voice input"),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
