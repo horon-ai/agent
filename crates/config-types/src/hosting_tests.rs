@@ -101,6 +101,7 @@ fn tenant_ids_that_could_escape_or_confuse_are_refused() {
 fn config_narrows_shared_children_but_never_widens_a_shared_worker() {
     let narrowed = HostingSection {
         allow_shared_children: Some(false),
+        allowed_mcp_servers: None,
         mode: None,
     };
     let container =
@@ -109,6 +110,7 @@ fn config_narrows_shared_children_but_never_widens_a_shared_worker() {
 
     let widened = HostingSection {
         allow_shared_children: Some(true),
+        allowed_mcp_servers: None,
         mode: Some("shared-worker".to_string()),
     };
     let worker = HostingPolicy::new(HostingMode::SharedWorker, Some(tenant("bob")), &widened).expect("policy");
@@ -124,4 +126,69 @@ fn a_tenant_id_outside_hosting_is_not_part_of_the_identity() {
     let policy =
         HostingPolicy::new(HostingMode::None, Some(tenant("alice")), &HostingSection::default()).expect("policy");
     assert_eq!(policy.tenant_id(), None);
+}
+
+#[test]
+fn an_absent_server_list_permits_every_server() {
+    let policy = HostingPolicy::new(
+        HostingMode::PerUserContainer,
+        Some(tenant("alice")),
+        &HostingSection::default(),
+    )
+    .expect("policy");
+    assert_eq!(policy.allowed_mcp_servers(), None);
+    assert!(policy.permits_mcp_server("anything"));
+}
+
+#[test]
+fn an_empty_server_list_refuses_every_server() {
+    // `[]` in the file must keep its meaning: refuse all, not "no narrowing".
+    let section: HostingSection = toml::from_str("allowed_mcp_servers = []\n").expect("an empty array parses");
+    assert_eq!(section.allowed_mcp_servers, Some(Vec::new()));
+    let policy = HostingPolicy::new(HostingMode::PerUserContainer, Some(tenant("alice")), &section).expect("policy");
+    assert_eq!(policy.allowed_mcp_servers(), Some(&[][..]));
+    assert!(!policy.permits_mcp_server("anything"));
+}
+
+#[test]
+fn a_server_list_is_trimmed_deduplicated_and_sorted() {
+    let section: HostingSection =
+        toml::from_str("allowed_mcp_servers = [\" zeta \", \"alpha\", \"alpha\", \"  \"]\n").expect("a list parses");
+    let policy = HostingPolicy::new(HostingMode::PerUserContainer, Some(tenant("alice")), &section).expect("policy");
+    assert_eq!(
+        policy.allowed_mcp_servers(),
+        Some(&["alpha".to_string(), "zeta".to_string()][..])
+    );
+    assert!(policy.permits_mcp_server("alpha"));
+    assert!(policy.permits_mcp_server("zeta"));
+    assert!(!policy.permits_mcp_server("Alpha"), "the match is exact");
+    assert!(
+        !policy.permits_mcp_server("beta"),
+        "a server outside the list is refused"
+    );
+}
+
+#[test]
+fn the_server_list_is_read_in_every_mode() {
+    // Narrowing is safe in any mode: the ordinary process, a container and a
+    // shared worker all keep the names the operator listed and nothing else.
+    for mode in [
+        HostingMode::None,
+        HostingMode::PerUserContainer,
+        HostingMode::SharedWorker,
+    ] {
+        let tenant_id = mode.is_hosted().then(|| tenant("alice"));
+        let policy = HostingPolicy::new(
+            mode,
+            tenant_id,
+            &HostingSection {
+                allow_shared_children: None,
+                allowed_mcp_servers: Some(vec!["only".to_string()]),
+                mode: None,
+            },
+        )
+        .expect("policy");
+        assert!(policy.permits_mcp_server("only"), "{mode}");
+        assert!(!policy.permits_mcp_server("other"), "{mode}");
+    }
 }

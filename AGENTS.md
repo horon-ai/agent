@@ -194,10 +194,14 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   `HORON_HOME` is an owner-only directory that is not `~/.horon`, the runtime
   directory is absolute, owner-only and outside the home, the TCP gateway is
   off and the tenant id is valid. A shared worker starts, but
-  `HostingPolicy::allows_shared_children()` is false. `[hosting]` in
-  `config.toml` may only narrow the policy, and a `mode` key there is ignored
-  with one warning, because a tenant can write its own config
-  (`docs/architecture/HOSTING.md`).
+  `HostingPolicy::allows_shared_children()` is false. A per-user container
+  keeps its own MCP stdio servers and package children; a shared worker refuses
+  every MCP stdio server, editor-supplied server, pool connection and remote
+  connection through one gate (`crates/base/src/mcp/hosted.rs`), with one
+  `HOSTED_POLICY` audit record per refusal. `[hosting]` in `config.toml` may
+  only narrow the policy (`allow_shared_children`, `allowed_mcp_servers`), and a
+  `mode` key there is ignored with one warning, because a tenant can write its
+  own config (`docs/architecture/HOSTING.md`, `docs/safety/SECURITY.md`).
 - Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
@@ -266,6 +270,7 @@ Boundaries, each with the gate that enforces it:
 |`HORON_AGENT_HOSTING_MODE`|unset (no hosting)|`per-user-container`, `shared-worker`; any other value is a startup error|
 |`HORON_AGENT_TENANT_ID`|unset|1 to 63 lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit; required by every hosted mode and used only as an audit label|
 |`[hosting] allow_shared_children`|per mode (true only in a per-user container)|`false` narrows; `true` never widens; `[hosting] mode` is ignored with one warning|
+|`[hosting] allowed_mcp_servers`|unset (every server reachable)|a list of exact MCP server names; an empty list refuses every server; narrowing only, and it never widens a hosting mode|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is

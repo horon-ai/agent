@@ -870,3 +870,79 @@ fn try_wait_sweeps_before_reporting_an_exit() {
     wait_for_quiet(&heartbeat, "the descendant of the polled exit");
     assert_eq!(process.try_wait().expect("inspect the reaped child"), Some(status),);
 }
+
+// ---------------------------------------------------------------------------
+// Hosted policy (issue #668)
+// ---------------------------------------------------------------------------
+
+/// The hosting mode is read once per process, so the refusal runs in a child of
+/// this binary with the environment already set and a home of its own.
+#[test]
+fn a_shared_worker_refuses_to_start_the_package_child() {
+    if !supervision_supported() {
+        return;
+    }
+    if std::env::var_os("HORON_HOSTED_GATE_CHILD").is_none() {
+        let home = tempdir().expect("the child's home");
+        let output = Command::new(std::env::current_exe().expect("the native test executable"))
+            .args([
+                "--exact",
+                "a_shared_worker_refuses_to_start_the_package_child",
+                "--nocapture",
+            ])
+            .env("HORON_HOSTED_GATE_CHILD", "1")
+            .env("HORON_HOME", home.path())
+            .env("HORON_AGENT_HOSTING_MODE", "shared-worker")
+            .env("HORON_AGENT_TENANT_ID", "acme")
+            .output()
+            .expect("start the child with the hostile hosting mode");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    horon_agent_base::logging::init();
+    let log_path = horon_agent_base::logging::log_path().expect("the child's home resolves a log path");
+    let harness = Harness::new();
+    let fixture = extension_fixture("spawn-hosted", "0.1.0");
+    install(&harness.store, fixture.path(), false);
+    let executable = harness
+        .store
+        .prepare_executable(
+            harness.store.lease("spawn-hosted-session").expect("take a lease"),
+            "spawn-hosted",
+        )
+        .expect("prepare the installed executable");
+
+    let error = match executable.start_with_arguments(&probe_arguments()) {
+        Ok(_) => panic!("a shared worker must refuse the package child"),
+        Err(error) => error,
+    };
+    let message = format!("{error:#}");
+    assert!(
+        message.contains(
+            "hosting policy 'shared-worker' refuses the package child 'spawn-hosted': a shared worker serves \
+             several customers from one process and never starts a child process for one of them"
+        ),
+        "unexpected error: {message}"
+    );
+
+    let log = fs::read_to_string(&log_path).expect("the audit line is written under the home");
+    let line = log
+        .lines()
+        .find(|line| line.contains("EVENT event=HOSTED_POLICY"))
+        .unwrap_or_else(|| panic!("no HOSTED_POLICY line in {log}"));
+    for field in [
+        "operation=package-child",
+        "policy=shared-worker",
+        "reason=shared-worker",
+        "subject=spawn-hosted",
+        "tenant=acme",
+    ] {
+        assert!(line.contains(field), "{field} missing from: {line}");
+    }
+}

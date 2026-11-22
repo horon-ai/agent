@@ -740,6 +740,7 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 - The project entry in `~/.claude.json` is selected by the canonical working folder path, so one project's servers never mix into another repository's session.
 - A user-level file is not re-parsed while its `FileStamp` holds; a process cache (up to 16 files) is used instead. A session start with no changed user settings reads no file at all. Working-folder files are not cached, because they must be parsed from the same single read that produced the trust decision.
 - Environment expansion (`${VAR}`) and removal of unlaunchable entries happen after merging, every time.
+- A hosted daemon refuses a server its mode forbids before anything starts: a shared worker refuses every MCP connection, and a per-user container keeps its own. `[hosting] allowed_mcp_servers` narrows the names any mode may connect (absent leaves all, empty refuses all). Each refusal is an explicit error to the caller and one `HOSTED_POLICY` audit line; [hosted MCP and extension isolation](/reference/safety/security) has the matrix, and a refused package server is reported to the session's next turn.
 
 ### Resources and prompts
 

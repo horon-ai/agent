@@ -3212,7 +3212,14 @@ pub(super) async fn handle_client(
                     .as_ref()
                     .is_some_and(|(session, _)| session == &client_session_id);
                 let configs = if acp_attached {
-                    crate::tool::session_mcp::server_configs(servers)
+                    // The process policy decides whether this editor's servers
+                    // may start at all; an unreadable policy refuses the list.
+                    match crate::hosting::current() {
+                        Ok(policy) => crate::tool::session_mcp::server_configs(policy, servers),
+                        Err(error) => Err(format!(
+                            "MCP servers are refused: the hosting policy could not be resolved: {error}"
+                        )),
+                    }
                 } else {
                     Err(crate::tool::approval_override::NOT_ACP_MESSAGE.to_string())
                 };

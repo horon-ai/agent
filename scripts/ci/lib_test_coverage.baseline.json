@@ -256,7 +256,6 @@
       "tool::replace::tests",
       "tool::sdk::tests",
       "tool::serde_coerce::tests",
-      "tool::session_mcp::tests",
       "tool::session_search_index::tests",
       "tool::skill::skill_install_tests",
       "tool::skill::tests",

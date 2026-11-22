@@ -361,6 +361,16 @@ impl SharedMcpPool {
     }
 
     async fn ensure_connected(&self, name: String, config: McpServerConfig) -> std::result::Result<bool, String> {
+        // The pool is one process per daemon and hands it to every session, so
+        // a hosted process must refuse here as well: this is where a server one
+        // customer configured could otherwise reach another's session.
+        let operation = if config.remote_transport().is_some() {
+            crate::mcp::hosted::HostedOperation::Remote
+        } else {
+            crate::mcp::hosted::HostedOperation::PooledStdio
+        };
+        crate::mcp::hosted::check_current(&crate::mcp::hosted::HostedRequest::server(operation, &name))
+            .map_err(|refusal| refusal.to_string())?;
         if let Some(record) = self.recent_failure(&name).await {
             let retry_after = FAILED_CONNECT_RETRY_COOLDOWN
                 .saturating_sub(record.failed_at.elapsed())

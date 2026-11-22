@@ -7,6 +7,7 @@
 
 pub mod budget;
 mod client;
+pub mod hosted;
 mod manager;
 pub mod oauth;
 mod package_source;

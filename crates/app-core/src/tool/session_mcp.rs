@@ -29,6 +29,8 @@
 use super::{Registry, Tool, ToolContext, ToolOutput, WeakRegistry, acp_session};
 use crate::extensions::lifecycle::{PackageLifecycleHolder, PackageLifecycleRegistry, RevocationCallback};
 use crate::extensions::package_snapshot::{PackageSession, lease_owner};
+use crate::hosting::HostingPolicy;
+use crate::mcp::hosted::{HostedOperation, HostedRequest};
 use crate::mcp::{
     ContentBlock, McpClient, McpConfig, McpHandle, McpManager, McpServerConfig, McpToolDef, dispatch_names,
     package_servers, render_resource_content, take_accept_large_output,
@@ -49,8 +51,16 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinSet;
 
 /// Turn the editor's server list into manager configs, refusing the whole
-/// list on the first invalid entry so a session never runs half of it.
-pub(crate) fn server_configs(servers: Vec<SessionMcpServer>) -> Result<Vec<(String, McpServerConfig)>, String> {
+/// list on the first invalid or refused entry so a session never runs half of it.
+///
+/// The policy is a parameter because the request is gated against it before any
+/// connection starts; the caller passes the process policy. The whole request
+/// fails when one server is refused, which is the error the ACP client receives:
+/// an editor never sees a silently reduced list.
+pub(crate) fn server_configs(
+    policy: &HostingPolicy,
+    servers: Vec<SessionMcpServer>,
+) -> Result<Vec<(String, McpServerConfig)>, String> {
     let mut seen = HashSet::new();
     servers
         .into_iter()
@@ -63,6 +73,13 @@ pub(crate) fn server_configs(servers: Vec<SessionMcpServer>) -> Result<Vec<(Stri
                 return Err(format!("MCP server {name:?} is listed more than once"));
             }
             let config = server_config(&name, server)?;
+            let operation = if config.remote_transport().is_some() {
+                HostedOperation::Remote
+            } else {
+                HostedOperation::SessionStdio
+            };
+            crate::mcp::hosted::check(policy, &HostedRequest::server(operation, &name))
+                .map_err(|refusal| refusal.to_string())?;
             Ok((name, config))
         })
         .collect()
@@ -486,6 +503,8 @@ struct PackageMcpSession {
 struct PackageRun {
     registry: Registry,
     store: PackageStore,
+    /// The session whose next turn reports a refusal.
+    session_id: String,
     package_id: String,
     /// Catalog generation this connection belongs to.
     catalog_generation: u64,
@@ -561,7 +580,7 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
             let Some(holder) = package_revocation_holder(session_id, &plan.package_id, catalog_generation) else {
                 continue;
             };
-            let connection = start_connection(&registry, store.clone(), catalog_generation, holder, plan);
+            let connection = start_connection(&registry, store.clone(), session_id, catalog_generation, holder, plan);
             packages.insert(connection.package_id.clone(), connection);
         }
         state.generation.store(snapshot.generation(), Ordering::SeqCst);
@@ -701,6 +720,7 @@ fn package_revocation_holder(session_id: &str, package_id: &str, generation: u64
 fn start_connection(
     registry: &Registry,
     store: PackageStore,
+    session_id: &str,
     catalog_generation: u64,
     holder: PackageLifecycleHolder,
     plan: PackagePlan,
@@ -719,6 +739,7 @@ fn start_connection(
     let task = tokio::spawn(run_package(PackageRun {
         registry: registry.clone(),
         store,
+        session_id: session_id.to_string(),
         package_id: package_id.clone(),
         catalog_generation,
         servers,
@@ -742,6 +763,7 @@ async fn run_package(run: PackageRun) {
     let PackageRun {
         registry,
         store,
+        session_id,
         package_id,
         catalog_generation,
         servers,
@@ -753,6 +775,19 @@ async fn run_package(run: PackageRun) {
             return;
         }
         let public_name = registration.server.public_name.clone();
+        // The server's own name, not the package id: a name the allow list can
+        // narrow, and a name the user can act on when it is refused.
+        let operation = match &registration.server.kind {
+            PackageMcpKind::Stdio { .. } => HostedOperation::Stdio,
+            PackageMcpKind::Remote { .. } => HostedOperation::Remote,
+        };
+        if let Err(refusal) = crate::mcp::hosted::check_current(&HostedRequest::server(operation, &public_name)) {
+            crate::logging::warn(&format!(
+                "MCP: package {package_id} server '{public_name}' was refused: {refusal}"
+            ));
+            report_hosted_refusal(&session_id, &public_name, &refusal);
+            continue;
+        }
         let connected = match &registration.server.kind {
             PackageMcpKind::Stdio { mode, args, .. } => {
                 match start_package_child(&store, &package_id, catalog_generation, mode, args).await {
@@ -768,6 +803,10 @@ async fn run_package(run: PackageRun) {
                 crate::logging::warn(&format!(
                     "MCP: package {package_id} server '{public_name}' did not connect: {error:#}"
                 ));
+                // A refusal the process gate raised rather than this name check.
+                if let Some(refusal) = crate::mcp::hosted::find(&error) {
+                    report_hosted_refusal(&session_id, &public_name, refusal);
+                }
                 continue;
             }
         };
@@ -788,6 +827,15 @@ async fn run_package(run: PackageRun) {
             .unwrap_or_else(PoisonError::into_inner)
             .push(PackageLive { public_name, client });
     }
+}
+
+/// Record a hosted refusal where the session's next turn will see it.
+///
+/// The gate already wrote the audit record; this carries the same refusal into
+/// the session, so a refused package MCP server is reported instead of quietly
+/// missing from the tool list.
+pub(crate) fn report_hosted_refusal(session_id: &str, server: &str, refusal: &crate::mcp::hosted::HostedRefusal) {
+    crate::agent::hosted_notice::push(session_id, format!("MCP server '{server}' was not started: {refusal}"));
 }
 
 /// Start one package MCP child through the shared package supervision.
