@@ -39,6 +39,9 @@ impl Agent {
 
     /// Run a single turn with the given user message
     pub async fn run_once(&mut self, user_message: &str) -> Result<()> {
+        // One turn, one package generation: the snapshot is captured here, as
+        // the tool list and its index are frozen on the first request of a turn.
+        self.enter_package_generation().await;
         self.resolve_armed_effort(false, None);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
@@ -76,6 +79,7 @@ impl Agent {
         user_message: &str,
         display_role: Option<crate::session::StoredDisplayRole>,
     ) -> Result<String> {
+        self.enter_package_generation().await;
         self.resolve_armed_effort(false, display_role);
         self.announce_late_mcp_tools().await;
         self.announce_late_skills();
@@ -118,6 +122,7 @@ impl Agent {
         display_role: Option<crate::session::StoredDisplayRole>,
         mut report: Option<crate::server::foreground_state::TurnReport>,
     ) -> Result<()> {
+        self.enter_package_generation().await;
         // Inject any pending notifications before the user message
         let alerts = self.take_alerts();
         if !alerts.is_empty() {
