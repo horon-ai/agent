@@ -89,7 +89,7 @@
     {
       "package": "horon-agent",
       "target": "session_commands",
-      "min_passed": 16
+      "min_passed": 22
     },
     {
       "package": "horon-agent",
