@@ -13,6 +13,7 @@ use crate::{agent, auth, build, provider_catalog, server, session, startup_profi
 use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal};
 use provider_init::ProviderChoice;
 
+mod compact_text;
 mod continue_latest;
 mod one_shot;
 #[cfg(test)]
@@ -276,6 +277,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             }
         },
         Some(Command::Run { .. }) => one_shot::run(&args).await?,
+        Some(Command::CompactText { source, max_tokens }) => compact_text::run(&source, max_tokens).await?,
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref()).await?;

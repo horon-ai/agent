@@ -6,6 +6,7 @@ mod git_context;
 mod hardware;
 mod package_source;
 mod static_sources;
+pub mod template;
 
 pub use package_source::{MAX_RULES_SECTION_BYTES, append_package_rules, render_rules};
 

@@ -664,6 +664,11 @@ jobs:
         shell: bash
         run: python3 scripts/test/launch_profile_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
 
+      - name: System template bounds
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/system_template_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
       - name: TUI PTY smoke (Linux, macOS)
         # The bare command hands a terminal launch to the sibling `horon-tui`
         # binary, and nothing else in this workflow drives that handoff or the
@@ -1003,6 +1008,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 1 \
             -- cli::startup::provider_status::tests:: --nocapture
+
+      - name: Run CLI compact-text cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::dispatch::compact_text::tests:: --nocapture
 
       - name: Run ACP cohort
         shell: bash
