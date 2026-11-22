@@ -165,6 +165,13 @@ impl PackageControl {
                 if let Err(error) = self.publish().await {
                     crate::logging::warn(&format!("package catalog could not be published at startup: {error:#}"));
                 }
+                // Every session in this process reads a generation from here
+                // instead of the catalog file, and this subscription exists
+                // before the watcher can move the value past it.
+                crate::extensions::package_snapshot::attach_daemon_feed(
+                    self.store.root().to_path_buf(),
+                    self.published.subscribe(),
+                );
                 tokio::spawn(Arc::clone(self).watch(baseline));
             })
             .await;
@@ -259,6 +266,28 @@ impl PackageControl {
         let previous = self.current();
         if previous.generation() == next.generation() && previous.packages() == next.packages() {
             return Ok(previous);
+        }
+        // The callbacks run before the new generation is announced and before
+        // the receipt of the operation that produced it is built, so a client
+        // that reads `disabled` has seen every live holder cancelled.
+        let revoked = crate::extensions::lifecycle::shared().apply_states(
+            &record_states(&previous),
+            &record_states(&next),
+            next.generation(),
+        );
+        if revoked.fired > 0 {
+            crate::logging::info(&format!(
+                "package catalog generation {}: {} live package holders were cancelled",
+                next.generation(),
+                revoked.fired
+            ));
+        }
+        if revoked.failed > 0 {
+            crate::logging::warn(&format!(
+                "package catalog generation {}: {} package cancel callbacks failed",
+                next.generation(),
+                revoked.failed
+            ));
         }
         crate::logging::info(&format!(
             "package catalog generation {} published ({} records)",
@@ -645,6 +674,22 @@ fn log_inbox_report(report: &InboxReport) {
     for skip in skipped_entries(report) {
         crate::logging::warn(&format!("package inbox skipped {}: {}", skip.name, skip.reason));
     }
+}
+
+/// The record states of one published generation, keyed by package ID.
+fn record_states(catalog: &PublishedCatalog) -> BTreeMap<String, PackageState> {
+    catalog
+        .packages()
+        .iter()
+        .map(|summary| {
+            let state = match summary.state {
+                PackageControlState::Installed => PackageState::Installed,
+                PackageControlState::Disabled => PackageState::Disabled,
+                PackageControlState::Revoked => PackageState::Revoked,
+            };
+            (summary.id.clone(), state)
+        })
+        .collect()
 }
 
 fn read_published(store: &PackageStore) -> Result<PublishedCatalog> {
