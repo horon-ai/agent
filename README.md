@@ -128,8 +128,11 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon agents` | Lists named agent definitions, their sources, and configured model and tools without starting a session. |
 | `horon provider status [--json]` | Reports each configured profile's credential source and local status (`authenticated`, `unauthenticated`, or `unknown`) without printing credentials or contacting a provider. |
 | `horon provider failover [--json]` | Shows the failover order the configuration produces and which setting excludes a step. Read-only: no model request, no account or quota change, no credential. |
+| `horon compact-text <FILE\|->` | Summarizes a UTF-8 text file (or stdin, up to 48 KiB, never modified) on stdout and lists what it left out on stderr. `--max-tokens` bounds the summary. |
 
 `horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
+
+`horon run --system-template <FILE>` renders a text template once as the system prompt for that run. The variables are `{{cwd}}`, `{{date}}` and `{{model}}`. A value is never expanded again. An unknown variable, an unclosed `{{` or a template over 16 KiB is refused before any provider request.
 
 `horon run --no-session "<message>"` keeps the run in memory. It writes no session log, checkpoint, catalog row or run journal under `$HORON_HOME`, so the run cannot be resumed or recovered afterwards, and a failed run leaves nothing behind either. The session id in `--json` and `--ndjson` output names no stored session. Logs, usage records and other non-session state are written as usual. It cannot be combined with `--resume`, `--continue` or `--goal`, which need a stored session. Tools that keep their own per-session files, such as `todo`, are not covered by this guarantee.
 

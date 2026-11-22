@@ -226,6 +226,18 @@ pub(crate) enum Command {
         sample: Option<String>,
     },
 
+    /// Summarize a text file (or '-' for stdin) to stdout and list what was left out on stderr
+    #[command(name = "compact-text")]
+    CompactText {
+        /// UTF-8 text file to read, or '-' for stdin; the source is never modified
+        #[arg(value_name = "FILE")]
+        source: String,
+
+        /// Bound the summary length in tokens
+        #[arg(long, value_name = "TOKENS")]
+        max_tokens: Option<u32>,
+    },
+
     /// List configured MCP servers or manage remote-server OAuth credentials
     Mcp {
         #[command(subcommand)]
@@ -302,6 +314,10 @@ pub(crate) enum Command {
         /// Wait for background jobs started by this invocation before exiting
         #[arg(long)]
         wait_async: bool,
+
+        /// Render this template once as the system prompt. Variables: {{cwd}}, {{date}}, {{model}}
+        #[arg(long, value_name = "FILE")]
+        system_template: Option<std::path::PathBuf>,
 
         #[command(flatten)]
         model_overrides: RunModelOverrides,
