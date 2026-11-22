@@ -10,7 +10,6 @@
 use anyhow::{Result, bail};
 use ignore::WalkBuilder;
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 use std::path::Path;
 
 const DEFAULT_RESULTS: usize = 5;
@@ -176,8 +175,9 @@ fn scan(root: &Path, concepts: &[Concept], max_files: usize) -> (Vec<FileLines>,
             continue;
         }
         let path = entry.path();
-        if std::fs::metadata(path).map_or(true, |meta| meta.len() > MAX_FILE_BYTES) {
-            continue;
+        match std::fs::metadata(path) {
+            Ok(meta) if meta.len() <= MAX_FILE_BYTES => {}
+            _ => continue,
         }
         let Ok(bytes) = std::fs::read(path) else {
             continue;
@@ -241,7 +241,7 @@ fn rank(files: &[FileLines], concepts: &[Concept], limit: usize) -> Vec<Hit> {
             let (start, end, score, union) = best_window(file, &idf)?;
             let hit_lines = || (start..end).filter(|line| file.masks[*line] != 0);
             let first = hit_lines().next()?;
-            let last = hit_lines().last()?;
+            let last = hit_lines().next_back()?;
             Some(Hit {
                 path: file.path.clone(),
                 start: first + 1,
@@ -300,45 +300,39 @@ pub(super) fn run_locate(
 
     let mut out = format!("locate: {}\n", crate::util::truncate_str(query, 200));
     let Some(best) = hits.first() else {
-        let _ = writeln!(
-            out,
-            "confidence: none. No line in {scanned} scanned files contains any of: {}.",
-            concepts
-                .iter()
-                .map(|concept| concept.label.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        let labels: Vec<&str> = concepts.iter().map(|concept| concept.label.as_str()).collect();
+        out.push_str(&format!(
+            "confidence: none. No line in {scanned} scanned files contains any of: {}.\n",
+            labels.join(", ")
+        ));
         return Ok(out);
     };
     let found = best.matched.len();
     let confidence = if found * 2 < concepts.len() { "low" } else { "ok" };
-    let _ = write!(
-        out,
+    out.push_str(&format!(
         "confidence: {confidence}. The best location matches {found} of {} query terms ({}).",
         concepts.len(),
         best.matched.join(", ")
-    );
+    ));
     if confidence == "low" {
         out.push_str(" Treat these as weak leads and try a more specific description.");
     }
     if dropped > 0 {
-        let _ = write!(out, " {dropped} further terms were ignored.");
+        out.push_str(&format!(" {dropped} further terms were ignored."));
     }
-    let _ = writeln!(out, "\nscanned: {scanned} files");
+    out.push_str(&format!("\nscanned: {scanned} files\n"));
     for (index, hit) in hits.iter().enumerate() {
-        let _ = writeln!(
-            out,
-            "{}. {}:{}-{}  score {:.2}  matched: {}",
+        out.push_str(&format!(
+            "{}. {}:{}-{}  score {:.2}  matched: {}\n",
             index + 1,
             hit.path,
             hit.start,
             hit.end,
             hit.score,
             hit.matched.join(", ")
-        );
+        ));
         for line in evidence(root, hit, &concepts) {
-            let _ = writeln!(out, "     {line}");
+            out.push_str(&format!("     {line}\n"));
         }
     }
     Ok(out)
