@@ -123,6 +123,11 @@
     },
     {
       "package": "horon-agent-app-core",
+      "target": "package_tools",
+      "min_passed": 14
+    },
+    {
+      "package": "horon-agent-app-core",
       "target": "pi_adoption_tier2",
       "min_passed": 19
     },

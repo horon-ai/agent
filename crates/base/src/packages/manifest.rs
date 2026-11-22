@@ -9,7 +9,9 @@ use horon_agent_extension_types::{
 };
 use horon_agent_platform::fs::{is_executable, is_path_link, native_package_target, package_open_options};
 use serde::de::DeserializeOwned;
+use sha2::{Digest, Sha256};
 
+use super::catalog::PackageRecord;
 use super::native_target::verify_native_target;
 
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
@@ -135,6 +137,60 @@ pub fn validate_package(root: &Path) -> Result<ValidatedPackage> {
         executable: selected.context("validated package has no host executable")?,
         files,
     })
+}
+
+/// Read the declaration an installed copy carries and prove it is the recorded one.
+///
+/// The declaration is `extension.toml` at the copy root, or the bundled
+/// `extension.toml` a `plugin.toml` names. The returned string is the lowercase
+/// hex SHA-256 of that file's raw bytes, which is the digest a wire handshake
+/// compares, and it is checked against the copy's own record before the caller
+/// reads anything from the manifest: an installed copy whose declaration no
+/// longer matches the bytes the installer published is refused here.
+///
+/// The executable and the resources are not checked; installation validated
+/// them, and a caller that needs only the declarations must not pay for a
+/// whole-package verification on every turn.
+pub fn read_recorded_declaration(root: &Path, record: &PackageRecord) -> Result<(ExtensionManifest, String)> {
+    let root_meta = symlink_metadata(root).with_context(|| format!("open {}", root.display()))?;
+    ensure!(
+        root_meta.is_dir() && !is_path_link(&root_meta),
+        "package root must be a directory without links"
+    );
+    let has_extension = exists(&root.join(EXTENSION_FILE))?;
+    let has_plugin = exists(&root.join(PLUGIN_FILE))?;
+    let (path, slash_path) = match (has_extension, has_plugin) {
+        (true, false) => (PathBuf::from(EXTENSION_FILE), EXTENSION_FILE.to_owned()),
+        (false, true) => {
+            let plugin: PluginManifest = read_manifest(root, Path::new(PLUGIN_FILE))?;
+            (relative_path(&plugin.extension)?, plugin.extension)
+        }
+        _ => bail!("the installed copy holds neither one extension.toml nor one plugin.toml"),
+    };
+    let recorded = record
+        .files
+        .iter()
+        .find(|file| file.path == slash_path)
+        .with_context(|| format!("package {} records no declaration at {slash_path}", record.id))?;
+    let file = open_package_file(root, &path)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read {}", path.display()))?;
+    ensure!(
+        bytes.len() as u64 <= MAX_MANIFEST_BYTES,
+        "manifest exceeds {MAX_MANIFEST_BYTES} bytes: {}",
+        path.display()
+    );
+    let digest = hex::encode(Sha256::digest(&bytes));
+    ensure!(
+        digest == recorded.sha256 && bytes.len() as u64 == recorded.len,
+        "the installed declaration of package {} does not match its record",
+        record.id
+    );
+    let text = std::str::from_utf8(&bytes).with_context(|| format!("read {}", path.display()))?;
+    let manifest: ExtensionManifest = toml::from_str(text).with_context(|| format!("parse {}", path.display()))?;
+    Ok((manifest, digest))
 }
 
 fn exists(path: &Path) -> Result<bool> {
