@@ -20,6 +20,7 @@ this file, this file wins.
 |`@horon-ai/horon` and six platform packages|`packages/npm`, `scripts/npm`|both binaries through one launcher|`publish-npm.yml`; publishes on each `main` release once `NPM_PUBLISH` is `true` (and again on `release: published`, which heals a run that arrived while the release was a draft), and fails the run with the recovery command instead of dry-running silently when the switch is off|
 |SDKs|`crates/agent-sdk`, `packages/sdk/typescript`, `packages/sdk/python`|headless mode from code|TypeScript: `publish-typescript-sdk.yml`, gated by its own `SDK_NPM_PUBLISH`; Python: `publish-python-sdk.yml`, manual dispatch into the `pypi` environment; neither published yet|
 |Container image|`scripts/release/Containerfile`|the daemon in headless mode|`ghcr.io/horon-ai/agent`, pushed by `release-tag.yml`|
+|Hosted per-tenant image|`scripts/hosting/Containerfile`|one customer per container with a `/data` home volume|built from the same release archives; not published, started by the control plane (`docs/architecture/HOSTING.md`)|
 
 - **One release.** Both binaries are built by the same `release.yml` run from
   the same tagged commit (`vMAJOR.MINOR.PATCH`), and `install-release` stages
@@ -185,6 +186,18 @@ v1, stored sessions). Reasons and sources: `PHILOSOPHY.md`.
   packages only from the user's catalog. Run executable calls in a separate
   child under the user's OS account and through the existing tool policy. Keep
   in-process plugin loading prohibited and preserve the fixed requirements.
+- Hosting is opt-in through `HORON_AGENT_HOSTING_MODE` (`per-user-container`
+  or `shared-worker`; absent means the operator's own home, and any other value
+  is a startup error naming both). A hosted process carries
+  `HORON_AGENT_TENANT_ID` as a validated audit label and directory name, never
+  a session lookup key. A per-user container refuses to start unless
+  `HORON_HOME` is an owner-only directory that is not `~/.horon`, the runtime
+  directory is absolute, owner-only and outside the home, the TCP gateway is
+  off and the tenant id is valid. A shared worker starts, but
+  `HostingPolicy::allows_shared_children()` is false. `[hosting]` in
+  `config.toml` may only narrow the policy, and a `mode` key there is ignored
+  with one warning, because a tenant can write its own config
+  (`docs/architecture/HOSTING.md`).
 - Core tool profile, the default when a launch selects none (18 tools): `bash`, `read`, `write`,
   `edit`, `replace`, `apply_patch`, `agentgrep`, `ls`, `webfetch`, `websearch`,
   `skill_manage`, `mcp`, `monitor`, `undo`, `ask`, `todo`, `session_search`, `swarm`.
@@ -250,6 +263,9 @@ Boundaries, each with the gate that enforces it:
 |`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
 |`[features] pricing_refresh`|`false`|`true`; `HORON_AGENT_PRICING_REFRESH=1` or `0` overrides it for one process|
 |`[server] idle_hibernation_secs`|`1800`|`0` disables the sweep; `HORON_AGENT_IDLE_HIBERNATION_SECS` overrides it for one process|
+|`HORON_AGENT_HOSTING_MODE`|unset (no hosting)|`per-user-container`, `shared-worker`; any other value is a startup error|
+|`HORON_AGENT_TENANT_ID`|unset|1 to 63 lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit; required by every hosted mode and used only as an audit label|
+|`[hosting] allow_shared_children`|per mode (true only in a per-user container)|`false` narrows; `true` never widens; `[hosting] mode` is ignored with one warning|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is
@@ -547,6 +563,7 @@ still states the old behaviour. To find the pages:
 |`src/cli/rpc/`|`docs/protocol/RPC.md`|
 |`crates/harness-api*`, `crates/agent-sdk`, `packages/sdk/`|`docs/protocol/HARNESS_API.md`|
 |`crates/app-core/src/server/`|`docs/architecture/SERVER.md`, `docs/runtime/TURNS.md`, `docs/diagram/03-turn-lifecycle`|
+|`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
 |`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
 |`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
 |`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|

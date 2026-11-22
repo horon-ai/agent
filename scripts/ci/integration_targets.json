@@ -58,6 +58,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "hosted_tenant",
+      "min_passed": 3
+    },
+    {
+      "package": "horon-agent",
       "target": "install_release_cli",
       "min_passed": 3
     },

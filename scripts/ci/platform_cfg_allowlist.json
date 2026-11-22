@@ -8,6 +8,10 @@
       "count": 1,
       "reason": "one `#[cfg(all(test, unix))]` module holding the daemon-launch fixture that runs a `/bin/sh` stand-in daemon."
     },
+    "crates/agent-sdk/src/launch_hosted.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` module holding the hosted-launch tests: a `/bin/sh` stand-in runtime and Unix socket paths exist only on Unix."
+    },
     "crates/agent-sdk/src/lib.rs": {
       "count": 1,
       "reason": "re-export of the Unix-only shared SSH transport types, which do not exist on Windows."
@@ -99,6 +103,10 @@
     "crates/app-core/src/perf.rs": {
       "count": 11,
       "reason": "host load, memory and terminal probes chosen at compile time: /proc readers on Linux, sysctlbyname/getloadavg on macOS, GlobalMemoryStatusEx on Windows. The perf tier is cross-platform; each probe is the platform's own measurement API."
+    },
+    "crates/app-core/src/server.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` declaration selecting the hosted-tenant test module; its fixtures use 0700 directory modes and symlinks, which only Unix has."
     },
     "crates/app-core/src/server/client_lifecycle_ack_failure_tests.rs": {
       "count": 1,
@@ -215,6 +223,10 @@
     "crates/base/src/hooks/pre_request_tests.rs": {
       "count": 13,
       "reason": "the hook cases write /bin/sh scripts because a hook is an external process spawned from a command line; the platform-neutral case proves an unset hook returns None."
+    },
+    "crates/base/src/hosting.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(all(test, unix))]` module testing the container boundary: owner-only modes and symlink refusal exist only on Unix."
     },
     "crates/base/src/import_takeover_tests.rs": {
       "count": 4,
