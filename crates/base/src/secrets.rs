@@ -87,7 +87,7 @@ pub(crate) mod rules {
         r"(?m)^\s*(AZURE_OPENAI_API_KEY\s*=\s*)([^\r\n]+)",
         r"(?m)^\s*(CURSOR_API_KEY\s*=\s*)([^\r\n]+)",
         r"(?m)^\s*(GITHUB_TOKEN\s*=\s*)([^\r\n]+)",
-        r"(?im)^\s*((?:export\s+)?[A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
+        r"(?im)^\s*((?:export\s+)?(?:[A-Z][A-Z0-9_]*)?(?:API_KEY|TOKEN|SECRET|PASSWORD|COOKIE)\s*=\s*)([^\r\n]+)",
         r"(?im)^\s*(AUTHORIZATION\s*[:=]\s*)([^\r\n]+)",
     ];
 
@@ -884,7 +884,7 @@ mod tests {
         let mut vault = SecretVault::new();
         let value = "sk-ant-abcdefghijklmnopqrstuvwxyz";
         let masked = obfuscate(
-            &format!("export API_KEY={value}\nexport PATH=/usr/bin\n"),
+            &format!("export API_KEY={value}\nAPI_KEY={value}\nexport PATH=/usr/bin\n"),
             &mut vault,
             &[],
         );
