@@ -58,12 +58,21 @@ fn collect(paths: &store::SessionPaths, root: &store::SessionId, with_children: 
         return Ok(found);
     }
     let mut children: BTreeMap<String, Vec<Exported>> = BTreeMap::new();
-    for summary in store::catalog::list(paths, store::ReadProbe::default())? {
-        if summary.session_id == *root {
+    // List the store by reading its directory: the catalog helpers refresh a
+    // derived cache on disk, and this command must not write to the store.
+    for entry in std::fs::read_dir(paths.root())? {
+        let entry = entry?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Ok(id) = store::SessionId::parse(&name) else {
+            continue;
+        };
+        if id == *root || !entry.file_type()?.is_dir() {
             continue;
         }
         // A session whose log cannot be replayed is not part of any tree here.
-        if let Ok(session) = load(paths, &summary.session_id)
+        if let Ok(session) = load(paths, &id)
             && let Some(parent) = session.parent.clone()
         {
             children.entry(parent).or_default().push(session);
