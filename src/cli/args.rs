@@ -5,6 +5,8 @@ use super::provider_init::ProviderChoice;
 mod mcp;
 #[allow(unused_imports)]
 pub(crate) use mcp::McpCommand;
+mod model_filter;
+pub(crate) use model_filter::ModelListFilter;
 mod packages;
 pub(crate) use packages::PackageCommand;
 mod run_options;
@@ -393,11 +395,7 @@ pub(crate) enum Command {
         json: bool,
     },
 
-    /// Show the release notes of a version without updating
-    ///
-    /// Reads the published notes of VERSION (default: the running release) and
-    /// prints them. It never downloads or installs a build. When the notes
-    /// cannot be read it prints the version and the release page instead.
+    /// Show a version's release notes without updating (read-only)
     Changelog {
         /// Release version such as 0.1.5 (default: the running release)
         #[arg(value_name = "VERSION")]
@@ -856,19 +854,6 @@ pub(crate) enum ModelCommand {
         #[command(flatten)]
         filter: ModelListFilter,
     },
-}
-
-#[derive(clap::Args, Debug)]
-pub(crate) struct ModelListFilter {
-    /// Filter model IDs by a case-insensitive substring
-    #[arg(long, value_name = "TEXT")]
-    pub(crate) search: Option<String>,
-    /// Filter results by provider profile name
-    #[arg(long, value_name = "PROFILE")]
-    pub(crate) profile: Option<String>,
-    /// Fetch current model IDs for matching OpenAI-compatible profiles
-    #[arg(long)]
-    pub(crate) refresh: bool,
 }
 
 #[derive(Subcommand, Debug)]
