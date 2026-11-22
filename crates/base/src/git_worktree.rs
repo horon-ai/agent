@@ -129,19 +129,9 @@ pub(crate) fn safe_name(branch: &str) -> String {
     name
 }
 
-/// Create a new branch from the caller's HEAD and check it out in a sibling
-/// `<main-repo-name>-worktrees/<encoded-branch>` directory. Nested and linked
-/// worktree invocations share the same destination root. No force/reset flags
-/// are used. Errors never trigger destructive cleanup, so a Git failure may
-/// leave a newly created branch or directory for the user to inspect.
-pub fn create(working_dir: &str, branch: &str) -> Result<Worktree> {
-    ensure!(!branch.is_empty() && !branch.starts_with('-'), "Invalid branch name");
-    let checked = git(working_dir, &["check-ref-format", "--branch", branch])?;
-    // Reject Git shorthand such as @{-1}, which check-ref-format expands.
-    ensure!(
-        checked == format!("{branch}\n").as_bytes(),
-        "Branch name must be literal"
-    );
+/// Where [`create`] would put the worktree for `branch`: a sibling
+/// `<main-repo-name>-worktrees/<encoded-branch>` directory. Nothing is created.
+pub fn planned_path(working_dir: &str, branch: &str) -> Result<std::path::PathBuf> {
     let entries = list(working_dir)?;
     let main = Path::new(&entries.first().context("Repository has no worktrees")?.path);
     let parent = main.parent().context("Repository has no parent directory")?;
@@ -157,7 +147,23 @@ pub fn create(working_dir: &str, branch: &str) -> Result<Worktree> {
             "Worktree root is not a real directory"
         );
     }
-    let path = root.join(safe_name(branch));
+    Ok(root.join(safe_name(branch)))
+}
+
+/// Create a new branch from the caller's HEAD and check it out in a sibling
+/// `<main-repo-name>-worktrees/<encoded-branch>` directory. Nested and linked
+/// worktree invocations share the same destination root. No force/reset flags
+/// are used. Errors never trigger destructive cleanup, so a Git failure may
+/// leave a newly created branch or directory for the user to inspect.
+pub fn create(working_dir: &str, branch: &str) -> Result<Worktree> {
+    ensure!(!branch.is_empty() && !branch.starts_with('-'), "Invalid branch name");
+    let checked = git(working_dir, &["check-ref-format", "--branch", branch])?;
+    // Reject Git shorthand such as @{-1}, which check-ref-format expands.
+    ensure!(
+        checked == format!("{branch}\n").as_bytes(),
+        "Branch name must be literal"
+    );
+    let path = planned_path(working_dir, branch)?;
     match std::fs::symlink_metadata(&path) {
         Ok(_) => bail!("Worktree destination already exists: {}", path.display()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}

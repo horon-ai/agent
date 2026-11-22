@@ -17,6 +17,7 @@ use crate::session;
 use crate::session::event_store_api as store;
 
 mod recovery;
+mod worktree;
 
 const BUNDLE_KIND: &str = "horon-agent-session-bundle";
 const BUNDLE_VERSION: u32 = 1;
@@ -51,6 +52,15 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             },
             json,
         ),
+        SessionCommand::Worktrees { json } => worktree::list(&home()?, json),
+        SessionCommand::MoveToWorktree {
+            session,
+            branch,
+            undo,
+            apply,
+            json,
+        } => worktree::move_session(&home()?, &session, branch.as_deref(), undo, apply, json),
+        SessionCommand::RemoveWorktree { path, apply, json } => worktree::remove(&home()?, &path, apply, json),
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
         SessionCommand::Import { input, json } => import(&home()?, &input, json),
         SessionCommand::ExportLegacy {
