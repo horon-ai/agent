@@ -26,8 +26,8 @@ OS마다 `.github/workflows/benchmark-os.yml`을 한 번씩 부르고, 그 안�
 
 | 작업 | 수 | 하는 일 |
 | --- | --- | --- |
-| `build` | OS마다 1개 | 고른 단위가 쓰는 바이너리를 모두 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `horon-agent`, `loading` 단위의 `loading_probe`·`resume_stage_probe` 예제, `tui` 단위의 `horon-tui`와 `render_bench`·`scroll_bench` 예제가 들어간다. `baseline_ref`가 있고 `compare`나 `tools`를 고르면 그 커밋의 `horon-agent`를 `baseline/`에 넣고, `tui`를 고르면 후보의 `scroll_bench` 소스를 기준 리비전 렌더러로 빌드해 `baseline/examples/`에 넣는다. 그래서 두 리비전이 같은 측정 코드로 돈다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
-| `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, `tui`다. 기준 빌드가 있으면 `compare`는 `horon-base` 줄로 같은 작업 안에서 번갈아 재고, `tools`는 두 번째 데몬으로 띄워 두 데몬의 CPU 구간을 사례마다 번갈아 잰다. |
+| `build` | OS마다 1개 | 고른 단위가 쓰는 바이너리를 모두 만들어 `bench-bin-<os>-<run_id>` 아티팩트(tar, 1일 보관)로 올린다. `horon-agent`, `loading` 단위의 `loading_probe`·`resume_stage_probe` 예제, `tui` 단위의 `horon-tui`와 `render_bench`·`scroll_bench` 예제가 들어간다. `packages` 단위에는 예제 패키지 실행 파일 `horon-package-example`이 들어간다. `baseline_ref`가 있고 `compare`·`packages`·`tools`를 고르면 그 커밋의 `horon-agent`를 `baseline/`에 넣고, `tui`를 고르면 후보의 `scroll_bench` 소스를 기준 리비전 렌더러로 빌드해 `baseline/examples/`에 넣는다. 그래서 두 리비전이 같은 측정 코드로 돈다. 두 빌드 모두 `release.yml`이 배포 바이너리를 만드는 값(`CARGO_PROFILE_RELEASE_OPT_LEVEL=3`, `CARGO_PROFILE_RELEASE_DEBUG=0`, `CARGO_INCREMENTAL=0`)으로 빌드한다. 저장소의 `[profile.release]`는 로컬 재빌드용(`opt-level = 1`, incremental)이고, 경쟁 도구는 각자 배포한 릴리스 빌드로 재기 때문이다. |
+| `measure` | OS × 측정 단위마다 1개 | 바이너리를 내려받아 측정 단위 하나만 잰다. 단위는 `compare`, `packages`, `startup`, `loading-cold`, `loading-warm`, `tools`, `reload`, `tui`다. 기준 빌드가 있으면 `compare`는 `horon-base` 줄로 같은 작업 안에서 번갈아 재고, `tools`는 두 번째 데몬으로 띄워 두 데몬의 CPU 구간을 사례마다 번갈아 잰다. |
 | `compile` | OS마다 1개 | 소스를 직접 다시 빌드하므로 다른 측정과 기계를 나누지 않게 따로 돈다. |
 | `merge` | OS마다 1개 | 단위별 결과 `bench-part-<os>-<unit>-<run_id>`를 모아 예전과 같은 `benchmark-<os>-<run_id>` 아티팩트로 합친다(`scripts/perf/bench_merge.py`). |
 
@@ -48,7 +48,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=install -f ones
 | 입력 | 기본값 | 뜻 |
 | --- | --- | --- |
 | `os` | `all` | `linux`, `macos`, `windows` 중 쉼표로 고른다. 고른 OS마다 위 작업이 뜬다. 설치 묶음은 `freebsd`도 받고 묶음마다 아키텍처 수만큼 작업을 띄운다. 일반 묶음은 이 자리에서 세 호스트 OS에서만 돈다. |
-| `suites` | `all` | `compare`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`, `install` 중 쉼표로 고른다. `all`은 일반 묶음 전부를 뜻하고 `install`은 넣지 않는다. 설치 묶음은 이름을 적어야만 도는 별도 선택이다 |
+| `suites` | `all` | `compare`, `packages`, `startup`, `loading`, `tools`, `reload`, `tui`, `compile`, `install` 중 쉼표로 고른다. `compare`는 `packages`도 함께 잰다. `all`은 일반 묶음 전부를 뜻하고 `install`은 넣지 않는다. 설치 묶음은 이름을 적어야만 도는 별도 선택이다 |
 | `competitors` | `jcode,claude_code,codex,opencode,pi,omp,omo` | horon과 비교할 도구. `omp`(oh-my-pi)와 `omo`(oh-my-openagent)가 들어 있다. 설치에 실패했거나 실행 런타임이 없는 도구는 `skipped`로 남는다. |
 | `jcode_version` | 비어 있음 | 고정할 jcode 공개 태그(`vX.Y.Z`). 비우면 비교·설치 행렬 전에 최신 안정 GitHub 릴리스를 한 번 해석해 그 태그·푼 커밋·`latest` 선택을 모든 OS 작업에 넘기므로, 한 회차가 릴리스 두 개를 재는 일이 없다. 해석·자산·체크섬·`--version` 가운데 하나라도 실패하면 jcode를 건너뛰지 않고 실행을 실패로 끝낸다. |
 | `sessions` | `1 5 10` | 세션 메모리 비교의 동시 세션 수 |
@@ -78,6 +78,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 | 묶음 | 스크립트 | 재는 것 |
 | --- | --- | --- |
 | `compare` | `bench_compare.py`, `install_competitors.sh` | horon과 경쟁 도구(`jcode`, `claude_code`, `codex`, `opencode`, `pi`, `omp`, `omo`)의 `--version` 시간, 질문 1건 처리 시간과 최대 메모리(기록된 결과와 같은 도구 허용 목록으로 한 번, horon은 기본 core 도구 표면으로 `oneshot_core`를 한 번 더), 모델 요청마다의 바이트 수(`request_bytes`), 동시 세션 수에 따른 메모리, 설치 크기, 스킬 호출 시간, MCP 도구 호출 시간과 도구 왕복. Linux는 `fsync` 호출 수와 그 호출이 flush한 파일(`fsync_paths`)도 잰다. |
+| `packages` | `package_workloads.py` | 사용자가 설치한 패키지의 비용을 세 상황에서 잰다. 설치 안 함, 설치했으나 호출 안 함, 실제 `ext__hello__greet` 호출 왕복 한 번. 표본마다 모의 모델을 상대로 `horon run` 턴을 한 번 돌려 첫 모델 요청까지와 종료까지의 시간, 프로세스 트리 최대 RSS를 잰다. 설치 영역의 바이트와 파일 수, 설치된 패키지 바이너리와 에이전트 바이너리의 바이트는 빌드마다 한 번 기록한다. `compare`도 이 묶음을 함께 고른다. 전후 비교를 지시하는 그 실행이 이 값을 남겨야 하기 때문이다. |
 | `startup` | `bench_startup.py` | `--help`·`--version` 로드, `serve` 소켓 준비, `HORON_AGENT_STARTUP_PROFILE=1`로 한 번 더 돌린 실행의 `serve` 기동 단계 표, 하네스 브리지 단계별 준비 시간 |
 | `loading` | `bench_loading.py` | 고정 시드 픽스처의 세션 로딩, COLD와 WARM, 그리고 콜드 픽스처에서 `resume_stage_probe`가 재는 단계별 귀속 |
 | `tools` | `bench_tools.py` | debug 소켓으로 core 도구(read, write, edit, ls, agentgrep, bash) 14개 사례의 지연, Linux에서는 호출당 데몬 CPU 시간과 문맥 전환 수도 잰다 |
@@ -85,6 +86,36 @@ gh workflow run benchmark.yml --ref <branch> -f os=linux -f suites=compare \
 | `tui` | `bench_tui.py` | 대화형 클라이언트 `horon-tui`: 첫 화면(맨 `horon-agent`와 직접 실행), 그 둘의 핸드오프, PTY 입력 반향, 유휴와 턴 후 RSS, `render_bench` 예제의 프레임 한 장, 별도 `scroll_bench` 예제로 큰 세션을 스크롤할 때의 held 프레임, 설치 크기 |
 | `compile` | `bench_compile.py` | `cargo check`의 변경 없음, `src/main.rs`·`crates/app-core`·build-meta 수정 뒤 재빌드 시간 |
 | `install` | `bench_install.py` | 배포 릴리스와 경쟁 도구의 설치 시간을 OS·아키텍처별로 콜드·웜으로 잰다. 이름을 적어야만 도는 별도 선택이고 `all`에는 들지 않는다([설치 시간](#설치-시간install) 참고) |
+
+### 사용자 설치 패키지(`packages`)
+
+패키지는 사용자가 설치하는 Rust 실행 파일과 선언이다. 이 묶음이 묻는 것은 설치하지 않은 사람이 치르는 비용, 설치했지만 한 번도 호출하지 않았을 때의 비용, 실제 호출 한 번의 비용이다. 셋은 서로 다른 수이고, "패키지 부담" 하나로 묶으면 그중 둘이 가려진다.
+
+세 시나리오를 같은 표의 행으로 각각 잰다.
+
+- **`empty`**: 패키지 영역이 아예 없는 개인 홈이다. 턴은 패키지 파일을 읽지 않고, 디렉터리를 훑지 않고, 영역에 아무것도 쓰지 않고, 자식 프로세스를 띄우지 않는다. 패키지를 설치한 적 없는 모든 사용자가 치르는 경로다.
+- **`installed`**: 예제(`examples/packages/example/layouts`)를 `horon package install`로 설치하고 한 번도 호출하지 않는다. 턴은 선언을 읽고 도구를 목록에 올리며, 모델은 호출 없이 답하므로 아무것도 뜨지 않는다. 이 셀의 선언에서만 예제의 `turn.start`·`turn.end` 구독을 뺀다. 턴을 구독하는 패키지는 그 턴이 *시작*시키므로 그대로 두면 자식 기동을 재게 되고, 이 선언은 실행 중인 자식에게 넘어가지도 않는다.
+- **`called`**: 같은 설치에서 모델이 `Registry::execute`를 거쳐 실제 `ext__hello__greet` 호출을 한 번 낸다. 이 복사본은 호스트 전용 `[targets]` 줄 말고는 선언을 그대로 유지한다. 작성자 SDK가 코드와 events가 어긋난 선언을 거부하기 때문이다(`SurfaceError::UndeclaredEvent`). 자식이 뜨고 `hello, <nonce>`로 답하며, 그 턴의 관찰도 자식에게 전달되므로 이것도 이 셀의 실제 비용이다. 표본마다 프로세스 하나이므로 자식 재사용 확인은 이 묶음이 아니라 구조 게이트가 맡는다. 호출이 돌아오지 않으면 행의 `last_tool_result`에 호스트가 실제로 답한 내용이 남고 실패 줄에 그대로 보이므로, 거부된 호출을 다시 돌리지 않고 읽을 수 있다.
+
+표본마다 기록하는 값은 턴의 전체 시간, 프로세스 시작부터 첫 모델 요청까지의 시간(모의 서버가 남긴 요청 시각 기준), 프로세스 트리 최대 RSS, 도구 왕복이 실제로 돌아왔는지 여부다. 크기는 절대값이다. 설치 영역의 바이트와 파일 수, 패키지 바이너리, 에이전트 바이너리다. `horon-tui`는 여기서 재지 않는다. 그 묶음은 `tui`다.
+
+`baseline_ref`를 주면 같은 작업에서 그 빌드의 세 시나리오도 번갈아 재므로, 두 빌드가 모두 지원하는 셀은 같은 기계의 전후 비교가 된다. 크기에는 기준선이 없다. 절대값으로 기록한다. 패키지 기능이 없는 빌드는 설치에 실패하고 0이 아니라 사유가 적힌 건너뛴 행으로 남는다.
+
+```bash
+gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=compare \
+  -f competitors=jcode -f oneshot_runs=5 -f baseline_ref=dev
+```
+
+이 실행은 경쟁 도구 셀 옆에 패키지 셀을 `compare`의 두 번째 단위(`packages`)로 남긴다. 표를 읽는 사람이 믿을 값은 한 OS 안의 비율이다. 절대값은 러너에 따라 움직인다.
+
+로컬에서는 같은 스크립트가 잴 두 바이너리만 받고 릴리스 빌드를 요구하지 않는다.
+
+```bash
+python3 scripts/perf/package_workloads.py --binary target/release/horon-agent \
+  --package-binary target/release/horon-package-example --runs 5
+```
+
+그보다 앞선 질문인 "모양이 여전히 한계 안인가"는 초시계 없이 구조 게이트가 답한다. `python3 scripts/perf/check_structural.py --only packages`가 `package_cost` 타깃이 찍는 계수를 읽는다([구조 게이트](#구조-게이트) 참고).
 
 ### 설치 시간(`install`)
 
@@ -360,6 +391,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui \
 | 요청 프리픽스 | `tools_bytes`, `tool_count`, `per_tool` | `core` 프로필의 도구 카탈로그가 1바이트 이상이고 커밋된 상한 이하이며, 도구 수가 그 카탈로그를 만든 즉시 사용 정의 수와 같다. `per_tool`은 카탈로그 순서의 `name:bytes` 목록이다. 크기의 합에 배열의 대괄호 둘과 항목 사이 쉼표를 더한 값이 `tools_bytes`와 같아야 하고, `per_tool`이 없는 줄은 측정이 아니다 |
 | 정적 프롬프트(`prompt`) | `static_bytes`, `static_sha256`, `static_tokens`, `index_bytes`, `index_clipped_rows`, `warm_source_reads`, `unchanged_request_source_reads` | `STRUCTURAL_PERF section=prompt` 줄로 찍힌다. `static_bytes`는 `prompt_static_bytes_max` 이하이고, 세션이 프롬프트 원천을 캡처한 뒤의 요청은 원천 파일을 하나도 읽지 않으며(`prompt_unchanged_request_source_reads_max`, 0), 문장 중간에서 잘리는 인덱스 행은 `prompt_index_clipped_rows_max`(1)개 이하다. 하한은 아무것도 재지 않은 줄을 거부한다. 정적 프롬프트와 그 토큰 추정치, 도구 인덱스가 1바이트 이상이고, 다이제스트가 SHA-256이며, 세션 캡처와 첫 조립을 합쳐 원천 파일을 하나 이상 읽으려 해야 한다. `static_sha256`은 시계 줄(`Time: `)을 뺀 프롬프트의 해시라 같은 프리픽스는 어느 실행에서나 같은 값이다. 두 읽기 카운터는 파일이 있든 없든 프롬프트 원천 파일을 읽으려는 시도를 센다 |
 | 세션 컨텍스트(`session_context`) | `git_spawns_outside_repo`, `git_spawns_in_repo`, `gpu_probe_spawns_without_display`, `gpu_probe_spawns_here`, `gpu_reported` | 저장소 밖 폴더는 `git`을 띄우지 않고(`session_context_git_spawns_outside_repo_max`, 0), 작업 트리는 한 번 띄우며(`session_context_git_spawns_in_repo_max`, 1), 표시 장치가 없는 PCI 장치 목록에서는 GPU 탐지를 띄우지 않는다(`session_context_gpu_probe_spawns_without_display_max`, 0). `git_spawns_in_repo`는 1 이상이어야 하기도 하다. 저장소를 설명하려면 `git` 프로세스가 필요하므로 0은 카운터가 꺼져 있었다는 뜻이다. 모두 자식 프로세스를 띄우려는 시도를 세므로 `git`이나 `lspci`가 없어도 센다. `gpu_probe_spawns_without_display`는 빈 PCI 장치 목록을 대상으로 재므로 어느 러너에서나 같은 값이다. `gpu_probe_spawns_here`와 `gpu_reported`는 시험을 돌린 기계를 설명하며 게이트는 둘 다 읽지 않는다 |
+| 패키지(`packages`) | `area_reads`, `dir_scans`, `area_writes`, `snapshot_builds`, `child_starts` | `package_cost` 타깃이 찍는다. 패키지 영역이 없으면 턴 두 번이 패키지 파일을 읽지 않고, 디렉터리를 훑지 않고, 아무것도 쓰지 않고, 자식을 띄우지 않는다(`packages_empty_area_*_max`, 0). 세션이 이미 잡은 세대에서 두 번째 턴은 아무것도 읽지 않고 스냅숏을 다시 만들지 않고 자식을 띄우지 않는다(`packages_unchanged_turn_*_max`, 0). 같은 카탈로그의 첫 턴은 카탈로그와 선언을 읽고 참조를 잡고 스냅숏을 정확히 하나 만든다(`packages_warm_turn_*_min`, 1). 이 하한이 계수가 실제로 기록된다는 증거다. 실제 호출 한 번은 자식을 정확히 하나 띄우고(`packages_call_child_starts`, 1) 다음 호출은 하나도 띄우지 않는다(`packages_call_repeat_child_starts`, 0) |
 | 도구 호출(`tool_dispatch`) | `dispatches`, `small_allocs`, `small_alloc_bytes`, `large_allocs`, `large_alloc_bytes` | `tool_dispatch_perf` 타깃이 출력한다. 이 타깃의 자체 할당자가 호출 스레드가 `Registry::execute` 안에서 낸 힙 요청을 센다. 픽스처 도구를 짧은 파일 쓰기 입력으로 200번, `content`가 10 KB인 입력으로 200번 호출하며 입력과 도구 컨텍스트는 세는 구간 밖에서 만든다. 호출당 요청 수와 호출당 요청 바이트(올림)는 `tool_dispatch_small_allocs_per_dispatch_max`, `tool_dispatch_small_alloc_bytes_per_dispatch_max`, `tool_dispatch_large_allocs_per_dispatch_max`, `tool_dispatch_large_alloc_bytes_per_dispatch_max` 이하여야 한다. 각 수는 호출당 요청 1건 이상, 요청당 1바이트 이상이기도 해야 하므로 아무것도 기록하지 못한 카운터는 실패한다. 테스트는 측정한 호출마다 `start`와 `done` 수명 주기 줄이 기록됐는지 확인하므로 로깅이 꺼진 실행은 측정이 아니다 |
 
 가짜 모델 서버는 응답한 요청마다 `body_bytes`, `tools_bytes`, `tool_count`를 기록하고(`GET /__stats`), `compare` 실행은 그 값을 실행 기록마다 `request_bytes`로 옮겨 적는다. 그래서 벤치 실행이 `prefix` 행이 경계를 거는 것과 같은 요청별 모양을 보고한다.
@@ -370,7 +402,7 @@ gh workflow run benchmark.yml --ref <branch> -f os=all -f suites=tui \
 
 ```bash
 python3 scripts/perf/check_structural.py                 # 전체
-python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix, prompt, session_context, tool_dispatch
+python3 scripts/perf/check_structural.py --only page     # queue, pending, page, hash, frame, soak, context, irc, skill, mcp_config, hooks, prefix, prompt, session_context, tool_dispatch, packages
 python3 scripts/perf/check_structural.py --print-plan    # 실행할 cargo 명령만 보기
 python3 -m unittest -v scripts/perf/test_check_structural.py   # 게이트의 계약 테스트
 ```

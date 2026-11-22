@@ -370,6 +370,7 @@ async fn start(
     let started = tokio::task::spawn_blocking(move || -> Result<Started> {
         let lease = store.lease(&owner)?;
         let mut process = store.prepare_record_executable(lease, &prepared)?.start()?;
+        horon_agent_perf_counters::record_package_child_start();
         let stdin = process
             .take_stdin()
             .with_context(|| format!("package {launch_id} has no standard input pipe"))?;

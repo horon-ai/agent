@@ -82,6 +82,7 @@ pub fn install(source: &str, git_ref: Option<&str>, name_hint: Option<&str>) -> 
     if source.is_empty() {
         bail!("An install needs a git source such as https://github.com/owner/repo.git.");
     }
+    check_source(source)?;
     let dir = managed_skills::dir()?;
     std::fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
 
@@ -100,6 +101,54 @@ pub fn install(source: &str, git_ref: Option<&str>, name_hint: Option<&str>) -> 
             discard(&staging);
             Err(error)
         }
+    }
+}
+
+/// Refuses a source that git would treat as anything but a plain remote or a
+/// local directory. The check runs before any directory is created, so a
+/// refused source leaves the managed directory exactly as it was.
+///
+/// Allowed: `https://`, `ssh://` and `file://` URLs, scp-style `user@host:path`,
+/// and an existing local directory. Refused: a leading `-` (an option), a
+/// `transport::address` remote such as `ext::` that runs a command, and
+/// unencrypted `http://` or `git://`.
+pub fn check_source(source: &str) -> Result<()> {
+    let refuse = |why: &str| bail!("Source {source:?} is not allowed: {why}.");
+    if source.starts_with('-') {
+        return refuse("it would be read as an option");
+    }
+    let transport = source.split_once("::").map(|(head, _)| head);
+    if transport
+        .is_some_and(|head| !head.is_empty() && head.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c)))
+    {
+        return refuse("a transport::address remote can run a command");
+    }
+    if source.starts_with("https://") || source.starts_with("ssh://") || source.starts_with("file://") {
+        return Ok(());
+    }
+    if source.contains("://") {
+        return refuse("only https, ssh and file URLs are accepted");
+    }
+    let scp_like = source
+        .split_once(':')
+        .is_some_and(|(host, _)| host.contains('@') && !host.contains('/'));
+    if scp_like || Path::new(source).is_dir() {
+        return Ok(());
+    }
+    refuse("expected an https, ssh or file URL, a user@host:path remote, or an existing local directory")
+}
+
+/// Every skill the install lock file records, in name order.
+///
+/// A missing lock file means nothing was installed through this path.
+pub fn read_lock() -> Result<Vec<InstallRecord>> {
+    let path = managed_skills::dir()?.join(LOCK_FILE);
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(serde_json::from_slice::<LockFile>(&bytes)
+            .with_context(|| format!("{} is not a readable install lock", path.display()))?
+            .installs),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error).with_context(|| format!("cannot read {}", path.display())),
     }
 }
 

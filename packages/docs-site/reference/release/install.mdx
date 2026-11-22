@@ -52,6 +52,25 @@ The FreeBSD x64 archive uses POSIX ustar so FreeBSD `tar` and `install-release` 
 
 FreeBSD is the one platform with no interactive client: the release publishes the agent only, and the installer never looks for `horon-tui` there.
 
+## Package support
+
+A user-installed Rust package (an extension or a plugin) runs as a child process of the agent, so a platform is supported only where the package was installed, called and removed. The `Package compat` workflow (`.github/workflows/package-compat.yml`) builds the agent binary and the worked example `examples/packages/example` on a native runner for each target below, then runs `cargo test --locked --test package_end_to_end` against them. The report covers both kinds: the install, a tool call from a later turn, a plugin resource call, a cancelled call, a replacement, removal with new calls refused, every descendant process reaped, a refused wrong target and a refused corrupted copy.
+
+Only a target whose native run passed every step says `Yes` here. A target whose run fails stays in the table as `No` until it passes: the six rows are the complete statement of support, and the checker refuses a table that omits one. A `No` row is not a passing state and does not make the workflow green; a red run is the warning to fix that target, and the row changes to `Yes` in a follow-up once the run passes.
+
+A log from a cross-compiled build is not execution evidence: a report whose `cross_compiled` is not false, or whose native run misses a step, is refused instead of counted. The final job of the workflow downloads every report, requires a report for all six targets and the steps of both kinds, and prints the target by kind by step matrix. It stays red while any target fails, whatever this table says.
+
+| Target | Platform | Native execution verified |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | macOS on Apple silicon | Yes |
+| `x86_64-apple-darwin` | macOS on Intel | Yes |
+| `aarch64-unknown-linux-gnu` | Linux on arm64 | Yes |
+| `x86_64-unknown-linux-gnu` | Linux on x86-64 | Yes |
+| `aarch64-pc-windows-msvc` | Windows on arm64 | Yes |
+| `x86_64-pc-windows-msvc` | Windows on x86-64 | Yes |
+
+`scripts/ci/package_compat.py docs-claims` reads this table and fails when a row says `Yes` for a target that has no passing report, so a claim here can only follow a green native run. FreeBSD and the other platforms have no runner in that workflow, so they are not listed and this page claims no package support there. The package format and the six declaration targets are described in [`../runtime/PACKAGES.md`](/reference/runtime/packages).
+
 ## How the install scripts use it
 
 `scripts/install/install.sh` and `scripts/install/install.ps1` fetch the release assets and `SHA256SUMS` into a temporary directory and then call this command. `scripts/install/install_from_source.sh` calls the same command with `--source-binary` to install a local build. The shell and PowerShell installers therefore never produce different layouts, and a failure leaves the previous installation alone.
@@ -144,6 +163,7 @@ default_model = "my-model"
 | Limit turn processing to 30 seconds | `horon --no-update run --max-time 30 "..."` |
 | Print shell completions | `horon completions bash` (also `zsh` and `fish`) |
 | Estimate tokens in a UTF-8 file offline | `horon --model gpt-4o tokens --file input.txt` |
+| Read a version's release notes without updating | `horon changelog 0.1.5` |
 | Stay resident as a daemon | `horon serve` |
 | Open the SDK socket | `horon api-bridge` |
 
