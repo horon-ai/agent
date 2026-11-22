@@ -81,6 +81,7 @@
                 "group": "Runtime",
                 "pages": [
                   "reference/runtime/tools",
+                  "reference/runtime/memory",
                   "reference/runtime/edit-diagnostics",
                   "reference/runtime/tool-scheduling",
                   "reference/runtime/turns",
@@ -197,6 +198,7 @@
                 "group": "런타임",
                 "pages": [
                   "ko/reference/runtime/tools",
+                  "ko/reference/runtime/memory",
                   "ko/reference/runtime/edit-diagnostics",
                   "ko/reference/runtime/tool-scheduling",
                   "ko/reference/runtime/turns",

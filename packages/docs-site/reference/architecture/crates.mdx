@@ -360,7 +360,7 @@ Current narrow verification table after the DTO splits:
 | Gateway DTO | `cargo check --profile selfdev -p horon-agent-gateway-types -p horon-agent --bin horon-agent` | Narrow the gateway persistence and auth tests to exact test names where possible. | Pairing and token HTTP and WebSocket behavior stay in the root. |
 | Ambient DTO | `cargo check --profile selfdev -p horon-agent-ambient-types -p horon-agent --bin horon-agent` | Target only the scheduler and the type consumers. | The ambient DTO crate owns usage records only. Queue, runtime, and prompt behavior stay in the root. |
 | Ambient behavior module | `cargo check --profile selfdev -p horon-agent-app-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-app-core ambient::ambient_tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::scheduler::tests --lib`; `cargo test --profile selfdev -p horon-agent-app-core ambient::runner::runner_tests --lib` | Do not use bare `ambient` as a required gate for a module-only refactor. It also picks up cross-module config state tests. |
-| Memory activity DTO | `cargo check --profile selfdev -p horon-agent-memory-types -p horon-agent-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-base runtime_memory_log --lib` | `memory::activity` matches no test today, so use the consumer test. |
+| Memory DTOs and page model | `cargo check --profile selfdev -p horon-agent-memory-types -p horon-agent-core -p horon-agent --bin horon-agent` | `cargo test --profile selfdev -p horon-agent-memory-types --lib` for the page model and graph tests; `cargo test --profile selfdev -p horon-agent-base memory::store --lib` for the wiki store | `memory::activity` matches no test today, so use the consumer test. CI runs the memory-types crate whole, and the base wiki store runs in the whole-crate base suite. |
 | Goal, todo, catchup core DTO | `cargo check --profile selfdev -p horon-agent-core -p horon-agent --bin horon-agent` | When behavior changes, use the exact goal, todo, and catchup filters. | They are small and stable enough to stay in `horon-agent-core` for now. Revisit when change frequency rises. |
 
 ## Compile baseline observations
@@ -409,7 +409,7 @@ Compile-speed priorities set by this audit:
 | `copilot_usage_types` | Local Copilot usage counters | Moved to `horon-agent-usage-types` | The move is done, and the compatibility re-export from then is gone from the root `src/lib.rs`. |
 | `gateway_types` | Durable records of paired devices and pairing codes | Moved to `horon-agent-gateway-types` | Pairing and token behavior stay in the root. |
 | `goal_types` | Goal state, milestones, status, updates | `horon-agent-goal-types` or `horon-agent-task-types` | The domain is bigger. Worth splitting when goals and tool work grow. |
-| `memory_types` | Memory activity DTOs | Moved to `horon-agent-memory-types` | Memory carries enough domain weight to have its own type crate. |
+| `memory_types` | Memory activity DTOs, the markdown page model (`page`) | Moved to `horon-agent-memory-types` | Memory carries enough domain weight to have its own type crate. The crate stays free of `rusqlite`: `page` holds ids, kinds, links and the page record, and the markdown wiki store that reads and writes files lives in `crates/base/src/memory/store/`. |
 | `todo_types` | Todo item DTOs | `horon-agent-task-types`, `horon-agent-todo-types`, or core | Very small. Can merge into the goal and catchup work-state crate. |
 | `usage_types` | Provider usage report DTOs | Moved to `horon-agent-usage-types` | Runtime lookup, caches, and display stay in the root. |
 | `env` | Environment variable helpers | Stay in core | A general utility that needs no domain crate. |
@@ -439,6 +439,7 @@ Domain type splits that are done or clearly worthwhile:
 4. `horon-agent-memory-types`
    - `memory_types`
    - memory protocol and activity DTOs shared by the server, TUI, and tools
+   - the markdown page model (`page`: page id and file name, kinds, typed links, the full page record); the SQLite-backed wiki store stays in `crates/base/src/memory/store/` because it needs `rusqlite`
 
 5. An optional work-state crate
    - `goal_types`

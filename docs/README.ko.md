@@ -36,6 +36,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
 | | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
+| | [`MEMORY.ko.md`](runtime/MEMORY.ko.md) | 기억 위키: 정본인 마크다운 페이지, 파생 SQLite 인덱스와 스키마, 검색 스트림과 융합, 삭제와 secure-delete 순서, 재생성, 한국어 평가와 측정된 recall |
 | | [`EDIT_DIAGNOSTICS.ko.md`](runtime/EDIT_DIAGNOSTICS.ko.md) | 편집 후 언어 서버 진단 설계 제안 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |
