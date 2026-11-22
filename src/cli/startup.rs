@@ -10,6 +10,7 @@ use super::{
 };
 
 mod agent_catalog;
+mod changelog;
 mod completions;
 mod provider_status;
 mod stream_rule_preview;
@@ -63,6 +64,10 @@ fn offline_command(args: &Args) -> Option<Result<()>> {
             crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
             Some(agent_catalog::run(args.cwd.as_deref().map(std::path::Path::new)))
         }
+        Some(Command::Changelog { .. }) if args.ssh.is_some() => {
+            Some(Err(anyhow::anyhow!("changelog runs locally without --ssh")))
+        }
+        Some(Command::Changelog { version, json }) => Some(changelog::run(version.as_deref(), *json)),
         Some(Command::Provider(ProviderCommand::Status { json })) => Some(provider_status::run(*json)),
         _ => None,
     }

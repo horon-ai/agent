@@ -1850,6 +1850,22 @@ export class HoronAgentClient extends EventEmitter {
     return frame.markdown ?? "";
   }
 
+  /** Export the conversation as a standalone offline HTML report.
+   *
+   * Requires `session_replication_v1`. Returns one self-contained document
+   * rendered from the same redacted projection as `exportSessionMarkdown`:
+   * every transcript character is escaped, the stylesheet is inline, and the
+   * page loads nothing from the network.
+   */
+  async exportSessionHtml(sessionId: string): Promise<string> {
+    this.requireCapability("session_replication_v1", "exportSessionHtml");
+    const frame = await this.expectReply(
+      { req: "export_session_html", session_id: sessionId },
+      "session_html",
+    );
+    return frame.html ?? "";
+  }
+
   /** Import one validated page. Identical retransmissions are idempotent. */
   async importSessionEvents(page: SessionEventPage, retryCursor?: string): Promise<SessionImportResult> {
     this.requireCapability("session_replication_v1", "importSessionEvents");

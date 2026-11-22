@@ -52,6 +52,25 @@ FreeBSD x64 압축 파일은 POSIX ustar 형식을 쓴다. FreeBSD `tar`와 `ins
 
 FreeBSD만 대화형 클라이언트가 없다. 릴리스는 에이전트만 내보내고, 설치기는 그 플랫폼에서 `horon-tui`를 찾지 않는다.
 
+## 패키지 지원
+
+사용자가 설치하는 Rust 패키지(확장 또는 플러그인)는 에이전트의 자식 프로세스로 실행된다. 그래서 어떤 플랫폼의 지원 여부는 그 플랫폼에서 패키지를 설치하고 호출하고 제거했을 때만 정해진다. `Package compat` 워크플로(`.github/workflows/package-compat.yml`)는 아래 각 타깃의 네이티브 러너에서 에이전트 바이너리와 예제 패키지 `examples/packages/example`을 빌드한 뒤 `cargo test --locked --test package_end_to_end`를 실행한다. 보고서는 두 유형 모두를 다룬다. 설치, 다음 턴의 도구 호출, 플러그인 자원 호출, 취소된 호출, 교체, 제거 뒤 새 호출 거부, 자손 프로세스 전부 정리, 잘못된 타깃 거부, 손상된 사본 거부가 여기에 들어간다.
+
+이 표에는 네이티브 실행이 모든 단계를 통과한 타깃만 `예`로 적는다. 실행이 실패한 타깃은 통과할 때까지 `아니오`로 남긴다. 여섯 행이 지원 범위의 전체 서술이고, 검사기는 행이 빠진 표를 거부한다. `아니오` 행은 통과 상태가 아니며 워크플로를 초록으로 만들지 않는다. 빨간 실행은 그 타깃을 고치라는 신호이고, 실행이 통과하면 다음 변경에서 그 행을 `예`로 바꾼다.
+
+교차 컴파일한 빌드의 로그는 실행 증거가 아니다. `cross_compiled`가 false가 아니거나 네이티브 실행이 단계를 빠뜨린 보고서는 세지 않고 거부한다. 워크플로의 마지막 작업은 모든 보고서를 내려받아 여섯 타깃의 보고와 두 유형의 필수 단계를 확인하고, 타깃별·유형별·단계별 매트릭스를 출력한다. 그래서 표의 값과 무관하게 타깃 하나라도 실패하면 이 워크플로는 빨간 상태로 남는다.
+
+| 타깃 | 플랫폼 | 네이티브 실행 검증 |
+| --- | --- | --- |
+| `aarch64-apple-darwin` | Apple 실리콘 macOS | 예 |
+| `x86_64-apple-darwin` | Intel macOS | 예 |
+| `aarch64-unknown-linux-gnu` | arm64 Linux | 예 |
+| `x86_64-unknown-linux-gnu` | x86-64 Linux | 예 |
+| `aarch64-pc-windows-msvc` | arm64 Windows | 예 |
+| `x86_64-pc-windows-msvc` | x86-64 Windows | 예 |
+
+`scripts/ci/package_compat.py docs-claims`는 이 표를 읽어, 통과한 보고서가 없는 타깃에 `Yes`(한국어판은 `예`)를 적으면 실패한다. `No`(한국어판은 `아니오`) 행은 보고서가 없어도 되지만, 실패한 타깃의 실행 자체는 집계 작업에서 계속 실패한다. 그래서 여기의 지원 표기는 초록 네이티브 실행 뒤에만 가능하다. FreeBSD와 나머지 플랫폼은 그 워크플로에 러너가 없어 표에 넣지 않으며, 이 문서는 그 플랫폼의 패키지 지원을 주장하지 않는다. 패키지 형식과 선언에 쓰는 여섯 타깃은 [`../runtime/PACKAGES.ko.md`](/ko/reference/runtime/packages)에 있다.
+
 ## 설치 스크립트와의 관계
 
 `scripts/install/install.sh`와 `scripts/install/install.ps1`은 릴리스 자산과 `SHA256SUMS`를 임시 디렉터리에 받은 뒤 이 명령을 호출한다. `scripts/install/install_from_source.sh`는 같은 명령에 `--source-binary`를 붙여 로컬 빌드를 설치한다. 그래서 셸과 PowerShell이 서로 다른 설치 레이아웃을 만들지 않고, 실패하면 스크립트도 이전 설치를 건드리지 않는다.
@@ -144,6 +163,7 @@ default_model = "my-model"
 | 턴 처리 시간을 30초로 제한 | `horon --no-update run --max-time 30 "..."` |
 | 셸 자동완성 스크립트 출력 | `horon completions bash` (`zsh`와 `fish`도 지원) |
 | UTF-8 파일의 토큰 수를 오프라인으로 추정 | `horon --model gpt-4o tokens --file input.txt` |
+| 업데이트 없이 특정 버전의 릴리스 노트 읽기 | `horon changelog 0.1.5` |
 | 데몬으로 상주 | `horon serve` |
 | SDK 소켓 열기 | `horon api-bridge` |
 
