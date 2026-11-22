@@ -2214,8 +2214,7 @@ impl Registry {
         };
         let hook_gate_ms = elapsed_ms(gate_started_at);
 
-        // Input and context stay as they are from here on, so the lifecycle
-        // fields are built once: lent to the start line, relabelled below.
+        // Input and context stay as they are from here on: the lifecycle fields are built once, lent to the start line.
         crate::extensions::observer::tool_before(&ctx, resolved_name);
         let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
         crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
