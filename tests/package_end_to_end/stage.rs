@@ -206,7 +206,10 @@ fn place_binary(declaration_dir: &Path, example: &Path) {
 
 fn versioned(text: &str, version: &str) -> String {
     let replaced = text.replace("version = \"0.1.0\"", &format!("version = \"{version}\""));
-    assert_ne!(replaced, text, "the example declares the version this test rewrites");
+    // The first install keeps the example's own version; a later one must change it.
+    if version != "0.1.0" {
+        assert_ne!(replaced, text, "the example declares the version this test rewrites");
+    }
     replaced
 }
 
