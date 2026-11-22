@@ -283,6 +283,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. } | Command::Agents) => {
             unreachable!("handled by startup")
         }
+        Some(Command::Changelog { .. }) => unreachable!("handled by startup"),
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }
