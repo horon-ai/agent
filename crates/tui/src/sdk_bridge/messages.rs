@@ -27,6 +27,17 @@ pub enum Command {
         command: RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Run one command an installed package supplies.
+    ///
+    /// `display` is the line the user typed, carried so a template's expansion
+    /// is drawn as that line rather than as the paragraph it expanded to, the
+    /// same way a command file's is.
+    PackageCommand {
+        package_id: String,
+        command: String,
+        arguments: String,
+        display: String,
+    },
     /// Read stored token usage for the attached session.
     Stats,
     /// Clear or compact the model context of the session the bridge follows.
@@ -165,6 +176,15 @@ pub enum Incoming {
     SessionsChecked { gone: Vec<String>, unverified: usize },
     /// The skills the harness reports for the session it serves.
     Skills(Vec<SkillRow>),
+    /// The slash commands the installed packages supply for that session.
+    ///
+    /// Replaces the whole list, like [`Self::Skills`]: the answer names one
+    /// session's packages, so a name the session left behind supplied stops
+    /// resolving the moment this arrives.
+    PackageCommands(Vec<crate::commands::PackageCommand>),
+    /// One package command's answer: a template's message or an executable's
+    /// output, with the line the user typed.
+    PackageCommand(Box<super::PackageOutcome>),
     /// The background work the session is still running.
     BackgroundJobs(Vec<super::BackgroundJobRow>),
     /// One cancellation's verdict, and the list as it stands after it.

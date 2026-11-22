@@ -85,6 +85,7 @@ pub fn validate_package(root: &Path) -> Result<ValidatedPackage> {
     };
     check_public_names(&extension, &resources)?;
     super::text_resources::validate_resources(root, &resources)?;
+    super::hook_resources::validate(root, &resources.hooks, &extension)?;
     files.insert(extension_path.clone());
     let directory = extension_path.parent().context("extension manifest needs a parent")?;
     let host = native_package_target().context("this host does not support native packages")?;

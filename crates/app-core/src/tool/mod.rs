@@ -61,6 +61,7 @@ mod read_selector;
 pub(crate) mod read_state;
 pub(crate) mod repair_event;
 mod replace;
+pub mod run_approval;
 pub(crate) mod sdk;
 pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
@@ -2067,12 +2068,12 @@ impl Registry {
         // inner call applies the same mode to the tool it runs, so one prompt
         // names that tool and its arguments.
         let refusal = if policy_on_self {
-            // An ACP connection may set the mode for the turns it starts; every other
-            // turn, including a desktop or daemon turn on the same session, keeps the
-            // configured mode.
+            // An ACP connection may set the mode for its own turns; any other turn keeps the configured mode.
             let approval_effects = plan_effects.unwrap_or(ToolEffects::write());
-            let approval_mode =
-                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode);
+            let approval_mode = run_approval::stricter(
+                &ctx.session_id,
+                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode),
+            );
             let dual_confirm = crate::config::config().tools.dual_confirm_classes.clone();
             let danger = crate::approval::danger_class(resolved_name, &input, ctx.working_dir.as_deref());
             // Explicit `[[tools.bash_patterns]]` rules are the user's own policy,
@@ -2213,14 +2214,15 @@ impl Registry {
         };
         let hook_gate_ms = elapsed_ms(gate_started_at);
 
-        // Input and context stay as they are from here on, so the lifecycle
-        // fields are built once: lent to the start line, relabelled below.
+        // Input and context stay as they are from here on: the lifecycle fields are built once, lent to the start line.
+        crate::extensions::observer::tool_before(&ctx, resolved_name);
         let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
         crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
 
         let execute_started_at = std::time::Instant::now();
         let result = tool.execute(input.clone(), ctx.clone()).await;
         let execute_ms = elapsed_ms(execute_started_at);
+        crate::extensions::observer::tool_after(&ctx, resolved_name, result.is_ok(), execute_ms);
 
         // The `post_tool` observer fires as soon as the tool returns, before the
         // feedback and guard stages exist, so its DURATION_MS stays the execute

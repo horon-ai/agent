@@ -474,14 +474,25 @@ pub(crate) fn for_session(session_id: &str) -> Option<Arc<PackageSession>> {
 }
 
 fn package_session(session_id: &str) -> Result<Arc<PackageSession>> {
-    let mut slots = lock_slots();
-    if let Some(existing) = slots.get(session_id) {
-        return Ok(Arc::clone(existing));
+    if let Some(existing) = lock_slots().get(session_id).cloned() {
+        return Ok(existing);
     }
     let store = PackageStore::for_current_user()?;
+    Ok(open_for(session_id, store))
+}
+
+/// The package session for `session_id` over `store`, opened on first use.
+///
+/// A caller that already resolved the store (the observation worker captures it
+/// once per session) uses this instead of reading the process environment again.
+pub(crate) fn open_for(session_id: &str, store: PackageStore) -> Arc<PackageSession> {
+    let mut slots = lock_slots();
+    if let Some(existing) = slots.get(session_id) {
+        return Arc::clone(existing);
+    }
     let session = PackageSession::open(store, format!("session-{session_id}"));
     slots.insert(session_id.to_owned(), Arc::clone(&session));
-    Ok(session)
+    session
 }
 
 impl crate::agent::Agent {
