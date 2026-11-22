@@ -1886,7 +1886,7 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 60 --min-passed 4 \
-            -- agent::tool_result_trim::tests:: --nocapture
+            -- agent::request_messages::tool_result_trim::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 60 --min-passed 2 \
