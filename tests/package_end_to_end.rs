@@ -24,8 +24,8 @@
 //! | `install` | both | `horon package install` publishes the copy and the catalog lists it |
 //! | `next_turn_tool_call` | both | a turn whose fake model calls `ext__hello__greet` carries the child's answer back to the model |
 //! | `resource_call` | plugin | the bundled executable command answers from a real child; the skill, rule, prompt, command and MCP server the plugin declares are loaded for the same generation, and its rule and skill reach the model |
-//! | `cancel` | both | a `wait` call that never returns ends the run at its `--max-time` deadline instead of hanging |
-//! | `replace` | both | `--replace` publishes a new copy while that call is still pending, the run survives it, and the next turn reaches the new copy |
+//! | `cancel` | both | a `wait` call that never returns ends the run at its own `--max-time` deadline (status 124 on Unix, any non-zero on Windows, plus the literal) and leaves no child |
+//! | `replace` | both | a second pending `wait` call is revoked by the `--replace` install: it is still running when the install finishes, then ends within seconds — not on its deadline — and the next turn reaches the new copy |
 //! | `remove_blocks_new_calls` | both | after `horon package remove` the tool is off the session's allow-list, so the run fails naming `ext__hello__greet` as not allowed, no child answers, and nothing is left running |
 //! | `descendants_reaped` | both | after the runs, no process whose command line names this home's installed copies is left |
 //! | `bad_target_refused` | both | an install whose declaration names no executable for this host is refused |
@@ -55,7 +55,7 @@ mod stage;
 
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use horon_agent::packages::{PackageRecord, PackageState, PackageStore, PackageTextResources};
 use serde_json::Value;
@@ -65,6 +65,19 @@ use stage::{Cli, Kind};
 
 /// How long the `wait` call may stay pending before its run is cancelled.
 const CANCEL_AFTER: &str = "40";
+
+/// How long the second pending call may stay pending before its replacement.
+const REPLACE_AFTER: &str = "60";
+
+/// Safety cap for the run a replacement revokes, above its own deadline.
+const REPLACE_FINISH: Duration = Duration::from_secs(90);
+
+/// How long a revoked call may take to end after the replacement is published.
+///
+/// A revocation ends the pending request, so the run stops within seconds; a
+/// value near its `--max-time` would mean the deadline, not the revocation, was
+/// what ended it.
+const REVOCATION_SETTLE: Duration = Duration::from_secs(15);
 
 /// How long the test waits for a package child to appear during that call.
 const CHILD_DEADLINE: Duration = Duration::from_secs(30);
@@ -155,49 +168,62 @@ fn run_kind(scratch: &Path, example: &Path, cli: &Cli, model: &model::Model, kin
         report.check(label, "resource_call", resources);
     }
 
-    // A call that only a cancellation ends: the run must stop at its deadline,
-    // and a replacement published while the call is pending must not end it.
-    let second = stage::stage(&sources.join("v2"), kind, "0.2.0", example);
+    // (a) Cancellation: a call only the host's cancellation ends. The run must
+    // stop at its own deadline and the child it held must be reaped.
     let wait = format!("PKG-E2E-{label}-wait");
     model.script(&wait, "ext__hello__wait", "{}");
-    let message = format!("{wait} wait for the package call");
-    let mut pending = cli.spawn(&[
-        "run",
-        message.as_str(),
-        "--no-session",
-        "--no-update",
-        "--max-time",
-        CANCEL_AFTER,
-    ]);
-    let observed = procs::wait_for(&fragment, CHILD_DEADLINE);
-    let saw_child = !observed.is_empty();
-    let replace_install = if saw_child {
+    let mut pending = pending_run(cli, &wait, CANCEL_AFTER);
+    let saw_child = !procs::wait_for(&fragment, CHILD_DEADLINE).is_empty();
+    let cancelled = pending.finish(RUN_DEADLINE);
+    let cancel = (|| -> Result<(), String> {
+        if !saw_child {
+            return Err(format!(
+                "no package child appeared within {CHILD_DEADLINE:?}; run output: {} {}",
+                cancelled.stdout.trim(),
+                cancelled.stderr.trim()
+            ));
+        }
+        // A deadline exit is 124 on Unix; Windows has no such convention, so any
+        // non-zero status plus the literal below is the evidence there.
+        let status_ok = if std::env::consts::OS == "windows" {
+            !cancelled.status.success()
+        } else {
+            cancelled.status.code() == Some(124)
+        };
+        if !status_ok {
+            return Err(format!(
+                "the run that waited on a package call ended with {:?}, not its deadline status: {} {}",
+                cancelled.status.code(),
+                cancelled.stdout.trim(),
+                cancelled.stderr.trim()
+            ));
+        }
+        require(
+            &cancelled.stderr,
+            "run exceeded its --max-time limit",
+            "the pending call did not end on the run's deadline",
+        )?;
+        procs::wait_until_gone(&fragment, REAP_DEADLINE)
+    })();
+    report.check(label, "cancel", cancel);
+
+    // (b) Replacement: a second pending call, revoked by the install that
+    // publishes the new copy. The revocation ends the call, so the run finishes
+    // well before its own deadline and the next turn reaches the new copy.
+    let second = stage::stage(&sources.join("v2"), kind, "0.2.0", example);
+    let revoked = format!("PKG-E2E-{label}-revoked");
+    model.script(&revoked, "ext__hello__wait", "{}");
+    let mut pending = pending_run(cli, &revoked, REPLACE_AFTER);
+    let replace_child = !procs::wait_for(&fragment, CHILD_DEADLINE).is_empty();
+    let replace_install = if replace_child {
         install(cli, &second, true)
     } else {
         Err("the wait call never reached an installed child".to_owned())
     };
     let still_running = pending.running();
-    let finished = pending.finish(RUN_DEADLINE);
-
-    let cancel = if !saw_child {
-        Err(format!(
-            "no package child appeared within {CHILD_DEADLINE:?}; run output: {} {}",
-            finished.stdout.trim(),
-            finished.stderr.trim()
-        ))
-    } else if finished.status.success() {
-        Err("the run that waited on a package call reported success".to_owned())
-    } else if !finished.stderr.contains("exceeded its --max-time limit") {
-        Err(format!(
-            "the pending call did not end on the run's deadline: {} {}",
-            finished.stdout.trim(),
-            finished.stderr.trim()
-        ))
-    } else {
-        Ok(())
-    };
-    report.check(label, "cancel", cancel);
-
+    let installed_at = Instant::now();
+    let after_replace = pending.finish(REPLACE_FINISH);
+    let settle = installed_at.elapsed();
     let replaced = replace_install
         .and_then(|stdout| {
             require(&stdout, "Installed hello 0.2.0", "unexpected replace report")?;
@@ -206,6 +232,18 @@ fn run_kind(scratch: &Path, example: &Path, cli: &Cli, model: &model::Model, kin
             }
             Ok(())
         })
+        .and_then(|()| {
+            if after_replace.stderr.contains("exceeded its --max-time limit") {
+                return Err("the pending call ended on its deadline, not on the revocation".to_owned());
+            }
+            if settle >= REVOCATION_SETTLE {
+                return Err(format!(
+                    "the revoked call took {settle:?} to end after the replacement, which is its deadline path"
+                ));
+            }
+            Ok(())
+        })
+        .and_then(|()| procs::wait_until_gone(&fragment, REAP_DEADLINE))
         .and_then(|()| {
             let marker = format!("PKG-E2E-{label}-replaced");
             model.script(&marker, "ext__hello__greet", r#"{"name":"Ada"}"#);
@@ -382,6 +420,19 @@ fn tamper_declaration(cli: &Cli) -> Result<(), String> {
     fs::write(&installed, bytes).map_err(|error| format!("write {}: {error}", installed.display()))
 }
 
+/// Start a run whose fake model asks for the `wait` call that never returns.
+fn pending_run(cli: &Cli, marker: &str, max_time: &str) -> stage::Run {
+    let message = format!("{marker} wait for the package call");
+    cli.spawn(&[
+        "run",
+        message.as_str(),
+        "--no-session",
+        "--no-update",
+        "--max-time",
+        max_time,
+    ])
+}
+
 /// Run one CLI invocation whose fake model answers with the scripted tool call.
 fn run_turn(cli: &Cli, marker: &str) -> Result<(), String> {
     let message = format!("{marker} run the package turn");
@@ -410,6 +461,10 @@ fn run_turn(cli: &Cli, marker: &str) -> Result<(), String> {
 /// declaration no longer matches leaves the tool off that list: the call is
 /// refused by the session, the run fails, and no model round or child follows.
 fn expect_refused_turn(cli: &Cli, model: &model::Model, marker: &str, fragment: &str) -> Result<(), String> {
+    // The mock keeps every request of this kind, including the earlier turns
+    // that legitimately carried the child's answer, so only the requests this
+    // run makes can show whether a child answered it.
+    let before = model.bodies().len();
     let message = format!("{marker} run the package turn");
     let finished = cli
         .spawn(&["run", message.as_str(), "--no-session", "--no-update"])
@@ -434,7 +489,12 @@ fn expect_refused_turn(cli: &Cli, model: &model::Model, marker: &str, fragment: 
             finished.stderr.trim()
         ));
     }
-    if let Some(answered) = model.bodies().iter().find(|raw| raw.contains("hello, Ada")) {
+    if let Some(answered) = model
+        .bodies()
+        .iter()
+        .skip(before)
+        .find(|raw| raw.contains("hello, Ada"))
+    {
         return Err(format!("a child answered the refused call: {}", answered.trim()));
     }
     let pids = procs::pids_running(fragment);
