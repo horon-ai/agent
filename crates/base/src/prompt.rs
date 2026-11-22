@@ -4,7 +4,10 @@ use std::path::Path;
 
 mod git_context;
 mod hardware;
+mod package_source;
 mod static_sources;
+
+pub use package_source::{MAX_RULES_SECTION_BYTES, append_package_rules, render_rules};
 
 use git_context::get_git_info;
 use hardware::hardware_context;
