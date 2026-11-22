@@ -13,6 +13,7 @@
 mod catalog;
 mod inbox;
 mod manifest;
+mod mcp_resources;
 mod native_target;
 mod process;
 mod store;
@@ -27,4 +28,5 @@ pub use horon_agent_extension_types::{
 };
 pub use inbox::{InboxEntry, InboxOutcome, InboxReport};
 pub use manifest::{ValidatedPackage, validate_package};
+pub use mcp_resources::{PackageMcpKind, PackageMcpServer};
 pub use process::{PackageExecutable, PackageProcess};

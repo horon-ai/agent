@@ -375,7 +375,7 @@ fn next_lease_token() -> u64 {
 /// digit. A session label may hold anything, so it is reduced to that alphabet
 /// and cut to leave room for the process and acquisition suffix, which keeps
 /// every acquisition's name unique inside the package area.
-fn lease_owner(label: &str, token: u64) -> String {
+pub(crate) fn lease_owner(label: &str, token: u64) -> String {
     let suffix = format!("-{}-{token}", std::process::id());
     let mut name: String = label
         .chars()
@@ -459,6 +459,7 @@ fn lock_slots() -> MutexGuard<'static, BTreeMap<String, Arc<PackageSession>>> {
 /// request using it finishes, so a running turn is never cut by this.
 pub(crate) fn forget_session(session_id: &str) {
     lock_slots().remove(session_id);
+    crate::tool::session_mcp::forget_package_mcp(session_id);
 }
 
 fn package_session(session_id: &str) -> Result<Arc<PackageSession>> {
@@ -497,6 +498,9 @@ impl crate::agent::Agent {
                 self.session_id()
             ));
         }
+        // The package MCP servers follow the same generation: a new one refreshes
+        // them here, before this turn's tool surface freezes.
+        crate::tool::session_mcp::refresh_package_mcp(self.session_id(), self.registry(), &session).await;
     }
 
     /// The package snapshot this turn captured, when the session has one.

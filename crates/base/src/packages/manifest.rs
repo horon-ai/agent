@@ -114,6 +114,7 @@ pub fn validate_package(root: &Path) -> Result<ValidatedPackage> {
         open_package_file(root, &path)?;
         ensure!(files.insert(path), "duplicate package file: {declared}");
     }
+    super::mcp_resources::validate(root, &resources.mcp, &extension.id)?;
     let mut spellings = BTreeMap::new();
     for path in &files {
         for prefix in path.ancestors().take_while(|part| !part.as_os_str().is_empty()) {
