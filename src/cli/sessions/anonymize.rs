@@ -81,7 +81,10 @@ fn collect(paths: &store::SessionPaths, root: &store::SessionId, with_children: 
     let mut seen = BTreeSet::from([root.as_str().to_string()]);
     let mut queue = VecDeque::from([root.as_str().to_string()]);
     while let Some(parent) = queue.pop_front() {
-        let mut direct = children.remove(&parent).unwrap_or_default();
+        let mut direct = match children.remove(&parent) {
+            Some(direct) => direct,
+            None => Vec::new(),
+        };
         direct.sort_by(|a, b| (&a.created_at, a.id.as_str()).cmp(&(&b.created_at, b.id.as_str())));
         for child in direct {
             if seen.insert(child.id.as_str().to_string()) {
@@ -121,7 +124,10 @@ fn block(value: &Value, options: &Options, scrub: &Scrub, tools: &mut BTreeMap<S
     let size = |field: &str| value.get(field).map_or(0, |inner| inner.to_string().len());
     match kind {
         "text" => {
-            let text = value.get("text").and_then(Value::as_str).unwrap_or_default();
+            let text = match value.get("text").and_then(Value::as_str) {
+                Some(text) => text,
+                None => "",
+            };
             let mut out = json!({"type": "text", "chars": text.chars().count()});
             if options.keep_text {
                 out["text"] = json!(scrub.text(text));
