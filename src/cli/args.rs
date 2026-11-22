@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use super::provider_init::ProviderChoice;
 
+mod approval_grants;
+pub(crate) use approval_grants::{GrantsAction, GrantsArgs};
 mod mcp;
 mod session_move;
 #[allow(unused_imports)]
@@ -709,6 +711,9 @@ pub(crate) enum ApprovalsCommand {
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,
     },
+
+    /// Report and revoke stored scoped approval grants
+    Grants(GrantsArgs),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
