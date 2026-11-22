@@ -141,9 +141,7 @@ impl Agent {
     }
 
     fn package_skills_section(&self, package_text: Option<&crate::packages::PackageTextResources>) -> Option<String> {
-        if package_text?.skills().next().is_none() {
-            return None;
-        }
+        package_text?.skills().next()?;
         let infos = self
             .current_skills_snapshot()
             .list()
