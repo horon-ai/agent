@@ -50,6 +50,8 @@ impl Home {
             .env("HORON_AGENT_MEMORY_ENABLED", "0")
             .env("HORON_AGENT_MEMORY_SIDECAR_ENABLED", "0")
             .env("HORON_AGENT_RUN_MCP", "0")
+            // The scripted todo stays incomplete, so the run must not re-prompt for it.
+            .env("HORON_AGENT_RUN_AUTO_POKE", "0")
             .env("NO_COLOR", "1")
             .env("PATH", std::env::var_os("PATH").unwrap_or_default());
         let mut child = command
