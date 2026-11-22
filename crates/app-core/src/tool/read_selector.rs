@@ -68,8 +68,6 @@ pub(crate) struct Rendered {
 
 /// Render bounded heading excerpts with inclusive source ranges.
 pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: usize) -> Option<Rendered> {
-    use std::fmt::Write as _;
-
     const MAX_HEADINGS: usize = 100;
     // One past the cap, so the line that trips the "more omitted" marker does
     // not reallocate the list.
@@ -128,12 +126,12 @@ pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: us
         let end = headings.get(index + 1).map_or(total_lines, |&(line, _, _)| line - 1);
         let hashes = &"######"[..level];
         let title = crate::util::truncate_str(title, 240);
-        let _ = writeln!(body, "{start}-{end}\t{hashes} {title}");
+        body.push_str(&format!("{start}-{end}\t{hashes} {title}\n"));
     }
     if headings.len() > MAX_HEADINGS {
         body.push_str("[More headings omitted]\n");
     }
-    let _ = write!(body, "\nRead source with path:A-B, e.g. {display}:{first}-{first}.");
+    body.push_str(&format!("\nRead source with path:A-B, e.g. {display}:{first}-{first}."));
     Some(Rendered {
         body,
         total_lines,

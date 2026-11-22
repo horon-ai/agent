@@ -228,17 +228,15 @@ fn render_condensed(
             if !SIGNAL_LINE.is_match(line) {
                 continue;
             }
-            let before = signals.len();
-            let _ = writeln!(
-                signals,
-                "L{}: {}",
+            let entry = format!(
+                "L{}: {}\n",
                 first_omitted_line + index,
                 crate::util::truncate_str(line, SIGNAL_LINE_MAX_BYTES)
             );
-            if signals.len() > room {
-                signals.truncate(before);
+            if signals.len() + entry.len() > room {
                 break;
             }
+            signals.push_str(&entry);
         }
     }
 

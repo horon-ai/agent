@@ -8,9 +8,9 @@
 //! rules. Their locks differ (one is broken when its owner dies, the other is an
 //! OS lock released with the handle), so each keeps its own.
 //!
-//! Every sentence a failure produces is built here and handed back as text: the
-//! two callers wrap it in their own fault type, and the reader sees the same
-//! words either way.
+//! Every sentence a failure produces is built here and handed back as a
+//! [`WriteFailure`]: the two callers wrap its text in their own fault type, and
+//! the reader sees the same words either way.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -24,11 +24,12 @@ use std::path::{Path, PathBuf};
 /// failed write removes its temporary file rather than leaving it behind.
 ///
 /// `fallback` names the temporary file when `path` has no file name of its own.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8], fallback: &str) -> Result<(), String> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8], fallback: &str) -> Result<(), WriteFailure> {
     let directory = path
         .parent()
-        .ok_or_else(|| format!("{} has no directory", path.display()))?;
-    fs::create_dir_all(directory).map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
+        .ok_or_else(|| WriteFailure(format!("{} has no directory", path.display())))?;
+    fs::create_dir_all(directory)
+        .map_err(|error| WriteFailure(format!("cannot create {}: {error}", directory.display())))?;
     let temp = directory.join(format!(
         ".{}.{}.tmp",
         path.file_name()
@@ -38,13 +39,28 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8], fallback: &str) -> Result<
     if let Err(error) = write_temp(&temp, bytes) {
         return Err(with_cleanup(error, &temp));
     }
-    fs::rename(&temp, path).map_err(|error| with_cleanup(format!("cannot replace {}: {error}", path.display()), &temp))
+    fs::rename(&temp, path).map_err(|error| {
+        with_cleanup(
+            WriteFailure(format!("cannot replace {}: {error}", path.display())),
+            &temp,
+        )
+    })
+}
+
+/// The sentence a failed state-file write reports.
+#[derive(Debug)]
+pub(crate) struct WriteFailure(String);
+
+impl From<WriteFailure> for String {
+    fn from(failure: WriteFailure) -> Self {
+        failure.0
+    }
 }
 
 /// Add a failed temp-file cleanup to a write error, so neither goes unreported.
-fn with_cleanup(error: String, temp: &Path) -> String {
+fn with_cleanup(error: WriteFailure, temp: &Path) -> WriteFailure {
     match discard(temp) {
-        Some(cleanup) => format!("{error}; {cleanup}"),
+        Some(cleanup) => WriteFailure(format!("{}; {cleanup}", error.0)),
         None => error,
     }
 }
@@ -59,19 +75,19 @@ pub(crate) fn discard(path: &Path) -> Option<String> {
 }
 
 /// Create `temp` owner-only, write `bytes` and flush them.
-fn write_temp(temp: &Path, bytes: &[u8]) -> Result<(), String> {
+fn write_temp(temp: &Path, bytes: &[u8]) -> Result<(), WriteFailure> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     horon_agent_sdk::private_fs::harden_credential_open(&mut options, temp)
-        .map_err(|error| format!("cannot prepare {}: {error}", temp.display()))?;
+        .map_err(|error| WriteFailure(format!("cannot prepare {}: {error}", temp.display())))?;
     let mut file = options
         .open(temp)
-        .map_err(|error| format!("cannot create {}: {error}", temp.display()))?;
+        .map_err(|error| WriteFailure(format!("cannot create {}: {error}", temp.display())))?;
     horon_agent_sdk::private_fs::set_permissions_owner_only_file(&file)
-        .map_err(|error| format!("cannot make {} private: {error}", temp.display()))?;
+        .map_err(|error| WriteFailure(format!("cannot make {} private: {error}", temp.display())))?;
     file.write_all(bytes)
         .and_then(|()| file.sync_all())
-        .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+        .map_err(|error| WriteFailure(format!("cannot write {}: {error}", temp.display())))?;
     Ok(())
 }
 

@@ -132,7 +132,6 @@ fn next_id(dir: &Path) -> u64 {
 }
 
 fn write_bounded(file: &mut std::fs::File, text: &str, cap_mib: Option<usize>) -> Result<()> {
-    use std::fmt::Write as _;
     use std::io::Write;
 
     let file_cap = cap_mib.map_or(ARTIFACT_KEEP_BYTES * 2, |mib| mib.clamp(1, 16) * 1024 * 1024);
@@ -160,25 +159,20 @@ fn write_bounded(file: &mut std::fs::File, text: &str, cap_mib: Option<usize>) -
     file.write_all(&text.as_bytes()[..head_end])?;
     // The separator and the marker line leave as one `write_all`: `writeln!`
     // on a `File` issues one write per format piece.
-    let mut marker = String::new();
-    if !text[..head_end].ends_with('\n') {
-        marker.push('\n');
-    }
-    if cap_mib.is_some() {
-        let _ = writeln!(
-            marker,
-            "[ARTIFACT TRUNCATED: {} bytes total, {} elided from the middle]",
+    let separator = if text[..head_end].ends_with('\n') { "" } else { "\n" };
+    let marker = if cap_mib.is_some() {
+        format!(
+            "{separator}[ARTIFACT TRUNCATED: {} bytes total, {} elided from the middle]\n",
             text.len(),
             dropped
-        );
+        )
     } else {
-        let _ = writeln!(
-            marker,
-            "[ARTIFACT TRUNCATED: kept first 8 MiB + last 8 MiB of {}; {} elided from the middle]",
+        format!(
+            "{separator}[ARTIFACT TRUNCATED: kept first 8 MiB + last 8 MiB of {}; {} elided from the middle]\n",
             text.len(),
             dropped
-        );
-    }
+        )
+    };
     file.write_all(marker.as_bytes())?;
     file.write_all(&text.as_bytes()[tail_start..])?;
     Ok(())
