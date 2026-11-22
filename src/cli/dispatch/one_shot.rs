@@ -10,6 +10,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         json: emit_json,
         ndjson: emit_ndjson,
         no_pty,
+        no_session,
         model_overrides: overrides,
         max_time,
         wait_async,
@@ -34,7 +35,15 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         registry.register_mcp_tools(None, None, None).await;
         commands::wait_for_cold_cache_mcp_tools(&registry).await;
     }
-    let mut agent = Agent::for_one_shot_run(provider.clone(), registry).closing_after_run();
+    if *no_session && (args.resume.is_some() || args.goal.is_some()) {
+        anyhow::bail!("--no-session cannot be combined with --resume, --continue or --goal, which need a stored session");
+    }
+    let mut agent = if *no_session {
+        Agent::for_memory_only_run(provider.clone(), registry)
+    } else {
+        Agent::for_one_shot_run(provider.clone(), registry)
+    }
+    .closing_after_run();
     let setup = (|| {
         commands::restore_agent_session_if_requested(&mut agent, args.resume.as_deref())?;
         apply_model_overrides(&mut agent, overrides)?;
