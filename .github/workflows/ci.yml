@@ -1928,6 +1928,10 @@ jobs:
             -- plan_review::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 3 \
+            -- agent::turn_streaming_mpsc::prose_repeat::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 60 --min-passed 2 \
             -- tool::package_tool::stage_tests:: --nocapture
 

@@ -3,6 +3,7 @@ use super::*;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
 
+mod prose_repeat;
 mod run;
 mod tool_wait;
 
@@ -403,6 +404,10 @@ impl Agent {
             let mut retry_after_recovery = false;
             let mut retry_after_stream_rule = false;
             let mut stream_rule_stop = false;
+            let mut prose_guard = crate::config::config()
+                .features
+                .repeat_guard
+                .then(prose_repeat::ProseRepeatGuard::default);
             let mut keepalive = stream_keepalive_ticker();
             loop {
                 let next_event = std::pin::pin!(stream.next());
@@ -726,6 +731,30 @@ impl Agent {
                                     break;
                                 }
                             }
+                        }
+                        if let Some(sentence) = prose_guard.as_mut().and_then(|guard| guard.feed(&text)) {
+                            logging::warn("Repeated prose detected; stopping the turn");
+                            if inline_output_tap {
+                                self.inline_tail.clear_live();
+                            }
+                            let notice = format!(
+                                "Stopped: the response repeated the same sentence {} times in a row: \"{sentence}\"",
+                                prose_repeat::STOP_AFTER
+                            );
+                            self.record_stream_rule_stop(&notice);
+                            self.save_session()?;
+                            if event_tx
+                                .send(ServerEvent::TurnStopped {
+                                    reason: crate::protocol::TurnStopReason::LimitReached,
+                                    message: notice,
+                                    provider_stop_reason: None,
+                                })
+                                .is_err()
+                            {
+                                logging::debug("Repeated prose stop has no event receiver");
+                            }
+                            stream_rule_stop = true;
+                            break;
                         }
                         let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
                         if self.is_graceful_shutdown() {
