@@ -1134,12 +1134,26 @@ async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_a
     // A number that is not in the listing is refused, so no run (and no model call) starts.
     let mock = Mock::start().await;
     home.write_config(&mock.base_url);
-    let bad = home.run(&["diagnostics", "notes.txt", "--select", "1", "--delegate"]).await;
+    let bad = home
+        .run(&["diagnostics", "notes.txt", "--select", "1", "--delegate"])
+        .await;
     assert!(!bad.status.success());
     assert!(text(&bad.stderr).contains("no diagnostic [1]"), "{}", text(&bad.stderr));
     assert_eq!(mock.requests(), 0, "a refused delegation must not reach the model");
 
     // Delegating needs a selection and a selection needs --delegate.
-    assert!(!home.run(&["diagnostics", "notes.txt", "--delegate"]).await.status.success());
-    assert!(!home.run(&["diagnostics", "notes.txt", "--select", "1"]).await.status.success());
+    assert!(
+        !home
+            .run(&["diagnostics", "notes.txt", "--delegate"])
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        !home
+            .run(&["diagnostics", "notes.txt", "--select", "1"])
+            .await
+            .status
+            .success()
+    );
 }
