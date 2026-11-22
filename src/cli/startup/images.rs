@@ -86,10 +86,7 @@ fn parse_line(line: &str) -> Option<Logged> {
 }
 
 fn inspect_all(logged: &[Logged], dir: &Path) -> Vec<Image> {
-    let dir = match dir.canonicalize() {
-        Ok(dir) => Some(dir),
-        Err(_) => None,
-    };
+    let dir = dir.canonicalize().into_iter().next();
     logged
         .iter()
         .enumerate()
