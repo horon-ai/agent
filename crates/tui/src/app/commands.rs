@@ -39,7 +39,8 @@ impl App {
                     // One leading slash is accepted, so `/help /model` reads the
                     // same as `/help model`; a second one is part of the name.
                     let name = name.strip_prefix('/').unwrap_or(name);
-                    match crate::help::detail(self.commands.entry_list(), name) {
+                    let entries = self.commands.entries();
+                    match crate::help::detail(&entries, name) {
                         Some(detail) => self.transcript.push_notice(detail),
                         None => self.warn(crate::help::unknown(name)),
                     }

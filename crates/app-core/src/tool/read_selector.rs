@@ -69,9 +69,7 @@ pub(crate) struct Rendered {
 /// Render bounded heading excerpts with inclusive source ranges.
 pub(super) fn render_markdown_outline(text: &str, display: &str, total_lines: usize) -> Option<Rendered> {
     const MAX_HEADINGS: usize = 100;
-    // One past the cap, so the line that trips the "more omitted" marker does
-    // not reallocate the list.
-    let mut headings = Vec::with_capacity(MAX_HEADINGS + 1);
+    let mut headings = Vec::new();
     let mut fence = None;
     let mut previous = None;
     for (index, line) in text.lines().enumerate() {

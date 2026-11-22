@@ -503,12 +503,90 @@ impl App {
     /// process exits non-zero once it has been drawn.
     pub fn failure(message: &str) -> Self {
         let (_sender, receiver) = mpsc::channel();
-        let mut app = Self::new("not connected".to_string(), receiver);
-        app.banner = Some(message.to_string());
-        app.running = false;
-        app.exit_code = 1;
-        app.disconnected = true;
-        app
+        Self {
+            transcript: Transcript::new(),
+            notes: crate::notes::NoteStore::memory(),
+            todos: Default::default(),
+            input: Input::new(),
+            history: History::new(),
+            prompt: None,
+            waiting_prompts: VecDeque::new(),
+            banner: Some(message.to_string()),
+            running: false,
+            exit_code: 1,
+            pending_turn: false,
+            queue: Vec::new(),
+            in_flight: None,
+            disconnected: true,
+            resend_held: false,
+            viewport_height: None,
+            repaint_requested: false,
+            scroll: Scroll::new(),
+            // Placeholder until the settings resolve: the terminal is not
+            // captured yet, and `refresh_settings` decides from the registry's
+            // default once the files are read.
+            mouse_scroll: false,
+            // Off unless a settings layer asks for it: a window named after its
+            // session is what every setup saw before the key existed.
+            title_state: false,
+            description: "not connected".to_string(),
+            events: receiver,
+            model: None,
+            provider: None,
+            reasoning_effort: None,
+            effort_requested: None,
+            effort_after_turn: None,
+            model_after_turn: None,
+            model_requested: None,
+            model_shortlist: Vec::new(),
+            model_shortlist_source: Vec::new(),
+            model_shortlist_skipped: Vec::new(),
+            model_catalog: Vec::new(),
+            model_catalog_loaded: false,
+            model_cycle_pending: None,
+            steer_pending: None,
+            steer_left_behind: VecDeque::new(),
+            session_status: None,
+            session_id: None,
+            session_title: None,
+            new_session_pending: false,
+            cwd: None,
+            workspace_is_local: false,
+            workspace_known: true,
+            path_cycle: None,
+            home: crate::path_completion::home_directory(),
+            tokens: None,
+            capacity: None,
+            usage: None,
+            cost: None,
+            statusline: Layout::default(),
+            status_separator: None,
+            theme: Theme::default(),
+            symbols: Symbols::default(),
+            bindings: Bindings::default(),
+            motion: Motion::default(),
+            motion_frame: 0,
+            slash: crate::help::SlashPopup::new(),
+            suggestions: Suggestions::new(),
+            commands: Registry::default(),
+            skills: Vec::new(),
+            background_jobs: Vec::new(),
+            settings: Settings::defaults(),
+            daemon_settings: crate::settings::DaemonSettings::default(),
+            themes_dir: horon_agent_sdk::user_horon_agent_home().join("themes"),
+            artifacts_dir: horon_agent_sdk::user_horon_agent_home().join("artifacts"),
+            overlay: None,
+            picker: None,
+            pins: pins::SessionPins::default(),
+            pending_change: None,
+            terminal_signals: crate::progress::Options::default(),
+            outcome: None,
+            pending_copy: None,
+            recorder: None,
+            voice: crate::voice::Voice::new(),
+            replay: None,
+            record_scan: (0, 0),
+        }
     }
 
     /// Ask for the screen to be painted again in full.

@@ -100,6 +100,8 @@ impl Config {
             .prewalk
             .validate()
             .map_err(|e| anyhow::anyhow!("Invalid [prewalk] section in {}: {e}", path.display()))?;
+        // An explicit discovery opt-out is authoritative. Older saves wrote the
+        // default endpoint too, so table shape cannot establish user intent.
         Ok(Some((path, content, config)))
     }
 

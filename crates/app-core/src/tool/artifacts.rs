@@ -217,12 +217,10 @@ fn render_condensed(
 
     let total_lines = text.lines().count();
     let omitted_lines = omitted.lines().count();
+    let first_omitted_line = head.bytes().filter(|&b| b == b'\n').count() + 1;
 
     let mut signals = String::new();
     if signal_budget > SIGNAL_HEADER.len() {
-        // Counted here so a call that has no room for signals, or none to show,
-        // does not walk the head at all.
-        let first_omitted_line = head.bytes().filter(|&b| b == b'\n').count() + 1;
         let room = signal_budget - SIGNAL_HEADER.len();
         for (index, line) in omitted.lines().enumerate() {
             if !SIGNAL_LINE.is_match(line) {

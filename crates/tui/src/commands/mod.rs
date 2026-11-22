@@ -344,14 +344,6 @@ pub struct Registry {
     /// session change replaces them, and an empty list is a session whose
     /// harness reports none.
     skills: Vec<Skill>,
-    /// The whole list `/help` and the popup read, assembled when a source
-    /// changes rather than on every keystroke.
-    ///
-    /// A dedicated sync rebuilds it once per changed draft, so building the
-    /// descriptions and sorting the names there would be work per key. The list
-    /// is rebuilt by [`Self::rebuild_entries`], the one place that knows every
-    /// source of a command.
-    entries: Vec<Entry>,
     stamps: [Option<Vec<FileStamp>>; 2],
     last_check: Instant,
     warnings: Vec<String>,
@@ -360,18 +352,15 @@ pub struct Registry {
 impl Registry {
     /// A registry reading `user_commands`, with no project directory yet.
     pub fn new(user_commands: PathBuf) -> Self {
-        let mut registry = Self {
+        Self {
             user: Some(user_commands),
             project: None,
             files: Vec::new(),
             skills: Vec::new(),
-            entries: Vec::new(),
             stamps: [None, None],
             last_check: Instant::now(),
             warnings: Vec::new(),
-        };
-        registry.rebuild_entries();
-        registry
+        }
     }
 
     /// Read every command file now.
@@ -432,7 +421,6 @@ impl Registry {
     /// resolving the moment the client moves.
     pub fn set_skills(&mut self, skills: Vec<Skill>) {
         self.skills = skills;
-        self.rebuild_entries();
     }
 
     /// Every command in force, as `/help` and the slash popup list it.
@@ -441,21 +429,6 @@ impl Registry {
     /// harness's own names, then the command files, then the skills the harness
     /// reported.
     pub fn entries(&self) -> Vec<Entry> {
-        self.entries.clone()
-    }
-
-    /// The list `/help` and the popup read, without copying it.
-    pub fn entry_list(&self) -> &[Entry] {
-        &self.entries
-    }
-
-    /// Reassemble the listing from the sources in force.
-    ///
-    /// The order is the order the sections print in: built-ins first, then the
-    /// harness's own names, then the command files, then the skills the harness
-    /// reported. Called by every path that changes a source, and by no path that
-    /// only reads one.
-    fn rebuild_entries(&mut self) {
         let mut entries: Vec<Entry> = LOCAL_NAMES
             .iter()
             .map(|name| Entry {
@@ -489,7 +462,7 @@ impl Registry {
             group: Group::Skill,
             shadowed: false,
         }));
-        self.entries = entries;
+        entries
     }
 
     /// Take the problems the last read produced.
@@ -645,7 +618,7 @@ impl Registry {
 
     /// The `/help` text against the key map in force.
     pub fn help_with(&self, bindings: &crate::keys::Bindings) -> String {
-        crate::help::text(self.entry_list(), bindings)
+        crate::help::text(&self.entries(), bindings)
     }
 
     /// Re-read both directories and rebuild the file list.
@@ -669,7 +642,6 @@ impl Registry {
         }
         files.sort_by(|left, right| left.name.cmp(&right.name));
         self.files = files;
-        self.rebuild_entries();
     }
 
     /// Every readable markdown file in one command directory.

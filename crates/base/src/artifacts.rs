@@ -157,23 +157,24 @@ fn write_bounded(file: &mut std::fs::File, text: &str, cap_mib: Option<usize>) -
     let tail_start = tail_start.max(head_end);
     let dropped = text.len() - head_end - (text.len() - tail_start);
     file.write_all(&text.as_bytes()[..head_end])?;
-    // The separator and the marker line leave as one `write_all`: `writeln!`
-    // on a `File` issues one write per format piece.
-    let separator = if text[..head_end].ends_with('\n') { "" } else { "\n" };
-    let marker = if cap_mib.is_some() {
-        format!(
-            "{separator}[ARTIFACT TRUNCATED: {} bytes total, {} elided from the middle]\n",
+    if !text[..head_end].ends_with('\n') {
+        file.write_all(b"\n")?;
+    }
+    if cap_mib.is_some() {
+        writeln!(
+            file,
+            "[ARTIFACT TRUNCATED: {} bytes total, {} elided from the middle]",
             text.len(),
             dropped
-        )
+        )?;
     } else {
-        format!(
-            "{separator}[ARTIFACT TRUNCATED: kept first 8 MiB + last 8 MiB of {}; {} elided from the middle]\n",
+        writeln!(
+            file,
+            "[ARTIFACT TRUNCATED: kept first 8 MiB + last 8 MiB of {}; {} elided from the middle]",
             text.len(),
             dropped
-        )
-    };
-    file.write_all(marker.as_bytes())?;
+        )?;
+    }
     file.write_all(&text.as_bytes()[tail_start..])?;
     Ok(())
 }

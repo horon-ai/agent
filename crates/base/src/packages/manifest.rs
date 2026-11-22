@@ -146,14 +146,7 @@ fn exists(path: &Path) -> Result<bool> {
 
 fn read_manifest<T: DeserializeOwned>(root: &Path, path: &Path) -> Result<T> {
     let file = open_package_file(root, path)?;
-    // The size already read for the open check sizes the buffer, so a manifest
-    // that fits the limit is read without regrowing it. A file that grew since
-    // then still trips the limit check below.
-    let capacity = file
-        .metadata()
-        .map_or(0, |metadata| metadata.len())
-        .min(MAX_MANIFEST_BYTES) as usize;
-    let mut text = String::with_capacity(capacity);
+    let mut text = String::new();
     file.take(MAX_MANIFEST_BYTES + 1)
         .read_to_string(&mut text)
         .with_context(|| format!("read {}", path.display()))?;
