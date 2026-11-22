@@ -825,6 +825,12 @@ Reading a file that was already read in the same session compares content hashes
 
 The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
 
+### Require a current read before editing
+
+Set `[tools] enforce_seen_line_guard = true` to require the session to have read each line an `edit` will change. The default is `false`. Use `read` with `start_line` and `end_line` to show a fresh range. If the file changed or the range was unread, `edit` names the lines to read before retrying. The whole batch is checked before any write, including every `replace_all` match.
+
+With the guard enabled, normal file reads print the original page and track shown lines even if `read_dedup` is off. Path selectors, summaries, and width-truncated lines do not supply edit evidence. Existing write permissions still apply.
+
 ### Aging batches of old results
 
 Editing earlier messages breaks the prompt cache from that point on, so results are reduced in batches rather than one per turn (`crates/app-core/src/agent/tool_result_aging.rs`). Targets are tool results over 8 KiB that sit outside the most recent 24 messages and behind the compaction boundary.

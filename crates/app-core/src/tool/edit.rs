@@ -1,3 +1,4 @@
+use super::read_state::EditEvidence;
 use super::{Tool, ToolContext, ToolOutput};
 use crate::bus::{Bus, BusEvent, FileOp, FileTouch};
 use anyhow::Result;
@@ -80,15 +81,12 @@ struct AppliedEdit {
 
 /// Apply every edit in order to an in-memory copy. Any failure aborts the whole
 /// call so the file is never left half-edited.
-fn apply_edits(original: &str, edits: &[EditOperation], file_path: &str) -> Result<(String, Vec<AppliedEdit>)> {
-    apply_edits_with(original, edits, file_path, crate::config::config().tools.edit_fuzzy)
-}
-
-fn apply_edits_with(
+fn apply_edits(
     original: &str,
     edits: &[EditOperation],
     file_path: &str,
     fuzzy: bool,
+    mut evidence: Option<EditEvidence>,
 ) -> Result<(String, Vec<AppliedEdit>)> {
     let mut content = original.to_string();
     let mut applied = Vec::with_capacity(edits.len());
@@ -116,6 +114,9 @@ fn apply_edits_with(
                 Some(found) if fuzzy && found.unique => {
                     let matched_text = &content[found.start_byte..found.end_byte];
                     let replacement = reindent(&edit.new_string, &edit.old_string, matched_text);
+                    if let Some(evidence) = evidence.as_mut() {
+                        evidence.replace(&content, file_path, found.start_byte, found.end_byte, &replacement)?;
+                    }
                     content.replace_range(found.start_byte..found.end_byte, &replacement);
                     applied.push(AppliedEdit {
                         occurrences: 1,
@@ -148,6 +149,23 @@ fn apply_edits_with(
             continue;
         }
         let start_line = find_line_number(&content, &edit.old_string);
+        if let Some(evidence) = evidence.as_mut() {
+            let mut matches = content.match_indices(&edit.old_string);
+            if edit.replace_all && occurrences > 1 {
+                let offsets: Vec<_> = matches.map(|(start, _)| start).collect();
+                for start in offsets.into_iter().rev() {
+                    evidence.replace(
+                        &content,
+                        file_path,
+                        start,
+                        start + edit.old_string.len(),
+                        &edit.new_string,
+                    )?;
+                }
+            } else if let Some((start, matched)) = matches.next() {
+                evidence.replace(&content, file_path, start, start + matched.len(), &edit.new_string)?;
+            }
+        }
         content = if edit.replace_all {
             content.replace(&edit.old_string, &edit.new_string)
         } else {
@@ -260,7 +278,11 @@ impl Tool for EditTool {
             return Err(anyhow::anyhow!(refusal));
         }
 
-        let (new_content, applied) = apply_edits(&content, &edits, &params.file_path)?;
+        let tools = &crate::config::config().tools;
+        let evidence = tools
+            .enforce_seen_line_guard
+            .then(|| EditEvidence::for_text(&ctx.session_id, &path, &content));
+        let (new_content, applied) = apply_edits(&content, &edits, &params.file_path, tools.edit_fuzzy, evidence)?;
 
         let wrote_to_client = super::client_fs::write_text(&path, &new_content, &ctx).await?;
         if !wrote_to_client {
@@ -819,6 +841,8 @@ mod tests {
             "alpha\nbeta\ngamma\n",
             &[op("alpha", "a"), op("missing", "x"), op("gamma", "g")],
             "f.rs",
+            false,
+            None,
         )
         .err()
         .unwrap()
@@ -834,6 +858,8 @@ mod tests {
             "alpha\nbeta\n",
             &[op("alpha", "temp"), op("temp", "done"), op("beta", "b")],
             "f.rs",
+            false,
+            None,
         )
         .unwrap();
         assert_eq!(content, "done\nb\n");
@@ -843,10 +869,10 @@ mod tests {
 
     #[test]
     fn apply_edits_rejects_ambiguous_match_without_replace_all() {
-        assert!(apply_edits("x x", &[op("x", "y")], "f").is_err());
+        assert!(apply_edits("x x", &[op("x", "y")], "f", false, None).is_err());
         let mut all = op("x", "y");
         all.replace_all = true;
-        let (content, applied) = apply_edits("x x", &[all], "f").unwrap();
+        let (content, applied) = apply_edits("x x", &[all], "f", false, None).unwrap();
         assert_eq!(content, "y y");
         assert_eq!(applied[0].occurrences, 2);
     }
@@ -1034,11 +1060,12 @@ mod fuzzy_tests {
     #[test]
     fn fuzzy_off_reports_the_prefix_and_the_opt_in_hint() {
         let content = "let name = “value”;\n";
-        let error = apply_edits_with(
+        let error = apply_edits(
             content,
             &[op("let name = \"value\";", "let name = \"x\";")],
             "f.rs",
             false,
+            None,
         )
         .expect_err("exact match is missing")
         .to_string();
@@ -1054,11 +1081,12 @@ mod fuzzy_tests {
     #[test]
     fn fuzzy_on_applies_and_reindents_the_replacement() {
         let content = "fn a() {\n    let name = “value”;\n}\n";
-        let (edited, applied) = apply_edits_with(
+        let (edited, applied) = apply_edits(
             content,
             &[op("let name = \"value\";", "let name = \"x\";")],
             "f.rs",
             true,
+            None,
         )
         .expect("fuzzy edit");
         assert_eq!(edited, "fn a() {\n    let name = \"x\";\n}\n");
@@ -1070,7 +1098,7 @@ mod fuzzy_tests {
     #[test]
     fn fuzzy_on_keeps_refusing_an_ambiguous_match() {
         let content = "alpha one\nalpha one\n";
-        let error = apply_edits_with(content, &[op("alpha ono", "beta")], "f.rs", true)
+        let error = apply_edits(content, &[op("alpha ono", "beta")], "f.rs", true, None)
             .expect_err("two windows are equally close")
             .to_string();
         assert!(error.contains("Closest match"), "{error}");

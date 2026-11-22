@@ -889,6 +889,7 @@ pub struct ToolConfig {
     /// Opt-in fuzzy `edit`: accept an `old_string` that matches exactly one
     /// location after whitespace and quote normalization. Off by default.
     pub edit_fuzzy: bool,
+    pub enforce_seen_line_guard: bool,
     /// Opt-in `lsp`: expose the tool that asks the project's language server
     /// for diagnostics, definitions, references, hover text, and symbols. Off
     /// by default because it starts and keeps a server process.
@@ -1008,6 +1009,7 @@ impl Default for ToolConfig {
             ast_tools: false,
             read_summary: false,
             edit_fuzzy: false,
+            enforce_seen_line_guard: false,
             lsp: false,
             managed_skills: false,
             context_notes: false,
