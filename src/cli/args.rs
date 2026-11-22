@@ -2,13 +2,19 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use super::provider_init::ProviderChoice;
 
+mod approval_grants;
+pub(crate) use approval_grants::{GrantsAction, GrantsArgs};
 mod mcp;
+mod session_move;
 #[allow(unused_imports)]
 pub(crate) use mcp::McpCommand;
+pub(crate) use session_move::SessionMoveArgs;
 mod model_filter;
 pub(crate) use model_filter::ModelListFilter;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod worktree_options;
+pub(crate) use worktree_options::{MoveToWorktreeArgs, RemoveWorktreeArgs, WorktreesArgs};
 mod anonymize_options;
 pub(crate) use anonymize_options::AnonymizeArgs;
 mod provider;
@@ -20,7 +26,11 @@ pub(crate) use import_options::ImportTranscriptArgs;
 mod skills;
 pub(crate) use skills::SkillsCommand;
 mod run_options;
+mod session_cache;
 pub(crate) use run_options::RunModelOverrides;
+mod images;
+pub(crate) use images::ImagesArgs;
+pub(crate) use session_cache::CacheArgs;
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -41,6 +51,8 @@ impl Command {
                 service_tier: None,
                 advisor: None,
                 approval: None,
+                config_overlay: Vec::new(),
+                approve_plan: false,
             },
             message,
         }
@@ -376,6 +388,8 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List a session's generated images, or copy one (read-only)
+    Images(ImagesArgs),
 
     /// Show usage limits for connected providers
     Usage {
@@ -704,6 +718,9 @@ pub(crate) enum ApprovalsCommand {
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,
     },
+
+    /// Report and revoke stored scoped approval grants
+    Grants(GrantsArgs),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -856,6 +873,11 @@ pub(crate) enum SessionCommand {
         json: bool,
     },
 
+    /// Preview or reclaim regenerable cache files of inactive sessions
+    Cache(CacheArgs),
+    /// Preview, or with --apply change, the working root a saved session resumes in
+    Move(SessionMoveArgs),
+
     /// Show one session's layout, heads, archive state and damage, read-only
     Inspect {
         /// Session ID
@@ -912,6 +934,15 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// List the Git worktrees around the current directory and which ones a session uses
+    Worktrees(WorktreesArgs),
+
+    /// Preview, apply or undo moving a session into a new managed Git worktree
+    MoveToWorktree(MoveToWorktreeArgs),
+
+    /// Remove a worktree that `move-to-worktree` created, never past uncommitted changes
+    RemoveWorktree(RemoveWorktreeArgs),
 
     /// Write a structure-preserving anonymized export of a session for diagnostics
     Anonymize(AnonymizeArgs),

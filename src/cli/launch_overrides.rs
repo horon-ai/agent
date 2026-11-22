@@ -12,6 +12,7 @@
 //! roles live.
 
 use anyhow::{Result, bail};
+use std::path::{Path, PathBuf};
 
 use super::args::Args;
 
@@ -32,6 +33,22 @@ pub(crate) struct LaunchOverrideArgs {
     /// Enable the `[prewalk]` handoff into this model or `role:<name>` for this launch only.
     #[arg(long = "prewalk", global = true, value_name = "INTO")]
     pub(crate) prewalk: Option<String>,
+
+    /// Skip AGENTS.md discovery (project and global) for this launch only.
+    #[arg(long = "no-context-files", global = true)]
+    pub(crate) no_context_files: bool,
+
+    /// Skip imported rules, prompt overlays and preferred-tools guidance for this launch only.
+    #[arg(long = "no-rules", global = true)]
+    pub(crate) no_rules: bool,
+
+    /// Hide every skill from this launch only; wins over --skills.
+    #[arg(long = "no-skills", global = true)]
+    pub(crate) no_skills: bool,
+
+    /// Keep only skills matching these comma-separated names or `*` patterns for this launch only. Repeatable.
+    #[arg(long = "skills", global = true, value_name = "PATTERNS", action = clap::ArgAction::Append)]
+    pub(crate) skills: Vec<String>,
 }
 use super::output;
 use super::provider_init::ProviderChoice;
@@ -67,6 +84,7 @@ struct PrewalkOverride {
 
 /// Apply the launch overrides, or fail before anything reads a model.
 pub(crate) fn apply(args: &mut Args) -> Result<()> {
+    apply_discovery(&args.launch)?;
     if args.launch.role.is_empty() && args.launch.prewalk.is_none() && !args.launch.no_prewalk {
         return Ok(());
     }
@@ -305,4 +323,87 @@ fn report(roles: &[(ModelRole, String)], prewalk: &PrewalkOverride) {
         },
         _ => {}
     }
+}
+
+/// Turn off optional instruction discovery for this process and name what it skips.
+///
+/// The base system prompt is not optional and is never skipped. Only sources
+/// that exist are reported, so the line says what the default run would have read.
+fn apply_discovery(launch: &LaunchOverrideArgs) -> Result<()> {
+    use crate::prompt::{NO_CONTEXT_FILES_ENV, NO_RULES_ENV};
+    if launch.no_context_files {
+        crate::env::set_var(NO_CONTEXT_FILES_ENV, "1");
+        let mut sources = vec![("project AGENTS.md", PathBuf::from("AGENTS.md"))];
+        if let Ok(global) = crate::storage::user_home_path("AGENTS.md") {
+            sources.push(("global AGENTS.md", global));
+        }
+        let skipped = existing(&sources);
+        report_skipped("--no-context-files", &skipped);
+    }
+    if launch.no_rules {
+        crate::env::set_var(NO_RULES_ENV, "1");
+        let mut sources = vec![(
+            ".horon/prompt-overlay.md",
+            Path::new(".horon/prompt-overlay.md").to_path_buf(),
+        )];
+        sources.push((
+            ".horon/preferred-tools.md",
+            Path::new(".horon/preferred-tools.md").to_path_buf(),
+        ));
+        if let Ok(dir) = crate::storage::horon_agent_dir() {
+            sources.push(("~/.horon/prompt-overlay.md", dir.join("prompt-overlay.md")));
+            sources.push(("~/.horon/preferred-tools.md", dir.join("preferred-tools.md")));
+        }
+        let mut skipped = existing(&sources);
+        if crate::config::config().features.foreign_rules {
+            skipped.push("imported foreign rules");
+        }
+        report_skipped("--no-rules", &skipped);
+    }
+    apply_skill_filter(launch)
+}
+
+/// `--no-skills` hides everything and wins over `--skills`; otherwise the
+/// patterns are checked here so a bad one fails before any request.
+fn apply_skill_filter(launch: &LaunchOverrideArgs) -> Result<()> {
+    use crate::skill::{NO_SKILLS_ENV, SKILLS_ALLOW_ENV, parse_patterns};
+    let patterns = launch
+        .skills
+        .iter()
+        .map(|raw| parse_patterns(raw))
+        .collect::<Result<Vec<_>>>()?
+        .concat();
+    if launch.no_skills {
+        crate::env::set_var(NO_SKILLS_ENV, "1");
+        let ignored = if patterns.is_empty() {
+            String::new()
+        } else {
+            format!("; --skills {} ignored", patterns.join(","))
+        };
+        output::stderr_info(format!("launch override: skills off (this invocation only){ignored}"));
+    } else if !patterns.is_empty() {
+        let joined = patterns.join(",");
+        crate::env::set_var(SKILLS_ALLOW_ENV, &joined);
+        output::stderr_info(format!(
+            "launch override: skills limited to {joined} (this invocation only)"
+        ));
+    }
+    Ok(())
+}
+
+fn existing(sources: &[(&'static str, PathBuf)]) -> Vec<&'static str> {
+    sources
+        .iter()
+        .filter(|(_, path)| path.is_file())
+        .map(|(label, _)| *label)
+        .collect()
+}
+
+fn report_skipped(flag: &str, skipped: &[&str]) {
+    let list = if skipped.is_empty() {
+        "no source was present".to_string()
+    } else {
+        skipped.join(", ")
+    };
+    output::stderr_info(format!("launch override: {flag} skips {list} (this invocation only)"));
 }

@@ -8,9 +8,8 @@ use super::args::{
     AmbientCommand, ApprovalVerdictArg, ApprovalsCommand, Args, Command, MemoryCommand, ModelCommand, ProviderCommand,
     ServerCommand, SessionCommand,
 };
-use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
-
 use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal};
+use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 use provider_init::ProviderChoice;
 
 mod compact_text;
@@ -280,10 +279,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             tokio::task::spawn_blocking(hot_exec::run_update).await??;
         }
         Some(Command::InstallRelease { .. } | Command::Package { .. }) => unreachable!("handled before bootstrap"),
-        Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. } | Command::Agents) => {
+        Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. }) => {
             unreachable!("handled by startup")
         }
         Some(Command::Changelog { .. }) => unreachable!("handled by startup"),
+        Some(Command::Agents | Command::Images(_)) => unreachable!("handled by startup"),
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }
@@ -378,9 +378,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Cloud(subcmd)) => {
             super::cloud_move::run_cli(subcmd)?;
         }
-        Some(Command::Pair { list, revoke }) => {
-            commands::run_pair_command(list, revoke)?;
-        }
+        Some(Command::Pair { list, revoke }) => commands::run_pair_command(list, revoke)?,
         Some(Command::Permissions) => {
             anyhow::bail!("the interactive permissions editor is unavailable in this headless build");
         }
@@ -394,6 +392,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 let store = crate::ambient::BlockedApprovalStore::open_default()?;
                 resolve_blocked_approval(&store, &request_id, &tool_call_id, verdict, note.as_deref())?;
             }
+            ApprovalsCommand::Grants(_) => unreachable!("handled by startup"),
         },
         Some(Command::Model(subcmd)) => match subcmd {
             ModelCommand::List { json, verbose, filter } => {

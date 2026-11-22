@@ -64,7 +64,7 @@
     {
       "package": "horon-agent",
       "target": "launch_overrides_cli",
-      "min_passed": 5
+      "min_passed": 9
     },
     {
       "package": "horon-agent",
@@ -75,6 +75,16 @@
       "package": "horon-agent",
       "target": "config_plan_cli",
       "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
+      "target": "run_config_overlay_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
+      "target": "run_approval_cli",
+      "min_passed": 1
     },
     {
       "package": "horon-agent",
@@ -100,6 +110,11 @@
       "package": "horon-agent",
       "target": "session_commands",
       "min_passed": 23
+    },
+    {
+      "package": "horon-agent",
+      "target": "session_move_cli",
+      "min_passed": 2
     },
     {
       "package": "horon-agent",
@@ -317,6 +332,11 @@
       "package": "horon-agent-session-store",
       "target": "cache_batches",
       "min_passed": 5
+    },
+    {
+      "package": "horon-agent-session-store",
+      "target": "cache_reclaim",
+      "min_passed": 1
     },
     {
       "package": "horon-agent-session-store",

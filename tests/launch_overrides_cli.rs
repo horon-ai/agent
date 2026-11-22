@@ -131,6 +131,13 @@ impl Mock {
         self.requests.load(Ordering::SeqCst)
     }
 
+    fn request_text(&self) -> String {
+        self.bodies
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .join("\n")
+    }
+
     fn models(&self) -> Vec<String> {
         self.bodies
             .lock()
@@ -352,6 +359,7 @@ async fn unusable_role_or_prewalk_values_fail_before_any_request() {
             "is not offered by provider profile",
         ),
         (vec!["run", "--prewalk", "role:judge", "hello"], "is not supported"),
+        (vec!["run", "--skills", "bad pattern", "hello"], "contains"),
     ] {
         let output = home.run(&args).await;
         assert!(!output.status.success(), "{args:?} must fail");
@@ -362,4 +370,127 @@ async fn unusable_role_or_prewalk_values_fail_before_any_request() {
         );
     }
     assert_eq!(mock.requests(), 0, "a rejected override sends no request");
+}
+
+const CONTEXT_MARKER: &str = "ZEBRA-CONTEXT-MARKER-7731";
+const OVERLAY_MARKER: &str = "OTTER-OVERLAY-MARKER-4410";
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_context_files_drops_agents_md_but_keeps_the_base_prompt() {
+    let mock = Mock::start(None).await;
+    let home = Home::new();
+    write_launch_config(&home, &mock.base_url, "role:plan");
+    std::fs::write(home.path().join("AGENTS.md"), CONTEXT_MARKER).expect("write AGENTS.md");
+
+    let default_run = home.run(&["run", "--provider-profile", "qa", "hello"]).await;
+    assert!(default_run.status.success(), "{}", text(&default_run.stderr));
+    assert!(
+        mock.request_text().contains(CONTEXT_MARKER),
+        "the default run reads AGENTS.md"
+    );
+
+    let skipped = Mock::start(None).await;
+    write_launch_config(&home, &skipped.base_url, "role:plan");
+    let output = home
+        .run(&["run", "--provider-profile", "qa", "--no-context-files", "hello"])
+        .await;
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let request = skipped.request_text();
+    assert!(!request.contains(CONTEXT_MARKER), "AGENTS.md is skipped");
+    assert!(request.contains("You are HoronAgent"), "the base prompt still applies");
+    assert!(
+        text(&output.stderr).contains("launch override: --no-context-files skips project AGENTS.md"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_rules_drops_the_prompt_overlay_and_leaves_agents_md() {
+    let mock = Mock::start(None).await;
+    let home = Home::new();
+    write_launch_config(&home, &mock.base_url, "role:plan");
+    std::fs::write(home.path().join("AGENTS.md"), CONTEXT_MARKER).expect("write AGENTS.md");
+    std::fs::create_dir_all(home.path().join(".horon")).expect("create .horon");
+    std::fs::write(home.path().join(".horon").join("prompt-overlay.md"), OVERLAY_MARKER).expect("write overlay");
+
+    let output = home
+        .run(&["run", "--provider-profile", "qa", "--no-rules", "hello"])
+        .await;
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let request = mock.request_text();
+    assert!(!request.contains(OVERLAY_MARKER), "the overlay is skipped");
+    assert!(
+        request.contains(CONTEXT_MARKER),
+        "AGENTS.md is a context file, not a rule"
+    );
+    assert!(
+        text(&output.stderr).contains("launch override: --no-rules skips .horon/prompt-overlay.md"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+fn write_skill(home: &Home, name: &str) {
+    let directory = home.path().join("skills").join(name);
+    std::fs::create_dir_all(&directory).expect("create the skill directory");
+    std::fs::write(
+        directory.join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: fixture skill {name}\n---\n\nbody of {name}\n"),
+    )
+    .expect("write SKILL.md");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn skills_patterns_keep_only_matching_skills_in_the_prompt() {
+    let home = Home::new();
+    let default_mock = Mock::start(None).await;
+    write_launch_config(&home, &default_mock.base_url, "role:plan");
+    write_skill(&home, "alpha-review");
+    write_skill(&home, "beta-deploy");
+
+    let default_run = home.run(&["run", "--provider-profile", "qa", "hello"]).await;
+    assert!(default_run.status.success(), "{}", text(&default_run.stderr));
+    let default_request = default_mock.request_text();
+    assert!(default_request.contains("alpha-review") && default_request.contains("beta-deploy"));
+
+    let limited = Mock::start(None).await;
+    write_launch_config(&home, &limited.base_url, "role:plan");
+    let output = home
+        .run(&["run", "--provider-profile", "qa", "--skills", "alpha-*", "hello"])
+        .await;
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let request = limited.request_text();
+    assert!(request.contains("alpha-review"), "an allowed skill stays");
+    assert!(!request.contains("beta-deploy"), "a filtered skill is hidden");
+    assert!(
+        text(&output.stderr).contains("launch override: skills limited to alpha-*"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_skills_wins_over_skills_and_hides_every_skill() {
+    let home = Home::new();
+    let mock = Mock::start(None).await;
+    write_launch_config(&home, &mock.base_url, "role:plan");
+    write_skill(&home, "alpha-review");
+
+    let output = home
+        .run(&[
+            "run",
+            "--provider-profile",
+            "qa",
+            "--no-skills",
+            "--skills",
+            "alpha-*",
+            "hello",
+        ])
+        .await;
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    assert!(!mock.request_text().contains("alpha-review"));
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("launch override: skills off"), "{stderr}");
+    assert!(stderr.contains("--skills alpha-* ignored"), "{stderr}");
 }

@@ -416,6 +416,10 @@
       "count": 1,
       "reason": "`ssh_transport` bridges the native protocol over tokio::net::UnixStream, so the module exists only on Unix."
     },
+    "src/cli/startup/images.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(unix)]` test that creates a symbolic link out of the generated-images directory to prove it is refused; Windows symlink creation needs privileges the CI runner does not grant."
+    },
     "src/main.rs": {
       "count": 1,
       "reason": "Apple's linker reports the unoptimized `horon-agent` binary's `__eh_frame` over its 16 MB compact-unwind limit; the message exists only for debug links on macOS and is not actionable from source."
