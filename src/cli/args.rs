@@ -70,7 +70,6 @@ impl Command {
                 advisor: None,
                 approval: None,
                 approve_plan: false,
-                approve_plan: false,
             },
             message,
         }

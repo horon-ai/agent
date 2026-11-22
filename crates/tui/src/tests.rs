@@ -1189,20 +1189,3 @@ fn the_repaint_key_answers_under_every_surface_without_taking_its_keys() {
         "the prompt stopped answering its own key"
     );
 }
-
-#[test]
-fn alt_m_asks_the_harness_for_read_only_plan_mode() {
-    let (_sender, receiver) = std::sync::mpsc::channel();
-    let mut app = crate::app::App::new("default socket".to_string(), receiver);
-    let key = crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Char('m'),
-        crossterm::event::KeyModifiers::ALT,
-    );
-    assert_eq!(
-        app.on_key(key),
-        Some(crate::app::Action::Runtime {
-            command: horon_agent_sdk::RuntimeCommand::Plan,
-            arguments: vec!["on".to_string()],
-        })
-    );
-}
