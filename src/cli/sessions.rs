@@ -16,6 +16,7 @@ use crate::cli::args::SessionCommand;
 use crate::session;
 use crate::session::event_store_api as store;
 
+mod anonymize;
 mod recovery;
 mod transcript;
 
@@ -55,6 +56,21 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             },
             json,
         ),
+        SessionCommand::Anonymize(options) => {
+            let output = options.output.as_deref().map(resolve_path).transpose()?;
+            anonymize::run(
+                &store_paths(&home()?),
+                &parse_id(&options.session)?,
+                output.as_deref(),
+                &anonymize::Options {
+                    with_children: options.with_children,
+                    keep_text: options.keep_text,
+                    keep_tool_names: options.keep_tool_names,
+                    keep_timestamps: options.keep_timestamps,
+                },
+                options.json,
+            )
+        }
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
         SessionCommand::Import { input, json } => import(&home()?, &input, json),
         SessionCommand::ImportTranscript(options) => {
