@@ -6,6 +6,9 @@ use horon_agent_base::prompt::{build_system_prompt_full, build_system_prompt_spl
 use std::path::Path;
 use std::process::Command;
 
+#[path = "support/package_text.rs"]
+mod package_text;
+
 const AGENTS: &str = "PROMPT_ACCEPTANCE_AGENTS_MARKER\n";
 const OVERLAY: &str = "PROMPT_ACCEPTANCE_OVERLAY_MARKER\n";
 const TOOLS: &str = "PROMPT_ACCEPTANCE_TOOLS_MARKER\n";
@@ -19,6 +22,9 @@ fn write_guidance(dir: &Path) {
 
 #[test]
 fn public_prompt_builders_deduplicate_home_and_aliases_but_preserve_distinct_files() {
+    // The package cases redirect HOME/HORON_HOME in this process; holding the
+    // same lock keeps this spawn from reading the environment mid-change.
+    let _env = package_text::hold_env();
     let temp = tempfile::tempdir().unwrap();
     let home = temp.path().join("home");
     let alias = temp.path().join("alias");

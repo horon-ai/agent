@@ -16,6 +16,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         wait_async,
         warn_cost,
         max_cost,
+        system_template,
     }) = &args.command
     else {
         anyhow::bail!("Expected a run command");
@@ -62,6 +63,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     let setup = (|| {
         commands::restore_agent_session_if_requested(&mut agent, args.resume.as_deref())?;
         apply_model_overrides(&mut agent, overrides)?;
+        if let Some(path) = system_template {
+            apply_system_template(&mut agent, path)?;
+        }
         if let (Some(title), Some(budget)) = (&args.goal, args.goal_budget) {
             let goal = crate::goal::start_session_goal(
                 agent.session_id(),
@@ -97,6 +101,28 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         ));
     }
     result
+}
+
+fn apply_system_template(agent: &mut Agent, path: &std::path::Path) -> Result<()> {
+    let template = std::fs::read_to_string(path)
+        .map_err(|error| anyhow::anyhow!("cannot read system template {}: {error}", path.display()))?;
+    let cwd = std::env::current_dir()
+        .map_err(|error| anyhow::anyhow!("cannot resolve the working directory: {error}"))?
+        .display()
+        .to_string();
+    let now = horon_agent_time::Timestamp::now().to_string();
+    let date = now.split_once('T').map_or(now.as_str(), |(day, _)| day).to_owned();
+    let model = agent.provider_model();
+    let text = crate::prompt::template::render(
+        &template,
+        &[
+            ("cwd", cwd.as_str()),
+            ("date", date.as_str()),
+            ("model", model.as_str()),
+        ],
+    )?;
+    agent.set_system_prompt(&text);
+    Ok(())
 }
 
 fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Result<()> {
