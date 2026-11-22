@@ -294,6 +294,8 @@ from = "plan-model"
 
 `provider add`가 같은 표를 `config.toml`에 쓰고, `--api-key-stdin`으로 받은 키를 키 파일에 저장한다.
 
+`horon provider diagnose`는 모델 호출 없이 모든 `[providers.<name>]` 프로필을 점검합니다. `no_providers`, `invalid_base_url`, `missing_credential`(`api_key_env`가 없거나 변수가 설정되지 않음), `configured` 중 하나로 표시하고, 확인할 항목이 있으면 종료 코드 1을 돌려줍니다. `--check`를 주면 설정한 자격 증명으로 각 엔드포인트의 모델 목록을 요청해 `reachable` 또는 `unreachable`을 표시합니다. 출력에는 키와 상대 서버의 응답 본문이 들어가지 않습니다. `--json`으로 구조화된 결과를 받습니다.
+
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --type openai-compatible \

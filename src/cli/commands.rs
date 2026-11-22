@@ -13,6 +13,7 @@ mod report_info;
 mod run_deadline;
 mod session_delete;
 mod session_rename;
+mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
 pub(crate) use session_rename::run_session_rename_command;
@@ -20,7 +21,8 @@ pub(crate) use session_rename::run_session_rename_command;
 pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
-pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
+pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
+pub(crate) use tool_preview::run_preview_command;
 
 pub enum AmbientSubcommand {
     Status,

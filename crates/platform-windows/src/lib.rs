@@ -8,6 +8,7 @@
 
 mod fs;
 pub mod ipc;
+pub mod package_child;
 mod power;
 mod resources;
 pub mod signal;
@@ -293,8 +294,9 @@ impl PlatformAdapter for Adapter {
     }
 
     fn isolate_process_group(_command: &mut Command) {
-        // Windows has no process groups; job objects cover the same ground and
-        // are not created here.
+        // Windows has no process groups. `package_child` covers that ground with
+        // a dedicated Job Object for a package child; an ordinary command is not
+        // put in a job here, so nothing else changes its lifetime.
     }
 
     fn fd_diagnostic_snapshot() -> String {
@@ -491,9 +493,10 @@ impl PlatformAdapter for Adapter {
     }
 
     fn bind_process_lifetime_to_parent() -> bool {
-        // Job objects can tie a child to its parent, but this adapter creates
-        // none, and a silently armed kill-on-close would change how a detached
-        // daemon outlives its client.
+        // A job object can tie the host to its parent, but none is created for
+        // the host: a silently armed kill-on-close would change how a detached
+        // daemon outlives its client. The package child's own job is created in
+        // `package_child`, where the caller owns its lifetime.
         false
     }
 

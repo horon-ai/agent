@@ -516,6 +516,8 @@ a model role.
 workspace. It is a separate action from `list`, which still means "list swarm
 members" and keeps `list_agents` as its alias.
 
+Use `horon agents` to inspect the catalog without starting a session. It shows each definition's source path, scope, configured model, effort and tool allow list. Project entries are shown when the workspace is trusted and take precedence over user entries of the same name. `--trust-workspace` applies to the inspection without writing a trust decision. The output omits role prompts and result schemas.
+
 ## 8c. Fan-out: `spawn_many`
 
 A parent that fans work out pays one model round trip per child when it calls
