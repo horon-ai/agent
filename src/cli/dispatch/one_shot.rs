@@ -82,6 +82,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
                 super::output::stderr_info(crate::goal::render_goal_detail(&goal));
             }
         }
+        if args.plan {
+            crate::plan_mode::command(agent.session_id(), &["on".to_owned()])?;
+        }
         Ok(())
     })();
     if let Err(error) = setup {
@@ -142,6 +145,13 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
     }
     if let Some(choice) = overrides.advisor.as_deref() {
         agent.set_advisor_enabled(choice == "on");
+    }
+    if let Some(mode) = overrides
+        .approval
+        .as_deref()
+        .and_then(crate::config::ApprovalMode::parse)
+    {
+        crate::tool::run_approval::set_floor(agent.session_id(), mode);
     }
     Ok(())
 }
