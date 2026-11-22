@@ -44,6 +44,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if (args.goal.is_some() || args.plan) && !matches!(args.command, None | Some(Command::Run { .. })) {
         anyhow::bail!("--goal and --plan only apply when opening the terminal client or running one message");
     }
+    super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
         // A remote host owns its session ID and cwd: skip local resume lookup and provider bootstrap.
         return super::ssh::run(args).await;
@@ -53,11 +54,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         commands::Early::Rewrite(next) => args.command = Some(next),
         commands::Early::Pass => {}
     }
-    // MCP management is independent of providers, sessions and the daemon; list stays offline and scriptable.
+    // MCP management is independent of providers and the daemon; list stays offline.
     if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
-    // Release installation is standalone: it must not load profiles, migrate config or start the daemon.
     if let Some(Command::InstallRelease { .. }) = &args.command {
         let Some(Command::InstallRelease {
             assets,
@@ -202,10 +202,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                     "api-bridge --stdio is Unix only; connect to the API socket instead (a named pipe on Windows)"
                 );
             }
-            // The daemon must be up for the bridge to translate onto, and a
-            // user running this to try the SDK has usually never started one.
-            // Starting it here turns "connection refused, good luck" into a
-            // working socket.
+            // The daemon must be up for the bridge to translate onto, and a user trying the SDK
+            // has usually never started one. Starting it here avoids "connection refused".
             //
             // Best-effort on purpose: a spawn can legitimately fail while a
             // usable daemon exists (another build already holds the runtime
@@ -609,6 +607,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         super::tui_handoff::decide_for_process(),
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
+        &args.add_dir,
         args.plan,
     )
 }

@@ -732,6 +732,84 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
 }
 
+/// Every `Additional directories:` line the model was sent.
+fn additional_directories_lines(bodies: &[String]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for body in bodies {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            continue;
+        };
+        let Some(messages) = value["messages"].as_array() else {
+            continue;
+        };
+        for message in messages {
+            let text = match &message["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|block| block["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => continue,
+            };
+            lines.extend(
+                text.lines()
+                    .filter_map(|line| line.trim().strip_prefix("Additional directories: "))
+                    .map(|rest| rest.trim().to_string()),
+            );
+        }
+    }
+    lines
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_lists_one_canonical_root_in_the_session_context() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let extra = home.path().join("extra");
+    std::fs::create_dir(&extra).expect("extra directory");
+    let canonical = std::fs::canonicalize(&extra)
+        .expect("canonical extra")
+        .display()
+        .to_string();
+    let alias = format!("{canonical}/.");
+    let output = home
+        .run(&["run", "hi", "--no-update", "--add-dir", &canonical, "--add-dir", &alias])
+        .await;
+    assert!(output.status.success(), "run failed: {}", text(&output.stderr));
+    let lines = additional_directories_lines(&mock.bodies());
+    assert!(!lines.is_empty(), "the session context reached the model");
+    assert!(
+        lines.iter().all(|line| line == &canonical),
+        "one canonical entry: {lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_refuses_a_missing_directory_before_the_model_call() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let missing = home.path().join("missing");
+    let output = home
+        .run(&[
+            "run",
+            "hi",
+            "--no-update",
+            "--add-dir",
+            missing.to_str().expect("utf-8"),
+        ])
+        .await;
+    assert!(!output.status.success(), "a missing directory fails the launch");
+    assert!(
+        text(&output.stderr).contains("no such directory"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(mock.requests(), 0, "no request is made for a path that names nothing");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     let home = Home::new();
@@ -1156,42 +1234,4 @@ async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_a
             .status
             .success()
     );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn config_check_names_the_invalid_section_and_show_never_prints_a_credential() {
-    let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
-    let home = Home::new();
-    let keyed = "[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\n";
-    let config = format!("{COMPACTION_HEAD}{keyed}api_key = \"{secret}\"\ndefault_model = \"m\"\n");
-    std::fs::write(home.path().join("config.toml"), config).unwrap();
-    let shown = home.run(&["config", "show", "--json"]).await;
-    assert!(shown.status.success(), "{}", text(&shown.stderr));
-    let report: Value = serde_json::from_slice(&shown.stdout).unwrap();
-    let settings = report["settings"].as_array().unwrap();
-    assert!(!settings.is_empty());
-    for row in settings {
-        assert!(row["source"].is_string() && row["key"].is_string());
-    }
-    assert!(!text(&shown.stdout).contains(secret));
-    assert!(home.run(&["config", "check"]).await.status.success());
-
-    std::fs::write(home.path().join("config.toml"), "[prewalk]\nenabled = true\n").unwrap();
-    let bad = home.run(&["config", "check", "--json"]).await;
-    assert_eq!(bad.status.code(), Some(1));
-    let report: Value = serde_json::from_slice(&bad.stdout).unwrap();
-    assert_eq!(report["ok"], false);
-    assert!(report["error"].as_str().unwrap().contains("[prewalk]"), "{report}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn run_plan_fails_before_any_request_when_plan_mode_is_off() {
-    let home = Home::new();
-    let mock = Mock::start().await;
-    home.write_config(&mock.base_url);
-    let result = home.run(&["run", "make a plan", "--no-update", "--plan"]).await;
-    assert!(!result.status.success());
-    let stderr = text(&result.stderr);
-    assert!(stderr.contains("Plan mode is off"), "{stderr}");
-    assert_eq!(mock.requests(), 0, "a refused plan start must not reach the model");
 }

@@ -23,6 +23,7 @@ pub(crate) use session_rename::run_session_rename_command;
 pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
+pub(crate) use config_cli::ConfigCommand;
 pub(crate) use early_commands::{Early, run_early_command};
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
 pub(crate) use tool_preview::run_preview_command;

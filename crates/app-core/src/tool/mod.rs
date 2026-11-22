@@ -49,6 +49,7 @@ mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
 pub(crate) mod new_context;
+pub(crate) mod package_tool;
 mod patch;
 pub mod path_policy;
 mod path_suffix;
@@ -2067,9 +2068,7 @@ impl Registry {
         // inner call applies the same mode to the tool it runs, so one prompt
         // names that tool and its arguments.
         let refusal = if policy_on_self {
-            // An ACP connection may set the mode for the turns it starts; every other
-            // turn, including a desktop or daemon turn on the same session, keeps the
-            // configured mode.
+            // An ACP connection may set the mode for its own turns; any other turn keeps the configured mode.
             let approval_effects = plan_effects.unwrap_or(ToolEffects::write());
             let approval_mode = run_approval::stricter(
                 &ctx.session_id,

@@ -1,9 +1,25 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::cli::args::ConfigCommand;
 use crate::config::Config;
 use crate::effective_settings::{EffectiveSource, effective_settings};
+use clap::Subcommand;
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum ConfigCommand {
+    /// Show effective values and the layer behind each, without secrets
+    Show {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate config.toml with the startup loader; exits 1 on an invalid file
+    Check {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+}
 
 #[derive(Serialize)]
 struct Setting {
