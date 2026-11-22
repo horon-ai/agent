@@ -7,6 +7,8 @@ mod mcp;
 pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod import_options;
+pub(crate) use import_options::ImportTranscriptArgs;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
 
@@ -944,6 +946,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview a Claude Code or Codex transcript file; import it with --apply
+    ImportTranscript(ImportTranscriptArgs),
 
     /// Import an exported bundle into this store
     Import {
