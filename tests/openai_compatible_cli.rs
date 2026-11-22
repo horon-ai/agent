@@ -1005,6 +1005,7 @@ async fn default_run_still_stores_its_session() {
         files.iter().any(|file| file.ends_with("/events.jsonl")),
         "a normal run keeps its event log: {files:?}"
     );
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn provider_diagnose_separates_missing_config_missing_credential_and_unreachable_endpoint() {
