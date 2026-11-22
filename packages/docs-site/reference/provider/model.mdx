@@ -198,6 +198,10 @@ An empty string counts as unset at every step. `aux` walks the same chain, so a 
 
 `image` stops at step 3: it has no inherited roles and does not take a profile or provider text default. An image request sent to a chat model cannot succeed, so an unset `roles.image` means image generation is not configured, which the tool reports, rather than a call that always fails at the endpoint. This is the only role where a text default is not a valid substitute, and `ModelRole::accepts_text_default` states it once.
 
+### Auxiliary calls stay in the active profile
+
+Every auxiliary workload resolves its model inside the profile the session runs under: the `advisor` forks the session's provider and only changes its model, `prewalk` accepts a model id or `role:<name>` from that profile, and `judge`, `aux`, `plan` and `image` read that profile's `roles`. A role value that looks like another profile's model, such as `beta/aux-model`, is sent as a model id to the active profile's own endpoint with its own credential. No auxiliary call selects a second profile, so none of them contacts another profile's endpoint, and `[ambient] provider` is not read to choose a provider. This is model-provider routing only: it says nothing about shell commands, MCP servers or other network access. `crates/base/src/provider/aux_boundary_tests.rs` checks it against two local servers.
+
 ### Fallback and failover order
 
 The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
