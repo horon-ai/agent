@@ -126,6 +126,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
 | `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
 | `horon tokens [TEXT]` | Estimates UTF-8 tokens offline from inline text, stdin, or `--file`. `--model` selects a known tokenizer family and the output labels any fallback. |
+| `horon session cache [--apply] [--json]` | Lists the regenerable cache files of sessions no running agent owns and their sizes. It writes nothing until `--apply`, and never touches original logs, blobs or the runtime journal. |
 | `horon agents` | Lists named agent definitions, their sources, and configured model and tools without starting a session. |
 | `horon provider status [--json]` | Reports each configured profile's credential source and local status (`authenticated`, `unauthenticated`, or `unknown`) without printing credentials or contacting a provider. |
 | `horon skills list [--json]`, `horon skills install <source> --approve` | Lists skills with the source and commit of installed ones, or installs one through the managed-skill installer from an https, ssh or file source or a local directory. Needs `[tools] managed_skills = true`. |
@@ -157,6 +158,8 @@ Run `horon --continue` to reopen the most recently active saved session in the c
 Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and token budget to a new session.
 
 Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
+
+`horon run --config overlay.toml "<message>"` layers a TOML file over `config.toml` for that run only. The flag is repeatable. Later files win per key, omitted keys inherit, and tables merge key by key. A file that does not parse names itself, and the merged result is validated before any provider work.
 
 `horon run --system-prompt <text|@file>` replaces the system prompt for that run and `--append-system-prompt <text|@file>` adds up to 16 KiB after the composed prompt. The tool definitions are sent either way, an append keeps the base prompt in place, and neither flag affects another session or a default run.
 

@@ -126,6 +126,7 @@ horon run "summarize this repo"
 | `horon completions <bash\|zsh\|fish>` | 데몬을 시작하지 않고 셸 자동완성 스크립트를 출력한다. |
 | `horon stream-rules [TEXT]` | 스트림 규칙을 검사하고 모델 답변 예시에 맞는 규칙을 오프라인에서 확인한다. |
 | `horon tokens [TEXT]` | UTF-8 텍스트를 인자나 표준 입력으로 받거나 `--file`에서 읽어 오프라인으로 토큰 수를 추정한다. `--model`로 알려진 토크나이저 계열을 고르며 기본 추정 방식을 사용하면 결과에 표시한다. |
+| `horon session cache [--apply] [--json]` | 실행 중인 에이전트가 소유하지 않은 세션의 재생성 가능한 캐시 파일과 크기를 나열한다. `--apply` 전에는 아무것도 쓰지 않으며 원본 로그, 블롭, 런타임 저널은 건드리지 않는다. |
 | `horon agents` | 세션을 시작하지 않고 에이전트 정의의 출처와 설정된 모델 및 도구를 나열한다. |
 | `horon provider status [--json]` | 설정된 프로파일마다 자격 증명 출처와 로컬 상태(`authenticated`, `unauthenticated`, `unknown`)를 표시한다. 자격 증명 값은 출력하지 않고 제공자에도 접속하지 않는다. |
 | `horon skills list [--json]`, `horon skills install <출처> --approve` | 스킬을 설치한 출처와 커밋과 함께 나열하거나, 관리 스킬 설치기로 https, ssh, file 출처나 로컬 폴더에서 설치한다. `[tools] managed_skills = true`가 필요하다. |
@@ -157,6 +158,8 @@ horon run "summarize this repo"
 `horon --goal "Ship a fix" --goal-budget 1200`으로 새 세션에 목표와 토큰 예산을 설정할 수 있습니다.
 
 `horon --plan`으로 새 터미널 세션을 읽기 전용 플랜 모드로 열 수 있고, `horon run --plan "<메시지>"`로 계획만 세우는 한 번 실행도 가능합니다. `[tools] plan_mode = true`가 필요하며 `--resume`, `--continue`와 함께 쓸 수 없고, 조건이 맞지 않으면 모델 요청 전에 실패합니다. `/plan approve`로 읽기 전용 상태를 끝냅니다.
+
+`horon run --config overlay.toml "<메시지>"`는 그 실행 한 번에 한해 `config.toml` 위에 TOML 파일을 겹쳐 적용합니다. 여러 번 쓸 수 있고, 뒤의 파일이 키 단위로 이기며, 적지 않은 키는 그대로 이어받고 표는 키별로 합쳐집니다. 파싱할 수 없는 파일은 자기 이름을 알리고, 합친 결과는 공급자를 쓰기 전에 검증합니다.
 
 `horon run --system-prompt <텍스트|@파일>`은 그 실행의 시스템 프롬프트를 바꾸고, `--append-system-prompt <텍스트|@파일>`은 조립된 프롬프트 뒤에 최대 16 KiB를 덧붙입니다. 도구 정의는 어느 쪽이든 그대로 전달되고, 덧붙이면 기본 프롬프트가 그대로 남으며, 어느 플래그도 다른 세션이나 기본 실행에는 영향을 주지 않습니다.
 

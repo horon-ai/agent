@@ -24,7 +24,9 @@ pub(crate) use import_options::ImportTranscriptArgs;
 mod skills;
 pub(crate) use skills::SkillsCommand;
 mod run_options;
+mod session_cache;
 pub(crate) use run_options::RunModelOverrides;
+pub(crate) use session_cache::CacheArgs;
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -47,6 +49,7 @@ impl Command {
                 approval: None,
                 system_prompt: None,
                 append_system_prompt: None,
+                config_overlay: Vec::new(),
                 approve_plan: false,
             },
             message,
@@ -866,6 +869,8 @@ pub(crate) enum SessionCommand {
         json: bool,
     },
 
+    /// Preview or reclaim regenerable cache files of inactive sessions
+    Cache(CacheArgs),
     /// Preview, or with --apply change, the working root a saved session resumes in
     Move(SessionMoveArgs),
 
