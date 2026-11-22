@@ -18,6 +18,7 @@
 //! aside as `<name>.corrupt` rather than overwritten, and a file from a newer
 //! schema is reported and left untouched.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -28,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value};
 
 use crate::app::App;
-use crate::transcript::Item;
+use crate::transcript::{Item, Transcript};
 
 /// Longest note kept, in characters after normalisation.
 pub(crate) const MAX_NOTE_CHARS: usize = 500;
@@ -748,40 +749,35 @@ pub(crate) fn note_at<'a>(
 pub(crate) struct Frame<'a> {
     store: &'a NoteStore,
     session: Option<&'a str>,
-    keys: Option<Vec<Option<MessageKey>>>,
+    keys: Option<Cow<'a, [Option<MessageKey>]>>,
     ids: &'a [Option<String>],
 }
 
 impl<'a> Frame<'a> {
     /// The notes of the app's current session.
     pub(crate) fn new(app: &'a App) -> Self {
-        Self::from_parts(
-            &app.notes,
-            app.session_id.as_deref(),
-            app.transcript.items(),
-            app.transcript.stored_ids(),
-        )
+        Self::from_parts(&app.notes, app.session_id.as_deref(), &app.transcript, &app.note_keys)
     }
 
-    /// The notes of `session` over `items`.
+    /// The notes of `session` over `transcript`.
     ///
-    /// The measuring walk has the store, the session and the items apart rather
-    /// than through an `App`, because it holds those fields of one borrowed
-    /// across the scroll's own mutable borrow.
+    /// The measuring walk has the store, the session and the transcript apart
+    /// rather than through an `App`, because it holds those fields of one
+    /// borrowed across the scroll's own mutable borrow.
     pub(crate) fn from_parts(
         store: &'a NoteStore,
         session: Option<&'a str>,
-        items: &[Item],
-        ids: &'a [Option<String>],
+        transcript: &'a Transcript,
+        cache: &'a KeyCache,
     ) -> Self {
         let keys = session
             .filter(|session| store.count(session) > 0)
-            .map(|_| message_keys(items));
+            .map(|_| cache.keys_for(transcript));
         Self {
             store,
             session,
             keys,
-            ids,
+            ids: transcript.stored_ids(),
         }
     }
 
@@ -791,11 +787,49 @@ impl<'a> Frame<'a> {
     }
 }
 
+/// The message keys of the conversation the last frame drew.
+///
+/// The keys depend on the user and assistant rows alone, and those change only
+/// when the transcript's item generation moves, so a frame that draws the same
+/// conversation again (a scroll step, a redraw, a spinner tick) reuses them
+/// instead of fingerprinting every message once more.
+#[derive(Debug, Default)]
+pub(crate) struct KeyCache {
+    generation: Option<u64>,
+    keys: Vec<Option<MessageKey>>,
+}
+
+impl KeyCache {
+    /// Bring the kept keys up to date with `transcript`.
+    pub(crate) fn refresh(&mut self, transcript: &Transcript) {
+        let generation = transcript.items_generation();
+        if self.generation != Some(generation) {
+            self.keys = message_keys(transcript.items());
+            self.generation = Some(generation);
+        }
+        debug_assert_eq!(
+            self.keys,
+            message_keys(transcript.items()),
+            "an unchanged item generation must leave the message keys unchanged"
+        );
+    }
+
+    /// The keys of `transcript`: the kept ones while they are current, and a
+    /// fresh walk for a frame drawn before [`Self::refresh`] caught up.
+    fn keys_for<'k>(&'k self, transcript: &Transcript) -> Cow<'k, [Option<MessageKey>]> {
+        if self.generation == Some(transcript.items_generation()) {
+            Cow::Borrowed(&self.keys)
+        } else {
+            Cow::Owned(message_keys(transcript.items()))
+        }
+    }
+}
+
 /// The identity of each row that can hold a note, aligned with `items`.
 ///
 /// The frame asks only for these, so it takes the shared walk's identities and
 /// drops the addresses: no stored message id is copied to answer a draw.
-pub(crate) fn message_keys(items: &[Item]) -> Vec<Option<MessageKey>> {
+fn message_keys(items: &[Item]) -> Vec<Option<MessageKey>> {
     let mut keys = Vec::with_capacity(items.len());
     walk(items, |_, key, _| keys.push(key));
     keys

@@ -33,6 +33,16 @@ pub(crate) fn transcript_pane(app: &mut App, width: u16, height: u16) -> Pane {
         app.transcript.open_reasoning().map_or(0, str::len),
     );
     app.scroll.observe(mark);
+    // A note hangs under the message its key names, and the keys only matter to
+    // a session that has a note: only then are they brought up to date, once,
+    // for every walk this frame makes.
+    if app
+        .session_id
+        .as_deref()
+        .is_some_and(|session| app.notes.count(session) > 0)
+    {
+        app.note_keys.refresh(&app.transcript);
+    }
     let view = usize::from(height.max(1));
     // The indicator spends the pane's bottom row while it is drawn, so the
     // content is measured against the rows it may actually fill.
@@ -173,6 +183,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
         settings,
         bindings,
         notes: note_store,
+        note_keys,
         session_id,
         ..
     } = app;
@@ -191,12 +202,7 @@ fn measure_transcript(app: &mut App, width: u16, view: usize) {
     // height measured here has to know about the expansion: a view held above
     // the end counts this height, and a stale one would leave the offset short.
     let expand = tool_expand::Frame::new(transcript.expand_state(), bindings);
-    let frame = notes::Frame::from_parts(
-        note_store,
-        session_id.as_deref(),
-        transcript.items(),
-        transcript.stored_ids(),
-    );
+    let frame = notes::Frame::from_parts(note_store, session_id.as_deref(), transcript, note_keys);
     scroll.measure(width, items, open, view, |index| match transcript.items().get(index) {
         // Counted, not built: the rows of a block that stays off screen are not
         // made to measure it.
