@@ -17,4 +17,8 @@ pub(crate) struct RunModelOverrides {
     /// Ask before file-changing calls (`write`) or every non-read call (`all`) for this run; never weakens the configured mode
     #[arg(long, value_name = "write|all", value_parser = ["write", "all"])]
     pub(crate) approval: Option<String>,
+
+    /// Layer a TOML file over config.toml for this run only; repeatable, later files win per key
+    #[arg(long = "config", value_name = "FILE")]
+    pub(crate) config_overlay: Vec<std::path::PathBuf>,
 }

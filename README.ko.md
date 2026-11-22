@@ -153,6 +153,8 @@ horon run "summarize this repo"
 
 `horon --plan`으로 새 터미널 세션을 읽기 전용 플랜 모드로 열 수 있고, `horon run --plan "<메시지>"`로 계획만 세우는 한 번 실행도 가능합니다. `[tools] plan_mode = true`가 필요하며 `--resume`, `--continue`와 함께 쓸 수 없고, 조건이 맞지 않으면 모델 요청 전에 실패합니다. `/plan approve`로 읽기 전용 상태를 끝냅니다.
 
+`horon run --config overlay.toml "<메시지>"`는 그 실행 한 번에 한해 `config.toml` 위에 TOML 파일을 겹쳐 적용합니다. 여러 번 쓸 수 있고, 뒤의 파일이 키 단위로 이기며, 적지 않은 키는 그대로 이어받고 표는 키별로 합쳐집니다. 파싱할 수 없는 파일은 자기 이름을 알리고, 합친 결과는 공급자를 쓰기 전에 검증합니다.
+
 `horon run --approval write|all "<메시지>"`는 그 실행 한 번에 한해 파일을 바꾸는 호출(`write`) 또는 읽기 전용이 아닌 모든 호출(`all`) 전에 승인을 요청합니다. 승인 수준을 높이기만 하고 설정된 더 엄격한 모드는 낮추지 않으며, 다른 세션은 자기 설정을 유지합니다.
 
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.

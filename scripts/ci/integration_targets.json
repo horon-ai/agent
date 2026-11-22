@@ -73,6 +73,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "run_config_overlay_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
       "target": "package_cli",
       "min_passed": 11
     },

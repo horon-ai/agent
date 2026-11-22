@@ -2,6 +2,9 @@ use super::*;
 use crate::storage::horon_agent_dir;
 use std::path::PathBuf;
 
+#[path = "overlay.rs"]
+mod overlay;
+
 type TrustedExternalAuthKey = (
     Option<PathBuf>,
     Option<std::time::SystemTime>,
@@ -71,6 +74,9 @@ impl Config {
         let Some(path) = Self::path() else {
             return Ok(None);
         };
+        if overlay::active() {
+            return overlay::load(&path).map(Some);
+        }
         if !path.exists() {
             return Ok(None);
         }
