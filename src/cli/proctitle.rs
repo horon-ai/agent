@@ -30,6 +30,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Stats { .. }) => "horon-agent stats".to_string(),
         Some(Command::Preview { .. }) => "horon-agent preview".to_string(),
         Some(Command::Diagnostics { .. }) => "horon-agent diagnostics".to_string(),
+        Some(Command::Config { .. }) => "horon-agent config".to_string(),
         Some(Command::RuntimeState(_)) => "horon-agent runtime-state".to_string(),
         Some(Command::Debug { .. }) => "horon-agent debug".to_string(),
         Some(Command::Provider(_)) => "horon-agent provider".to_string(),

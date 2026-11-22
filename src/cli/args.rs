@@ -9,46 +9,16 @@ mod model_filter;
 pub(crate) use model_filter::ModelListFilter;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod anonymize_options;
+pub(crate) use anonymize_options::AnonymizeArgs;
+mod provider;
+pub(crate) use provider::ProviderCommand;
+mod provider_args;
+pub(crate) use provider_args::ProviderAuthArg;
+mod import_options;
+pub(crate) use import_options::ImportTranscriptArgs;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum ProviderAuthArg {
-    /// Send the API key as Authorization: Bearer <key> (default for openai-compatible and openai-responses)
-    Bearer,
-    /// Send the API key in a header: api-key for the OpenAI wires, x-api-key for anthropic-compatible and x-goog-api-key for gemini-compatible
-    ApiKey,
-    /// Do not send authentication, useful for localhost model servers
-    None,
-}
-
-/// Request/response shape of the endpoint a profile points at.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum ProviderTypeArg {
-    /// OpenAI Chat Completions: POST <base-url>/chat/completions, Bearer auth by default
-    #[value(name = "openai-compatible")]
-    OpenAiCompatible,
-    /// OpenAI Responses: POST <base-url>/responses, Bearer auth by default
-    #[value(name = "openai-responses")]
-    OpenAiResponses,
-    /// Anthropic Messages: POST <base-url>/messages, x-api-key header by default
-    #[value(name = "anthropic-compatible")]
-    AnthropicCompatible,
-    /// Gemini generateContent: POST <base-url>/models/{model}:streamGenerateContent?alt=sse, x-goog-api-key header by default
-    #[value(name = "gemini-compatible")]
-    GeminiCompatible,
-}
-
-impl From<ProviderTypeArg> for crate::config::NamedProviderType {
-    fn from(value: ProviderTypeArg) -> Self {
-        match value {
-            ProviderTypeArg::OpenAiCompatible => Self::OpenAiCompatible,
-            ProviderTypeArg::OpenAiResponses => Self::OpenAiResponses,
-            ProviderTypeArg::AnthropicCompatible => Self::AnthropicCompatible,
-            ProviderTypeArg::GeminiCompatible => Self::GeminiCompatible,
-        }
-    }
-}
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -68,6 +38,7 @@ impl Command {
                 thinking: None,
                 service_tier: None,
                 advisor: None,
+                approval: None,
             },
             message,
         }
@@ -82,15 +53,12 @@ pub(crate) struct Args {
     /// Provider profile to use: `auto` (follow [provider] default_provider or --provider-profile), `openai-compatible`, or a [providers.<name>] profile id from config.toml.
     #[arg(short, long, default_value = "auto", global = true, value_parser = super::provider_init::parse_provider_choice)]
     pub(crate) provider: ProviderChoice,
-
     /// Working directory for the local client process
     #[arg(short = 'C', long, global = true)]
     pub(crate) cwd: Option<String>,
-
     /// Working directory to send to a remote server when using --socket
     #[arg(long, global = true)]
     pub(crate) remote_working_dir: Option<String>,
-
     /// Extra workspace directory for the session, repeatable. Each path is
     /// resolved and must be an existing directory; the session lists it in its
     /// context, and the directory is never modified or granted wholesale.
@@ -102,15 +70,12 @@ pub(crate) struct Args {
         conflicts_with = "ssh"
     )]
     pub(crate) add_dir: Vec<String>,
-
     /// Remote SSH attach; unavailable in this headless build, so it fails with an explanation
     #[arg(long, global = true, conflicts_with = "socket", value_name = "HOST")]
     pub(crate) ssh: Option<String>,
-
     /// Remote HoronAgent executable name or literal path (requires --ssh)
     #[arg(long, global = true, requires = "ssh", value_name = "PATH")]
     pub(crate) ssh_binary: Option<String>,
-
     /// Remote daemon socket override, for isolated servers (requires --ssh)
     #[arg(long, global = true, requires = "ssh", value_name = "PATH")]
     pub(crate) ssh_server_socket: Option<String>,
@@ -147,6 +112,10 @@ pub(crate) struct Args {
     #[arg(long, global = true, requires = "goal", value_parser = clap::value_parser!(u64).range(1..))]
     pub(crate) goal_budget: Option<u64>,
 
+    /// Start the new session in read-only plan mode (needs `[tools] plan_mode = true`).
+    #[arg(long, global = true, conflicts_with_all = ["resume", "continue_latest", "ssh"])]
+    pub(crate) plan: bool,
+
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
     #[allow(dead_code)]
@@ -157,8 +126,7 @@ pub(crate) struct Args {
     /// Clients dial this path instead of the shared daemon socket. A headless
     /// `run` hosts its agent in-process, so nothing binds the path until a
     /// tool needs a server (today: `swarm`); the first such tool starts a
-    /// temporary server here that exits with the run, leaving no daemon
-    /// behind on a one-off socket.
+    /// temporary server here that exits with the run, leaving no daemon behind on a one-off socket.
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
 
@@ -179,8 +147,7 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) provider_profile: Option<String>,
 
-    /// Tool profile to expose to the model: core (headless default), full,
-    /// minimal/lite, or none.
+    /// Tool profile to expose to the model: core (headless default), full, minimal/lite, or none.
     #[arg(long, global = true)]
     pub(crate) tool_profile: Option<String>,
 
@@ -222,8 +189,7 @@ impl Args {
     /// Turn `--mode rpc` into the `rpc` subcommand.
     ///
     /// A host that launches the binary directly passes the mode rather than a
-    /// subcommand, so the flag form has to reach the same code. An explicit
-    /// subcommand wins when both are present.
+    /// subcommand, so the flag form has to reach the same code. An explicit subcommand wins when both are present.
     pub(crate) fn promote_rpc_mode(&mut self) {
         if self.command.is_none() && self.mode.as_deref() == Some("rpc") {
             self.command = Some(Command::Rpc { session_dir: None });
@@ -461,6 +427,12 @@ pub(crate) enum Command {
         delegate: bool,
     },
 
+    /// Inspect the effective configuration (read-only)
+    Config {
+        #[command(subcommand)]
+        command: super::commands::ConfigCommand,
+    },
+
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
@@ -584,8 +556,7 @@ pub(crate) enum Command {
         api_socket: Option<String>,
 
         /// Serve one API connection on stdin/stdout (for SSH SDK clients).
-        /// Starts the shared daemon if needed; does not create an API socket.
-        /// Unix only.
+        /// Starts the shared daemon if needed; does not create an API socket. Unix only.
         #[arg(long, conflicts_with = "api_socket")]
         stdio: bool,
     },
@@ -689,8 +660,7 @@ pub(crate) enum ServerCommand {
     ///
     /// Prefer `server reload` after an upgrade; it preserves live sessions.
     /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which
-    /// drops any in-flight headless/swarm sessions, so it requires `--force`
-    /// as a deliberate acknowledgement.
+    /// drops any in-flight headless/swarm sessions, so it requires `--force` as a deliberate acknowledgement.
     Stop {
         /// Confirm that terminating the daemon (and dropping live sessions) is intended.
         #[arg(long)]
@@ -813,8 +783,7 @@ pub(crate) enum CloudCommand {
     },
 
     /// Check that a cloud host is reachable and runs a compatible horon-agent
-    /// before moving a session. It sends no session data and creates nothing
-    /// on the host.
+    /// before moving a session. It sends no session data and creates nothing on the host.
     Doctor {
         #[command(flatten)]
         target: CloudMoveTarget,
@@ -826,8 +795,7 @@ pub(crate) enum CloudCommand {
 
 #[derive(Parser, Debug, Clone, Default)]
 pub(crate) struct CloudMoveTarget {
-    /// SSH host alias for the cloud machine. Defaults to [cloud] host in config
-    /// or $HORON_AGENT_CLOUD_HOST.
+    /// SSH host alias for the cloud machine. Defaults to [cloud] host in config or $HORON_AGENT_CLOUD_HOST.
     #[arg(long)]
     pub(crate) host: Option<String>,
     /// Remote horon-agent binary (name or path). Defaults to `horon-agent`.
@@ -933,6 +901,9 @@ pub(crate) enum SessionCommand {
         json: bool,
     },
 
+    /// Write a structure-preserving anonymized export of a session for diagnostics
+    Anonymize(AnonymizeArgs),
+
     /// Export one session's original events and blobs to a directory
     Export {
         session: String,
@@ -944,6 +915,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview a Claude Code or Codex transcript file; import it with --apply
+    ImportTranscript(ImportTranscriptArgs),
 
     /// Import an exported bundle into this store
     Import {
@@ -1011,115 +985,6 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         yes: bool,
 
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-pub(crate) enum ProviderCommand {
-    /// List provider IDs you can pass to -p/--provider
-    List {
-        /// Emit JSON instead of plain text
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Show each configured profile's credential source and local status
-    ///
-    /// Reads local configuration only. It never prints credential values or
-    /// contacts a provider, so a profile with no resolvable credential is
-    /// `unauthenticated` and one that uses no credential is `unknown`.
-    Status {
-        /// Emit JSON instead of plain text
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Show the currently requested and resolved provider selection
-    Current {
-        /// Emit JSON instead of plain text
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Check configured profiles: missing config, missing credential variable, and (with --check) reachability
-    Diagnose {
-        /// Contact each endpoint's model-list URL with the configured credentials
-        #[arg(long)]
-        check: bool,
-
-        /// Emit JSON instead of plain text
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Add a named API provider profile
-    Add {
-        /// Profile name used with --provider-profile and config defaults, e.g. my-gateway
-        name: String,
-
-        /// API base URL including the version prefix, e.g. https://llm.example.com/v1. Each type appends its own path: /chat/completions, /responses, /messages, or /models/{model}:streamGenerateContent
-        #[arg(long, alias = "api-base")]
-        base_url: String,
-
-        /// Default model id for this provider profile
-        #[arg(short, long)]
-        model: String,
-
-        /// Optional model context window in tokens
-        #[arg(long)]
-        context_window: Option<usize>,
-
-        /// Environment variable name that contains the API key
-        #[arg(long, conflicts_with = "no_api_key")]
-        api_key_env: Option<String>,
-
-        /// API key value to store in horon-agent's private provider env file. Prefer --api-key-stdin for shell history safety.
-        #[arg(long, conflicts_with_all = ["api_key_stdin", "no_api_key"])]
-        api_key: Option<String>,
-
-        /// Read the API key from stdin and store it in horon-agent's private provider env file
-        #[arg(long, conflicts_with = "no_api_key")]
-        api_key_stdin: bool,
-
-        /// Configure the provider with no API key/authentication
-        #[arg(long, conflicts_with_all = ["api_key", "api_key_stdin", "api_key_env"])]
-        no_api_key: bool,
-
-        /// Request/response shape of the endpoint: openai-compatible, openai-responses, anthropic-compatible, or gemini-compatible
-        #[arg(long = "type", value_enum, default_value = "openai-compatible")]
-        provider_type: ProviderTypeArg,
-
-        /// Authentication style for the API key
-        #[arg(long, value_enum)]
-        auth: Option<ProviderAuthArg>,
-
-        /// Header name when --auth api-key is used (default: api-key for the OpenAI types, x-api-key for anthropic-compatible, x-goog-api-key for gemini-compatible)
-        #[arg(long)]
-        auth_header: Option<String>,
-
-        /// Private env file name under horon-agent's app config directory for stored API keys
-        #[arg(long)]
-        env_file: Option<String>,
-
-        /// Make this profile the startup default provider/model
-        #[arg(long, alias = "default")]
-        set_default: bool,
-
-        /// Replace an existing profile with the same name
-        #[arg(long)]
-        overwrite: bool,
-
-        /// Allow provider-routing features for OpenRouter-style gateways
-        #[arg(long)]
-        provider_routing: bool,
-
-        /// Fetch/list models from the provider's /models endpoint
-        #[arg(long)]
-        model_catalog: bool,
-
-        /// Emit JSON instead of human-readable setup output
         #[arg(long)]
         json: bool,
     },

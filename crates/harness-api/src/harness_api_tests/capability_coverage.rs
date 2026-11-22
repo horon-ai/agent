@@ -278,6 +278,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "live_todo_v1",
         "effective_settings_v1",
         "package_control_v1",
+        "package_commands_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(

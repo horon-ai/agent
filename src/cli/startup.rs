@@ -426,11 +426,31 @@ fn report_main_error(error: &anyhow::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::args::{Args, Command};
+    use crate::cli::args::{Args, Command, RunModelOverrides};
     use clap::Parser;
 
     fn parse_args(argv: &[&str]) -> Args {
         Args::parse_from(argv)
+    }
+
+    #[test]
+    fn run_approval_flag_accepts_only_stricter_modes() {
+        let parsed = Args::try_parse_from(["horon", "run", "hi", "--approval", "write"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Run { model_overrides: RunModelOverrides { approval: Some(ref mode), .. }, .. }) if mode == "write"
+        ));
+        for mode in ["yolo", "off", "none"] {
+            assert!(Args::try_parse_from(["horon", "run", "hi", "--approval", mode]).is_err());
+        }
+    }
+
+    #[test]
+    fn startup_plan_flag_conflicts_with_resume() {
+        assert!(parse_args(&["horon", "--plan"]).plan);
+        assert!(!parse_args(&["horon"]).plan);
+        let error = Args::try_parse_from(["horon", "--plan", "--resume", "session-1"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

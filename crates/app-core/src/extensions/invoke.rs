@@ -10,6 +10,10 @@
 //! for the snapshot generation ends it: the waiting request fails because the
 //! connection closed, and the supervised process tree is reaped.
 //!
+//! Observation notifications take this same child and connection. They carry no
+//! answer and no input, and they are the one case where a child may start
+//! without a tool call (`extensions::observer` drives that, never in plan mode).
+//!
 //! Three refusals happen before a byte crosses to the child: a handle whose
 //! package left the catalog after the generation this session captured, an
 //! input that still holds a secret placeholder, and an input that carries a
@@ -17,31 +21,37 @@
 //! permissions and its environment is cleared, but nothing here hands it the
 //! user's credentials.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use anyhow::{Context, Result, anyhow, bail, ensure};
-use horon_agent_extension_types::ExtensionManifest;
 use horon_agent_extension_types::wire::{
     Capability, CapabilitySet, CommandInvokeParams, HOST_PROTOCOL_RANGE, HostExpectation, InitializeParams,
-    ToolCallParams, WireMethod,
+    ObserverParams, ToolCallParams, WireMethod,
 };
+use horon_agent_extension_types::{ExtensionManifest, ObserverEvent};
 use serde_json::Value;
 
 use crate::extensions::lifecycle::{PackageLifecycleHolder, PackageLifecycleRegistry, RevocationEvent};
-use crate::extensions::package_snapshot::{self, PackageSession};
+use crate::extensions::package_snapshot;
 use crate::extensions::wire::{ExtensionWire, FrameReader, WireError, WireLimits};
 use crate::packages::{PackageProcess, PackageRecord, PackageStore};
 use crate::secrets;
 
 /// The wire capabilities this host can dispatch.
 ///
-/// Both package kinds travel the same connection; the tool path and the shared
-/// executable-command dispatch are the two the host drives today. Observer
-/// notifications stay out until the hook wiring consumes them.
-static HOST_CAPABILITIES: LazyLock<CapabilitySet> =
-    LazyLock::new(|| CapabilitySet::new([Capability::ToolCall, Capability::CommandInvoke]));
+/// Both package kinds travel the same connection; the tool path, the shared
+/// executable-command dispatch and the observation notifications a declared
+/// event set subscribes to are the ones the host drives today.
+static HOST_CAPABILITIES: LazyLock<CapabilitySet> = LazyLock::new(|| {
+    CapabilitySet::new([
+        Capability::ToolCall,
+        Capability::CommandInvoke,
+        Capability::ObserverNotify,
+    ])
+});
 
 /// Children alive in this process, one per session and package.
 type ChildMap = HashMap<(String, String), Arc<Child>>;
@@ -124,12 +134,33 @@ pub(crate) struct Declarations {
     /// Lowercase hex SHA-256 of the declaration file the record published.
     digest: String,
     pub(crate) manifest: ExtensionManifest,
+    /// Every event this package's child observes: the declaration's own
+    /// `events` plus the events its bundled hook files subscribe to.
+    events: BTreeSet<ObserverEvent>,
 }
 
 impl Declarations {
     /// The declaration digest the handshake compares.
     pub(crate) fn digest(&self) -> &str {
         &self.digest
+    }
+
+    /// Whether the package subscribed to `event` when the copy was installed.
+    pub(crate) fn observes(&self, event: ObserverEvent) -> bool {
+        self.events.contains(&event)
+    }
+
+    /// The capabilities the host may offer this package.
+    ///
+    /// The declaration's own tools and commands are not the whole surface: a
+    /// plugin may subscribe through a bundled hook file without naming an event
+    /// in `extension.toml`, so the offer has to follow the merged set.
+    fn capabilities(&self) -> CapabilitySet {
+        let mut capabilities = self.manifest.capabilities();
+        if !self.events.is_empty() {
+            capabilities.insert(Capability::ObserverNotify);
+        }
+        capabilities
     }
 }
 
@@ -171,7 +202,13 @@ pub(crate) async fn declarations_for(store: &PackageStore, record: &PackageRecor
             "the installed declaration of package {} names another package",
             prepared.id
         );
-        Ok(Declarations { copy, digest, manifest })
+        let events = crate::packages::observation_events(&root, &prepared, &manifest)?;
+        Ok(Declarations {
+            copy,
+            digest,
+            manifest,
+            events,
+        })
     })
     .await
     .context("the package declaration read task failed")??;
@@ -252,7 +289,7 @@ async fn dispatch(session_id: &str, package_id: &str, surface: Surface<'_>, argu
         ),
     }
     refuse_secret_bearing(session_id, &arguments)?;
-    let child = child_for(session_id, generation, &session, &record, &declarations).await?;
+    let child = child_for(session_id, generation, session.store(), &record, &declarations).await?;
     let params = surface.params(arguments)?;
     child
         .wire
@@ -288,7 +325,7 @@ fn refuse_secret_bearing(session_id: &str, arguments: &Value) -> Result<()> {
 async fn child_for(
     session_id: &str,
     generation: u64,
-    session: &PackageSession,
+    store: &PackageStore,
     record: &PackageRecord,
     declarations: &Declarations,
 ) -> Result<Arc<Child>> {
@@ -306,7 +343,7 @@ async fn child_for(
         let removed = lock_children().remove(&key);
         drop(removed);
     }
-    let child = start(session_id, generation, session, record, declarations, copy).await?;
+    let child = start(session_id, generation, store, record, declarations, copy).await?;
     let replaced = lock_children().insert(key, Arc::clone(&child));
     drop(replaced);
     Ok(child)
@@ -316,7 +353,7 @@ async fn child_for(
 async fn start(
     session_id: &str,
     generation: u64,
-    session: &PackageSession,
+    store: &PackageStore,
     record: &PackageRecord,
     declarations: &Declarations,
     copy: String,
@@ -327,7 +364,7 @@ async fn start(
         std::process::id(),
         NEXT_OWNER.fetch_add(1, Ordering::Relaxed)
     );
-    let store = session.store().clone();
+    let store = store.clone();
     let prepared = record.clone();
     let launch_id = package_id.clone();
     let started = tokio::task::spawn_blocking(move || -> Result<Started> {
@@ -388,7 +425,7 @@ async fn start(
         runtime: tokio::runtime::Handle::current(),
     });
 
-    let declared = declarations.manifest.capabilities();
+    let declared = declarations.capabilities();
     // Offer only what the installed manifest declares: a child answers with
     // the capabilities it was offered, and one it never declared is refused.
     let offered = HOST_CAPABILITIES.intersection(&declared);
@@ -439,6 +476,161 @@ async fn start(
         return Err(anyhow!("package {package_id} was revoked while its child was starting"));
     }
     Ok(child)
+}
+
+/// One package that subscribed to an observation, resolved at a generation.
+///
+/// The record travels with the target so the delivery task does not read the
+/// catalog again for every event: the snapshot that decided the subscription
+/// already pinned the copy, and the record is the one it captured.
+pub(crate) struct ObservationTarget {
+    package_id: String,
+    generation: u64,
+    record: PackageRecord,
+}
+
+impl ObservationTarget {
+    pub(crate) fn package_id(&self) -> &str {
+        &self.package_id
+    }
+}
+
+/// Whether `package_id` was revoked after `generation`.
+///
+/// A revocation records the catalog generation that published it, so a target
+/// resolved at that generation or later is still allowed and one resolved before
+/// it is stale: the user disabled or removed the package after the snapshot the
+/// observation came from.
+pub(crate) fn revoked_after(registry: &Arc<PackageLifecycleRegistry>, package_id: &str, generation: u64) -> bool {
+    registry
+        .revocation(package_id)
+        .is_some_and(|event| event.generation > generation)
+}
+
+/// The packages whose installed declaration subscribes to `event`.
+///
+/// Runs on the observation worker, never on a turn's path: it may capture the
+/// session's first package snapshot and read declaration files. A package that
+/// was revoked after the snapshot was taken is skipped here, before any child is
+/// considered, so a disabled package receives nothing even while its child is
+/// still being reaped.
+pub(crate) async fn observation_targets(
+    store: &PackageStore,
+    session_id: &str,
+    event: ObserverEvent,
+    workspace: Option<&Path>,
+) -> Vec<ObservationTarget> {
+    // Only the first observation of a session may open its package area. A later
+    // one, `session.end` after the session was cleaned up for instance, must not
+    // recreate a slot, a lease and a child for a session that is already gone.
+    let session = if event == ObserverEvent::SessionStart {
+        package_snapshot::open_for(session_id, store.clone())
+    } else {
+        match package_snapshot::for_session(session_id) {
+            Some(session) => session,
+            None => return Vec::new(),
+        }
+    };
+    let snapshot = match session.current() {
+        Some(snapshot) => snapshot,
+        None => match session.enter_turn(workspace).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                crate::logging::debug(&format!(
+                    "package observation for session {session_id} found no generation: {error:#}"
+                ));
+                return Vec::new();
+            }
+        },
+    };
+    let registry = PackageLifecycleRegistry::shared();
+    let mut targets = Vec::new();
+    for record in snapshot.packages() {
+        if revoked_after(&registry, &record.id, snapshot.generation()) {
+            continue;
+        }
+        match declarations_for(store, record).await {
+            Ok(declarations) if declarations.observes(event) => targets.push(ObservationTarget {
+                package_id: record.id.clone(),
+                generation: snapshot.generation(),
+                record: record.clone(),
+            }),
+            Ok(_) => {}
+            Err(error) => crate::logging::debug(&format!(
+                "package {} declarations are unavailable for an observation: {error:#}",
+                record.id
+            )),
+        }
+    }
+    targets
+}
+
+/// Whether an observation may start a package child for this session.
+///
+/// Planning is read-only, so an observation is never a reason to create a
+/// process; a package tool or command call in the same session still starts its
+/// child through the ordinary approved path. A child that is already running
+/// keeps receiving notifications either way.
+pub(crate) fn observation_may_start_child(session_id: &str) -> bool {
+    !crate::plan_mode::state_for(session_id).is_read_only()
+}
+
+/// Send one observation to one package child, starting the child when needed.
+///
+/// The approval and plan-mode decisions are already made: this is only reached
+/// for an event the host decided to publish, and no child is started while the
+/// session is planning. A slow or stuck child therefore delays this delivery,
+/// which runs on the observation worker, and never the turn that published it.
+pub(crate) async fn deliver_observation(
+    store: &PackageStore,
+    session_id: &str,
+    target: &ObservationTarget,
+    params: &ObserverParams,
+) -> Result<()> {
+    let package_id = target.package_id.as_str();
+    let registry = PackageLifecycleRegistry::shared();
+    ensure!(
+        !revoked_after(&registry, package_id, target.generation),
+        "package {package_id} was revoked after this observation was published"
+    );
+    let copy = target
+        .record
+        .digest
+        .clone()
+        .with_context(|| format!("package {package_id} has no published copy"))?;
+    let key = (session_id.to_owned(), package_id.to_owned());
+    let live = lock_children()
+        .get(&key)
+        .filter(|child| !child.closed.load(Ordering::SeqCst) && child.copy == copy)
+        .cloned();
+    let child = match live {
+        Some(child) => child,
+        None => {
+            // Planning is read-only: an observation is never a reason to create
+            // a process, and a session that is ending has no use for a new one.
+            // A package tool or command call still starts its child through the
+            // ordinary approved path.
+            ensure!(
+                params.event != ObserverEvent::SessionEnd,
+                "no package child is running to receive session.end"
+            );
+            ensure!(
+                observation_may_start_child(session_id),
+                "plan mode does not start a package child for an observation"
+            );
+            let declarations = declarations_for(store, &target.record).await?;
+            ensure!(
+                declarations.observes(params.event),
+                "package {package_id} does not subscribe to {:?}",
+                params.event
+            );
+            child_for(session_id, target.generation, store, &target.record, &declarations).await?
+        }
+    };
+    child
+        .wire
+        .notify(params)
+        .map_err(|error| anyhow!("package {package_id} did not accept the observation: {error}"))
 }
 
 struct Started {

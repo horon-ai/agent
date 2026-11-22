@@ -372,6 +372,7 @@ discovery pass only.
 | `respondToPermission(id, requestId, decision)`                                                        | Answer a permission prompt                                                    |
 | `listModels(id)` / `setModel(id, model)`                                                              | List and choose the session's model                                           |
 | `getRuntimeInfo(id)`                                                                                  | Provider, model route, protocol, capability, and health metadata              |
+| `listPackageCommands(id)` / `runPackageCommand(id, packageId, command, arguments?)`                    | List and run the slash commands installed packages supply (`package_commands_v1`) |
 | `setApiKey(provider, key)` / `clearApiKey(provider)`                                                  | Atomically provision or remove owner-only API-key files                       |
 | `usageReport(sessionId?)`                                                                             | Token totals, per-model aggregates, context window, and subscription limits   |
 | `ackApproval(id, requestId)`                                                                          | Retire the daemon's durable copy of a resolved approval                       |
