@@ -45,7 +45,7 @@ pub struct PageRow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileStamp {
     /// Modification time in milliseconds since the Unix epoch.
-    pub mtime_ms: i64,
+    pub mtime_ns: i64,
     /// File size in bytes.
     pub size: i64,
 }
@@ -174,8 +174,8 @@ impl Index {
         }
         tx.execute("DELETE FROM files WHERE page_id = ?1", [id])?;
         tx.execute(
-            "INSERT OR REPLACE INTO files (path, page_id, mtime_ms, size) VALUES (?1, ?2, ?3, ?4)",
-            params![path, id, stamp.mtime_ms, stamp.size],
+            "INSERT OR REPLACE INTO files (path, page_id, mtime_ns, size) VALUES (?1, ?2, ?3, ?4)",
+            params![path, id, stamp.mtime_ns, stamp.size],
         )?;
         let rev: i64 = tx.query_row(
             "SELECT COALESCE(MAX(rev), 0) + 1 FROM versions WHERE page_id = ?1",
@@ -243,11 +243,11 @@ impl Index {
     pub fn file_stamp(&self, path: &str) -> Result<Option<FileStamp>> {
         let mut statement = self
             .conn()
-            .prepare("SELECT mtime_ms, size FROM files WHERE path = ?1")?;
+            .prepare("SELECT mtime_ns, size FROM files WHERE path = ?1")?;
         let mut rows = statement.query([path])?;
         match rows.next()? {
             Some(row) => Ok(Some(FileStamp {
-                mtime_ms: row.get(0)?,
+                mtime_ns: row.get(0)?,
                 size: row.get(1)?,
             })),
             None => Ok(None),
@@ -256,12 +256,12 @@ impl Index {
 
     /// Every recorded file stamp, as `(path, stamp)`.
     pub fn file_stamps(&self) -> Result<Vec<(String, FileStamp)>> {
-        let mut statement = self.conn().prepare("SELECT path, mtime_ms, size FROM files")?;
+        let mut statement = self.conn().prepare("SELECT path, mtime_ns, size FROM files")?;
         let rows = statement.query_map([], |row: &rusqlite::Row<'_>| {
             Ok((
                 row.get::<_, String>(0)?,
                 FileStamp {
-                    mtime_ms: row.get(1)?,
+                    mtime_ns: row.get(1)?,
                     size: row.get(2)?,
                 },
             ))

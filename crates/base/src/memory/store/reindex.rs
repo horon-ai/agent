@@ -195,7 +195,7 @@ pub fn scan(wiki_root: &Path) -> Result<Vec<ScannedFile>> {
                     relative,
                     absolute: path,
                     stamp: FileStamp {
-                        mtime_ms: -1,
+                        mtime_ns: -1,
                         size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
                     },
                 });
@@ -214,15 +214,15 @@ pub fn scan(wiki_root: &Path) -> Result<Vec<ScannedFile>> {
 
 /// The index stamp of a file metadata value.
 pub fn stamp_of(metadata: &std::fs::Metadata) -> FileStamp {
-    let mtime_ms = match metadata.modified() {
+    let mtime_ns = match metadata.modified() {
         Ok(time) => match time.duration_since(std::time::UNIX_EPOCH) {
-            Ok(duration) => i64::try_from(duration.as_millis()).unwrap_or(i64::MAX),
+            Ok(duration) => i64::try_from(duration.as_nanos()).unwrap_or(i64::MAX),
             Err(_) => 0,
         },
         Err(_) => 0,
     };
     FileStamp {
-        mtime_ms,
+        mtime_ns,
         size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
     }
 }
@@ -238,7 +238,8 @@ fn read_page(file: &ScannedFile) -> Result<MemoryPage> {
         .file_stem()
         .and_then(|stem| stem.to_str())
         .ok_or_else(|| anyhow!("page file has no UTF-8 name"))?;
-    let fallback = Timestamp::from_timestamp_millis(file.stamp.mtime_ms.max(0)).unwrap_or(Timestamp::UNIX_EPOCH);
+    let fallback =
+        Timestamp::from_timestamp_millis(file.stamp.mtime_ns.max(0) / 1_000_000).unwrap_or(Timestamp::UNIX_EPOCH);
     document::decode(&text, stem, fallback)
 }
 

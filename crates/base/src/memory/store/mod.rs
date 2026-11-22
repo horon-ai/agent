@@ -230,7 +230,8 @@ impl MemoryWiki {
         let bytes = std::fs::read(&path).with_context(|| format!("cannot read the page file {}", path.display()))?;
         let text = String::from_utf8(bytes).map_err(|_| anyhow!("page file {} is not UTF-8", path.display()))?;
         let fallback = reindex::stamp_of(&metadata);
-        let fallback_time = Timestamp::from_timestamp_millis(fallback.mtime_ms.max(0)).unwrap_or(Timestamp::UNIX_EPOCH);
+        let fallback_time =
+            Timestamp::from_timestamp_millis(fallback.mtime_ns.max(0) / 1_000_000).unwrap_or(Timestamp::UNIX_EPOCH);
         document::decode(&text, id.file_stem().as_str(), fallback_time).map(Some)
     }
 

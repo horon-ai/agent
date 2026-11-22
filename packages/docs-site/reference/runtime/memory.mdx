@@ -154,7 +154,7 @@ The limit of that guarantee is stated rather than implied: SQLite can zero what 
 
 ## Rebuild
 
-`MemoryWiki::open` reconciles the index with the files every time. Files whose modification time and size match the recorded stamp are skipped; changed files are re-read and re-indexed; index rows whose file is gone are pruned, which is what makes a delete final. The index is rebuilt from scratch when it is absent, carries another schema version, or is a corrupt database (corruption is detected and the file plus its `-wal`/`-shm` sidecars are removed before recreating). A locked index is not reset: deleting a file another writer is using would lose that writer's work.
+`MemoryWiki::open` reconciles the index with the files every time. Files whose modification time (at nanosecond precision) and size match the recorded stamp are skipped; changed files are re-read and re-indexed; index rows whose file is gone are pruned, which is what makes a delete final. The index is rebuilt from scratch when it is absent, carries another schema version, or is a corrupt database (corruption is detected and the file plus its `-wal`/`-shm` sidecars are removed before recreating). A locked index is not reset: deleting a file another writer is using would lose that writer's work.
 
 One malformed page never fails the open and is never deleted. It is reported in the store's last reconcile report with its path and the reason, its previous index rows are left as they were, and the rest of the wiki is indexed. Two files that claim the same page id: the first path in sorted order is indexed and the second is reported as a duplicate.
 
