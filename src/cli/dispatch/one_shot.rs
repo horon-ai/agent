@@ -146,6 +146,9 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
     if let Some(choice) = overrides.advisor.as_deref() {
         agent.set_advisor_enabled(choice == "on");
     }
+    if overrides.approve_plan {
+        crate::plan_mode::allow_unattended_approval(agent.session_id());
+    }
     if let Some(mode) = overrides
         .approval
         .as_deref()

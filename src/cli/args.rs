@@ -69,6 +69,8 @@ impl Command {
                 service_tier: None,
                 advisor: None,
                 approval: None,
+                approve_plan: false,
+                approve_plan: false,
             },
             message,
         }

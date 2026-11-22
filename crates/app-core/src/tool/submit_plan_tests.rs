@@ -555,3 +555,36 @@ fn a_parked_session_always_carries_the_plan_that_releases_it() {
         );
     });
 }
+
+#[test]
+fn an_opted_in_session_approves_its_own_plan_and_another_still_waits() {
+    let _env = crate::storage::lock_test_env();
+    let _home = HomeGuard::with_config("[tools]\nplan_mode = true\n");
+    let (opted_in, waiting) = ("submit-plan-opted-in", "submit-plan-not-opted-in");
+    for session in [opted_in, waiting] {
+        plan_mode::clear_state(session);
+        plan_mode::set_state(session, PlanState::Planning);
+    }
+    plan_mode::allow_unattended_approval(opted_in);
+
+    runtime().block_on(async {
+        let tool = super::SubmitPlanTool::new();
+        tool.execute(json!({"plan": "# Plan\n\nChange one function."}), context(opted_in))
+            .await
+            .expect("the opted-in submission succeeds");
+        tool.execute(json!({"plan": "# Other plan"}), context(waiting))
+            .await
+            .expect("the other submission succeeds");
+    });
+
+    assert_eq!(plan_mode::state_for(opted_in), PlanState::Approved);
+    assert_eq!(
+        plan_mode::approved_plan(opted_in).as_deref(),
+        Some("# Plan\n\nChange one function.")
+    );
+    assert_eq!(plan_mode::state_for(waiting), PlanState::PendingApproval);
+    assert!(plan_mode::pending_plan(waiting).is_some());
+    for session in [opted_in, waiting] {
+        plan_mode::clear_state(session);
+    }
+}
