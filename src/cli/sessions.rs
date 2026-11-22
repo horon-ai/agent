@@ -16,6 +16,7 @@ use crate::cli::args::SessionCommand;
 use crate::session;
 use crate::session::event_store_api as store;
 
+mod anonymize;
 mod recovery;
 
 const BUNDLE_KIND: &str = "horon-agent-session-bundle";
@@ -51,6 +52,29 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             },
             json,
         ),
+        SessionCommand::Anonymize {
+            session,
+            output,
+            with_children,
+            keep_text,
+            keep_tool_names,
+            keep_timestamps,
+            json,
+        } => {
+            let output = output.as_deref().map(resolve_path).transpose()?;
+            anonymize::run(
+                &store_paths(&home()?),
+                &parse_id(&session)?,
+                output.as_deref(),
+                &anonymize::Options {
+                    with_children,
+                    keep_text,
+                    keep_tool_names,
+                    keep_timestamps,
+                },
+                json,
+            )
+        }
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
         SessionCommand::Import { input, json } => import(&home()?, &input, json),
         SessionCommand::ExportLegacy {

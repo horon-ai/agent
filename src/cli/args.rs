@@ -918,6 +918,34 @@ pub(crate) enum SessionCommand {
         json: bool,
     },
 
+    /// Write a structure-preserving anonymized export of a session for diagnostics
+    Anonymize {
+        session: String,
+
+        /// New directory to write anonymized.json into. Without it the command only previews.
+        #[arg(long)]
+        output: Option<String>,
+
+        /// Also export every descendant session, keeping the parent and child links
+        #[arg(long)]
+        with_children: bool,
+
+        /// Keep message text, with recognizable secrets and known paths masked
+        #[arg(long)]
+        keep_text: bool,
+
+        /// Keep tool names instead of replacing them
+        #[arg(long)]
+        keep_tool_names: bool,
+
+        /// Keep message and session timestamps
+        #[arg(long)]
+        keep_timestamps: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Export one session's original events and blobs to a directory
     Export {
         session: String,
