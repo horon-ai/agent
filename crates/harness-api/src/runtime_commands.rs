@@ -14,6 +14,7 @@ pub enum RuntimeCommand {
     #[serde(rename = "modelpreset")]
     ModelPreset,
     SubagentModel,
+    Trim,
     Autoreview,
     Autojudge,
     Transport,

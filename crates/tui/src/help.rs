@@ -372,6 +372,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "logout" => "drop the stored provider credentials",
         "memory" => "show the memory status; `memory extract` schedules an extraction",
         "modelpreset" => "list, preview or apply a named set of model choices",
+        "trim" => "preview or apply a request-only trim of old tool results",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
         "productivity" => "generate the productivity report",
