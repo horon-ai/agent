@@ -403,15 +403,37 @@ pub fn trust_for_tests(project_root: &Path) {
 #[cfg(any(test, feature = "test-support"))]
 static TRUST_FILE_OVERRIDE: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
-/// Pin the trust store for this process. Test-only: the store normally follows
-/// the agent home, which tests of other modules move underneath a running suite.
+/// Restores the previous trust-store pin when dropped.
 #[cfg(any(test, feature = "test-support"))]
-pub fn set_trust_file_for_tests(path: PathBuf) {
-    let slot = TRUST_FILE_OVERRIDE.get_or_init(|| Mutex::new(None));
-    match slot.lock() {
-        Ok(mut slot) => *slot = Some(path),
-        Err(poisoned) => *poisoned.into_inner() = Some(path),
+#[must_use = "dropping the guard immediately undoes the pin"]
+pub struct TrustFileGuard {
+    previous: Option<PathBuf>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for TrustFileGuard {
+    fn drop(&mut self) {
+        let slot = TRUST_FILE_OVERRIDE.get_or_init(|| Mutex::new(None));
+        let previous = self.previous.take();
+        match slot.lock() {
+            Ok(mut slot) => *slot = previous,
+            Err(poisoned) => *poisoned.into_inner() = previous,
+        }
     }
+}
+
+/// Pin the trust store for the lifetime of the returned guard. Test-only: the
+/// store normally follows the agent home, which tests of other modules move
+/// underneath a running suite. Dropping the guard restores the previous pin, so
+/// a pin never outlives the temporary directory it points into.
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_trust_file_for_tests(path: PathBuf) -> TrustFileGuard {
+    let slot = TRUST_FILE_OVERRIDE.get_or_init(|| Mutex::new(None));
+    let previous = match slot.lock() {
+        Ok(mut slot) => slot.replace(path),
+        Err(poisoned) => poisoned.into_inner().replace(path),
+    };
+    TrustFileGuard { previous }
 }
 
 fn trust_file_path() -> Result<PathBuf> {
@@ -521,6 +543,9 @@ mod tests {
     struct EnvGuard {
         home: Option<std::ffi::OsString>,
         trust: Option<std::ffi::OsString>,
+        // Dropped after `Drop::drop` restores the environment and before the
+        // lock is released, so the pin never outlives the home it points into.
+        _trust_file: TrustFileGuard,
         // Declared last so the lock is released after `Drop` restores the environment.
         _lock: std::sync::MutexGuard<'static, ()>,
     }
@@ -528,16 +553,17 @@ mod tests {
     impl EnvGuard {
         fn install(home: &Path) -> Self {
             let guard = crate::storage::lock_test_env();
-            let saved = Self {
-                home: std::env::var_os("HORON_HOME"),
-                trust: std::env::var_os(TRUST_ENV),
-                _lock: guard,
-            };
+            let previous_home = std::env::var_os("HORON_HOME");
+            let previous_trust = std::env::var_os(TRUST_ENV);
             crate::env::set_var("HORON_HOME", home);
             crate::env::remove_var(TRUST_ENV);
             set_cli_trust_workspace(false);
-            set_trust_file_for_tests(home.join(TRUST_FILE_NAME));
-            saved
+            Self {
+                home: previous_home,
+                trust: previous_trust,
+                _trust_file: set_trust_file_for_tests(home.join(TRUST_FILE_NAME)),
+                _lock: guard,
+            }
         }
     }
 
@@ -795,6 +821,27 @@ mod tests {
             TrustState::Unknown {
                 digest: snapshot(project.path()).digest
             }
+        );
+    }
+
+    #[test]
+    fn a_dropped_trust_file_pin_restores_the_previous_location() {
+        let _lock = crate::storage::lock_test_env();
+        let first = tempfile::tempdir().expect("first tempdir");
+        let second = tempfile::tempdir().expect("second tempdir");
+        let outer = set_trust_file_for_tests(first.path().join("outer.json"));
+        {
+            let _inner = set_trust_file_for_tests(second.path().join("inner.json"));
+            assert_eq!(
+                trust_file_path().expect("pinned path"),
+                second.path().join("inner.json")
+            );
+        }
+        assert_eq!(trust_file_path().expect("outer path"), first.path().join("outer.json"));
+        drop(outer);
+        assert_ne!(
+            trust_file_path().expect("unpinned path"),
+            first.path().join("outer.json")
         );
     }
 }

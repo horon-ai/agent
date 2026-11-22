@@ -25,6 +25,19 @@ fn harden_secret_file_permissions_sets_owner_only_modes() {
 }
 
 #[test]
+fn a_cwd_guard_restores_the_directory_even_when_the_test_panics() {
+    let _guard = lock_test_env();
+    let before = std::env::current_dir().expect("current dir");
+    let temp = tempfile::TempDir::new().expect("create temp dir");
+    let outcome = std::panic::catch_unwind(|| {
+        let _cwd = CwdGuard::enter(temp.path()).expect("enter temp dir");
+        panic!("a failing assertion inside the guarded section");
+    });
+    assert!(outcome.is_err());
+    assert_eq!(std::env::current_dir().expect("current dir after"), before);
+}
+
+#[test]
 fn user_home_path_uses_external_dir_under_horon_agent_home() {
     let _guard = lock_test_env();
     let prev_home = std::env::var_os("HORON_HOME");
