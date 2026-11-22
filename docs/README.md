@@ -50,6 +50,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`VISION_POLICY.md`](provider/VISION_POLICY.md) | Proposed image input routing policy |
 | | [`DIAGNOSTICS.md`](provider/DIAGNOSTICS.md) | Proposed bounded provider-stream diagnostic |
 | | [`SAMPLING.md`](provider/SAMPLING.md) | Proposed typed model sampling |
+| | [`QUOTA_FALLBACK.md`](provider/QUOTA_FALLBACK.md) | Proposed quota-aware route fallback |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
 | | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |
