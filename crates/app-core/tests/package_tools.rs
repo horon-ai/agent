@@ -744,7 +744,9 @@ async fn an_existing_tool_name_wins_over_the_package_declaration() {
     );
 }
 
-#[tokio::test]
+// The case waits on the child's own files with blocking sleeps while the call
+// it spawned must keep running, so it needs a second worker thread.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_revocation_mid_call_ends_the_request_and_reaps_the_child() {
     let _env = TEST_ENV.lock().await;
     let mut h = harness("[tools]\nprofile = \"core\"\n").await;
