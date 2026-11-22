@@ -489,7 +489,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른한 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른세 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
