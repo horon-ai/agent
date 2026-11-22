@@ -847,3 +847,15 @@ fn the_fingerprint_reads_the_first_word_and_the_length() {
     let long = format!("/mo{}", "x".repeat(100_000));
     assert_ne!(hash("/mo"), hash(&long), "the length is part of the answer");
 }
+
+#[test]
+fn alt_m_asks_the_harness_for_read_only_plan_mode() {
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    let mut app = App::new("default socket".to_string(), receiver);
+    let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT);
+    let plan = Action::Runtime {
+        command: horon_agent_sdk::RuntimeCommand::Plan,
+        arguments: vec!["on".to_string()],
+    };
+    assert_eq!(app.on_key(key), Some(plan));
+}

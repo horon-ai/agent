@@ -6,10 +6,43 @@
 //! `CompactionManager` per clone, so a registry field would be copied into every
 //! per-call and per-subagent clone instead of following the session.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use crate::tool::ToolEffects;
+
+static UNATTENDED: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+/// The caller opted this session into approving the plan it submits, with no
+/// one answering the queued request. Plan mode, the read-only state and the
+/// approval policy are unchanged; only the answer is given up front.
+pub fn allow_unattended_approval(session_id: &str) {
+    UNATTENDED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(session_id.to_string());
+}
+
+/// With the opt-in, answer the plan just submitted as approved, exactly as
+/// `/plan approve` would. Returns the plan, or `None` for a session that did not opt in.
+pub fn approve_if_opted_in(session_id: &str) -> anyhow::Result<Option<SubmittedPlan>> {
+    let opted_in = UNATTENDED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .contains(session_id);
+    let Some(plan) = pending_plan(session_id).filter(|_| opted_in) else {
+        return Ok(None);
+    };
+    crate::tool::ambient::shared_safety_system().record_decision(
+        &plan.request_id,
+        true,
+        "approve_plan_flag",
+        Some("Approved with --approve-plan".to_string()),
+    )?;
+    // The decision notifier may already have applied it; the call is idempotent.
+    approve_pending_plan(session_id);
+    Ok(Some(plan))
+}
 
 /// Where a session is in the plan-mode state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +145,10 @@ pub fn clear_state(session_id: &str) {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .remove(session_id);
     approved_plans()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(session_id);
+    UNATTENDED
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .remove(session_id);
