@@ -961,6 +961,17 @@ pub(crate) enum ProviderCommand {
         json: bool,
     },
 
+    /// Show the failover order the configuration produces and why a step is excluded
+    ///
+    /// Read-only: sends no model request, changes no account, quota or provider
+    /// selection, and prints no credential. Quota cooldowns live in a running
+    /// daemon, so they are not shown.
+    Failover {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Check configured profiles: missing config, missing credential variable, and (with --check) reachability
     Diagnose {
         /// Contact each endpoint's model-list URL with the configured credentials
