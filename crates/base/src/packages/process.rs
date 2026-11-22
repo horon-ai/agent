@@ -108,6 +108,57 @@ impl PackageStore {
             grace: DEFAULT_GRACE,
         })
     }
+
+    /// Verify the exact copy `record` names and pin it for one launch.
+    ///
+    /// This is the launch a session makes from a catalog generation it already
+    /// captured: the record is the one the turn pinned, so a replacement install
+    /// that landed after the turn began cannot redirect the child to new bytes.
+    /// The copy's recorded length and SHA-256 are checked against the published
+    /// file before anything starts, exactly as [`PackageStore::prepare_executable`]
+    /// checks the catalog's current record, and the lease the caller supplies is
+    /// the one that keeps the copy alive.
+    pub fn prepare_record_executable(
+        &self,
+        mut lease: PackageLease,
+        record: &PackageRecord,
+    ) -> Result<PackageExecutable> {
+        ensure!(
+            record.state == PackageState::Installed,
+            "package {} is {}; only an installed package starts",
+            record.id,
+            state_name(record.state),
+        );
+        let digest = record
+            .digest
+            .clone()
+            .with_context(|| format!("package {} has no published copy", record.id))?;
+        let executable = record
+            .executable
+            .clone()
+            .with_context(|| format!("package {} has no recorded executable", record.id))?;
+        self.pin_recorded_copy(&mut lease, &digest)?;
+        let layout = Layout::new(self.root());
+        let root = store::digest_dir(&layout, &digest)?;
+        ensure!(
+            root.is_dir(),
+            "the installed copy {digest} of package {} is missing: {}",
+            record.id,
+            root.display(),
+        );
+        verify_executable(&root, record)?;
+        let state_dir = private_state_dir(self.root(), &record.id)?;
+        Ok(PackageExecutable {
+            lease,
+            id: record.id.clone(),
+            record: record.clone(),
+            generation: record.generation,
+            executable: root.join(Path::new(&executable)),
+            root,
+            state_dir,
+            grace: DEFAULT_GRACE,
+        })
+    }
 }
 
 /// One verified installed executable, ready to start.

@@ -523,6 +523,27 @@ impl PackageStore {
         Ok(view)
     }
 
+    /// Pin one copy a caller already selected, without re-reading the record.
+    ///
+    /// A session that captured a catalog generation holds that generation's
+    /// records and a lease that already pins their copies. A launch made from
+    /// one of those records must run the bytes that record names, not whatever
+    /// the catalog names now, so this only adds the digest to the lease: the
+    /// copy stays readable while the lease lives, and a replacement install
+    /// cannot redirect the launch.
+    pub(super) fn pin_recorded_copy(&self, lease: &mut PackageLease, digest: &str) -> Result<()> {
+        ensure!(
+            lease.root == self.root,
+            "package reference '{}' belongs to a different package store",
+            lease.owner
+        );
+        let layout = self.layout();
+        let _lock = store::lock(&layout)?;
+        let mut pinned = lease.pinned.clone();
+        pinned.insert(digest.to_owned());
+        lease.pin_locked(&layout, pinned)
+    }
+
     /// Check every published copy against the hashes recorded with it.
     ///
     /// This writes nothing: a mismatch or a missing file is reported with the

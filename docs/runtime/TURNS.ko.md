@@ -346,6 +346,14 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   `on`/`off`로 이 세션만 켜거나 끈다. 끄면 이 세션의 새 advisor 작업이 바로 멈춘다. 선택은
   실행 중인 세션에만 적용되며 `[advisor] enabled`나 다른 세션을 바꾸지 않는다.
   `horon run --advisor on|off`는 한 번 실행에 같은 선택을 적용한다.
+- `dirs`: 세션의 작업 디렉터리와 함께 쓰는 추가 작업 디렉터리 목록을 보여 주고,
+  `add <path>`와 `remove <path>`로 하나를 더하거나 뺀다. 더하는 경로는 심볼릭 링크와 `..`까지
+  풀어서 해석하며 실제로 있는 디렉터리여야 하므로, 없는 경로나 파일은 오류로 거절한다.
+  이미 목록에 있는 디렉터리의 다른 표기는 두 번 들어가지 않는다. 제거는 목록만 바꾸고
+  디렉터리는 건드리지 않는다. 목록은 세션 문맥의 일부라서 더한 루트는 다음 프롬프트의
+  세션 문맥(대화가 시작된 뒤라면 한 번짜리 알림)에 나타나고, 세션 메타데이터와 함께
+  저장된다. `horon --add-dir <path>`, `horon run --add-dir <path>`(둘 다 반복 가능)는
+  세션을 시작할 때 목록을 정한다. 이 루트는 문맥일 뿐 승인 권한을 넓히지 않는다.
 - `plan`: 계획 모드 상태를 읽고 바꾼다. 인자가 없거나 `status`면 현재 상태를,
   `on`/`off`는 계획 모드를 켜고 끄며, `approve`/`reject`는 세션에 대기 중인 계획을
   승인하거나 거절한다. 설정에서 계획 모드가 꺼져 있으면 `on`과 `approve`는 오류로 답한다
@@ -378,7 +386,7 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   프로바이더 자격 증명 제거. 지원되는 공유 인증 저장소가 대상이다.
 
 위 이름들은 런타임 명령 열거형이 정한다
-(`crates/harness-api/src/runtime_commands.rs:7-33`).
+(`crates/harness-api/src/runtime_commands.rs:7-39`).
 열거형에 없는 이름을 보내면 오류로 답한다.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, `cache 5m`은 이 열거형에 없다.
 캐시 TTL을 늘리는 런타임 명령도, 프리미엄 모드를 바꾸는 클라이언트 요청도 이 빌드에 없다.
@@ -639,6 +647,10 @@ method_order = ["handoff", "structured"]
 텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
 
 `--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함합니다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시합니다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보냅니다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보냅니다.
+
+## 텍스트 모드의 추론 표시
+
+`horon run --print-thoughts "..."`는 제공자가 보이는 텍스트로 돌려주는 추론을 답변보다 먼저 표준 오류에 `[thinking]` 표시와 함께 출력합니다. 답변은 표준 출력에 그대로 남으므로 파이프로 받은 출력은 달라지지 않습니다. 옵션을 주지 않으면 텍스트 출력은 바이트 단위로 같습니다. 제공자가 보이는 텍스트로 돌려주지 않는 추론은 표시하지 않으며, 이 옵션은 형식이 바뀌지 않는 `--json`, `--ndjson`과 함께 쓸 수 없습니다.
 
 ## `--resume` 동작
 

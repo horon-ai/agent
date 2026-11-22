@@ -375,7 +375,7 @@ fn next_lease_token() -> u64 {
 /// digit. A session label may hold anything, so it is reduced to that alphabet
 /// and cut to leave room for the process and acquisition suffix, which keeps
 /// every acquisition's name unique inside the package area.
-fn lease_owner(label: &str, token: u64) -> String {
+pub(crate) fn lease_owner(label: &str, token: u64) -> String {
     let suffix = format!("-{}-{token}", std::process::id());
     let mut name: String = label
         .chars()
@@ -456,9 +456,21 @@ fn lock_slots() -> MutexGuard<'static, BTreeMap<String, Arc<PackageSession>>> {
 /// Drop one session's package state, called when its agent leaves memory.
 ///
 /// The snapshot the session still holds keeps its lease alive until the last
-/// request using it finishes, so a running turn is never cut by this.
+/// request using it finishes, so a running turn is never cut by this. The tools
+/// this session exposed and the children those tools started are released with
+/// it as well.
 pub(crate) fn forget_session(session_id: &str) {
     lock_slots().remove(session_id);
+    crate::tool::package_tool::forget_session(session_id);
+    crate::tool::session_mcp::forget_package_mcp(session_id);
+}
+
+/// The package session a request belongs to, when the session has one.
+///
+/// A call that arrives without a captured generation has no package surface to
+/// reach, so this never opens a store or creates a session.
+pub(crate) fn for_session(session_id: &str) -> Option<Arc<PackageSession>> {
+    lock_slots().get(session_id).cloned()
 }
 
 fn package_session(session_id: &str) -> Result<Arc<PackageSession>> {
@@ -473,13 +485,19 @@ fn package_session(session_id: &str) -> Result<Arc<PackageSession>> {
 }
 
 impl crate::agent::Agent {
-    /// Capture this turn's package generation at the start of the turn.
+    /// Capture this turn's package generation, and expose the tools it pins.
     ///
     /// Every turn entry point calls this once, before the tool list and its
     /// index freeze, so each request and tool round of one turn reads the same
     /// generation. A turn whose catalog did not move returns the snapshot the
-    /// session already holds.
-    pub(crate) async fn enter_package_generation(&self) {
+    /// session already holds. The declared tools of the packages it lists are
+    /// registered on this agent's registry afterwards, so the dispatcher,
+    /// plan mode, approval, the tool policy and the hooks treat a package tool
+    /// exactly as they treat a built-in. Exposing a name also widens this
+    /// session's own allow-list, because that list is what filters the tool
+    /// definitions this turn sends; the profile, the blocked names and the load
+    /// tiers already decided whether the name may be exposed at all.
+    pub async fn enter_package_generation(&mut self) {
         let session = match package_session(self.session_id()) {
             Ok(session) => session,
             Err(error) => {
@@ -497,6 +515,14 @@ impl crate::agent::Agent {
                 self.session_id()
             ));
         }
+        let registry = self.registry();
+        let exposed = crate::tool::package_tool::sync_session_tools(&registry, self.session_id(), &session).await;
+        for name in exposed {
+            self.allow_tool(&name);
+        }
+        // The package MCP servers follow the same generation: a new one refreshes
+        // them here, before this turn's tool surface freezes.
+        crate::tool::session_mcp::refresh_package_mcp(self.session_id(), registry, &session).await;
     }
 
     /// The package snapshot this turn captured, when the session has one.

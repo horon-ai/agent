@@ -689,6 +689,32 @@ Extraction stores memories one session at a time and never merges across session
 - `[agents] memory_consolidation_min_new` (Horon default `20`) is how many memories must have been stored since the previous pass before it runs. A pass reloads the graph, merges and rewrites it, so it is batched instead of run per session.
 - `[agents] memory_consolidation_summary_bytes` (Horon default `4096`) caps the injected summary. Over the cap the text is cut at a character boundary, never dropped.
 
+## Package tools
+
+An installed extension or plugin can declare native tools in its `extension.toml`. Installing the package is the consent to run its executable with the user's OS permissions, so no second prompt is added. Each call still goes through the ordinary tool path (`crates/app-core/src/tool/package_tool.rs`).
+
+| Question | Answer |
+| --- | --- |
+| Name | `ext__<package id>__<declared name>`. The installer caps the declared part so the whole name stays within 64 bytes. |
+| Which generation | The one the turn captured (see `docs/runtime/PACKAGES.md`). A package installed or removed since appears from the next turn; a running turn keeps its tools. |
+| Effect | `ToolEffects::process()` (`crates/app-core/src/tool/package_tool.rs:89`). The call is a write barrier and never overlaps another call in its round. |
+| Name collision | A name the registry already holds wins. The package never replaces an existing tool. |
+
+Exposure follows the session's frozen policy and adds no rule of its own:
+
+- A profile that names its tools (`minimal`, `none`, `acp`) exposes no package tool, because a package name is not on its list.
+- The untouched `core` profile lists package tools behind `toolbox`, like the core tools it does not send eagerly. The `full` default defers them.
+- An explicit `[tools] enabled` list or an SDK `enabled` overlay exposes exactly the names it gives, eagerly.
+- `[tools] disabled`, `[tools.load_mode] = "off"` and any `off` tier hide the name outright. A hidden or unknown name is refused before anything reaches a child.
+
+Plan mode refuses the process effect, the approval tiers that gate process effects ask before the child starts, and `off` and `yolo` behave as they do for every tool. A denied call starts no child. The `pre_tool` hook receives the exact input the child would receive.
+
+The child is started, or reused for the same session, package and installed copy, only after the call is approved. It runs from the copy the snapshot pinned, and the launcher checks the installed declaration against the catalog record and the declaration digest the child reports in the handshake. Input that holds an unresolved secret placeholder, or a value the session vault already knows, is refused before it crosses to the child.
+
+Disabling or removing the package cancels the pending request and reaps the child and its descendants. A handle obtained before the revocation is refused afterwards, even if the package is installed again.
+
+Limits: starting a child is serialized across the process, bounded by the 30-second wire deadline. Observer notifications and the slash-command consumer are separate steps. The tests run on Linux and macOS and compile on Windows (`cargo test --locked -p horon-agent-app-core --test package_tools`).
+
 ## Where MCP server configuration comes from
 
 MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.
@@ -1025,3 +1051,9 @@ report that replaces the branch, and undo.
 ### Preview a read-only tool
 
 `horon preview <read|agentgrep|websearch> '<json input>'` runs one of these three built-ins once, without a model, a session or an approval prompt. The input is the tool's own JSON object, and the tool applies its normal path checks. Output is redacted for credentials and capped at 32 KiB. `--json` returns `tool`, `output`, `truncated` and, for `websearch`, the configured engine order as `backend`; the search endpoint and any key are never shown. Any other tool name is refused.
+
+### Diagnostics before delegating a fix
+
+`horon diagnostics <file>...` asks each file's language server for its diagnostics and lists them grouped by file, errors before warnings, with a number per entry. A file that cannot be checked (missing, no language server for its type, server not installed) stays in the list with the reason. Nothing is edited. `--json` returns the same list.
+
+`horon diagnostics <file>... --select 1,3 --delegate` prints the files of the selected entries and then runs a normal one-shot `horon run` that is asked to fix only those diagnostics, so its approvals, tool policy and isolation apply as for any run. A number that is not in the listing is refused before any model call. `--select` and `--delegate` go together.
