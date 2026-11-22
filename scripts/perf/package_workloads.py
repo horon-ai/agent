@@ -25,12 +25,17 @@ The new surfaces (an installed package's on-disk size) have no baseline when the
 baseline predates packages, and are then recorded as absolute values with the
 comparison left out.
 
-The observation subscription is removed from the installed fixture on purpose:
-the shipped example subscribes to `turn.start`, and a package that observes a
-turn is *started* by that turn, so keeping it would make "installed but never
-called" measure a child start instead. `empty` and `installed` use the same
-prompt and no package marker, so the only difference between them is what is
-installed; `called` adds the marker the mock answers with one package call.
+The two installed scenarios do not share a staged declaration, because the
+author SDK refuses to serve a declaration whose tools, commands or events
+disagree with the code (`crates/extension-sdk/src/serve.rs`). `installed` drops
+the example's `turn.start`/`turn.end` subscription: a package that observes a
+turn is *started* by that turn, so keeping it would make that cell measure a
+child start instead, and its child is never started anyway. `called` keeps the
+declaration byte for byte except the host-only `[targets]` row, so the child
+starts and answers, and the observation of that turn also reaches it: that is
+real cost, and it belongs to this cell. `empty` and `installed` use the same
+prompt, so the only difference between them is what is installed; `called` adds
+the marker the mock answers with one package call.
 
 `horon-tui` is a separate binary with its own suite and is never measured here.
 """
@@ -61,6 +66,9 @@ SCENARIOS = (SCENARIO_EMPTY, SCENARIO_INSTALLED, SCENARIO_CALLED)
 PLAIN_PROMPT = "Reply with mock-ok and nothing else."
 # The prompt the mock answers with one real call to the installed package's tool.
 CALL_PROMPT = f"{mm.PACKAGE_MARKER} Greet one name with the installed package tool, then reply with mock-ok."
+
+# How much of the host's answer to a failed call the report keeps.
+RESULT_EXCERPT_CHARS = 200
 
 DEFAULT_PACKAGE_SOURCE = "examples/packages/example/layouts"
 PACKAGE_ID = "hello"
@@ -108,18 +116,26 @@ def copy_tree(source: Path, destination: Path) -> None:
             shutil.copy2(entry, target)
 
 
-def stage_declaration(source: Path, destination: Path, package_binary: Path) -> Path:
+def stage_declaration(source: Path, destination: Path, package_binary: Path, keep_events: bool) -> Path:
     """Write one rewritten declaration and the executable it names beside it.
 
     The example ships one target key per platform and expects the binary below
-    its own root; the rewrite keeps the declaration as shipped except for two
-    things: the observation subscription is dropped (a package that observes a
-    turn is started by that turn), and the target table names only the binary
-    this run was given.
+    its own root; the rewrite changes exactly one thing, the target table, which
+    names only the binary this run was given.
+
+    `keep_events=False` additionally drops the observation subscription, and only
+    the `installed` scenario may ask for that: the author SDK refuses to start a
+    package whose code and declaration disagree about events
+    (`crates/extension-sdk/src/serve.rs`, `SurfaceError::UndeclaredEvent`), so a
+    declaration stripped this way can never be handed to a child that runs. A
+    scenario that calls the tool keeps the declaration as shipped, events
+    included, and pays for the observation the child then receives.
     """
     if not source.is_file():
         raise SystemExit(f"{source} is not a package declaration")
-    text = strip_events(source.read_text(encoding="utf-8"))
+    text = source.read_text(encoding="utf-8")
+    if not keep_events:
+        text = strip_events(text)
     text = re.sub(r"^\[targets\]\n(?:.*\n)*?(?=\n|\Z)", "", text, flags=re.MULTILINE)
     relative = Path("bin") / binary_name()
     text = text.rstrip() + f"\n\n[targets]\n{host_target()} = \"{relative.as_posix()}\"\n"
@@ -133,7 +149,9 @@ def stage_declaration(source: Path, destination: Path, package_binary: Path) -> 
     return declaration
 
 
-def stage_package(source: Path, package_binary: Path, root: Path, layout: str) -> Path:
+def stage_package(
+    source: Path, package_binary: Path, root: Path, layout: str, keep_events: bool = True
+) -> Path:
     """One shipped layout staged the way the installer accepts it.
 
     The installer refuses a root that holds both declarations, so the two kinds
@@ -147,21 +165,22 @@ def stage_package(source: Path, package_binary: Path, root: Path, layout: str) -
     destination.mkdir(parents=True, exist_ok=True)
     declaration = source / "extension.toml"
     if layout == "extension":
-        stage_declaration(declaration, destination, package_binary)
+        stage_declaration(declaration, destination, package_binary, keep_events)
         return destination
     if layout != "plugin":
         raise SystemExit(f"unknown package layout {layout}")
     plugin = source / "plugin.toml"
     if not plugin.is_file():
         raise SystemExit(f"{source} is not a plugin layout: no plugin.toml")
+    plugin_text = plugin.read_text(encoding="utf-8")
     (destination / "plugin.toml").write_text(
-        strip_events(plugin.read_text(encoding="utf-8")), encoding="utf-8"
+        plugin_text if keep_events else strip_events(plugin_text), encoding="utf-8"
     )
     for resource in RESOURCE_DIRS:
         copy_tree(source / "resources" / resource, destination / "resources" / resource)
     bundled = destination / "extension"
     bundled.mkdir(exist_ok=True)
-    stage_declaration(declaration, bundled, package_binary)
+    stage_declaration(declaration, bundled, package_binary, keep_events)
     return destination
 
 
@@ -188,6 +207,12 @@ def install(binary: str, source: Path, env: dict, timeout: float) -> str:
         detail = (completed.stderr or completed.stdout or "").strip()[-400:]
         raise RuntimeError(f"`horon package install` exited {completed.returncode}: {detail}")
     return (completed.stdout or completed.stderr).strip()
+
+
+def last_result(requests: list[dict]) -> str | None:
+    """The last tool result text the model saw, short enough to quote."""
+    excerpts = [entry["result_excerpt"] for entry in requests if entry.get("result_excerpt")]
+    return excerpts[-1][:RESULT_EXCERPT_CHARS] if excerpts else None
 
 
 def first_request_ms(requests: list[dict], started_wall: float) -> float | None:
@@ -259,6 +284,9 @@ def run_turn(binary: str, env: dict, cwd: str, prompt: str, tools: str, mock, ti
         "first_request_ms": first_request_ms(requests, started_wall),
         "tool_round_trip": round_trip,
         "sentinel_seen": sentinel,
+        # What the host actually answered the call with, short enough to read in
+        # a failure line. A refused call is named here instead of only counted.
+        "last_tool_result": last_result(requests),
         "requests": len(requests),
         "tools": tool_names(requests),
         "exit_code": proc.returncode,
@@ -272,6 +300,7 @@ def summarize(runs: list[dict], expect_call: bool) -> dict:
     firsts = [run["first_request_ms"] for run in runs if run.get("first_request_ms") is not None]
     peaks = [run["peak_rss_bytes"] for run in runs if run.get("peak_rss_bytes")]
     errors = [str(run["error"]) for run in runs if run.get("error")]
+    results = [run["last_tool_result"] for run in runs if run.get("last_tool_result")]
     calls = [run["tool_round_trip"] for run in runs if run.get("tool_round_trip") is not None]
     if expect_call:
         round_trip = bool(calls) and all(calls)
@@ -297,17 +326,30 @@ def summarize(runs: list[dict], expect_call: bool) -> dict:
         "tools": sorted({name for run in runs for name in run.get("tools") or []}),
         "status": "ok" if failure is None else "failed",
         "failure": failure,
+        # A failed round trip is diagnosable from the report alone: the host's
+        # own answer to the call travels beside the failure.
+        "last_tool_result": results[-1] if results else None,
         "errors": errors,
         "runs": runs,
     }
 
 
-def size_facts(binary: str, package_binary: str, home: str, extension_root: Path, plugin_root: Path) -> dict:
+def size_facts(
+    binary: str, package_binary: str, home: str, installed_layout: Path | None, plugin_root: Path
+) -> dict:
+    """What this scenario occupies, on disk and as installed.
+
+    `installed_layout` is the staged layout the scenario actually installed, so
+    the size beside a row describes that row and not a sibling scenario's copy;
+    `empty` installs nothing and reports no layout bytes.
+    """
     store = Path(home) / "packages"
     return {
         "agent_binary_bytes": Path(binary).stat().st_size if Path(binary).is_file() else None,
         "package_binary_bytes": Path(package_binary).stat().st_size if Path(package_binary).is_file() else None,
-        "package_extension_bytes": directory_facts(extension_root)["bytes"],
+        "package_extension_bytes": (
+            directory_facts(installed_layout)["bytes"] if installed_layout is not None else None
+        ),
         "package_plugin_bytes": directory_facts(plugin_root)["bytes"],
         "installed_area_bytes": directory_facts(store)["bytes"],
         "installed_area_files": directory_facts(store)["files"],
@@ -333,7 +375,7 @@ class Prepared:
     binary: str
     package_binary: str
     root: Path
-    extension_root: Path
+    layouts: dict[str, Path]
     plugin_root: Path
     homes: dict[str, str]
     envs: dict[str, dict]
@@ -352,7 +394,18 @@ def prepare_build(
     """
     root = Path(bc.short_temp_dir("hpkg-"))
     staged = root / "staged"
-    extension_root = stage_package(package_source, Path(package_binary), staged, "extension")
+    # One staged extension per scenario that installs one. `installed` must not
+    # start its child, so its declaration drops the observation subscription;
+    # `called` starts a child, and the author SDK refuses a declaration whose
+    # events disagree with the code, so its copy keeps them exactly as shipped.
+    layouts = {
+        SCENARIO_INSTALLED: stage_package(
+            package_source, Path(package_binary), staged, "extension", keep_events=False
+        ),
+        SCENARIO_CALLED: stage_package(
+            package_source, Path(package_binary), staged / "called", "extension", keep_events=True
+        ),
+    }
     plugin_root = stage_package(package_source, Path(package_binary), staged, "plugin")
     homes: dict[str, str] = {}
     envs: dict[str, dict] = {}
@@ -374,7 +427,7 @@ def prepare_build(
         if scenario == SCENARIO_EMPTY:
             continue
         try:
-            install(binary, extension_root, env, timeout)
+            install(binary, layouts[scenario], env, timeout)
         except RuntimeError as exc:
             skipped[scenario] = str(exc)
     return Prepared(
@@ -382,7 +435,7 @@ def prepare_build(
         binary=binary,
         package_binary=package_binary,
         root=root,
-        extension_root=extension_root,
+        layouts=layouts,
         plugin_root=plugin_root,
         homes=homes,
         envs=envs,
@@ -439,6 +492,7 @@ def measure_scenarios(prepared: list[Prepared], runs: int, timeout: float, mock)
                             "first_request_ms": None,
                             "tool_round_trip": None,
                             "sentinel_seen": False,
+                            "last_tool_result": None,
                             "requests": 0,
                             "tools": [],
                             "error": str(exc)[:300],
@@ -453,8 +507,13 @@ def measure_scenarios(prepared: list[Prepared], runs: int, timeout: float, mock)
                 **summarize(repeats[build.label], scenario == SCENARIO_CALLED),
             }
             row.update(
-                size_facts(build.binary, build.package_binary, build.homes[scenario],
-                           build.extension_root, build.plugin_root)
+                size_facts(
+                    build.binary,
+                    build.package_binary,
+                    build.homes[scenario],
+                    build.layouts.get(scenario),
+                    build.plugin_root,
+                )
             )
             by_label[build.label][scenario] = row
     return by_label
@@ -537,6 +596,16 @@ def markdown(report: dict) -> str:
                 size_table,
             )
         )
+    failures = [row for row in rows if row.get("status") == "failed"]
+    if failures:
+        lines.append("")
+        lines.append("**Failures** (the host's own answer to the call is quoted where there was one)")
+        lines.append("")
+        for row in failures:
+            detail = row.get("failure") or "did not do what the scenario says"
+            answer = row.get("last_tool_result")
+            quoted = f' — last tool result: `{answer}`' if answer else ""
+            lines.append(f"- `{row['tool']}` `{row['scenario']}`: {detail}{quoted}")
     for note in report.get("skipped") or []:
         lines.append("")
         lines.append(f"- skipped `{note.get('tool')}` `{note.get('scenario')}`: {note.get('reason')}")
@@ -579,7 +648,11 @@ def measure(binary: str, package_binary: str, baseline_binary: str | None,
             results.append(row)
     candidate = next(build for build in prepared if build.label == "candidate")
     sizes = {
-        "payload_extension_bytes": payload_unpacked_bytes(candidate.extension_root / "extension.toml"),
+        # The payload is the shipped layout with only its target table rewritten,
+        # which is the copy `called` installs.
+        "payload_extension_bytes": payload_unpacked_bytes(
+            candidate.layouts[SCENARIO_CALLED] / "extension.toml"
+        ),
         "payload_plugin_bytes": payload_unpacked_bytes(candidate.plugin_root / "plugin.toml"),
     }
     report = bc.build_report("packages", results, skipped, started_at=started_at)

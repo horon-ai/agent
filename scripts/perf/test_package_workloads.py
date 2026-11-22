@@ -66,8 +66,7 @@ class StageTest(unittest.TestCase):
     bundled extension under `extension/`.
     """
 
-    def stage(self, layout: str = "extension") -> tuple[Path, Path]:
-        root = Path(tempfile.mkdtemp(prefix="hpkg-test-"))
+    def source(self, root: Path) -> Path:
         source = root / "layouts"
         (source / "resources" / "rules").mkdir(parents=True)
         (source / "resources" / "rules" / "greeting.md").write_text("A rule\n", encoding="utf-8")
@@ -79,13 +78,37 @@ class StageTest(unittest.TestCase):
             '\n[resources]\nrules = ["resources/rules/greeting.md"]\n',
             encoding="utf-8",
         )
+        return source
+
+    def binary(self, root: Path) -> Path:
         binary = root / "built-example"
         binary.write_bytes(b"\x7fELF-not-really")
-        staged = pw.stage_package(source, binary, root / "staged", layout)
+        return binary
+
+    def stage(self, layout: str = "extension", keep_events: bool = True) -> tuple[Path, Path]:
+        root = Path(tempfile.mkdtemp(prefix="hpkg-test-"))
+        source = self.source(root)
+        staged = pw.stage_package(source, self.binary(root), root / "staged", layout, keep_events=keep_events)
         return staged, root
 
+    def test_the_installed_scenario_may_drop_the_subscription(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="hpkg-test-"))
+        staged = pw.stage_package(self.source(root), self.binary(root), root / "staged", "extension",
+                                  keep_events=False)
+        self.assertNotIn("events", (staged / "extension.toml").read_text(encoding="utf-8"))
+
+    def test_the_called_scenario_keeps_the_shipped_declaration_events(self) -> None:
+        # The author SDK refuses a declaration whose events disagree with the
+        # code, so the copy a child is started from keeps them.
+        root = Path(tempfile.mkdtemp(prefix="hpkg-test-"))
+        staged = pw.stage_package(self.source(root), self.binary(root), root / "staged", "extension",
+                                  keep_events=True)
+        text = (staged / "extension.toml").read_text(encoding="utf-8")
+        self.assertIn('events = ["turn.start", "turn.end"]', text)
+        self.assertIn('id = "hello"', text)
+
     def test_the_extension_root_carries_only_its_own_declaration(self) -> None:
-        staged, _ = self.stage("extension")
+        staged, _ = self.stage("extension", keep_events=False)
         text = (staged / "extension.toml").read_text(encoding="utf-8")
         self.assertNotIn("events", text, "an observing package is started by a turn, which this cell isolates")
         self.assertIn('id = "hello"', text)
@@ -110,8 +133,12 @@ class StageTest(unittest.TestCase):
         self.assertTrue((staged / "resources" / "mcp" / "servers.json").is_file())
         nested = staged / "extension" / "extension.toml"
         self.assertTrue(nested.is_file(), "plugin.toml names extension/extension.toml")
-        self.assertNotIn("events", nested.read_text(encoding="utf-8"))
+        self.assertIn('events = ["turn.start", "turn.end"]', nested.read_text(encoding="utf-8"))
         self.assertTrue((staged / "extension" / "bin" / pw.binary_name()).is_file())
+
+    def test_a_scenario_that_installs_nothing_reports_no_layout_bytes(self) -> None:
+        facts = pw.size_facts("/bin/agent", "/bin/example", "/tmp/home", None, Path("/tmp/plugin"))
+        self.assertIsNone(facts["package_extension_bytes"], "`empty` installs no copy to measure")
 
     def test_the_plugin_payload_does_not_double_the_extension_payload(self) -> None:
         extension_root, _ = self.stage("extension")
@@ -194,6 +221,8 @@ def run(**overrides) -> dict:
         "peak_rss_bytes": 4096,
         "first_request_ms": 40.0,
         "tool_round_trip": False,
+        "sentinel_seen": False,
+        "last_tool_result": None,
         "requests": 1,
         "tools": [],
         "error": None,
@@ -229,6 +258,44 @@ class SummarizeTest(unittest.TestCase):
         self.assertEqual(row["peak_rss_bytes"], 4096)
 
 
+class DiagnosticTest(unittest.TestCase):
+    """A failed round trip names the answer the host actually gave."""
+
+    def test_the_row_keeps_the_last_tool_result_of_a_failed_call(self) -> None:
+        row = pw.summarize(
+            [run(tool_round_trip=False, last_tool_result="package hello did not answer the call: boom")],
+            expect_call=True,
+        )
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["last_tool_result"], "package hello did not answer the call: boom")
+
+    def test_the_markdown_failure_line_quotes_the_answer(self) -> None:
+        report = {
+            "results": [
+                {
+                    "tool": "candidate",
+                    "scenario": "called",
+                    "ms": None,
+                    "status": "failed",
+                    "failure": "the package call never came back",
+                    "last_tool_result": "package hello did not answer the call: undeclared event",
+                }
+            ],
+            "skipped": [],
+        }
+        text = pw.markdown(report)
+        self.assertIn(
+            "- `candidate` `called`: the package call never came back — "
+            "last tool result: `package hello did not answer the call: undeclared event`",
+            text,
+        )
+
+    def test_a_clean_report_carries_no_failure_section(self) -> None:
+        report = {"results": [{"tool": "candidate", "scenario": "called", "ms": 10.0, "status": "ok"}],
+                  "skipped": []}
+        self.assertNotIn("**Failures**", pw.markdown(report))
+
+
 class ComparisonTest(unittest.TestCase):
     def test_a_ratio_needs_both_sides(self) -> None:
         self.assertIsNone(pw.comparison(None, {"ms": 100.0}))
@@ -240,6 +307,22 @@ class ComparisonTest(unittest.TestCase):
             pw.comparison({"ms": 100.0}, {"ms": 110.0}),
             {"baseline_ms": 100.0, "candidate_ms": 110.0, "ratio": 1.1},
         )
+
+
+class ResultExcerptTest(unittest.TestCase):
+    def test_the_kept_answer_is_the_last_one_and_is_bounded(self) -> None:
+        long = "x" * (pw.RESULT_EXCERPT_CHARS + 50)
+        requests = [
+            {"result_excerpt": "first"},
+            {"result_excerpt": long},
+            {"plan": "package"},
+        ]
+        kept = pw.last_result(requests)
+        self.assertEqual(len(kept), 200, "the row quotes at most 200 characters")
+        self.assertTrue(kept.startswith("x" * 10))
+
+    def test_no_tool_result_is_no_snippet(self) -> None:
+        self.assertIsNone(pw.last_result([{"plan": "package"}]))
 
 
 class FirstRequestTest(unittest.TestCase):
@@ -298,7 +381,7 @@ class OrderTest(unittest.TestCase):
             binary=f"/bin/{label}",
             package_binary="/bin/example",
             root=Path("/tmp"),
-            extension_root=Path("/tmp/ext"),
+            layouts={scenario: Path("/tmp/ext") for scenario in pw.SCENARIOS},
             plugin_root=Path("/tmp/plugin"),
             homes={scenario: "/tmp/home" for scenario in pw.SCENARIOS},
             envs={scenario: {} for scenario in pw.SCENARIOS},
@@ -317,6 +400,7 @@ class OrderTest(unittest.TestCase):
                 "first_request_ms": 1.0,
                 "tool_round_trip": False,
                 "sentinel_seen": False,
+                "last_tool_result": None,
                 "requests": 1,
                 "tools": [],
                 "error": None,

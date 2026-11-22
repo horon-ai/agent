@@ -943,7 +943,7 @@ class Handler(BaseHTTPRequestHandler):
             # The tail of the tool results so far, kept only for the skill and
             # MCP plans: a call that ran without returning the fixture's proof
             # is diagnosed from this instead of a re-run.
-            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp") and results else None,
+            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp", "package") and results else None,
             "ts": time.time(),
         }
         STATS.record(entry)
