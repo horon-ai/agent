@@ -35,6 +35,8 @@ from .protocol import (
     EffectiveSetting,
     FailoverAckReceipt,
     MessageModes,
+    PackageCommandList,
+    PackageCommandOutcome,
     SessionSearchHit,
     SessionToolDefinition,
     UsageReport,
@@ -1967,6 +1969,39 @@ class HoronAgentClient:
         frame = await self._expect_reply({"req": "package_control", **request}, "package_control")
         receipt = frame.get("receipt")
         return cast(dict[str, Any], receipt if isinstance(receipt, dict) else {})
+
+    async def list_package_commands(self, session_id: str) -> PackageCommandList:
+        """List the slash commands the installed packages supply for this session.
+
+        Requires ``package_commands_v1``. The entries belong to the package
+        generation the session currently observes, and ``generation`` says which
+        one: a command listed here and run later is refused as stale if its
+        package left that generation in between.
+        """
+        self._require_capability("package_commands_v1", "list_package_commands")
+        frame = await self.runtime_command(session_id, "package_commands")
+        data = frame.get("data")
+        return cast(PackageCommandList, data if isinstance(data, dict) else {})
+
+    async def run_package_command(
+        self,
+        session_id: str,
+        package_id: str,
+        command: str,
+        arguments: str = "",
+    ) -> PackageCommandOutcome:
+        """Run one package slash command and return what the daemon answered.
+
+        ``arguments`` is the text typed after the command name. A template
+        answers with ``text``, the user message it expands to; an executable
+        command answers with ``output`` and the child's ``data`` after the tool
+        policy allowed the call. Requires ``package_commands_v1``.
+        """
+        self._require_capability("package_commands_v1", "run_package_command")
+        words = arguments.split()
+        frame = await self.runtime_command(session_id, "package_command", [package_id, command, *words])
+        data = frame.get("data")
+        return cast(PackageCommandOutcome, data if isinstance(data, dict) else {})
 
     async def get_runtime_info(self, session_id: str) -> RuntimeInfo:
         await self.ping()

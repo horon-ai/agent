@@ -30,7 +30,10 @@ pub use handoff::*;
 pub mod replication;
 mod requests;
 mod runtime_commands;
-pub use runtime_commands::{RuntimeCommand, RuntimeCommandOutput};
+pub use runtime_commands::{
+    PackageCommandInfo, PackageCommandKind, PackageCommandList, PackageCommandOutcome, RuntimeCommand,
+    RuntimeCommandOutput,
+};
 pub mod degradation;
 mod sockets;
 mod swarm_metadata;
@@ -144,6 +147,16 @@ pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
 /// serve the request, and forwarding it to a daemon that predates the request
 /// would park the client until its own timeout.
 pub const CAPABILITY_PACKAGE_CONTROL_V1: &str = "package_control_v1";
+/// A client can list and run the slash commands installed packages supply.
+/// Gates `runtime_command` with the `package_commands` and `package_command`
+/// values and the matching `runtime_command_result` payloads.
+///
+/// The commands ride the runtime-command request rather than a request of their
+/// own, so an older client never sends one and keeps its existing surface. The
+/// bridge advertises this only when the daemon reported `runtime_commands`:
+/// without that, the daemon answers the request with an error no client can
+/// correlate, which reads as a timeout.
+pub const CAPABILITY_PACKAGE_COMMANDS_V1: &str = "package_commands_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -176,6 +189,10 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
     (CAPABILITY_PACKAGE_CONTROL_V1, &["package_control"]),
+    (
+        CAPABILITY_PACKAGE_COMMANDS_V1,
+        &["runtime_command.package_commands", "runtime_command.package_command"],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -189,6 +206,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_LIVE_TODO_V1,
     CAPABILITY_EFFECTIVE_SETTINGS_V1,
     CAPABILITY_PACKAGE_CONTROL_V1,
+    CAPABILITY_PACKAGE_COMMANDS_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

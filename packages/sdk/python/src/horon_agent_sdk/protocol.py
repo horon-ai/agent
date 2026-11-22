@@ -36,6 +36,10 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("live_todo_v1", ("todo_changed",)),
     ("effective_settings_v1", ("get_effective_settings",)),
     ("package_control_v1", ("package_control",)),
+    (
+        "package_commands_v1",
+        ("runtime_command.package_commands", "runtime_command.package_command"),
+    ),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each
@@ -81,7 +85,54 @@ RuntimeCommand: TypeAlias = Literal[
     "advisor",
     "dirs",
     "mcp",
+    "package_commands",
+    "package_command",
 ]
+
+PackageCommandKind: TypeAlias = Literal["template", "executable"]
+
+"""How one package command runs: a Markdown template or a child process."""
+
+
+class PackageCommandInfo(TypedDict, total=False):
+    """One slash command an installed package supplies.
+
+    ``name`` is what a user types after the slash, ``<package id>:<command>``,
+    and the entries belong to the package generation the session observes.
+    """
+
+    name: str
+    package_id: str
+    command: str
+    kind: PackageCommandKind
+    description: str
+    argument_hint: str
+
+
+class PackageCommandList(TypedDict, total=False):
+    """The reply to a ``package_commands`` runtime command."""
+
+    # The package catalog generation the entries were read at; 0 for none.
+    generation: int
+    commands: list[PackageCommandInfo]
+
+
+class PackageCommandOutcome(TypedDict, total=False):
+    """The reply to a ``package_command`` runtime command.
+
+    A template sets ``text``, the user message it expands to; an executable
+    command sets ``output`` and the child's ``data`` after the tool policy
+    allowed the call.
+    """
+
+    name: str
+    package_id: str
+    command: str
+    kind: PackageCommandKind
+    text: str
+    output: str
+    data: Any
+
 
 PermissionDecision: TypeAlias = Literal["allow", "allow_always", "deny"]
 
