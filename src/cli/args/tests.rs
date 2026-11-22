@@ -513,3 +513,20 @@ fn api_stdio_accepts_alias_and_daemon_socket_but_not_api_socket() {
         );
     }
 }
+
+#[test]
+fn add_dir_is_repeatable_and_keeps_each_value() {
+    let args = Args::try_parse_from([
+        "horon-agent",
+        "run",
+        "hello",
+        "--add-dir",
+        "/work/library",
+        "--add-dir=/work/tests",
+    ])
+    .expect("--add-dir parses");
+    assert_eq!(
+        args.add_dir,
+        vec!["/work/library".to_string(), "/work/tests".to_string()]
+    );
+}

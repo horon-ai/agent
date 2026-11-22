@@ -510,6 +510,34 @@ impl Agent {
         self.persist_session_best_effort("additional directories");
     }
 
+    /// Extra workspace roots this session reaches beyond its working directory.
+    pub fn additional_dirs(&self) -> Vec<String> {
+        self.session.additional_dirs()
+    }
+
+    /// Add one workspace root, resolving it to an existing directory.
+    ///
+    /// A missing path, a file, or a second spelling of a directory already on
+    /// the list is answered by the session; only a real change is persisted.
+    pub fn add_additional_dir(&mut self, raw: &str) -> Result<bool> {
+        let added = self.session.add_additional_dir(raw)?;
+        if added {
+            self.persist_session_best_effort("additional directories");
+        }
+        Ok(added)
+    }
+
+    /// Remove one workspace root from this session's list.
+    ///
+    /// The directory itself is never touched. Answers whether the list changed.
+    pub fn remove_additional_dir(&mut self, raw: &str) -> Result<bool> {
+        let removed = self.session.remove_additional_dir(raw);
+        if removed {
+            self.persist_session_best_effort("additional directories");
+        }
+        Ok(removed)
+    }
+
     /// Get the stored messages (for transcript export)
     pub fn messages(&self) -> &[StoredMessage] {
         self.session.active_context()

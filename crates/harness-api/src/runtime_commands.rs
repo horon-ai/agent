@@ -34,6 +34,7 @@ pub enum RuntimeCommand {
     Plan,
     Goal,
     Advisor,
+    Dirs,
     Mcp,
 }
 

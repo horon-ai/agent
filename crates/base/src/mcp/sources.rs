@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
-type Servers = HashMap<String, McpServerConfig>;
+pub(super) type Servers = HashMap<String, McpServerConfig>;
 
 /// Parsed user files kept at once. One generation per path; a handful of
 /// files exist, the bound only stops a pathological home from growing it.
@@ -219,6 +219,24 @@ pub(super) fn merge_lower(merged: &mut Servers, lower: Servers) {
             }
             Some(_) => {}
         }
+    }
+}
+
+/// Merge a package source into `merged`, after every user source.
+///
+/// There is no stdio exception here: a user definition of a name keeps its
+/// server even when the package definition is stdio, because a package never
+/// replaces a connection the user configured. Package names are prefixed, so a
+/// collision means the user already chose that exact name.
+pub(super) fn merge_package_lower(merged: &mut Servers, lower: Servers) {
+    for (name, config) in lower {
+        if merged.contains_key(&name) {
+            crate::logging::info(&format!(
+                "MCP: Keeping the user definition of '{name}'; the package definition of that name is not registered"
+            ));
+            continue;
+        }
+        merged.insert(name, config);
     }
 }
 

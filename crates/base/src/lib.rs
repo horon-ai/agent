@@ -112,6 +112,7 @@ pub mod transcript_sample;
 pub mod transport;
 pub mod usage;
 pub mod util;
+pub mod workspace_dirs;
 pub mod workspace_trust;
 #[cfg(not(feature = "embeddings"))]
 pub use embedding_stub as embedding;

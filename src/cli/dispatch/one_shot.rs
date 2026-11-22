@@ -17,6 +17,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         warn_cost,
         max_cost,
         system_template,
+        print_thoughts,
     }) = &args.command
     else {
         anyhow::bail!("Expected a run command");
@@ -25,6 +26,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     let limits = commands::RunLimits {
         max_time: *max_time,
         wait_async: *wait_async,
+        print_thoughts: *print_thoughts,
     };
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
@@ -62,6 +64,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     .closing_after_run();
     let setup = (|| {
         commands::restore_agent_session_if_requested(&mut agent, args.resume.as_deref())?;
+        for directory in &args.add_dir {
+            agent.add_additional_dir(directory)?;
+        }
         apply_model_overrides(&mut agent, overrides)?;
         if let Some(path) = system_template {
             apply_system_template(&mut agent, path)?;
