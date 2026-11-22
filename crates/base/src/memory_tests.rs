@@ -556,15 +556,13 @@ fn retrieval_candidates_include_local_skills() {
             )
             .expect("write skill");
 
-        let old_cwd = std::env::current_dir().expect("current dir");
-        std::env::set_current_dir(&project_dir).expect("set current dir");
+        // The guard restores the cwd when this closure ends, assertions included.
+        let _cwd = crate::storage::CwdGuard::enter(&project_dir).expect("set current dir");
 
         let manager = MemoryManager::new().with_project_dir(&project_dir).with_skills(true);
         let candidates = manager
             .collect_retrieval_candidates_scoped(MemoryScope::All)
             .expect("collect retrieval candidates");
-
-        std::env::set_current_dir(old_cwd).expect("restore current dir");
 
         assert!(candidates.iter().any(|entry| entry.id == "skill:firefox-browser"));
         assert!(candidates.iter().any(|entry| {

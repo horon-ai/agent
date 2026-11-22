@@ -2,6 +2,9 @@ use super::*;
 
 /// An isolated agent home for tests that make a workspace trusted.
 struct HomeSandbox {
+    // Dropped first, while the lock is still held, so the pin never outlives
+    // the home it points into.
+    _trust_file: crate::workspace_trust::TrustFileGuard,
     _guard: std::sync::MutexGuard<'static, ()>,
     _home: tempfile::TempDir,
     previous: Option<std::ffi::OsString>,
@@ -13,8 +16,9 @@ impl HomeSandbox {
         let home = tempfile::tempdir().expect("home tempdir");
         let previous = std::env::var_os("HORON_HOME");
         crate::env::set_var("HORON_HOME", home.path());
-        crate::workspace_trust::set_trust_file_for_tests(home.path().join("workspace-trust.json"));
+        let trust_file = crate::workspace_trust::set_trust_file_for_tests(home.path().join("workspace-trust.json"));
         Self {
+            _trust_file: trust_file,
             _guard: guard,
             _home: home,
             previous,
@@ -39,14 +43,9 @@ fn load_trusted_project_locals(project: &std::path::Path) -> McpConfig {
 
 #[test]
 fn issue_790_load_uses_process_cwd_while_unbound_load_for_dir_does_not() {
-    let _guard = crate::storage::lock_test_env();
-    let original_cwd = std::env::current_dir().expect("current cwd");
-    let previous_home = std::env::var_os("HORON_HOME");
-    let home = tempfile::tempdir().expect("home tempdir");
+    let _sandbox = HomeSandbox::new();
     let project = tempfile::tempdir().expect("project tempdir");
     let other_project = tempfile::tempdir().expect("other project tempdir");
-    crate::env::set_var("HORON_HOME", home.path());
-    std::env::set_current_dir(project.path()).expect("set project cwd");
     std::fs::write(
         project.path().join(".mcp.json"),
         r#"{"mcpServers":{"cwd-only":{"command":"cwd-server"}}}"#,
@@ -59,32 +58,25 @@ fn issue_790_load_uses_process_cwd_while_unbound_load_for_dir_does_not() {
     .expect("write other project MCP config");
     crate::workspace_trust::trust_for_tests(project.path());
     crate::workspace_trust::trust_for_tests(other_project.path());
+    // Declared after the temp dirs it points into, so it restores the cwd
+    // first, even when an assertion below fails.
+    let cwd = crate::storage::CwdGuard::enter(project.path()).expect("set project cwd");
 
-    let result = std::panic::catch_unwind(|| {
-        let unbound = McpConfig::load_for_dir(None);
-        assert!(!unbound.servers.contains_key("cwd-only"));
+    let unbound = McpConfig::load_for_dir(None);
+    assert!(!unbound.servers.contains_key("cwd-only"));
 
-        let default = McpConfig::load();
-        assert!(default.servers.contains_key("cwd-only"));
-        assert!(!default.servers.contains_key("other-cwd-only"));
+    let default = McpConfig::load();
+    assert!(default.servers.contains_key("cwd-only"));
+    assert!(!default.servers.contains_key("other-cwd-only"));
 
-        std::env::set_current_dir(other_project.path()).expect("set other project cwd");
-        let other_default = McpConfig::load();
-        assert!(!other_default.servers.contains_key("cwd-only"));
-        assert!(other_default.servers.contains_key("other-cwd-only"));
+    cwd.change(other_project.path()).expect("set other project cwd");
+    let other_default = McpConfig::load();
+    assert!(!other_default.servers.contains_key("cwd-only"));
+    assert!(other_default.servers.contains_key("other-cwd-only"));
 
-        let bound = McpConfig::load_for_dir(Some(project.path()));
-        assert!(bound.servers.contains_key("cwd-only"));
-        assert!(!bound.servers.contains_key("other-cwd-only"));
-    });
-
-    std::env::set_current_dir(original_cwd).expect("restore cwd");
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_HOME");
-    }
-    result.expect("MCP cwd isolation assertions");
+    let bound = McpConfig::load_for_dir(Some(project.path()));
+    assert!(bound.servers.contains_key("cwd-only"));
+    assert!(!bound.servers.contains_key("other-cwd-only"));
 }
 
 #[test]
