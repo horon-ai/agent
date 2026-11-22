@@ -64,7 +64,7 @@
     {
       "package": "horon-agent",
       "target": "launch_overrides_cli",
-      "min_passed": 5
+      "min_passed": 9
     },
     {
       "package": "horon-agent",

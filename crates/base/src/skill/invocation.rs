@@ -95,7 +95,7 @@ impl SkillRegistry {
 
         for end in boundaries {
             let name = &invocation[..end];
-            if name.is_empty() || !is_addressable(name) || !self.skills.contains_key(name) {
+            if name.is_empty() || !is_addressable(name) || !self.contains(name) {
                 continue;
             }
             return Some(SkillInvocation {
