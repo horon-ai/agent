@@ -104,6 +104,20 @@ impl Index {
         if let Some(rowid) = existing {
             clear_page_rows(&tx, rowid, id)?;
         }
+        // A page whose frontmatter id was edited keeps its file path, so the
+        // row (and its full-text rows) for the previous id must go before the
+        // path can be claimed again. Its versions go too: they belong to a page
+        // id that no longer exists.
+        let path_owner: Option<(i64, String)> = tx
+            .query_row("SELECT rowid, id FROM pages WHERE path = ?1", [path], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?;
+        if let Some((rowid, previous_id)) = path_owner {
+            clear_page_rows(&tx, rowid, &previous_id)?;
+            tx.execute("DELETE FROM versions WHERE page_id = ?1", [&previous_id])?;
+            tx.execute("DELETE FROM files WHERE page_id = ?1", [&previous_id])?;
+        }
         let tags_json = serde_json::to_string(&page.tags)?;
         let entities_json = serde_json::to_string(&page.entities)?;
         tx.execute(

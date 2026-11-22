@@ -908,11 +908,10 @@ jobs:
         # bring that floor to 1611. The three ignored benchmarks are separate.
         # It moved 1611 -> 1597 when prune-tests (#419) removed fourteen tests
         # that guarded no behavior, and the hosting boundary (#663) brought it
-        # to 1612. The forty-nine memory wiki store cases (#664) bring it to
-        # 1661.
+        # to 1612. The fifty memory wiki store cases (#664) bring it to 1662.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1661 --timeout 1200
+            --package horon-agent-base --min-passed 1662 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -921,11 +920,10 @@ jobs:
         # staged-import regressions in the minimum for the complete suite.
         # It moved 1597 -> 1583 when prune-tests (#419) removed fourteen tests
         # that guarded no behavior, and the hosting boundary (#663) brought it
-        # to 1598. The forty-nine memory wiki store cases (#664) bring it to
-        # 1647.
+        # to 1598. The fifty memory wiki store cases (#664) bring it to 1648.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1647 --timeout 1200
+            --package horon-agent-base --min-passed 1648 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''

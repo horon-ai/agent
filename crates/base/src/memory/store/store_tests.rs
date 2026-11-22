@@ -289,6 +289,30 @@ fn a_row_whose_file_was_unlinked_is_pruned_on_open() {
 }
 
 #[test]
+fn editing_the_frontmatter_id_reindexes_the_page_under_the_new_id() {
+    let root = TempRoot::new("id-edit");
+    let mut wiki = open(&root);
+    wiki.write_page(&fact("mem_2201_v", "배포", "배포는 화요일이다.", 1_700_000_000))
+        .expect("write");
+    drop(wiki);
+
+    let file = root.path().join("wiki").join("facts").join("mem_2201_v.md");
+    let text = std::fs::read_to_string(&file).expect("read");
+    let edited = text.replace("id: \"mem_2201_v\"", "id: \"mem_2201_w\"");
+    assert_ne!(text, edited, "the edit must land");
+    std::fs::write(&file, edited).expect("write the edited page");
+
+    let wiki = open(&root);
+    assert_eq!(wiki.stats().expect("stats").pages, 1, "the old id row is gone");
+    assert!(wiki.page(&id("mem_2201_v")).expect("page").is_none());
+    assert_eq!(
+        wiki.page(&id("mem_2201_w")).expect("page").expect("present").body,
+        "배포는 화요일이다."
+    );
+    assert_eq!(search_ids(&wiki, "배포"), vec!["mem_2201_w"]);
+}
+
+#[test]
 fn a_symlinked_page_file_is_never_indexed_or_read() {
     let root = TempRoot::new("symlink");
     let outside = TempRoot::new("symlink-outside");
