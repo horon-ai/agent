@@ -75,6 +75,7 @@ impl Command {
             no_session: false,
             max_time: None,
             wait_async: false,
+            system_template: None,
             model_overrides: RunModelOverrides {
                 thinking: None,
                 service_tier: None,
