@@ -879,6 +879,23 @@ pub(crate) enum SessionCommand {
         json: bool,
     },
 
+    /// Preview a Claude Code or Codex transcript file; import it with --apply
+    ImportTranscript {
+        /// Transcript file (JSON lines) written by Claude Code or Codex
+        file: String,
+
+        /// Force the format instead of detecting it
+        #[arg(long, value_parser = ["claude", "codex"])]
+        format: Option<String>,
+
+        /// Import the transcript. Without it the command only previews.
+        #[arg(long)]
+        apply: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Import an exported bundle into this store
     Import {
         /// Bundle directory written by `sessions export`

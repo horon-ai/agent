@@ -17,6 +17,7 @@ use crate::session;
 use crate::session::event_store_api as store;
 
 mod recovery;
+mod transcript;
 
 const BUNDLE_KIND: &str = "horon-agent-session-bundle";
 const BUNDLE_VERSION: u32 = 1;
@@ -53,6 +54,12 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
         ),
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
         SessionCommand::Import { input, json } => import(&home()?, &input, json),
+        SessionCommand::ImportTranscript {
+            file,
+            format,
+            apply,
+            json,
+        } => transcript::run(&file, format.as_deref(), apply, json),
         SessionCommand::ExportLegacy {
             session,
             output,
