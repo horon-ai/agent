@@ -264,6 +264,31 @@ fn a_malformed_page_is_reported_and_left_alone() {
 }
 
 #[test]
+fn a_row_whose_file_was_unlinked_is_pruned_on_open() {
+    // The delete order removes the file first and the rows second. If the
+    // process dies in between, the index holds a row with no file; the next
+    // open must drop it, and a rebuild must not resurrect it.
+    let root = TempRoot::new("unlink-crash");
+    let mut wiki = open(&root);
+    wiki.write_page(&fact("mem_2101_u", "배포", "배포는 화요일이다.", 1_700_000_000))
+        .expect("write");
+    let file = root.path().join("wiki").join("facts").join("mem_2101_u.md");
+    std::fs::remove_file(&file).expect("simulate the unlink before the row delete");
+    drop(wiki);
+
+    let mut wiki = open(&root);
+    assert!(wiki.page(&id("mem_2101_u")).expect("page").is_none());
+    assert_eq!(wiki.stats().expect("stats").pages, 0, "the ghost row is pruned");
+    assert!(search_ids(&wiki, "배포").is_empty());
+    assert!(wiki.list(&super::ListFilter::default()).expect("list").is_empty());
+    wiki.reindex().expect("reindex");
+    assert!(
+        search_ids(&wiki, "배포").is_empty(),
+        "a rebuild cannot resurrect a missing file"
+    );
+}
+
+#[test]
 fn a_symlinked_page_file_is_never_indexed_or_read() {
     let root = TempRoot::new("symlink");
     let outside = TempRoot::new("symlink-outside");
