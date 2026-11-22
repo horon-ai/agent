@@ -93,6 +93,8 @@ flush하지 않으므로, 크래시는 재생성 비용만 낸다. 스탬프나 
 [`../architecture/CRATES.ko.md`](../architecture/CRATES.ko.md)의 "저장 내구성은 core 정책이고 flush 호출만 OS에 맡긴다"에
 있다. `doctor`는 원본의 손상을 보고하며 고치지는 않는다.
 
+`horon session cache`는 쓰기 락을 기다리지 않고 잡을 수 있는 모든 정식 세션의 파생 파일(`checkpoint.json`, `sparse-index.jsonl`, `summary.json`, `facade-cache.json`)을 크기와 합계와 함께 나열합니다. 아무것도 쓰지 않으며 `--apply`를 주면 나열한 파일을 지웁니다. 실행 중인 에이전트가 소유한 세션은 건너뛰고 이름을 알리며, 세션의 파일을 재고 지우는 동안 락을 계속 잡고 있습니다. `events.jsonl`, `blobs/`, `local-*` 원본, 런타임 저널, 레거시 스냅숏, `.catalog.index.jsonl`은 건드리지 않고 심볼릭 링크는 따라가지 않습니다. 지운 파생 파일은 그 세션을 다음에 읽을 때 원본 로그에서 다시 만들어지므로 보관한 세션도 그대로 열리고 `session doctor`는 원본만 계속 점검합니다(`crates/session-store/src/cache_reclaim.rs`).
+
 새로 만든 폴더는 그 항목을 부모 폴더에 확정해야 정전 뒤에도 남는다. 세션 writer는 `sessions/`
 루트를 열 때 루트를 새로 만든 경우에만 부모를 flush한다(`writer.rs`의 `ensure_dir`). 이미 있는
 루트의 항목은 만들 때 확정됐으므로, 세션을 열 때마다 부모를 다시 flush하지 않는다.

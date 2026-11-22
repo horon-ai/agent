@@ -28,6 +28,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         wait_async: *wait_async,
         print_thoughts: *print_thoughts,
     };
+    if !overrides.config_overlay.is_empty() {
+        crate::config::Config::set_run_overlays(&overrides.config_overlay)?;
+    }
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
     let registry = crate::tool::Registry::new(provider.clone()).await;

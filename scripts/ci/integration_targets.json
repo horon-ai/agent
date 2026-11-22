@@ -78,6 +78,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "run_config_overlay_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
       "target": "run_approval_cli",
       "min_passed": 1
     },
@@ -322,6 +327,11 @@
       "package": "horon-agent-session-store",
       "target": "cache_batches",
       "min_passed": 5
+    },
+    {
+      "package": "horon-agent-session-store",
+      "target": "cache_reclaim",
+      "min_passed": 1
     },
     {
       "package": "horon-agent-session-store",
