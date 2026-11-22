@@ -88,6 +88,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "spend_cap_cli",
+      "min_passed": 3
+    },
+    {
+      "package": "horon-agent",
       "target": "session_event_lifecycle",
       "min_passed": 7
     },
