@@ -142,8 +142,8 @@ fn run_kind(scratch: &Path, example: &Path, cli: &Cli, model: &model::Model, kin
         expect_record(cli, "hello", "0.1.0")
     });
     if !report.check(label, "install", installed) {
-        for step in report::steps(label).iter().skip(1) {
-            report.check(label, *step, Err("the install did not complete".to_owned()));
+        for step in report::steps(label).iter().skip(1).copied() {
+            report.check(label, step, Err("the install did not complete".to_owned()));
         }
         return;
     }
