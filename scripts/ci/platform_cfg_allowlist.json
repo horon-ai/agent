@@ -292,6 +292,10 @@
       "count": 3,
       "reason": "assert POSIX owner-only modes after hardening and symlink refusal of an external auth file."
     },
+    "crates/base/src/workspace_dirs_tests.rs": {
+      "count": 1,
+      "reason": "the dedup test reaches one directory through a symlink as well as through its canonical path, and Windows symlinks need privileges the test fixture cannot assume."
+    },
     "crates/base/tests/loading_probe_contract.rs": {
       "count": 1,
       "reason": "widens directory modes to 0755 to simulate a preflight failure, which needs POSIX mode bits."

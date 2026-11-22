@@ -732,6 +732,84 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
 }
 
+/// Every `Additional directories:` line the model was sent.
+fn additional_directories_lines(bodies: &[String]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for body in bodies {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            continue;
+        };
+        let Some(messages) = value["messages"].as_array() else {
+            continue;
+        };
+        for message in messages {
+            let text = match &message["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|block| block["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => continue,
+            };
+            lines.extend(
+                text.lines()
+                    .filter_map(|line| line.trim().strip_prefix("Additional directories: "))
+                    .map(|rest| rest.trim().to_string()),
+            );
+        }
+    }
+    lines
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_lists_one_canonical_root_in_the_session_context() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let extra = home.path().join("extra");
+    std::fs::create_dir(&extra).expect("extra directory");
+    let canonical = std::fs::canonicalize(&extra)
+        .expect("canonical extra")
+        .display()
+        .to_string();
+    let alias = format!("{canonical}/.");
+    let output = home
+        .run(&["run", "hi", "--no-update", "--add-dir", &canonical, "--add-dir", &alias])
+        .await;
+    assert!(output.status.success(), "run failed: {}", text(&output.stderr));
+    let lines = additional_directories_lines(&mock.bodies());
+    assert!(!lines.is_empty(), "the session context reached the model");
+    assert!(
+        lines.iter().all(|line| line == &canonical),
+        "one canonical entry: {lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_refuses_a_missing_directory_before_the_model_call() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let missing = home.path().join("missing");
+    let output = home
+        .run(&[
+            "run",
+            "hi",
+            "--no-update",
+            "--add-dir",
+            missing.to_str().expect("utf-8"),
+        ])
+        .await;
+    assert!(!output.status.success(), "a missing directory fails the launch");
+    assert!(
+        text(&output.stderr).contains("no such directory"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(mock.requests(), 0, "no request is made for a path that names nothing");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     let home = Home::new();
