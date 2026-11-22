@@ -365,6 +365,36 @@ fn named_profile_api_key(profile: &crate::config::NamedProviderConfig) -> Option
     crate::provider_catalog::load_api_key_from_env_or_config(env_name, env_file)
 }
 
+/// Local, read-only credential status for a configured profile, as
+/// `(source, state)`. It never returns a credential value and never touches the
+/// network. `state` is `authenticated` when a credential resolves,
+/// `unauthenticated` when one is required but missing, and `unknown` when the
+/// profile uses no credential.
+pub fn profile_credential_status(profile: &crate::config::NamedProviderConfig) -> (&'static str, &'static str) {
+    if profile.resolved_auth() == crate::config::NamedProviderAuth::None {
+        return ("none", "unknown");
+    }
+    let source = if profile.api_key.as_deref().is_some_and(|key| !key.trim().is_empty()) {
+        "inline"
+    } else if profile
+        .api_key_env
+        .as_deref()
+        .is_some_and(|name| !name.trim().is_empty())
+    {
+        "environment"
+    } else {
+        "none"
+    };
+    let state = if named_profile_api_key(profile).is_some() {
+        "authenticated"
+    } else if profile.requires_api_key == Some(false) {
+        "unknown"
+    } else {
+        "unauthenticated"
+    };
+    (source, state)
+}
+
 /// Background OpenAI-compatible profile catalog refresh, registered by the
 /// composition root. Base's route-building path calls this on a display cache
 /// miss; when unregistered (e.g. minimal test binaries) the refresh is skipped
