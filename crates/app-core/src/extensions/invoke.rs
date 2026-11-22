@@ -44,7 +44,8 @@ static HOST_CAPABILITIES: LazyLock<CapabilitySet> =
     LazyLock::new(|| CapabilitySet::new([Capability::ToolCall, Capability::CommandInvoke]));
 
 /// Children alive in this process, one per session and package.
-static CHILDREN: LazyLock<Mutex<HashMap<(String, String), Arc<Child>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+type ChildMap = HashMap<(String, String), Arc<Child>>;
+static CHILDREN: LazyLock<Mutex<ChildMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Serializes child starts so two calls for one package cannot both launch it.
 ///
@@ -56,7 +57,7 @@ static START: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::M
 /// Distinguishes one launch's lease owner from another's.
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
-fn lock_children() -> MutexGuard<'static, HashMap<(String, String), Arc<Child>>> {
+fn lock_children() -> MutexGuard<'static, ChildMap> {
     CHILDREN.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -137,9 +138,10 @@ impl Declarations {
 /// The entry names the copy it was read from, so a replacement install is read
 /// again on the first call that sees it and an unchanged copy costs one
 /// comparison per turn.
-static DECLARATIONS: LazyLock<Mutex<HashMap<String, Arc<Declarations>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+type DeclarationMap = HashMap<String, Arc<Declarations>>;
+static DECLARATIONS: LazyLock<Mutex<DeclarationMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn lock_declarations() -> MutexGuard<'static, HashMap<String, Arc<Declarations>>> {
+fn lock_declarations() -> MutexGuard<'static, DeclarationMap> {
     DECLARATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
@@ -356,12 +358,12 @@ async fn start(
                 Ok(Some(frame)) => {
                     // A late or unexpected frame is reported and dropped; it
                     // never ends the connection on its own.
-                    if let Err(error) = reader_wire.dispatch(frame) {
-                        if !matches!(error, WireError::UnexpectedResponse(_) | WireError::QueueFull) {
-                            crate::logging::debug(&format!(
-                                "package {log_id} sent a frame the host could not route: {error}"
-                            ));
-                        }
+                    if let Err(error) = reader_wire.dispatch(frame)
+                        && !matches!(error, WireError::UnexpectedResponse(_) | WireError::QueueFull)
+                    {
+                        crate::logging::debug(&format!(
+                            "package {log_id} sent a frame the host could not route: {error}"
+                        ));
                     }
                 }
                 Ok(None) => break,
@@ -387,15 +389,18 @@ async fn start(
     });
 
     let declared = declarations.manifest.capabilities();
+    // Offer only what the installed manifest declares: a child answers with
+    // the capabilities it was offered, and one it never declared is refused.
+    let offered = HOST_CAPABILITIES.intersection(&declared);
     let params = InitializeParams {
         protocol: HOST_PROTOCOL_RANGE,
-        capabilities: HOST_CAPABILITIES.clone(),
+        capabilities: offered.clone(),
         package_id: package_id.clone(),
         kind: record.kind,
     };
     let expectation = HostExpectation {
         protocol: HOST_PROTOCOL_RANGE,
-        capabilities: &HOST_CAPABILITIES,
+        capabilities: &offered,
         declared: &declared,
         kind: record.kind,
         package_id: &package_id,

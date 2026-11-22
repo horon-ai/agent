@@ -117,6 +117,13 @@ fn extension_fixture(id: &str, tools: &[&str], commands: &[&str]) -> TempDir {
     root
 }
 
+/// The dispatcher refused the name before any child could start: either the
+/// tool policy does not allow it or the registry has no such tool.
+fn is_refusal(error: &dyn std::fmt::Display) -> bool {
+    let text = error.to_string();
+    text.contains("is not allowed") || text.contains("Unknown tool")
+}
+
 fn plugin_fixture(id: &str, tools: &[&str]) -> TempDir {
     let root = tempfile::tempdir().expect("fixture directory");
     fs::create_dir_all(root.path().join("native")).expect("create the bundled directory");
@@ -430,7 +437,7 @@ async fn a_plugin_tool_reaches_its_bundled_extension_and_an_undeclared_name_does
         .call(&public_name("probe-plugin", "missing"), json!({}))
         .await
         .expect_err("an undeclared tool name is refused");
-    assert!(error.to_string().contains("Unknown tool"), "got {error}");
+    assert!(is_refusal(&error), "got {error}");
     assert_eq!(
         h.record("probe-plugin", "calls.log").len(),
         1,
@@ -460,7 +467,7 @@ async fn minimal_and_none_profiles_expose_no_package_tool() {
             .call(&name, json!({}))
             .await
             .expect_err("a profile that names its tools refuses the call");
-        assert!(error.to_string().contains("Unknown tool"), "{profile}: {error}");
+        assert!(is_refusal(&error), "{profile}: {error}");
         assert!(
             h.record("probe-ext", "starts.log").is_empty(),
             "{profile} must not start the package child"
@@ -525,10 +532,7 @@ async fn a_disabled_name_is_hidden_and_never_delivered() {
     let name = public_name("probe-ext", "greet");
     assert!(h.definition(&name).await.is_none(), "[tools] disabled hides the name");
     let error = h.call(&name, json!({})).await.expect_err("a disabled name is refused");
-    assert!(
-        error.to_string().contains("Unknown tool") || error.to_string().contains("disabled"),
-        "got {error}"
-    );
+    assert!(is_refusal(&error), "got {error}");
     assert!(h.record("probe-ext", "starts.log").is_empty(), "no child started");
 }
 

@@ -109,10 +109,11 @@ impl Tool for PackageTool {
 ///
 /// The stored value is the tool this module installed: a name that now maps to
 /// anything else was installed by someone else and is left alone.
-static REGISTERED: LazyLock<Mutex<HashMap<String, HashMap<String, Arc<dyn Tool>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+type SessionTools = HashMap<String, Arc<dyn Tool>>;
+type RegisteredTools = HashMap<String, SessionTools>;
+static REGISTERED: LazyLock<Mutex<RegisteredTools>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn lock_registered() -> MutexGuard<'static, HashMap<String, HashMap<String, Arc<dyn Tool>>>> {
+fn lock_registered() -> MutexGuard<'static, RegisteredTools> {
     REGISTERED.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
