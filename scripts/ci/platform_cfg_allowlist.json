@@ -292,6 +292,10 @@
       "count": 1,
       "reason": "widens directory modes to 0755 to simulate a preflight failure, which needs POSIX mode bits."
     },
+    "crates/base/tests/package_spawn_windows.rs": {
+      "count": 1,
+      "reason": "whole test file is the native-Windows counterpart of package_spawn.rs (#![cfg(windows)]): the package child's lifetime owner there is a Job Object and the scenarios start real cmd.exe descendants, which only a Windows runner can do. .github/workflows/package-windows.yml runs it on x64 and arm64, and scripts/ci/test_target_allowlist.json keeps it out of the Linux/macOS cohort."
+    },
     "crates/base/tests/prompt_guidance_integration.rs": {
       "count": 1,
       "reason": "POSIX-shell integration test file: the whole file is gated to unix because it drives the CLI through a real shell and HOME/cwd resolution."
