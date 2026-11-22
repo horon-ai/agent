@@ -14,6 +14,25 @@
 use anyhow::{Result, bail};
 
 use super::args::Args;
+
+/// Launch flags that override roles and prewalk for this process only.
+#[derive(clap::Args, Debug)]
+pub(crate) struct LaunchOverrideArgs {
+    /// Override a model role for this launch only: NAME=MODEL. Repeatable.
+    ///
+    /// Roles are default, plan, aux, judge and image. `default` names the
+    /// session model, like --model. The value is never written to config.toml.
+    #[arg(long = "role", global = true, value_name = "NAME=MODEL", action = clap::ArgAction::Append)]
+    pub(crate) role: Vec<String>,
+
+    /// Disable the `[prewalk]` handoff for this launch only.
+    #[arg(long = "no-prewalk", global = true)]
+    pub(crate) no_prewalk: bool,
+
+    /// Enable the `[prewalk]` handoff into this model or `role:<name>` for this launch only.
+    #[arg(long = "prewalk", global = true, value_name = "INTO")]
+    pub(crate) prewalk: Option<String>,
+}
 use super::output;
 use super::provider_init::ProviderChoice;
 use crate::config::{
@@ -48,13 +67,13 @@ struct PrewalkOverride {
 
 /// Apply the launch overrides, or fail before anything reads a model.
 pub(crate) fn apply(args: &mut Args) -> Result<()> {
-    if args.role.is_empty() && args.prewalk.is_none() && !args.no_prewalk {
+    if args.launch.role.is_empty() && args.launch.prewalk.is_none() && !args.launch.no_prewalk {
         return Ok(());
     }
     let config = crate::config::config();
     let profile_name = active_profile_name(args, config);
     let profile = profile_name.as_deref().and_then(|name| config.providers.get(name));
-    let roles = parse_role_overrides(&args.role)?;
+    let roles = parse_role_overrides(&args.launch.role)?;
     if roles.iter().any(|(role, _)| *role != ModelRole::Default) && profile.is_none() {
         bail!(
             "--role changes a model role, and roles live inside one provider profile; \
@@ -179,15 +198,15 @@ fn effective_prewalk(
     profile: Option<&NamedProviderConfig>,
     roles: &[(ModelRole, String)],
 ) -> Result<PrewalkOverride> {
-    if args.no_prewalk {
+    if args.launch.no_prewalk {
         return Ok(PrewalkOverride {
             enabled: Some(false),
             into: None,
-            ignored: args.prewalk.clone(),
+            ignored: args.launch.prewalk.clone(),
             target: None,
         });
     }
-    let Some(raw) = args.prewalk.as_deref() else {
+    let Some(raw) = args.launch.prewalk.as_deref() else {
         return Ok(PrewalkOverride::default());
     };
     let into = raw.trim();

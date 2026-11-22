@@ -166,8 +166,7 @@ pub(crate) struct Args {
     /// Clients dial this path instead of the shared daemon socket. A headless
     /// `run` hosts its agent in-process, so nothing binds the path until a
     /// tool needs a server (today: `swarm`); the first such tool starts a
-    /// temporary server here that exits with the run, leaving no daemon
-    /// behind on a one-off socket.
+    /// temporary server here that exits with the run, leaving no daemon behind on a one-off socket.
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
 
@@ -188,25 +187,12 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) provider_profile: Option<String>,
 
-    /// Tool profile to expose to the model: core (headless default), full,
-    /// minimal/lite, or none.
+    /// Tool profile to expose to the model: core (headless default), full, minimal/lite, or none.
     #[arg(long, global = true)]
     pub(crate) tool_profile: Option<String>,
 
-    /// Override a model role for this launch only: NAME=MODEL. Repeatable.
-    ///
-    /// Roles are default, plan, aux, judge and image. `default` names the
-    /// session model, like --model. The value is never written to config.toml.
-    #[arg(long = "role", global = true, value_name = "NAME=MODEL", action = clap::ArgAction::Append)]
-    pub(crate) role: Vec<String>,
-
-    /// Disable the `[prewalk]` handoff for this launch only.
-    #[arg(long = "no-prewalk", global = true)]
-    pub(crate) no_prewalk: bool,
-
-    /// Enable the `[prewalk]` handoff into this model or `role:<name>` for this launch only.
-    #[arg(long = "prewalk", global = true, value_name = "INTO")]
-    pub(crate) prewalk: Option<String>,
+    #[command(flatten)]
+    pub(crate) launch: super::launch_overrides::LaunchOverrideArgs,
 
     /// Run mode for a bare launch. `rpc` speaks the stdio JSONL protocol on
     /// stdin and stdout; every other value runs the normal client.
@@ -246,8 +232,7 @@ impl Args {
     /// Turn `--mode rpc` into the `rpc` subcommand.
     ///
     /// A host that launches the binary directly passes the mode rather than a
-    /// subcommand, so the flag form has to reach the same code. An explicit
-    /// subcommand wins when both are present.
+    /// subcommand, so the flag form has to reach the same code. An explicit subcommand wins when both are present.
     pub(crate) fn promote_rpc_mode(&mut self) {
         if self.command.is_none() && self.mode.as_deref() == Some("rpc") {
             self.command = Some(Command::Rpc { session_dir: None });
@@ -552,10 +537,8 @@ pub(crate) enum Command {
     /// Export a session transcript as Markdown, or as standalone HTML
     ///
     /// Prints the transcript to stdout, or writes it to a file with `--out`.
-    /// The Markdown text matches the `export_session_markdown` harness API
-    /// reply and `--html` the `export_session_html` reply: both render one
-    /// redacted projection, so secrets are redacted and tool results over
-    /// 4 KiB are truncated in either format.
+    /// Markdown matches `export_session_markdown`, `--html` matches `export_session_html`;
+    /// both redact secrets and truncate tool results over 4 KiB.
     Export {
         /// Session ID to export
         session: String,
@@ -564,12 +547,7 @@ pub(crate) enum Command {
         #[arg(long)]
         out: Option<std::path::PathBuf>,
 
-        /// Write a standalone HTML report instead of Markdown
-        ///
-        /// The page inlines its stylesheet, carries a Content-Security-Policy
-        /// of `default-src 'none'`, and escapes every transcript character, so
-        /// it opens offline and stored markup stays text. A file that already
-        /// exists is refused rather than overwritten.
+        /// Write an offline standalone HTML report (inline style, CSP `default-src 'none'`, escaped text); never overwrites a file
         #[arg(long)]
         html: bool,
 
@@ -600,8 +578,7 @@ pub(crate) enum Command {
         api_socket: Option<String>,
 
         /// Serve one API connection on stdin/stdout (for SSH SDK clients).
-        /// Starts the shared daemon if needed; does not create an API socket.
-        /// Unix only.
+        /// Starts the shared daemon if needed; does not create an API socket. Unix only.
         #[arg(long, conflicts_with = "api_socket")]
         stdio: bool,
     },
@@ -705,8 +682,7 @@ pub(crate) enum ServerCommand {
     ///
     /// Prefer `server reload` after an upgrade; it preserves live sessions.
     /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which
-    /// drops any in-flight headless/swarm sessions, so it requires `--force`
-    /// as a deliberate acknowledgement.
+    /// drops any in-flight headless/swarm sessions, so it requires `--force` as a deliberate acknowledgement.
     Stop {
         /// Confirm that terminating the daemon (and dropping live sessions) is intended.
         #[arg(long)]
@@ -829,8 +805,7 @@ pub(crate) enum CloudCommand {
     },
 
     /// Check that a cloud host is reachable and runs a compatible horon-agent
-    /// before moving a session. It sends no session data and creates nothing
-    /// on the host.
+    /// before moving a session. It sends no session data and creates nothing on the host.
     Doctor {
         #[command(flatten)]
         target: CloudMoveTarget,
