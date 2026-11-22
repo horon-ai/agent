@@ -127,6 +127,7 @@ horon run "summarize this repo"
 | `horon tokens [TEXT]` | UTF-8 텍스트를 인자나 표준 입력으로 받거나 `--file`에서 읽어 오프라인으로 토큰 수를 추정한다. `--model`로 알려진 토크나이저 계열을 고르며 기본 추정 방식을 사용하면 결과에 표시한다. |
 | `horon agents` | 세션을 시작하지 않고 에이전트 정의의 출처와 설정된 모델 및 도구를 나열한다. |
 | `horon provider status [--json]` | 설정된 프로파일마다 자격 증명 출처와 로컬 상태(`authenticated`, `unauthenticated`, `unknown`)를 표시한다. 자격 증명 값은 출력하지 않고 제공자에도 접속하지 않는다. |
+| `horon compact-text <FILE\|->` | UTF-8 텍스트 파일(또는 표준 입력, 48KiB 이하)을 요약해 표준 출력에 내고 생략한 항목을 표준 오류에 나열한다. 원본은 고치지 않는다. `--max-tokens`로 요약 길이를 제한한다. |
 
 `horon run --wait-async "<메시지>"`는 해당 실행이 시작한 작업을 기다리고 각 작업의 최종 상태를 한 번씩 표시합니다. `--max-time`은 응답과 작업 대기를 합친 시간을 제한합니다. 시간을 넘기면 확인한 작업 상태를 표시하고 0이 아닌 코드로 종료합니다.
 
