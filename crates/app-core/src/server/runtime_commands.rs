@@ -207,6 +207,13 @@ pub(super) async fn execute(
             }
             json!({"enabled": agent.autoreview_enabled().unwrap_or(config.autoreview.enabled), "default_enabled": config.autoreview.enabled})
         }
+        RuntimeCommand::Advisor => {
+            let configured = config.advisor.enabled;
+            if let Some(enabled) = boolean_action(args, agent.advisor_enabled().unwrap_or(configured), false)? {
+                agent.set_advisor_enabled(enabled);
+            }
+            json!({"enabled": agent.advisor_enabled().unwrap_or(configured), "default_enabled": configured})
+        }
         RuntimeCommand::Autojudge => {
             let current = agent.autojudge_enabled().unwrap_or(config.autojudge.enabled);
             if let Some(enabled) = boolean_action(args, current, false)? {
@@ -439,6 +446,20 @@ mod tests {
                 .await
                 .is_err()
         );
+        for (action, expected) in [("status", false), ("on", true), ("status", true), ("off", false)] {
+            let (data, _) = execute(
+                &mut agent,
+                RuntimeCommand::Advisor,
+                &[action.into()],
+                false,
+                Value::Null,
+            )
+            .await
+            .unwrap();
+            assert_eq!(data["enabled"], expected, "advisor {action}");
+            assert_eq!(data["default_enabled"], false);
+        }
+        assert_eq!(agent.advisor_enabled(), Some(false));
         for command in [
             RuntimeCommand::Skills,
             RuntimeCommand::Context,

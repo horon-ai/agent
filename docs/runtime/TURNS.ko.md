@@ -342,6 +342,10 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   세션 재정의를 읽거나 요청한 정책 범위를 유지한다.
 - `subagent_model`: 생성된 워커 정책을 보기/설정/상속.
 - `autoreview`, `autojudge`: 상태를 보여주고 명시적 on/off/toggle을 유지한다.
+- `advisor`: 이 세션의 advisor가 도는지 보여 주고(`enabled`와 설정 기본값 `default_enabled`),
+  `on`/`off`로 이 세션만 켜거나 끈다. 끄면 이 세션의 새 advisor 작업이 바로 멈춘다. 선택은
+  실행 중인 세션에만 적용되며 `[advisor] enabled`나 다른 세션을 바꾸지 않는다.
+  `horon run --advisor on|off`는 한 번 실행에 같은 선택을 적용한다.
 - `plan`: 계획 모드 상태를 읽고 바꾼다. 인자가 없거나 `status`면 현재 상태를,
   `on`/`off`는 계획 모드를 켜고 끄며, `approve`/`reject`는 세션에 대기 중인 계획을
   승인하거나 거절한다. 설정에서 계획 모드가 꺼져 있으면 `on`과 `approve`는 오류로 답한다

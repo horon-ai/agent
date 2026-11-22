@@ -354,6 +354,7 @@ pub(crate) fn detail(entries: &[Entry], name: &str) -> Option<String> {
 /// not know still lists: it simply shows without a description.
 pub(crate) fn harness_description(name: &str) -> &'static str {
     match name {
+        "advisor" => "show the session advisor, or turn it on or off with /advisor on|off",
         "agents" => "list the agent models, and switch one for this session or every session",
         "auth" => "show the login status and the provider profiles",
         "autojudge" => "turn the automatic judge on or off",
