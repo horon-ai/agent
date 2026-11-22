@@ -52,27 +52,19 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             },
             json,
         ),
-        SessionCommand::Anonymize {
-            session,
-            output,
-            with_children,
-            keep_text,
-            keep_tool_names,
-            keep_timestamps,
-            json,
-        } => {
-            let output = output.as_deref().map(resolve_path).transpose()?;
+        SessionCommand::Anonymize(options) => {
+            let output = options.output.as_deref().map(resolve_path).transpose()?;
             anonymize::run(
                 &store_paths(&home()?),
-                &parse_id(&session)?,
+                &parse_id(&options.session)?,
                 output.as_deref(),
                 &anonymize::Options {
-                    with_children,
-                    keep_text,
-                    keep_tool_names,
-                    keep_timestamps,
+                    with_children: options.with_children,
+                    keep_text: options.keep_text,
+                    keep_tool_names: options.keep_tool_names,
+                    keep_timestamps: options.keep_timestamps,
                 },
-                json,
+                options.json,
             )
         }
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
