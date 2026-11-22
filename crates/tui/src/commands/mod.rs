@@ -781,6 +781,7 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Plan,
     RuntimeCommand::Goal,
     RuntimeCommand::Advisor,
+    RuntimeCommand::Dirs,
     RuntimeCommand::Mcp,
 ];
 

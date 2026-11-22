@@ -238,6 +238,28 @@ pub(super) async fn execute(
             )?;
             return Ok((serde_json::to_value(&goal)?, crate::goal::render_goal_detail(&goal)));
         }
+        RuntimeCommand::Dirs => {
+            let (action, targets) = match args {
+                [] => ("list", &[][..]),
+                [arg] if matches!(arg.as_str(), "list" | "status" | "show") => ("list", &[][..]),
+                [verb, targets @ ..] if matches!(verb.as_str(), "add" | "remove" | "rm") && !targets.is_empty() => {
+                    (verb.as_str(), targets)
+                }
+                _ => bail!("Usage: /dirs [list | add <path> | remove <path>]"),
+            };
+            for target in targets {
+                match action {
+                    "add" => {
+                        agent.add_additional_dir(target)?;
+                    }
+                    _ => {
+                        agent.remove_additional_dir(target)?;
+                    }
+                }
+            }
+            let data = json!({"working_dir": agent.working_dir(), "additional_dirs": agent.additional_dirs()});
+            return Ok((data, dirs_report(agent.working_dir(), &agent.additional_dirs())));
+        }
         RuntimeCommand::Transport => {
             let provider = agent.provider_handle();
             match args {
@@ -329,6 +351,24 @@ fn role_args(args: &[String], default_label: &str) -> Result<(Option<String>, St
     Ok((model, label, args[index..].join(" ")))
 }
 
+/// The `/dirs` listing: the session's working directory, then its extra roots.
+fn dirs_report(working_dir: Option<&str>, directories: &[String]) -> String {
+    let mut report = String::from("## Workspace directories\n\n");
+    if let Some(working_dir) = working_dir {
+        report.push_str(&format!("- `{working_dir}` (working directory)\n"));
+    }
+    for directory in directories {
+        report.push_str(&format!("- `{directory}`\n"));
+    }
+    if directories.is_empty() {
+        report.push_str("No additional directories.\n");
+    }
+    report.push_str(
+        "\nAdd one with `/dirs add <path>` or remove one with `/dirs remove <path>`; a root is workspace context, not an approval grant.\n",
+    );
+    report
+}
+
 fn skills_report(data: &Value) -> String {
     let mut report = String::from("## Loaded skills\n\n");
     let loaded = data["skills"].as_array().map(Vec::as_slice).unwrap_or(&[]);
@@ -409,27 +449,38 @@ mod tests {
         }
     }
 
+    /// Restore `HORON_HOME` when the test ends; the store reads it once per
+    /// agent, so a test that saves a session must point it at a temp home.
+    struct RestoreHome(Option<std::ffi::OsString>);
+    impl Drop for RestoreHome {
+        fn drop(&mut self) {
+            if let Some(value) = &self.0 {
+                crate::env::set_var("HORON_HOME", value);
+            } else {
+                crate::env::remove_var("HORON_HOME");
+            }
+        }
+    }
+
+    fn isolated_home(home: &tempfile::TempDir) -> RestoreHome {
+        let old = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
+        RestoreHome(old)
+    }
+
+    async fn test_agent(home: &tempfile::TempDir) -> Agent {
+        let provider: Arc<dyn crate::provider::Provider> = Arc::new(NoInferenceProvider::default());
+        let registry = crate::tool::Registry::new(provider.clone()).await;
+        Agent::new_with_initial_working_dir(provider, registry, home.path().to_str())
+    }
+
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn runtime_commands_read_actual_state_without_inference() {
         let _lock = crate::storage::lock_test_env();
         let home = tempfile::TempDir::new().unwrap();
-        let old = std::env::var_os("HORON_HOME");
-        crate::env::set_var("HORON_HOME", home.path());
-        struct Restore(Option<std::ffi::OsString>);
-        impl Drop for Restore {
-            fn drop(&mut self) {
-                if let Some(value) = &self.0 {
-                    crate::env::set_var("HORON_HOME", value);
-                } else {
-                    crate::env::remove_var("HORON_HOME");
-                }
-            }
-        }
-        let _restore = Restore(old);
-        let provider: Arc<dyn crate::provider::Provider> = Arc::new(NoInferenceProvider::default());
-        let registry = crate::tool::Registry::new(provider.clone()).await;
-        let mut agent = Agent::new_with_initial_working_dir(provider, registry, home.path().to_str());
+        let _restore = isolated_home(&home);
+        let mut agent = test_agent(&home).await;
         let goal_args = ["1200".into(), "Ship a fix".into()];
         let (data, message) = execute(&mut agent, RuntimeCommand::Goal, &goal_args, false, Value::Null)
             .await
@@ -555,6 +606,80 @@ mod tests {
             .is_err()
         );
     }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn dirs_command_lists_canonical_roots_and_removes_only_the_list() {
+        let _lock = crate::storage::lock_test_env();
+        let home = tempfile::TempDir::new().unwrap();
+        let _restore = isolated_home(&home);
+        let mut agent = test_agent(&home).await;
+
+        let workspace = tempfile::TempDir::new().unwrap();
+        let library = workspace.path().join("library");
+        std::fs::create_dir(&library).expect("library");
+        let canonical = std::fs::canonicalize(&library).expect("canonical library");
+        let canonical = canonical.to_string_lossy().into_owned();
+
+        let (data, message) = execute(
+            &mut agent,
+            RuntimeCommand::Dirs,
+            &["add".into(), library.to_string_lossy().into_owned()],
+            false,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+        assert_eq!(data["additional_dirs"], json!([canonical.clone()]));
+        assert!(
+            message.contains("Workspace directories") && message.contains(&canonical),
+            "{message}"
+        );
+
+        // A trailing separator spells the same directory, so it adds nothing.
+        let (data, _) = execute(
+            &mut agent,
+            RuntimeCommand::Dirs,
+            &["add".into(), format!("{canonical}/")],
+            false,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+        assert_eq!(data["additional_dirs"], json!([canonical.clone()]));
+
+        let (data, _) = execute(&mut agent, RuntimeCommand::Dirs, &[], false, Value::Null)
+            .await
+            .unwrap();
+        assert_eq!(data["additional_dirs"], json!([canonical.clone()]));
+        assert_eq!(data["working_dir"], home.path().to_string_lossy().as_ref());
+
+        // A path that names nothing is a clear error, not a stored root.
+        let missing = workspace.path().join("missing");
+        let error = execute(
+            &mut agent,
+            RuntimeCommand::Dirs,
+            &["add".into(), missing.to_string_lossy().into_owned()],
+            false,
+            Value::Null,
+        )
+        .await
+        .expect_err("a missing directory must be refused");
+        assert!(error.to_string().contains("no such directory"), "{error}");
+
+        let (data, _) = execute(
+            &mut agent,
+            RuntimeCommand::Dirs,
+            &["remove".into(), canonical.clone()],
+            false,
+            Value::Null,
+        )
+        .await
+        .unwrap();
+        assert_eq!(data["additional_dirs"], json!([]));
+        assert!(library.is_dir(), "removal must leave the directory alone");
+    }
+
     #[test]
     fn toggle_and_status_are_distinct() {
         assert_eq!(boolean_action(&[], true, true).unwrap(), Some(false));

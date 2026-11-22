@@ -8,11 +8,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{gateway, memory, storage};
 
+mod early_commands;
 mod provider_setup;
 mod report_info;
 mod run_deadline;
 mod session_delete;
 mod session_rename;
+mod thoughts;
 mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
@@ -21,6 +23,7 @@ pub(crate) use session_rename::run_session_rename_command;
 pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
+pub(crate) use early_commands::{Early, run_early_command};
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
 pub(crate) use tool_preview::run_preview_command;
 
@@ -1122,14 +1125,18 @@ fn build_run_todo_validation_message(
     }
 }
 
-async fn run_single_message_command_plain_with_auto_poke(agent: &mut crate::agent::Agent, message: &str) -> Result<()> {
+async fn run_single_message_command_plain_with_auto_poke(
+    agent: &mut crate::agent::Agent,
+    message: &str,
+    print_thoughts: bool,
+) -> Result<()> {
     let mut next_message = message.to_string();
     let max_turns = run_command_auto_poke_max_turns();
     let mut turns_completed = 0usize;
     let mut confidence_spike_challenged = false;
     let mut gate_digest_delivered = false;
     loop {
-        agent.run_once(&next_message).await?;
+        thoughts::run_plain_turn(agent, &next_message, print_thoughts).await?;
         turns_completed += 1;
         if !run_command_auto_poke_enabled() {
             break;
