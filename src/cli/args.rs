@@ -7,6 +7,8 @@ mod mcp;
 pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod import_options;
+pub(crate) use import_options::ImportTranscriptArgs;
 mod run_options;
 pub(crate) use run_options::RunModelOverrides;
 
@@ -678,8 +680,7 @@ pub(crate) enum ServerCommand {
     /// Stop the running background server and clear its socket.
     ///
     /// Prefer `server reload` after an upgrade; it preserves live sessions.
-    /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which
-    /// drops any in-flight headless/swarm sessions, so it requires `--force` as a deliberate acknowledgement.
+    /// `stop` terminates the daemon (SIGTERM, escalating to SIGKILL), which drops any in-flight headless/swarm sessions, so it requires `--force`.
     Stop {
         /// Confirm that terminating the daemon (and dropping live sessions) is intended.
         #[arg(long)]
@@ -945,6 +946,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview a Claude Code or Codex transcript file; import it with --apply
+    ImportTranscript(ImportTranscriptArgs),
 
     /// Import an exported bundle into this store
     Import {

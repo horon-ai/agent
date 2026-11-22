@@ -14,7 +14,7 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 
 ## 상태
 
-`dev`에서는 설치 명령으로 두 패키지 유형을 등록한다. 실행 중인 데몬은 수신함의 완성 폴더를 처리하고 카탈로그 세대를 게시한다. 자식 프로세스 감독기는 Linux, macOS, Windows에서 설치 사본을 실행한다. 세션은 턴마다 스냅샷 하나를 잡으므로 실행 중인 턴은 시작한 세대를 그대로 쓰고 다음 턴과 새 세션은 최신 세대를 본다. 비활성과 제거는 새 로딩을 곧바로 막고 철회되는 세대에 등록된 콜백을 실행한다. 도구·텍스트·MCP·훅·명령 표면은 후속 이슈에서 다룬다.
+`dev`에서는 설치 명령으로 두 패키지 유형을 등록한다. 실행 중인 데몬은 수신함의 완성 폴더를 처리하고 카탈로그 세대를 게시한다. 자식 프로세스 감독기는 Linux, macOS, Windows에서 설치 사본을 실행한다. 세션은 턴마다 스냅샷 하나를 잡으므로 실행 중인 턴은 시작한 세대를 그대로 쓰고 다음 턴과 새 세션은 최신 세대를 본다. 비활성과 제거는 새 로딩을 곧바로 막고 철회되는 세대에 등록된 콜백을 실행한다. 도구·텍스트·MCP·명령 표면은 후속 이슈에서 다루고, 설치한 패키지와 그 부속 훅 파일이 구독한 관찰 사건은 지금 전달한다.
 
 | 영역 | 상태 | 검사 |
 | --- | --- | --- |
@@ -28,7 +28,8 @@ JSON-RPC 계약 하나로 대화한다. 패키지는 도구 호출, 실행형 �
 | Windows의 자식 프로세스 감독 | 구현됨 | `.github/workflows/package-windows.yml`(x64·arm64)에서 `cargo test --locked -p horon-agent-base --test package_spawn_windows` |
 | 데몬 카탈로그 제어와 수신함 자동 동기화 | 구현됨 | `cargo test --locked --test harness_roundtrip package_daemon` |
 | 세션 스냅샷과 철회 | 구현됨 | `cargo test --locked -p horon-agent-app-core --test package_session` |
-| 패키지 도구·텍스트·MCP·훅·명령 | 예정 | 같은 실행 경로의 후속 변경 |
+| 패키지 관찰 사건과 부속 훅 파일 | 구현됨 | `cargo test --locked -p horon-agent-app-core --lib extensions::observer::tests` |
+| 패키지 도구·텍스트·MCP·명령 | 예정 | 같은 실행 경로의 후속 변경 |
 
 ## 두 패키지 유형
 

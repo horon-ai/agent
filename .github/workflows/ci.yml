@@ -2116,7 +2116,7 @@ jobs:
           trap 'rmdir "$HORON_HOME"' EXIT
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --kind test --target-name package_manifest --min-passed 9 --timeout 900
+            --kind test --target-name package_manifest --min-passed 13 --timeout 900
 
       - name: Run extension wire contracts with an isolated home
         shell: bash
@@ -2139,6 +2139,24 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --min-passed 34 --timeout 900 -- extensions::wire::tests --nocapture
+
+      - name: Run package observation contracts with an isolated home
+        shell: bash
+        # Package observation is a lib module in `horon-agent-app-core`, so no
+        # other cohort filter reaches it. `--min-passed 10` is the measured count
+        # of the module: a filter that matched nothing reports `0 passed` with
+        # exit 0, which would look green. Two cases drive `Registry::execute`, so
+        # they read the process `HORON_HOME`; the observation worker resolves the
+        # package area once per session, and this fresh owner-private directory
+        # keeps that resolution away from the user's packages.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --min-passed 10 --timeout 900 -- extensions::observer::tests --nocapture
 
       - name: Run the extension author SDK contracts with an isolated home
         shell: bash
