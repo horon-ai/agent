@@ -291,6 +291,10 @@ pub(crate) enum Command {
         #[arg(long)]
         no_pty: bool,
 
+        /// Keep this run in memory only: no session, journal or resume hint is written
+        #[arg(long)]
+        no_session: bool,
+
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
         max_time: Option<std::time::Duration>,

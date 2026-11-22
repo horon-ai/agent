@@ -123,6 +123,9 @@ pub(super) struct EventState {
     /// Set just before the commit that closes a turn. The commit consumes it
     /// even when it fails, so the commit after that rebuilds normally.
     pub skip_cache_once: bool,
+    /// A memory-only session never writes its event log, checkpoint, catalog
+    /// row or writer lock. Only `horon-agent run --no-session` enables this.
+    pub memory_only: bool,
 }
 
 pub(super) fn validate_external(source: &(PathBuf, String)) -> Result<()> {
@@ -313,6 +316,16 @@ impl Session {
     /// publishes the derived checkpoint and catalog row.
     pub fn set_defer_final_cache(&mut self, on: bool) {
         self.event_state.defer_final_cache = on;
+    }
+
+    /// Keep this session in memory only: every save becomes a no-op.
+    pub fn set_memory_only(&mut self, on: bool) {
+        self.event_state.memory_only = on;
+    }
+
+    /// Whether saves are suppressed for this session.
+    pub fn is_memory_only(&self) -> bool {
+        self.event_state.memory_only
     }
 
     /// Mark the commit that closes a turn as the last one whose derived cache
