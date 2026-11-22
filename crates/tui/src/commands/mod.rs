@@ -7,7 +7,7 @@
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/pin`,
 //!    `/rename`, `/settings`, `/resume`, `/skills`, `/switch`, `/unpin`, `/links`,
-//!    `/queue`, `/record`, `/replay`, `/swarm` and `/voice`.
+//!    `/queue`, `/record`, `/replay`, `/diff`, `/commit`, `/swarm` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -143,6 +143,10 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Show the staged and unstaged changes in the session's workspace.
+    Diff,
+    /// Review the staged set, and commit exactly it after a second line.
+    Commit,
     /// List the swarm children of this session and the parent it reports back
     /// to, and attach to one.
     ///
@@ -188,6 +192,8 @@ impl Local {
             "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "diff" => Some(Self::Diff),
+            "commit" => Some(Self::Commit),
             "swarm" => Some(Self::Swarm),
             "voice" => Some(Self::Voice),
             _ => None,
@@ -230,6 +236,8 @@ impl Local {
             Self::Export => "export",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Diff => "diff",
+            Self::Commit => "commit",
             Self::Swarm => "swarm",
             Self::Voice => "voice",
         }
@@ -795,13 +803,15 @@ impl Default for Registry {
 }
 
 /// The built-in names, for completion and `/help`.
-const LOCAL_NAMES: [&str; 31] = [
+const LOCAL_NAMES: &[&str] = &[
     "archived",
     "artifact",
     "clear",
     "clear-context",
+    "commit",
     "compact",
     "copy",
+    "diff",
     "effort",
     "exit",
     "export",

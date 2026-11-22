@@ -386,12 +386,12 @@ pub struct App {
     pub(crate) terminal_signals: crate::progress::Options,
     /// How the last turn ended, until the user acts on it.
     ///
-    /// The status line goes back to `idle` the moment a turn ends, which is
-    /// right for the person already looking at the screen; a terminal tab behind
+    /// The status line returns to `idle` the moment a turn ends; a tab behind
     /// another window has no other way to say a turn finished or failed, so the
-    /// outcome is held here until the user does something and the mark is safe
-    /// to drop.
+    /// outcome stays until the user acts and the mark is safe to drop.
     pub(crate) outcome: Option<crate::progress::Outcome>,
+    /// The staged set a `/commit` preview showed and `/commit --yes` commits.
+    pub(crate) commit_review: Option<crate::git_review::Review>,
     /// A copy the app decided on, waiting for the loop to write it.
     ///
     /// It sits here rather than being written from the key handler so that the
@@ -499,6 +499,7 @@ impl App {
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
+            commit_review: None,
             pending_copy: None,
             recorder: None,
             voice: crate::voice::Voice::new(),
@@ -590,6 +591,7 @@ impl App {
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
+            commit_review: None,
             pending_copy: None,
             recorder: None,
             voice: crate::voice::Voice::new(),

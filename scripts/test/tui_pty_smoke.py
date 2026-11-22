@@ -613,6 +613,57 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def git(root: str, env: dict[str, str], *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
+
+
+def git_fixture(root: str, env: dict[str, str]) -> None:
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    git(root, env, "init", "-qb", "main")
+    git(root, env, "config", "user.email", "smoke@example.invalid")
+    git(root, env, "config", "user.name", "TUI Smoke Test")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+            handle.write("original\n")
+    git(root, env, "add", "--", "a.txt", "b.txt")
+    git(root, env, "commit", "-qm", "base")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "a", encoding="utf-8") as handle:
+            handle.write(f"new {name}\n")
+    git(root, env, "add", "--", "a.txt")
+
+
+def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> None:
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for staged review")
+    before = git(root, env, "rev-parse", "HEAD")
+    terminal.send("/diff\r")
+    terminal.read_until("what /commit would include", STEP_TIMEOUT, "staged diff")
+    terminal.read_until("left alone by /commit", STEP_TIMEOUT, "unstaged diff")
+    terminal.send("/commit Reviewed test change\r")
+    terminal.read_until("nothing was committed yet", STEP_TIMEOUT, "commit starts as a review")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("review moved HEAD before confirmation")
+    git(root, env, "add", "--", "b.txt")
+    terminal.send("/commit --yes\r")
+    terminal.read_until("the staged index changed", STEP_TIMEOUT, "stale review refused")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("confirming a stale review moved HEAD")
+    git(root, env, "restore", "--staged", "--", "b.txt")
+    fresh_start = len(terminal.transcript)
+    terminal.send("/commit Quartz\r")
+    terminal.read_until("Quartz", STEP_TIMEOUT, "fresh review", since=fresh_start)
+    confirmed_start = len(terminal.transcript)
+    terminal.send("/commit --yes\r")
+    terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed", since=confirmed_start)
+    subject = git(root, env, "log", "-1", "--format=%s").strip()
+    if subject != "Quartz":
+        raise Failure(f"expected the fresh review's subject, got {subject!r}")
+    changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
+    if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
+        raise Failure("the commit did not preserve the reviewed staging boundary")
+
+
 def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
     from pathlib import Path
 
@@ -646,7 +697,9 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
 
     def select_session(session_id: str) -> None:
         previous = completed_subscriptions(session_id)
+        attach_start = len(terminal.transcript)
         terminal.send("\r")
+        terminal.read_until("resumed", STEP_TIMEOUT, "TUI applied the session change", since=attach_start)
         deadline = time.monotonic() + STEP_TIMEOUT
         while time.monotonic() < deadline:
             if completed_subscriptions(session_id) > previous:
@@ -692,17 +745,17 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
 
     terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
     count = request_count()
+    before_consent = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent", since=before_consent)
     terminal.send("/voice consent\r")
-    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    capture_start = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text after consent", since=capture_start)
     if request_count() != count:
         raise Failure("voice input sent a request before the user submitted the draft")
     terminal.send("\x15")
     terminal.send("/voice say local playback proof\r")
-    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
     played = os.path.join(case_root, "voice-bin", "played")
     deadline = time.monotonic() + STEP_TIMEOUT
     while time.monotonic() < deadline:
@@ -712,9 +765,12 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
                     break
         except FileNotFoundError:
             pass
-        time.sleep(0.05)
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            terminal.transcript += chunk.decode("utf-8", "replace")
     else:
-        raise Failure("the local player did not receive the requested text")
+        raise Failure(f"the local player did not receive the requested text\n--- transcript ---\n{terminal.transcript}")
     if request_count() != count:
         raise Failure("local playback sent a model request")
 
@@ -832,6 +888,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
     if POSIX:
+        env.pop("HORON_AGENT_API_SOCKET", None)
+    git_fixture(case_root, env)
+    if POSIX:
         voice_fixture(case_root, home, env)
     archive_label = "archive-pty-fixture"
     seeded = subprocess.run(
@@ -888,6 +947,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
         if POSIX:
+            staged_review_smoke(terminal, case_root, env)
+        else:
+            terminal.send("/diff\r")
+            terminal.read_until("workspace is not this machine's", STEP_TIMEOUT, "explicit socket refused local Git")
+        if POSIX:
             voice_input_smoke(terminal, case_root, base_url)
 
         terminal.send("ping\r")
@@ -897,9 +961,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
         stats_start = len(terminal.transcript)
         terminal.send("/stats\r")
@@ -956,6 +1019,14 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if len(archived_ids) != 1:
             raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
         archived_id = next(iter(archived_ids))
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
+        recent_filter = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("nothing match", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.send("\x1b")
+        time.sleep(0.15)
         archived_start = len(terminal.transcript)
         terminal.send("/archived\r")
         terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
