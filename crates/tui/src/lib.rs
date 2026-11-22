@@ -163,6 +163,8 @@ pub struct Args {
     pub goal_budget: Option<u64>,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
+    /// Extra workspace directories for the attached session, in the order given.
+    pub add_dirs: Vec<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
     /// Gallery scene to preview instead of connecting, if the flag was given.
@@ -241,6 +243,10 @@ impl Args {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
                 },
+                "--add-dir" => match arguments.next() {
+                    Some(path) if !path.is_empty() => parsed.add_dirs.push(path.into()),
+                    _ => return Err("--add-dir needs a directory".to_string()),
+                },
                 "--config" => match arguments.next() {
                     Some(path) if !path.is_empty() => parsed.config.push(path.into()),
                     _ => return Err("--config needs a file".to_string()),
@@ -256,6 +262,10 @@ impl Args {
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
+                    Some(("--add-dir", "")) => {
+                        return Err("--add-dir needs a value".to_string());
+                    }
+                    Some(("--add-dir", path)) => parsed.add_dirs.push(path.into()),
                     Some(("--config", path)) => parsed.config.push(path.into()),
                     _ => return Err(format!("unknown argument: {other}")),
                 },
@@ -359,6 +369,20 @@ where
         working_dir.as_deref(),
     ) {
         Ok(runtime) => {
+            // The session's extra roots are sent before the goal so a goal's
+            // first turn already sees them in its session context.
+            for directory in &args.add_dirs {
+                if let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Dirs,
+                    arguments: vec!["add".to_string(), directory.display().to_string()],
+                }) {
+                    show_failure(&format!(
+                        "could not add workspace directory {}: {error}",
+                        directory.display()
+                    ));
+                    return 1;
+                }
+            }
             if let Some((title, budget)) = args.goal.zip(args.goal_budget)
                 && let Err(error) = runtime.commands.send(Command::Runtime {
                     command: horon_agent_sdk::RuntimeCommand::Goal,

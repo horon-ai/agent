@@ -420,6 +420,7 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Plan => "plan mode",
         RuntimeCommand::Goal => "session goal",
         RuntimeCommand::Advisor => "advisor",
+        RuntimeCommand::Dirs => "workspace directories",
         RuntimeCommand::Mcp => "MCP servers",
     }
 }

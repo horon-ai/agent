@@ -30,7 +30,7 @@ The client reaches the daemon through the harness API bridge, and starts that br
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
            [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking] [--no-title]
 ```
 
@@ -41,6 +41,7 @@ The three motion flags are per-launch overrides: they outrank every settings fil
 | `--socket <path>` | Harness API socket instead of the resolved default |
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
+| `--add-dir <dir>` | Extra workspace directory for the session, repeatable; each must exist and is resolved and de-duplicated, and `/dirs` lists them |
 | `--config <file>` | Extra settings file, repeatable |
 | `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
 | `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |

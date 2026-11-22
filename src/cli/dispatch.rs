@@ -43,6 +43,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
         anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
     }
+    super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
         // A remote session ID and working directory belong to the remote host.
         // Do not run local resume lookup or provider bootstrap.
@@ -608,6 +609,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         super::tui_handoff::decide_for_process(),
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
+        &args.add_dir,
     )
 }
 

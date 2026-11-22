@@ -78,6 +78,18 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) remote_working_dir: Option<String>,
 
+    /// Extra workspace directory for the session, repeatable. Each path is
+    /// resolved and must be an existing directory; the session lists it in its
+    /// context, and the directory is never modified or granted wholesale.
+    #[arg(
+        long = "add-dir",
+        global = true,
+        value_name = "PATH",
+        action = clap::ArgAction::Append,
+        conflicts_with = "ssh"
+    )]
+    pub(crate) add_dir: Vec<String>,
+
     /// Remote SSH attach; unavailable in this headless build, so it fails with an explanation
     #[arg(long, global = true, conflicts_with = "socket", value_name = "HOST")]
     pub(crate) ssh: Option<String>,

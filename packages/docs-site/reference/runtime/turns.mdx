@@ -346,6 +346,15 @@ session's runtime host, including SSH and managed remote runtimes.
   advisor work for this session at once. The choice lives with the running session and does
   not change `[advisor] enabled` or any other session. `horon run --advisor on|off` sets the
   same choice for a single run.
+- `dirs`: list the session's extra workspace directories beside its working directory, or
+  `add <path>` and `remove <path>` one. An added path is resolved (symlinks and `..`
+  included) and must be an existing directory, so a missing path or a file is refused with
+  an error; a second spelling of a directory already listed is not added twice. Removal
+  changes only the list and never touches the directory. The list is part of the session's
+  context, so adding a root shows up in the next prompt's session context (or its one-time
+  reminder once the conversation has started), and it persists with the session metadata.
+  `horon --add-dir <path>` and `horon run --add-dir <path>` (both repeatable) set the list
+  when the session starts; it is a context root, not an approval grant.
 - `plan`: read and change plan mode state. No argument or `status` returns the current
   state, `on`/`off` turn plan mode on and off, and `approve`/`reject` approve or reject the
   plan pending in the session. When configuration has plan mode off, `on` and `approve`
@@ -380,7 +389,7 @@ session's runtime host, including SSH and managed remote runtimes.
   removal of provider credentials. Supported shared credential stores are the target.
 
 The names above are set by the runtime command enum
-(`crates/harness-api/src/runtime_commands.rs:7-33`).
+(`crates/harness-api/src/runtime_commands.rs:7-39`).
 Sending a name that is not in the enum answers with an error.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, and `cache 5m` are not in the enum.
 This build has no runtime command that extends cache TTL and no client request that changes

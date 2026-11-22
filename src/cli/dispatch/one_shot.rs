@@ -48,6 +48,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     .closing_after_run();
     let setup = (|| {
         commands::restore_agent_session_if_requested(&mut agent, args.resume.as_deref())?;
+        for directory in &args.add_dir {
+            agent.add_additional_dir(directory)?;
+        }
         apply_model_overrides(&mut agent, overrides)?;
         if let (Some(title), Some(budget)) = (&args.goal, args.goal_budget) {
             let goal = crate::goal::start_session_goal(

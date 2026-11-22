@@ -1,4 +1,5 @@
 pub mod acp;
+pub mod add_dir;
 pub mod args;
 pub mod cloud_move;
 pub mod commands;
