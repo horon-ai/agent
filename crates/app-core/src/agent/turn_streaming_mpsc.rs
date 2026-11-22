@@ -743,11 +743,16 @@ impl Agent {
                             );
                             self.record_stream_rule_stop(&notice);
                             self.save_session()?;
-                            let _ = event_tx.send(ServerEvent::TurnStopped {
-                                reason: crate::protocol::TurnStopReason::LimitReached,
-                                message: notice,
-                                provider_stop_reason: None,
-                            });
+                            if event_tx
+                                .send(ServerEvent::TurnStopped {
+                                    reason: crate::protocol::TurnStopReason::LimitReached,
+                                    message: notice,
+                                    provider_stop_reason: None,
+                                })
+                                .is_err()
+                            {
+                                logging::debug("Repeated prose stop has no event receiver");
+                            }
                             stream_rule_stop = true;
                             break;
                         }

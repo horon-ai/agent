@@ -244,7 +244,7 @@ Boundaries, each with the gate that enforces it:
 |`[tools] eval`|`false`|`true` with Python 3.10+, a profile that permits `eval`, and explicit cell approval|
 |`[features] crash_bundles`|`true`|`false`|
 |`[features] turn_recovery`|`conservative`|`aggressive`, `off`|
-|`[features] foreign_rules`, `stream_rules`|`false`|`true`|
+|`[features] foreign_rules`, `stream_rules`, `repeat_guard`|`false`|`true`|
 |`[features] effort_keywords`|`true`|`false`|
 |`[prewalk] enabled`|`false`|`true`, which then requires `into` (a model id or `role:<name>`) that passes config validation|
 |`[storage] sync`|`full`|`fast`; `HORON_AGENT_STORAGE_SYNC` overrides it for one process, and an unknown value falls back to `full` with one warning|
