@@ -77,7 +77,7 @@ that decision (`crates/base/src/mcp/hosted.rs`).
 
 - A shared worker refuses all five. A child process and the remote credential store would belong to one customer while the process serves every customer, so there is no per-user environment, process tree or token to prove.
 - A per-user container or Fly Machine keeps its own servers: the home volume, the OAuth store under it, and the process environment a `${VAR}` expansion reads are that customer's own. `allow_shared_children = false` closes its child processes and leaves remote connections alone, because a remote connection starts none.
-- `[hosting] allowed_mcp_servers` narrows every MCP server any mode may connect: absent leaves all of them reachable, an empty list reaches none, and the match is exact against the name a source or an editor registered. It never widens a mode.
+- `[hosting] allowed_mcp_servers` narrows the MCP servers a hosted process may connect: absent leaves all of them reachable, an empty list reaches none, and the match is exact against the name a source or an editor registered. It never widens a mode, and a process without hosting is unchanged, so a key left over on a reused volume does not take the operator's own servers away.
 - Package children pass one gate (`crates/base/src/packages/child_gate.rs`, called from `PackageExecutable::start_with_arguments`), so a package's MCP stdio server, its extension child, its declared commands and its observers are all covered by the same decision.
 
 A refusal is explicit and recorded once. The caller gets a typed error that names

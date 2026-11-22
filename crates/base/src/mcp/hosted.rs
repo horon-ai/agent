@@ -206,8 +206,10 @@ impl<'a> HostedRequest<'a> {
 /// - A per-user container allows its own children unless the file narrowed them
 ///   off with `allow_shared_children = false`; its remote connections are
 ///   per-user because the home volume and the process environment are.
-/// - `[hosting] allowed_mcp_servers` narrows every named MCP server in every
-///   mode: absent leaves all of them reachable, an empty list reaches none.
+/// - `[hosting] allowed_mcp_servers` narrows a hosted process only: absent
+///   leaves every server reachable, an empty list reaches none. A process
+///   without hosting is unchanged, so a key left over on a reused volume never
+///   moves the operator's own servers out of reach.
 pub fn decide(policy: &HostingPolicy, request: &HostedRequest<'_>) -> Result<(), HostedRefusal> {
     let refusal = |reason: RefusalReason| HostedRefusal {
         mode: Some(policy.mode()),
@@ -226,7 +228,8 @@ pub fn decide(policy: &HostingPolicy, request: &HostedRequest<'_>) -> Result<(),
         }
         HostingMode::None => {}
     }
-    if let Some(server) = request.server
+    if policy.is_hosted()
+        && let Some(server) = request.server
         && !policy.permits_mcp_server(server)
     {
         return Err(refusal(RefusalReason::NotAllowed));

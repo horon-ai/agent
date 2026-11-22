@@ -13,7 +13,7 @@
 | 호스팅 모드 | `HORON_AGENT_HOSTING_MODE` | `per-user-container` 또는 `shared-worker`입니다. 변수가 없으면 호스팅이 아닙니다. 다른 값은 허용된 두 값을 알려 주는 시작 오류입니다 |
 | 테넌트 id | `HORON_AGENT_TENANT_ID` | 검증된 감사 라벨입니다. 소문자 ASCII 글자, 숫자, 하이픈으로 1바이트부터 63바이트까지이며 글자나 숫자로 시작하고 끝납니다. 디렉터리 이름과 로그 라벨로만 쓰이고 세션 조회 키가 아닙니다 |
 | `[hosting] allow_shared_children` | `config.toml` | `false`이면 허용되는 모드에서도 MCP 서버와 확장 자식 프로세스를 거부합니다. `true`는 금지한 모드를 넓히지 못합니다 |
-| `[hosting] allowed_mcp_servers` | `config.toml` | 이 프로세스가 연결할 수 있는 MCP 서버 이름입니다. 값이 없으면 모두 허용하고, 빈 목록이면 하나도 허용하지 않으며, 이름은 정확히 일치해야 합니다. 모드를 넓히지 못하며, 자세한 내용은 [호스팅 모드의 MCP·확장 격리](../safety/SECURITY.ko.md)에 있습니다 |
+| `[hosting] allowed_mcp_servers` | `config.toml` | 호스팅 프로세스가 연결할 수 있는 MCP 서버 이름입니다. 값이 없으면 모두 허용하고, 빈 목록이면 하나도 허용하지 않으며, 이름은 정확히 일치해야 합니다. 모드를 넓히지 못하고 호스팅이 아닌 프로세스는 그대로이며, 자세한 내용은 [호스팅 모드의 MCP·확장 격리](../safety/SECURITY.ko.md)에 있습니다 |
 | `[hosting] mode` | `config.toml` | 경고 한 번과 함께 무시합니다. 대신 `HORON_AGENT_HOSTING_MODE`를 설정합니다 |
 
 해석된 정책은 프로세스 하나에 하나인 값입니다. `HostingPolicy::mode()`, `tenant_id()`, `is_hosted()`, `is_per_user_container()`, `is_shared_worker()`, `allows_shared_children()`, `allowed_mcp_servers()`, `permits_mcp_server()`, `inherits_operator_logins()`가 지원되는 조회이고, MCP·확장 게이트와 비로컬 노출 검사는 환경변수를 다시 읽지 않고 이 값을 씁니다.

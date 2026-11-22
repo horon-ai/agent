@@ -142,8 +142,9 @@ pub struct HostingSection {
     /// `false` refuses shared children even in a mode that would allow them.
     /// `true` never widens a mode that forbids them.
     pub allow_shared_children: Option<bool>,
-    /// Names of MCP servers this process may run. Absent leaves every server
-    /// allowed; an empty list refuses every server. Exact match, narrowing only.
+    /// Names of MCP servers a hosted process may run. Absent leaves every
+    /// server allowed; an empty list refuses every server. Exact match, and it
+    /// narrows only: a process without hosting is unchanged.
     pub allowed_mcp_servers: Option<Vec<String>>,
     /// Ignored, with one warning. Present so the reader can name the mistake.
     pub mode: Option<String>,

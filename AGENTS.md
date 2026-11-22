@@ -270,7 +270,7 @@ Boundaries, each with the gate that enforces it:
 |`HORON_AGENT_HOSTING_MODE`|unset (no hosting)|`per-user-container`, `shared-worker`; any other value is a startup error|
 |`HORON_AGENT_TENANT_ID`|unset|1 to 63 lowercase ASCII letters, digits and hyphens, starting and ending with a letter or digit; required by every hosted mode and used only as an audit label|
 |`[hosting] allow_shared_children`|per mode (true only in a per-user container)|`false` narrows; `true` never widens; `[hosting] mode` is ignored with one warning|
-|`[hosting] allowed_mcp_servers`|unset (every server reachable)|a list of exact MCP server names; an empty list refuses every server; narrowing only, and it never widens a hosting mode|
+|`[hosting] allowed_mcp_servers`|unset (every server reachable)|a list of exact MCP server names for a hosted process; an empty list refuses every server; narrowing only, never widens a mode, and a process without hosting is unchanged|
 |Update check on `serve`|not run|`--no-update` skips it everywhere|
 
 `[storage] sync` names a durability level, not a syscall: `full` is

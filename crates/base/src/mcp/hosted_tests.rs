@@ -171,6 +171,27 @@ fn an_empty_allowed_list_refuses_every_named_server() {
 }
 
 #[test]
+fn an_allowed_list_never_narrows_a_process_without_hosting() {
+    // The mode matrix says no hosting is unchanged; a key left over on a reused
+    // volume must not take the operator's own servers away.
+    let policy = hosting(
+        HostingMode::None,
+        HostingSection {
+            allow_shared_children: None,
+            allowed_mcp_servers: Some(vec!["editor".to_string()]),
+            mode: None,
+        },
+    );
+    for request in operations() {
+        assert!(
+            decide(&policy, &request).is_ok(),
+            "{} must be unchanged without hosting",
+            request.operation.as_str()
+        );
+    }
+}
+
+#[test]
 fn a_package_child_is_not_narrowed_by_the_server_list() {
     // The list names MCP servers; a package id is not one, so a package's
     // extension children keep following the mode alone.
