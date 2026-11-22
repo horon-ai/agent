@@ -981,7 +981,10 @@ async fn run_without_session_refuses_resume() {
     assert!(first.status.success());
     let session_id = session_files(home.path())
         .iter()
-        .find_map(|file| file.strip_suffix("/events.jsonl").and_then(|dir| dir.strip_prefix("sessions/")))
+        .find_map(|file| {
+            file.strip_suffix("/events.jsonl")
+                .and_then(|dir| dir.strip_prefix("sessions/"))
+        })
         .expect("the first run stored a session")
         .to_string();
 

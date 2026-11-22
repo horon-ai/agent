@@ -36,7 +36,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         commands::wait_for_cold_cache_mcp_tools(&registry).await;
     }
     if *no_session && (args.resume.is_some() || args.goal.is_some()) {
-        anyhow::bail!("--no-session cannot be combined with --resume, --continue or --goal, which need a stored session");
+        anyhow::bail!(
+            "--no-session cannot be combined with --resume, --continue or --goal, which need a stored session"
+        );
     }
     let mut agent = if *no_session {
         Agent::for_memory_only_run(provider.clone(), registry)
