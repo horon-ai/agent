@@ -120,6 +120,10 @@
       "count": 1,
       "reason": "raw pipe-descriptor readiness test (FromRawFd)."
     },
+    "crates/app-core/src/tool/agentgrep/locate.rs": {
+      "count": 1,
+      "reason": "the test that a symbolic link out of the searched root is never followed creates the link with `std::os::unix::fs::symlink`, which Windows does not offer without a privilege."
+    },
     "crates/app-core/src/tool/bash.rs": {
       "count": 7,
       "reason": "`#[path]` gates for the POSIX-only bash test suites (one per test file), plus the helpers only those suites call (`parse_progress_marker` and the session-cwd, minimizer and non-interactive-env test overrides), gated with them so Windows does not compile them unused."

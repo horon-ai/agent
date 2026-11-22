@@ -1450,6 +1450,14 @@ jobs:
             --timeout 60 --min-passed 1 \
             -- agent::provider::model_preset::tests::
 
+      - name: Run agentgrep locate cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 5 \
+            -- tool::agentgrep::locate::tests:: --nocapture
+
       - name: Run tool verdict and prewalk cohort
         shell: bash
         # These tests merged with the typed tool verdict (#212) and the prewalk
