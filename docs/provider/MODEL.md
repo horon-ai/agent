@@ -250,15 +250,19 @@ Two read-only accessors expose the outcome. `Agent::fallback_models()` returns t
 enabled = true
 into = "exec-model"
 from = "plan-model"
+plan = "plan-model"
 ```
 
 | Key | Meaning |
 | --- | --- |
 | `enabled` | Whether a session hands off at all. Off by default. |
 | `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `plan` | The planning model: a bare model id, or `role:<name>`. With `[tools] plan_mode` on, the session switches to it once when planning starts, before approval. Optional: leaving it out keeps the session on its own model while planning. It has no effect unless `enabled = true` and `into` is set. |
 | `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
 
 The handoff point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it.
+
+The planning switch is separate from the handoff and spends none of it. It happens once per planning run, so a model you pick with `/model` during planning is kept, and it resets when plan mode ends. `/plan status` shows whether prewalk is on, the planning model and the handoff model, so the targets are visible before you approve. The handoff after approval is unchanged.
 
 The decision is one replay event, `prewalk` in the stored session, and that event is what makes the handoff one-shot across processes: a session that already carries one never decides again. A refused `into` is recorded the same way — an unknown model, a `role:` name outside `default`, `plan` and `aux`, or a role that resolves to nothing — so the session keeps its current model, one warning is logged, and later rounds do not repeat it. An `into` that resolves to the model the session already runs records the decision without switching.
 

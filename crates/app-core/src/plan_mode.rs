@@ -289,7 +289,13 @@ fn snapshot(session_id: &str, enabled: bool) -> serde_json::Value {
     let state = state_for(session_id);
     let pending = pending_plan(session_id);
     let approved = approved_plan(session_id);
+    let prewalk = &crate::config::config().prewalk;
     serde_json::json!({
+        "prewalk": {
+            "active": prewalk.is_active(),
+            "planning_model": prewalk.plan_model(),
+            "handoff_model": prewalk.into_model(),
+        },
         "enabled": enabled,
         "state": state.as_str(),
         "read_only": state.is_read_only(),
@@ -314,6 +320,14 @@ fn report(session_id: &str, enabled: bool) -> String {
             ""
         }
     );
+    let prewalk = &crate::config::config().prewalk;
+    if prewalk.is_active() {
+        report.push_str(&format!(
+            "\n\nPrewalk is on: planning model {}, then hands off to {} after approval.",
+            prewalk.plan_model().unwrap_or("(the session's own model)"),
+            prewalk.into_model().unwrap_or("(unset)")
+        ));
+    }
     if let Some(plan) = pending {
         report.push_str(&format!(
             "\n\nWaiting for an answer: request {} carries {} characters of plan text for {} file(s). Use `/plan approve` or `/plan reject`.",

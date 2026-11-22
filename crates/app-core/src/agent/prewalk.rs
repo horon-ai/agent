@@ -40,6 +40,26 @@ impl std::fmt::Display for PrewalkRefusal {
     }
 }
 
+impl PrewalkRefusal {
+    /// The reason alone, for a message that names its own key.
+    fn detail(&self) -> String {
+        match self {
+            Self::UnknownModel(model) => format!("the active provider profile does not offer `{model}`"),
+            Self::UnresolvedRole(role) => format!("the model role `{role}` resolves to no model"),
+            Self::UnknownRole(role) => format!("`role:{role}` is not one of `default`, `plan`, `aux`"),
+        }
+    }
+}
+
+/// Sessions already switched to the planning model during the current planning run.
+fn plan_entry_spent() -> std::sync::MutexGuard<'static, std::collections::HashSet<String>> {
+    static SPENT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    SPENT
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 impl Agent {
     /// Apply the `[prewalk]` handoff if this session has reached its trigger.
     ///
@@ -50,6 +70,7 @@ impl Agent {
         if !config.prewalk.is_active() {
             return;
         }
+        self.apply_prewalk_plan_entry(&config.prewalk);
         // A session that already decided this, in this process or in the stored
         // file, never decides again.
         if self.session.prewalk_event().is_some() {
@@ -99,6 +120,44 @@ impl Agent {
                 self.persist_session_best_effort("prewalk");
                 logging::warn(&format!("prewalk: {reason}; the session keeps '{current}'"));
             }
+        }
+    }
+
+    /// Switch to the `plan` model once when plan mode starts.
+    ///
+    /// The marker lives in memory beside the plan state it follows: both are
+    /// process-wide and both reset when plan mode ends, so each planning round
+    /// switches at most once and a later manual `/model` choice is respected.
+    fn apply_prewalk_plan_entry(&mut self, config: &PrewalkConfig) {
+        let Some(plan) = config.plan_model() else {
+            return;
+        };
+        let session_id = self.session.id.clone();
+        let mut spent = plan_entry_spent();
+        if !crate::plan_mode::state_for(&session_id).is_read_only() {
+            spent.remove(&session_id);
+            return;
+        }
+        if !spent.insert(session_id) || self.session.prewalk_event().is_some() {
+            return;
+        }
+        drop(spent);
+        let current = self.provider_model();
+        match self.resolve_prewalk_model(plan, &current) {
+            Ok(target) if target == current => {}
+            Ok(target) => match self.set_model(&target) {
+                Ok(()) => {
+                    self.persist_session_best_effort("prewalk");
+                    logging::info(&format!("prewalk: planning on '{target}' instead of '{current}'"));
+                }
+                Err(error) => logging::warn(&format!(
+                    "prewalk: the switch to the planning model `{target}` failed: {error}; the session keeps '{current}'"
+                )),
+            },
+            Err(refusal) => logging::warn(&format!(
+                "prewalk: `prewalk.plan` = `{plan}` cannot be used ({}); the session keeps '{current}'",
+                refusal.detail()
+            )),
         }
     }
 

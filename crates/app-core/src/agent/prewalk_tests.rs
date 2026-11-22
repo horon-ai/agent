@@ -395,3 +395,81 @@ async fn prewalk_into_unknown_role_keeps_the_model_and_records_one_refusal() {
         "the refusal names the role: {events:?}"
     );
 }
+
+/// The provider starts on the execution model, so a `plan` value of the
+/// planning model is a real switch.
+fn start_on_exec(provider: &PrewalkProvider) {
+    provider.set_model(EXEC_MODEL).expect("provider model");
+}
+
+fn with_plan(plan: &str) -> String {
+    format!("{}plan = \"{plan}\"\n", on(EXEC_MODEL))
+}
+
+#[tokio::test]
+async fn the_planning_model_serves_requests_until_approval_then_the_handoff_switches_once() {
+    let (_home, provider, mut agent) = setup(&with_plan(START_MODEL), true);
+    start_on_exec(&provider);
+    let session_id = agent.session.id.clone();
+    crate::plan_mode::set_state(&session_id, crate::plan_mode::PlanState::Planning);
+
+    run(&mut agent).await;
+    run(&mut agent).await;
+    assert_eq!(
+        provider.calls(),
+        vec![START_MODEL.to_string(), START_MODEL.to_string()],
+        "planning requests run on the planning model"
+    );
+    assert!(prewalk_events(&agent).is_empty(), "entering planning spends no handoff");
+
+    crate::plan_mode::set_state(&session_id, crate::plan_mode::PlanState::Approved);
+    run(&mut agent).await;
+    run(&mut agent).await;
+    assert_eq!(
+        provider.calls().split_off(2),
+        vec![EXEC_MODEL.to_string(), EXEC_MODEL.to_string()],
+        "after approval the session switched to the execution model"
+    );
+    assert_eq!(prewalk_events(&agent).len(), 1, "one handoff decision per session");
+    crate::plan_mode::clear_state(&session_id);
+}
+
+#[tokio::test]
+async fn a_model_chosen_during_planning_is_not_overridden_again() {
+    let (_home, provider, mut agent) = setup(&with_plan(START_MODEL), true);
+    start_on_exec(&provider);
+    let session_id = agent.session.id.clone();
+    crate::plan_mode::set_state(&session_id, crate::plan_mode::PlanState::Planning);
+    run(&mut agent).await;
+    start_on_exec(&provider);
+    run(&mut agent).await;
+    assert_eq!(
+        provider.calls(),
+        vec![START_MODEL.to_string(), EXEC_MODEL.to_string()],
+        "the planning switch happens once per planning run"
+    );
+    crate::plan_mode::clear_state(&session_id);
+}
+
+#[tokio::test]
+async fn an_unset_planning_model_keeps_the_session_model_while_planning() {
+    let (_home, provider, mut agent) = setup(&on(EXEC_MODEL), true);
+    start_on_exec(&provider);
+    let session_id = agent.session.id.clone();
+    crate::plan_mode::set_state(&session_id, crate::plan_mode::PlanState::Planning);
+    run(&mut agent).await;
+    assert_eq!(provider.calls(), vec![EXEC_MODEL.to_string()]);
+    crate::plan_mode::clear_state(&session_id);
+}
+
+#[tokio::test]
+async fn the_planning_model_can_be_a_role() {
+    let roles = format!("[providers.{PROFILE}.roles]\nplan = \"{START_MODEL}\"\n\n");
+    let (_home, provider, mut agent) = setup_with_roles(&with_plan("role:plan"), true, &roles);
+    start_on_exec(&provider);
+    let session_id = agent.session.id.clone();
+    crate::plan_mode::set_state(&session_id, crate::plan_mode::PlanState::Planning);
+    run(&mut agent).await;
+    assert_eq!(provider.calls(), vec![START_MODEL.to_string()]);
+    crate::plan_mode::clear_state(&session_id);
+}

@@ -20,6 +20,12 @@ pub struct PrewalkConfig {
     /// The execution model: a bare model id, or `role:<name>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub into: Option<String>,
+    /// The planning model: a bare model id, or `role:<name>`.
+    ///
+    /// With plan mode on, the session switches to it once when planning starts,
+    /// before the plan is approved. Unset leaves the session on its own model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
     /// Only switch when the session currently runs this model.
     ///
     /// Unlike omp's `from`, this is an applicability condition: it never names
@@ -37,6 +43,11 @@ impl PrewalkConfig {
     /// The trimmed `into` value, if one was configured.
     pub fn into_model(&self) -> Option<&str> {
         trimmed(self.into.as_deref())
+    }
+
+    /// The trimmed `plan` value, if one was configured.
+    pub fn plan_model(&self) -> Option<&str> {
+        trimmed(self.plan.as_deref())
     }
 
     /// The trimmed `from` value, if one was configured.
