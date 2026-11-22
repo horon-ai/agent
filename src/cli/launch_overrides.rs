@@ -222,9 +222,10 @@ fn effective_prewalk(
 }
 
 fn effective_roles(profile: Option<&NamedProviderConfig>, roles: &[(ModelRole, String)]) -> ModelRoles {
-    let mut effective = profile
-        .map(|profile| profile.model_roles.roles.clone())
-        .unwrap_or_else(ModelRoles::default);
+    let mut effective = match profile {
+        Some(profile) => profile.model_roles.roles.clone(),
+        None => ModelRoles::default(),
+    };
     for (role, model) in roles {
         effective.set(*role, model.clone());
     }
