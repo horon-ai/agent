@@ -20,7 +20,9 @@ pub(crate) use import_options::ImportTranscriptArgs;
 mod skills;
 pub(crate) use skills::SkillsCommand;
 mod run_options;
+mod session_cache;
 pub(crate) use run_options::RunModelOverrides;
+pub(crate) use session_cache::CacheArgs;
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -855,6 +857,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview or reclaim regenerable cache files of inactive sessions
+    Cache(CacheArgs),
 
     /// Show one session's layout, heads, archive state and damage, read-only
     Inspect {

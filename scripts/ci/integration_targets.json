@@ -320,6 +320,11 @@
     },
     {
       "package": "horon-agent-session-store",
+      "target": "cache_reclaim",
+      "min_passed": 1
+    },
+    {
+      "package": "horon-agent-session-store",
       "target": "catalog_legacy_boundary",
       "min_passed": 6
     },

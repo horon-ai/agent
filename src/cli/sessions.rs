@@ -17,6 +17,7 @@ use crate::session;
 use crate::session::event_store_api as store;
 
 mod anonymize;
+mod cache;
 mod recovery;
 mod transcript;
 
@@ -31,6 +32,7 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             clear,
             json,
         } => super::commands::run_session_rename_command(&session, name.as_deref(), clear, json),
+        SessionCommand::Cache(args) => cache::run(&home()?, &args),
         SessionCommand::Inspect { session, json } => inspect(&home()?, &session, json),
         SessionCommand::Recovery { session, json } => recovery::run(&home()?, &session, json),
         SessionCommand::Doctor { session, json } => doctor(&home()?, session.as_deref(), json),
