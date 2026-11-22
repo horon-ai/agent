@@ -381,6 +381,8 @@ The model list has the model in force marked `(current)` and the selected row ca
 
 Use `/modelpreset` to list names, `/modelpreset preview <name>` to inspect the choices, or `/modelpreset apply <name>` to apply them to the current session. The [model preset settings](../provider/MODEL.md#session-model-presets) define how to write a preset. If a turn is running, retry the command after it ends.
 
+A saved session whose project moved on disk keeps the old path. Use `/workroot` to show the session's working root, `/workroot preview <path>` to see the canonical target and how much project `AGENTS.md` guidance the move reads again, and `/workroot apply <path>` to switch the session to it. A missing target, a path that is not a directory, or the current root changes nothing. Stored messages stay as they were; only the root and the guidance read from it change. If a turn is running, retry the command after it ends.
+
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
 
 Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.

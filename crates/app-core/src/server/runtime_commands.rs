@@ -238,6 +238,7 @@ pub(super) async fn execute(
             )?;
             return Ok((serde_json::to_value(&goal)?, crate::goal::render_goal_detail(&goal)));
         }
+        RuntimeCommand::WorkRoot => return agent.work_root_command(args),
         RuntimeCommand::Dirs => {
             let (action, targets) = match args {
                 [] => ("list", &[][..]),

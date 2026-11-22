@@ -80,6 +80,7 @@ RuntimeCommand: TypeAlias = Literal[
     "goal",
     "advisor",
     "dirs",
+    "workroot",
     "mcp",
 ]
 

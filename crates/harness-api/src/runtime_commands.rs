@@ -35,6 +35,8 @@ pub enum RuntimeCommand {
     Goal,
     Advisor,
     Dirs,
+    #[serde(rename = "workroot")]
+    WorkRoot,
     Mcp,
 }
 

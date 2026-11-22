@@ -384,6 +384,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "subagent_model" => "show or set the model subagents run on",
         "swarm" => "show the swarm and its members",
         "transport" => "show or set the provider transport",
+        "workroot" => "preview or change the working root of this session",
         _ => "",
     }
 }

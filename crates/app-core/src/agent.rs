@@ -96,6 +96,7 @@ mod utils;
 #[cfg(test)]
 #[path = "agent/verdict_store_tests.rs"]
 mod verdict_store_tests;
+mod work_root;
 
 pub(crate) use self::resume_commit::{ResumeCommitFailed, resume_commit_owed};
 pub(crate) use self::turn_recovery_wiring::AutoContinuation;
