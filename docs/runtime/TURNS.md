@@ -338,6 +338,11 @@ session's runtime host, including SSH and managed remote runtimes.
   session overrides, or keep the requested policy scope.
 - `subagent_model`: view, set, or inherit the spawned worker policy.
 - `autoreview`, `autojudge`: show status and keep explicit on/off/toggle.
+- `advisor`: show whether this session's advisor runs (`enabled`, with the configured
+  `default_enabled`), or turn it on or off for this session with `on`/`off`. Off stops new
+  advisor work for this session at once. The choice lives with the running session and does
+  not change `[advisor] enabled` or any other session. `horon run --advisor on|off` sets the
+  same choice for a single run.
 - `plan`: read and change plan mode state. No argument or `status` returns the current
   state, `on`/`off` turn plan mode on and off, and `approve`/`reject` approve or reject the
   plan pending in the session. When configuration has plan mode off, `on` and `approve`

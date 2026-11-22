@@ -314,6 +314,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 commands::run_provider_current_command(&args.provider, args.model.as_deref(), json).await?;
             }
             ProviderCommand::Diagnose { check, json } => commands::run_provider_diagnose_command(check, json).await?,
+            ProviderCommand::Status { .. } => unreachable!("handled by startup"),
             ProviderCommand::Add {
                 name,
                 base_url,

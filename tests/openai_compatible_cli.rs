@@ -912,6 +912,104 @@ async fn unconfigured_provider_explains_setup() {
     assert!(!stderr.contains("router"), "{stderr}");
 }
 
+fn files_under(root: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.push(path.strip_prefix(root).unwrap().display().to_string());
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Files a run leaves behind that belong to a session: its log, journal,
+/// checkpoint, catalog and the recovery data built from them.
+fn session_files(root: &Path) -> Vec<String> {
+    files_under(root)
+        .into_iter()
+        .filter(|file| file.starts_with("sessions/") || file.starts_with("durable-runtime/"))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_without_session_leaves_no_session_files() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+
+    let output = home.run(&["run", "hi", "--no-session", "--no-update"]).await;
+    assert!(
+        output.status.success(),
+        "run failed: status={:?}\nstdout={}\nstderr={}",
+        output.status,
+        text(&output.stdout),
+        text(&output.stderr)
+    );
+    assert!(text(&output.stdout).contains(FINAL_TEXT));
+    assert!(tool_round_seen(&mock.bodies()), "the tool round still runs");
+    assert_eq!(session_files(home.path()), Vec::<String>::new());
+    assert!(
+        !text(&output.stderr).to_lowercase().contains("resume"),
+        "no recovery hint: {}",
+        text(&output.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_without_session_leaves_no_session_files_when_the_provider_fails() {
+    let home = Home::new();
+    home.write_config("http://127.0.0.1:9/v1");
+
+    let output = home.run(&["run", "hi", "--no-session", "--no-update"]).await;
+    assert!(!output.status.success());
+    assert_eq!(session_files(home.path()), Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_without_session_refuses_resume() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let first = home.run(&["run", "hi", "--no-update"]).await;
+    assert!(first.status.success());
+    let session_id = session_files(home.path())
+        .iter()
+        .find_map(|file| {
+            file.strip_suffix("/events.jsonl")
+                .and_then(|dir| dir.strip_prefix("sessions/"))
+        })
+        .expect("the first run stored a session")
+        .to_string();
+
+    let output = home
+        .run(&["--resume", &session_id, "run", "hi", "--no-session", "--no-update"])
+        .await;
+    assert!(!output.status.success());
+    assert!(text(&output.stderr).contains("--no-session cannot be combined"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_run_still_stores_its_session() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+
+    let output = home.run(&["run", "hi", "--no-update"]).await;
+    assert!(output.status.success());
+    let files = session_files(home.path());
+    assert!(
+        files.iter().any(|file| file.ends_with("/events.jsonl")),
+        "a normal run keeps its event log: {files:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn provider_diagnose_separates_missing_config_missing_credential_and_unreachable_endpoint() {
     let secret = "sk-diagnose-masked-fixture-0123456789";

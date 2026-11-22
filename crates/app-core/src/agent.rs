@@ -546,22 +546,21 @@ pub struct Agent {
     /// resolution (available rungs, pinned effort, movement rules) happens at
     /// turn start so it reads the state that is current for that turn.
     armed_effort_keyword: Option<magic_keywords::EffortKeyword>,
-    /// True when the session's reasoning effort has been explicitly pinned
-    /// (via `SetReasoningEffort`). This prevents keyword overrides from
-    /// lowering the effort below the pinned value.
+    /// True when the effort was explicitly pinned (`SetReasoningEffort`), so
+    /// keyword overrides cannot lower it below the pinned value.
     reasoning_effort_pinned: bool,
     /// True when this agent runs inside the persistent serve/api-bridge daemon.
     /// Idle background compaction only starts here; a one-shot `run` leaves it
     /// false so it never compacts a transcript nobody will resume.
     persistent_runtime: bool,
-    /// Opted-in advisor worker, created on the session's first completed tool
-    /// round. `None` until then, after a disable, or when `[advisor]` is off.
+    /// Opted-in advisor worker, created on the first completed tool round; `None` before that, after a disable, or when off.
     advisor: Option<advisor::Handle>,
     /// Number of main-session messages the advisor has already been fed.
     advisor_cursor: usize,
-    /// User-turn index at which a blocker interrupt was last delivered, so the
-    /// configured immune window can route later notes to the reminder slot.
+    /// User-turn index of the last blocker interrupt, so the immune window can route later notes to the reminder slot.
     advisor_blocker_turn: Option<usize>,
+    /// This session's `/advisor` or `--advisor` choice; `None` follows `[advisor] enabled`. Not persisted.
+    advisor_enabled: Option<bool>,
 }
 
 impl Agent {
@@ -689,6 +688,7 @@ impl Agent {
             advisor: None,
             advisor_cursor: 0,
             advisor_blocker_turn: None,
+            advisor_enabled: None,
         };
         agent.restore_failover_budget();
         agent.refresh_prompt_skills_snapshot();

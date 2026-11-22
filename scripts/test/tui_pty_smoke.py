@@ -69,9 +69,15 @@ MOCK_SERVER = os.path.join(REPO_ROOT, "scripts", "perf", "mock_llm_server.py")
 
 # How long a single expected screen costs before the run fails. The first draw
 # waits on the daemon, the provider probe, and the harness bridge, so it gets the
-# larger budget; keystroke round trips are local.
+# larger budget. A keystroke round trip is local, but a loaded runner can stall a
+# redraw for tens of seconds, so a step gets twice the budget it once had.
 STARTUP_TIMEOUT = 90.0
-STEP_TIMEOUT = 45.0
+STEP_TIMEOUT = 90.0
+# A keystroke is sent only after the client has stopped drawing for
+# `SETTLE_QUIET` seconds (at most `SETTLE_LIMIT` seconds of waiting). Typing into
+# a redraw loses the keys, which showed up as a screen that never appeared.
+SETTLE_QUIET = 0.4
+SETTLE_LIMIT = 4.0
 # Budget for a launch whose stdio is a pipe and which therefore has to start the
 # daemon itself. It has to exceed the product's own readiness budget
 # (`READY_POLL_TIMEOUT`, 120 s on Windows, where a spawned server is polled
@@ -332,7 +338,25 @@ class PosixTerminal:
         if not contains(self.transcript[since:], needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
+    def settle(self) -> None:
+        """Wait until the client stops drawing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            readable, _, _ = select.select([self.master], [], [], 0.05)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            self.transcript += chunk.decode("utf-8", "replace")
+            quiet_since = time.monotonic()
+
     def send(self, keys: str) -> None:
+        self.settle()
         os.write(self.master, keys.encode())
 
     def wait(self, timeout: float) -> int:
@@ -441,7 +465,22 @@ class WindowsTerminal:
         state = "still running" if self.process.isalive() else f"exited {self.process.exitstatus!r}"
         raise Failure(f"{what}: never saw {needle!r} (client {state})\n--- transcript ---\n{text}")
 
+    def settle(self) -> None:
+        """Wait until the console stops growing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        with self._lock:
+            size = len(self.transcript)
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            time.sleep(0.05)
+            with self._lock:
+                grown = len(self.transcript) != size
+                size = len(self.transcript)
+            if grown:
+                quiet_since = time.monotonic()
+
     def send(self, keys: str) -> None:
+        self.settle()
         try:
             self.process.write(keys)
         except EOFError as closed:
@@ -944,7 +983,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             try:
                 resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
                 resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
-                selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
+                # Memorable names can hold a hyphen (`session_t-rex_<digits>_<hex>`).
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_-]+)", resumed.transcript)
                 if selected is None:
                     raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
                 attached = r"phase=resume_(?:restored|live_attach)_done"
@@ -1262,16 +1302,26 @@ def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
         argv.append("--no-title")
     env = horon_env(root, launch.home)
     env.pop("HORON_TUI_TITLE_ENABLED", None)
-    terminal = Terminal(argv, cwd=root, env=env)
-    try:
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
-        terminal.send("/quit\r")
-        code = terminal.wait(STEP_TIMEOUT)
-        if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
-            raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
-        return terminal.transcript
-    finally:
-        terminal.close()
+    # A client started before its harness bridge accepts connections reports
+    # "harness connection closed" once. Only that startup message is retried,
+    # once; every other failure and every later assertion stays strict.
+    for attempt in (1, 2):
+        terminal = Terminal(argv, cwd=root, env=env)
+        try:
+            try:
+                terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
+            except Failure:
+                if attempt == 1 and "harness connection closed" in terminal.transcript:
+                    continue
+                raise
+            terminal.send("/quit\r")
+            code = terminal.wait(STEP_TIMEOUT)
+            if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
+                raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
+            return terminal.transcript
+        finally:
+            terminal.close()
+    raise Failure("title opt-out session never started")
 
 
 def selected_cases(requested: str | None) -> set[int]:

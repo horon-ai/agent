@@ -5,12 +5,13 @@ use std::process::Command as ProcessCommand;
 use crate::{build, logging, server, startup_profile, storage, update};
 
 use super::{
-    args::{Args, Command},
+    args::{Args, Command, ProviderCommand},
     dispatch, hot_exec, output, terminal,
 };
 
 mod agent_catalog;
 mod completions;
+mod provider_status;
 mod stream_rule_preview;
 mod tokens;
 
@@ -62,6 +63,7 @@ fn offline_command(args: &Args) -> Option<Result<()>> {
             crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
             Some(agent_catalog::run(args.cwd.as_deref().map(std::path::Path::new)))
         }
+        Some(Command::Provider(ProviderCommand::Status { json })) => Some(provider_status::run(*json)),
         _ => None,
     }
 }

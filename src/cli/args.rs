@@ -55,6 +55,10 @@ pub(crate) struct RunModelOverrides {
     /// OpenAI service tier (off, priority, fast, or ultrafast where supported)
     #[arg(long, value_name = "TIER")]
     pub(crate) service_tier: Option<String>,
+
+    /// Turn the session advisor on or off for this run, overriding `[advisor] enabled`
+    #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
+    pub(crate) advisor: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -286,6 +290,10 @@ pub(crate) enum Command {
         /// Run shell tools without a pseudo-terminal for this invocation
         #[arg(long)]
         no_pty: bool,
+
+        /// Keep this run in memory only: no session, journal or resume hint is written
+        #[arg(long)]
+        no_session: bool,
 
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
@@ -920,6 +928,17 @@ pub(crate) enum SessionCommand {
 pub(crate) enum ProviderCommand {
     /// List provider IDs you can pass to -p/--provider
     List {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show each configured profile's credential source and local status
+    ///
+    /// Reads local configuration only. It never prints credential values or
+    /// contacts a provider, so a profile with no resolvable credential is
+    /// `unauthenticated` and one that uses no credential is `unknown`.
+    Status {
         /// Emit JSON instead of plain text
         #[arg(long)]
         json: bool,
