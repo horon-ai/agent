@@ -669,6 +669,11 @@ jobs:
         shell: bash
         run: python3 scripts/test/system_template_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
 
+      - name: Skills CLI install gate
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/skills_cli_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
       - name: TUI PTY smoke (Linux, macOS)
         # The bare command hands a terminal launch to the sibling `horon-tui`
         # binary, and nothing else in this workflow drives that handoff or the
@@ -972,6 +977,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 1 \
             -- cli::startup::agent_catalog::tests:: --nocapture
+
+      - name: Run skill source policy tests
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- skill_install::tests::only_plain_remotes --nocapture
 
       - name: Run CLI launch profile cohort
         shell: bash

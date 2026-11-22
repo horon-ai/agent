@@ -13,6 +13,7 @@ mod report_info;
 mod run_deadline;
 mod session_delete;
 mod session_rename;
+mod skills_cli;
 mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
@@ -22,6 +23,7 @@ pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
+pub(crate) use skills_cli::run_skills_command;
 pub(crate) use tool_preview::run_preview_command;
 
 pub enum AmbientSubcommand {
