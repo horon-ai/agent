@@ -27,7 +27,10 @@ does not. So every check here reads a counter:
 - the request projection with no `pre_request` hook configured: no child
   process spawned and no message copied.
 - the heap allocations and the bytes one tool dispatch asks for, with a short
-  input and with a 10 KB one.
+  input and with a 10 KB one;
+- the package-area reads, directory scans, writes, snapshot builds and child
+  starts of a home with no packages, of an unchanged catalog generation, and of
+  one real call.
 
 The measurements are the repo's own tests. Each one prints one
 `STRUCTURAL_PERF section=<name> k=v k=v` line, so this gate reads the numbers
@@ -272,6 +275,23 @@ MEASUREMENTS = (
             "one_dispatch_allocates_a_bounded_amount",
         ],
     },
+    # User-installed packages must cost nothing to the people who have none, and
+    # a turn over an unchanged catalog must cost nothing beyond the check that it
+    # is unchanged. One integration target drives a package-free session, a daemon
+    # generation, two turns of one session and two real calls of the installed
+    # `horon-package-probe` child; it prints one line per situation because each
+    # is a different promise.
+    {
+        "section": "packages",
+        "source": "app-core",
+        "args": [
+            "-p",
+            "horon-agent-app-core",
+            "--test",
+            "package_cost",
+            "structural_package_costs_are_measured",
+        ],
+    },
 )
 
 REQUIRED_SECTIONS = (
@@ -290,6 +310,7 @@ REQUIRED_SECTIONS = (
     "prompt",
     "session_context",
     "tool_dispatch",
+    "packages",
 )
 
 
@@ -914,6 +935,152 @@ def check_tool_dispatch(report: Report, records: list[dict[str, str]], bounds: d
             )
 
 
+# The five situations the packages section promises. A log that carries only
+# some of them is incomplete, not green: `empty`'s zeros certify nothing about a
+# turn over an installed package, and `turn-warm` is what proves the counters
+# record at all.
+PACKAGE_SOURCES = ("empty", "turn-warm", "turn-unchanged", "call", "call-repeat")
+
+
+def check_packages(report: Report, records: list[dict[str, str]], bounds: dict[str, int]) -> None:
+    """What packages cost when none are installed, installed, and called.
+
+    Five situations, and every one of them needs its floor: with the counters
+    off each reports zero, which would pass every ceiling. So a turn reports the
+    number of turns it ran and how many packages the catalog listed, and a call
+    reports the call it made. The `empty` line is read against `turn-warm` for
+    exactly this reason: the warm turn proves the same counters do record reads,
+    writes and one snapshot build when there is something to measure.
+
+    `turn-unchanged` is the promise that a session which already captured this
+    catalog generation neither reads a package file nor rebuilds its snapshot,
+    and `call`/`call-repeat` split "a call starts one child" from "the next call
+    starts none".
+    """
+    for record in records:
+        source = record.get("source", "?")
+        section = f"packages/{source}"
+        if source == "empty":
+            report.at_least(section, "turns", as_int(record, "turns", section), 1)
+            report.equal(section, "packages", as_int(record, "packages", section), 0)
+            report.at_most(
+                section,
+                "area_reads",
+                as_int(record, "area_reads", section),
+                bounds["packages_empty_area_reads_max"],
+            )
+            report.at_most(
+                section,
+                "dir_scans",
+                as_int(record, "dir_scans", section),
+                bounds["packages_empty_area_dir_scans_max"],
+            )
+            report.at_most(
+                section,
+                "area_writes",
+                as_int(record, "area_writes", section),
+                bounds["packages_empty_area_writes_max"],
+            )
+            report.at_most(
+                section,
+                "snapshot_builds",
+                as_int(record, "snapshot_builds", section),
+                bounds["packages_empty_area_snapshot_builds_max"],
+            )
+            report.at_most(
+                section,
+                "child_starts",
+                as_int(record, "child_starts", section),
+                bounds["packages_empty_area_child_starts_max"],
+            )
+        elif source == "turn-warm":
+            report.at_least(section, "turns", as_int(record, "turns", section), 1)
+            report.at_least(section, "packages", as_int(record, "packages", section), 1)
+            report.at_least(
+                section,
+                "area_reads",
+                as_int(record, "area_reads", section),
+                bounds["packages_warm_turn_reads_min"],
+            )
+            report.at_least(
+                section,
+                "snapshot_builds",
+                as_int(record, "snapshot_builds", section),
+                bounds["packages_warm_turn_snapshot_builds_min"],
+            )
+            report.at_least(
+                section,
+                "area_writes",
+                as_int(record, "area_writes", section),
+                bounds["packages_warm_turn_writes_min"],
+            )
+            report.at_most(
+                section,
+                "child_starts",
+                as_int(record, "child_starts", section),
+                bounds["packages_turn_child_starts_max"],
+            )
+        elif source == "turn-unchanged":
+            report.at_least(section, "turns", as_int(record, "turns", section), 1)
+            report.at_least(section, "packages", as_int(record, "packages", section), 1)
+            report.at_most(
+                section,
+                "area_reads",
+                as_int(record, "area_reads", section),
+                bounds["packages_unchanged_turn_reads_max"],
+            )
+            report.at_most(
+                section,
+                "dir_scans",
+                as_int(record, "dir_scans", section),
+                bounds["packages_unchanged_turn_dir_scans_max"],
+            )
+            report.at_most(
+                section,
+                "area_writes",
+                as_int(record, "area_writes", section),
+                bounds["packages_unchanged_turn_writes_max"],
+            )
+            report.at_most(
+                section,
+                "snapshot_builds",
+                as_int(record, "snapshot_builds", section),
+                bounds["packages_unchanged_turn_snapshot_builds_max"],
+            )
+            report.at_most(
+                section,
+                "child_starts",
+                as_int(record, "child_starts", section),
+                bounds["packages_turn_child_starts_max"],
+            )
+        elif source == "call":
+            report.at_least(section, "calls", as_int(record, "calls", section), 1)
+            report.equal(
+                section,
+                "child_starts",
+                as_int(record, "child_starts", section),
+                bounds["packages_call_child_starts"],
+            )
+        elif source == "call-repeat":
+            report.at_least(section, "calls", as_int(record, "calls", section), 1)
+            report.equal(
+                section,
+                "child_starts",
+                as_int(record, "child_starts", section),
+                bounds["packages_call_repeat_child_starts"],
+            )
+        else:
+            raise GateError(f"section packages: unknown source {source}")
+    seen = {record.get("source") for record in records}
+    absent = [source for source in PACKAGE_SOURCES if source not in seen]
+    if absent:
+        raise GateError(
+            "section packages: no measurement for source(s): "
+            + ", ".join(absent)
+            + " (a partial log does not certify the situations it omits)"
+        )
+
+
 CHECKS = {
     "queue": check_queue,
     "pending": check_pending,
@@ -930,6 +1097,7 @@ CHECKS = {
     "prompt": check_prompt,
     "session_context": check_session_context,
     "tool_dispatch": check_tool_dispatch,
+    "packages": check_packages,
 }
 
 
