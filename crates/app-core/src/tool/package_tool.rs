@@ -35,6 +35,8 @@ use horon_agent_message_types::ToolDefinition;
 use horon_agent_tool_core::ensure_intent_in_schema;
 use serde_json::Value;
 
+pub(crate) mod command_gate;
+
 use super::{Registry, Tool, ToolContext, ToolEffects, ToolOutput, sdk};
 use crate::config::LoadMode;
 use crate::extensions::invoke;

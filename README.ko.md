@@ -115,12 +115,13 @@ horon run "summarize this repo"
 | 명령 | 하는 일 |
 | --- | --- |
 | `horon`(하위 명령 없음) | 터미널에서는 서버를 띄운 뒤 형제 파일 `horon-tui`로 자기 프로세스를 넘긴다. 키 바인딩, 사용자 파일, 설정 화면이 있다([문서](docs/runtime/TUI.ko.md)). 파이프, `HORON_NO_TUI=1`, 형제 파일 부재 중 하나면 어떤 조건인지와 설치 명령을 알리는 문장을 남기고 0이 아닌 코드로 끝난다. |
-| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](docs/provider/MODEL.ko.md#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰며 `--no-session`으로 실행을 메모리에만 두고 [`--max-time`](docs/runtime/TURNS.ko.md#실행-시간-제한)으로 실행 시간을 제한한다. |
+| `horon run "<메시지>"` | 메시지 하나를 보내고, 턴이 끝날 때까지 도구를 실행한 뒤 종료한다. `--thinking`과 `--service-tier`로 [모델 옵션](docs/provider/MODEL.ko.md#설정)을 지정한다. `--no-pty`로 셸 도구에 파이프를 쓰며 `--no-session`으로 실행을 메모리에만 두고 [`--max-time`](docs/runtime/TURNS.ko.md#실행-시간-제한)으로 실행 시간을 제한하며 `--warn-cost`와 `--max-cost`로 추정 비용을 감시한다. |
 | `horon repl` | 전체 화면 클라이언트 없이 터미널에서 한 줄씩 입력한다. |
 | `horon serve` | 유닉스 소켓(`HORON_AGENT_SOCKET`)에서 도는 백그라운드 에이전트 데몬. |
 | `horon api-bridge` | SDK 클라이언트용 하네스 API 로컬 소켓(`HORON_AGENT_API_SOCKET`). Unix 소켓이거나 Windows의 네임드 파이프다. |
 | `horon acp` | 에디터용 표준 입출력 ACP v1·v2 어댑터. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | 저장한 토큰 사용량을 UTC 날짜, 제공자와 모델별로 표시합니다. `--json`으로 구조화된 결과를 받고, 터미널 클라이언트에서는 `/stats`로 연결된 세션의 사용량을 봅니다. |
+| `horon config show` / `horon config check` | 읽기 전용입니다. `show`는 유효 설정과 각 값의 출처(default, file, env, cli)를 표시하며 자격 증명은 표시하지 않습니다. `--json`으로 구조화된 결과를 받습니다. `check`는 시작 때 쓰는 로더로 `config.toml`을 검증하고, 잘못된 섹션을 알리며 종료 코드 1을 돌려줍니다. |
 | `horon rpc` | 프로세스를 직접 소유한 호스트 프로그램용 표준 입출력 JSONL RPC 어댑터. 표준 입력으로 한 줄에 JSON 명령 하나, 표준 출력으로 한 줄에 프레임 하나를 주고받는다([문서](docs/protocol/RPC.ko.md)). `--mode rpc`도 같은 어댑터를 고른다. |
 | `horon completions <bash\|zsh\|fish>` | 데몬을 시작하지 않고 셸 자동완성 스크립트를 출력한다. |
 | `horon stream-rules [TEXT]` | 스트림 규칙을 검사하고 모델 답변 예시에 맞는 규칙을 오프라인에서 확인한다. |
@@ -136,6 +137,8 @@ horon run "summarize this repo"
 
 `horon run --no-session "<메시지>"`는 실행을 메모리에만 둡니다. `$HORON_HOME` 아래에 세션 로그, 체크포인트, 카탈로그 행, 실행 저널을 쓰지 않으므로 실행 뒤에 이어가거나 복구할 수 없고, 실패한 실행도 흔적을 남기지 않습니다. `--json`과 `--ndjson` 출력의 세션 ID는 저장된 세션을 가리키지 않습니다. 로그와 사용량 기록 같은 세션 밖 상태는 평소처럼 기록합니다. 저장된 세션이 필요한 `--resume`, `--continue`, `--goal`과는 함께 쓸 수 없습니다. `todo`처럼 세션별 파일을 따로 쓰는 도구는 이 보장에 포함되지 않습니다.
 
+`horon run --warn-cost <USD>`는 실행의 추정 비용이 그 금액에 닿으면 표준 오류에 경고를 한 번 표시합니다. `--max-cost <USD>`는 추정 비용이 그 금액에 닿은 뒤로 새 모델 요청을 보내지 않고, 실행은 비용 상한 오류로 끝납니다. 추정은 응답이 보고한 토큰과 가격 카탈로그로 계산합니다. 이미 보낸 요청은 끝까지 처리해 합산하므로 합계가 처리 중이던 만큼 상한을 넘을 수 있습니다. 가격을 모르는 모델은 따로 보고하며 무료로 세지 않으므로 상한이 적용되지 않습니다. 같은 프로세스가 소유한 자식 에이전트도 같은 실행에 합산합니다. 두 옵션이 없으면 요청은 달라지지 않습니다.
+
 `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답하므로 v1 클라이언트와 v2 클라이언트가 모두 붙는다.
 
 ### 터미널 클라이언트
@@ -147,6 +150,10 @@ horon run "summarize this repo"
 현재 작업 디렉터리에서 가장 최근에 활동한 저장 세션을 다시 열려면 `horon --continue`를 실행한다. 특정 세션을 고르려면 `--resume <id>`를 사용한다.
 
 `horon --goal "Ship a fix" --goal-budget 1200`으로 새 세션에 목표와 토큰 예산을 설정할 수 있습니다.
+
+`horon --plan`으로 새 터미널 세션을 읽기 전용 플랜 모드로 열 수 있고, `horon run --plan "<메시지>"`로 계획만 세우는 한 번 실행도 가능합니다. `[tools] plan_mode = true`가 필요하며 `--resume`, `--continue`와 함께 쓸 수 없고, 조건이 맞지 않으면 모델 요청 전에 실패합니다. `/plan approve`로 읽기 전용 상태를 끝냅니다.
+
+`horon run --approval write|all "<메시지>"`는 그 실행 한 번에 한해 파일을 바꾸는 호출(`write`) 또는 읽기 전용이 아닌 모든 호출(`all`) 전에 승인을 요청합니다. 승인 수준을 높이기만 하고 설정된 더 엄격한 모드는 낮추지 않으며, 다른 세션은 자기 설정을 유지합니다.
 
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 

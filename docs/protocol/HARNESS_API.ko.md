@@ -124,6 +124,48 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 카탈로그 전체를 받는다. 변경 요청을 보낸 뒤 통신 오류가 발생하면 다시 요청하기
 전에 게시된 상태를 확인한다.
 
+## 패키지 명령(프로토콜 1.27)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 26에서 27로 옮겼습니다. 여기 있는 것은 모두
+추가형입니다. 패키지 명령을 조회하지 않는 클라이언트는 이전과 같은 프레임을 읽습니다.
+
+브리지는 데몬이 `runtime_commands`를 보고했을 때만 `package_commands_v1`을 광고합니다.
+이 두 값은 별도 요청이 아니라 그 요청에 실려 가기 때문입니다. 클라이언트는 보내기 전에
+기능을 확인하고, 세 SDK 모두 기능이 없으면 프로세스 안에서 호출을 거부하므로 구버전
+서버는 답할 수 없는 값을 받지 않습니다.
+
+| 값 | `args` | `runtime_command_result`의 `data` |
+| --- | --- | --- |
+| `package_commands` | 비어 있음 | `PackageCommandList`: 세대와 이름순으로 정렬한 명령 |
+| `package_command` | `[package_id, command, …인자 단어]` | `PackageCommandOutcome`: 펼친 글 또는 자식의 답 |
+
+항목 하나는 입력할 이름, 선언한 패키지, 선언한 명령 이름, 방식, 설명 한 줄, 그리고
+자원이 선언했을 때의 `argument_hint`를 담습니다. `kind`는 사용자 메시지로 펼쳐지는
+Markdown 자원이면 `template`, 패키지의 자식이 통신 계약으로 답하는 명령이면
+`executable`입니다.
+
+```json
+{"v":1,"id":9,"req":"runtime_command","session_id":"s-1","command":"package_commands"}
+{"v":1,"reply_to":9,"ev":"runtime_command_result","session_id":"s-1","command":"package_commands","data":{"generation":7,"commands":[{"name":"hello:greet","package_id":"hello","command":"greet","kind":"executable","description":"Report the arguments this executable command was called with."},{"name":"hello:review","package_id":"hello","command":"review","kind":"template","description":"Review a file","argument_hint":"<path>"}]},"message":"..."}
+```
+
+결과는 `text`와 `output` 가운데 하나만 채웁니다. 템플릿은 클라이언트가 제출할 메시지인
+`text`를, 실행형 명령은 자식의 값을 글자로 그린 `output`과 그리지 않은 같은 값을 담은
+`data`를 설정합니다. 결과 프레임의 `message`는 설정된 쪽을 그대로 다시 담으므로,
+메시지만 인쇄하는 클라이언트는 새로 해석할 것이 없습니다.
+
+두 값 모두 세션이 턴 경계에서 고정한 패키지 세대를 읽습니다. 조회는 그 세대를 이름 짓고,
+실행은 그 세대에서 빠진 패키지의 항목을 파일을 읽거나 자식을 시작하기 전에 거부하며,
+오류는 그 항목이 오래됐다고 말합니다. 실행형 명령은 계획 모드, 승인 모드, 세션의 비활성
+이름과 `pre_tool` 훅을 확인하고, 도구 허용 목록은 확인하지 않습니다. 허용 목록은 모델이
+부를 수 있는 도구를 이름 짓고 사용자가 입력하는 명령은 다르기 때문입니다. 정책 이름은
+`ext__<package id>__<command>`입니다.
+
+세 SDK는 이 쌍을 Rust와 Python에서 `list_package_commands`와 `run_package_command`로,
+TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다. ACP v1과 v2는
+바뀌지 않습니다. `available_commands_update`는 여전히 클라이언트 자체의 `/model`,
+`/models`, `/effort`를 싣습니다. 패키지 명령은 하네스 API 표면이고 ACP 표면이 아닙니다.
+
 ## 핸드오프 압축
 
 `compact`는 선택 필드 `method`를 받는다. 없으면 클라이언트가 늘 요청해 온 모델 요약이고,

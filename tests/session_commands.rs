@@ -859,3 +859,268 @@ fn removal_only_touches_a_recorded_clean_worktree_that_no_session_uses() {
     assert!(!planned.exists());
     assert!(repo.join("tracked.txt").exists() && foreign.exists());
 }
+
+/// A root session and a child of it, carrying canary values that must not leave the store.
+fn write_nested(home: &Path) {
+    let sessions = home.join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions");
+    fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).expect("private sessions");
+    let text = |id: &str, role: &str, text: &str| json!({"id":id,"role":role,"content":[{"type":"text","text":text}],"timestamp":"2020-01-01T01:00:00+01:00"});
+    let snapshot = |id: &str, parent: Value, created: &str, messages: Vec<Value>| {
+        json!({"id":id,"created_at":created,"updated_at":"2020-01-02T00:00:00Z","title":"CANARY_TITLE",
+               "provider_key":"openai","model":"test","route_api_method":"openai-api","messages":messages,
+               "parent_id":parent,"working_dir":"/Users/canary/secret-project","status":"completed","last_pid":null})
+    };
+    let root = snapshot(
+        "root_one",
+        Value::Null,
+        "2020-01-01T00:00:00Z",
+        vec![
+            text("r1", "user", "hello CANARY_NAME in /Users/canary/secret-project"),
+            json!({"id":"r2","role":"assistant","content":[
+                {"type":"tool_use","id":"toolu_CANARY","name":"bash","input":{"command":"cat /Users/canary/secret-project/.env"}}]}),
+            json!({"id":"r3","role":"user","content":[
+                {"type":"tool_result","tool_use_id":"toolu_CANARY","content":"SECRET_VALUE_CANARY"},
+                {"type":"image","media_type":"image/png","data":"CANARYIMAGEBYTES"}]}),
+        ],
+    );
+    let child = snapshot(
+        "child_one",
+        json!("root_one"),
+        "2020-01-01T00:10:00Z",
+        vec![text("c1", "user", "child CANARY_NAME"), text("c2", "assistant", "done")],
+    );
+    for (id, snapshot) in [("root_one", root), ("child_one", child)] {
+        fs::write(
+            sessions.join(format!("{id}.json")),
+            serde_json::to_vec(&snapshot).unwrap(),
+        )
+        .expect("snapshot");
+    }
+}
+
+fn anonymized(sandbox: &Sandbox, home: &Path, extra: &[&str]) -> (String, Value) {
+    let target = sandbox.path().join(format!("export-{}", extra.join("")));
+    let mut args = vec![
+        "sessions",
+        "anonymize",
+        "root_one",
+        "--output",
+        target.to_str().unwrap(),
+        "--json",
+    ];
+    args.extend_from_slice(extra);
+    let output = sandbox.run(home, &args);
+    assert_ok(&output);
+    let raw = fs::read_to_string(target.join("anonymized.json")).expect("anonymized.json");
+    let document = serde_json::from_str(&raw).expect("export json");
+    (raw, document)
+}
+
+#[test]
+fn anonymize_previews_the_removed_data_classes_and_writes_nothing() {
+    let sandbox = Sandbox::new("anonymize-preview");
+    let home = sandbox.home("a");
+    write_nested(&home);
+    assert_ok(&sandbox.migrate(&home, "root_one"));
+    assert_ok(&sandbox.migrate(&home, "child_one"));
+    let before = tree(&home.join("sessions"));
+
+    let output = sandbox.run(&home, &["sessions", "anonymize", "root_one", "--with-children"]);
+    assert_ok(&output);
+    let shown = stdout(&output);
+    for class in [
+        "titles",
+        "tool inputs and tool results",
+        "attachment bytes",
+        "message text",
+        "timestamps",
+    ] {
+        assert!(shown.contains(class), "the preview names {class:?}:\n{shown}");
+    }
+    assert!(shown.contains("sessions: 2, messages: 5"), "{shown}");
+    assert!(!shown.contains("CANARY"), "{shown}");
+    assert_eq!(tree(&home.join("sessions")), before);
+}
+
+#[test]
+fn anonymized_export_keeps_structure_and_drops_canaries() {
+    let sandbox = Sandbox::new("anonymize-export");
+    let home = sandbox.home("a");
+    write_nested(&home);
+    assert_ok(&sandbox.migrate(&home, "root_one"));
+    assert_ok(&sandbox.migrate(&home, "child_one"));
+    let original = tree(&home.join("sessions"));
+
+    let (raw, document) = anonymized(&sandbox, &home, &["--with-children"]);
+    for canary in [
+        "CANARY_NAME",
+        "CANARY_TITLE",
+        "/Users/canary",
+        "SECRET_VALUE_CANARY",
+        "CANARYIMAGEBYTES",
+        "toolu_CANARY",
+        "root_one",
+        "child_one",
+    ] {
+        assert!(!raw.contains(canary), "{canary} must not appear in the export");
+    }
+    let sessions = document["sessions"].as_array().expect("sessions");
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(
+        (sessions[0]["id"].as_str(), sessions[0]["parent"].as_str()),
+        (Some("s1"), None)
+    );
+    assert_eq!(sessions[1]["parent"], json!("s1"));
+    let roles: Vec<&str> = sessions[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|message| message["role"].as_str().unwrap())
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "user"]);
+    let blocks = |message: usize, block: usize| sessions[0]["messages"][message]["blocks"][block].clone();
+    assert_eq!(blocks(1, 0)["id"], json!("t1"));
+    assert_eq!(
+        blocks(2, 0)["tool_use_id"],
+        json!("t1"),
+        "the result still answers its call"
+    );
+    assert_eq!(blocks(2, 1)["type"], json!("image"));
+    assert!(blocks(2, 1).get("data").is_none());
+    assert_eq!(tree(&home.join("sessions")), original, "the store is untouched");
+}
+
+#[test]
+fn anonymized_export_keeps_only_what_the_caller_names() {
+    let sandbox = Sandbox::new("anonymize-keep");
+    let home = sandbox.home("a");
+    write_nested(&home);
+    assert_ok(&sandbox.migrate(&home, "root_one"));
+
+    let (raw, document) = anonymized(&sandbox, &home, &["--keep-text", "--keep-tool-names"]);
+    assert!(!raw.contains("/Users/canary"), "known paths are masked in kept text");
+    let first = &document["sessions"][0]["messages"];
+    assert_eq!(first[0]["blocks"][0]["text"], json!("hello CANARY_NAME in <path>"));
+    assert_eq!(first[1]["blocks"][0]["name"], json!("bash"));
+    assert!(raw.contains("\"removed\"") && !raw.contains("\"timestamp\""));
+}
+
+fn claude_transcript(path: &Path) {
+    let rows = [
+        json!({"type":"user","uuid":"u1","sessionId":"cc-1","cwd":"/work/app","timestamp":"2026-11-01T10:00:00Z",
+               "message":{"role":"user","content":"fix the parser"}}),
+        json!({"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"cc-1","cwd":"/work/app",
+               "timestamp":"2026-11-01T10:00:05Z",
+               "message":{"role":"assistant","model":"claude-x","content":[{"type":"text","text":"done"}]}}),
+    ];
+    let body: Vec<String> = rows.iter().map(Value::to_string).collect();
+    fs::write(path, body.join("\n") + "\n").expect("claude transcript");
+}
+
+fn codex_transcript(path: &Path) {
+    let rows = [
+        json!({"timestamp":"2026-11-01T10:00:00Z","type":"session_meta","payload":{"id":"cx-1","timestamp":"2026-11-01T10:00:00Z","cwd":"/work/app"}}),
+        json!({"timestamp":"2026-11-01T10:00:01Z","type":"response_item",
+               "payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"add a flag"}]}}),
+        json!({"timestamp":"2026-11-01T10:00:02Z","type":"response_item",
+               "payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"added"}]}}),
+    ];
+    let body: Vec<String> = rows.iter().map(Value::to_string).collect();
+    fs::write(path, body.join("\n") + "\n").expect("codex transcript");
+}
+
+#[test]
+fn transcript_preview_reads_both_formats_and_writes_nothing() {
+    let sandbox = Sandbox::new("transcript-preview");
+    let home = sandbox.home("a");
+    let claude = sandbox.path().join("claude.jsonl");
+    let codex = sandbox.path().join("codex.jsonl");
+    claude_transcript(&claude);
+    codex_transcript(&codex);
+    let sources = (sha(&claude), sha(&codex));
+
+    for (file, id, format, prompt) in [
+        (&claude, "imported_cc_cc-1", "claude-code", "fix the parser"),
+        (&codex, "imported_codex_cx-1", "openai-codex", "add a flag"),
+    ] {
+        let output = sandbox.run(
+            &home,
+            &["sessions", "import-transcript", file.to_str().unwrap(), "--json"],
+        );
+        assert_ok(&output);
+        let report: Value = serde_json::from_str(&stdout(&output)).expect("preview json");
+        assert_eq!(report["session_id"], json!(id));
+        assert_eq!(report["format"], json!(format));
+        assert_eq!(report["imported"], json!(false));
+        assert_eq!(report["user_messages"], json!(1));
+        assert_eq!(report["assistant_messages"], json!(1));
+        assert_eq!(report["first_prompt"], json!(prompt));
+    }
+    assert!(!home.join("sessions").exists(), "a preview stores no session");
+    assert_eq!((sha(&claude), sha(&codex)), sources, "the source files are untouched");
+}
+
+#[test]
+fn transcript_apply_creates_a_resumable_session_and_is_idempotent() {
+    let sandbox = Sandbox::new("transcript-apply");
+    let home = sandbox.home("a");
+    let claude = sandbox.path().join("claude.jsonl");
+    let codex = sandbox.path().join("codex.jsonl");
+    claude_transcript(&claude);
+    codex_transcript(&codex);
+    let sources = (sha(&claude), sha(&codex));
+
+    for (file, id) in [(&claude, "imported_cc_cc-1"), (&codex, "imported_codex_cx-1")] {
+        for _ in 0..2 {
+            let output = sandbox.run(
+                &home,
+                &[
+                    "sessions",
+                    "import-transcript",
+                    file.to_str().unwrap(),
+                    "--apply",
+                    "--json",
+                ],
+            );
+            assert_ok(&output);
+            let report: Value = serde_json::from_str(&stdout(&output)).expect("apply json");
+            assert_eq!(report["session_id"], json!(id));
+            assert_eq!(report["imported"], json!(true));
+        }
+        let inspect = sandbox.run(&home, &["sessions", "inspect", id, "--json"]);
+        assert_ok(&inspect);
+        let report: Value = serde_json::from_str(&stdout(&inspect)).expect("inspect json");
+        assert_eq!(report["messages"], json!(2));
+        assert!(event_log(&home, id).exists(), "the import wrote a stored session");
+    }
+    assert_eq!((sha(&claude), sha(&codex)), sources, "the source files are untouched");
+}
+
+#[test]
+fn transcript_with_an_unknown_format_fails_with_the_source_error() {
+    let sandbox = Sandbox::new("transcript-unknown");
+    let home = sandbox.home("a");
+    let not_json = sandbox.path().join("notes.txt");
+    let other_json = sandbox.path().join("other.jsonl");
+    fs::write(&not_json, "plain notes\n").unwrap();
+    fs::write(&other_json, "{\"hello\":\"world\"}\n").unwrap();
+
+    let output = sandbox.run(
+        &home,
+        &["sessions", "import-transcript", not_json.to_str().unwrap(), "--apply"],
+    );
+    assert_refused(
+        &output,
+        "notes.txt line 1 is not a JSON record: expected value at line 1 column 1",
+    );
+    let output = sandbox.run(
+        &home,
+        &["sessions", "import-transcript", other_json.to_str().unwrap(), "--apply"],
+    );
+    assert_refused(
+        &output,
+        "other.jsonl is not a Claude Code or Codex transcript (first record has no type field)",
+    );
+    assert!(!home.join("sessions").exists());
+}

@@ -34,6 +34,7 @@ use anyhow::{Context, Result, ensure};
 use horon_agent_extension_types::{PackageResources, PluginManifest};
 use sha2::{Digest, Sha256};
 
+use super::command_resources::{PackageCommand, read_commands, validate_command_files};
 use super::manifest::{open_package_file, relative_path};
 use super::{PackageKind, PackageRecord, PackageScope, PackageState, PackageStore};
 use crate::skill::FileStamp;
@@ -89,6 +90,8 @@ pub struct PackageText {
     pub skills: Vec<PackageSkill>,
     pub rules: Vec<PackageRule>,
     pub prompts: Vec<PackagePrompt>,
+    /// The Markdown commands the plugin declares, sorted by typed name.
+    pub commands: Vec<PackageCommand>,
 }
 
 impl PackageText {
@@ -98,6 +101,11 @@ impl PackageText {
             .iter()
             .find(|prompt| prompt.name == name)
             .map(|prompt| prompt.text.as_str())
+    }
+
+    /// The command whose declared name is `command`.
+    pub fn command(&self, command: &str) -> Option<&PackageCommand> {
+        self.commands.iter().find(|entry| entry.command == command)
     }
 }
 
@@ -137,6 +145,20 @@ impl PackageTextResources {
 
     pub fn rules(&self) -> impl Iterator<Item = &PackageRule> {
         self.packages.values().flat_map(|package| package.rules.iter())
+    }
+
+    /// Every Markdown command the listed packages declare.
+    ///
+    /// The order is the loader's: packages by ID, commands by typed name. A
+    /// caller that lists them sorts by `name` itself when it needs one order
+    /// across every package.
+    pub fn commands(&self) -> impl Iterator<Item = &PackageCommand> {
+        self.packages.values().flat_map(|package| package.commands.iter())
+    }
+
+    /// The command whose declared name is `command` in `package_id`.
+    pub fn command(&self, package_id: &str, command: &str) -> Option<&PackageCommand> {
+        self.packages.get(package_id)?.command(command)
     }
 
     /// The prompt whose public name is `name`, from any listed package.
@@ -351,14 +373,17 @@ fn load_installed(store: &PackageStore, record: &PackageRecord, digest: &str) ->
         files.push((file.path.clone(), stamp(&file.path)?));
         prompts.push(PackagePrompt { name, text: file.text });
     }
+    let (mut commands, mut command_files) = read_commands(&root, record, &resources.commands)?;
+    files.append(&mut command_files);
     skills.sort_by(|left, right| left.name.cmp(&right.name));
     rules.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     prompts.sort_by(|left, right| left.name.cmp(&right.name));
+    commands.sort_by(|left, right| left.name.cmp(&right.name));
     files.sort_by(|left, right| left.0.cmp(&right.0));
     files.dedup_by(|left, right| left.0 == right.0);
-    if skills.is_empty() && rules.is_empty() && prompts.is_empty() {
-        // A plugin may declare only commands or MCP servers; it then holds no
-        // text resource and must not make an otherwise empty set non-empty.
+    if skills.is_empty() && rules.is_empty() && prompts.is_empty() && commands.is_empty() {
+        // A plugin may declare only MCP servers; it then holds no text
+        // resource and must not make an otherwise empty set non-empty.
         return Ok(LoadedPackage {
             digest: digest.to_owned(),
             files,
@@ -369,7 +394,12 @@ fn load_installed(store: &PackageStore, record: &PackageRecord, digest: &str) ->
     Ok(LoadedPackage {
         digest: digest.to_owned(),
         files,
-        text: Some(Arc::new(PackageText { skills, rules, prompts })),
+        text: Some(Arc::new(PackageText {
+            skills,
+            rules,
+            prompts,
+            commands,
+        })),
         rejection: None,
     })
 }
@@ -597,5 +627,6 @@ pub fn validate_resources(root: &Path, resources: &PackageResources) -> Result<(
             "duplicate package prompt name: {declared}"
         );
     }
+    validate_command_files(root, &resources.commands)?;
     Ok(())
 }

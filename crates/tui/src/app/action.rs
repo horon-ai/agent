@@ -40,6 +40,16 @@ pub enum Action {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Ask the harness to run one command an installed package supplies.
+    ///
+    /// `display` is the line the user typed: a template's expansion is drawn as
+    /// that line, and an executable command's report needs no line at all.
+    PackageCommand {
+        package_id: String,
+        command: String,
+        arguments: String,
+        display: String,
+    },
     /// Read the attached session's token usage.
     Stats,
     /// Clear or compact the model context on the daemon.
