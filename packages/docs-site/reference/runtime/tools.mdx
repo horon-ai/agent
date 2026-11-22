@@ -713,7 +713,7 @@ The child is started, or reused for the same session, package and installed copy
 
 Disabling or removing the package cancels the pending request and reaps the child and its descendants. A handle obtained before the revocation is refused afterwards, even if the package is installed again.
 
-Limits: starting a child is serialized across the process, bounded by the 30-second wire deadline. Observer notifications and the slash-command consumer are separate steps. The tests run on Linux and macOS and compile on Windows (`cargo test --locked -p horon-agent-app-core --test package_tools`).
+Limits: starting a child is serialized across the process, bounded by the 30-second wire deadline. Tool calls and package commands share the one child; observer notifications are a separate step. The tests run on Linux and macOS and compile on Windows (`cargo test --locked -p horon-agent-app-core --test package_tools`).
 
 ## Where MCP server configuration comes from
 

@@ -121,6 +121,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | Report stored token usage by UTC date, provider, and model. Add `--json` for structured output. In the terminal client, `/stats` reports the attached session. |
+| `horon config show` / `horon config check` | Read-only. `show` lists the effective settings with the layer behind each (default, file, env, cli) and never prints credentials; `--json` for structured output. `check` validates `config.toml` with the startup loader, names the invalid section, and exits 1 when it is invalid. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
 | `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
 | `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
@@ -150,6 +151,10 @@ It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The c
 Run `horon --continue` to reopen the most recently active saved session in the current working directory. Use `--resume <id>` to pick a specific session.
 
 Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and token budget to a new session.
+
+Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
+
+`horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
 
 Use `horon --add-dir <path>` (repeatable) to open a session with extra workspace directories. Each path is resolved to an existing directory, a second spelling of the same directory collapses to one entry, and the list is part of the session context and stored with the session. In the client, `/dirs` lists it and `/dirs add <path>` or `/dirs remove <path>` changes it; removal never touches the directory. A listed root is workspace context, not an approval grant.
 

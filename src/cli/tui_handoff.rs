@@ -130,12 +130,13 @@ pub(crate) fn run(
     resume: Option<&str>,
     goal: Option<(&str, u64)>,
     add_dirs: &[String],
+    plan: bool,
 ) -> anyhow::Result<()> {
     match handoff {
         Handoff::Exec(sibling) => {
             let cwd =
                 std::env::current_dir().map_err(|error| anyhow::anyhow!("working directory unreadable: {error}"))?;
-            hand_off(&sibling, resume, Some(cwd.as_path()), goal, add_dirs)
+            hand_off(&sibling, resume, Some(cwd.as_path()), goal, add_dirs, plan)
         }
         Handoff::Headless(reason) => anyhow::bail!("{}", headless_message(reason)),
     }
@@ -167,6 +168,7 @@ fn client_args(
     cwd: Option<&Path>,
     goal: Option<(&str, u64)>,
     add_dirs: &[String],
+    plan: bool,
 ) -> Vec<std::ffi::OsString> {
     let mut args = Vec::new();
     if let Some(resume) = resume.filter(|resume| !resume.is_empty()) {
@@ -189,6 +191,9 @@ fn client_args(
         args.push("--add-dir".into());
         args.push(directory.into());
     }
+    if plan {
+        args.push("--plan".into());
+    }
     args
 }
 
@@ -200,9 +205,10 @@ fn hand_off(
     cwd: Option<&Path>,
     goal: Option<(&str, u64)>,
     add_dirs: &[String],
+    plan: bool,
 ) -> anyhow::Result<()> {
     let mut command = std::process::Command::new(sibling);
-    command.args(client_args(resume, cwd, goal, add_dirs));
+    command.args(client_args(resume, cwd, goal, add_dirs, plan));
     let error = horon_agent_platform::replace_process(&mut command);
     Err(anyhow::anyhow!(
         "could not start the interactive client {}: {error}",
@@ -255,7 +261,7 @@ mod tests {
     fn a_resumed_session_is_passed_as_the_session_flag() {
         let cwd = Path::new("/work/project");
         assert_eq!(
-            client_args(Some("sess-42"), Some(cwd), None, &[]),
+            client_args(Some("sess-42"), Some(cwd), None, &[], false),
             vec![
                 std::ffi::OsString::from("--session"),
                 std::ffi::OsString::from("sess-42"),
@@ -268,7 +274,7 @@ mod tests {
     #[test]
     fn a_fresh_launch_passes_only_the_cwd() {
         assert_eq!(
-            client_args(None, Some(Path::new("/work/project")), None, &[]),
+            client_args(None, Some(Path::new("/work/project")), None, &[], false),
             vec![
                 std::ffi::OsString::from("--cwd"),
                 std::ffi::OsString::from("/work/project"),
@@ -277,7 +283,7 @@ mod tests {
         // An empty id is what the flag parser rejects before this point; it must
         // never become `--session ""`.
         assert!(
-            client_args(Some(""), Some(Path::new("/work")), None, &[])
+            client_args(Some(""), Some(Path::new("/work")), None, &[], false)
                 .iter()
                 .all(|arg| arg != "--session")
         );
@@ -317,8 +323,8 @@ mod tests {
             HeadlessReason::DisabledByEnv,
             HeadlessReason::MissingSibling,
         ] {
-            let error =
-                run(Handoff::Headless(reason), None, None, &[]).expect_err("a headless handoff must not succeed");
+            let error = run(Handoff::Headless(reason), None, None, &[], false)
+                .expect_err("a headless handoff must not succeed");
             assert_eq!(error.to_string(), headless_message(reason));
         }
     }

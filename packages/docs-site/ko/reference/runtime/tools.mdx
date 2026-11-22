@@ -679,7 +679,7 @@ config 하위 디렉터리 규칙 본문
 
 패키지를 비활성화하거나 제거하면 대기 중인 요청을 취소하고 자식과 그 자손을 회수합니다. 철회 전에 얻은 핸들은 같은 패키지를 다시 설치해도 이후 거부합니다.
 
-한계: 자식 시작은 프로세스 전체에서 직렬화하며 30초 통신 기한으로 제한합니다. 관찰 알림과 슬래시 명령 소비자는 별도 단계입니다. 시험은 Linux와 macOS에서 실행하고 Windows에서는 컴파일만 합니다(`cargo test --locked -p horon-agent-app-core --test package_tools`).
+한계: 자식 시작은 프로세스 전체에서 직렬화하며 30초 통신 기한으로 제한합니다. 도구 호출과 패키지 명령은 자식 하나를 함께 쓰고, 관찰 알림은 별도 단계입니다. 시험은 Linux와 macOS에서 실행하고 Windows에서는 컴파일만 합니다(`cargo test --locked -p horon-agent-app-core --test package_tools`).
 
 ## MCP 서버 설정 출처
 

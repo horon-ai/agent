@@ -9,7 +9,7 @@ pub(crate) enum Early {
     /// Finished; nothing more to run.
     Done,
     /// Continue as this command, with the usual provider setup and approvals.
-    Rewrite(Command),
+    Rewrite(Box<Command>),
 }
 
 /// Commands that read local state and need no model, daemon or session.
@@ -29,6 +29,10 @@ pub(crate) async fn run_early_command(command: &Option<Command>) -> Result<Early
             select,
             delegate,
         }) => diagnostics(files, *json, select, *delegate).await,
+        Some(Command::Config { command }) => {
+            super::config_cli::run(command)?;
+            Ok(Early::Done)
+        }
         _ => Ok(Early::Pass),
     }
 }
@@ -48,5 +52,5 @@ async fn diagnostics(files: &[String], json: bool, select: &[usize], delegate: b
     }
     let (paths, brief) = handoff(&reports, select)?;
     eprintln!("Delegating {} diagnostic(s) in: {}", select.len(), paths.join(", "));
-    Ok(Early::Rewrite(Command::one_shot(brief)))
+    Ok(Early::Rewrite(Box::new(Command::one_shot(brief))))
 }
