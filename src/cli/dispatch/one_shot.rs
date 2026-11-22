@@ -152,6 +152,9 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
     if let Some(value) = overrides.append_system_prompt.as_deref() {
         agent.set_appended_system_text(&prompt_text(value)?)?;
     }
+    if overrides.approve_plan {
+        crate::plan_mode::allow_unattended_approval(agent.session_id());
+    }
     if let Some(mode) = overrides
         .approval
         .as_deref()

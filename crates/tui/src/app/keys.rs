@@ -345,6 +345,12 @@ impl App {
                 self.toggle_thinking();
                 return None;
             }
+            Some(keys::ids::APP_PLAN_MODE) => {
+                return Some(Action::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Plan,
+                    arguments: vec!["on".into()],
+                });
+            }
             Some(keys::ids::APP_VOICE) => {
                 self.toggle_voice();
                 return None;

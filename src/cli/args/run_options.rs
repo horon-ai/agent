@@ -25,4 +25,8 @@ pub(crate) struct RunModelOverrides {
     /// Add text after the composed system prompt for this run (text, or @file; at most 16 KiB)
     #[arg(long, value_name = "TEXT|@FILE")]
     pub(crate) append_system_prompt: Option<String>,
+
+    /// With `--plan`, approve the plan the model submits instead of waiting for an answer
+    #[arg(long, requires = "plan")]
+    pub(crate) approve_plan: bool,
 }
