@@ -57,9 +57,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
-    // Release installation is a standalone filesystem operation. Installers run
-    // it on machines with no configuration yet, and it must not load provider
-    // profiles, migrate config, or start the daemon before it installs.
+    // Release installation is a standalone filesystem operation: installers run it before any configuration
+    // exists, so it must not load provider profiles, migrate config, or start the daemon.
     if let Some(Command::InstallRelease { .. }) = &args.command {
         let Some(Command::InstallRelease {
             assets,
@@ -288,6 +287,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. } | Command::Agents) => {
             unreachable!("handled by startup")
         }
+        Some(Command::Changelog { .. }) => unreachable!("handled by startup"),
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }

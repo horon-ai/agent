@@ -129,6 +129,7 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | `horon provider status [--json]` | Reports each configured profile's credential source and local status (`authenticated`, `unauthenticated`, or `unknown`) without printing credentials or contacting a provider. |
 | `horon compact-text <FILE\|->` | Summarizes a UTF-8 text file (or stdin, up to 48 KiB, never modified) on stdout and lists what it left out on stderr. `--max-tokens` bounds the summary. |
 | `horon cloud doctor [--host <alias>]` | Checks that an SSH host is reachable and runs a horon-agent that supports `cloud move`, before you move a session. It prints one `ready`, `unreachable` or `incompatible` line with the next step, sends no session data and exits nonzero unless the host is ready. |
+| `horon changelog [VERSION] [--json]` | Prints the published release notes of VERSION (default: the running release) without updating or installing anything. If the notes cannot be read it prints the version and the release page instead. Control characters in the notes are removed. |
 
 `horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
 

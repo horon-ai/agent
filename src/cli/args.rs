@@ -393,6 +393,21 @@ pub(crate) enum Command {
         json: bool,
     },
 
+    /// Show the release notes of a version without updating
+    ///
+    /// Reads the published notes of VERSION (default: the running release) and
+    /// prints them. It never downloads or installs a build. When the notes
+    /// cannot be read it prints the version and the release page instead.
+    Changelog {
+        /// Release version such as 0.1.5 (default: the running release)
+        #[arg(value_name = "VERSION")]
+        version: Option<String>,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Show usage limits for connected providers
     Usage {
         /// Emit JSON instead of plain text
