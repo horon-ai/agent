@@ -19,7 +19,9 @@ supervisor runs installed copies on Linux, macOS and Windows. A session captures
 one snapshot per turn, so a running turn keeps the generation it started with
 while the next turn and new sessions observe the newest one; a disable or removal
 refuses new loads at once and runs the callbacks registered for the generation
-that is being revoked. Tool, text, MCP, hook and command surfaces are later steps.
+that is being revoked. Tool, text, MCP and command surfaces are later steps; the
+observation events an installed package and its bundled hook files subscribe to
+are delivered now.
 
 | Surface | State | Check |
 | --- | --- | --- |
@@ -33,7 +35,8 @@ that is being revoked. Tool, text, MCP, hook and command surfaces are later step
 | Child supervision on Windows | Implemented | `cargo test --locked -p horon-agent-base --test package_spawn_windows` on `.github/workflows/package-windows.yml` (x64 and arm64) |
 | Daemon catalog control and automatic inbox reconciliation | Implemented | `cargo test --locked --test harness_roundtrip package_daemon` |
 | Session snapshot and revocation | Implemented | `cargo test --locked -p horon-agent-app-core --test package_session` |
-| Package tools, text, MCP, hooks and commands | Pending | Follow-up changes on the same launch path |
+| Package observation events and bundled hook files | Implemented | `cargo test --locked -p horon-agent-app-core --lib extensions::observer::tests` |
+| Package tools, text, MCP and commands | Pending | Follow-up changes on the same launch path |
 
 ## Two package kinds
 

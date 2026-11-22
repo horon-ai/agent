@@ -259,3 +259,51 @@ fn rejects_nonportable_path_spellings_before_installation() {
     plugin(root.path(), "rules = ['règles.md']", "1.2.3-beta.1+local.007");
     rejected(root.path(), "invalid package-relative path");
 }
+
+#[test]
+fn accepts_a_plugin_hook_file_that_subscribes_to_an_event() {
+    let (root, _) = fixture(true);
+    fs::write(root.path().join("hook.json"), r#"{"events": ["tool.after"]}"#).unwrap();
+    plugin(root.path(), "hooks = ['hook.json']", "1.2.3-beta.1+local.007");
+    let validated = validate_package(root.path()).unwrap();
+    assert_eq!(validated.resources.hooks, ["hook.json"]);
+}
+
+#[test]
+fn rejects_a_hook_file_that_repeats_a_declared_event() {
+    let (root, _) = fixture(true);
+    fs::write(
+        root.path().join("native/extension.toml"),
+        extension(
+            r#"events = ["turn.start"]"#,
+            "1.2.3-beta.1+local.007",
+            binary_name(),
+            host_target(),
+        ),
+    )
+    .unwrap();
+    fs::write(root.path().join("hook.json"), r#"{"events": ["turn.start"]}"#).unwrap();
+    plugin(root.path(), "hooks = ['hook.json']", "1.2.3-beta.1+local.007");
+    rejected(root.path(), "declared in extension.toml");
+}
+
+#[test]
+fn rejects_two_hook_files_that_name_the_same_event() {
+    let (root, _) = fixture(true);
+    fs::write(root.path().join("first.json"), r#"{"events": ["turn.end"]}"#).unwrap();
+    fs::write(root.path().join("second.json"), r#"{"events": ["turn.end"]}"#).unwrap();
+    plugin(
+        root.path(),
+        "hooks = ['first.json', 'second.json']",
+        "1.2.3-beta.1+local.007",
+    );
+    rejected(root.path(), "duplicate package event");
+}
+
+#[test]
+fn rejects_a_hook_file_with_an_unknown_event() {
+    let (root, _) = fixture(true);
+    fs::write(root.path().join("hook.json"), r#"{"events": ["prompt.read"]}"#).unwrap();
+    plugin(root.path(), "hooks = ['hook.json']", "1.2.3-beta.1+local.007");
+    rejected(root.path(), "parse hook.json");
+}

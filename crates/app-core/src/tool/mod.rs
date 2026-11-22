@@ -2215,12 +2215,14 @@ impl Registry {
 
         // Input and context stay as they are from here on, so the lifecycle
         // fields are built once: lent to the start line, relabelled below.
+        crate::extensions::observer::tool_before(&ctx, resolved_name);
         let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
         crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
 
         let execute_started_at = std::time::Instant::now();
         let result = tool.execute(input.clone(), ctx.clone()).await;
         let execute_ms = elapsed_ms(execute_started_at);
+        crate::extensions::observer::tool_after(&ctx, resolved_name, result.is_ok(), execute_ms);
 
         // The `post_tool` observer fires as soon as the tool returns, before the
         // feedback and guard stages exist, so its DURATION_MS stays the execute
