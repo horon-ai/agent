@@ -3,7 +3,16 @@ use crate::logging;
 use crate::message::{Message, ToolDefinition};
 use crate::session::StoredMessage;
 
+#[path = "run_prompt.rs"]
+mod run_prompt;
+
 impl Agent {
+    /// Add text after this session's composed system prompt, for this process only.
+    /// Nothing is stored in the session; the text is bounded.
+    pub fn set_appended_system_text(&mut self, text: &str) -> anyhow::Result<()> {
+        run_prompt::set_appended(&self.session.id, text)
+    }
+
     pub(crate) fn runtime_skills_snapshot(&self) -> serde_json::Value {
         let registry = self.current_skills_snapshot();
         let mut loaded = registry.list();
@@ -280,6 +289,9 @@ impl Agent {
             if let Some(section) = listed_tools {
                 Self::append_static_section(&mut static_part, &section);
             }
+            if let Some(extra) = run_prompt::appended(&self.session.id) {
+                Self::append_static_section(&mut static_part, &extra);
+            }
             return crate::prompt::SplitSystemPrompt {
                 static_part,
                 dynamic_part: String::new(),
@@ -304,19 +316,27 @@ impl Agent {
         });
 
         // Frozen per session so skill installs never rewrite the cached
-        // system prefix. Later installs are announced in the transcript.
-        let skills_section = self.prompt_skills_section.as_deref();
+        // system prefix. A package skill is the exception: the section is then
+        // re-rendered from the turn's package generation, so the package set
+        // that did not move still renders the same bytes.
+        let package_text = self.package_text_resources();
+        let skills_section = self.request_skills_section(package_text.as_deref());
 
         let working_dir = self.session.working_dir.as_ref().map(std::path::PathBuf::from);
 
         let (mut split, _context_info) = crate::prompt::build_system_prompt_split_with_snapshot(
             skill_prompt.as_deref(),
-            skills_section,
+            skills_section.as_deref(),
             memory_prompt,
             working_dir.as_deref(),
             &self.agents_md_snapshot,
             &self.static_prompt_sources,
         );
+        // Package rules come after every captured section: a labelled, capped,
+        // lowest-priority block that never replaces AGENTS.md or the base prompt.
+        if let Some(resources) = package_text.as_deref() {
+            crate::prompt::append_package_rules(&mut split, resources);
+        }
 
         self.append_current_turn_system_reminder(&mut split);
         self.append_context_notes(&mut split);
@@ -325,6 +345,9 @@ impl Agent {
         self.append_todo_hint(&mut split);
         if let Some(section) = listed_tools {
             Self::append_static_section(&mut split.static_part, &section);
+        }
+        if let Some(extra) = run_prompt::appended(&self.session.id) {
+            Self::append_static_section(&mut split.static_part, &extra);
         }
         self.append_yield_instruction(&mut split);
 

@@ -223,6 +223,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | SessionHeads { session_id, .. }
         | SessionHistoryPage { session_id, .. }
         | SessionMarkdown { session_id, .. }
+        | SessionHtml { session_id, .. }
         | SessionEventPage { session_id, .. }
         | SessionImportResult { session_id, .. }
         | SessionBlobChunk { session_id, .. }
@@ -246,6 +247,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         // rest of the arm list comes from the import above.
         | ApiEvent::Ok
         | Error { .. }
+        | PackageControl { .. }
         | Sessions { .. }
         | Pong
         | DegradationReceipts(_)

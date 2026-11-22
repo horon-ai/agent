@@ -22,7 +22,8 @@ pub const USAGE: &str = "\
 horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
-                 [--config <file>]... [--gallery[=<scene>]]
+                 [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
+                 [--goal <objective> --goal-budget <tokens>]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
                  [--hide-thinking] [--no-title]
@@ -31,7 +32,11 @@ Options:
   --socket <path>           Harness API socket to connect to (default: the
                             resolved harness socket for this user)
   --session <id>            Attach to an existing session instead of creating one
+  --goal <objective>       Attach a goal when creating a new session
+  --goal-budget <tokens>   Set the new goal's token ceiling
   --cwd <dir>               Working directory for a newly created session
+  --add-dir <dir>           Extra workspace directory for the session; must
+                            exist, and repeats add several (repeatable)
   --config <file>           Extra settings file, read after the global and
                             project files and before the environment
                             (repeatable)
@@ -218,6 +223,10 @@ const ACTION_DESCRIPTIONS: &[(&str, &str)] = &[
         ids::APP_TOGGLE_THINKING,
         "show or hide the model's reasoning for this session",
     ),
+    (
+        ids::APP_PLAN_MODE,
+        "put this session in read-only plan mode, like /plan on",
+    ),
     (ids::APP_VOICE, "start or finish on-device voice input"),
     (ids::EDITOR_BACKSPACE, "delete the character before the cursor"),
     (ids::EDITOR_DELETE, "delete the character at the cursor"),
@@ -278,8 +287,10 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "diff" => "show the staged and unstaged changes in the session's workspace",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
+        "export" => "write this session's transcript as a standalone offline HTML report (/export <path>)",
         "help" => "list the commands and the keys in force",
         "jobs" => "list the background work this session is running, and cancel a terminal",
+        "stats" => "show the attached session's recorded token usage",
         "keys" => "list the keys in force and what each does",
         "links" => "list the http(s) links in recent answers and open one",
         "mcp" => "list trusted MCP servers or connect to one with /mcp probe <server>",
@@ -352,18 +363,23 @@ pub(crate) fn detail(entries: &[Entry], name: &str) -> Option<String> {
 /// not know still lists: it simply shows without a description.
 pub(crate) fn harness_description(name: &str) -> &'static str {
     match name {
+        "advisor" => "show the session advisor, or turn it on or off with /advisor on|off",
         "agents" => "list the agent models, and switch one for this session or every session",
         "auth" => "show the login status and the provider profiles",
         "autojudge" => "turn the automatic judge on or off",
         "autoreview" => "turn the automatic review on or off",
         "context" => "show what is filling the context window",
+        "dirs" => "list the session's extra workspace directories, or add and remove one",
         "continue" => "resume every paused session",
         "fast" => "switch the provider's fast (priority) service tier",
+        "goal" => "attach a goal with /goal <token-budget> <objective>",
         "info" => "show the session, provider and usage details",
         "initiatives" => "list the open initiatives",
         "judge" => "spawn a judge that checks the work against the request",
         "logout" => "drop the stored provider credentials",
         "memory" => "show the memory status; `memory extract` schedules an extraction",
+        "modelpreset" => "list, preview or apply a named set of model choices",
+        "trim" => "preview or apply a request-only trim of old tool results",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
         "productivity" => "generate the productivity report",

@@ -17,6 +17,10 @@
 //!    rather than written down twice. The harness's `skills`, `mcp` and `swarm`
 //!    commands are the exceptions: the built-in `/skills`, `/mcp` and `/swarm`
 //!    own those names, and a skill itself answers as `/skill:<name>`.
+//! 4. The commands installed packages supply answer under `<package id>:<command>`,
+//!    and only where no source above spells that name: an installed package
+//!    never takes over an address a built-in, a command file or the harness
+//!    already answers to.
 //!
 //! A file whose name a built-in UI command already owns is shadowed: `/help`
 //! lists it with that label and it never runs, because the built-in wins.
@@ -45,6 +49,9 @@ pub(crate) mod shell;
 
 #[cfg(test)]
 mod builtin_tests;
+
+#[cfg(test)]
+mod package_tests;
 
 #[cfg(test)]
 mod shell_tests;
@@ -126,8 +133,12 @@ pub enum Local {
     Links,
     /// List the background work this session is running, and cancel one.
     Jobs,
+    /// Show stored token usage for the attached session.
+    Stats,
     /// Record the visible conversation to a local file, or stop.
     Record,
+    /// Write the conversation to a standalone offline HTML report.
+    Export,
     /// Replay a recorded conversation, or stop the replay.
     Replay,
     /// List the messages waiting for the running turn to end.
@@ -176,7 +187,9 @@ impl Local {
             "unpin" => Some(Self::Unpin),
             "links" => Some(Self::Links),
             "jobs" => Some(Self::Jobs),
+            "stats" => Some(Self::Stats),
             "record" => Some(Self::Record),
+            "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
             "diff" => Some(Self::Diff),
@@ -218,7 +231,9 @@ impl Local {
             Self::ShellExcluded => "shell",
             Self::Links => "links",
             Self::Jobs => "jobs",
+            Self::Stats => "stats",
             Self::Record => "record",
+            Self::Export => "export",
             Self::Replay => "replay",
             Self::Queue => "queue",
             Self::Diff => "diff",
@@ -263,7 +278,8 @@ pub struct FileCommand {
 pub enum Group {
     /// A command the client answers itself ([`Local`]).
     Builtin,
-    /// A runtime command the harness answers.
+    /// A runtime command the harness answers, including the commands an
+    /// installed package supplies under `<package id>:<command>`.
     Harness,
     /// A markdown command file.
     File,
@@ -309,6 +325,26 @@ pub struct Skill {
     pub description: String,
 }
 
+/// One slash command an installed package supplies, as the resolver needs it.
+///
+/// The name is the whole address a user types, `<package id>:<command>`; the
+/// two parts travel with it because running the command asks the harness for
+/// that package's command by name. The list belongs to the session, like the
+/// skills beside it, and is replaced whole when the session changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageCommand {
+    /// The typed name, without the leading slash.
+    pub name: String,
+    /// The package that declares it.
+    pub package_id: String,
+    /// The declared command name, the part after the colon.
+    pub command: String,
+    /// The argument hint the resource declares, when it declares one.
+    pub argument_hint: Option<String>,
+    /// One line saying what the command does.
+    pub description: String,
+}
+
 /// What one typed line asks the interface to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Invocation {
@@ -322,6 +358,17 @@ pub enum Invocation {
     Server {
         command: RuntimeCommand,
         arguments: Vec<String>,
+    },
+    /// A command an installed package supplies: the harness expands or runs it.
+    Package {
+        /// The package that declares the command.
+        package_id: String,
+        /// The declared command name, the part after the colon.
+        command: String,
+        /// The text typed after the name.
+        arguments: String,
+        /// The line the user typed, drawn as the message a template expands to.
+        display: String,
     },
     /// The line named nothing runnable; show it and send nothing.
     Error(String),
@@ -352,6 +399,11 @@ pub struct Registry {
     /// session change replaces them, and an empty list is a session whose
     /// harness reports none.
     skills: Vec<Skill>,
+    /// The commands the installed packages supply for the session in force.
+    ///
+    /// Read through the harness's own list for the same reason as the skills:
+    /// the list belongs to one session, and a session change replaces it whole.
+    packages: Vec<PackageCommand>,
     stamps: [Option<Vec<FileStamp>>; 2],
     last_check: Instant,
     warnings: Vec<String>,
@@ -365,6 +417,7 @@ impl Registry {
             project: None,
             files: Vec::new(),
             skills: Vec::new(),
+            packages: Vec::new(),
             stamps: [None, None],
             last_check: Instant::now(),
             warnings: Vec::new(),
@@ -431,11 +484,20 @@ impl Registry {
         self.skills = skills;
     }
 
+    /// Replace the package commands the harness listed for the session in force.
+    ///
+    /// The whole list is replaced for the same reason as the skills: it names
+    /// one session's installed packages, and a command the session left behind
+    /// offered must stop resolving the moment the client moves.
+    pub fn set_package_commands(&mut self, packages: Vec<PackageCommand>) {
+        self.packages = packages;
+    }
+
     /// Every command in force, as `/help` and the slash popup list it.
     ///
     /// The order is the order the sections print in: built-ins first, then the
-    /// harness's own names, then the command files, then the skills the harness
-    /// reported.
+    /// harness's own names, then the commands the installed packages supply,
+    /// then the command files, then the skills the harness reported.
     pub fn entries(&self) -> Vec<Entry> {
         let mut entries: Vec<Entry> = LOCAL_NAMES
             .iter()
@@ -453,6 +515,17 @@ impl Registry {
             name: name.to_string(),
             argument_hint: None,
             description: crate::help::harness_description(name).to_string(),
+            group: Group::Harness,
+            shadowed: false,
+        }));
+        // A package command is answered by the harness, so it lists in the
+        // harness section: its typed name already carries the package it came
+        // from, and `/help <name>` then reads the same as any other runtime
+        // command's entry.
+        entries.extend(self.packages.iter().map(|package| Entry {
+            name: package.name.clone(),
+            argument_hint: package.argument_hint.clone(),
+            description: package.description.clone(),
             group: Group::Harness,
             shadowed: false,
         }));
@@ -576,6 +649,18 @@ impl Registry {
         {
             return expand_skill(skill, trimmed, arguments);
         }
+        // A package command is the last source to answer, for the same reason:
+        // an installed package must never take over a name a built-in, a
+        // command file or the harness already answers to. Its address carries
+        // the package id, so a name it claims reads as one of its own.
+        if let Some(package) = self.packages.iter().find(|package| package.name == word) {
+            return Invocation::Package {
+                package_id: package.package_id.clone(),
+                command: package.command.clone(),
+                arguments: arguments.to_string(),
+                display: trimmed.to_string(),
+            };
+        }
         Invocation::Error(crate::help::unknown(word))
     }
 
@@ -590,6 +675,7 @@ impl Registry {
         }
         let mut names: Vec<&str> = LOCAL_NAMES.to_vec();
         names.extend(server_commands().iter().map(|(name, _)| name.as_str()));
+        names.extend(self.packages.iter().map(|package| package.name.as_str()));
         names.extend(
             self.files
                 .iter()
@@ -728,6 +814,7 @@ const LOCAL_NAMES: [&str; 31] = [
     "diff",
     "effort",
     "exit",
+    "export",
     "help",
     "jobs",
     "keys",
@@ -745,6 +832,7 @@ const LOCAL_NAMES: [&str; 31] = [
     "resume",
     "settings",
     "skills",
+    "stats",
     "swarm",
     "switch",
     "unpin",
@@ -759,7 +847,9 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Memory,
     RuntimeCommand::Swarm,
     RuntimeCommand::Agents,
+    RuntimeCommand::ModelPreset,
     RuntimeCommand::SubagentModel,
+    RuntimeCommand::Trim,
     RuntimeCommand::Autoreview,
     RuntimeCommand::Autojudge,
     RuntimeCommand::Transport,
@@ -778,6 +868,9 @@ const SERVER_VARIANTS: &[RuntimeCommand] = &[
     RuntimeCommand::Auth,
     RuntimeCommand::Logout,
     RuntimeCommand::Plan,
+    RuntimeCommand::Goal,
+    RuntimeCommand::Advisor,
+    RuntimeCommand::Dirs,
     RuntimeCommand::Mcp,
 ];
 

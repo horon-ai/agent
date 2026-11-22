@@ -8,7 +8,9 @@ use std::sync::OnceLock;
 use tokio::sync::RwLock;
 
 mod body;
+mod filter;
 pub(crate) use body::FileStamp;
+pub use filter::{NO_SKILLS_ENV, SKILLS_ALLOW_ENV, parse_patterns};
 mod collision;
 #[cfg(test)]
 #[path = "skill/collision_tests.rs"]
@@ -22,6 +24,7 @@ mod overlay_cache;
 #[cfg(test)]
 #[path = "skill/overlay_cache_tests.rs"]
 mod overlay_cache_tests;
+mod package_source;
 mod sources;
 #[cfg(test)]
 #[path = "skill/sources_tests.rs"]
@@ -129,9 +132,8 @@ impl SkillRegistry {
     /// tools own once their switch is on.
     ///
     /// This is what the process-wide shared registry holds. Project-local
-    /// skills are intentionally excluded: they are a per-session overlay
-    /// resolved from the active session's workspace root (issue #457), never
-    /// from the daemon's startup cwd, and never shared across sessions.
+    /// skills are a per-session overlay resolved from the session's workspace
+    /// root (issue #457), never from the daemon's startup cwd.
     pub fn load_global() -> Result<Self> {
         let mut registry = Self::default();
         sources::load_global(&mut registry);
@@ -182,8 +184,7 @@ impl SkillRegistry {
         effective
     }
 
-    /// Insert or replace one skill. Shared bodies make the clone cheap, and
-    /// `Arc::make_mut` keeps an already handed-out snapshot untouched.
+    /// Insert or replace one skill; `Arc::make_mut` keeps a handed-out snapshot untouched.
     pub(crate) fn insert_skill(&mut self, skill: Skill) {
         Arc::make_mut(&mut self.skills).insert(skill.name.clone(), skill);
     }
@@ -319,20 +320,19 @@ impl SkillRegistry {
 
     /// Get a skill by name
     pub fn get(&self, name: &str) -> Option<&Skill> {
-        self.skills.get(name)
+        self.skills.get(name).filter(|skill| filter::allows(name, &skill.name))
     }
 
-    /// List all available skills.
-    ///
-    /// Sorted by skill name so the ordering is deterministic. The backing store
-    /// is a `HashMap`, whose iteration order is randomized per instance; without
-    /// this sort, two snapshots of the same skill set (e.g. the lock-contended
-    /// `self.skills.clone()` fallback in `current_skills_snapshot`) could emit
-    /// the "Available Skills" prompt section in different orders. That produces a
-    /// system prompt with identical length but different bytes, silently busting
-    /// the Anthropic strict-prefix KV cache mid-conversation.
+    /// List all available skills, sorted by name. The `HashMap` iterates in a
+    /// random order per instance, which would emit the "Available Skills" prompt
+    /// section in different bytes and bust the strict-prefix KV cache.
     pub fn list(&self) -> Vec<&Skill> {
-        let mut skills: Vec<&Skill> = self.skills.values().collect();
+        let mut skills: Vec<&Skill> = self
+            .skills
+            .iter()
+            .filter(|(key, skill)| filter::allows(key, &skill.name))
+            .map(|(_, skill)| skill)
+            .collect();
         skills.sort_by(|a, b| a.name.cmp(&b.name));
         skills
     }
@@ -387,7 +387,7 @@ impl SkillRegistry {
 
     /// Return true if a skill with the given name is currently loaded.
     pub fn contains(&self, name: &str) -> bool {
-        self.skills.contains_key(name)
+        self.get(name).is_some()
     }
 }
 
@@ -908,13 +908,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         write_test_skill(temp.path(), ".horon", "session-skill");
 
-        let prev_cwd = std::env::current_dir().expect("cwd");
         // reload_global must not pick up project-local skills even when the
         // process cwd contains them (daemon startup cwd independence).
-        std::env::set_current_dir(temp.path()).expect("chdir");
+        let cwd = crate::storage::CwdGuard::enter(temp.path()).expect("chdir");
         let mut registry = SkillRegistry::default();
         let result = registry.reload_global();
-        std::env::set_current_dir(prev_cwd).expect("restore cwd");
+        drop(cwd);
 
         result.expect("reload skills");
         assert!(

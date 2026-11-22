@@ -120,6 +120,10 @@
       "count": 1,
       "reason": "raw pipe-descriptor readiness test (FromRawFd)."
     },
+    "crates/app-core/src/tool/agentgrep/locate.rs": {
+      "count": 1,
+      "reason": "the test that a symbolic link out of the searched root is never followed creates the link with `std::os::unix::fs::symlink`, which Windows does not offer without a privilege."
+    },
     "crates/app-core/src/tool/bash.rs": {
       "count": 7,
       "reason": "`#[path]` gates for the POSIX-only bash test suites (one per test file), plus the helpers only those suites call (`parse_progress_marker` and the session-cwd, minimizer and non-interactive-env test overrides), gated with them so Windows does not compile them unused."
@@ -176,6 +180,10 @@
       "count": 6,
       "reason": "the execute bit `write` grants a newly created shebang file: mode arithmetic and `PermissionsExt` exist only on Unix, and Windows keeps the file exactly as written, so the Unix implementation, its no-op counterpart and their test modules are the whole OS split."
     },
+    "crates/app-core/tests/package_tools.rs": {
+      "count": 3,
+      "reason": "the pre-tool hook tests write chmod'd POSIX shell scripts (`PermissionsExt` mode bits and a `#!/bin/sh` body) and so does their `write_hook` helper; Windows cannot execute them, and the rest of the file compiles and runs there."
+    },
     "crates/base/src/background/tests/finalize.rs": {
       "count": 1,
       "reason": "one `#[cfg(unix)]` test that makes the status directory read-only through Unix mode bits (`PermissionsExt`) to prove a failed status write still finalizes the task once; a Windows read-only attribute does not stop files being created in a directory, so the failure cannot be produced there."
@@ -210,7 +218,7 @@
     },
     "crates/base/src/import_takeover_tests.rs": {
       "count": 4,
-      "reason": "the takeover guard's two directions are cfg-gated because they assert opposite outcomes: off Linux the call must be refused before staging, on Linux it must be allowed. The condition is the feature under test, not an OS primitive \u2014 `live_takeover_supported()` is the product surface and its Linux-only backing (`/proc/<pid>/stat`, pidfd) lives behind it."
+      "reason": "the takeover guard's two directions are cfg-gated because they assert opposite outcomes: off Linux the call must be refused before staging, on Linux it must be allowed. The condition is the feature under test, not an OS primitive — `live_takeover_supported()` is the product surface and its Linux-only backing (`/proc/<pid>/stat`, pidfd) lives behind it."
     },
     "crates/base/src/import_tests.rs": {
       "count": 7,
@@ -288,9 +296,17 @@
       "count": 3,
       "reason": "assert POSIX owner-only modes after hardening and symlink refusal of an external auth file."
     },
+    "crates/base/src/workspace_dirs_tests.rs": {
+      "count": 1,
+      "reason": "the dedup test reaches one directory through a symlink as well as through its canonical path, and Windows symlinks need privileges the test fixture cannot assume."
+    },
     "crates/base/tests/loading_probe_contract.rs": {
       "count": 1,
       "reason": "widens directory modes to 0755 to simulate a preflight failure, which needs POSIX mode bits."
+    },
+    "crates/base/tests/package_spawn_windows.rs": {
+      "count": 1,
+      "reason": "whole test file is the native-Windows counterpart of package_spawn.rs (#![cfg(windows)]): the package child's lifetime owner there is a Job Object and the scenarios start real cmd.exe descendants, which only a Windows runner can do. .github/workflows/package-windows.yml runs it on x64 and arm64, and scripts/ci/test_target_allowlist.json keeps it out of the Linux/macOS cohort."
     },
     "crates/base/tests/prompt_guidance_integration.rs": {
       "count": 1,
@@ -388,6 +404,10 @@
       "count": 2,
       "reason": "tests of the Unix-only `server stdio` subcommand above and of `api-bridge --stdio`, whose stdio transport has no Windows counterpart."
     },
+    "src/cli/cloud_doctor.rs": {
+      "count": 2,
+      "reason": "two `#[cfg(unix)]` test items: a fixture that writes an executable `/bin/sh` script standing in for the remote horon-agent, and the test that runs it. Windows has no `sh` or executable bit to stand in for the cloud host."
+    },
     "src/cli/dispatch.rs": {
       "count": 3,
       "reason": "the Unix-only `server stdio` arm, the Unix-only `api-bridge --stdio` transport, and the Windows arm that refuses it by name; no OS primitive is left in the file."
@@ -395,6 +415,10 @@
     "src/cli/mod.rs": {
       "count": 1,
       "reason": "`ssh_transport` bridges the native protocol over tokio::net::UnixStream, so the module exists only on Unix."
+    },
+    "src/cli/startup/images.rs": {
+      "count": 1,
+      "reason": "one `#[cfg(unix)]` test that creates a symbolic link out of the generated-images directory to prove it is refused; Windows symlink creation needs privileges the CI runner does not grant."
     },
     "src/main.rs": {
       "count": 1,

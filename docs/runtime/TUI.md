@@ -20,12 +20,14 @@ A resumed session is handed over as well. `horon --resume <id>` passes `--sessio
 
 `horon --continue` selects the most recently active saved session in the working directory and hands it to the client the same way.
 
+`horon --goal "Ship a fix" --goal-budget 1200` starts a new session and shows its goal and token ceiling. The flags also work with `horon run` and conflict with `--resume` and `--continue`. In a terminal session, `/goal 1200 Ship a fix` creates and attaches a goal without sending a model prompt. An existing active goal stays attached when reconnecting.
+
 The client reaches the daemon through the harness API bridge, and starts that bridge when no listening socket answers. The bridge serves the terminal that started it and ends with it: while a client is connected it keeps serving, and once none is it stops, as soon as the process that started it exits or after a minute without a client, releasing its single-instance lock and removing the socket file (`horon-agent-api.sock`). The next launch therefore starts a bridge from the installed release instead of reconnecting to one that stayed resident across an upgrade, and the daemon keeps running throughout. A socket file left by a bridge that was killed outright is not taken as a running bridge: `horon` and `horon-tui` check the socket with a connection, and when nothing answers they start the bridge again, which replaces the leftover file. No manual cleanup is needed.
 
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
            [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking] [--no-title]
 ```
 
@@ -36,6 +38,7 @@ The three motion flags are per-launch overrides: they outrank every settings fil
 | `--socket <path>` | Harness API socket instead of the resolved default |
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
+| `--add-dir <dir>` | Extra workspace directory for the session, repeatable; each must exist and is resolved and de-duplicated, and `/dirs` lists them |
 | `--config <file>` | Extra settings file, repeatable |
 | `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
 | `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |
@@ -244,6 +247,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.cycle_model_back` | `ctrl+alt+p` | Move backward through the model shortlist |
 | `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
+| `app.plan_mode` | `alt+m` | Put this session in read-only plan mode, like `/plan on` |
 | `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
 | `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
 | `editor.left` | `left`, `ctrl+b` | Move the cursor one grapheme cluster left |
@@ -376,6 +380,10 @@ The model list has the model in force marked `(current)` and the selected row ca
 
 `/model <name>` switches without the list.
 
+Use `/modelpreset` to list names, `/modelpreset preview <name>` to inspect the choices, or `/modelpreset apply <name>` to apply them to the current session. The [model preset settings](../provider/MODEL.md#session-model-presets) define how to write a preset. If a turn is running, retry the command after it ends.
+
+`/trim` shortens old tool results in the requests a session sends, without touching its stored history. `/trim preview [max_chars]` shows how many results and characters a limit would remove. `/trim apply [max_chars]` turns it on for later requests, and `/trim off` turns it off. The limit is 200 to 1,000,000 characters and defaults to 4,000. A result over the limit keeps its first 400 characters and a note pointing at `history://current`. The newest six messages and every error result are kept whole, and each tool call keeps its result with the same id. A limit outside the range is refused and the current setting stays.
+
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
 
 Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.
@@ -427,11 +435,15 @@ The `model` segment carries the reasoning effort the daemon reported for the mod
 
 `usage` and `cost` are opt-in: no preset draws them, and only a custom `statusline.left` or `statusline.right` array can. Both read what the runtime reported, so a metric nobody recorded draws nothing rather than a zero: a provider that omitted cache accounting gets `Σ↑in ↓out` with no cache column, and a daemon without a price table publishes no estimate, which is why `cost` is hidden on this build. Neither one causes a request per frame: the report is read when the client moves to a session and again when the model moves.
 
+Use `/stats` to show the attached session's recorded input, output and cache tokens, request count, and estimated cost in the transcript. The command reads the same harness report as the status line. Missing figures are shown as `unknown`.
+
 When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
 
 ## Commands
 
-A line starting with `/` is resolved in this order: a built-in command, a `skill:` address, a command file, a harness command, then a bare skill name. A built-in owns its name outright, so a command file with that name is listed with the built-in winning and never runs. An unknown name is an error that points at `/help`, and a line starting with `//` is sent as the literal message with one slash removed.
+A line starting with `/` is resolved in this order: a built-in command, a `skill:` address, a command file, a harness command, a bare skill name, then a command an installed package supplies. The `//` escape is read before any of them: such a line is sent as the literal message with one slash removed. A built-in owns its name outright, so a command file with that name is listed with the built-in winning and never runs. An unknown name is an error that points at `/help`.
+
+A package command answers as `/id:command`, where `id` is the package id and `command` is the name the package declared. It is resolved last, so an installed package never takes over a name a built-in, a command file or a harness command already answers to. The client reads the list when it attaches to a session and again after a session switch, and does not refresh it during the session, so a package installed while it is attached appears once it attaches again. `/help` lists these names under the harness commands, by the `/id:command` name. A template's text arrives from the harness already expanded and is submitted as an ordinary user message, drawn as the line that was typed and queued like typed text while a turn runs; an executable command has already run on the daemon under the tool policy, so its answer is drawn as a notice and nothing is sent. A harness without the `package_commands_v1` capability yields no package commands, and everything else in this section works as it did.
 
 | Command | Effect |
 | --- | --- |
@@ -445,6 +457,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/diff [staged\|unstaged]` | Inspect staged and unstaged changes in the attached local worktree |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
+| `/export <path>` | Write this session's transcript to a standalone offline HTML report |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
@@ -462,6 +475,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
+| `/stats` | Show the attached session's recorded token usage |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/unpin [id]` | Remove a session from the pinned group |
@@ -489,6 +503,8 @@ Enter `!command` to run a shell command in the TUI process's working directory. 
 
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
 
+`/export <path>` writes the attached session's transcript as one HTML file that opens without a connection: the harness renders it from the same redacted projection `horon export` prints, every transcript character is escaped so stored markup stays text, the stylesheet is inline, and a Content-Security-Policy forbids any network load. The path is used as typed, so a relative one lands in the directory the client runs in, and a file that already exists is refused rather than replaced.
+
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
 ```text
@@ -503,6 +519,7 @@ built-in commands:
   /diff                show staged and unstaged changes in the attached local worktree
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
+  /export              write this session's transcript as a standalone offline HTML report (/export <path>)
   /help                list the commands and the keys in force
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
@@ -520,6 +537,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
+  /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
   /unpin               take a session out of the pinned group
@@ -528,7 +546,7 @@ harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```
 
-Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page.
+Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page. The commands an installed package supplies sit in that same section under their `/id:command` name, and the section simply has no such rows when the session's packages supply none.
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
 

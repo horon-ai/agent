@@ -46,6 +46,7 @@ METADATA = ("platform.txt", "runner.txt", "commit.txt", "horon-version.txt")
 # not carry the unit, and to keep this list in one place next to the workflow.
 UNIT_FILES = {
     "compare": ("compare.json", "compare.md"),
+    "packages": ("packages.json", "packages.md"),
     "startup": ("startup.txt",),
     "loading-cold": ("loading-cold.json", "loading-cold.txt"),
     "loading-warm": ("loading-warm.json", "loading-warm.txt"),

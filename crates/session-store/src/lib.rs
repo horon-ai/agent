@@ -31,6 +31,7 @@ mod blob_staging;
 pub mod blobs;
 mod cache_coordination;
 mod cache_io;
+pub mod cache_reclaim;
 mod cache_state;
 mod cache_tools;
 mod cache_values;

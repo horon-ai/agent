@@ -57,6 +57,10 @@ pub struct DirectOpenAiCompatibleSpec {
 
 /// Build the direct provider runtime for a resolved profile.
 pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<Arc<dyn Provider>> {
+    Ok(Arc::new(build_direct_runtime(spec)?))
+}
+
+fn build_direct_runtime(spec: DirectOpenAiCompatibleSpec) -> anyhow::Result<OpenAiCompatibleProvider> {
     let configured_retention = spec.prompt_cache_retention;
     let model_reasoning_efforts = spec.model_reasoning_efforts;
     let mut provider =
@@ -78,7 +82,7 @@ pub fn build_direct_openai_compatible_runtime(spec: DirectOpenAiCompatibleSpec) 
     if let Some(extra_body) = spec.extra_body {
         provider = provider.with_extra_body(extra_body);
     }
-    Ok(Arc::new(provider))
+    Ok(provider)
 }
 
 /// Build the runtime for one built-in `OpenAiCompatibleProfile`.
@@ -164,6 +168,29 @@ pub fn build_named_openai_compatible_runtime(
     profile_name: &str,
     profile: &crate::config::NamedProviderConfig,
 ) -> anyhow::Result<Arc<dyn Provider>> {
+    Ok(Arc::new(build_named_runtime(profile_name, profile)?))
+}
+
+/// `None` indicates a wire that does not use the OpenAI model-list format.
+pub async fn fetch_named_openai_models(
+    profile_name: &str,
+    profile: &crate::config::NamedProviderConfig,
+) -> anyhow::Result<Option<Vec<String>>> {
+    if !matches!(
+        named_provider_wire(&profile.provider_type),
+        Some(WireProtocol::ChatCompletions | WireProtocol::Responses)
+    ) {
+        return Ok(None);
+    }
+    let runtime = build_named_runtime(profile_name, profile)
+        .map_err(|_| anyhow::anyhow!("profile endpoint or authentication is invalid"))?;
+    runtime.fetch_models().await.map(Some)
+}
+
+fn build_named_runtime(
+    profile_name: &str,
+    profile: &crate::config::NamedProviderConfig,
+) -> anyhow::Result<OpenAiCompatibleProvider> {
     let Some(wire) = named_provider_wire(&profile.provider_type) else {
         anyhow::bail!(
             "Provider profile '{}' has type \"{}\", which is not supported. \
@@ -259,7 +286,7 @@ pub fn build_named_openai_compatible_runtime(
         ));
     }
 
-    build_direct_openai_compatible_runtime(DirectOpenAiCompatibleSpec {
+    build_direct_runtime(DirectOpenAiCompatibleSpec {
         base_url,
         auth,
         wire,
@@ -336,6 +363,36 @@ fn named_profile_api_key(profile: &crate::config::NamedProviderConfig) -> Option
         return None;
     }
     crate::provider_catalog::load_api_key_from_env_or_config(env_name, env_file)
+}
+
+/// Local, read-only credential status for a configured profile, as
+/// `(source, state)`. It never returns a credential value and never touches the
+/// network. `state` is `authenticated` when a credential resolves,
+/// `unauthenticated` when one is required but missing, and `unknown` when the
+/// profile uses no credential.
+pub fn profile_credential_status(profile: &crate::config::NamedProviderConfig) -> (&'static str, &'static str) {
+    if profile.resolved_auth() == crate::config::NamedProviderAuth::None {
+        return ("none", "unknown");
+    }
+    let source = if profile.api_key.as_deref().is_some_and(|key| !key.trim().is_empty()) {
+        "inline"
+    } else if profile
+        .api_key_env
+        .as_deref()
+        .is_some_and(|name| !name.trim().is_empty())
+    {
+        "environment"
+    } else {
+        "none"
+    };
+    let state = if named_profile_api_key(profile).is_some() {
+        "authenticated"
+    } else if profile.requires_api_key == Some(false) {
+        "unknown"
+    } else {
+        "unauthenticated"
+    };
+    (source, state)
 }
 
 /// Background OpenAI-compatible profile catalog refresh, registered by the

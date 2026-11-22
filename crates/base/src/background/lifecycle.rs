@@ -220,6 +220,41 @@ impl Finalizer {
 }
 
 impl BackgroundTaskManager {
+    /// List all tasks (both running and completed from disk)
+    pub async fn list(&self) -> Vec<TaskStatusFile> {
+        self.list_matching(|_| true).await
+    }
+
+    /// Return only jobs owned by this process for the selected session.
+    pub async fn list_local_for_session(&self, session_id: &str) -> Vec<TaskStatusFile> {
+        let instance = model::process_instance_token();
+        self.list_matching(|task| task.session_id == session_id && task.owner_instance.as_deref() == Some(instance))
+            .await
+    }
+
+    async fn list_matching(&self, matches: impl Fn(&TaskStatusFile) -> bool) -> Vec<TaskStatusFile> {
+        let mut results = Vec::new();
+
+        // Read all status files from disk
+        if let Ok(mut entries) = fs::read_dir(&self.output_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.extension().map(|e| e == "json").unwrap_or(false)
+                    && let Some(status) = self.read_status_file(&path).await
+                    && matches(&status)
+                {
+                    let reconciled = self.finalize_detached_status_if_needed(status, &path).await;
+                    let reconciled = self.finalize_orphaned_status_if_needed(reconciled, &path).await;
+                    results.push(reconciled);
+                }
+            }
+        }
+
+        // Sort by task_id (which includes timestamp)
+        results.sort_by(|a, b| b.task_id.cmp(&a.task_id));
+        results
+    }
+
     /// Subscribe to terminal task transitions.
     ///
     /// Every task appears once, whether it finished on its own, failed, was

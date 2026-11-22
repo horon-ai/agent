@@ -5,12 +5,18 @@ use std::process::Command as ProcessCommand;
 use crate::{build, logging, server, startup_profile, storage, update};
 
 use super::{
-    args::{Args, Command},
+    args::{ApprovalsCommand, Args, Command, ProviderCommand},
     dispatch, hot_exec, output, terminal,
 };
 
+mod agent_catalog;
+mod approval_grants;
+mod changelog;
 mod completions;
+mod images;
+mod provider_status;
 mod stream_rule_preview;
+mod tokens;
 
 fn sync_output_style_from_config() {
     crate::output_style::set_emoji_enabled(crate::config::config().display.emoji);
@@ -20,7 +26,7 @@ fn sync_output_style_from_config() {
 /// errors during parsing, before any worker threads or TLS state are needed.
 pub fn run_standalone() -> Result<()> {
     let args = Args::parse();
-    if let Some(result) = offline_command(args.command.as_ref()) {
+    if let Some(result) = offline_command(&args) {
         return result;
     }
     // A provider install that loses to one already installed process-wide is the
@@ -42,17 +48,54 @@ pub async fn run() -> Result<()> {
     run_with_args(Args::parse()).await
 }
 
-fn offline_command(command: Option<&Command>) -> Option<Result<()>> {
-    match command {
+fn offline_command(args: &Args) -> Option<Result<()>> {
+    match &args.command {
         Some(Command::Completions { shell }) => Some(completions::write(*shell, std::io::stdout().lock())),
         Some(Command::StreamRules { sample }) => Some(stream_rule_preview::run(sample.as_deref())),
+        Some(Command::Tokens { .. }) if args.ssh.is_some() => {
+            Some(Err(anyhow::anyhow!("tokens runs locally without --ssh")))
+        }
+        Some(Command::Tokens { text, file }) => Some(tokens::run(
+            text.as_deref(),
+            file.as_deref(),
+            args.cwd.as_deref().map(std::path::Path::new),
+            args.model.as_deref(),
+        )),
+        Some(Command::Agents) if args.ssh.is_some() => Some(Err(anyhow::anyhow!("agents runs locally without --ssh"))),
+        Some(Command::Agents) => {
+            crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
+            Some(agent_catalog::run(args.cwd.as_deref().map(std::path::Path::new)))
+        }
+        Some(Command::Changelog { .. }) if args.ssh.is_some() => {
+            Some(Err(anyhow::anyhow!("changelog runs locally without --ssh")))
+        }
+        Some(Command::Changelog { version, json }) => Some(changelog::run(version.as_deref(), *json)),
+        Some(Command::Approvals {
+            action: ApprovalsCommand::Grants(grants),
+        }) => Some(approval_grants::run(grants)),
+        Some(Command::Images(_)) if args.ssh.is_some() => {
+            Some(Err(anyhow::anyhow!("images runs locally without --ssh")))
+        }
+        Some(Command::Images(images)) => Some(images::run(images)),
+        Some(Command::Provider(ProviderCommand::Status { json })) => Some(provider_status::run(*json)),
         _ => None,
     }
 }
 
 async fn run_with_args(args: Args) -> Result<()> {
-    if let Some(result) = offline_command(args.command.as_ref()) {
+    if let Some(result) = offline_command(&args) {
         return result;
+    }
+    if let Some(name) = args.isolated_profile.as_deref() {
+        let profile = super::launch_profile::select(name)?;
+        super::launch_profile::apply(&profile)?;
+        if args.show_profile {
+            println!("{}", super::launch_profile::describe(&profile));
+            return Ok(());
+        }
+    } else if args.show_profile {
+        println!("profile: none (HORON_HOME and socket environment unchanged)");
+        return Ok(());
     }
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
     // Snapshot user-supplied provider env before provider init rewrites it.
@@ -64,7 +107,12 @@ async fn run_with_args(args: Args) -> Result<()> {
                 if let Some(cwd) = &args.cwd {
                     std::env::set_current_dir(cwd)?;
                 }
-                return super::packages::run(action);
+                // A running daemon owns the catalog, so the command has to reach
+                // the socket the rest of the CLI would use.
+                if let Some(socket) = &args.socket {
+                    server::set_socket_path(socket);
+                }
+                return super::packages::run(action).await;
             }
             Some(Command::Mcp { .. } | Command::Approvals { .. }) => {
                 if let Some(cwd) = &args.cwd {
@@ -387,11 +435,44 @@ fn report_main_error(error: &anyhow::Error) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::args::{Args, Command};
+    use crate::cli::args::{Args, Command, RunModelOverrides};
     use clap::Parser;
 
     fn parse_args(argv: &[&str]) -> Args {
         Args::parse_from(argv)
+    }
+
+    #[test]
+    fn run_approval_flag_accepts_only_stricter_modes() {
+        let parsed = Args::try_parse_from(["horon", "run", "hi", "--approval", "write"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Run { model_overrides: RunModelOverrides { approval: Some(ref mode), .. }, .. }) if mode == "write"
+        ));
+        for mode in ["yolo", "off", "none"] {
+            assert!(Args::try_parse_from(["horon", "run", "hi", "--approval", mode]).is_err());
+        }
+    }
+
+    #[test]
+    fn startup_plan_flag_conflicts_with_resume() {
+        assert!(parse_args(&["horon", "--plan"]).plan);
+        assert!(!parse_args(&["horon"]).plan);
+        let error = Args::try_parse_from(["horon", "--plan", "--resume", "session-1"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn startup_goal_requires_budget_and_conflicts_with_resume() {
+        let goal = ["horon", "--goal", "Ship a fix", "--goal-budget", "1200"];
+        let parsed = parse_args(&goal);
+        assert_eq!(parsed.goal.as_deref(), Some("Ship a fix"));
+        assert_eq!(parsed.goal_budget, Some(1200));
+        for resume in [["--resume", "session-1"].as_slice(), ["--continue"].as_slice()] {
+            let error = Args::try_parse_from(goal.iter().chain(resume)).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+        assert!(Args::try_parse_from(["horon", "--goal", "Ship a fix"]).is_err());
     }
 
     #[test]

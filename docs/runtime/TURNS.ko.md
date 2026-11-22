@@ -302,8 +302,8 @@ CancelSoftInterrupts {
 
 하네스 API는 연결된 데몬의 안전 기능 프로브가 `runtime_commands`를 알릴 때만 그 기능을 알린다.
 구형 데몬은 명시적인 미지원 오류를 돌려준다.
-이것은 추가형 API이며 현재 마이너 버전은 22이고 Rust와 TypeScript SDK 모두에서 쓸 수 있다
-(`crates/harness-api/src/lib.rs:72-74`).
+이것은 추가형 API이며 현재 마이너 버전은 27이고 세 SDK 모두에서 쓸 수 있다
+(`crates/harness-api/src/lib.rs:88-91`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -342,6 +342,18 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   세션 재정의를 읽거나 요청한 정책 범위를 유지한다.
 - `subagent_model`: 생성된 워커 정책을 보기/설정/상속.
 - `autoreview`, `autojudge`: 상태를 보여주고 명시적 on/off/toggle을 유지한다.
+- `advisor`: 이 세션의 advisor가 도는지 보여 주고(`enabled`와 설정 기본값 `default_enabled`),
+  `on`/`off`로 이 세션만 켜거나 끈다. 끄면 이 세션의 새 advisor 작업이 바로 멈춘다. 선택은
+  실행 중인 세션에만 적용되며 `[advisor] enabled`나 다른 세션을 바꾸지 않는다.
+  `horon run --advisor on|off`는 한 번 실행에 같은 선택을 적용한다.
+- `dirs`: 세션의 작업 디렉터리와 함께 쓰는 추가 작업 디렉터리 목록을 보여 주고,
+  `add <path>`와 `remove <path>`로 하나를 더하거나 뺀다. 더하는 경로는 심볼릭 링크와 `..`까지
+  풀어서 해석하며 실제로 있는 디렉터리여야 하므로, 없는 경로나 파일은 오류로 거절한다.
+  이미 목록에 있는 디렉터리의 다른 표기는 두 번 들어가지 않는다. 제거는 목록만 바꾸고
+  디렉터리는 건드리지 않는다. 목록은 세션 문맥의 일부라서 더한 루트는 다음 프롬프트의
+  세션 문맥(대화가 시작된 뒤라면 한 번짜리 알림)에 나타나고, 세션 메타데이터와 함께
+  저장된다. `horon --add-dir <path>`, `horon run --add-dir <path>`(둘 다 반복 가능)는
+  세션을 시작할 때 목록을 정한다. 이 루트는 문맥일 뿐 승인 권한을 넓히지 않는다.
 - `plan`: 계획 모드 상태를 읽고 바꾼다. 인자가 없거나 `status`면 현재 상태를,
   `on`/`off`는 계획 모드를 켜고 끄며, `approve`/`reject`는 세션에 대기 중인 계획을
   승인하거나 거절한다. 설정에서 계획 모드가 꺼져 있으면 `on`과 `approve`는 오류로 답한다
@@ -372,9 +384,16 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   첫 응답은 완료가 아니라 요청 접수다.
 - `auth`, `logout`: 런타임 호스트 인증 검사와 명시적으로 확인한
   프로바이더 자격 증명 제거. 지원되는 공유 인증 저장소가 대상이다.
+- `package_commands`, `package_command`: 설치한 패키지가 공급하는 슬래시 명령.
+  `package_commands`는 세션이 고정한 세대의 명령을 나열하고,
+  `package_command`는 `[패키지 id, 명령, …인자 단어]`를 받아 펼친 템플릿 글이나
+  도구 정책을 통과한 자식의 답을 돌려준다. 둘 다 `package_commands_v1` 뒤에 있고
+  `runtime_commands`가 필요하다. 표면은
+  [하네스 API](../protocol/HARNESS_API.ko.md#패키지-명령프로토콜-127)에, 패키지 쪽은
+  [PACKAGES.ko.md](PACKAGES.ko.md#패키지-명령)에 있다.
 
 위 이름들은 런타임 명령 열거형이 정한다
-(`crates/harness-api/src/runtime_commands.rs:7-33`).
+(`crates/harness-api/src/runtime_commands.rs:13-58`).
 열거형에 없는 이름을 보내면 오류로 답한다.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, `cache 5m`은 이 열거형에 없다.
 캐시 TTL을 늘리는 런타임 명령도, 프리미엄 모드를 바꾸는 클라이언트 요청도 이 빌드에 없다.
@@ -634,6 +653,12 @@ method_order = ["handoff", "structured"]
 
 텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
 
+`--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함합니다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시합니다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보냅니다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보냅니다.
+
+## 텍스트 모드의 추론 표시
+
+`horon run --print-thoughts "..."`는 제공자가 보이는 텍스트로 돌려주는 추론을 답변보다 먼저 표준 오류에 `[thinking]` 표시와 함께 출력합니다. 답변은 표준 출력에 그대로 남으므로 파이프로 받은 출력은 달라지지 않습니다. 옵션을 주지 않으면 텍스트 출력은 바이트 단위로 같습니다. 제공자가 보이는 텍스트로 돌려주지 않는 추론은 표시하지 않으며, 이 옵션은 형식이 바뀌지 않는 `--json`, `--ndjson`과 함께 쓸 수 없습니다.
+
 ## `--resume` 동작
 
 값 없이 `--resume`만 넘기면 데몬을 시작하기 전에 세션 선택기 오류를 표시하고 종료한다.
@@ -657,6 +682,19 @@ method_order = ["handoff", "structured"]
 `session_picker_enter`나 `[terminal]` 키가 남아 있어도 읽지 않고, 예전 `--fresh-spawn`처럼
 창을 고르는 플래그도 없다. `crates/terminal-launch`에는 클라이언트 터미널 환경 스냅숏과
 훅 명령 파싱만 남아 있다.
+
+### 복구 미리보기
+
+`horon-agent session recovery <id> [--json]`는 세션 하나를 재개하면 무엇이 영향을 받는지 재개하지 않고 보여 준다. 저장된 원본만 읽는다. 데몬을 시작하지 않고, 런타임 저널을 열지 않으며, 아무것도 쓰지 않으므로 다른 프로세스가 그 세션을 쓰는 중에도 안전하다. 세션과 그 세션이 소유한 하위 세션(`parent_id`가 그 세션인 저장된 세션)은 아래 상태 중 하나가 된다.
+
+| 상태 | 의미 | 재개 대상 |
+| --- | --- | --- |
+| `empty` | 메시지 없음 | 아니요 |
+| `complete` | 마지막 메시지가 어시스턴트의 것이고 열린 도구 호출이 없음 | 아니요 |
+| `awaiting_reply` | 마지막 메시지가 사용자 메시지나 도구 결과라서 모델이 답하기 전에 턴이 멈춤 | 예 |
+| `unresolved_tool_calls` | 결과 없는 어시스턴트 도구 호출이 있어 실행 여부를 알 수 없고 부작용이 있을 수 있음 | 아니요, 사람이 결정할 때까지 보류 |
+
+보고서는 보류된 도구 호출마다 이름을 밝히고, 재개 대상과 보류 세션 수를 세며, 기존 재개 명령(`horon-agent --resume <id>`)을 출력한다. 재개 동작 자체는 바뀌지 않는다. 하위 세션 탐색은 저장된 세션을 최대 5000개까지 읽고, 거기서 멈추면 그렇게 알린다. 읽을 수 없는 세션은 `unreadable_sessions`에 나열한다.
 
 ### 저장한 세션
 

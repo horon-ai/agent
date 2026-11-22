@@ -37,6 +37,7 @@ mod history_search;
 mod jobs;
 mod keys;
 mod notes;
+mod package;
 mod picker;
 mod pins;
 mod prompts;
@@ -342,6 +343,13 @@ pub struct App {
     /// picker needs the file and the tool list the harness named, so the report
     /// is kept whole here. It is cleared with the session it belongs to.
     pub skills: Vec<SkillRow>,
+    /// The send a package command's expansion asked for, until the loop takes it.
+    ///
+    /// A package command's answer arrives on the bridge's channel, where no
+    /// command sender is held. A template's answer is a user message, and the
+    /// action that sends it waits here for [`App::take_queued`], which the frame
+    /// loop drains right after every delivery.
+    package_send: Option<Action>,
     /// The background work the session reported as running, in its order.
     ///
     /// A row's value is its index here, so the selected row names the call id
@@ -479,6 +487,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            package_send: None,
             background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
@@ -570,6 +579,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            package_send: None,
             background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),

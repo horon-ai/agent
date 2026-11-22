@@ -3,6 +3,7 @@ use super::*;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
 
+mod prose_repeat;
 mod run;
 mod tool_wait;
 
@@ -246,6 +247,7 @@ impl Agent {
             if self.is_graceful_shutdown() {
                 break;
             }
+            crate::spend_cap::admit()?;
             if let Some(budget) = &mut self.swarm_budget {
                 budget.charge_request();
             }
@@ -402,6 +404,10 @@ impl Agent {
             let mut retry_after_recovery = false;
             let mut retry_after_stream_rule = false;
             let mut stream_rule_stop = false;
+            let mut prose_guard = crate::config::config()
+                .features
+                .repeat_guard
+                .then(prose_repeat::ProseRepeatGuard::default);
             let mut keepalive = stream_keepalive_ticker();
             loop {
                 let next_event = std::pin::pin!(stream.next());
@@ -725,6 +731,30 @@ impl Agent {
                                     break;
                                 }
                             }
+                        }
+                        if let Some(sentence) = prose_guard.as_mut().and_then(|guard| guard.feed(&text)) {
+                            logging::warn("Repeated prose detected; stopping the turn");
+                            if inline_output_tap {
+                                self.inline_tail.clear_live();
+                            }
+                            let notice = format!(
+                                "Stopped: the response repeated the same sentence {} times in a row: \"{sentence}\"",
+                                prose_repeat::STOP_AFTER
+                            );
+                            self.record_stream_rule_stop(&notice);
+                            self.save_session()?;
+                            if event_tx
+                                .send(ServerEvent::TurnStopped {
+                                    reason: crate::protocol::TurnStopReason::LimitReached,
+                                    message: notice,
+                                    provider_stop_reason: None,
+                                })
+                                .is_err()
+                            {
+                                logging::debug("Repeated prose stop has no event receiver");
+                            }
+                            stream_rule_stop = true;
+                            break;
                         }
                         let _ = event_tx.send(ServerEvent::TextDelta { text: text.clone() });
                         if self.is_graceful_shutdown() {
@@ -1229,12 +1259,12 @@ impl Agent {
             }
 
             // Store usage for debug queries
-            self.last_usage = TokenUsage {
+            self.set_last_usage(TokenUsage {
                 input_tokens: usage_input.unwrap_or(0),
                 output_tokens: usage_output.unwrap_or(0),
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
-            };
+            });
 
             // Detect a transparent mid-request model switch (e.g. Anthropic's
             // retired `claude-fable-5` falling back to `claude-opus-4-8`). The

@@ -480,3 +480,77 @@ fn a_tool_that_names_no_path_is_not_restricted() {
         "bash names no path here; [[tools.bash_patterns]] is its equivalent"
     );
 }
+
+fn stored_path_grant(sandbox: &Sandbox, relative: &str) -> std::path::PathBuf {
+    let file = sandbox.write(relative);
+    let grant = grant_from_request_at(
+        &request(
+            "write",
+            serde_json::json!({ "file_path": file }),
+            &sandbox.workspace(),
+            "write",
+        ),
+        GrantScope::Path,
+        Timestamp::now(),
+        7,
+    )
+    .expect("a single-path write request can be granted");
+    store(grant).expect("the grant is stored");
+    file.canonicalize().expect("canonical file")
+}
+
+fn asks_again(workspace: &Path, target: &Path) -> bool {
+    !covered_by(
+        &load_grants(),
+        workspace,
+        &[target.to_path_buf()],
+        GrantCapability::Write,
+        Timestamp::now(),
+    )
+}
+
+#[test]
+fn revoking_one_grant_makes_its_path_ask_again_and_leaves_the_others() {
+    let sandbox = Sandbox::new();
+    let workspace = sandbox.workspace();
+    let first = stored_path_grant(&sandbox, "notes/first.md");
+    let second = stored_path_grant(&sandbox, "notes/second.md");
+    assert!(!asks_again(&workspace, &first) && !asks_again(&workspace, &second));
+
+    let listed = list();
+    assert_eq!(listed.len(), 2);
+    assert!(
+        listed
+            .iter()
+            .all(|grant| grant.active && grant.capability == "write" && grant.scope == "path")
+    );
+    let first_id = &listed
+        .iter()
+        .find(|grant| grant.path == first.display().to_string())
+        .expect("the first path is listed")
+        .id;
+
+    assert_eq!(revoke(&["not-a-grant"]).unwrap(), 0);
+    assert_eq!(revoke(&[first_id.as_str()]).unwrap(), 1);
+    assert!(asks_again(&workspace, &first), "a revoked path needs a fresh decision");
+    assert!(!asks_again(&workspace, &second), "an unrelated grant is untouched");
+    assert_eq!(list().len(), 1);
+
+    assert_eq!(revoke_all().unwrap(), 1);
+    assert!(asks_again(&workspace, &second) && list().is_empty());
+}
+
+#[test]
+fn an_unreadable_grant_file_is_reported_and_never_overwritten() {
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.grant_file(), b"{ not json").unwrap();
+    assert!(revoke_all().is_err());
+    assert_eq!(std::fs::read(sandbox.grant_file()).unwrap(), b"{ not json");
+}
+
+#[test]
+fn listed_paths_have_no_control_characters() {
+    let text = listing::printable(Path::new("/work/a\nb\u{1b}[31mc"));
+    assert!(!text.chars().any(char::is_control), "{text:?}");
+    assert!(text.contains("\\n") && text.contains("\\u{1b}"));
+}

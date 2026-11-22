@@ -163,8 +163,15 @@ pub struct Args {
     pub socket: Option<std::path::PathBuf>,
     /// Existing session to attach to instead of creating one.
     pub session: Option<String>,
+    /// Objective and token ceiling for a new session.
+    pub goal: Option<String>,
+    pub goal_budget: Option<u64>,
+    /// Start the new session in read-only plan mode.
+    pub plan: bool,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
+    /// Extra workspace directories for the attached session, in the order given.
+    pub add_dirs: Vec<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
     /// Gallery scene to preview instead of connecting, if the flag was given.
@@ -223,9 +230,30 @@ impl Args {
                     Some(session) if !session.is_empty() => parsed.session = Some(session),
                     _ => return Err("--session needs a session id".to_string()),
                 },
+                "--goal" => match arguments.next() {
+                    Some(title) if !title.trim().is_empty() => parsed.goal = Some(title),
+                    _ => return Err("--goal needs a nonempty objective".into()),
+                },
+                "--plan" => parsed.plan = true,
+                "--goal-budget" => {
+                    let Some(value) = arguments.next() else {
+                        return Err("--goal-budget needs a positive token count".into());
+                    };
+                    let budget = value
+                        .parse::<u64>()
+                        .map_err(|_| "--goal-budget needs a positive token count")?;
+                    if budget == 0 {
+                        return Err("--goal-budget needs a positive token count".into());
+                    }
+                    parsed.goal_budget = Some(budget);
+                }
                 "--cwd" => match arguments.next() {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
+                },
+                "--add-dir" => match arguments.next() {
+                    Some(path) if !path.is_empty() => parsed.add_dirs.push(path.into()),
+                    _ => return Err("--add-dir needs a directory".to_string()),
                 },
                 "--config" => match arguments.next() {
                     Some(path) if !path.is_empty() => parsed.config.push(path.into()),
@@ -242,10 +270,23 @@ impl Args {
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
+                    Some(("--add-dir", "")) => {
+                        return Err("--add-dir needs a value".to_string());
+                    }
+                    Some(("--add-dir", path)) => parsed.add_dirs.push(path.into()),
                     Some(("--config", path)) => parsed.config.push(path.into()),
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
+        }
+        if parsed.goal.is_some() != parsed.goal_budget.is_some() {
+            return Err("--goal and --goal-budget must be used together".into());
+        }
+        if parsed.plan && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--plan can only be used when starting a new session".into());
+        }
+        if parsed.goal.is_some() && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--goal can only be used when starting a new session".into());
         }
         Ok(parsed)
     }
@@ -338,7 +379,41 @@ where
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking),
+        Ok(runtime) => {
+            // The session's extra roots are sent before the goal so a goal's
+            // first turn already sees them in its session context.
+            for directory in &args.add_dirs {
+                if let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Dirs,
+                    arguments: vec!["add".to_string(), directory.display().to_string()],
+                }) {
+                    show_failure(&format!(
+                        "could not add workspace directory {}: {error}",
+                        directory.display()
+                    ));
+                    return 1;
+                }
+            }
+            if let Some((title, budget)) = args.goal.zip(args.goal_budget)
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Goal,
+                    arguments: vec![budget.to_string(), title],
+                })
+            {
+                show_failure(&format!("could not queue the startup goal: {error}"));
+                return 1;
+            }
+            if args.plan
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Plan,
+                    arguments: vec!["on".into()],
+                })
+            {
+                show_failure(&format!("could not queue plan mode: {error}"));
+                return 1;
+            }
+            run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking)
+        }
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -399,6 +474,10 @@ fn run_interactive(
         };
         app.transcript
             .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
+    }
+    if let Some(profile) = std::env::var_os("HORON_PROFILE").filter(|name| !name.is_empty()) {
+        app.transcript
+            .push_notice(format!("profile: {}", profile.to_string_lossy()));
     }
     // The session's own directory names the workspace: `--cwd` is what the
     // create was asked for, and a resumed session reports the directory it

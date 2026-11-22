@@ -15,6 +15,12 @@
       "reason": "Measurement harness, not a pass/fail assertion: the single test is #[ignore]d and prints header cost samples on the developer's hardware so the TTL-vs-signature tradeoff stays grounded in measured numbers."
     },
     {
+      "package": "horon-agent-base",
+      "target": "package_spawn_windows",
+      "path": "crates/base/tests/package_spawn_windows.rs",
+      "reason": "Native Windows only: the package child's lifetime owner is a Job Object there, and these scenarios start real children and grandchildren on windows-latest (x64) and windows-11-arm (arm64), which neither the Linux nor the macOS cohort can build or run. .github/workflows/package-windows.yml runs this target on both runners and fails when fewer than the five expected tests pass."
+    },
+    {
       "package": "horon-agent-logging",
       "target": "watchdog_idle_probe",
       "path": "crates/logging/tests/watchdog_idle_probe.rs",

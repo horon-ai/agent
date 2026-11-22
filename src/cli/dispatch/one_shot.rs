@@ -4,19 +4,37 @@ use super::{Args, commands, provider_init, register_on_demand_server_spawner_for
 use crate::agent::Agent;
 use crate::cli::args::RunModelOverrides;
 
-pub(super) async fn run(
-    args: &Args,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-    no_pty: bool,
-    overrides: &RunModelOverrides,
-    max_time: Option<std::time::Duration>,
-) -> Result<()> {
+pub(super) async fn run(args: &Args) -> Result<()> {
+    let Some(super::Command::Run {
+        message,
+        json: emit_json,
+        ndjson: emit_ndjson,
+        no_pty,
+        no_session,
+        model_overrides: overrides,
+        max_time,
+        wait_async,
+        warn_cost,
+        max_cost,
+        system_template,
+        print_thoughts,
+    }) = &args.command
+    else {
+        anyhow::bail!("Expected a run command");
+    };
+    let (emit_json, emit_ndjson) = (*emit_json, *emit_ndjson);
+    let limits = commands::RunLimits {
+        max_time: *max_time,
+        wait_async: *wait_async,
+        print_thoughts: *print_thoughts,
+    };
+    if !overrides.config_overlay.is_empty() {
+        crate::config::Config::set_run_overlays(&overrides.config_overlay)?;
+    }
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;
     let registry = crate::tool::Registry::new(provider.clone()).await;
-    if no_pty {
+    if *no_pty {
         registry.disable_bash_pty().await;
     }
     if commands::run_command_mcp_enabled() {
@@ -25,10 +43,52 @@ pub(super) async fn run(
         registry.register_mcp_tools(None, None, None).await;
         commands::wait_for_cold_cache_mcp_tools(&registry).await;
     }
-    let mut agent = Agent::for_one_shot_run(provider.clone(), registry).closing_after_run();
+    if let (Some(warn), Some(max)) = (warn_cost, max_cost)
+        && warn > max
+    {
+        anyhow::bail!("--warn-cost ({warn}) must not exceed --max-cost ({max})");
+    }
+    if warn_cost.is_some() || max_cost.is_some() {
+        crate::spend_cap::install(crate::spend_cap::Limits {
+            warn_usd: *warn_cost,
+            max_usd: *max_cost,
+        });
+    }
+    if *no_session && (args.resume.is_some() || args.goal.is_some()) {
+        anyhow::bail!(
+            "--no-session cannot be combined with --resume, --continue or --goal, which need a stored session"
+        );
+    }
+    let mut agent = if *no_session {
+        Agent::for_memory_only_run(provider.clone(), registry)
+    } else {
+        Agent::for_one_shot_run(provider.clone(), registry)
+    }
+    .closing_after_run();
     let setup = (|| {
         commands::restore_agent_session_if_requested(&mut agent, args.resume.as_deref())?;
-        apply_model_overrides(&mut agent, overrides)
+        for directory in &args.add_dir {
+            agent.add_additional_dir(directory)?;
+        }
+        apply_model_overrides(&mut agent, overrides)?;
+        if let Some(path) = system_template {
+            apply_system_template(&mut agent, path)?;
+        }
+        if let (Some(title), Some(budget)) = (&args.goal, args.goal_budget) {
+            let goal = crate::goal::start_session_goal(
+                agent.session_id(),
+                agent.working_dir().map(std::path::Path::new),
+                title.clone(),
+                budget,
+            )?;
+            if !emit_json && !emit_ndjson {
+                super::output::stderr_info(crate::goal::render_goal_detail(&goal));
+            }
+        }
+        if args.plan {
+            crate::plan_mode::command(agent.session_id(), &["on".to_owned()])?;
+        }
+        Ok(())
     })();
     if let Err(error) = setup {
         agent.mark_closed();
@@ -36,7 +96,44 @@ pub(super) async fn run(
     }
     // User-authored `run` message; later helper turns are synthetic.
     agent.arm_effort_keywords(message);
-    commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, max_time).await
+    let result =
+        commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, limits).await;
+    if let Some(summary) = crate::spend_cap::summary() {
+        super::output::stderr_info(format!(
+            "Estimated spend about ${:.4} over {} priced request(s); {} request(s) had no known price and are not counted{}.",
+            summary.spent_usd,
+            summary.priced_requests,
+            summary.unpriced_requests,
+            if summary.stopped {
+                "; the spend cap stopped further requests"
+            } else {
+                ""
+            }
+        ));
+    }
+    result
+}
+
+fn apply_system_template(agent: &mut Agent, path: &std::path::Path) -> Result<()> {
+    let template = std::fs::read_to_string(path)
+        .map_err(|error| anyhow::anyhow!("cannot read system template {}: {error}", path.display()))?;
+    let cwd = std::env::current_dir()
+        .map_err(|error| anyhow::anyhow!("cannot resolve the working directory: {error}"))?
+        .display()
+        .to_string();
+    let now = horon_agent_time::Timestamp::now().to_string();
+    let date = now.split_once('T').map_or(now.as_str(), |(day, _)| day).to_owned();
+    let model = agent.provider_model();
+    let text = crate::prompt::template::render(
+        &template,
+        &[
+            ("cwd", cwd.as_str()),
+            ("date", date.as_str()),
+            ("model", model.as_str()),
+        ],
+    )?;
+    agent.set_system_prompt(&text);
+    Ok(())
 }
 
 fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Result<()> {
@@ -49,5 +146,32 @@ fn apply_model_overrides(agent: &mut Agent, overrides: &RunModelOverrides) -> Re
         }
         agent.set_reasoning_effort(effort)?;
     }
+    if let Some(choice) = overrides.advisor.as_deref() {
+        agent.set_advisor_enabled(choice == "on");
+    }
+    if let Some(value) = overrides.system_prompt.as_deref() {
+        agent.set_system_prompt(&prompt_text(value)?);
+    }
+    if let Some(value) = overrides.append_system_prompt.as_deref() {
+        agent.set_appended_system_text(&prompt_text(value)?)?;
+    }
+    if overrides.approve_plan {
+        crate::plan_mode::allow_unattended_approval(agent.session_id());
+    }
+    if let Some(mode) = overrides
+        .approval
+        .as_deref()
+        .and_then(crate::config::ApprovalMode::parse)
+    {
+        crate::tool::run_approval::set_floor(agent.session_id(), mode);
+    }
     Ok(())
+}
+
+/// Prompt text given inline, or read from the file named after `@`.
+fn prompt_text(value: &str) -> Result<String> {
+    match value.strip_prefix('@') {
+        Some(path) => std::fs::read_to_string(path).map_err(|error| anyhow::anyhow!("cannot read {path}: {error}")),
+        None => Ok(value.to_owned()),
+    }
 }

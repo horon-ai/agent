@@ -1,5 +1,7 @@
 pub mod acp;
+pub mod add_dir;
 pub mod args;
+pub mod cloud_doctor;
 pub mod cloud_move;
 pub mod commands;
 pub mod debug;
@@ -7,6 +9,8 @@ pub mod dispatch;
 pub mod hot_exec;
 pub mod index_import;
 pub mod install_release;
+pub mod launch_overrides;
+pub mod launch_profile;
 pub mod mcp;
 pub mod output;
 pub mod packages;

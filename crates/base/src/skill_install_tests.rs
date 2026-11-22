@@ -139,3 +139,28 @@ fn a_lock_file_an_earlier_build_wrote_keeps_its_ref() {
         "the row is rewritten in the current shape: {text}"
     );
 }
+
+#[test]
+fn only_plain_remotes_and_existing_directories_are_accepted_as_sources() {
+    let local = tempfile::tempdir().unwrap();
+    for allowed in [
+        "https://github.com/owner/repo.git",
+        "ssh://git@example.com/owner/repo.git",
+        "file:///srv/skills/repo",
+        "git@example.com:owner/repo.git",
+        local.path().to_str().unwrap(),
+    ] {
+        assert!(check_source(allowed).is_ok(), "{allowed}");
+    }
+    for refused in [
+        "--upload-pack=touch /tmp/x",
+        "ext::sh -c touch% /tmp/x",
+        "fd::17/repo",
+        "http://example.com/repo.git",
+        "git://example.com/repo.git",
+        "/no/such/directory",
+        "owner/repo",
+    ] {
+        assert!(check_source(refused).is_err(), "{refused}");
+    }
+}

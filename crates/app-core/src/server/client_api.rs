@@ -1,5 +1,5 @@
 use super::{connect_socket, debug_socket_path, socket_path};
-use crate::protocol::{Request, ServerEvent};
+use crate::protocol::{PackageControlRequest, Request, ServerEvent};
 use crate::transport::{ReadHalf, WriteHalf};
 use anyhow::Result;
 use std::path::PathBuf;
@@ -274,6 +274,62 @@ impl Client {
 
     pub async fn reload(&mut self) -> Result<u64> {
         self.reload_with_force(true).await
+    }
+
+    /// Apply one package-management operation to the daemon's catalog.
+    ///
+    /// The daemon owns the catalog while it runs, so this is the only path a
+    /// management command may take when one is reachable. The capability probe
+    /// comes first: a daemon that predates package management answers an
+    /// unknown request with an uncorrelated error, which a caller could not
+    /// tell apart from "the operation was not applied".
+    ///
+    /// The reply is the published generation. A caller that never receives it
+    /// must not retry blind: the operation may already have been applied.
+    pub async fn package_control(&mut self, request: PackageControlRequest) -> Result<ServerEvent> {
+        let probe = self.next_id;
+        self.next_id += 1;
+        self.write_request(&Request::Ping { id: probe }).await?;
+        loop {
+            match self.read_event().await? {
+                ServerEvent::Pong { id, capabilities, .. } if id == probe => {
+                    if !capabilities.iter().any(|capability| capability == "package_control") {
+                        anyhow::bail!(
+                            "the running daemon does not manage packages; restart it to pick up this build, or stop it to manage the catalog offline"
+                        );
+                    }
+                    break;
+                }
+                ServerEvent::Pong { .. } => continue,
+                other => anyhow::bail!("unexpected reply while probing the daemon: {other:?}"),
+            }
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        self.write_request(&Request::PackageControl {
+            id,
+            operation_id: request.operation_id,
+            operation: request.operation,
+        })
+        .await?;
+        loop {
+            match self.read_event().await? {
+                event
+                @ (ServerEvent::PackageControlResult { id: reply, .. } | ServerEvent::Error { id: reply, .. })
+                    if reply == id =>
+                {
+                    return Ok(event);
+                }
+                ServerEvent::Ack { id: ack } if ack == id => continue,
+                other => anyhow::bail!("unexpected reply to package management: {other:?}"),
+            }
+        }
+    }
+
+    async fn write_request(&mut self, request: &Request) -> Result<()> {
+        let json = serde_json::to_string(request)? + "\n";
+        self.writer.write_all(json.as_bytes()).await?;
+        Ok(())
     }
 
     pub async fn debug_command(&mut self, command: &str, session_id: Option<&str>) -> Result<u64> {

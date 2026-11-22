@@ -35,6 +35,7 @@ PYTHON_FILES = [
     SCRIPTS / "bench_startup.py",
     SCRIPTS / "bench_tools.py",
     SCRIPTS / "check_structural.py",
+    SCRIPTS / "package_workloads.py",
 ]
 GATE = SCRIPTS / "check_memory.sh"
 

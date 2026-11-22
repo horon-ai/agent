@@ -9,10 +9,10 @@
 //! harness process never holds: [`package_child_probe`] returns immediately in
 //! a normal run and becomes the package process body when it is started.
 //!
-//! Windows package children need the dedicated Job Object of issue #644, so the
-//! launcher fails closed there and `package_spawn_windows` covers that platform.
-//! These scenarios return early on Windows instead of claiming a supervision
-//! contract the platform does not have yet.
+//! Windows has its own target, `package_spawn_windows`, because its supervision
+//! contract is a Job Object rather than a process group and it needs a native
+//! Windows runner. These scenarios return early there instead of repeating that
+//! target's coverage from another platform.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
@@ -110,6 +110,10 @@ fn package_child_probe() {
 // Fixtures
 // ---------------------------------------------------------------------------
 
+/// Whether these scenarios run on this platform.
+///
+/// Windows keeps the same contract through a Job Object and covers it in
+/// `package_spawn_windows` on native runners, so the Unix scenarios stop here.
 fn supervision_supported() -> bool {
     std::env::consts::OS != "windows"
 }

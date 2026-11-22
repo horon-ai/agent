@@ -35,17 +35,22 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`RPC.md`](protocol/RPC.md) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
 | | [`SHARING.md`](protocol/SHARING.md) | Proposed encrypted session sharing and revocation |
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
+| | [`EDIT_DIAGNOSTICS.md`](runtime/EDIT_DIAGNOSTICS.md) | Proposed post-edit language diagnostics |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
 | | [`IRC.md`](runtime/IRC.md) | Inter-agent IRC mailbox bus, the `irc` tool, configuration, performance gate |
 | | [`TUI.md`](runtime/TUI.md) | The `horon-tui` terminal client: the handoff from bare `horon`, user files (`tui.toml`, themes, key bindings, command files, status line), keys, the multi-line editor, the transcript and its scrollback, turn state, prompts, the slash popup, the model and session pickers, commands, the settings screen, installing the optional asset, limits |
 | | [`PROMPT.md`](runtime/PROMPT.md) | System prompt composition, skill sources and invocation, token estimates |
 | | [`HOOKS.md`](runtime/HOOKS.md) | Lifecycle hooks |
-| | [`PACKAGES.md`](runtime/PACKAGES.md) | User-installed Rust packages: the author SDK, the declaration and its digest, both layouts, targets, signing and installation |
+| | [`PACKAGES.md`](runtime/PACKAGES.md) | User-installed Rust packages: the author SDK, the declaration and its digest, both layouts, targets, signing, installation, and the slash commands a package supplies |
 | | [`SWARM_TASK_GRAPH.md`](runtime/SWARM_TASK_GRAPH.md) | Swarm task DAG design (a feature that is off by default, and the design rationale of the `horon-agent-plan` crate) |
 | `provider/` | [`MODEL.md`](provider/MODEL.md) | Direct calls to the endpoint of the wire a profile's `type` names (Chat Completions, Responses, Anthropic Messages, Gemini generateContent), provider profiles and API keys, model roles and their fallback order, the one-shot `[prewalk]` handoff, model usage metadata |
+| | [`LOCAL_HELPERS.md`](provider/LOCAL_HELPERS.md) | Proposed offline local model helper |
 | | [`INTEGRATIONS.md`](provider/INTEGRATIONS.md) | Remote MCP, user-defined web search |
+| | [`VISION_POLICY.md`](provider/VISION_POLICY.md) | Proposed image input routing policy |
 | | [`DIAGNOSTICS.md`](provider/DIAGNOSTICS.md) | Proposed bounded provider-stream diagnostic |
+| | [`SAMPLING.md`](provider/SAMPLING.md) | Proposed typed model sampling |
+| | [`QUOTA_FALLBACK.md`](provider/QUOTA_FALLBACK.md) | Proposed quota-aware route fallback |
 | `safety/` | [`SAFETY.md`](safety/SAFETY.md) | Safety system, unattended approval and automatic switching |
 | | [`SECURITY.md`](safety/SECURITY.md) | Workspace trust, crash bundles, dependency security classification |
 | `performance/` | [`BENCHMARK.md`](performance/BENCHMARK.md) | The goal of beating jcode and the measurement standard, per-OS benchmarks (Linux, macOS, Windows), the structural gate, A/B measurement, skill and MCP config loading A/B |

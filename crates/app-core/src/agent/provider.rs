@@ -1,3 +1,5 @@
+mod model_preset;
+
 use super::*;
 
 impl Agent {
@@ -95,6 +97,38 @@ impl Agent {
         if crate::provider::provider_unavailability_detail_for_account_label(key, label).is_none() {
             crate::provider::record_provider_unavailable_for_account_label(key, label, error);
         }
+    }
+
+    /// Store the usage the provider reported for the response just received and
+    /// charge it to the run's spend ledger.
+    pub(super) fn set_last_usage(&mut self, usage: TokenUsage) {
+        self.last_usage = usage;
+        // A direct profile prices under its own `openai-compatible:<id>` route;
+        // the display label would map a compatible endpoint to OpenAI's table.
+        let source_key = self.compaction_route_from_provider().unwrap_or_else(|| {
+            let runtime = std::env::var("HORON_AGENT_RUNTIME_PROVIDER").into_iter().next();
+            crate::provider_activity::source_key_for_provider_label(&self.provider_name(), runtime.as_deref())
+        });
+        let model = self.provider_model();
+        let usage = &self.last_usage;
+        crate::spend_cap::settle(
+            &format!("{model} on route {source_key}"),
+            crate::provider::pricing::metered_usage_cost_usd(
+                &source_key,
+                &model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_input_tokens.unwrap_or(0),
+                usage.cache_creation_input_tokens.unwrap_or(0),
+            ),
+        );
+    }
+
+    /// Prepare the next model request: clear the status detail and refuse the
+    /// request once the run's spend ceiling is reached.
+    pub(super) fn begin_request(&mut self) -> Result<()> {
+        self.last_status_detail = None;
+        crate::spend_cap::admit()
     }
 
     pub(super) fn record_model_turn_usage(&mut self, turn_id: &str) {
@@ -476,6 +510,34 @@ impl Agent {
         self.persist_session_best_effort("additional directories");
     }
 
+    /// Extra workspace roots this session reaches beyond its working directory.
+    pub fn additional_dirs(&self) -> Vec<String> {
+        self.session.additional_dirs()
+    }
+
+    /// Add one workspace root, resolving it to an existing directory.
+    ///
+    /// A missing path, a file, or a second spelling of a directory already on
+    /// the list is answered by the session; only a real change is persisted.
+    pub fn add_additional_dir(&mut self, raw: &str) -> Result<bool> {
+        let added = self.session.add_additional_dir(raw)?;
+        if added {
+            self.persist_session_best_effort("additional directories");
+        }
+        Ok(added)
+    }
+
+    /// Remove one workspace root from this session's list.
+    ///
+    /// The directory itself is never touched. Answers whether the list changed.
+    pub fn remove_additional_dir(&mut self, raw: &str) -> Result<bool> {
+        let removed = self.session.remove_additional_dir(raw);
+        if removed {
+            self.persist_session_best_effort("additional directories");
+        }
+        Ok(removed)
+    }
+
     /// Get the stored messages (for transcript export)
     pub fn messages(&self) -> &[StoredMessage] {
         self.session.active_context()
@@ -490,7 +552,7 @@ impl Agent {
 /// `[providers.<name>]` profile without a loaded catalog still yields the same
 /// entry from its key.
 impl Agent {
-    fn compaction_route_from_provider(&self) -> Option<String> {
+    pub(super) fn compaction_route_from_provider(&self) -> Option<String> {
         let model = self.provider.model();
         let from_routes = self
             .provider

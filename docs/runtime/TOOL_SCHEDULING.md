@@ -60,6 +60,7 @@ The tools that declare effects are below.
 | `websearch` | `crates/app-core/src/tool/websearch.rs:64` `effects` |
 | `bash` | `crates/app-core/src/tool/bash.rs:1589` `effects` |
 | `eval` | `crates/app-core/src/tool/eval.rs` `effects` |
+| Package tools (`ext__<id>__<name>`) | `crates/app-core/src/tool/package_tool.rs:89` `effects` (`ToolEffects::process()`) |
 
 The rest stay at the barrier default, namely `write`, `edit`, `replace`,
 `apply_patch`, `batch`, `mcp`, and `skill_manage`. Registry lookup resolves provider

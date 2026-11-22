@@ -214,6 +214,28 @@ pub fn attach_goal_to_session(session_id: &str, goal: &Goal, working_dir: Option
     crate::storage::write_json_fast(&path, &attachment)
 }
 
+/// Create and attach a user-specified goal without sending a model request.
+pub fn start_session_goal(session: &str, working_dir: Option<&Path>, title: String, budget: u64) -> Result<Goal> {
+    if load_attached_goal(session, working_dir)?.is_some_and(|goal| goal.status.is_resumable()) {
+        anyhow::bail!("This session already has an active goal");
+    }
+    let goal = create_goal(
+        GoalCreateInput {
+            title,
+            scope: if working_dir.is_some() {
+                GoalScope::Project
+            } else {
+                GoalScope::Global
+            },
+            budget_tokens: Some(budget),
+            ..GoalCreateInput::default()
+        },
+        working_dir,
+    )?;
+    attach_goal_to_session(session, &goal, working_dir)?;
+    Ok(goal)
+}
+
 pub fn load_attached_goal(session_id: &str, working_dir: Option<&Path>) -> Result<Option<Goal>> {
     let path = session_attachment_path(session_id)?;
     if !path.exists() {

@@ -66,6 +66,8 @@ pub fn estimate_tokens(s: &str) -> usize {
     horon_agent_token_estimate::estimate_tokens(s)
 }
 
+pub use horon_agent_token_estimate::{TokenFamily, estimate_tokens_for_family};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApproxTokenSeverity {
     Normal,

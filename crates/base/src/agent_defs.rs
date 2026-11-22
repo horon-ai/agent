@@ -121,8 +121,22 @@ impl std::error::Error for AgentDefinitionError {}
 /// frontmatter does not parse are skipped here: discovery lists what the caller
 /// can actually spawn.
 pub fn discover(working_dir: Option<&Path>) -> Vec<AgentDefinition> {
+    discover_dirs(search_dirs(working_dir))
+}
+
+/// Discover definitions from explicitly selected roots, with the project taking precedence.
+pub fn discover_from_roots(project: Option<&Path>, home: &Path) -> Vec<AgentDefinition> {
+    discover_dirs(
+        project
+            .map(|root| root.join(PROJECT_DIR))
+            .into_iter()
+            .chain([home.join(HOME_DIR)]),
+    )
+}
+
+fn discover_dirs(directories: impl IntoIterator<Item = PathBuf>) -> Vec<AgentDefinition> {
     let mut by_name: BTreeMap<String, AgentDefinition> = BTreeMap::new();
-    for directory in search_dirs(working_dir) {
+    for directory in directories {
         for definition in read_dir(&directory) {
             by_name.entry(definition.name.clone()).or_insert(definition);
         }
