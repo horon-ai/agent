@@ -806,22 +806,10 @@ pub(crate) fn history_message(
     // The row carries its own id, so moving it out costs no copy, and a
     // connection that did not ask for ids allocates nothing here.
     let message_id = if include_message_ids { msg.stored_id } else { None };
-    let turn_start = match message_id.as_deref() {
-        Some(id) => {
-            // The renderer copied the id from the message it built the row from,
-            // so the index comparison proves the common case in one step; a row
-            // that indexes a full-history snapshot instead lands on another id
-            // and falls back to the scan that finds its own message.
-            let indexed = msg
-                .stored_index
-                .and_then(|index| stored.get(index))
-                .filter(|message| message.id == id);
-            indexed
-                .or_else(|| stored.iter().find(|message| message.id == id))
-                .is_some_and(|message| message.turn_start)
-        }
-        None => false,
-    };
+    let turn_start = message_id
+        .as_deref()
+        .and_then(|id| stored.iter().find(|message| message.id == id))
+        .is_some_and(|message| message.turn_start);
     crate::protocol::HistoryMessage {
         message_id,
         turn_start,

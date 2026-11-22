@@ -804,8 +804,14 @@ fn write_catalog(layout: &Layout, catalog: &CatalogFile) -> Result<()> {
     let bytes = serde_json::to_vec(catalog).context("serialize the package catalog")?;
     let mut temp = NamedTempFile::with_prefix_in(CATALOG_TEMP_PREFIX, layout.root())
         .with_context(|| format!("create a temporary catalog in {}", layout.root().display()))?;
-    temp.write_all(&bytes)
-        .with_context(|| format!("write {}", temp.path().display()))?;
+    let mut buffer = bytes.as_slice();
+    while !buffer.is_empty() {
+        let written = temp
+            .write(buffer)
+            .with_context(|| format!("write {}", temp.path().display()))?;
+        ensure!(written > 0, "the catalog temporary accepted no bytes");
+        buffer = &buffer[written..];
+    }
     temp.as_file()
         .sync_all()
         .with_context(|| format!("flush {}", temp.path().display()))?;
