@@ -49,6 +49,7 @@ pub mod notifications;
 pub mod overnight;
 pub mod perf;
 pub mod plan_mode;
+pub mod plan_review;
 pub mod running_tool_registry;
 pub mod server;
 pub mod server_spawn;

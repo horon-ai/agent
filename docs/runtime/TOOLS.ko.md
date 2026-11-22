@@ -183,6 +183,12 @@ memory = "essential"
 
 계획 모드는 기본값이 꺼짐입니다. 설정 필드의 기본값이 `false`이고 (`crates/base/src/config.rs:920`), 기본 설정 파일도 `plan_mode = false`입니다 (`crates/base/src/config/default_file.rs:283`). 설정을 건드리지 않은 세션은 상태 맵에 항목이 없으므로 항상 `Off`로 판정됩니다.
 
+### 승인 전에 계획 검토하기
+
+계획이 `PendingApproval`인 동안 `/plan review`는 계획을 읽고 지적 사항을 출력합니다. 이 검토는 읽기 전용이며 로컬에서만 동작합니다. 모델 요청을 보내지 않고 판정을 기록하지 않으며 계획을 대기 상태로 둡니다. 판정은 `/plan approve`나 `/plan reject`(또는 승인 정책)만 합니다. 검토마다 수정본 번호를 표시합니다. 계획 본문과 파일 목록의 SHA-256 앞 12자리입니다. 같은 계획은 항상 같은 번호를 받고 한 글자만 고쳐도 번호가 바뀌므로, 판정을 검토한 바로 그 본문에 묶을 수 있습니다.
+
+지적 사항은 구조 점검입니다. 파일을 하나도 적지 않은 계획, 절대 경로이거나 `..`로 작업 폴더를 벗어나는 파일 경로, 두 번 적힌 파일, 테스트·확인·빌드 단계를 언급하지 않는 본문, 20,000자를 넘는 계획입니다. 뒤의 세 가지는 추정에 기대므로 참고 수준입니다. 대기 중인 계획이 없을 때 `/plan review`는 오류입니다(`crates/app-core/src/plan_review.rs`).
+
 ### 승인 등급
 
 `[tools] approval_mode`의 기본값은 `"yolo"`입니다 (`crates/base/src/config.rs:1023`). 일반 호출을 자동 승인합니다. 기존 설정에 `"off"`를 명시했다면 같은 정책이 적용됩니다. 승인 요청을 켜려면 `$HORON_HOME/config.toml`의 `[tools]`에서 `approval_mode = "write"` 또는 `approval_mode = "all"`을 지정하고 데몬 설정을 다시 읽습니다.

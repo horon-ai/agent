@@ -63,6 +63,7 @@ RuntimeCommand: TypeAlias = Literal[
     "agents",
     "modelpreset",
     "subagent_model",
+    "trim",
     "autoreview",
     "autojudge",
     "transport",

@@ -384,6 +384,8 @@ The model list has the model in force marked `(current)` and the selected row ca
 
 Use `/modelpreset` to list names, `/modelpreset preview <name>` to inspect the choices, or `/modelpreset apply <name>` to apply them to the current session. The [model preset settings](/reference/provider/model#session-model-presets) define how to write a preset. If a turn is running, retry the command after it ends.
 
+`/trim` shortens old tool results in the requests a session sends, without touching its stored history. `/trim preview [max_chars]` shows how many results and characters a limit would remove. `/trim apply [max_chars]` turns it on for later requests, and `/trim off` turns it off. The limit is 200 to 1,000,000 characters and defaults to 4,000. A result over the limit keeps its first 400 characters and a note pointing at `history://current`. The newest six messages and every error result are kept whole, and each tool call keeps its result with the same id. A limit outside the range is refused and the current setting stays.
+
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
 
 Set `models.shortlist` to the model IDs you want to cycle. Ctrl+P moves forward and Ctrl+Alt+P moves backward, wrapping at either end. The client asks the daemon for its model catalog before cycling and skips unlisted IDs.

@@ -1894,6 +1894,14 @@ jobs:
             -- agent::swarm_budget::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 4 \
+            -- agent::request_messages::tool_result_trim::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 2 \
+            -- plan_review::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 60 --min-passed 2 \
             -- tool::package_tool::stage_tests:: --nocapture
 

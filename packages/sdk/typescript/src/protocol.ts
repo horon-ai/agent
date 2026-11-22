@@ -48,6 +48,7 @@ export type RuntimeCommand =
   | "agents"
   | "modelpreset"
   | "subagent_model"
+  | "trim"
   | "autoreview"
   | "autojudge"
   | "transport"
