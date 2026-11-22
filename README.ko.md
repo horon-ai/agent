@@ -128,8 +128,11 @@ horon run "summarize this repo"
 | `horon tokens [TEXT]` | UTF-8 텍스트를 인자나 표준 입력으로 받거나 `--file`에서 읽어 오프라인으로 토큰 수를 추정한다. `--model`로 알려진 토크나이저 계열을 고르며 기본 추정 방식을 사용하면 결과에 표시한다. |
 | `horon agents` | 세션을 시작하지 않고 에이전트 정의의 출처와 설정된 모델 및 도구를 나열한다. |
 | `horon provider status [--json]` | 설정된 프로파일마다 자격 증명 출처와 로컬 상태(`authenticated`, `unauthenticated`, `unknown`)를 표시한다. 자격 증명 값은 출력하지 않고 제공자에도 접속하지 않는다. |
+| `horon skills list [--json]`, `horon skills install <출처> --approve` | 스킬을 설치한 출처와 커밋과 함께 나열하거나, 관리 스킬 설치기로 https, ssh, file 출처나 로컬 폴더에서 설치한다. `[tools] managed_skills = true`가 필요하다. |
+| `horon provider failover [--json]` | 설정이 만드는 페일오버 순서와 단계를 제외한 설정을 보여 준다. 읽기 전용이며 모델 요청, 계정·쿼터 변경, 자격 증명 출력이 없다. |
 | `horon compact-text <FILE\|->` | UTF-8 텍스트 파일(또는 표준 입력, 48KiB 이하)을 요약해 표준 출력에 내고 생략한 항목을 표준 오류에 나열한다. 원본은 고치지 않는다. `--max-tokens`로 요약 길이를 제한한다. |
 | `horon cloud doctor [--host <별칭>]` | 세션을 옮기기 전에 SSH 호스트에 접속할 수 있고 `cloud move`를 지원하는 horon-agent가 있는지 확인한다. 다음 조치와 함께 `ready`, `unreachable`, `incompatible` 중 한 줄을 표시하고 세션 데이터는 보내지 않으며 준비되지 않았으면 0이 아닌 코드로 종료한다. |
+| `horon changelog [VERSION] [--json]` | VERSION(기본값은 실행 중인 릴리스)의 공개된 릴리스 노트를 업데이트나 설치 없이 표시한다. 노트를 읽지 못하면 버전과 릴리스 페이지를 대신 표시한다. 노트의 제어 문자는 제거한다. |
 
 `horon run --wait-async "<메시지>"`는 해당 실행이 시작한 작업을 기다리고 각 작업의 최종 상태를 한 번씩 표시합니다. `--max-time`은 응답과 작업 대기를 합친 시간을 제한합니다. 시간을 넘기면 확인한 작업 상태를 표시하고 0이 아닌 코드로 종료합니다.
 

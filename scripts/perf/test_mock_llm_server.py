@@ -382,6 +382,24 @@ def final_text_of(raw: bytes) -> str:
     )
 
 
+# One installed package's tool, as the host names it, with the schema the example
+# declares for `greet`.
+PACKAGE_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "ext__hello__greet",
+            "description": "Greet one name.",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+
 class ScenarioPlanTests(ServerCase):
     """The plan markers the compare suite relies on, and their fallbacks.
 
@@ -391,6 +409,7 @@ class ScenarioPlanTests(ServerCase):
 
     SKILL_PROMPT = "[bench:skill] Use the bench-skill skill from /tmp/bench/SKILL.md then answer."
     MCP_PROMPT = "[bench:mcp] Call the bench_echo tool once, then reply with mock-ok."
+    PACKAGE_PROMPT = "[bench:package] Greet one name with the installed package tool, then reply with mock-ok."
 
     def chat(self, prompt: str, tools, messages=None) -> bytes:
         conversation = messages or [{"role": "user", "content": prompt}]
@@ -402,6 +421,43 @@ class ScenarioPlanTests(ServerCase):
 
     def requests(self) -> list[dict]:
         return get_json(self.port, "/__stats")["requests"]
+
+    def test_package_plan_calls_the_installed_tools_name_with_a_nonce_argument(self) -> None:
+        name, arguments = tool_call_of(self.chat(self.PACKAGE_PROMPT, PACKAGE_TOOL))
+        self.assertEqual(name, "ext__hello__greet")
+        self.assertEqual(set(arguments), {"name"}, "the example's greet takes one string")
+        self.assertTrue(arguments["name"].startswith("bench-"), "the argument carries the run's nonce")
+        entry = self.requests()[0]
+        self.assertEqual(entry["plan"], "package")
+        self.assertEqual(entry["via"], "package-tool")
+        self.assertTrue(entry["issued_tool_call"])
+        self.assertFalse(entry["sentinel_seen"], "the nonce has not come back yet")
+
+    def test_package_plan_stops_and_sees_the_nonce_in_the_childs_answer(self) -> None:
+        name, arguments = tool_call_of(self.chat(self.PACKAGE_PROMPT, PACKAGE_TOOL))
+        conversation = [
+            {"role": "user", "content": self.PACKAGE_PROMPT},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "call-1", "type": "function",
+                             "function": {"name": name, "arguments": json.dumps(arguments)}}]},
+            {"role": "tool", "tool_call_id": "call-1",
+             "content": json.dumps({"greeting": f"hello, {arguments['name']}"})},
+        ]
+        name_again, _ = tool_call_of(self.chat(self.PACKAGE_PROMPT, PACKAGE_TOOL, conversation))
+        self.assertEqual(name_again, "", "a package call is issued once, not repeatedly")
+        entry = self.requests()[1]
+        self.assertTrue(entry["sentinel_seen"], "the child's own answer came back through the model")
+        self.assertFalse(entry["issued_tool_call"])
+
+    def test_package_plan_is_offered_the_deferred_name_from_the_transcript(self) -> None:
+        # horon keeps a package schema out of the cached prefix; the listed-tool
+        # index names it, and the host still dispatches the call by name.
+        transcript = [
+            {"role": "system", "content": "Discovered tools: ext__hello__greet"},
+            {"role": "user", "content": self.PACKAGE_PROMPT},
+        ]
+        name, _ = tool_call_of(self.chat(self.PACKAGE_PROMPT, [], transcript))
+        self.assertEqual(name, "ext__hello__greet")
 
     def test_skill_plan_calls_the_skill_tool(self) -> None:
         name, arguments = tool_call_of(self.chat(self.SKILL_PROMPT, SKILL_TOOL))

@@ -237,7 +237,7 @@ jobs:
       - name: Benchmark script gate
         if: ${{ !cancelled() }}
         shell: bash
-        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_record_charts.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py
+        run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_record_charts.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py scripts/perf/test_package_workloads.py
 
       - name: npm CLI package gate
         # The npm distribution is generated, so its shape is only real when
@@ -669,6 +669,11 @@ jobs:
         shell: bash
         run: python3 scripts/test/system_template_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
 
+      - name: Skills CLI install gate
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/skills_cli_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
       - name: TUI PTY smoke (Linux, macOS)
         # The bare command hands a terminal launch to the sibling `horon-tui`
         # binary, and nothing else in this workflow drives that handoff or the
@@ -985,6 +990,14 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- cli::startup::agent_catalog::tests:: --nocapture
 
+      - name: Run skill source policy tests
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- skill_install::tests::only_plain_remotes --nocapture
+
       - name: Run CLI launch profile cohort
         shell: bash
         run: |
@@ -1008,6 +1021,22 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 1 \
             -- cli::startup::provider_status::tests:: --nocapture
+
+      - name: Run CLI provider failover preview cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::commands::failover_preview::tests:: --nocapture
+
+      - name: Run CLI changelog cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::changelog::tests:: --nocapture
 
       - name: Run CLI compact-text cohort
         shell: bash
@@ -1084,6 +1113,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- spend_cap::tests:: --nocapture
+
+      - name: Run release notes cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- update::release_notes::tests:: --nocapture
 
       - name: Run secrets cohort
         if: runner.os != 'Windows'
@@ -1441,7 +1478,7 @@ jobs:
             -- agent::round_budget::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 12 \
+            --timeout 600 --min-passed 16 \
             -- agent::prewalk_tests:: --nocapture
 
       - name: Verify Python eval host
