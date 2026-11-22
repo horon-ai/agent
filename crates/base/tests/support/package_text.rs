@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use horon_agent_base::packages::{
-    InstallRequest, PackageRecord, PackageScope, PackageStore, PackageTextCache, PackageTextResources, validate_package,
+    InstallRequest, PackageRecord, PackageScope, PackageStore, PackageTextCache, PackageTextResources,
 };
 use horon_agent_base::prompt::{
     SplitSystemPrompt, append_package_rules, build_system_prompt_split, load_base_system_prompt,

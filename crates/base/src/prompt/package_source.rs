@@ -27,9 +27,7 @@ const RULES_HEADER: &str = "# Package Rules\n\n\
 /// The order is the loader's: packages by ID, rules by their package-relative
 /// path, so the same resources render the same bytes on every request.
 pub fn render_rules(resources: &PackageTextResources) -> Option<String> {
-    if resources.rules().next().is_none() {
-        return None;
-    }
+    resources.rules().next()?;
     let mut section = String::from(RULES_HEADER);
     let mut omitted = 0usize;
     for rule in resources.rules() {
