@@ -32,8 +32,7 @@ fn arm_debug_client_parent_death_signal() {
     if !is_file_controlled_debug_client() {
         return;
     }
-    // The platform arms its parent-death behaviour and re-checks the parent
-    // afterwards, because the launcher can exit before the signal is armed.
+    // The platform arms parent-death behaviour and re-checks the parent, as the launcher can exit first.
     if horon_agent_platform::process::bind_process_lifetime_to_parent() {
         std::process::exit(0);
     }
@@ -44,9 +43,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
         anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
     }
+    super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
-        // A remote session ID and working directory belong to the remote host.
-        // Do not run local resume lookup or provider bootstrap.
+        // A remote host owns its session ID and cwd: skip local resume lookup and provider bootstrap.
         return super::ssh::run(args).await;
     }
     match commands::run_early_command(&args.command).await? {
@@ -54,8 +53,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         commands::Early::Rewrite(next) => args.command = Some(next),
         commands::Early::Pass => {}
     }
-    // Explicit MCP management is independent of provider profiles, sessions,
-    // and the daemon. In particular, list must remain offline and scriptable.
+    // MCP management is independent of providers, sessions and the daemon; list stays offline and scriptable.
     if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
@@ -611,6 +609,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         super::tui_handoff::decide_for_process(),
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
+        &args.add_dir,
     )
 }
 

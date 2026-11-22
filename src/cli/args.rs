@@ -71,6 +71,8 @@ impl Command {
             no_session: false,
             max_time: None,
             wait_async: false,
+            system_template: None,
+            print_thoughts: false,
             model_overrides: RunModelOverrides {
                 thinking: None,
                 service_tier: None,
@@ -97,6 +99,18 @@ pub(crate) struct Args {
     /// Working directory to send to a remote server when using --socket
     #[arg(long, global = true)]
     pub(crate) remote_working_dir: Option<String>,
+
+    /// Extra workspace directory for the session, repeatable. Each path is
+    /// resolved and must be an existing directory; the session lists it in its
+    /// context, and the directory is never modified or granted wholesale.
+    #[arg(
+        long = "add-dir",
+        global = true,
+        value_name = "PATH",
+        action = clap::ArgAction::Append,
+        conflicts_with = "ssh"
+    )]
+    pub(crate) add_dir: Vec<String>,
 
     /// Remote SSH attach; unavailable in this headless build, so it fails with an explanation
     #[arg(long, global = true, conflicts_with = "socket", value_name = "HOST")]
@@ -338,6 +352,11 @@ pub(crate) enum Command {
         /// Render this template once as the system prompt. Variables: {{cwd}}, {{date}}, {{model}}
         #[arg(long, value_name = "FILE")]
         system_template: Option<std::path::PathBuf>,
+
+        /// Print provider-supplied visible reasoning to stderr under a label
+        /// (text mode only; the answer stays on stdout)
+        #[arg(long, conflicts_with_all = ["json", "ndjson"])]
+        print_thoughts: bool,
 
         #[command(flatten)]
         model_overrides: RunModelOverrides,
@@ -781,6 +800,17 @@ pub(crate) enum CloudCommand {
         session: String,
         #[arg(long)]
         epoch: u64,
+    },
+
+    /// Check that a cloud host is reachable and runs a compatible horon-agent
+    /// before moving a session. It sends no session data and creates nothing
+    /// on the host.
+    Doctor {
+        #[command(flatten)]
+        target: CloudMoveTarget,
+        /// Emit JSON instead of one line of text
+        #[arg(long)]
+        json: bool,
     },
 }
 
