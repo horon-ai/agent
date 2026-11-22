@@ -17,9 +17,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail, ensure};
-use horon_agent_harness_api::{
-    PackageCommandInfo, PackageCommandKind, PackageCommandList, PackageCommandOutcome,
-};
+use horon_agent_harness_api::{PackageCommandInfo, PackageCommandKind, PackageCommandList, PackageCommandOutcome};
 use serde_json::{Value, json};
 
 use crate::agent::Agent;
@@ -28,7 +26,10 @@ use crate::extensions::package_snapshot;
 use crate::packages::{PackageCommand, PackageTextResources};
 
 /// Every package command this session currently provides.
-pub(super) async fn list(agent: &Agent) -> Result<(Value, String)> {
+///
+/// The daemon's runtime-command dispatch calls this; integration tests drive
+/// the same code with the agent a turn hands it.
+pub async fn list(agent: &Agent) -> Result<(Value, String)> {
     let listing = generate(agent).await;
     let value = serde_json::to_value(&listing)?;
     let message = serde_json::to_string_pretty(&value)?;
@@ -36,7 +37,10 @@ pub(super) async fn list(agent: &Agent) -> Result<(Value, String)> {
 }
 
 /// Run the package command `args` names: `[package_id, command, …words]`.
-pub(super) async fn run(agent: &mut Agent, args: &[String]) -> Result<(Value, String)> {
+///
+/// The daemon's runtime-command dispatch calls this; integration tests drive
+/// the same code with the agent a turn hands it.
+pub async fn run(agent: &mut Agent, args: &[String]) -> Result<(Value, String)> {
     let [package_id, command, rest @ ..] = args else {
         bail!("A package command names a package and a command.");
     };
@@ -61,11 +65,7 @@ pub(super) async fn run(agent: &mut Agent, args: &[String]) -> Result<(Value, St
         .ok_or_else(|| stale(generation))?
         .ensure_live(&session)
         .await
-        .map_err(|error| {
-            anyhow::anyhow!(
-                "The package command `{package_id}:{command}` is stale: {error:#}"
-            )
-        })?;
+        .map_err(|error| anyhow::anyhow!("The package command `{package_id}:{command}` is stale: {error:#}"))?;
 
     let store = session.store();
     let declarations = invoke::declarations_for(store, &record).await?;
@@ -124,14 +124,16 @@ async fn generate(agent: &Agent) -> PackageCommandList {
     }
     let resources = PackageTextResources::load(session.store(), snapshot.workspace(), snapshot.packages());
     for command in resources.commands() {
-        commands.entry(command.name.clone()).or_insert_with(|| PackageCommandInfo {
-            name: command.name.clone(),
-            package_id: command.package_id.clone(),
-            command: command.command.clone(),
-            kind: PackageCommandKind::Template,
-            description: command.description.clone(),
-            argument_hint: command.argument_hint.clone(),
-        });
+        commands
+            .entry(command.name.clone())
+            .or_insert_with(|| PackageCommandInfo {
+                name: command.name.clone(),
+                package_id: command.package_id.clone(),
+                command: command.command.clone(),
+                kind: PackageCommandKind::Template,
+                description: command.description.clone(),
+                argument_hint: command.argument_hint.clone(),
+            });
     }
     for record in snapshot.packages() {
         if let Some(reason) = resources.rejection(&record.id) {

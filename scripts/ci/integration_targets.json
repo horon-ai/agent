@@ -118,6 +118,11 @@
     },
     {
       "package": "horon-agent-app-core",
+      "target": "package_commands",
+      "min_passed": 5
+    },
+    {
+      "package": "horon-agent-app-core",
       "target": "package_session",
       "min_passed": 10
     },

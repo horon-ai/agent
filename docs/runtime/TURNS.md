@@ -297,8 +297,8 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 The harness API advertises this feature only when the connected daemon's safety-feature probe reports `runtime_commands`.
 Older daemons return an explicit unsupported error.
-This is an additive API (the current minor version is 22), available from both the Rust and TypeScript SDKs
-(`crates/harness-api/src/lib.rs:72-74`).
+This is an additive API (the current minor version is 27), available from all three SDKs
+(`crates/harness-api/src/lib.rs:88-91`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -384,9 +384,17 @@ session's runtime host, including SSH and managed remote runtimes.
   exists. The first response is acceptance of the request, not completion.
 - `auth`, `logout`: runtime host authentication inspection and explicitly confirmed
   removal of provider credentials. Supported shared credential stores are the target.
+- `package_commands`, `package_command`: the slash commands an installed package
+  supplies. `package_commands` lists them for the session's captured generation;
+  `package_command` takes `[package id, command, …argument words]` and answers
+  either the expanded template text or the child's answer after the tool policy
+  allowed it. Both are behind `package_commands_v1` and need
+  `runtime_commands`; the surfaces are in
+  [the harness API](../protocol/HARNESS_API.md#package-commands-protocol-127) and
+  the package side is in [PACKAGES.md](PACKAGES.md#package-commands).
 
 The names above are set by the runtime command enum
-(`crates/harness-api/src/runtime_commands.rs:7-39`).
+(`crates/harness-api/src/runtime_commands.rs:13-58`).
 Sending a name that is not in the enum answers with an error.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, and `cache 5m` are not in the enum.
 This build has no runtime command that extends cache TTL and no client request that changes

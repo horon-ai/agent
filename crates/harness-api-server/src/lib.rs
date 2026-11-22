@@ -138,6 +138,9 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // refuses with `unsupported` naming this capability. Advertising it
     // unconditionally is what lets a client find it before sending.
     horon_agent_harness_api::CAPABILITY_PACKAGE_CONTROL_V1,
+    // Listed so an SDK capability gate finds it; `hello_ok` drops it when the
+    // daemon did not report `runtime_commands`.
+    horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -392,18 +395,15 @@ where
                 .iter()
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
-                .map(str::to_string)
-                .chain(user_connections_supported.then(|| "session_connections".to_string()))
-                .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
                 // The package commands ride the runtime-command request, so a
                 // daemon without that surface cannot answer them at all. The
                 // bridge cannot see which variants a daemon's enum holds; the
                 // release keeps them in step, and an older daemon answers the
                 // unknown value with an error the client shows.
-                .chain(
-                    runtime_commands_supported
-                        .then(|| horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1.to_string()),
-                )
+                .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1 || runtime_commands_supported)
+                .map(str::to_string)
+                .chain(user_connections_supported.then(|| "session_connections".to_string()))
+                .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))
                 .chain(session_tools_supported.then(|| "session_tools".to_string()))
                 .chain(
                     ["soft_interrupt_ids", "background_tool_result"]

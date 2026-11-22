@@ -24,8 +24,8 @@ use anyhow::{Result, bail};
 use serde_json::Value;
 
 use super::{
-    ApprovalPromptRef, Registry, ToolContext, ToolEffects, approval_override, permission_bridge, run_gated_pre_tool_hook,
-    sdk, session_tool_policy,
+    ApprovalPromptRef, Registry, ToolContext, ToolEffects, approval_override, permission_bridge,
+    run_gated_pre_tool_hook, sdk, session_tool_policy,
 };
 
 /// The registry-shaped name one executable command's policy is decided under.

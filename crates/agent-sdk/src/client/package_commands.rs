@@ -26,9 +26,7 @@ impl HoronAgentClient {
         serde_json::from_value(output.data).map_err(|error| {
             Error::new(
                 ErrorKind::UnexpectedReply,
-                format!(
-                    "expected a package command list from harness API v{API_VERSION_MAJOR}, got: {error}"
-                ),
+                format!("expected a package command list from harness API v{API_VERSION_MAJOR}, got: {error}"),
             )
         })
     }
@@ -55,9 +53,7 @@ impl HoronAgentClient {
         serde_json::from_value(output.data).map_err(|error| {
             Error::new(
                 ErrorKind::UnexpectedReply,
-                format!(
-                    "expected a package command outcome from harness API v{API_VERSION_MAJOR}, got: {error}"
-                ),
+                format!("expected a package command outcome from harness API v{API_VERSION_MAJOR}, got: {error}"),
             )
         })
     }

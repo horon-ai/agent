@@ -24,12 +24,12 @@ pub use catalog::{
     CATALOG_VERSION, CatalogView, CollectionReport, InstallRequest, PackageLease, PackageRecord, PackageScope,
     PackageState, PackageStore, StoredFile, VerificationReport,
 };
+pub use command_resources::{
+    MAX_COMMAND_BYTES, MAX_PACKAGE_COMMAND_BYTES, PackageCommand, expand, fallback_description,
+};
 pub use horon_agent_extension_types::{
     CommandDeclaration, EXTENSION_PROTOCOL, ExtensionManifest, MANIFEST_VERSION, ObserverEvent, PackageKind,
     PackageResources, PluginManifest, TARGETS, ToolDeclaration,
-};
-pub use command_resources::{
-    MAX_COMMAND_BYTES, MAX_PACKAGE_COMMAND_BYTES, PackageCommand, expand, fallback_description,
 };
 pub use inbox::{InboxEntry, InboxOutcome, InboxReport};
 pub use manifest::{ValidatedPackage, read_recorded_declaration, validate_package};

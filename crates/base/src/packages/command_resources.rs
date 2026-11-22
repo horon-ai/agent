@@ -64,6 +64,9 @@ pub(super) struct ParsedCommand {
     pub(super) body: String,
 }
 
+/// The identity of every file one load read, for the text cache to revalidate.
+pub(super) type CommandFiles = Vec<(PathBuf, FileStamp)>;
+
 /// Read, verify and parse every declared command of one installed copy.
 ///
 /// The file identities come back with the commands so the caller's cache can
@@ -72,7 +75,7 @@ pub(super) fn read_commands(
     root: &Path,
     record: &PackageRecord,
     declared: &[String],
-) -> Result<(Vec<PackageCommand>, Vec<(PathBuf, FileStamp)>)> {
+) -> Result<(Vec<PackageCommand>, CommandFiles)> {
     let mut commands = Vec::with_capacity(declared.len());
     let mut files = Vec::with_capacity(declared.len());
     let mut names = BTreeSet::new();
@@ -86,10 +89,7 @@ pub(super) fn read_commands(
             "package commands exceed {MAX_PACKAGE_COMMAND_BYTES} bytes"
         );
         let stem = command_stem(path)?;
-        ensure!(
-            names.insert(stem.to_owned()),
-            "duplicate package command name: {stem}"
-        );
+        ensure!(names.insert(stem.to_owned()), "duplicate package command name: {stem}");
         let parsed = parse(&bytes);
         ensure!(!parsed.body.trim().is_empty(), "package command has no body: {path}");
         commands.push(PackageCommand {
@@ -104,9 +104,8 @@ pub(super) fn read_commands(
             body: parsed.body,
             relative_path: relative,
         });
-        files.push((absolute, FileStamp::capture(&absolute).with_context(|| {
-            format!("inspect the package command {path}")
-        })?));
+        let stamp = FileStamp::capture(&absolute).with_context(|| format!("inspect the package command {path}"))?;
+        files.push((absolute, stamp));
     }
     commands.sort_by(|left, right| left.name.cmp(&right.name));
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -139,10 +138,7 @@ pub fn validate_command_files(root: &Path, declared: &[String]) -> Result<()> {
         );
         ensure!(!bytes.trim().is_empty(), "package command is empty: {path}");
         let stem = command_stem(path)?;
-        ensure!(
-            names.insert(stem.to_owned()),
-            "duplicate package command name: {stem}"
-        );
+        ensure!(names.insert(stem.to_owned()), "duplicate package command name: {stem}");
         let parsed = parse(&bytes);
         ensure!(!parsed.body.trim().is_empty(), "package command has no body: {path}");
     }
@@ -350,11 +346,11 @@ mod tests {
 
     #[test]
     fn a_missing_description_falls_back_to_the_first_body_line() {
-        assert_eq!(fallback_description("\n\n  Summarize the tree  \nmore"), "Summarize the tree");
         assert_eq!(
-            fallback_description(&"x".repeat(80)),
-            format!("{}...", "x".repeat(60))
+            fallback_description("\n\n  Summarize the tree  \nmore"),
+            "Summarize the tree"
         );
+        assert_eq!(fallback_description(&"x".repeat(80)), format!("{}...", "x".repeat(60)));
     }
 
     #[test]
