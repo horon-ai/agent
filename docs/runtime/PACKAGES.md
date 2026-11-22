@@ -20,7 +20,8 @@ one snapshot per turn, so a running turn keeps the generation it started with
 while the next turn and new sessions observe the newest one; a disable or removal
 refuses new loads at once and runs the callbacks registered for the generation
 that is being revoked. The tool, text, MCP and command surfaces all read that
-pinned generation. Hook and observer wiring are later steps.
+pinned generation, and the observation events an installed package and its
+bundled hook files subscribe to are delivered now.
 
 | Surface | State | Check |
 | --- | --- | --- |
@@ -38,7 +39,7 @@ pinned generation. Hook and observer wiring are later steps.
 | Package skills, rules and prompts | Implemented | `cargo test --locked -p horon-agent-base --test prompt_guidance_integration` |
 | Package MCP servers | Implemented | `cargo test --locked -p horon-agent-app-core --test tool_dispatch_boundaries` |
 | Package commands: listing, templates, executable dispatch | Implemented | `cargo test --locked -p horon-agent-app-core --test package_commands` |
-| Package hooks and observer delivery | Pending | Follow-up changes on the same launch path |
+| Package observation events and bundled hook files | Implemented | `cargo test --locked -p horon-agent-app-core --lib extensions::observer::tests` |
 
 ## Two package kinds
 

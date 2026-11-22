@@ -277,6 +277,7 @@ impl Agent {
     /// submission and the first tool call. No-op (without building the payload)
     /// when the hook is not configured.
     fn fire_turn_start_hook(&self, source: &str) {
+        crate::extensions::observer::turn_started(&self.session.id, source);
         if !crate::hooks::hook_configured("turn_start") {
             return;
         }
@@ -293,6 +294,7 @@ impl Agent {
     /// Fire the `turn_end` observer hook with turn outcome metadata.
     /// No-op (without building the payload) when the hook is not configured.
     fn fire_turn_end_hook(&self, result: &Result<()>, started_at: Instant, start_message_index: usize) {
+        crate::extensions::observer::turn_ended(&self.session.id, result.is_ok(), started_at.elapsed());
         if !crate::hooks::hook_configured("turn_end") {
             return;
         }
