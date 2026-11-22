@@ -264,6 +264,14 @@ The decision is one replay event, `prewalk` in the stored session, and that even
 
 `role:<name>` resolves through the active profile's role chain described above, which is why a profile that only sets `default_model` can hand off to `into = "role:aux"` and get that same model. `crates/app-core/src/agent/prewalk.rs` holds the decision, and the acceptance cases live in `crates/app-core/src/agent/prewalk_tests.rs`.
 
+### Launch overrides
+
+`--role <name>=<model>` overrides one role for this launch only, and `--prewalk <into>` or `--no-prewalk` does the same for the handoff. Repeat `--role` to set several roles. The supported names are `default`, `plan`, `aux`, `judge` and `image`; an unknown name, an empty model, or a model the active `[providers.<name>].models` list does not offer fails before the first request is sent.
+
+`--role default=<model>` names the session model, which is the resolution slot `--model` fills, and passing both with different values fails instead of silently preferring one. Every other role is rewritten inside the active profile, chosen by `--provider-profile` or `[provider] default_provider`. `--no-prewalk` turns the handoff off even when `[prewalk]` enabled it, and it wins over a `--prewalk` on the same command line.
+
+The overrides are process-scoped. They set `HORON_AGENT_MODEL_ROLE_DEFAULT`, `HORON_AGENT_MODEL_ROLE_PLAN`, `HORON_AGENT_MODEL_ROLE_AUX`, `HORON_AGENT_MODEL_ROLE_JUDGE`, `HORON_AGENT_MODEL_ROLE_IMAGE`, `HORON_AGENT_PREWALK_ENABLED` and `HORON_AGENT_PREWALK_INTO`, which the config loader reads before anything resolves a role; a settings save reads the file layer only, so none of them is written back. `horon run` reports each effective value on stderr, for example `launch override: role plan -> plan-model (this invocation only)`, and `--quiet` suppresses that line.
+
 ## Prompt cache key
 
 A request that sends `prompt_cache_key` always uses the same key for the same session lineage (the root of a forked lineage, or the session id when there is none), the same system prompt, and the same tool list. The key is 28 characters, `pck_` followed by the first 12 bytes of sha256 in hex, and it stays the same even when conversation turns or compaction results change. So after compaction the leading prompt remains in the same cache slot, and a different lineage uses a different slot.

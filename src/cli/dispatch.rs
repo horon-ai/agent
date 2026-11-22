@@ -92,7 +92,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
         args.provider = provider_choice_for_named_profile(profile_name);
     }
-
+    super::launch_overrides::apply(&mut args)?;
     if let Some(tool_profile) = args.tool_profile.as_deref() {
         crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
         crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");

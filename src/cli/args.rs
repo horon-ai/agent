@@ -159,6 +159,21 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) tool_profile: Option<String>,
 
+    /// Override a model role for this launch only: NAME=MODEL. Repeatable.
+    ///
+    /// Roles are default, plan, aux, judge and image. `default` names the
+    /// session model, like --model. The value is never written to config.toml.
+    #[arg(long = "role", global = true, value_name = "NAME=MODEL", action = clap::ArgAction::Append)]
+    pub(crate) role: Vec<String>,
+
+    /// Disable the `[prewalk]` handoff for this launch only.
+    #[arg(long = "no-prewalk", global = true)]
+    pub(crate) no_prewalk: bool,
+
+    /// Enable the `[prewalk]` handoff into this model or `role:<name>` for this launch only.
+    #[arg(long = "prewalk", global = true, value_name = "INTO")]
+    pub(crate) prewalk: Option<String>,
+
     /// Run mode for a bare launch. `rpc` speaks the stdio JSONL protocol on
     /// stdin and stdout; every other value runs the normal client.
     #[arg(long, global = true, value_name = "MODE")]

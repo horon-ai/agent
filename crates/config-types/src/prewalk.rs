@@ -29,6 +29,16 @@ pub struct PrewalkConfig {
 }
 
 impl PrewalkConfig {
+    /// Environment key that turns the handoff on or off for one launch.
+    ///
+    /// `--no-prewalk` writes `0` and `--prewalk <into>` writes `1`, so the
+    /// override covers a config file that enabled the section. The value is
+    /// read by the config loader and never written back to the file.
+    pub const ENABLED_ENV: &'static str = "HORON_AGENT_PREWALK_ENABLED";
+
+    /// Environment key that overrides `prewalk.into` for one launch.
+    pub const INTO_ENV: &'static str = "HORON_AGENT_PREWALK_INTO";
+
     /// Whether the session hands off to [`Self::into`].
     pub fn is_active(&self) -> bool {
         self.enabled && self.into_model().is_some()

@@ -7,6 +7,7 @@ pub mod dispatch;
 pub mod hot_exec;
 pub mod index_import;
 pub mod install_release;
+pub mod launch_overrides;
 pub mod launch_profile;
 pub mod mcp;
 pub mod output;

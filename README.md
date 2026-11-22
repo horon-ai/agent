@@ -132,6 +132,8 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 
 `horon run --no-session "<message>"` keeps the run in memory. It writes no session log, checkpoint, catalog row or run journal under `$HORON_HOME`, so the run cannot be resumed or recovered afterwards, and a failed run leaves nothing behind either. The session id in `--json` and `--ndjson` output names no stored session. Logs, usage records and other non-session state are written as usual. It cannot be combined with `--resume`, `--continue` or `--goal`, which need a stored session. Tools that keep their own per-session files, such as `todo`, are not covered by this guarantee.
 
+`horon run --role plan=<model>`, `--prewalk <model|role:<name>>` and `--no-prewalk` change model roles and the `[prewalk]` handoff for that one launch without touching `config.toml`. An unknown role, an empty model, or a model the active profile does not list fails before any request, and `--no-prewalk` wins over both `[prewalk]` and `--prewalk` ([docs](docs/provider/MODEL.md#launch-overrides)).
+
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
 ### Terminal client

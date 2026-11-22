@@ -132,6 +132,8 @@ horon run "summarize this repo"
 
 `horon run --no-session "<메시지>"`는 실행을 메모리에만 둡니다. `$HORON_HOME` 아래에 세션 로그, 체크포인트, 카탈로그 행, 실행 저널을 쓰지 않으므로 실행 뒤에 이어가거나 복구할 수 없고, 실패한 실행도 흔적을 남기지 않습니다. `--json`과 `--ndjson` 출력의 세션 ID는 저장된 세션을 가리키지 않습니다. 로그와 사용량 기록 같은 세션 밖 상태는 평소처럼 기록합니다. 저장된 세션이 필요한 `--resume`, `--continue`, `--goal`과는 함께 쓸 수 없습니다. `todo`처럼 세션별 파일을 따로 쓰는 도구는 이 보장에 포함되지 않습니다.
 
+`horon run --role plan=<모델>`, `--prewalk <모델|role:<이름>>`, `--no-prewalk`는 `config.toml`을 건드리지 않고 그 한 번의 실행에만 모델 역할과 `[prewalk]` 핸드오프를 바꿉니다. 모르는 역할, 빈 모델, 활성 프로파일이 나열하지 않는 모델은 요청을 보내기 전에 실패하고, `--no-prewalk`는 `[prewalk]`와 `--prewalk` 모두보다 우선합니다([문서](docs/provider/MODEL.ko.md#실행-한-번의-역할프리워크-덮어쓰기)).
+
 `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답하므로 v1 클라이언트와 v2 클라이언트가 모두 붙는다.
 
 ### 터미널 클라이언트
