@@ -241,8 +241,11 @@ fn run(extension: TestExtension, declaration: Declaration, input: Vec<u8>) -> (R
     let (sender, receiver) = mpsc::channel();
     let sink = Arc::new(Mutex::new(Vec::new()));
     let output = Sink(Arc::clone(&sink));
-    let worker = thread::spawn(move || serve(extension, declaration, Feed::new(receiver), output));
+    // Queue the frames before the server starts. A server that refuses at once
+    // (an empty input, a bad declaration) ends and drops its receiver, so a send
+    // issued after the spawn races that shutdown and fails with `SendError`.
     sender.send(input).expect("the frames reach the server");
+    let worker = thread::spawn(move || serve(extension, declaration, Feed::new(receiver), output));
     let result = worker.join().expect("the server thread");
     // Dropping the sender is the host closing its write half, which happens
     // after it read every answer.
