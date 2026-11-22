@@ -106,10 +106,7 @@ impl Agent {
         // A direct profile prices under its own `openai-compatible:<id>` route;
         // the display label would map a compatible endpoint to OpenAI's table.
         let source_key = self.compaction_route_from_provider().unwrap_or_else(|| {
-            let runtime = match std::env::var("HORON_AGENT_RUNTIME_PROVIDER") {
-                Ok(value) => Some(value),
-                Err(_) => None,
-            };
+            let runtime = std::env::var("HORON_AGENT_RUNTIME_PROVIDER").into_iter().next();
             crate::provider_activity::source_key_for_provider_label(&self.provider_name(), runtime.as_deref())
         });
         let model = self.provider_model();
