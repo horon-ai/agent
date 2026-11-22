@@ -443,7 +443,9 @@ When the line does not fit the terminal, the least important segment is dropped 
 
 ## Commands
 
-A line starting with `/` is resolved in this order: a built-in command, a `skill:` address, a command file, a harness command, then a bare skill name. A built-in owns its name outright, so a command file with that name is listed with the built-in winning and never runs. An unknown name is an error that points at `/help`, and a line starting with `//` is sent as the literal message with one slash removed.
+A line starting with `/` is resolved in this order: a built-in command, a `skill:` address, a command file, a harness command, a bare skill name, then a command an installed package supplies. The `//` escape is read before any of them: such a line is sent as the literal message with one slash removed. A built-in owns its name outright, so a command file with that name is listed with the built-in winning and never runs. An unknown name is an error that points at `/help`.
+
+A package command answers as `/id:command`, where `id` is the package id and `command` is the name the package declared. It is resolved last, so an installed package never takes over a name a built-in, a command file or a harness command already answers to. The client reads the list when it attaches to a session and again after a session switch, and does not refresh it during the session, so a package installed while it is attached appears once it attaches again. `/help` lists these names under the harness commands, by the `/id:command` name. A template's text arrives from the harness already expanded and is submitted as an ordinary user message, drawn as the line that was typed and queued like typed text while a turn runs; an executable command has already run on the daemon under the tool policy, so its answer is drawn as a notice and nothing is sent. A harness without the `package_commands_v1` capability yields no package commands, and everything else in this section works as it did.
 
 | Command | Effect |
 | --- | --- |
@@ -532,7 +534,7 @@ harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```
 
-Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page.
+Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page. The commands an installed package supplies sit in that same section under their `/id:command` name, and the section simply has no such rows when the session's packages supply none.
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
 

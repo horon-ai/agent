@@ -297,8 +297,8 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 The harness API advertises this feature only when the connected daemon's safety-feature probe reports `runtime_commands`.
 Older daemons return an explicit unsupported error.
-This is an additive API (the current minor version is 22), available from both the Rust and TypeScript SDKs
-(`crates/harness-api/src/lib.rs:72-74`).
+This is an additive API (the current minor version is 27), available from all three SDKs
+(`crates/harness-api/src/lib.rs:88-91`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -384,9 +384,17 @@ session's runtime host, including SSH and managed remote runtimes.
   exists. The first response is acceptance of the request, not completion.
 - `auth`, `logout`: runtime host authentication inspection and explicitly confirmed
   removal of provider credentials. Supported shared credential stores are the target.
+- `package_commands`, `package_command`: the slash commands an installed package
+  supplies. `package_commands` lists them for the session's captured generation;
+  `package_command` takes `[package id, command, …argument words]` and answers
+  either the expanded template text or the child's answer after the tool policy
+  allowed it. Both are behind `package_commands_v1` and need
+  `runtime_commands`; the surfaces are in
+  [the harness API](../protocol/HARNESS_API.md#package-commands-protocol-127) and
+  the package side is in [PACKAGES.md](PACKAGES.md#package-commands).
 
 The names above are set by the runtime command enum
-(`crates/harness-api/src/runtime_commands.rs:7-39`).
+(`crates/harness-api/src/runtime_commands.rs:13-58`).
 Sending a name that is not in the enum answers with an error.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, and `cache 5m` are not in the enum.
 This build has no runtime command that extends cache TTL and no client request that changes
@@ -681,6 +689,10 @@ Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The 
 Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
 
 With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
+
+## Visible reasoning in text mode
+
+`horon run --print-thoughts "..."` prints reasoning that the provider returns as visible text to stderr under a `[thinking]` label, ahead of the answer. The answer stays on stdout, so piped output is unchanged. Without the option, text output is byte-for-byte the same. Reasoning the provider does not return as visible text is not shown, and the option cannot be combined with `--json` or `--ndjson`, whose formats are unchanged.
 
 ## `--resume` behaviour
 

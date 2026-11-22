@@ -195,6 +195,10 @@ An empty string counts as unset at every step. `aux` walks the same chain, so a 
 
 `image` stops at step 3: it has no inherited roles and does not take a profile or provider text default. An image request sent to a chat model cannot succeed, so an unset `roles.image` means image generation is not configured, which the tool reports, rather than a call that always fails at the endpoint. This is the only role where a text default is not a valid substitute, and `ModelRole::accepts_text_default` states it once.
 
+### Auxiliary calls stay in the active profile
+
+Every auxiliary workload resolves its model inside the profile the session runs under: the `advisor` forks the session's provider and only changes its model, `prewalk` accepts a model id or `role:<name>` from that profile, and `judge`, `aux`, `plan` and `image` read that profile's `roles`. A role value that looks like another profile's model, such as `beta/aux-model`, is sent as a model id to the active profile's own endpoint with its own credential. No auxiliary call selects a second profile, so none of them contacts another profile's endpoint, and `[ambient] provider` is not read to choose a provider. This is model-provider routing only: it says nothing about shell commands, MCP servers or other network access. `crates/base/src/provider/aux_boundary_tests.rs` checks it against two local servers.
+
 ### Fallback and failover order
 
 The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[providers.<name>]`, not on a role, and it applies to whichever model the role resolved to. Recovery enters these steps in this fixed order, and each is entered only after the one before it is exhausted.
@@ -204,6 +208,12 @@ The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[provider
 3. Cross-provider failover (`cross_provider_failover`, default `countdown`; unattended runs need `autonomous_failover`, default `false`).
 
 The switch lasts for the rest of the turn and the next turn starts again from the role's model. Non-retryable errors (401, invalid request, context overflow) never start the chain. Reason: the steps differ in what they cost to take. A model switch keeps the endpoint, the credential, and the cache host; an account switch changes the credential; a provider switch changes the endpoint. Cheapest first means a rate limit is absorbed without losing prompt-cache locality, and putting the list on the profile keeps it from naming a model on another endpoint, which the placement rule above forbids.
+
+### Previewing the failover order
+
+`horon provider failover [--json]` prints the order the current configuration produces: the retry budget, then same-provider account failover, cross-provider failover and the unattended switch. A step that cannot run says which setting excludes it. The command reads configuration only. It sends no model request, changes no account, quota or provider selection, and prints no credential.
+
+This build assigns no accounts across a set of inputs, so there is no distribution to preview. The preview shows the real failover order instead. Quota cooldowns and which saved accounts are available at this moment are held in memory by a running daemon, so the preview does not show them. `fallback_models` is not a setting in this build yet, so the preview does not list it.
 
 ### Who implements it
 
@@ -256,6 +266,7 @@ from = "plan-model"
 | --- | --- |
 | `enabled` | Whether a session hands off at all. Off by default. |
 | `into` | The execution model: a bare model id, or `role:<name>`. Required when `enabled = true`; a section without a usable value fails config validation with an error naming `prewalk.into`. |
+| `planning` | Optional. The model a new session plans on: a bare model id or `role:<name>`. It is applied once, before the session's first assistant message, so a model chosen later, a resumed session and a session already handed off are left alone, and the handoff to `into` then starts from this model. It needs `enabled = true`, and a value the profile does not offer keeps the session model and logs why. |
 | `from` | Applicability only. When set, the session hands off just if it currently runs this model. It never names a model to return to, and leaving it out applies to every session. |
 
 The handoff point depends on plan mode. With `[tools] plan_mode` off it is the first successful `todo` write that left at least one item; with plan mode on it is plan approval, so a todo list written during planning never switches the model out from under the plan. The switch takes the same path as `/model`, so `session.model` stores the execution model and every later request, including after a resume or a restore, runs on it.

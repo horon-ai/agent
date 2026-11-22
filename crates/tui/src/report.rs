@@ -423,5 +423,7 @@ fn title(command: RuntimeCommand) -> &'static str {
         RuntimeCommand::Advisor => "advisor",
         RuntimeCommand::Dirs => "workspace directories",
         RuntimeCommand::Mcp => "MCP servers",
+        RuntimeCommand::PackageCommands => "package commands",
+        RuntimeCommand::PackageCommand => "package command",
     }
 }

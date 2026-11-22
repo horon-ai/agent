@@ -302,8 +302,8 @@ CancelSoftInterrupts {
 
 하네스 API는 연결된 데몬의 안전 기능 프로브가 `runtime_commands`를 알릴 때만 그 기능을 알린다.
 구형 데몬은 명시적인 미지원 오류를 돌려준다.
-이것은 추가형 API이며 현재 마이너 버전은 22이고 Rust와 TypeScript SDK 모두에서 쓸 수 있다
-(`crates/harness-api/src/lib.rs:72-74`).
+이것은 추가형 API이며 현재 마이너 버전은 27이고 세 SDK 모두에서 쓸 수 있다
+(`crates/harness-api/src/lib.rs:88-91`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -384,9 +384,16 @@ Rust 이벤트는 `RuntimeCommandResult { session_id, command, data, message }`
   첫 응답은 완료가 아니라 요청 접수다.
 - `auth`, `logout`: 런타임 호스트 인증 검사와 명시적으로 확인한
   프로바이더 자격 증명 제거. 지원되는 공유 인증 저장소가 대상이다.
+- `package_commands`, `package_command`: 설치한 패키지가 공급하는 슬래시 명령.
+  `package_commands`는 세션이 고정한 세대의 명령을 나열하고,
+  `package_command`는 `[패키지 id, 명령, …인자 단어]`를 받아 펼친 템플릿 글이나
+  도구 정책을 통과한 자식의 답을 돌려준다. 둘 다 `package_commands_v1` 뒤에 있고
+  `runtime_commands`가 필요하다. 표면은
+  [하네스 API](../protocol/HARNESS_API.ko.md#패키지-명령프로토콜-127)에, 패키지 쪽은
+  [PACKAGES.ko.md](PACKAGES.ko.md#패키지-명령)에 있다.
 
 위 이름들은 런타임 명령 열거형이 정한다
-(`crates/harness-api/src/runtime_commands.rs:7-39`).
+(`crates/harness-api/src/runtime_commands.rs:13-58`).
 열거형에 없는 이름을 보내면 오류로 답한다.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, `cache 5m`은 이 열거형에 없다.
 캐시 TTL을 늘리는 런타임 명령도, 프리미엄 모드를 바꾸는 클라이언트 요청도 이 빌드에 없다.
@@ -647,6 +654,10 @@ method_order = ["handoff", "structured"]
 텍스트 모드는 시간 초과를 표준 오류에 표시합니다. `--json`은 오류 객체 하나를 쓰고 `--ndjson`은 오류 레코드로 끝납니다. 두 형식은 `"code":"deadline_exceeded"`와 함께 `max_time_seconds` 및 세션 ID를 포함합니다.
 
 `--wait-async`를 쓰면 현재 실행과 세션이 시작한 백그라운드 작업을 기다리는 시간도 제한에 포함합니다. 텍스트 모드는 표준 오류에 작업마다 상태를 한 번씩 표시합니다. `--json`이 성공하면 `background_jobs` 배열을 포함하고, `--ndjson`은 `done` 전에 작업마다 `background_job` 레코드를 보냅니다. 시간이 초과되면 확인한 상태를 표준 오류에 쓰고 선택한 형식으로 기존 시간 초과 오류를 보냅니다.
+
+## 텍스트 모드의 추론 표시
+
+`horon run --print-thoughts "..."`는 제공자가 보이는 텍스트로 돌려주는 추론을 답변보다 먼저 표준 오류에 `[thinking]` 표시와 함께 출력합니다. 답변은 표준 출력에 그대로 남으므로 파이프로 받은 출력은 달라지지 않습니다. 옵션을 주지 않으면 텍스트 출력은 바이트 단위로 같습니다. 제공자가 보이는 텍스트로 돌려주지 않는 추론은 표시하지 않으며, 이 옵션은 형식이 바뀌지 않는 `--json`, `--ndjson`과 함께 쓸 수 없습니다.
 
 ## `--resume` 동작
 

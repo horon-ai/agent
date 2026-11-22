@@ -669,6 +669,11 @@ jobs:
         shell: bash
         run: python3 scripts/test/system_template_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
 
+      - name: Skills CLI install gate
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 scripts/test/skills_cli_smoke.py --agent target/${{ matrix.target }}/release/horon-agent
+
       - name: TUI PTY smoke (Linux, macOS)
         # The bare command hands a terminal launch to the sibling `horon-tui`
         # binary, and nothing else in this workflow drives that handoff or the
@@ -985,6 +990,14 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- cli::startup::agent_catalog::tests:: --nocapture
 
+      - name: Run skill source policy tests
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
+            --timeout 600 --min-passed 1 \
+            -- skill_install::tests::only_plain_remotes --nocapture
+
       - name: Run CLI launch profile cohort
         shell: bash
         run: |
@@ -1009,6 +1022,22 @@ jobs:
             --timeout 600 --min-passed 1 \
             -- cli::startup::provider_status::tests:: --nocapture
 
+      - name: Run CLI provider failover preview cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::commands::failover_preview::tests:: --nocapture
+
+      - name: Run CLI changelog cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::startup::changelog::tests:: --nocapture
+
       - name: Run CLI compact-text cohort
         shell: bash
         run: |
@@ -1016,6 +1045,22 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 2 \
             -- cli::dispatch::compact_text::tests:: --nocapture
+
+      - name: Run CLI cloud doctor cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 1 \
+            -- cli::cloud_doctor::tests:: --nocapture
+
+      - name: Run CLI visible reasoning cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 2 \
+            -- cli::commands::thoughts::tests:: --nocapture
 
       - name: Run ACP cohort
         shell: bash
@@ -1059,6 +1104,23 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 \
             -- retention_readiness --nocapture
+
+      - name: Run spend cap cohort
+        shell: bash
+        # The spend ledger is process-wide, so its one test owns the process.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- spend_cap::tests:: --nocapture
+
+      - name: Run release notes cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- update::release_notes::tests:: --nocapture
 
       - name: Run secrets cohort
         if: runner.os != 'Windows'
@@ -1408,7 +1470,7 @@ jobs:
             -- agent::round_budget::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 12 \
+            --timeout 600 --min-passed 16 \
             -- agent::prewalk_tests:: --nocapture
 
       - name: Verify Python eval host
@@ -1497,6 +1559,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 2 \
             -- tool::artifacts::render_tests::shared_output_budget_ --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- tool::run_approval::tests:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 4 \
@@ -2085,7 +2151,7 @@ jobs:
           trap 'rmdir "$HORON_HOME"' EXIT
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --kind test --target-name package_manifest --min-passed 9 --timeout 900
+            --kind test --target-name package_manifest --min-passed 13 --timeout 900
 
       - name: Run extension wire contracts with an isolated home
         shell: bash
@@ -2108,6 +2174,24 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --min-passed 34 --timeout 900 -- extensions::wire::tests --nocapture
+
+      - name: Run package observation contracts with an isolated home
+        shell: bash
+        # Package observation is a lib module in `horon-agent-app-core`, so no
+        # other cohort filter reaches it. `--min-passed 10` is the measured count
+        # of the module: a filter that matched nothing reports `0 passed` with
+        # exit 0, which would look green. Two cases drive `Registry::execute`, so
+        # they read the process `HORON_HOME`; the observation worker resolves the
+        # package area once per session, and this fresh owner-private directory
+        # keeps that resolution away from the user's packages.
+        run: |
+          HORON_HOME="$(mktemp -d)"
+          export HORON_HOME
+          chmod 700 "$HORON_HOME"
+          trap 'rm -rf "$HORON_HOME"' EXIT
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --min-passed 10 --timeout 900 -- extensions::observer::tests --nocapture
 
       - name: Run the extension author SDK contracts with an isolated home
         shell: bash

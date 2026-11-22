@@ -115,25 +115,32 @@ Headless mode covers every subcommand below except bare `horon`, which opens TUI
 | Command | What it does |
 | --- | --- |
 | `horon` (no subcommand) | On a terminal, starts the server and replaces itself with the `horon-tui` client beside it, with keybindings, user files and a settings screen ([docs](docs/runtime/TUI.md)). A pipe, `HORON_NO_TUI=1` or a missing sibling prints a sentence naming the condition and the install command, then exits non-zero. |
-| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, `--no-session` to keep the run in memory, `--add-dir <path>` (repeatable) to list extra workspace directories in the session context, and [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run. |
+| `horon run "<message>"` | Sends one message, runs tools until the turn ends, then exits. Use `--thinking` and `--service-tier` to set [model options](docs/provider/MODEL.md#configuration), `--no-pty` to run shell tools through pipes, `--no-session` to keep the run in memory, `--add-dir <path>` (repeatable) to list extra workspace directories in the session context, [`--max-time`](docs/runtime/TURNS.md#run-deadline) to limit the run, and `--warn-cost` or `--max-cost` to watch its estimated spend. |
 | `horon repl` | One line at a time in the terminal, without the full-screen client. |
 | `horon serve` | Background agent daemon on a Unix socket (`HORON_AGENT_SOCKET`). |
 | `horon api-bridge` | Harness API on a local socket for SDK clients (`HORON_AGENT_API_SOCKET`): a Unix socket, or a named pipe on Windows. |
 | `horon acp` | ACP v1 and v2 adapter on stdio, for editors. |
 | `horon stats --from 2026-11-01 --through 2026-11-21` | Report stored token usage by UTC date, provider, and model. Add `--json` for structured output. In the terminal client, `/stats` reports the attached session. |
+| `horon config show` / `horon config check` | Read-only. `show` lists the effective settings with the layer behind each (default, file, env, cli) and never prints credentials; `--json` for structured output. `check` validates `config.toml` with the startup loader, names the invalid section, and exits 1 when it is invalid. |
 | `horon rpc` | stdio JSONL RPC adapter for a host program that owns the process: one JSON command per line in, one frame per line out ([docs](docs/protocol/RPC.md)). `--mode rpc` selects the same adapter. |
 | `horon completions <bash\|zsh\|fish>` | Prints a shell completion script without starting a daemon. |
 | `horon stream-rules [TEXT]` | Validates stream rules and previews matching rules for assistant text offline. |
 | `horon tokens [TEXT]` | Estimates UTF-8 tokens offline from inline text, stdin, or `--file`. `--model` selects a known tokenizer family and the output labels any fallback. |
 | `horon agents` | Lists named agent definitions, their sources, and configured model and tools without starting a session. |
 | `horon provider status [--json]` | Reports each configured profile's credential source and local status (`authenticated`, `unauthenticated`, or `unknown`) without printing credentials or contacting a provider. |
+| `horon skills list [--json]`, `horon skills install <source> --approve` | Lists skills with the source and commit of installed ones, or installs one through the managed-skill installer from an https, ssh or file source or a local directory. Needs `[tools] managed_skills = true`. |
+| `horon provider failover [--json]` | Shows the failover order the configuration produces and which setting excludes a step. Read-only: no model request, no account or quota change, no credential. |
 | `horon compact-text <FILE\|->` | Summarizes a UTF-8 text file (or stdin, up to 48 KiB, never modified) on stdout and lists what it left out on stderr. `--max-tokens` bounds the summary. |
+| `horon cloud doctor [--host <alias>]` | Checks that an SSH host is reachable and runs a horon-agent that supports `cloud move`, before you move a session. It prints one `ready`, `unreachable` or `incompatible` line with the next step, sends no session data and exits nonzero unless the host is ready. |
+| `horon changelog [VERSION] [--json]` | Prints the published release notes of VERSION (default: the running release) without updating or installing anything. If the notes cannot be read it prints the version and the release page instead. Control characters in the notes are removed. |
 
 `horon run --wait-async "<message>"` waits for jobs started by that run and reports each final status once. Set `--max-time` to bound the turn and job wait together. A timed-out run exits nonzero and reports the job statuses it observed.
 
 `horon run --system-template <FILE>` renders a text template once as the system prompt for that run. The variables are `{{cwd}}`, `{{date}}` and `{{model}}`. A value is never expanded again. An unknown variable, an unclosed `{{` or a template over 16 KiB is refused before any provider request.
 
 `horon run --no-session "<message>"` keeps the run in memory. It writes no session log, checkpoint, catalog row or run journal under `$HORON_HOME`, so the run cannot be resumed or recovered afterwards, and a failed run leaves nothing behind either. The session id in `--json` and `--ndjson` output names no stored session. Logs, usage records and other non-session state are written as usual. It cannot be combined with `--resume`, `--continue` or `--goal`, which need a stored session. Tools that keep their own per-session files, such as `todo`, are not covered by this guarantee.
+
+`horon run --warn-cost <USD>` prints one warning on stderr when the estimated spend of that run reaches the amount. `--max-cost <USD>` sends no new model request once the estimate reaches it, and the run fails with a spend cap error. The estimate comes from each response's reported tokens and the pricing catalog. A request already sent settles and is counted, so the total can exceed the ceiling by what was in flight. A model with no known price is reported separately and is never counted as free, so a cap does not limit it. Child agents owned by the same process are charged to the same run. Without either option, requests are unchanged.
 
 `horon acp` answers `initialize` with the highest protocol version both sides support, so v1 clients and v2 clients both work.
 
@@ -146,6 +153,10 @@ It starts when you run bare `horon`, `hrn` or `horon-agent` on a terminal. The c
 Run `horon --continue` to reopen the most recently active saved session in the current working directory. Use `--resume <id>` to pick a specific session.
 
 Use `horon --goal "Ship a fix" --goal-budget 1200` to attach an objective and token budget to a new session.
+
+Use `horon --plan` to open a new terminal session in read-only plan mode, or `horon run --plan "<message>"` for one planning run. It needs `[tools] plan_mode = true`, conflicts with `--resume` and `--continue`, and fails before any model request otherwise. `/plan approve` ends read-only mode.
+
+`horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
 
 Use `horon --add-dir <path>` (repeatable) to open a session with extra workspace directories. Each path is resolved to an existing directory, a second spelling of the same directory collapses to one entry, and the list is part of the session context and stored with the session. In the client, `/dirs` lists it and `/dirs add <path>` or `/dirs remove <path>` changes it; removal never touches the directory. A listed root is workspace context, not an approval grant.
 

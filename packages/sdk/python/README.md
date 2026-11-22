@@ -238,6 +238,7 @@ Every method mirrors the Rust SDK's name exactly:
   `list_models`, `get_runtime_info`, `runtime_command`, `read_file`,
   `find_files`, `search_text`, `list_artifacts`, `file_status`, `todo_state`,
   `ack_todo_follow_up`.
+- Packages: `list_package_commands`, `run_package_command`.
 - Usage: `usage_report`.
 - Tools: `configure_tools`, `list_tools`, `submit_tool_result`.
 - Runtime: `get_runtime_state`, `apply_control`, `get_control_receipt`,
