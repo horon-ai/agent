@@ -238,7 +238,7 @@ impl PackageSession {
 
     async fn acquire(&self, workspace: Option<PathBuf>) -> Result<Arc<PackageSnapshot>> {
         let store = self.store.clone();
-        let owner = format!("{}:{}:{}", self.owner, std::process::id(), next_lease_token());
+        let owner = lease_owner(&self.owner, next_lease_token());
         let acquired = tokio::task::spawn_blocking(move || read_turn(&store, &owner))
             .await
             .context("the package snapshot task failed")??;
@@ -369,6 +369,29 @@ fn next_lease_token() -> u64 {
     NEXT_LEASE.fetch_add(1, Ordering::Relaxed)
 }
 
+/// The reference owner name for one acquisition.
+///
+/// The store accepts 1 to 64 bytes of `[a-z0-9_-]` that start with a letter or a
+/// digit. A session label may hold anything, so it is reduced to that alphabet
+/// and cut to leave room for the process and acquisition suffix, which keeps
+/// every acquisition's name unique inside the package area.
+fn lease_owner(label: &str, token: u64) -> String {
+    let suffix = format!("-{}-{token}", std::process::id());
+    let mut name: String = label
+        .chars()
+        .map(|ch| match ch.to_ascii_lowercase() {
+            ch if ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_' => ch,
+            _ => '-',
+        })
+        .collect();
+    name.truncate(63usize.saturating_sub(suffix.len()));
+    if !name.starts_with(|ch: char| ch.is_ascii_alphanumeric()) {
+        name.insert(0, 's');
+    }
+    name.push_str(&suffix);
+    name
+}
+
 /// Read one turn's catalog under the store lock and pin the copies it names.
 ///
 /// An empty catalog is reported without taking a lease: a session on a home that
@@ -444,7 +467,7 @@ fn package_session(session_id: &str) -> Result<Arc<PackageSession>> {
         return Ok(Arc::clone(existing));
     }
     let store = PackageStore::for_current_user()?;
-    let session = PackageSession::open(store, format!("session:{session_id}"));
+    let session = PackageSession::open(store, format!("session-{session_id}"));
     slots.insert(session_id.to_owned(), Arc::clone(&session));
     Ok(session)
 }
