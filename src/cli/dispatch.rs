@@ -305,12 +305,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             debug::run_debug_command(&command, &arg, session, socket, wait).await?;
         }
         Some(Command::Provider(subcmd)) => match subcmd {
-            ProviderCommand::List { json } => {
-                commands::run_provider_list_command(json)?;
-            }
+            ProviderCommand::List { json } => commands::run_provider_list_command(json)?,
             ProviderCommand::Current { json } => {
                 commands::run_provider_current_command(&args.provider, args.model.as_deref(), json).await?;
             }
+            ProviderCommand::Failover { json } => commands::run_provider_failover_command(json)?,
             ProviderCommand::Diagnose { check, json } => commands::run_provider_diagnose_command(check, json).await?,
             ProviderCommand::Status { .. } => unreachable!("handled by startup"),
             ProviderCommand::Add {

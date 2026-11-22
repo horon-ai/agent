@@ -208,6 +208,12 @@ The ordered list that #73 adds is `fallback_models = ["m2", "m3"]` on `[provider
 
 The switch lasts for the rest of the turn and the next turn starts again from the role's model. Non-retryable errors (401, invalid request, context overflow) never start the chain. Reason: the steps differ in what they cost to take. A model switch keeps the endpoint, the credential, and the cache host; an account switch changes the credential; a provider switch changes the endpoint. Cheapest first means a rate limit is absorbed without losing prompt-cache locality, and putting the list on the profile keeps it from naming a model on another endpoint, which the placement rule above forbids.
 
+### Previewing the failover order
+
+`horon provider failover [--json]` prints the order the current configuration produces: the retry budget, then same-provider account failover, cross-provider failover and the unattended switch. A step that cannot run says which setting excludes it. The command reads configuration only. It sends no model request, changes no account, quota or provider selection, and prints no credential.
+
+This build assigns no accounts across a set of inputs, so there is no distribution to preview. The preview shows the real failover order instead. Quota cooldowns and which saved accounts are available at this moment are held in memory by a running daemon, so the preview does not show them. `fallback_models` is not a setting in this build yet, so the preview does not list it.
+
 ### Who implements it
 
 #73 writes the shared type: the `roles` table flattened into `NamedProviderConfig` in `crates/config-types/src/named_provider.rs` and one resolution function that every caller uses. #70 adds only its own `[prewalk]` section and calls that function for `into` and `from`, spelling a role as `role:<name>` (`into = "role:aux"`). Reason: #73 changes `NamedProviderConfig` in any case and is a declared dependency of #70 (`depends_on: [73, 112]`), so two implementations would drift; the `role:` prefix keeps a role reference apart from a model id, as the existing `openai:` and `<profile>:` prefixes already do.
