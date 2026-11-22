@@ -118,6 +118,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "session_move_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
       "target": "spend_cap_cli",
       "min_passed": 3
     },

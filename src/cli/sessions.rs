@@ -20,6 +20,7 @@ mod anonymize;
 mod cache;
 mod recovery;
 mod transcript;
+mod worktree;
 
 const BUNDLE_KIND: &str = "horon-agent-session-bundle";
 const BUNDLE_VERSION: u32 = 1;
@@ -58,6 +59,18 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             },
             json,
         ),
+        SessionCommand::Worktrees(options) => worktree::list(&home()?, options.json),
+        SessionCommand::MoveToWorktree(options) => worktree::move_session(
+            &home()?,
+            &options.session,
+            options.branch.as_deref(),
+            options.undo,
+            options.apply,
+            options.json,
+        ),
+        SessionCommand::RemoveWorktree(options) => {
+            worktree::remove(&home()?, &options.path, options.apply, options.json)
+        }
         SessionCommand::Anonymize(options) => {
             let output = options.output.as_deref().map(resolve_path).transpose()?;
             anonymize::run(
