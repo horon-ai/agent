@@ -247,6 +247,7 @@ impl Agent {
             if self.is_graceful_shutdown() {
                 break;
             }
+            crate::spend_cap::admit()?;
             if let Some(budget) = &mut self.swarm_budget {
                 budget.charge_request();
             }
@@ -1253,12 +1254,12 @@ impl Agent {
             }
 
             // Store usage for debug queries
-            self.last_usage = TokenUsage {
+            self.set_last_usage(TokenUsage {
                 input_tokens: usage_input.unwrap_or(0),
                 output_tokens: usage_output.unwrap_or(0),
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
-            };
+            });
 
             // Detect a transparent mid-request model switch (e.g. Anthropic's
             // retired `claude-fable-5` falling back to `claude-opus-4-8`). The

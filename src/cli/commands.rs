@@ -14,6 +14,7 @@ mod report_info;
 mod run_deadline;
 mod session_delete;
 mod session_rename;
+mod thoughts;
 mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
@@ -880,6 +881,14 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
 mod run_jobs;
 pub(super) use run_jobs::{RunLimits, run_single_message_with_agent};
 
+/// A positive, finite US dollar amount for `run --warn-cost` and `--max-cost`.
+pub(super) fn parse_run_cost(raw: &str) -> Result<f64, &'static str> {
+    match raw.parse::<f64>() {
+        Ok(usd) if usd.is_finite() && usd > 0.0 => Ok(usd),
+        _ => Err("expected a positive amount in US dollars"),
+    }
+}
+
 fn run_command_auto_poke_enabled() -> bool {
     std::env::var("HORON_AGENT_RUN_AUTO_POKE")
         .ok()
@@ -1124,14 +1133,18 @@ fn build_run_todo_validation_message(
     }
 }
 
-async fn run_single_message_command_plain_with_auto_poke(agent: &mut crate::agent::Agent, message: &str) -> Result<()> {
+async fn run_single_message_command_plain_with_auto_poke(
+    agent: &mut crate::agent::Agent,
+    message: &str,
+    print_thoughts: bool,
+) -> Result<()> {
     let mut next_message = message.to_string();
     let max_turns = run_command_auto_poke_max_turns();
     let mut turns_completed = 0usize;
     let mut confidence_spike_challenged = false;
     let mut gate_digest_delivered = false;
     loop {
-        agent.run_once(&next_message).await?;
+        thoughts::run_plain_turn(agent, &next_message, print_thoughts).await?;
         turns_completed += 1;
         if !run_command_auto_poke_enabled() {
             break;

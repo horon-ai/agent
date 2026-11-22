@@ -102,7 +102,7 @@ pub(crate) struct Target {
 }
 
 impl Target {
-    fn resolve_host(&self) -> Result<String> {
+    pub(crate) fn resolve_host(&self) -> Result<String> {
         if let Some(host) = self.host.clone().filter(|h| !h.trim().is_empty()) {
             return Ok(host);
         }
@@ -142,7 +142,7 @@ impl Target {
     }
 
     /// Run `horon-agent <args>` on the target, feeding `stdin` and returning stdout.
-    fn run_remote(&self, host: &str, args: &[&str], stdin: Option<&Path>) -> Result<Vec<u8>> {
+    pub(crate) fn run_remote(&self, host: &str, args: &[&str], stdin: Option<&Path>) -> Result<Vec<u8>> {
         let binary = shell_quote(&self.remote_binary());
         let quoted: Vec<String> = args.iter().map(|arg| shell_quote(arg)).collect();
         let remote_cmd = format!(
@@ -313,7 +313,6 @@ pub(crate) fn run_move(
             repo.snapshot
         );
     }
-
     let report = MoveReport {
         session_id: session_id.clone(),
         host: host.clone(),
@@ -1200,6 +1199,7 @@ pub(crate) fn run_cli(command: super::args::CloudCommand) -> Result<()> {
         C::Receive { .. } => run_receive(),
         C::Activate { session, epoch } => run_activate(&session, epoch),
         C::Export { session, epoch } => run_export(&session, epoch),
+        C::Doctor { target, json } => super::cloud_doctor::run(&target_of(target), json),
     }
 }
 
