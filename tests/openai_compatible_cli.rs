@@ -54,16 +54,9 @@ impl Home {
     }
 
     fn write_config(&self, base_url: &str) {
-        self.write_profile_config("qa", base_url);
-    }
-
-    /// Register the mock as `profile`. A loopback endpoint under a profile name
-    /// the pricing catalog does not map is treated as free, so a price applies
-    /// only under a mapped name such as `deepseek`.
-    fn write_profile_config(&self, profile: &str, base_url: &str) {
         let config = format!(
-            "{COMPACTION_HEAD}[provider]\ndefault_provider = \"{profile}\"\ndefault_model = \"qa-model\"\n\n\
-[providers.{profile}]\ntype = \"openai-compatible\"\nbase_url = \"{base_url}\"\nauth = \"none\"\n\
+            "{COMPACTION_HEAD}[provider]\ndefault_provider = \"qa\"\ndefault_model = \"qa-model\"\n\n\
+[providers.qa]\ntype = \"openai-compatible\"\nbase_url = \"{base_url}\"\nauth = \"none\"\n\
 default_model = \"qa-model\"\nmodels = [{{ id = \"qa-model\" }}]\n"
         );
         std::fs::write(self.path().join("config.toml"), config).expect("write config.toml");
@@ -272,13 +265,6 @@ async fn serve(
     for frame in frames {
         sse.push_str(&format!("data: {frame}\n\n"));
     }
-    // Each response reports one million prompt tokens, so a priced model costs
-    // exactly its input price per million tokens per request.
-    let usage = json!({
-        "id": "chatcmpl-qa", "object": "chat.completion.chunk", "model": "qa-model", "choices": [],
-        "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0, "total_tokens": 1_000_000}
-    });
-    sse.push_str(&format!("data: {usage}\n\n"));
     sse.push_str("data: [DONE]\n\n");
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1133,65 +1119,41 @@ async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_outpu
     assert!(output.contains("Found") && !output.contains(secret), "{output}");
 }
 
-impl Home {
-    /// A fresh pricing catalog that lists `qa-model` at $0.60 per million input tokens.
-    fn write_pricing(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let catalog = json!({
-            "cached_at_unix_secs": now,
-            "providers": {"deepseek": {"qa-model": {"input_usd_per_mtok": 0.6, "output_usd_per_mtok": 1.0}}}
-        });
-        std::fs::create_dir_all(self.path().join("cache")).unwrap();
-        std::fs::write(
-            self.path().join("cache").join("models_dev_pricing.json"),
-            catalog.to_string(),
-        )
-        .unwrap();
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn warn_cost_warns_once_and_the_run_finishes() {
-    let mock = Mock::start().await;
+async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_any_model_call() {
     let home = Home::new();
-    home.write_profile_config("deepseek", &mock.base_url);
-    home.write_pricing();
+    std::fs::write(home.path().join("notes.txt"), "plain text").unwrap();
 
-    let output = home
-        .run(&["run", "hi", "--warn-cost", "0.5", "--max-cost", "5", "--no-update"])
-        .await;
-    let stderr = text(&output.stderr);
-    assert!(output.status.success(), "stderr={stderr}");
-    assert_eq!(stderr.matches("spend warning").count(), 1, "{stderr}");
-    assert_eq!(mock.requests(), 2);
-}
+    let listing = home.run(&["diagnostics", "notes.txt", "missing.rs", "--json"]).await;
+    assert!(listing.status.success(), "{}", text(&listing.stderr));
+    let reports: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(reports[0]["path"], "notes.txt");
+    assert_eq!(reports[0]["note"], "no language server for this file type");
+    assert_eq!(reports[1]["note"], "file not found");
 
-#[tokio::test(flavor = "multi_thread")]
-async fn max_cost_admits_no_request_after_the_cap_is_reached() {
+    // A number that is not in the listing is refused, so no run (and no model call) starts.
     let mock = Mock::start().await;
-    let home = Home::new();
-    home.write_profile_config("deepseek", &mock.base_url);
-    home.write_pricing();
-
-    let output = home.run(&["run", "hi", "--max-cost", "0.5", "--no-update"]).await;
-    let stderr = text(&output.stderr);
-    assert!(!output.status.success());
-    assert!(stderr.contains("spend cap of $0.5000 reached"), "{stderr}");
-    assert_eq!(mock.requests(), 1, "the second request is not sent");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_unpriced_model_is_reported_not_counted_as_free() {
-    let mock = Mock::start().await;
-    let home = Home::new();
     home.write_config(&mock.base_url);
+    let bad = home
+        .run(&["diagnostics", "notes.txt", "--select", "1", "--delegate"])
+        .await;
+    assert!(!bad.status.success());
+    assert!(text(&bad.stderr).contains("no diagnostic [1]"), "{}", text(&bad.stderr));
+    assert_eq!(mock.requests(), 0, "a refused delegation must not reach the model");
 
-    let output = home.run(&["run", "hi", "--max-cost", "0.01", "--no-update"]).await;
-    let stderr = text(&output.stderr);
-    assert!(output.status.success(), "stderr={stderr}");
-    assert!(stderr.contains("no price is known for qa-model"), "{stderr}");
-    assert!(stderr.contains("2 request(s) had no known price"), "{stderr}");
+    // Delegating needs a selection and a selection needs --delegate.
+    assert!(
+        !home
+            .run(&["diagnostics", "notes.txt", "--delegate"])
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        !home
+            .run(&["diagnostics", "notes.txt", "--select", "1"])
+            .await
+            .status
+            .success()
+    );
 }

@@ -1485,6 +1485,10 @@ jobs:
             -- tool::artifacts::render_tests::shared_output_budget_ --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- tool::diagnostics_list::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- tool::agentgrep::tests::grep_context_merges_overlaps_and_preserves_paths_only --nocapture
 
@@ -1799,6 +1803,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 60 --min-passed 3 \
             -- agent::swarm_budget::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 60 --min-passed 2 \
+            -- tool::package_tool::stage_tests:: --nocapture
 
       - name: Run turn end race cohort
         shell: bash
