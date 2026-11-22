@@ -50,7 +50,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     }
     match commands::run_early_command(&args.command).await? {
         commands::Early::Done => return Ok(()),
-        commands::Early::Rewrite(next) => args.command = Some(next),
+        commands::Early::Rewrite(next) => args.command = Some(*next),
         commands::Early::Pass => {}
     }
     // MCP management is independent of providers and the daemon; list stays offline.
