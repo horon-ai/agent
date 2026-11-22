@@ -7,6 +7,8 @@ mod mcp;
 pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod run_options;
+pub(crate) use run_options::RunModelOverrides;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
@@ -46,21 +48,6 @@ impl From<ProviderTypeArg> for crate::config::NamedProviderType {
     }
 }
 
-#[derive(clap::Args, Debug)]
-pub(crate) struct RunModelOverrides {
-    /// Reasoning effort for the selected model
-    #[arg(long, value_name = "EFFORT")]
-    pub(crate) thinking: Option<String>,
-
-    /// OpenAI service tier (off, priority, fast, or ultrafast where supported)
-    #[arg(long, value_name = "TIER")]
-    pub(crate) service_tier: Option<String>,
-
-    /// Turn the session advisor on or off for this run, overriding `[advisor] enabled`
-    #[arg(long, value_name = "on|off", value_parser = ["on", "off"])]
-    pub(crate) advisor: Option<String>,
-}
-
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
     pub(crate) fn one_shot(message: String) -> Self {
@@ -69,6 +56,8 @@ impl Command {
             ndjson: false,
             no_pty: false,
             no_session: false,
+            warn_cost: None,
+            max_cost: None,
             max_time: None,
             wait_async: false,
             system_template: None,
@@ -340,6 +329,14 @@ pub(crate) enum Command {
         /// Keep this run in memory only: no session, journal or resume hint is written
         #[arg(long)]
         no_session: bool,
+
+        /// Warn once on stderr when the estimated spend of this run reaches this many US dollars
+        #[arg(long, value_name = "USD", value_parser = super::commands::parse_run_cost)]
+        warn_cost: Option<f64>,
+
+        /// Send no new model request once the estimated spend of this run reaches this many US dollars
+        #[arg(long, value_name = "USD", value_parser = super::commands::parse_run_cost)]
+        max_cost: Option<f64>,
 
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
