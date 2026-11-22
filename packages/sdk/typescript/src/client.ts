@@ -37,6 +37,8 @@ import {
   type ImageAttachment,
   type MessageModes,
   type ModelRouteInfo,
+  type PackageCommandList,
+  type PackageCommandOutcome,
   type PackageControlOperation,
   type PackageControlReceipt,
   type PayloadRef,
@@ -1269,6 +1271,38 @@ export class HoronAgentClient extends EventEmitter {
       "runtime_command_result",
     );
     return { session_id: frame.session_id, command: frame.command, data: frame.data, message: frame.message };
+  }
+
+  /**
+   * List the package slash commands this session provides.
+   *
+   * The entries belong to the package generation the session observes, and
+   * `generation` says which one.
+   */
+  async listPackageCommands(sessionId: string): Promise<PackageCommandList> {
+    this.requireCapability("package_commands_v1", "listPackageCommands");
+    const frame = await this.runtimeCommand(sessionId, "package_commands");
+    return frame.data as PackageCommandList;
+  }
+
+  /**
+   * Run one package command and return what the daemon answered.
+   *
+   * A template sets `text`, the user message it expands to; an executable
+   * command sets `output` and the child's `data` after the tool policy allowed
+   * the call. A command whose package left the generation is refused with a
+   * stale-entry error.
+   */
+  async runPackageCommand(
+    sessionId: string,
+    packageId: string,
+    command: string,
+    argumentsText = "",
+  ): Promise<PackageCommandOutcome> {
+    this.requireCapability("package_commands_v1", "runPackageCommand");
+    const words = argumentsText.trim() === "" ? [] : argumentsText.trim().split(/\s+/);
+    const frame = await this.runtimeCommand(sessionId, "package_command", [packageId, command, ...words]);
+    return frame.data as PackageCommandOutcome;
   }
 
   async transferSession(sessionId: string): Promise<SessionInfo> {

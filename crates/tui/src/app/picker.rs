@@ -489,6 +489,9 @@ impl App {
         // session just left behind must not resolve.
         self.skills.clear();
         self.commands.set_skills(Vec::new());
+        // The package commands belong to the session for the same reason, and
+        // the bridge asks the new session for its own right after this answer.
+        self.commands.set_package_commands(Vec::new());
         // The effort belongs to the session being attached to, so it is the
         // one the bridge read for it. Nothing of the session left behind
         // survives: a report that names no effort leaves it unknown until the
