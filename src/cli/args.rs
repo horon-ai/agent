@@ -794,6 +794,17 @@ pub(crate) enum CloudCommand {
         #[arg(long)]
         epoch: u64,
     },
+
+    /// Check that a cloud host is reachable and runs a compatible horon-agent
+    /// before moving a session. It sends no session data and creates nothing
+    /// on the host.
+    Doctor {
+        #[command(flatten)]
+        target: CloudMoveTarget,
+        /// Emit JSON instead of one line of text
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Parser, Debug, Clone, Default)]

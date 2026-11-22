@@ -1,6 +1,7 @@
 pub mod acp;
 pub mod add_dir;
 pub mod args;
+pub mod cloud_doctor;
 pub mod cloud_move;
 pub mod commands;
 pub mod debug;
