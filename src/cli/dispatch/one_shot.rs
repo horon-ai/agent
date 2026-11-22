@@ -60,6 +60,9 @@ pub(super) async fn run(args: &Args) -> Result<()> {
                 super::output::stderr_info(crate::goal::render_goal_detail(&goal));
             }
         }
+        if args.plan {
+            crate::plan_mode::command(agent.session_id(), &["on".to_owned()])?;
+        }
         Ok(())
     })();
     if let Err(error) = setup {

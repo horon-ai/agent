@@ -1189,3 +1189,18 @@ async fn config_check_names_the_invalid_section_and_show_never_prints_a_credenti
     assert_eq!(report["ok"], false);
     assert!(report["error"].as_str().unwrap().contains("[prewalk]"), "{report}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_plan_fails_before_any_request_when_plan_mode_is_off() {
+    let home = Home::new();
+    let mock = Mock::start().await;
+    home.write_config(&mock.base_url);
+    let result = home.run(&["run", "make a plan", "--no-update", "--plan"]).await;
+    assert!(!result.status.success());
+    assert!(
+        text(&result.stderr).contains("Plan mode is off"),
+        "{}",
+        text(&result.stderr)
+    );
+    assert_eq!(mock.requests(), 0, "a refused plan start must not reach the model");
+}

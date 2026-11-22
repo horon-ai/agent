@@ -429,6 +429,14 @@ mod tests {
     }
 
     #[test]
+    fn startup_plan_flag_conflicts_with_resume() {
+        assert!(parse_args(&["horon", "--plan"]).plan);
+        assert!(!parse_args(&["horon"]).plan);
+        let error = Args::try_parse_from(["horon", "--plan", "--resume", "session-1"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn startup_goal_requires_budget_and_conflicts_with_resume() {
         let goal = ["horon", "--goal", "Ship a fix", "--goal-budget", "1200"];
         let parsed = parse_args(&goal);

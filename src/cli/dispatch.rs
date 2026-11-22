@@ -40,8 +40,8 @@ fn arm_debug_client_parent_death_signal() {
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
-    if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
-        anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
+    if (args.goal.is_some() || args.plan) && !matches!(args.command, None | Some(Command::Run { .. })) {
+        anyhow::bail!("--goal and --plan only apply when opening the terminal client or running one message");
     }
     if args.ssh.is_some() {
         // A remote host owns its session ID and cwd: skip local resume lookup and provider bootstrap.
@@ -609,6 +609,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         super::tui_handoff::decide_for_process(),
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
+        args.plan,
     )
 }
 

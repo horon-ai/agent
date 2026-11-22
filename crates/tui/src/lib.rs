@@ -161,6 +161,8 @@ pub struct Args {
     /// Objective and token ceiling for a new session.
     pub goal: Option<String>,
     pub goal_budget: Option<u64>,
+    /// Start the new session in read-only plan mode.
+    pub plan: bool,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
@@ -225,6 +227,7 @@ impl Args {
                     Some(title) if !title.trim().is_empty() => parsed.goal = Some(title),
                     _ => return Err("--goal needs a nonempty objective".into()),
                 },
+                "--plan" => parsed.plan = true,
                 "--goal-budget" => {
                     let Some(value) = arguments.next() else {
                         return Err("--goal-budget needs a positive token count".into());
@@ -263,6 +266,9 @@ impl Args {
         }
         if parsed.goal.is_some() != parsed.goal_budget.is_some() {
             return Err("--goal and --goal-budget must be used together".into());
+        }
+        if parsed.plan && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--plan can only be used when starting a new session".into());
         }
         if parsed.goal.is_some() && (parsed.session.is_some() || parsed.gallery.is_some()) {
             return Err("--goal can only be used when starting a new session".into());
@@ -366,6 +372,15 @@ where
                 })
             {
                 show_failure(&format!("could not queue the startup goal: {error}"));
+                return 1;
+            }
+            if args.plan
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Plan,
+                    arguments: vec!["on".into()],
+                })
+            {
+                show_failure(&format!("could not queue plan mode: {error}"));
                 return 1;
             }
             run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking)

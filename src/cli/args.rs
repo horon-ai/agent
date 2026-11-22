@@ -142,6 +142,10 @@ pub(crate) struct Args {
     #[arg(long, global = true, requires = "goal", value_parser = clap::value_parser!(u64).range(1..))]
     pub(crate) goal_budget: Option<u64>,
 
+    /// Start the new session in read-only plan mode (needs `[tools] plan_mode = true`).
+    #[arg(long, global = true, conflicts_with_all = ["resume", "continue_latest", "ssh"])]
+    pub(crate) plan: bool,
+
     /// Deprecated: accepted so older clients keep working, and ignored.
     #[arg(long, global = true, hide = true)]
     #[allow(dead_code)]

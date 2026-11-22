@@ -145,6 +145,8 @@ horon run "summarize this repo"
 
 `horon --goal "Ship a fix" --goal-budget 1200`으로 새 세션에 목표와 토큰 예산을 설정할 수 있습니다.
 
+`horon --plan`으로 새 터미널 세션을 읽기 전용 플랜 모드로 열 수 있고, `horon run --plan "<메시지>"`로 계획만 세우는 한 번 실행도 가능합니다. `[tools] plan_mode = true`가 필요하며 `--resume`, `--continue`와 함께 쓸 수 없고, 조건이 맞지 않으면 모델 요청 전에 실패합니다. `/plan approve`로 읽기 전용 상태를 끝냅니다.
+
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.
 
 ### 에디터 (ACP)
