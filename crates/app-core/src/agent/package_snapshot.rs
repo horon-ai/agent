@@ -301,7 +301,7 @@ impl PackageHandle {
     pub async fn ensure_live(&self, session: &PackageSession) -> Result<()> {
         let package_id = self.package_id.as_str();
         let generation = self.snapshot.generation();
-        if let Some(event) = lifecycle::shared().revocation(package_id) {
+        if let Some(event) = lifecycle::PackageLifecycleRegistry::shared().revocation(package_id) {
             ensure!(
                 event.generation <= generation,
                 "package {package_id} was {} at catalog generation {}; a request from generation {generation} is stale",

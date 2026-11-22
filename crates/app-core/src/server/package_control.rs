@@ -270,7 +270,7 @@ impl PackageControl {
         // The callbacks run before the new generation is announced and before
         // the receipt of the operation that produced it is built, so a client
         // that reads `disabled` has seen every live holder cancelled.
-        let revoked = crate::extensions::lifecycle::shared().apply_states(
+        let revoked = crate::extensions::lifecycle::PackageLifecycleRegistry::shared().apply_states(
             &record_states(&previous),
             &record_states(&next),
             next.generation(),
