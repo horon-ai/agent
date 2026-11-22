@@ -25,7 +25,9 @@ pub use catalog::{
     CATALOG_VERSION, CatalogView, CollectionReport, InstallRequest, PackageLease, PackageRecord, PackageScope,
     PackageState, PackageStore, StoredFile, VerificationReport,
 };
-pub use command_resources::{MAX_COMMAND_BYTES, MAX_PACKAGE_COMMAND_BYTES, PackageCommand, expand, fallback_description};
+pub use command_resources::{
+    MAX_COMMAND_BYTES, MAX_PACKAGE_COMMAND_BYTES, PackageCommand, expand, fallback_description,
+};
 pub use hook_resources::observation_events;
 pub use horon_agent_extension_types::{
     CommandDeclaration, EXTENSION_PROTOCOL, ExtensionManifest, MANIFEST_VERSION, ObserverEvent, PackageKind,

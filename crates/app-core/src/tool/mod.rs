@@ -49,7 +49,6 @@ mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
 pub(crate) mod new_context;
-pub(crate) mod package_command_gate;
 pub(crate) mod package_tool;
 mod patch;
 pub mod path_policy;

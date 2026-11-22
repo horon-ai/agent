@@ -4,7 +4,7 @@
 //! Markdown resource the plugin declares: it expands into the user message a
 //! person asked for. An executable command is declared in `extension.toml` and
 //! answered by the package child; it passes the tool policy first, through
-//! [`crate::tool::package_command_gate`], so submitting a command can never run
+//! [`crate::tool::package_tool::command_gate`], so submitting a command can never run
 //! a process a tool call would have had to ask about.
 //!
 //! Both the listing and the run read the session's current package snapshot
@@ -156,7 +156,7 @@ async fn executable(
     command: &str,
     arguments: &str,
 ) -> Result<PackageCommandOutcome> {
-    let name = crate::tool::package_command_gate::policy_name(package_id, command);
+    let name = crate::tool::package_tool::command_gate::policy_name(package_id, command);
     let context = crate::tool::ToolContext {
         session_id: agent.session_id().into(),
         message_id: crate::id::new_id("msg"),
@@ -173,7 +173,7 @@ async fn executable(
         "text": arguments.trim(),
         "args": arguments.split_whitespace().collect::<Vec<_>>(),
     });
-    let input = crate::tool::package_command_gate::authorize(agent.session_id(), &name, input, &context).await?;
+    let input = crate::tool::package_tool::command_gate::authorize(agent.session_id(), &name, input, &context).await?;
     let value = invoke::call_command(agent.session_id(), package_id, command, input).await?;
     Ok(PackageCommandOutcome {
         name: format!("{package_id}:{command}"),
