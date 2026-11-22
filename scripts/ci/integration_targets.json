@@ -99,7 +99,12 @@
     {
       "package": "horon-agent",
       "target": "session_commands",
-      "min_passed": 25
+      "min_passed": 23
+    },
+    {
+      "package": "horon-agent",
+      "target": "session_move_cli",
+      "min_passed": 2
     },
     {
       "package": "horon-agent",
