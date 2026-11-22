@@ -696,6 +696,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // refusal restores exactly the messages it was about.
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
         Command::Runtime { command, arguments } => runtime::command(client, session_id, command, arguments),
+        Command::Stats => runtime::stats(client, session_id).map(Some),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -751,6 +752,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::DaemonSettings
         | Command::Steer(_)
         | Command::Runtime { .. }
+        | Command::Stats
         | Command::NewSession { .. }
         | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
@@ -789,6 +791,7 @@ fn describe(command: &Command) -> &'static str {
     match command {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
+        Command::Stats => "could not read session token usage",
         Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
         Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
         Command::Model(_) => "could not switch the model",

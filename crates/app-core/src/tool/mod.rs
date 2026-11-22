@@ -53,6 +53,7 @@ pub mod path_policy;
 mod path_suffix;
 pub(crate) mod permission_bridge;
 pub(crate) mod post_tool_feedback;
+pub mod preview;
 mod read;
 mod read_selector;
 pub(crate) mod read_state;

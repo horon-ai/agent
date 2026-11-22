@@ -40,6 +40,8 @@ pub enum Action {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Read the attached session's token usage.
+    Stats,
     /// Clear or compact the model context on the daemon.
     Context(crate::commands::ContextCommand),
     /// Switch to the model named.

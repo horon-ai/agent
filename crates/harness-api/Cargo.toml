@@ -6,6 +6,8 @@ publish = false
 description = "Stable, versioned client API for the horon-agent harness (agent runtime)"
 
 [dependencies]
+# The package-management contract is shared with the daemon and both SDKs.
+horon-agent-extension-types = { path = "../extension-types" }
 horon-agent-platform = { path = "../platform" }
 horon-agent-session-types = { path = "../session-types" }
 horon-agent-session-store = { path = "../session-store" }

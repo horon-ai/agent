@@ -13,6 +13,7 @@ mod report_info;
 mod run_deadline;
 mod session_delete;
 mod session_rename;
+mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
 pub(crate) use session_rename::run_session_rename_command;
@@ -20,7 +21,8 @@ pub(crate) use session_rename::run_session_rename_command;
 pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
-pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
+pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
+pub(crate) use tool_preview::run_preview_command;
 
 pub enum AmbientSubcommand {
     Status,
@@ -447,6 +449,16 @@ pub fn run_version_command(emit_json: bool) -> Result<()> {
 
 pub async fn run_usage_command(emit_json: bool) -> Result<()> {
     report_info::run_usage_command(emit_json).await
+}
+
+pub(super) fn run_stats_command(from: Option<&str>, through: Option<&str>, json: bool) -> Result<()> {
+    let report = horon_agent_harness_api_server::translate::local_usage(&storage::horon_agent_dir()?, from, through)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{report}");
+    }
+    Ok(())
 }
 
 /// Explicitly pin the daemon's shared-server channel to an installed build.

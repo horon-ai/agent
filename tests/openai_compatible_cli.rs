@@ -772,6 +772,52 @@ async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn stats_groups_durable_usage_by_date_and_route_without_double_counting() {
+    let home = Home::new();
+    let seed = |id: &str, events: &[Value]| {
+        let session = home.path().join("sessions").join(id);
+        std::fs::create_dir_all(&session).unwrap();
+        let text = events.iter().map(|event| format!("{event}\n")).collect::<String>();
+        std::fs::write(session.join("events.jsonl"), text).unwrap();
+    };
+    let created = |provider: &str, model: &str| json!({"kind":"session_created","payload":{"metadata":{"provider_key":provider,"model":model}}});
+    let appended = |id: &str, time: &str, input: u64| json!({"kind":"message_appended","event_id":id,"timestamp":time,"payload":{"message":{"token_usage":{"input_tokens":input,"output_tokens":2}}}});
+    let original = appended("a", "2026-11-20T23:50:00Z", 5);
+    let revised = json!({"kind":"message_revised","event_id":"r","timestamp":"2026-11-21T00:01:00Z","payload":{"target_event_id":"a","replacement":{"token_usage":{"input_tokens":12,"output_tokens":3}}}});
+    seed(
+        "s1",
+        &[
+            created("alpha", "m1"),
+            original.clone(),
+            revised.clone(),
+            original,
+            revised,
+            appended("b", "2026-11-21T00:10:00Z", 99),
+        ],
+    );
+    seed(
+        "s2",
+        &[created("beta", "m2"), appended("c", "2026-11-20T18:00:00-05:00", 7)],
+    );
+    let result = home
+        .run(&["stats", "--from", "2026-11-20", "--through", "2026-11-20", "--json"])
+        .await;
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["estimated_cost"], Value::Null);
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        json!({"date":"2026-11-20","provider":"alpha","model":"m1","input":12,"output":3,"cache_read_input":null,"cache_creation_input":null,"requests":1})
+    );
+    assert_eq!(rows[1]["provider"], "beta");
+    assert_eq!(rows[1]["model"], "m2");
+    assert_eq!(rows[1]["input"], 7);
+    assert_eq!(rows[1]["requests"], 1);
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn wait_async_reports_background_status_and_respects_run_deadline() {
@@ -864,4 +910,113 @@ async fn unconfigured_provider_explains_setup() {
     assert!(stderr.contains("openai-compatible"), "{stderr}");
     assert!(stderr.contains("[providers."), "{stderr}");
     assert!(!stderr.contains("router"), "{stderr}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn provider_diagnose_separates_missing_config_missing_credential_and_unreachable_endpoint() {
+    let secret = "sk-diagnose-masked-fixture-0123456789";
+    let home = Home::new();
+
+    let none = home.run(&["provider", "diagnose", "--json"]).await;
+    assert_eq!(none.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&none.stdout).unwrap()["status"],
+        "no_providers"
+    );
+
+    let table = |extra: &str| {
+        format!(
+            "{COMPACTION_HEAD}[providers.keyed]\ntype = \"openai-compatible\"\nbase_url = \"https://llm.example.com/v1\"\n\
+api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n{extra}"
+        )
+    };
+    std::fs::write(home.path().join("config.toml"), table("")).unwrap();
+    let missing = home.run(&["provider", "diagnose", "--json"]).await;
+    assert_eq!(missing.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&missing.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["outcome"], "missing_credential");
+
+    // Credential present, local endpoint closed: reachability fails without leaking the key.
+    let local = format!(
+        "{COMPACTION_HEAD}[providers.local]\ntype = \"openai-compatible\"\nbase_url = \"http://127.0.0.1:1/v1\"\n\
+api_key_env = \"{KEY_ENV}\"\ndefault_model = \"m\"\n"
+    );
+    std::fs::write(home.path().join("config.toml"), local).unwrap();
+    let unreachable = home
+        .run_with_env(&["provider", "diagnose", "--check", "--json"], &[(KEY_ENV, secret)])
+        .await;
+    assert_eq!(unreachable.status.code(), Some(1));
+    let report: Value = serde_json::from_slice(&unreachable.stdout).unwrap();
+    assert_eq!(report["profiles"][0]["outcome"], "unreachable");
+    assert!(!text(&unreachable.stdout).contains(secret) && !text(&unreachable.stderr).contains(secret));
+
+    // Without --check no request is made, so the same profile is merely configured.
+    let configured = home
+        .run_with_env(&["provider", "diagnose", "--json"], &[(KEY_ENV, secret)])
+        .await;
+    assert!(configured.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&configured.stdout).unwrap()["profiles"][0]["outcome"],
+        "configured"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_output() {
+    let secret = "sk-proj-abcdefghijklmnopqrstuvwxyz012345";
+    let home = Home::new();
+    std::fs::write(home.path().join("sample.txt"), "alpha\nneedle one\nbeta\nneeedle two\n").unwrap();
+
+    let read = home.run(&["preview", "read", r#"{"file_path":"sample.txt"}"#]).await;
+    assert!(read.status.success(), "{}", text(&read.stderr));
+    assert!(text(&read.stdout).contains("needle one"));
+
+    let grep = home
+        .run(&[
+            "preview",
+            "agentgrep",
+            r#"{"query":"ne+dle","regex":true,"paths_only":false}"#,
+            "--json",
+        ])
+        .await;
+    assert!(grep.status.success(), "{}", text(&grep.stderr));
+    let grep: Value = serde_json::from_slice(&grep.stdout).unwrap();
+    assert_eq!(grep["tool"], "agentgrep");
+    assert!(grep["output"].as_str().unwrap().contains("needle"));
+
+    assert!(
+        !home.path().join("sessions").exists(),
+        "a preview must not create a session"
+    );
+    let refused = home.run(&["preview", "bash", r#"{"command":"true"}"#]).await;
+    assert!(!refused.status.success());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        read_request(&mut socket).await.unwrap();
+        let body = format!(
+            r#"{{"results":[{{"title":"Found","url":"https://example.org/a","content":"OPENAI_API_KEY={secret}"}}]}}"#
+        );
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(reply.as_bytes()).await.unwrap();
+    });
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!("{COMPACTION_HEAD}[websearch]\nengine = \"searxng\"\nfallback_engines = []\nsearxng_url = \"http://127.0.0.1:{port}\"\n"),
+    )
+    .unwrap();
+    let search = home
+        .run(&["preview", "websearch", r#"{"query":"anything"}"#, "--json"])
+        .await;
+    assert!(search.status.success(), "{}", text(&search.stderr));
+    server.await.unwrap();
+    let search: Value = serde_json::from_slice(&search.stdout).unwrap();
+    assert_eq!(search["backend"], "searxng");
+    let output = search["output"].as_str().unwrap();
+    assert!(output.contains("Found") && !output.contains(secret), "{output}");
 }

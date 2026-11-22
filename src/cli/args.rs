@@ -133,6 +133,14 @@ pub(crate) struct Args {
     #[arg(long, global = true)]
     pub(crate) socket: Option<String>,
 
+    /// Isolated local profile: separate config, sessions, credentials and daemon sockets.
+    #[arg(long = "isolated-profile", global = true, value_name = "NAME", conflicts_with_all = ["socket", "ssh"])]
+    pub(crate) isolated_profile: Option<String>,
+
+    /// Print the active profile, its paths and a shell alias example, then exit.
+    #[arg(long, global = true)]
+    pub(crate) show_profile: bool,
+
     /// Model to use (e.g., claude-opus-4-6, gpt-5.5)
     #[arg(short, long, global = true)]
     pub(crate) model: Option<String>,
@@ -332,6 +340,35 @@ pub(crate) enum Command {
         json: bool,
     },
 
+    /// Report stored local token usage by UTC date, provider and model
+    Stats {
+        /// First UTC day to include (YYYY-MM-DD)
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Last UTC day to include (YYYY-MM-DD)
+        #[arg(long)]
+        through: Option<String>,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Run one read-only built-in (read, agentgrep, websearch) without a model or session
+    Preview {
+        /// Built-in to run
+        #[arg(value_parser = ["read", "agentgrep", "websearch"])]
+        tool: String,
+
+        /// Tool input as a JSON object, e.g. '{"file_path":"README.md","limit":20}'
+        input: String,
+
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Inspect and settle durable pending inputs
     RuntimeState(RuntimeStateCommand),
 
@@ -396,6 +433,20 @@ pub(crate) enum Command {
     Approvals {
         #[command(subcommand)]
         action: ApprovalsCommand,
+    },
+
+    /// Inspect named agent definitions without starting a session
+    Agents,
+
+    /// Estimate tokens in UTF-8 text without contacting a model provider
+    #[command(alias = "toks")]
+    Tokens {
+        /// Inline UTF-8 text, or '-' to read stdin (also the default)
+        #[arg(conflicts_with = "file", value_name = "TEXT")]
+        text: Option<String>,
+        /// Read UTF-8 text from a local file
+        #[arg(long, value_name = "PATH")]
+        file: Option<std::path::PathBuf>,
     },
 
     /// Model management commands
@@ -886,6 +937,17 @@ pub(crate) enum ProviderCommand {
 
     /// Show the currently requested and resolved provider selection
     Current {
+        /// Emit JSON instead of plain text
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Check configured profiles: missing config, missing credential variable, and (with --check) reachability
+    Diagnose {
+        /// Contact each endpoint's model-list URL with the configured credentials
+        #[arg(long)]
+        check: bool,
+
         /// Emit JSON instead of plain text
         #[arg(long)]
         json: bool,

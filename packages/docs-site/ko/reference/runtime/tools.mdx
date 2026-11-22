@@ -974,3 +974,7 @@ grep 모드에서 `before`와 `after`로 일치한 줄 앞뒤를 원래 줄 번�
 테스트: `crates/app-core/src/tool/checkpoint_tests.rs`가 등록 게이트, 거부 사유,
 대기 요청 표를 다루고, `crates/app-core/src/agent/rewind_summary_tests.rs`가 정착
 경로, 갈래를 대신하는 보고, 되돌리기를 다룹니다.
+
+### 읽기 전용 도구 미리보기
+
+`horon preview <read|agentgrep|websearch> '<JSON 입력>'`는 이 세 내장 도구 중 하나를 모델, 세션, 승인 질문 없이 한 번 실행합니다. 입력은 도구가 받는 JSON 객체이며, 도구의 일반 경로 검사를 그대로 적용합니다. 출력은 자격 증명을 가리고 32 KiB로 제한합니다. `--json`은 `tool`, `output`, `truncated`를 반환하고, `websearch`는 설정된 엔진 순서를 `backend`로 함께 반환합니다. 검색 엔드포인트와 키는 표시하지 않습니다. 다른 도구 이름은 거부합니다.

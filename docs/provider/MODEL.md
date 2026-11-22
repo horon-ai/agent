@@ -293,6 +293,8 @@ Key files get narrowed permissions when read. You can also write the key value d
 
 `provider add` writes the same table into `config.toml` and stores the key received on `--api-key-stdin` in the key file.
 
+`horon provider diagnose` checks every `[providers.<name>]` profile without a model call. It reports `no_providers`, `invalid_base_url`, `missing_credential` (no `api_key_env`, or the variable is unset), or `configured`, and exits 1 when anything needs attention. Add `--check` to request each endpoint's model list with the configured credentials, which reports `reachable` or `unreachable`. Output never contains a key or an upstream response body. Use `--json` for structured output.
+
 ```bash
 printf '%s' "$MY_GW_KEY" | horon provider add my-gw \
   --type openai-compatible \

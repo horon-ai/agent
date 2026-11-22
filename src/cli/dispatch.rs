@@ -48,12 +48,15 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         // Do not run local resume lookup or provider bootstrap.
         return super::ssh::run(args).await;
     }
+    if let Some(Command::Stats { from, through, json }) = &args.command {
+        return commands::run_stats_command(from.as_deref(), through.as_deref(), *json);
+    }
+    if let Some(Command::Preview { tool, input, json }) = &args.command {
+        return commands::run_preview_command(tool, input, *json).await;
+    }
     // Explicit MCP management is independent of provider profiles, sessions,
     // and the daemon. In particular, list must remain offline and scriptable.
-    if matches!(args.command, Some(Command::Mcp { .. })) {
-        let Some(Command::Mcp { action }) = args.command else {
-            unreachable!("MCP command checked above");
-        };
+    if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
     // Release installation is a standalone filesystem operation. Installers run
@@ -283,13 +286,16 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             tokio::task::spawn_blocking(hot_exec::run_update).await??;
         }
         Some(Command::InstallRelease { .. } | Command::Package { .. }) => unreachable!("handled before bootstrap"),
-        Some(Command::Completions { .. } | Command::StreamRules { .. }) => unreachable!("handled by startup"),
+        Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. } | Command::Agents) => {
+            unreachable!("handled by startup")
+        }
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }
         Some(Command::Usage { json }) => {
             commands::run_usage_command(json).await?;
         }
+        Some(Command::Stats { .. } | Command::Preview { .. }) => unreachable!("handled before bootstrap"),
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,
         Some(Command::Debug {
             command,
@@ -307,6 +313,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             ProviderCommand::Current { json } => {
                 commands::run_provider_current_command(&args.provider, args.model.as_deref(), json).await?;
             }
+            ProviderCommand::Diagnose { check, json } => commands::run_provider_diagnose_command(check, json).await?,
             ProviderCommand::Add {
                 name,
                 base_url,
