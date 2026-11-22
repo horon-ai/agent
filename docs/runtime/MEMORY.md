@@ -111,7 +111,7 @@ Kind and authority, highest first: `preference`, `person` and `correction` (5); 
 | `links` | `(src_id, dst_id, kind, weight)`. |
 | `entities` | `(page_id, name, name_norm)`; `name_norm` is the lowercased alphanumeric form used for matching. |
 | `versions` | `(page_id, rev, body, created_at)`; `rev` starts at 1. |
-| `files` | `(path, page_id, mtime_ms, size)` the reconciliation uses to skip unchanged files. |
+| `files` | `(path, page_id, mtime_ns, size)`: the reconciliation uses it to skip unchanged files; the stamp is at nanosecond precision so an update in the same millisecond as the last index commit is not skipped. |
 | `pages_fts` | `fts5(unicode61 remove_diacritics 2)` over title, body, tags and entities. |
 | `pages_bigram` | `fts5(trigram)` over title and body, for a substring of three or more characters. |
 | `pages_grams` | `fts5(unicode61)` over the overlapping-bigram expansion of title and body, for Korean and CJK queries written without spaces. |
