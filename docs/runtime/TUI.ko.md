@@ -27,7 +27,7 @@
 클라이언트는 자체 인자를 받는다.
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
            [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking] [--no-title]
 ```
 
@@ -38,6 +38,7 @@ horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... 
 | `--socket <path>` | 찾아낸 기본값 대신 이 하네스 API 소켓을 쓴다 |
 | `--session <id>` | 새 세션을 만들지 않고 기존 세션에 붙는다 |
 | `--cwd <dir>` | 이 클라이언트가 만드는 세션의 작업 디렉터리 |
+| `--add-dir <dir>` | 세션에 더할 작업 디렉터리. 여러 번 쓸 수 있고 각 경로는 실제로 있어야 하며, 해석과 중복 제거를 거쳐 `/dirs`에 나온다 |
 | `--config <file>` | 설정 파일을 하나 더 읽는다. 여러 번 쓸 수 있다 |
 | `--gallery[=<scene>]` | 터미널 렌더러를 오프라인에서 미리 보기 |
 | `--motion <mode>` | 이번 실행에서 `motion.preset` 대신 쓸 `full`, `reduced`, `static` |

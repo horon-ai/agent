@@ -44,19 +44,17 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     if args.goal.is_some() && !matches!(args.command, None | Some(Command::Run { .. })) {
         anyhow::bail!("--goal is only supported when opening the terminal client or running a single message");
     }
+    super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
-        // A remote session ID and working directory belong to the remote host.
-        // Do not run local resume lookup or provider bootstrap.
+        // A remote host owns its session ID and cwd: skip local resume lookup and provider bootstrap.
         return super::ssh::run(args).await;
     }
-    if let Some(Command::Stats { from, through, json }) = &args.command {
-        return commands::run_stats_command(from.as_deref(), through.as_deref(), *json);
+    match commands::run_early_command(&args.command).await? {
+        commands::Early::Done => return Ok(()),
+        commands::Early::Rewrite(next) => args.command = Some(next),
+        commands::Early::Pass => {}
     }
-    if let Some(Command::Preview { tool, input, json }) = &args.command {
-        return commands::run_preview_command(tool, input, *json).await;
-    }
-    // Explicit MCP management is independent of provider profiles, sessions,
-    // and the daemon. In particular, list must remain offline and scriptable.
+    // MCP management is independent of providers, sessions and the daemon; list stays offline and scriptable.
     if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
@@ -297,7 +295,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Usage { json }) => {
             commands::run_usage_command(json).await?;
         }
-        Some(Command::Stats { .. } | Command::Preview { .. }) => unreachable!("handled before bootstrap"),
+        Some(Command::Stats { .. } | Command::Preview { .. } | Command::Diagnostics { .. }) => {
+            unreachable!("handled before bootstrap")
+        }
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,
         Some(Command::Debug {
             command,
@@ -609,6 +609,7 @@ async fn run_default_command(args: Args) -> Result<()> {
         super::tui_handoff::decide_for_process(),
         args.resume.as_deref(),
         args.goal.as_deref().zip(args.goal_budget),
+        &args.add_dir,
     )
 }
 

@@ -67,6 +67,7 @@ export type RuntimeCommand =
   | "plan"
   | "goal"
   | "advisor"
+  | "dirs"
   | "mcp";
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";

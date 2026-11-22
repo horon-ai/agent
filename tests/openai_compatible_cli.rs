@@ -732,6 +732,84 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
 }
 
+/// Every `Additional directories:` line the model was sent.
+fn additional_directories_lines(bodies: &[String]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for body in bodies {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            continue;
+        };
+        let Some(messages) = value["messages"].as_array() else {
+            continue;
+        };
+        for message in messages {
+            let text = match &message["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|block| block["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => continue,
+            };
+            lines.extend(
+                text.lines()
+                    .filter_map(|line| line.trim().strip_prefix("Additional directories: "))
+                    .map(|rest| rest.trim().to_string()),
+            );
+        }
+    }
+    lines
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_lists_one_canonical_root_in_the_session_context() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let extra = home.path().join("extra");
+    std::fs::create_dir(&extra).expect("extra directory");
+    let canonical = std::fs::canonicalize(&extra)
+        .expect("canonical extra")
+        .display()
+        .to_string();
+    let alias = format!("{canonical}/.");
+    let output = home
+        .run(&["run", "hi", "--no-update", "--add-dir", &canonical, "--add-dir", &alias])
+        .await;
+    assert!(output.status.success(), "run failed: {}", text(&output.stderr));
+    let lines = additional_directories_lines(&mock.bodies());
+    assert!(!lines.is_empty(), "the session context reached the model");
+    assert!(
+        lines.iter().all(|line| line == &canonical),
+        "one canonical entry: {lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_refuses_a_missing_directory_before_the_model_call() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let missing = home.path().join("missing");
+    let output = home
+        .run(&[
+            "run",
+            "hi",
+            "--no-update",
+            "--add-dir",
+            missing.to_str().expect("utf-8"),
+        ])
+        .await;
+    assert!(!output.status.success(), "a missing directory fails the launch");
+    assert!(
+        text(&output.stderr).contains("no such directory"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(mock.requests(), 0, "no request is made for a path that names nothing");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     let home = Home::new();
@@ -1117,4 +1195,43 @@ async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_outpu
     assert_eq!(search["backend"], "searxng");
     let output = search["output"].as_str().unwrap();
     assert!(output.contains("Found") && !output.contains(secret), "{output}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn diagnostics_lists_unchecked_files_and_refuses_a_bad_delegation_before_any_model_call() {
+    let home = Home::new();
+    std::fs::write(home.path().join("notes.txt"), "plain text").unwrap();
+
+    let listing = home.run(&["diagnostics", "notes.txt", "missing.rs", "--json"]).await;
+    assert!(listing.status.success(), "{}", text(&listing.stderr));
+    let reports: Value = serde_json::from_slice(&listing.stdout).unwrap();
+    assert_eq!(reports[0]["path"], "notes.txt");
+    assert_eq!(reports[0]["note"], "no language server for this file type");
+    assert_eq!(reports[1]["note"], "file not found");
+
+    // A number that is not in the listing is refused, so no run (and no model call) starts.
+    let mock = Mock::start().await;
+    home.write_config(&mock.base_url);
+    let bad = home
+        .run(&["diagnostics", "notes.txt", "--select", "1", "--delegate"])
+        .await;
+    assert!(!bad.status.success());
+    assert!(text(&bad.stderr).contains("no diagnostic [1]"), "{}", text(&bad.stderr));
+    assert_eq!(mock.requests(), 0, "a refused delegation must not reach the model");
+
+    // Delegating needs a selection and a selection needs --delegate.
+    assert!(
+        !home
+            .run(&["diagnostics", "notes.txt", "--delegate"])
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        !home
+            .run(&["diagnostics", "notes.txt", "--select", "1"])
+            .await
+            .status
+            .success()
+    );
 }
