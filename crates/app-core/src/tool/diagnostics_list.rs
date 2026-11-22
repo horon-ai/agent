@@ -123,10 +123,9 @@ pub async fn collect(files: &[String], working_dir: &Path) -> Vec<FileReport> {
         }));
     }
     // Numbering runs across files, so it is assigned once the whole list exists.
-    let mut next = 1;
-    for item in reports.iter_mut().flat_map(|r| r.diagnostics.iter_mut()) {
-        item.index = next;
-        next += 1;
+    let items = reports.iter_mut().flat_map(|r| r.diagnostics.iter_mut());
+    for (index, item) in (1..).zip(items) {
+        item.index = index;
     }
     reports
 }
