@@ -1175,3 +1175,6 @@ async fn profile_request_limit_queues_across_runtimes_and_drops_cancelled_waiter
         "send after release"
     );
 }
+
+#[path = "aux_boundary_tests.rs"]
+mod aux_boundary;

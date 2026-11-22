@@ -25,6 +25,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Update) => "horon-agent update".to_string(),
         Some(Command::InstallRelease { .. }) => "horon-agent install-release".to_string(),
         Some(Command::Version { .. }) => "horon-agent version".to_string(),
+        Some(Command::Changelog { .. }) => "horon-agent changelog".to_string(),
         Some(Command::Usage { .. }) => "horon-agent usage".to_string(),
         Some(Command::Stats { .. }) => "horon-agent stats".to_string(),
         Some(Command::Preview { .. }) => "horon-agent preview".to_string(),

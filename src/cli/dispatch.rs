@@ -283,6 +283,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. } | Command::Agents) => {
             unreachable!("handled by startup")
         }
+        Some(Command::Changelog { .. }) => unreachable!("handled by startup"),
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }
@@ -310,6 +311,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             ProviderCommand::Current { json } => {
                 commands::run_provider_current_command(&args.provider, args.model.as_deref(), json).await?;
             }
+            ProviderCommand::Failover { json } => commands::run_provider_failover_command(json)?,
             ProviderCommand::Diagnose { check, json } => commands::run_provider_diagnose_command(check, json).await?,
             ProviderCommand::Status { .. } => unreachable!("handled by startup"),
             ProviderCommand::Add {
