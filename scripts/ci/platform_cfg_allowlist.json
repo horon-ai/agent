@@ -214,7 +214,7 @@
     },
     "crates/base/src/import_takeover_tests.rs": {
       "count": 4,
-      "reason": "the takeover guard's two directions are cfg-gated because they assert opposite outcomes: off Linux the call must be refused before staging, on Linux it must be allowed. The condition is the feature under test, not an OS primitive \u2014 `live_takeover_supported()` is the product surface and its Linux-only backing (`/proc/<pid>/stat`, pidfd) lives behind it."
+      "reason": "the takeover guard's two directions are cfg-gated because they assert opposite outcomes: off Linux the call must be refused before staging, on Linux it must be allowed. The condition is the feature under test, not an OS primitive — `live_takeover_supported()` is the product surface and its Linux-only backing (`/proc/<pid>/stat`, pidfd) lives behind it."
     },
     "crates/base/src/import_tests.rs": {
       "count": 7,
@@ -399,6 +399,10 @@
     "src/cli/args/tests.rs": {
       "count": 2,
       "reason": "tests of the Unix-only `server stdio` subcommand above and of `api-bridge --stdio`, whose stdio transport has no Windows counterpart."
+    },
+    "src/cli/cloud_doctor.rs": {
+      "count": 2,
+      "reason": "two `#[cfg(unix)]` test items: a fixture that writes an executable `/bin/sh` script standing in for the remote horon-agent, and the test that runs it. Windows has no `sh` or executable bit to stand in for the cloud host."
     },
     "src/cli/dispatch.rs": {
       "count": 3,
