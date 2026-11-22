@@ -880,10 +880,10 @@ pub(super) use run_jobs::{RunLimits, run_single_message_with_agent};
 
 /// A positive, finite US dollar amount for `run --warn-cost` and `--max-cost`.
 pub(super) fn parse_run_cost(raw: &str) -> Result<f64, &'static str> {
-    raw.parse::<f64>()
-        .ok()
-        .filter(|usd| usd.is_finite() && *usd > 0.0)
-        .ok_or("expected a positive amount in US dollars")
+    match raw.parse::<f64>() {
+        Ok(usd) if usd.is_finite() && usd > 0.0 => Ok(usd),
+        _ => Err("expected a positive amount in US dollars"),
+    }
 }
 
 fn run_command_auto_poke_enabled() -> bool {

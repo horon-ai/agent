@@ -1127,6 +1127,18 @@ async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_outpu
 }
 
 impl Home {
+    /// The mock endpoint registered as the `deepseek` profile. A loopback
+    /// endpoint under an unmapped profile name is treated as free, so a price
+    /// can only apply to a profile the catalog maps to a provider table.
+    fn write_priced_config(&self, base_url: &str) {
+        let config = format!(
+            "{COMPACTION_HEAD}[provider]\ndefault_provider = \"deepseek\"\ndefault_model = \"qa-model\"\n\n\
+[providers.deepseek]\ntype = \"openai-compatible\"\nbase_url = \"{base_url}\"\nauth = \"none\"\n\
+default_model = \"qa-model\"\nmodels = [{{ id = \"qa-model\" }}]\n"
+        );
+        std::fs::write(self.path().join("config.toml"), config).expect("write config.toml");
+    }
+
     /// A fresh pricing catalog that lists `qa-model` at $0.60 per million input tokens.
     fn write_pricing(&self) {
         let now = std::time::SystemTime::now()
@@ -1138,7 +1150,11 @@ impl Home {
             "providers": {"deepseek": {"qa-model": {"input_usd_per_mtok": 0.6, "output_usd_per_mtok": 1.0}}}
         });
         std::fs::create_dir_all(self.path().join("cache")).unwrap();
-        std::fs::write(self.path().join("cache").join("models_dev_pricing.json"), catalog.to_string()).unwrap();
+        std::fs::write(
+            self.path().join("cache").join("models_dev_pricing.json"),
+            catalog.to_string(),
+        )
+        .unwrap();
     }
 }
 
@@ -1146,7 +1162,7 @@ impl Home {
 async fn warn_cost_warns_once_and_the_run_finishes() {
     let mock = Mock::start().await;
     let home = Home::new();
-    home.write_config(&mock.base_url);
+    home.write_priced_config(&mock.base_url);
     home.write_pricing();
 
     let output = home
@@ -1162,7 +1178,7 @@ async fn warn_cost_warns_once_and_the_run_finishes() {
 async fn max_cost_admits_no_request_after_the_cap_is_reached() {
     let mock = Mock::start().await;
     let home = Home::new();
-    home.write_config(&mock.base_url);
+    home.write_priced_config(&mock.base_url);
     home.write_pricing();
 
     let output = home.run(&["run", "hi", "--max-cost", "0.5", "--no-update"]).await;

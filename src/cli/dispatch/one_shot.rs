@@ -43,7 +43,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         anyhow::bail!("--warn-cost ({warn}) must not exceed --max-cost ({max})");
     }
     if warn_cost.is_some() || max_cost.is_some() {
-        crate::agent::spend_cap::install(crate::agent::spend_cap::Limits {
+        crate::spend_cap::install(crate::spend_cap::Limits {
             warn_usd: *warn_cost,
             max_usd: *max_cost,
         });
@@ -83,7 +83,7 @@ pub(super) async fn run(args: &Args) -> Result<()> {
     agent.arm_effort_keywords(message);
     let result =
         commands::run_single_message_with_agent(&mut agent, provider, message, emit_json, emit_ndjson, limits).await;
-    if let Some(summary) = crate::agent::spend_cap::summary() {
+    if let Some(summary) = crate::spend_cap::summary() {
         super::output::stderr_info(format!(
             "Estimated spend about ${:.4} over {} priced request(s); {} request(s) had no known price and are not counted{}.",
             summary.spent_usd,

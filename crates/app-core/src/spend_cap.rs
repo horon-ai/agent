@@ -55,7 +55,7 @@ pub fn install(limits: Limits) {
 }
 
 /// Refuse a new model request once the ceiling is reached. No-op when no cap is installed.
-pub(super) fn admit() -> Result<()> {
+pub(crate) fn admit() -> Result<()> {
     let mut guard = ledger();
     let Some(ledger) = guard.as_mut() else {
         return Ok(());
@@ -73,7 +73,7 @@ pub(super) fn admit() -> Result<()> {
 }
 
 /// Count one settled response. `cost_usd` is `None` when the route has no price.
-pub(super) fn settle(model: &str, cost_usd: Option<f64>) {
+pub(crate) fn settle(model: &str, cost_usd: Option<f64>) {
     let mut guard = ledger();
     let Some(ledger) = guard.as_mut() else {
         return;
@@ -114,33 +114,6 @@ pub fn summary() -> Option<Summary> {
         warned: ledger.warned,
         stopped: ledger.stopped,
     })
-}
-
-impl super::Agent {
-    /// Charge the response just settled to the run's spend ledger.
-    pub(super) fn settle_spend(&self) {
-        let usage = &self.last_usage;
-        let model = self.provider_model();
-        // A direct profile prices under its own `openai-compatible:<id>` route;
-        // the display label would map a compatible endpoint to OpenAI's table.
-        let source_key = self.compaction_route_from_provider().unwrap_or_else(|| {
-            crate::provider_activity::source_key_for_provider_label(
-                &self.provider_name(),
-                std::env::var("HORON_AGENT_RUNTIME_PROVIDER").ok().as_deref(),
-            )
-        });
-        settle(
-            &model,
-            crate::provider::pricing::metered_usage_cost_usd(
-                &source_key,
-                &model,
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cache_read_input_tokens.unwrap_or(0),
-                usage.cache_creation_input_tokens.unwrap_or(0),
-            ),
-        );
-    }
 }
 
 #[cfg(test)]

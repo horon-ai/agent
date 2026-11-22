@@ -1034,7 +1034,7 @@ jobs:
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
-            -- agent::spend_cap::tests:: --nocapture
+            -- spend_cap::tests:: --nocapture
 
       - name: Run secrets cohort
         if: runner.os != 'Windows'
