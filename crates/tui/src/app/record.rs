@@ -43,11 +43,6 @@ impl App {
         match Recorder::create(&path, recording::MAX_BYTES) {
             Ok(recorder) => {
                 self.recorder = Some(recorder);
-                // The scan is based here so answers the conversation published
-                // before the recording began are not written into it. The
-                // per-event scan skips the count while nothing is recorded, so
-                // this is the one place the whole list is walked for it.
-                self.record_scan = (self.transcript.revision(), self.published_answers());
                 let shown = path.display().to_string();
                 self.transcript.push_notice(format!(
                     "recording to {shown}; approval answers, unsent drafts and tool bodies stay out; /record stop ends it"
@@ -112,15 +107,20 @@ impl App {
     /// A replay owns the transcript while it runs, so its scratch conversation
     /// never moves the count: the live conversation is the one being recorded.
     pub(super) fn record_new_assistants(&mut self) {
-        // Nothing is written unless a recording was started, so the ordinary
-        // client stops at this read rather than counting the conversation after
-        // every event and every key. The baseline is taken by
-        // [`Self::start_recording`], which is the only place a recording begins.
-        if self.recorder.is_none() || self.replay.is_some() {
+        if self.replay.is_some() {
             return;
         }
         let revision = self.transcript.revision();
-        let published = self.published_answers();
+        let published = self
+            .transcript
+            .items()
+            .iter()
+            .filter(|item| matches!(item, crate::transcript::Item::Assistant(_)))
+            .count();
+        if self.recorder.is_none() {
+            self.record_scan = (revision, published);
+            return;
+        }
         if revision != self.record_scan.0 || published <= self.record_scan.1 {
             self.record_scan = (revision, published);
             return;
@@ -130,28 +130,15 @@ impl App {
             .items()
             .iter()
             .filter_map(|item| match item {
-                crate::transcript::Item::Assistant(text) => Some(text),
+                crate::transcript::Item::Assistant(text) => Some(text.clone()),
                 _ => None,
             })
             .skip(self.record_scan.1)
-            .map(String::clone)
             .collect();
         self.record_scan = (revision, published);
         for text in fresh {
             self.record_event(Event::Assistant(text));
         }
-    }
-
-    /// How many assistant answers the conversation has published.
-    ///
-    /// One definition for the starting baseline and the per-event check, so the
-    /// two counts cannot disagree about what an answer is.
-    fn published_answers(&self) -> usize {
-        self.transcript
-            .items()
-            .iter()
-            .filter(|item| matches!(item, crate::transcript::Item::Assistant(_)))
-            .count()
     }
 
     /// `/record`: start, stop or report the recording.

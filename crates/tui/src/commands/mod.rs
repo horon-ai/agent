@@ -604,38 +604,24 @@ impl Registry {
     /// position is the user's to fill.
     pub fn complete(&self, text: &str) -> Option<Completion> {
         let rest = text.trim_start().strip_prefix('/')?;
-        let completion = self.complete_prefix(rest)?;
-        Some(Completion {
-            insert: format!("/{}", completion.insert),
-            matches: completion.matches,
-        })
-    }
-
-    /// [`Self::complete`] for a prefix already separated from its slash.
-    ///
-    /// The popup keeps the prefix of the draft it was last synced against, so a
-    /// caller that has it does not build the whole line to hand it back.
-    pub fn complete_prefix(&self, rest: &str) -> Option<Completion> {
         if rest.contains(char::is_whitespace) {
             return None;
         }
-        // The built-ins and the harness commands never move while the process
-        // runs, so their sorted, deduplicated list is built once. The command
-        // files are the only source that changes, so their names are merged
-        // into the matches rather than into a list rebuilt per keystroke.
-        let mut matches: Vec<String> = STABLE_NAMES
+        let mut names: Vec<&str> = LOCAL_NAMES.to_vec();
+        names.extend(server_commands().iter().map(|(name, _)| name.as_str()));
+        names.extend(
+            self.files
+                .iter()
+                .filter(|file| !file.shadowed)
+                .map(|file| file.name.as_str()),
+        );
+        names.sort_unstable();
+        names.dedup();
+        let matches: Vec<String> = names
             .iter()
             .filter(|name| name.starts_with(rest))
-            .map(|name| name.clone())
+            .map(|name| (*name).to_string())
             .collect();
-        for file in self.files.iter().filter(|file| !file.shadowed) {
-            if !file.name.starts_with(rest) {
-                continue;
-            }
-            if let Err(at) = matches.binary_search_by(|name| name.as_str().cmp(file.name.as_str())) {
-                matches.insert(at, file.name.clone());
-            }
-        }
         if matches.is_empty() {
             return None;
         }
@@ -643,7 +629,10 @@ impl Registry {
             1 => matches[0].clone(),
             _ => common_prefix(&matches),
         };
-        Some(Completion { matches, insert })
+        Some(Completion {
+            matches,
+            insert: format!("/{insert}"),
+        })
     }
 
     /// The `/help` text: every command with its summary, then the keys.
@@ -779,20 +768,6 @@ const LOCAL_NAMES: [&str; 29] = [
     "unpin",
     "voice",
 ];
-
-/// The built-in and harness names completion filters, sorted and deduplicated.
-///
-/// Neither source changes while the process runs, so the list is built once,
-/// lazily, and every keystroke filters it instead of sorting the same names
-/// again. The command files are the only source that moves, and they are merged
-/// into the matches by [`Registry::complete_prefix`].
-static STABLE_NAMES: LazyLock<Vec<String>> = LazyLock::new(|| {
-    let mut names: Vec<String> = LOCAL_NAMES.iter().map(|name| (*name).to_string()).collect();
-    names.extend(server_commands().iter().map(|(name, _)| name.clone()));
-    names.sort_unstable();
-    names.dedup();
-    names
-});
 
 /// Every runtime command, in declaration order.
 const SERVER_VARIANTS: &[RuntimeCommand] = &[

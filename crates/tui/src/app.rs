@@ -951,21 +951,11 @@ impl App {
     /// The popup carries the same names with their descriptions, so the hint is
     /// the fallback for a popup the user closed.
     pub fn completion_hint(&self) -> Option<String> {
-        // A one-line slash draft is exactly what the popup was last synced
-        // against, so the registry is asked about the prefix the popup already
-        // holds; only a draft the popup has not seen is built from the editor.
-        let draft;
-        let needle = match self.slash.needle() {
-            Some(prefix) => prefix,
-            None => {
-                draft = self.input.text();
-                crate::help::prefix(&draft)?
-            }
-        };
-        let completion = self.commands.complete_prefix(needle)?;
+        let text = self.input.text();
+        let completion = self.commands.complete(&text)?;
         // A line that already names the command has nothing left to complete,
         // and naming it again under the draft is noise.
-        if completion.insert == needle {
+        if completion.insert == text {
             return None;
         }
         Some(completion.matches.join("  "))
