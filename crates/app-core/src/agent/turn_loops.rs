@@ -736,6 +736,7 @@ impl Agent {
             let send_messages = outbound.as_deref().unwrap_or(send_messages);
             let prompt_has_recent_tool_result = Self::messages_end_with_tool_result(send_messages);
             self.last_status_detail = None;
+            super::spend_cap::admit()?;
             let completion = self
                 .provider
                 .complete_split_with_context(
@@ -1414,6 +1415,7 @@ impl Agent {
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
             };
+            self.settle_spend();
 
             let visible_text_is_empty = text_content.trim().is_empty();
 

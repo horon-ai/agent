@@ -295,6 +295,14 @@ pub(crate) enum Command {
         #[arg(long)]
         no_session: bool,
 
+        /// Warn once on stderr when the estimated spend of this run reaches this many US dollars
+        #[arg(long, value_name = "USD", value_parser = super::commands::parse_run_cost)]
+        warn_cost: Option<f64>,
+
+        /// Send no new model request once the estimated spend of this run reaches this many US dollars
+        #[arg(long, value_name = "USD", value_parser = super::commands::parse_run_cost)]
+        max_cost: Option<f64>,
+
         /// Cancel the run after this many seconds (fractions are accepted)
         #[arg(long, value_name = "SECONDS", value_parser = super::commands::parse_run_duration)]
         max_time: Option<std::time::Duration>,

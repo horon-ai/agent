@@ -265,6 +265,13 @@ async fn serve(
     for frame in frames {
         sse.push_str(&format!("data: {frame}\n\n"));
     }
+    // Each response reports one million prompt tokens, so a priced model costs
+    // exactly its input price per million tokens per request.
+    let usage = json!({
+        "id": "chatcmpl-qa", "object": "chat.completion.chunk", "model": "qa-model", "choices": [],
+        "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0, "total_tokens": 1_000_000}
+    });
+    sse.push_str(&format!("data: {usage}\n\n"));
     sse.push_str("data: [DONE]\n\n");
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1117,4 +1124,63 @@ async fn preview_runs_read_only_tools_without_a_session_and_redacts_search_outpu
     assert_eq!(search["backend"], "searxng");
     let output = search["output"].as_str().unwrap();
     assert!(output.contains("Found") && !output.contains(secret), "{output}");
+}
+
+impl Home {
+    /// A fresh pricing catalog that lists `qa-model` at $0.60 per million input tokens.
+    fn write_pricing(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let catalog = json!({
+            "cached_at_unix_secs": now,
+            "providers": {"deepseek": {"qa-model": {"input_usd_per_mtok": 0.6, "output_usd_per_mtok": 1.0}}}
+        });
+        std::fs::create_dir_all(self.path().join("cache")).unwrap();
+        std::fs::write(self.path().join("cache").join("models_dev_pricing.json"), catalog.to_string()).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn warn_cost_warns_once_and_the_run_finishes() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    home.write_pricing();
+
+    let output = home
+        .run(&["run", "hi", "--warn-cost", "0.5", "--max-cost", "5", "--no-update"])
+        .await;
+    let stderr = text(&output.stderr);
+    assert!(output.status.success(), "stderr={stderr}");
+    assert_eq!(stderr.matches("spend warning").count(), 1, "{stderr}");
+    assert_eq!(mock.requests(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn max_cost_admits_no_request_after_the_cap_is_reached() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    home.write_pricing();
+
+    let output = home.run(&["run", "hi", "--max-cost", "0.5", "--no-update"]).await;
+    let stderr = text(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("spend cap of $0.5000 reached"), "{stderr}");
+    assert_eq!(mock.requests(), 1, "the second request is not sent");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unpriced_model_is_reported_not_counted_as_free() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+
+    let output = home.run(&["run", "hi", "--max-cost", "0.01", "--no-update"]).await;
+    let stderr = text(&output.stderr);
+    assert!(output.status.success(), "stderr={stderr}");
+    assert!(stderr.contains("no price is known for qa-model"), "{stderr}");
+    assert!(stderr.contains("2 request(s) had no known price"), "{stderr}");
 }

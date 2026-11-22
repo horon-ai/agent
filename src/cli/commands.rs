@@ -878,6 +878,14 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
 mod run_jobs;
 pub(super) use run_jobs::{RunLimits, run_single_message_with_agent};
 
+/// A positive, finite US dollar amount for `run --warn-cost` and `--max-cost`.
+pub(super) fn parse_run_cost(raw: &str) -> Result<f64, &'static str> {
+    raw.parse::<f64>()
+        .ok()
+        .filter(|usd| usd.is_finite() && *usd > 0.0)
+        .ok_or("expected a positive amount in US dollars")
+}
+
 fn run_command_auto_poke_enabled() -> bool {
     std::env::var("HORON_AGENT_RUN_AUTO_POKE")
         .ok()

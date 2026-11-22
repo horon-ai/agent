@@ -60,6 +60,7 @@ mod rewind_summary;
 pub use rewind_summary::RewindSummaryOutcome;
 mod round_budget;
 mod run_journal;
+pub mod spend_cap;
 mod session_replication;
 mod stable_hash;
 pub(crate) use stable_hash::{stable_hash_json, stable_hash_str, stable_json_len};

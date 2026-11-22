@@ -246,6 +246,7 @@ impl Agent {
             if self.is_graceful_shutdown() {
                 break;
             }
+            super::spend_cap::admit()?;
             if let Some(budget) = &mut self.swarm_budget {
                 budget.charge_request();
             }
@@ -1235,6 +1236,7 @@ impl Agent {
                 cache_read_input_tokens: usage_cache_read,
                 cache_creation_input_tokens: usage_cache_creation,
             };
+            self.settle_spend();
 
             // Detect a transparent mid-request model switch (e.g. Anthropic's
             // retired `claude-fable-5` falling back to `claude-opus-4-8`). The

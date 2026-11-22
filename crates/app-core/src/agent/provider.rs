@@ -492,7 +492,7 @@ impl Agent {
 /// `[providers.<name>]` profile without a loaded catalog still yields the same
 /// entry from its key.
 impl Agent {
-    fn compaction_route_from_provider(&self) -> Option<String> {
+    pub(super) fn compaction_route_from_provider(&self) -> Option<String> {
         let model = self.provider.model();
         let from_routes = self
             .provider
