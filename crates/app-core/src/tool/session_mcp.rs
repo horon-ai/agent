@@ -368,7 +368,7 @@ struct PackageTool {
     /// Package server that owns it, `plugin_<id>_<name>`.
     server: String,
     /// Name the server itself uses.
-    name: String,
+    raw_name: String,
     description: String,
     schema: Value,
     handle: McpHandle,
@@ -381,7 +381,7 @@ impl Tool for PackageTool {
     }
 
     fn mcp_identity(&self) -> Option<(&str, &str)> {
-        Some((&self.server, &self.name))
+        Some((&self.server, &self.raw_name))
     }
 
     fn description(&self) -> &str {
@@ -410,7 +410,7 @@ impl Tool for PackageTool {
             object.remove("intent");
         }
         let accept_large_output = take_accept_large_output(&mut input);
-        let result = self.handle.call_tool(&self.name, input).await?;
+        let result = self.handle.call_tool(&self.raw_name, input).await?;
 
         let mut output_parts = Vec::new();
         for block in result.content {
@@ -429,7 +429,7 @@ impl Tool for PackageTool {
         } else {
             crate::mcp::budget::fit_to_budget(&output, crate::mcp::budget::MCP_RESULT_TOKEN_BUDGET)
         };
-        let title = format!("mcp:{}:{}", self.server, self.name);
+        let title = format!("mcp:{}:{}", self.server, self.raw_name);
 
         if result.is_error {
             Ok(ToolOutput::new(format!("Error: {}", output)).with_title(title))
@@ -839,7 +839,7 @@ fn package_tools(server: &str, handle: &McpHandle) -> Vec<(String, Arc<dyn Tool>
             let tool = PackageTool {
                 alias: alias.clone(),
                 server,
-                name: definition.name,
+                raw_name: definition.name,
                 description: definition.description.unwrap_or_else(|| "MCP tool".to_string()),
                 schema: definition.input_schema,
                 handle: handle.clone(),
