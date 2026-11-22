@@ -7,6 +7,8 @@ mod mcp;
 pub(crate) use mcp::McpCommand;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod worktree_options;
+pub(crate) use worktree_options::{MoveToWorktreeArgs, RemoveWorktreeArgs, WorktreesArgs};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum ProviderAuthArg {
@@ -937,42 +939,13 @@ pub(crate) enum SessionCommand {
     },
 
     /// List the Git worktrees around the current directory and which ones a session uses
-    Worktrees {
-        #[arg(long)]
-        json: bool,
-    },
+    Worktrees(WorktreesArgs),
 
     /// Preview, apply or undo moving a session into a new managed Git worktree
-    MoveToWorktree {
-        session: String,
-
-        /// New branch for the worktree
-        #[arg(long)]
-        branch: Option<String>,
-
-        /// Move the session back to its previous working directory
-        #[arg(long, conflicts_with = "branch")]
-        undo: bool,
-
-        /// Do it. Without it the command only previews.
-        #[arg(long)]
-        apply: bool,
-
-        #[arg(long)]
-        json: bool,
-    },
+    MoveToWorktree(MoveToWorktreeArgs),
 
     /// Remove a worktree that `move-to-worktree` created, never past uncommitted changes
-    RemoveWorktree {
-        path: String,
-
-        /// Do it. Without it the command only previews.
-        #[arg(long)]
-        apply: bool,
-
-        #[arg(long)]
-        json: bool,
-    },
+    RemoveWorktree(RemoveWorktreeArgs),
 
     /// Export one session's original events and blobs to a directory
     Export {

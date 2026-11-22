@@ -52,15 +52,18 @@ pub(crate) fn run_session_command(command: SessionCommand) -> Result<()> {
             },
             json,
         ),
-        SessionCommand::Worktrees { json } => worktree::list(&home()?, json),
-        SessionCommand::MoveToWorktree {
-            session,
-            branch,
-            undo,
-            apply,
-            json,
-        } => worktree::move_session(&home()?, &session, branch.as_deref(), undo, apply, json),
-        SessionCommand::RemoveWorktree { path, apply, json } => worktree::remove(&home()?, &path, apply, json),
+        SessionCommand::Worktrees(options) => worktree::list(&home()?, options.json),
+        SessionCommand::MoveToWorktree(options) => worktree::move_session(
+            &home()?,
+            &options.session,
+            options.branch.as_deref(),
+            options.undo,
+            options.apply,
+            options.json,
+        ),
+        SessionCommand::RemoveWorktree(options) => {
+            worktree::remove(&home()?, &options.path, options.apply, options.json)
+        }
         SessionCommand::Export { session, output, json } => export(&home()?, &session, &output, json),
         SessionCommand::Import { input, json } => import(&home()?, &input, json),
         SessionCommand::ExportLegacy {
