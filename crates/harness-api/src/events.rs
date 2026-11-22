@@ -671,6 +671,14 @@ pub enum ApiEvent {
         markdown: String,
     },
 
+    /// Reply to `ExportSessionHtml`.
+    SessionHtml {
+        session_id: String,
+        /// Standalone HTML report: every transcript character escaped, the
+        /// stylesheet inline, and nothing loaded from the network.
+        html: String,
+    },
+
     /// Reply to `ExportSessionEvents`.
     SessionEventPage {
         session_id: String,

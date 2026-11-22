@@ -187,6 +187,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
         Action::BackgroundJobs => Command::BackgroundJobs,
+        Action::Export(path) => Command::Export { path },
         // The frame loop answers these two: the editor needs the terminal that
         // loop is drawing on, so the action never reaches the bridge thread.
         Action::EditDraft | Action::OpenArtifact(_) => return,

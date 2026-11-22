@@ -56,6 +56,7 @@ horon session inspect <id>     # layout, heads, archive state, damage (read-only
 horon session doctor [<id>]    # validate originals without repairing
 horon session migrate          # migrate legacy originals (dry run unless --apply)
 horon export <id> --out file.md   # Markdown transcript; secrets redacted
+horon export <id> --html --out report.html  # offline HTML report; secrets redacted
 horon session export <id> --output <dir>  # events and blobs as a bundle
 horon session restore <id>     # restore an archived session
 horon session delete <id> --yes   # permanent; refuses a session a daemon has open
@@ -63,6 +64,10 @@ horon session delete <id> --yes   # permanent; refuses a session a daemon has op
 
 `horon export` is the Markdown transcript, and tool results over 4 KiB are
 truncated in it, matching the `export_session_markdown` harness API reply.
+`--html` writes that same redacted projection as one standalone report instead:
+stored markup is escaped, the stylesheet is inline, a Content-Security-Policy
+forbids network loads, so the saved file opens offline; an `--out` path that
+already exists is refused.
 `horon session export` is the other direction: it writes the original
 `events.jsonl` and `blobs/` into a new directory as a movable bundle, which
 `horon session import` reads into another store.

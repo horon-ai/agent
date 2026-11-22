@@ -2562,6 +2562,21 @@ class HoronAgentClient:
         frame = await self._replication_reply(request, "session_markdown")
         return {"session_id": frame.get("session_id"), "markdown": frame.get("markdown", "")}
 
+    async def export_session_html(
+        self,
+        session_id: str,
+    ) -> dict[str, Any]:
+        """Export the conversation as a standalone offline HTML report.
+
+        Requires ``session_replication_v1``. The document renders the same
+        redacted projection as :meth:`export_session_markdown`, escapes every
+        transcript character, and loads nothing from the network.
+        """
+        self._require_capability("session_replication_v1", "export_session_html")
+        request: dict[str, Any] = {"req": "export_session_html", "session_id": session_id}
+        frame = await self._replication_reply(request, "session_html")
+        return {"session_id": frame.get("session_id"), "html": frame.get("html", "")}
+
     async def import_session_events(
         self,
         page: dict[str, Any],

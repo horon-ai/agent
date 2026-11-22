@@ -460,11 +460,13 @@ pub(crate) enum Command {
     /// Model management commands
     #[command(subcommand)]
     Model(ModelCommand),
-    /// Export a session transcript as Markdown
+    /// Export a session transcript as Markdown, or as standalone HTML
     ///
     /// Prints the transcript to stdout, or writes it to a file with `--out`.
-    /// The text matches the `export_session_markdown` harness API reply:
-    /// secrets are redacted and tool results over 4 KiB are truncated.
+    /// The Markdown text matches the `export_session_markdown` harness API
+    /// reply and `--html` the `export_session_html` reply: both render one
+    /// redacted projection, so secrets are redacted and tool results over
+    /// 4 KiB are truncated in either format.
     Export {
         /// Session ID to export
         session: String,
@@ -472,6 +474,15 @@ pub(crate) enum Command {
         /// Write the transcript to this file instead of stdout
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+
+        /// Write a standalone HTML report instead of Markdown
+        ///
+        /// The page inlines its stylesheet, carries a Content-Security-Policy
+        /// of `default-src 'none'`, and escapes every transcript character, so
+        /// it opens offline and stored markup stays text. A file that already
+        /// exists is refused rather than overwritten.
+        #[arg(long)]
+        html: bool,
 
         /// Emit JSON instead of the raw transcript
         #[arg(long)]

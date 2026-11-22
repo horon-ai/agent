@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 26
+API_VERSION_MINOR = 27
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -497,6 +497,15 @@ class SessionMarkdown(TypedDict, total=False):
     markdown: str
 
 
+class SessionHtml(TypedDict, total=False):
+    """Reply to ``export_session_html``."""
+
+    session_id: str
+    # Standalone HTML report: every transcript character escaped, the stylesheet
+    # inline, and nothing loaded from the network.
+    html: str
+
+
 class SessionEventPage(TypedDict, total=False):
     """Reply to ``export_session_events``."""
 
@@ -792,6 +801,7 @@ KNOWN_EVENT_KINDS: tuple[str, ...] = (
     "session_heads",
     "session_history_page",
     "session_markdown",
+    "session_html",
     "session_event_page",
     "session_import_result",
     "session_blob_chunk",
@@ -870,6 +880,7 @@ KNOWN_REQUEST_KINDS: tuple[str, ...] = (
     "export_session_record_blob",
     "import_session_record_blob",
     "export_session_markdown",
+    "export_session_html",
     "package_control",
     "get_session_record_blob_status",
     "get_runtime_state",

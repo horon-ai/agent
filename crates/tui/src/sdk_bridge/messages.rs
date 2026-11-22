@@ -68,6 +68,12 @@ pub enum Command {
     Rename(String),
     /// List the background work the attached session is still running.
     BackgroundJobs,
+    /// Write the attached session's transcript to this path as an HTML report.
+    ///
+    /// The document is the harness's renderer output, not the transcript the
+    /// client drew: that is what keeps the report in step with the Markdown
+    /// export, redaction and truncation included.
+    Export { path: String },
     /// Stop one background terminal this session started.
     ///
     /// It names the tool call, not the turn: the session and every other job

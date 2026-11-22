@@ -49,6 +49,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("get_history_page", "getHistoryPage"),
     cap("export_session_events", "exportSessionEvents"),
     cap("export_session_markdown", "exportSessionMarkdown"),
+    cap("export_session_html", "exportSessionHtml"),
     cap("import_session_events", "importSessionEvents"),
     cap("export_session_blob", "exportSessionBlob"),
     cap("import_session_blob", "importSessionBlob"),

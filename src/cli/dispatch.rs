@@ -206,10 +206,9 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                     "api-bridge --stdio is Unix only; connect to the API socket instead (a named pipe on Windows)"
                 );
             }
-            // The daemon must be up for the bridge to translate onto, and a
-            // user running this to try the SDK has usually never started one.
-            // Starting it here turns "connection refused, good luck" into a
-            // working socket.
+            // The daemon must be up for the bridge to translate onto, and a user
+            // running this to try the SDK has usually never started one. Starting it
+            // here turns "connection refused, good luck" into a working socket.
             //
             // Best-effort on purpose: a spawn can legitimately fail while a
             // usable daemon exists (another build already holds the runtime
@@ -359,16 +358,20 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             commands::run_memory_command(map_memory_subcommand(subcmd)).await?;
         }
         Some(Command::Session(subcmd)) => match subcmd {
-            // `delete` talks to the daemon, so it cannot go through the
-            // synchronous session dispatcher that handles every other
-            // subcommand.
+            // `delete` talks to the daemon, so it cannot go through the synchronous
+            // session dispatcher that handles every other subcommand.
             SessionCommand::Delete { session, yes, json } => {
                 commands::run_session_delete_command(&session, yes, json).await?;
             }
             other => commands::run_session_command(other)?,
         },
-        Some(Command::Export { session, out, json }) => {
-            super::sessions::export_markdown(&session, out.as_deref(), json)?;
+        Some(Command::Export {
+            session,
+            out,
+            json,
+            html,
+        }) => {
+            super::sessions::export_transcript(&session, out.as_deref(), json, html)?;
         }
         Some(Command::Ambient(subcmd)) => {
             commands::run_ambient_command(map_ambient_subcommand(subcmd)).await?;
@@ -452,8 +455,7 @@ fn apply_default_tool_profile(flag_profile: Option<&str>) {
 /// carries the profile's base URL, auth and model.
 fn provider_choice_for_named_profile(_profile_name: &str) -> ProviderChoice {
     // Deliberately independent of the profile's `type`: the runtime identity is
-    // `openai-compatible[:profile]` for every wire, so no config lookup happens
-    // here.
+    // `openai-compatible[:profile]` for every wire, so no config lookup happens here.
     ProviderChoice::OpenaiCompatible
 }
 
@@ -1137,9 +1139,8 @@ fn resolve_blocked_approval(
     let message = human_verdict_message(verdict, tool_call_id, note);
     match system.record_decision(request_id, approved, outcome, Some(message)) {
         Ok(crate::safety::RecordDecisionOutcome::Recorded(decision)) => {
-            // A corrupt history records a denial whatever was asked for, so the
-            // waiter must be told what it will actually receive rather than
-            // what this command asked for.
+            // A corrupt history records a denial whatever was asked for, so the waiter
+            // must be told what it will actually receive rather than what was asked.
             if decision.approved != approved {
                 crate::logging::warn(&format!(
                     "human verdict for request {request_id} was recorded as a denial in the decision history ({})",

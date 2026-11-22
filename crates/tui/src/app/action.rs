@@ -81,6 +81,11 @@ pub enum Action {
     EditDraft,
     /// Give the terminal to the editor with a private copy of a resolved artifact.
     OpenArtifact(std::path::PathBuf),
+    /// Write the attached session's transcript as a standalone HTML report.
+    ///
+    /// The path is the destination the reader typed, kept exactly as typed so
+    /// a relative one resolves against the directory the client runs in.
+    Export(String),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.

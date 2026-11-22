@@ -449,6 +449,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/copy` | Choose which text to copy |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
+| `/export <path>` | Write this session's transcript to a standalone offline HTML report |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
@@ -466,6 +467,7 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/resume [id]` | Replay a stored session, or pick one from the list |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
+| `/stats` | Show the attached session's recorded token usage |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
 | `/unpin [id]` | Remove a session from the pinned group |
@@ -475,7 +477,7 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): twenty-nine commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-one commands the client answers itself, in name order.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -489,6 +491,8 @@ Enter `!command` to run a shell command in the TUI process's working directory. 
 
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
 
+`/export <path>` writes the attached session's transcript as one HTML file that opens without a connection: the harness renders it from the same redacted projection `horon export` prints, every transcript character is escaped so stored markup stays text, the stylesheet is inline, and a Content-Security-Policy forbids any network load. The path is used as typed, so a relative one lands in the directory the client runs in, and a file that already exists is refused rather than replaced.
+
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
 ```text
@@ -501,6 +505,7 @@ built-in commands:
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
+  /export              write this session's transcript as a standalone offline HTML report (/export <path>)
   /help                list the commands and the keys in force
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
@@ -518,6 +523,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
+  /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
   /unpin               take a session out of the pinned group

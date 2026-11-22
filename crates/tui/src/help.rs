@@ -279,6 +279,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "copy" => "copy a recent answer or code block to the terminal clipboard, or list them",
         "effort" => "set the reasoning effort, or pick one from the ladder",
         "exit" => "leave, the same as /quit",
+        "export" => "write this session's transcript as a standalone offline HTML report (/export <path>)",
         "help" => "list the commands and the keys in force",
         "jobs" => "list the background work this session is running, and cancel a terminal",
         "stats" => "show the attached session's recorded token usage",

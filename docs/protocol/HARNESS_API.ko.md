@@ -688,6 +688,27 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 `horon export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
 같은 바이트를 쓴다.
 
+### HTML 보고서 (프로토콜 1.27)
+
+`export_session_html`은 `session_id`를 받아 독립 실행 문서를 `html`에 담은
+`session_html` 이벤트로 응답한다. `export_session_markdown`과 같은 가림 처리된
+투영을 렌더하므로 비밀 값과 잘린 도구 결과가 두 형식에서 같다. 다른 것은 표현이다.
+각 턴은 역할을 적은 `<h2>`를 가진 `<section>`이고, 본문은 줄바꿈을 유지하는
+`pre-wrap` 블록에, 도구 호출과 결과는 `<pre>` 블록에 들어간다.
+
+이 문서는 저장해 두었다가 연결 없이 여는 것을 목적으로 한다. 대화록의 모든 글자를
+이스케이프하므로 마크업처럼 보이는 저장 텍스트는 노드가 아니라 글자로 표시된다.
+스타일시트는 문서 안에 있고 글꼴, 이미지, 스크립트를 참조하지 않으며, 헤드에
+`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`를
+넣어 브라우저가 나중에 생길 수 있는 네트워크 요청도 거부하게 한다.
+`session_replication_v1` 기능을 요구하고, 저장소에 없는 id에는 `unknown_session`으로
+답한다.
+
+`horon export <session-id> --html [--out <path>]`는 같은 바이트를 쓰고, `--json`은
+`{"session_id": ..., "html": ...}`로 감싼다. Markdown 형식과 달리 이미 있는
+`--out` 경로는 덮어쓰지 않고 거절한다. 보고서의 목적지는 사용자가 직접 지목한
+파일이기 때문이다.
+
 클라이언트가 어겨서는 안 되는 규칙 두 가지:
 
 - **`canonical_json`을 다시 직렬화하지 않는다.** 이벤트의 정규 JSON은 문자열로

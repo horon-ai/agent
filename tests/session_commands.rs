@@ -151,6 +151,20 @@ fn message(id: &str, role: &str) -> Value {
 }
 
 fn write_legacy(home: &Path, id: &str) {
+    write_legacy_messages(
+        home,
+        id,
+        &[
+            message("one", "user"),
+            message("two", "assistant"),
+            message("three", "user"),
+        ],
+    );
+}
+
+/// Write a legacy snapshot whose messages are supplied, for a case that needs
+/// exact transcript text.
+fn write_legacy_messages(home: &Path, id: &str, messages: &[Value]) {
     let sessions = home.join("sessions");
     fs::create_dir_all(&sessions).expect("sessions");
     fs::set_permissions(&sessions, fs::Permissions::from_mode(0o700)).expect("private sessions");
@@ -162,7 +176,7 @@ fn write_legacy(home: &Path, id: &str) {
         "provider_key": "openai",
         "model": "test",
         "route_api_method": "openai-api",
-        "messages": [message("one","user"), message("two","assistant"), message("three","user")],
+        "messages": messages,
         "parent_id": "parent",
         "status": "completed",
         "last_pid": null
@@ -709,3 +723,72 @@ fn export_writes_the_same_markdown_the_api_reply_carries() {
 }
 
 static EXPORT_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `horon-agent export <id> --html` writes one standalone report: the redacted
+/// projection the Markdown export uses, escaped so stored markup stays inert,
+/// and a document that loads nothing from the network. An existing destination
+/// is refused.
+#[test]
+fn export_html_writes_an_offline_report_without_secrets_or_live_markup() {
+    let sandbox = Sandbox::new("export-html");
+    let home = sandbox.home("a");
+    // Split so the repository secret scanner does not flag the fixture.
+    let secret = concat!("sk-", "proj-abcdefghijklmnopqrstuvwxyz012345");
+    let hostile = "<script>alert('x')</script><img src=x onerror=\"alert('y')\">";
+    write_legacy_messages(
+        &home,
+        "old",
+        &[
+            message("one", "user"),
+            json!({"id":"two","role":"assistant","content":[{"type":"text","text":hostile}],
+                "timestamp":"2020-01-01T01:00:00+01:00"}),
+            json!({"id":"three","role":"user","content":[{"type":"text","text":format!("OPENAI_API_KEY={secret}")}],
+                "timestamp":"2020-01-01T01:00:00+01:00"}),
+        ],
+    );
+    assert_ok(&sandbox.migrate(&home, "old"));
+    let out = home.join("report.html");
+    let out_arg = out.to_str().expect("utf-8 path");
+
+    let output = sandbox.run(&home, &["export", "old", "--html", "--out", out_arg]);
+    assert_ok(&output);
+    assert!(
+        stdout(&output).is_empty(),
+        "the file form must not also print the report"
+    );
+
+    let html = fs::read_to_string(&out).expect("written report");
+    assert!(html.starts_with("<!DOCTYPE html>"), "a standalone document");
+    assert!(html.trim_end().ends_with("</html>"), "a whole document");
+    assert!(
+        html.contains("content=\"default-src 'none'; style-src 'unsafe-inline'\""),
+        "the report must carry the offline policy"
+    );
+    assert!(!html.contains(secret), "the credential must be redacted");
+    assert!(
+        html.contains("[REDACTED_SECRET]"),
+        "a visible marker replaces the secret"
+    );
+    assert!(!html.contains("<script"), "stored script markup must not become a node");
+    assert!(!html.contains("<img"), "stored image markup must not become a node");
+    assert!(
+        html.contains("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"),
+        "the hostile text must appear escaped, not dropped"
+    );
+    for forbidden in ["<link", "http://", "https://", "@import", "url("] {
+        assert!(
+            !html.contains(forbidden),
+            "the report carries {forbidden:?}, which could load something"
+        );
+    }
+
+    // The stdout form is the same bytes, because both call one renderer.
+    let plain = sandbox.run(&home, &["export", "old", "--html"]);
+    assert_ok(&plain);
+    assert_eq!(stdout(&plain), html, "stdout form writes the same bytes");
+
+    // The destination the reader named is theirs: a second write is refused.
+    let again = sandbox.run(&home, &["export", "old", "--html", "--out", out_arg]);
+    assert_refused(&again, "already exists");
+    assert_eq!(fs::read_to_string(&out).expect("kept report"), html);
+}

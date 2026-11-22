@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 26;
+export const API_VERSION_MINOR = 27;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -797,6 +797,7 @@ export type ApiRequest =
       cursor?: string;
     }
   | { req: "export_session_markdown"; session_id: string }
+  | { req: "export_session_html"; session_id: string }
   | {
       req: "import_session_events";
       session_id: string;
@@ -1110,6 +1111,7 @@ export type ApiEvent =
     }
   | { ev: "session_heads"; session_id: string; heads: string[]; selected_head?: string }
   | { ev: "session_markdown"; session_id: string; markdown: string }
+  | { ev: "session_html"; session_id: string; html: string }
   | {
       ev: "session_history_page";
       session_id: string;
@@ -1272,6 +1274,7 @@ export const KNOWN_EVENT_KINDS = [
   "session_heads",
   "session_history_page",
   "session_markdown",
+  "session_html",
   "session_event_page",
   "session_import_result",
   "session_blob_chunk",
@@ -1361,6 +1364,7 @@ export const KNOWN_REQUEST_KINDS = [
   "ping",
   "package_control",
   "export_session_markdown",
+  "export_session_html",
 ] as const;
 
 export function isKnownEvent(frame: AnyApiEvent): frame is ApiEvent {

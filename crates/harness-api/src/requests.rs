@@ -229,6 +229,15 @@ pub enum ApiRequest {
     /// are truncated with a marker.
     ExportSessionMarkdown { session_id: String },
 
+    /// Export the conversation as a standalone offline HTML report.
+    ///
+    /// One self-contained document from the same redacted projection
+    /// `ExportSessionMarkdown` renders: every transcript character is escaped,
+    /// the stylesheet is inline, and the page loads nothing from the network.
+    /// The same `session_replication_v1` capability gates it, and an unknown
+    /// session returns the same unknown-session error.
+    ExportSessionHtml { session_id: String },
+
     /// Answer an `AskRequested` event.
     ///
     /// `ask_id` echoes the event. A reply for an id that is no longer pending
@@ -685,6 +694,7 @@ impl ApiRequest {
             Self::PermissionResponse { session_id, .. } => Some(session_id.as_str()),
             Self::ApprovalAck { session_id, .. } => Some(session_id.as_str()),
             Self::ExportSessionMarkdown { session_id, .. } => Some(session_id.as_str()),
+            Self::ExportSessionHtml { session_id, .. } => Some(session_id.as_str()),
             Self::AskResponse { session_id, .. } => Some(session_id.as_str()),
             Self::FailoverAck { session_id, .. } => Some(session_id.as_str()),
             Self::ListModels { session_id, .. } => Some(session_id.as_str()),
