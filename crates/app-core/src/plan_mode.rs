@@ -227,7 +227,7 @@ pub fn command(session_id: &str, args: &[String]) -> anyhow::Result<(serde_json:
     use anyhow::bail;
 
     if args.len() > 1 {
-        bail!("Usage: /plan [on|off|status|approve|reject]");
+        bail!("Usage: /plan [on|off|status|review|approve|reject]");
     }
     let enabled = crate::config::config().tools.plan_mode;
     match args.first().map(|arg| arg.trim().to_ascii_lowercase()).as_deref() {
@@ -242,6 +242,16 @@ pub fn command(session_id: &str, args: &[String]) -> anyhow::Result<(serde_json:
         Some("off") | Some("disable") | Some("disabled") => {
             clear_state(session_id);
             Ok((snapshot(session_id, enabled), report(session_id, enabled)))
+        }
+        Some("review") => {
+            // Read-only: the review reads the pending plan and records no decision.
+            let Some(plan) = pending_plan(session_id) else {
+                bail!("No plan is waiting for approval in this session. Call submit_plan first, then review.");
+            };
+            let review = crate::plan_review::review(&plan);
+            let mut data = snapshot(session_id, enabled);
+            data["review"] = serde_json::to_value(&review)?;
+            Ok((data, crate::plan_review::render(&review)))
         }
         Some("approve") => {
             if !enabled {
@@ -281,7 +291,7 @@ pub fn command(session_id: &str, args: &[String]) -> anyhow::Result<(serde_json:
                 "Rejected the plan. The session is still read-only, so the next plan can be submitted.".to_string(),
             ))
         }
-        Some(other) => bail!("Unknown /plan action '{other}'. Expected on, off, status, approve, or reject."),
+        Some(other) => bail!("Unknown /plan action '{other}'. Expected on, off, status, review, approve, or reject."),
     }
 }
 

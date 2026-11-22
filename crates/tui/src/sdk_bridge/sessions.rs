@@ -223,6 +223,7 @@ pub(super) fn session_of(event: &ApiEvent) -> Option<&str> {
         | SessionHeads { session_id, .. }
         | SessionHistoryPage { session_id, .. }
         | SessionMarkdown { session_id, .. }
+        | SessionHtml { session_id, .. }
         | SessionEventPage { session_id, .. }
         | SessionImportResult { session_id, .. }
         | SessionBlobChunk { session_id, .. }

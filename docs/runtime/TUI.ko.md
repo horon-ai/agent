@@ -381,6 +381,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 `/modelpreset`으로 이름을 나열하고 `/modelpreset preview <name>`으로 설정을 미리 보거나 `/modelpreset apply <name>`으로 현재 세션에 적용한다. 작성법은 [모델 프리셋 설정](../provider/MODEL.ko.md#세션-모델-프리셋)에 있다. 턴이 진행 중이면 끝난 뒤 명령을 다시 실행한다.
 
+`/trim`은 세션이 보내는 요청에서 오래된 도구 결과를 줄이되 저장된 기록은 건드리지 않는다. `/trim preview [max_chars]`는 그 한도가 결과 몇 개와 글자 몇 자를 줄이는지 보여 준다. `/trim apply [max_chars]`는 이후 요청에 적용하고 `/trim off`는 끈다. 한도는 200자에서 1,000,000자까지이고 기본값은 4,000자다. 한도를 넘는 결과는 앞 400자와 `history://current`를 가리키는 안내만 남는다. 가장 최근 메시지 6개와 오류 결과는 줄이지 않으며, 각 도구 호출은 같은 id의 결과를 그대로 유지한다. 범위를 벗어난 한도는 거절하고 현재 설정을 유지한다.
+
 노력 사다리 목록은 클라이언트가 제공하는 `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`이고, 지금 단계에 `(current)`를 붙이며 행마다 그 단계가 모델에 무엇을 요구하는지 한 줄로 미리 보여 준다. 커서와 미리보기는 그 표시된 행에서 열리므로 `enter`가 지금 단계를 그대로 확인하고 `none`으로 내려가지 않는다. 세션이 단계를 알리지 않거나 사다리에 없는 단계를 알리면 첫 행에서 연다. 행은 클라이언트의 것이므로 목록은 여는 순간 이미 완성되어 있다.
 
 `models.shortlist`에 순환할 모델 ID를 지정합니다. Ctrl+P는 다음 모델로, Ctrl+Alt+P는 이전 모델로 옮깁니다. 목록 끝을 지나면 반대편으로 돌아갑니다. 클라이언트는 순환 전에 데몬의 모델 목록을 확인하고 목록에 없는 ID는 건너뜁니다.
@@ -452,6 +454,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/copy` | 복사할 텍스트를 고른다 |
 | `/effort [level]` | 추론 노력 단계를 정하거나, 사다리에서 고른다 |
 | `/exit` | `/quit`과 같이 나간다 |
+| `/export <path>` | 이 세션의 대화록을 연결 없이 열리는 독립 HTML 보고서로 쓴다 |
 | `/help [command]` | 명령과 각 명령의 출처, 지금 적용된 키를 나열하거나, 명령 하나를 설명한다 |
 | `/jobs` | 현재 세션의 백그라운드 작업을 보고 선택한 터미널 작업을 취소한다 |
 | `/keys` | 지금 적용된 키와 동작마다 하는 일을 나열한다 |
@@ -469,6 +472,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/settings` | 설정 화면을 연다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
+| `/stats` | 연결된 세션에 기록된 토큰 사용량을 표시한다 |
 | `/swarm` | 연결된 세션의 직계 자식을 살펴보고 부모 세션으로 돌아간다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
 | `/unpin [id]` | 세션 고정을 해제한다 |
@@ -478,7 +482,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 스물아홉 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른한 명령을 이름 순으로 적었다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -492,6 +496,8 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 `/record`는 보낸 메시지, 완료된 답변과 도구 실행 결과를 비공개 로컬 파일에 기록합니다. `stop`으로 기록을 끝냅니다. 미전송 초안, 승인 답변, 추론과 도구 출력은 저장하지 않으며 파일은 최대 2 MiB입니다. `/replay`는 녹화된 입력을 보내지 않고 파일을 재생합니다. 재생은 로컬에서만 이뤄지므로 화면에 그리는 내용은 하네스로 보내지 않습니다. 스페이스로 일시 정지하고 방향 키로 앞뒤로 이동하며 `+`와 `-`로 속도를 조절합니다. Esc를 누르면 현재 대화로 돌아옵니다.
 
+`/export <path>`는 연결된 세션의 대화록을 연결 없이 열리는 HTML 파일 하나로 씁니다. 하네스가 `horon export`와 같은 가림 처리된 투영으로 렌더하고, 대화록의 모든 글자를 이스케이프하므로 저장된 마크업은 글자로 남습니다. 스타일시트는 문서 안에 있고 Content-Security-Policy가 네트워크 요청을 막습니다. 경로는 입력한 그대로 쓰이므로 상대 경로는 클라이언트가 실행된 디렉터리에 만들어지고, 이미 있는 파일은 덮어쓰지 않고 거절합니다.
+
 하네스 명령은 붙어 있는 런타임에서 돌고 모델의 프롬프트로는 가지 않는다. `/help`는 명령마다 행 하나를 그리고 설명을 한 열에 맞춘다. 내장 명령이 먼저, 그다음 하네스 이름이 이름 순으로, 그다음 명령 파일, 그다음 하네스가 보고한 스킬, 마지막으로 키가 온다. 트랜스크립트는 이 목록 전체를 공지 하나로 그리므로 첫 행에 공지의 글머리표가 붙고 그 뒤의 모든 행에 두 칸이 더해진다. 아래 예시는 그 여백을 뺀 목록이다.
 
 ```text
@@ -504,6 +510,7 @@ built-in commands:
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
+  /export              write this session's transcript as a standalone offline HTML report (/export <path>)
   /help                list the commands and the keys in force
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
@@ -521,6 +528,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
+  /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
   /unpin               take a session out of the pinned group

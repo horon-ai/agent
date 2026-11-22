@@ -742,7 +742,8 @@ impl BridgeState {
             | "export_session_record_blob"
             | "import_session_record_blob"
             | "get_session_record_blob_status"
-            | "export_session_markdown" => crate::replication::handle(request, self.request_envelope_bytes),
+            | "export_session_markdown"
+            | "export_session_html" => crate::replication::handle(request, self.request_envelope_bytes),
             // Answered from the stored record rather than the daemon: the legacy
             // protocol can only speak about the attached session, and attaching
             // merely to read it would disturb the very thing being previewed.
@@ -816,8 +817,7 @@ impl BridgeState {
                 ids.extend(self.user_connected_sessions.iter().cloned());
                 // Titles are deliberately not cached. A rename is persisted
                 // before `SessionRenamed` is broadcast, and every list call
-                // should reflect that newest canonical value even on another
-                // API connection.
+                // should reflect that newest canonical value even on another API connection.
                 let metadata: BTreeMap<String, PersistedSessionMetadata> = ids
                     .iter()
                     .filter_map(|id| {

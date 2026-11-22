@@ -144,6 +144,16 @@ impl App {
                 self.run_record(arguments);
                 None
             }
+            // `/export` names a destination and nothing else: the document is
+            // rendered by the harness from its redacted projection, so the
+            // client only carries the path.
+            Local::Export => match arguments.trim() {
+                "" => {
+                    self.warn("export: name the file to write, as /export <path>");
+                    None
+                }
+                path => Some(Action::Export(path.to_string())),
+            },
             Local::Replay => {
                 self.run_replay(arguments);
                 None

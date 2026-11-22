@@ -551,6 +551,7 @@ pub(super) struct ReferenceScan {
 /// taken belongs to a reader that is gone.
 pub(super) fn create_reference(layout: &Layout, owner: &str) -> Result<InstanceLock> {
     validate_owner(owner)?;
+    horon_agent_perf_counters::record_package_area_write();
     fs::create_dir_all(layout.refs())
         .with_context(|| format!("create the package references directory {}", layout.refs().display()))?;
     set_dir_permissions_owner_only(&layout.refs())
@@ -590,6 +591,7 @@ pub(super) fn create_reference(layout: &Layout, owner: &str) -> Result<InstanceL
 /// Replace the pinned digest set of a held reference.
 pub(super) fn write_pin(layout: &Layout, owner: &str, token: &str, digests: &BTreeSet<String>) -> Result<()> {
     validate_owner(owner)?;
+    horon_agent_perf_counters::record_package_area_write();
     let directory = layout.refs().join(owner);
     let document = PinFile {
         version: PIN_VERSION,
@@ -648,6 +650,7 @@ pub(super) fn scan_references(layout: &Layout) -> Result<ReferenceScan> {
     if !refs.exists() {
         return Ok(ReferenceScan { pinned, removed });
     }
+    horon_agent_perf_counters::record_package_dir_scan();
     for entry in fs::read_dir(&refs).with_context(|| format!("read {}", refs.display()))? {
         let entry = entry.with_context(|| format!("read {}", refs.display()))?;
         let path = entry.path();

@@ -24,6 +24,7 @@ const AGENTGREP_FOREGROUND_BUDGET: Duration = Duration::from_secs(5);
 
 mod args;
 mod context;
+mod locate;
 
 use self::args::{
     build_find_args, build_grep_args_with_note, build_outline_args, build_smart_args_and_query, resolve_search_root,
@@ -200,8 +201,8 @@ impl Tool for AgentGrepTool {
                 "intent": super::intent_schema_property(),
                 "mode": {
                     "type": "string",
-                    "enum": ["grep", "find", "outline", "trace"],
-                    "description": "Defaults to grep."
+                    "enum": ["grep", "find", "outline", "trace", "locate"],
+                    "description": "Defaults to grep. locate ranks code locations for a plain-language description in query."
                 },
                 "query": {
                     "type": "string",
@@ -465,8 +466,18 @@ fn execute_linked_agentgrep(
             );
             Ok(ToolOutput::new(render_smart_output(&result, &args)).with_title(format!("agentgrep {}", params.mode)))
         }
+        "locate" => {
+            let query = params
+                .query
+                .as_deref()
+                .filter(|query| !query.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("locate requires a query describing the behavior to find"))?;
+            let root = resolve_search_root(ctx, params.path.as_deref())?;
+            let rendered = locate::run_locate(&root, query, params.max_regions, params.max_files)?;
+            Ok(ToolOutput::new(rendered).with_title("agentgrep locate"))
+        }
         _ => Err(anyhow::anyhow!(
-            "Unsupported agentgrep mode: {}. Use grep, find, outline, or trace.",
+            "Unsupported agentgrep mode: {}. Use grep, find, outline, trace, or locate.",
             params.mode
         )),
     }

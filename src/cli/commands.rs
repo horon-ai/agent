@@ -10,11 +10,13 @@ use crate::{gateway, memory, storage};
 
 mod config_cli;
 mod early_commands;
+mod failover_preview;
 mod provider_setup;
 mod report_info;
 mod run_deadline;
 mod session_delete;
 mod session_rename;
+mod skills_cli;
 mod thoughts;
 mod tool_preview;
 
@@ -26,7 +28,9 @@ pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
 pub(crate) use config_cli::ConfigCommand;
 pub(crate) use early_commands::{Early, run_early_command};
+pub(crate) use failover_preview::run_provider_failover_command;
 pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
+pub(crate) use skills_cli::run_skills_command;
 pub(crate) use tool_preview::run_preview_command;
 
 pub enum AmbientSubcommand {

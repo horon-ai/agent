@@ -2065,8 +2065,7 @@ impl Registry {
         // external gate as if it had been dispatched. The command-risk hard
         // refusal inside `bash` is untouched; this only decides whether the user
         // must answer first. The dispatcher asks nothing on its own behalf: the
-        // inner call applies the same mode to the tool it runs, so one prompt
-        // names that tool and its arguments.
+        // inner call applies the same mode to the tool it runs, so one prompt names it.
         let refusal = if policy_on_self {
             // An ACP connection may set the mode for its own turns; any other turn keeps the configured mode.
             let approval_effects = plan_effects.unwrap_or(ToolEffects::write());

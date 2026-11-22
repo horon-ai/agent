@@ -128,8 +128,11 @@ horon run "summarize this repo"
 | `horon tokens [TEXT]` | UTF-8 텍스트를 인자나 표준 입력으로 받거나 `--file`에서 읽어 오프라인으로 토큰 수를 추정한다. `--model`로 알려진 토크나이저 계열을 고르며 기본 추정 방식을 사용하면 결과에 표시한다. |
 | `horon agents` | 세션을 시작하지 않고 에이전트 정의의 출처와 설정된 모델 및 도구를 나열한다. |
 | `horon provider status [--json]` | 설정된 프로파일마다 자격 증명 출처와 로컬 상태(`authenticated`, `unauthenticated`, `unknown`)를 표시한다. 자격 증명 값은 출력하지 않고 제공자에도 접속하지 않는다. |
+| `horon skills list [--json]`, `horon skills install <출처> --approve` | 스킬을 설치한 출처와 커밋과 함께 나열하거나, 관리 스킬 설치기로 https, ssh, file 출처나 로컬 폴더에서 설치한다. `[tools] managed_skills = true`가 필요하다. |
+| `horon provider failover [--json]` | 설정이 만드는 페일오버 순서와 단계를 제외한 설정을 보여 준다. 읽기 전용이며 모델 요청, 계정·쿼터 변경, 자격 증명 출력이 없다. |
 | `horon compact-text <FILE\|->` | UTF-8 텍스트 파일(또는 표준 입력, 48KiB 이하)을 요약해 표준 출력에 내고 생략한 항목을 표준 오류에 나열한다. 원본은 고치지 않는다. `--max-tokens`로 요약 길이를 제한한다. |
 | `horon cloud doctor [--host <별칭>]` | 세션을 옮기기 전에 SSH 호스트에 접속할 수 있고 `cloud move`를 지원하는 horon-agent가 있는지 확인한다. 다음 조치와 함께 `ready`, `unreachable`, `incompatible` 중 한 줄을 표시하고 세션 데이터는 보내지 않으며 준비되지 않았으면 0이 아닌 코드로 종료한다. |
+| `horon changelog [VERSION] [--json]` | VERSION(기본값은 실행 중인 릴리스)의 공개된 릴리스 노트를 업데이트나 설치 없이 표시한다. 노트를 읽지 못하면 버전과 릴리스 페이지를 대신 표시한다. 노트의 제어 문자는 제거한다. |
 
 `horon run --wait-async "<메시지>"`는 해당 실행이 시작한 작업을 기다리고 각 작업의 최종 상태를 한 번씩 표시합니다. `--max-time`은 응답과 작업 대기를 합친 시간을 제한합니다. 시간을 넘기면 확인한 작업 상태를 표시하고 0이 아닌 코드로 종료합니다.
 
@@ -138,6 +141,8 @@ horon run "summarize this repo"
 `horon run --no-session "<메시지>"`는 실행을 메모리에만 둡니다. `$HORON_HOME` 아래에 세션 로그, 체크포인트, 카탈로그 행, 실행 저널을 쓰지 않으므로 실행 뒤에 이어가거나 복구할 수 없고, 실패한 실행도 흔적을 남기지 않습니다. `--json`과 `--ndjson` 출력의 세션 ID는 저장된 세션을 가리키지 않습니다. 로그와 사용량 기록 같은 세션 밖 상태는 평소처럼 기록합니다. 저장된 세션이 필요한 `--resume`, `--continue`, `--goal`과는 함께 쓸 수 없습니다. `todo`처럼 세션별 파일을 따로 쓰는 도구는 이 보장에 포함되지 않습니다.
 
 `horon run --warn-cost <USD>`는 실행의 추정 비용이 그 금액에 닿으면 표준 오류에 경고를 한 번 표시합니다. `--max-cost <USD>`는 추정 비용이 그 금액에 닿은 뒤로 새 모델 요청을 보내지 않고, 실행은 비용 상한 오류로 끝납니다. 추정은 응답이 보고한 토큰과 가격 카탈로그로 계산합니다. 이미 보낸 요청은 끝까지 처리해 합산하므로 합계가 처리 중이던 만큼 상한을 넘을 수 있습니다. 가격을 모르는 모델은 따로 보고하며 무료로 세지 않으므로 상한이 적용되지 않습니다. 같은 프로세스가 소유한 자식 에이전트도 같은 실행에 합산합니다. 두 옵션이 없으면 요청은 달라지지 않습니다.
+
+`horon run --role plan=<모델>`, `--prewalk <모델|role:<이름>>`, `--no-prewalk`는 `config.toml`을 건드리지 않고 그 한 번의 실행에만 모델 역할과 `[prewalk]` 핸드오프를 바꿉니다. 모르는 역할, 빈 모델, 활성 프로파일이 나열하지 않는 모델은 요청을 보내기 전에 실패하고, `--no-prewalk`는 `[prewalk]`와 `--prewalk` 모두보다 우선합니다([문서](docs/provider/MODEL.ko.md#실행-한-번의-역할프리워크-덮어쓰기)).
 
 `horon acp`는 `initialize`에 양쪽이 지원하는 가장 높은 프로토콜 버전으로 답하므로 v1 클라이언트와 v2 클라이언트가 모두 붙는다.
 
