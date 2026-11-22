@@ -28,6 +28,8 @@ pub(crate) use skills::SkillsCommand;
 mod run_options;
 mod session_cache;
 pub(crate) use run_options::RunModelOverrides;
+mod images;
+pub(crate) use images::ImagesArgs;
 pub(crate) use session_cache::CacheArgs;
 
 impl Command {
@@ -386,6 +388,8 @@ pub(crate) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List a session's generated images, or copy one (read-only)
+    Images(ImagesArgs),
 
     /// Show usage limits for connected providers
     Usage {

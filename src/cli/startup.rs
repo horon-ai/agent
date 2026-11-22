@@ -13,6 +13,7 @@ mod agent_catalog;
 mod approval_grants;
 mod changelog;
 mod completions;
+mod images;
 mod provider_status;
 mod stream_rule_preview;
 mod tokens;
@@ -72,6 +73,10 @@ fn offline_command(args: &Args) -> Option<Result<()>> {
         Some(Command::Approvals {
             action: ApprovalsCommand::Grants(grants),
         }) => Some(approval_grants::run(grants)),
+        Some(Command::Images(_)) if args.ssh.is_some() => {
+            Some(Err(anyhow::anyhow!("images runs locally without --ssh")))
+        }
+        Some(Command::Images(images)) => Some(images::run(images)),
         Some(Command::Provider(ProviderCommand::Status { json })) => Some(provider_status::run(*json)),
         _ => None,
     }

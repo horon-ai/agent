@@ -46,6 +46,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Model(_)) => "horon-agent model".to_string(),
         Some(Command::Tokens { .. }) => "horon-agent tokens".to_string(),
         Some(Command::Agents) => "horon-agent agents".to_string(),
+        Some(Command::Images(_)) => "horon-agent images".to_string(),
         None => {
             if let Some(resume) = args.resume.as_deref().filter(|resume| !resume.is_empty()) {
                 // The `horon:` colon labels share Linux's 15-char comm budget with
