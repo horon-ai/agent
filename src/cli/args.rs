@@ -13,6 +13,8 @@ mod model_filter;
 pub(crate) use model_filter::ModelListFilter;
 mod packages;
 pub(crate) use packages::PackageCommand;
+mod worktree_options;
+pub(crate) use worktree_options::{MoveToWorktreeArgs, RemoveWorktreeArgs, WorktreesArgs};
 mod anonymize_options;
 pub(crate) use anonymize_options::AnonymizeArgs;
 mod provider;
@@ -928,6 +930,15 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// List the Git worktrees around the current directory and which ones a session uses
+    Worktrees(WorktreesArgs),
+
+    /// Preview, apply or undo moving a session into a new managed Git worktree
+    MoveToWorktree(MoveToWorktreeArgs),
+
+    /// Remove a worktree that `move-to-worktree` created, never past uncommitted changes
+    RemoveWorktree(RemoveWorktreeArgs),
 
     /// Write a structure-preserving anonymized export of a session for diagnostics
     Anonymize(AnonymizeArgs),
