@@ -160,6 +160,7 @@ Use `horon --plan` to open a new terminal session in read-only plan mode, or `ho
 
 `horon run --config overlay.toml "<message>"` layers a TOML file over `config.toml` for that run only. The flag is repeatable. Later files win per key, omitted keys inherit, and tables merge key by key. A file that does not parse names itself, and the merged result is validated before any provider work.
 
+`horon run --plan --approve-plan "<message>"` approves the plan the model submits instead of waiting for an answer, so the run continues to its configured execution model (`[prewalk]`) under the normal approval policy. It requires `--plan`.
 `horon run --approval write|all "<message>"` asks before file-changing calls (`write`) or before every call that is not read-only (`all`) for that run only. It can raise the approval mode but never lowers a stricter configured mode, and other sessions keep their own setting.
 
 Use `horon --add-dir <path>` (repeatable) to open a session with extra workspace directories. Each path is resolved to an existing directory, a second spelling of the same directory collapses to one entry, and the list is part of the session context and stored with the session. In the client, `/dirs` lists it and `/dirs add <path>` or `/dirs remove <path>` changes it; removal never touches the directory. A listed root is workspace context, not an approval grant.

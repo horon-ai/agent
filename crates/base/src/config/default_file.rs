@@ -101,6 +101,9 @@ turn_recovery = "conservative"
 # a matching pattern aborts the response, injects the rule body as a system
 # reminder, and re-issues the request. Off by default.
 stream_rules = false
+# Stop a response that repeats the same long sentence four times in a row.
+# Code blocks, tables, headings and lists are not counted.
+repeat_guard = false
 # Each [[stream_rules]] entry names an id, a Rust regex pattern, and the body to
 # inject. Optional keys: scope (["text"] default, "tool", "tool:<name>"), paths
 # (globs matched against a tool call's file_path/path argument), repeat

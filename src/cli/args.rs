@@ -2,9 +2,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use super::provider_init::ProviderChoice;
 
+mod approval_grants;
+pub(crate) use approval_grants::{GrantsAction, GrantsArgs};
 mod mcp;
+mod session_move;
 #[allow(unused_imports)]
 pub(crate) use mcp::McpCommand;
+pub(crate) use session_move::SessionMoveArgs;
 mod model_filter;
 pub(crate) use model_filter::ModelListFilter;
 mod packages;
@@ -42,6 +46,7 @@ impl Command {
                 advisor: None,
                 approval: None,
                 config_overlay: Vec::new(),
+                approve_plan: false,
             },
             message,
         }
@@ -705,6 +710,9 @@ pub(crate) enum ApprovalsCommand {
         #[arg(long, value_name = "TEXT")]
         note: Option<String>,
     },
+
+    /// Report and revoke stored scoped approval grants
+    Grants(GrantsArgs),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -856,6 +864,9 @@ pub(crate) enum SessionCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Preview, or with --apply change, the working root a saved session resumes in
+    Move(SessionMoveArgs),
 
     /// Show one session's layout, heads, archive state and damage, read-only
     Inspect {

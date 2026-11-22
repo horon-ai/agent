@@ -127,6 +127,9 @@ pub(crate) fn load_agents_md_files_from_dirs(
 
 /// Load AGENTS.md files from a specific working directory.
 pub fn load_agents_md_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, ContextInfo) {
+    if super::discovery::context_files_disabled() {
+        return (None, ContextInfo::default());
+    }
     let project_dir = working_dir.unwrap_or(Path::new("."));
     let global_agents_md = crate::storage::user_home_path("AGENTS.md").ok();
     load_agents_md_files_from_dirs(project_dir, global_agents_md.as_deref())
@@ -134,6 +137,9 @@ pub fn load_agents_md_files_from_dir(working_dir: Option<&Path>) -> (Option<Stri
 
 /// Load optional prompt overlay markdown from ~/.horon/ and ./.horon/
 pub(super) fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
+    if super::discovery::rules_disabled() {
+        return (None, 0);
+    }
     let mut contents = vec![];
     let mut total_chars = 0usize;
 
@@ -174,6 +180,9 @@ pub(super) fn load_prompt_overlay_files_from_dir(working_dir: Option<&Path>) -> 
 
 /// Load optional preferred-tool guidance from ~/.horon/ and ./.horon/
 pub(super) fn load_preferred_tools_files_from_dir(working_dir: Option<&Path>) -> (Option<String>, usize) {
+    if super::discovery::rules_disabled() {
+        return (None, 0);
+    }
     let mut contents = vec![];
     let mut total_chars = 0usize;
 

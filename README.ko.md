@@ -160,6 +160,7 @@ horon run "summarize this repo"
 
 `horon run --config overlay.toml "<메시지>"`는 그 실행 한 번에 한해 `config.toml` 위에 TOML 파일을 겹쳐 적용합니다. 여러 번 쓸 수 있고, 뒤의 파일이 키 단위로 이기며, 적지 않은 키는 그대로 이어받고 표는 키별로 합쳐집니다. 파싱할 수 없는 파일은 자기 이름을 알리고, 합친 결과는 공급자를 쓰기 전에 검증합니다.
 
+`horon run --plan --approve-plan "<메시지>"`는 모델이 제출한 계획을 답을 기다리지 않고 승인합니다. 그러면 실행은 평소 승인 정책 아래에서 설정된 실행 모델(`[prewalk]`)로 이어집니다. `--plan`이 있어야 합니다.
 `horon run --approval write|all "<메시지>"`는 그 실행 한 번에 한해 파일을 바꾸는 호출(`write`) 또는 읽기 전용이 아닌 모든 호출(`all`) 전에 승인을 요청합니다. 승인 수준을 높이기만 하고 설정된 더 엄격한 모드는 낮추지 않으며, 다른 세션은 자기 설정을 유지합니다.
 
 설치 스크립트는 에이전트 압축 파일 옆에서 `horon-tui-<플랫폼 접미사>.tar.gz`도 받아 `SHA256SUMS`로 검증한다. 이 압축 파일은 선택 사항이다. 배포가 올리지 않았거나, 다이제스트가 맞지 않거나, 소스 빌드이거나, FreeBSD이면 경고 한 줄을 남기고 에이전트만 설치하거나 그대로 둔다. 사용자 파일은 `$HORON_HOME/tui.toml`, `themes/<이름>.json`, `keybindings.toml`, `commands/<이름>.md`, 프로젝트의 `.horon/commands/<이름>.md`이고 모든 키는 [docs/runtime/TUI.ko.md](docs/runtime/TUI.ko.md)에 있다.

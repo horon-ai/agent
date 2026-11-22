@@ -2,12 +2,14 @@
 
 use std::path::Path;
 
+mod discovery;
 mod git_context;
 mod hardware;
 mod package_source;
 mod static_sources;
 pub mod template;
 
+pub use discovery::{NO_CONTEXT_FILES_ENV, NO_RULES_ENV};
 pub use package_source::{MAX_RULES_SECTION_BYTES, append_package_rules, render_rules};
 
 use git_context::get_git_info;
@@ -47,7 +49,7 @@ impl PromptCapabilities {
 /// rendered with their provenance labels. `None` when the feature is off or no
 /// rule file was found.
 fn foreign_rules_section(capabilities: PromptCapabilities, working_dir: Option<&Path>) -> Option<(String, usize)> {
-    if !capabilities.foreign_rules {
+    if !capabilities.foreign_rules || discovery::rules_disabled() {
         return None;
     }
     let root = working_dir.unwrap_or(Path::new("."));

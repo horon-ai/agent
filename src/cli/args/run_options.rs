@@ -21,4 +21,7 @@ pub(crate) struct RunModelOverrides {
     /// Layer a TOML file over config.toml for this run only; repeatable, later files win per key
     #[arg(long = "config", value_name = "FILE")]
     pub(crate) config_overlay: Vec<std::path::PathBuf>,
+    /// With `--plan`, approve the plan the model submits instead of waiting for an answer
+    #[arg(long, requires = "plan")]
+    pub(crate) approve_plan: bool,
 }
