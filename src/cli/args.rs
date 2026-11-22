@@ -51,6 +51,8 @@ impl Command {
                 service_tier: None,
                 advisor: None,
                 approval: None,
+                system_prompt: None,
+                append_system_prompt: None,
                 config_overlay: Vec::new(),
                 approve_plan: false,
             },

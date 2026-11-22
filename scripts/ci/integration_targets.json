@@ -83,6 +83,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "run_system_prompt_cli",
+      "min_passed": 2
+    },
+    {
+      "package": "horon-agent",
       "target": "run_approval_cli",
       "min_passed": 1
     },
