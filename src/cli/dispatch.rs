@@ -309,9 +309,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             debug::run_debug_command(&command, &arg, session, socket, wait).await?;
         }
         Some(Command::Provider(subcmd)) => match subcmd {
-            ProviderCommand::List { json } => {
-                commands::run_provider_list_command(json)?;
-            }
+            ProviderCommand::List { json } => commands::run_provider_list_command(json)?,
             ProviderCommand::Current { json } => {
                 commands::run_provider_current_command(&args.provider, args.model.as_deref(), json).await?;
             }
