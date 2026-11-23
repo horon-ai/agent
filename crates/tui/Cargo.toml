@@ -14,6 +14,10 @@ path = "src/lib.rs"
 name = "horon-tui"
 path = "src/main.rs"
 
+[[bench]]
+name = "opt_round2"
+harness = false
+
 [dependencies]
 horon-agent-sdk = { path = "../agent-sdk" }
 # The ask tool's question shape crosses the harness API inside

@@ -15,6 +15,10 @@ publish = false
 name = "horon_agent_base"
 path = "src/lib.rs"
 
+[[bench]]
+name = "opt_round2"
+harness = false
+
 [dependencies]
 # Memory allocator (reduces fragmentation for long-running server)
 tikv-jemalloc-ctl = { git = "https://github.com/tikv/jemallocator", rev = "66b124bdf4f1c65f154135f4e9d4b25206540091", optional = true }
