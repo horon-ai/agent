@@ -422,7 +422,7 @@ fn check_for_stable_update_explicit_blocking() -> Result<ExplicitUpdateCheck> {
         release,
         current_update_semver(),
         is_release_build(),
-        |tag| update_dev_guard::should_install_release(tag),
+        update_dev_guard::should_install_release,
         |release| release_asset::binary_asset(release).map(|_| ()),
     )
 }

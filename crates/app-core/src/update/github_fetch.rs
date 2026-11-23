@@ -506,9 +506,9 @@ mod tests {
                 assert!(!has_auth, "fallback requests must not carry credentials: {path}");
                 let response = match path.as_str() {
                     "/api/releases/latest" => "HTTP/1.1 403 Forbidden\r\nX-RateLimit-Remaining: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned(),
-                    "/web/releases/latest" => format!(
-                        "HTTP/1.1 302 Found\r\nLocation: /web/releases/tag/v9.9.9\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                    ),
+                    "/web/releases/latest" => {
+                        "HTTP/1.1 302 Found\r\nLocation: /web/releases/tag/v9.9.9\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                    }
                     "/web/releases/tag/v9.9.9" => {
                         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_owned()
                     }
