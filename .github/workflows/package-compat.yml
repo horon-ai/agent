@@ -103,8 +103,103 @@ env:
   RUSTUP_TOOLCHAIN: stable
 
 jobs:
+  changes:
+    name: Check if install claims changed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run_compat: ${{ steps.filter.outputs.run_compat }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether native compat matrix is needed
+        id: filter
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, sys, tempfile
+          from pathlib import Path
+          sys.path.insert(0, "scripts/ci")
+          from package_compat import ClaimsError, advertised_targets
+
+          def emit(val: str) -> None:
+              out = os.environ.get("GITHUB_OUTPUT")
+              if out:
+                  with open(out, "a", encoding="utf-8") as handle:
+                      handle.write(f"run_compat={val}\n")
+
+          if os.environ.get("EVENT") != "pull_request":
+              emit("true")
+              sys.exit(0)
+          base, head = os.environ.get("BASE_SHA", ""), os.environ.get("HEAD_SHA", "")
+          if not base or not head:
+              emit("true")
+              sys.exit(0)
+          diff = subprocess.run(
+              ["git", "diff", "--name-only", "--no-renames", f"{base}...{head}"],
+              capture_output=True, text=True, check=False,
+          )
+          if diff.returncode != 0:
+              emit("true")
+              sys.exit(0)
+          changed = [p for p in diff.stdout.splitlines() if p]
+          install_docs = {"docs/release/INSTALL.md", "docs/release/INSTALL.ko.md"}
+          # Non-doc compat inputs copied from `on.pull_request.paths` above so paired
+          # mintlify doc-site updates (`packages/docs-site/**`) do not force native builds.
+          compat_code_prefixes = (
+              "crates/base/src/packages/",
+              "crates/app-core/src/tool/package_tool/",
+              "crates/app-core/src/extensions",
+              "crates/extension-sdk/",
+              "crates/extension-types/",
+              "crates/platform",
+              "src/cli/packages",
+              "examples/packages/example/",
+              "tests/package_end_to_end",
+              "scripts/ci/package_compat.py",
+              "scripts/ci/test_package_compat.py",
+              ".github/workflows/package-compat.yml",
+          )
+          has_compat_code = any(
+              p.startswith(compat_code_prefixes) or "/package" in p
+              for p in changed
+          )
+          touched_docs = [p for p in changed if p in install_docs]
+          if has_compat_code or not touched_docs:
+              emit("true")
+              sys.exit(0)
+
+          with tempfile.TemporaryDirectory() as tmp:
+              for rel in sorted(install_docs):
+                  base_blob = subprocess.run(
+                      ["git", "show", f"{base}:{rel}"],
+                      capture_output=True, text=True, check=False,
+                  )
+                  if base_blob.returncode != 0:
+                      emit("true")
+                      sys.exit(0)
+                  base_path = Path(tmp) / rel.replace("/", "_")
+                  base_path.write_text(base_blob.stdout, encoding="utf-8")
+                  try:
+                      if advertised_targets(base_path) != advertised_targets(Path(rel)):
+                          emit("true")
+                          sys.exit(0)
+                  except ClaimsError:
+                      emit("true")
+                      sys.exit(0)
+          emit("false")
+          PY
+
   compat:
     name: Package compat (${{ matrix.target }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run_compat == 'true' }}
     # The six targets answer different questions on different CPUs and operating
     # systems, so one failing must not hide the others' results: a report is
     # evidence for its own target only.
@@ -311,10 +406,11 @@ jobs:
 
   support-matrix:
     name: Package support matrix
-    needs: compat
+    needs: [changes, compat]
     # Runs after a failed target as well, so the matrix names which target is
-    # missing instead of the run going quiet.
-    if: ${{ !cancelled() }}
+    # missing instead of the run going quiet. Skips cleanly when `changes` skips
+    # doc-prose-only PRs without modifying advertised targets.
+    if: ${{ !cancelled() && needs.changes.outputs.run_compat == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

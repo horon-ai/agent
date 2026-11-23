@@ -51,7 +51,7 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
         conditions = [line.strip() for line in arm64.splitlines() if line.strip().startswith('if:')]
-        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.code == 'true' }}"])
+        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.rust == 'true' }}"])
 
     def test_workflows_do_not_select_self_hosted_runners(self):
         for path in (ROOT / '.github/workflows').iterdir():
@@ -265,7 +265,23 @@ class WorkflowGuardTests(unittest.TestCase):
             'classify_changes', ROOT / 'scripts/ci/classify_changes.py')
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        full = {'code': True, 'docs': False, 'docs_only': False}
+        full = {
+            'code': True,
+            'docs': False,
+            'docs_only': False,
+            'rust': True,
+            'docs_site': True,
+            'ts_sdk': True,
+            'py_sdk': True,
+            'npm_pkg': True,
+            'install_scripts': True,
+            'release_scripts': True,
+            'workflows': True,
+            'tui_only': False,
+            'platform_windows': True,
+            'platform_macos': True,
+            'full_matrix': True,
+        }
         for event, ref, attempt in (('push', 'refs/heads/main', 1),
                                     ('push', 'refs/tags/v1.0.0', 1),
                                     ('workflow_dispatch', 'refs/heads/dev', 1),

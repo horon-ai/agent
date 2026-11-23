@@ -17,12 +17,44 @@ from classify_changes import (  # noqa: E402
     changed_files, classify, fetch_runs, head_in_origin_main, last_green_sha,
     main, parse_attempt, parser, resolve)
 
-FULL = {"code": True, "docs": False, "docs_only": False}
-DOCS_ONLY = {"code": False, "docs": True, "docs_only": True}
+FULL = {
+    "code": True,
+    "docs": False,
+    "docs_only": False,
+    "rust": True,
+    "docs_site": True,
+    "ts_sdk": True,
+    "py_sdk": True,
+    "npm_pkg": True,
+    "install_scripts": True,
+    "release_scripts": True,
+    "workflows": True,
+    "tui_only": False,
+    "platform_windows": True,
+    "platform_macos": True,
+    "full_matrix": True,
+}
+DOCS_ONLY = {
+    "code": False,
+    "docs": True,
+    "docs_only": True,
+    "rust": False,
+    "docs_site": True,
+    "ts_sdk": False,
+    "py_sdk": False,
+    "npm_pkg": False,
+    "install_scripts": False,
+    "release_scripts": False,
+    "workflows": False,
+    "tui_only": False,
+    "platform_windows": False,
+    "platform_macos": False,
+    "full_matrix": False,
+}
 
 
-def pr(*files):
-    return classify("pull_request", list(files))
+def pr(*files, labels=None):
+    return classify("pull_request", list(files), labels=labels)
 
 
 def push(files, ref="refs/heads/dev", attempt=1):
@@ -48,23 +80,113 @@ class ClassifyChangesTests(unittest.TestCase):
                 self.assertFalse(result["docs_only"])
 
     def test_code_without_docs_does_not_run_docs_gates(self):
-        self.assertEqual(pr("crates/base/src/lib.rs"), FULL)
+        self.assertEqual(
+            pr("crates/base/src/lib.rs"),
+            {
+                "code": True,
+                "docs": False,
+                "docs_only": False,
+                "rust": True,
+                "docs_site": False,
+                "ts_sdk": False,
+                "py_sdk": False,
+                "npm_pkg": False,
+                "install_scripts": False,
+                "release_scripts": False,
+                "workflows": False,
+                "tui_only": False,
+                "platform_windows": False,
+                "platform_macos": False,
+                "full_matrix": False,
+            },
+        )
 
     def test_non_embedded_prose_is_docs_only_but_needs_no_corpus_test(self):
         # AGENTS.md is not compiled into the binary; a template is not documentation
         # the product serves. Both still count as "no code changed".
         result = pr("AGENTS.md", ".github/pull_request_template.md")
         self.assertTrue(result["docs_only"])
+        self.assertFalse(result["docs_site"])
 
     def test_only_pull_requests_and_first_dev_pushes_are_classified(self):
         self.assertEqual(push(["docs/README.md"]), DOCS_ONLY)
-        self.assertEqual(push(["crates/base/src/lib.rs"]), FULL)
+        dev_rust = push(["crates/base/src/lib.rs"])
+        self.assertTrue(dev_rust["code"])
+        self.assertTrue(dev_rust["rust"])
+        self.assertTrue(dev_rust["release_scripts"])
+        self.assertTrue(dev_rust["platform_windows"])
+        self.assertTrue(dev_rust["platform_macos"])
+        self.assertTrue(dev_rust["full_matrix"])
+        self.assertFalse(dev_rust["docs"])
         self.assertEqual(push(["README.md"], ref="refs/heads/main"), FULL)
         self.assertEqual(push(["README.md"], ref="refs/tags/v1.0.0"), FULL)
         self.assertEqual(push(["README.md"], attempt=2), FULL)
         self.assertEqual(push(["README.md"], attempt=0), FULL)
         self.assertEqual(classify("workflow_dispatch", ["README.md"], ref="refs/heads/dev"), FULL)
         self.assertEqual(classify("push", ["README.md"]), FULL)
+
+    def test_fine_grained_non_rust_and_platform_pull_request_buckets(self):
+        docs_site = pr("packages/docs-site/guides/intro.mdx")
+        self.assertFalse(docs_site["rust"])
+        self.assertTrue(docs_site["docs_site"])
+        self.assertFalse(docs_site["docs_only"])
+
+        workflows_only = pr(".github/workflows/ci.yml", ".github/workflows/benchmark-docs.yml", "tests/test_ci_workflow_guards.py")
+        self.assertFalse(workflows_only["rust"])
+        self.assertTrue(workflows_only["workflows"])
+        self.assertTrue(workflows_only["release_scripts"])
+
+        ts_only = pr("packages/sdk/typescript/src/client.ts")
+        self.assertFalse(ts_only["rust"])
+        self.assertTrue(ts_only["ts_sdk"])
+        self.assertFalse(ts_only["py_sdk"])
+
+        py_only = pr("packages/sdk/python/src/horon_agent_sdk/client.py")
+        self.assertFalse(py_only["rust"])
+        self.assertTrue(py_only["py_sdk"])
+        self.assertFalse(py_only["ts_sdk"])
+
+        sh_install = pr("scripts/install/install.sh")
+        self.assertFalse(sh_install["rust"])
+        self.assertTrue(sh_install["install_scripts"])
+
+        ps_install = pr("scripts/install/install.ps1")
+        self.assertTrue(ps_install["rust"])
+        self.assertTrue(ps_install["install_scripts"])
+        self.assertTrue(ps_install["platform_windows"])
+
+        tui_only = pr("crates/tui/src/app.rs")
+        self.assertTrue(tui_only["rust"])
+        self.assertTrue(tui_only["tui_only"])
+
+        shared_unix = pr("crates/platform-linux/src/unix.rs")
+        self.assertTrue(shared_unix["rust"])
+        self.assertTrue(shared_unix["platform_macos"])
+        self.assertFalse(shared_unix["platform_windows"])
+
+        labeled = pr("packages/docs-site/guides/intro.mdx", labels={"ci:all-os"})
+        self.assertEqual(labeled, FULL)
+        labeled_docs = pr("docs/runtime/TOOLS.md", labels={"ci:all-os"})
+        self.assertEqual(labeled_docs, dict(FULL, docs=True))
+
+        philosophy = pr("PHILOSOPHY.md")
+        self.assertTrue(philosophy["docs_site"])
+        self.assertTrue(philosophy["docs_only"])
+
+        for readme in (
+            "packages/sdk/typescript/README.md",
+            "packages/sdk/python/README.md",
+            "packages/npm/horon/README.md",
+        ):
+            self.assertTrue(pr(readme)["docs_site"], readme)
+            self.assertTrue(push([readme])["docs_site"], readme)
+
+        docs_script = pr("scripts/ci/check_docs_pairs.py")
+        self.assertFalse(docs_script["rust"])
+        self.assertTrue(docs_script["docs"])
+
+        for quality_script in ("scripts/ci/check_issue_refs.py", "scripts/ci/package_compat.py"):
+            self.assertTrue(pr(quality_script)["rust"], quality_script)
 
     def test_empty_or_unknown_diff_runs_everything(self):
         self.assertEqual(classify("pull_request", []), FULL)

@@ -41,13 +41,12 @@ permissions:
 
 concurrency:
   group: structural-perf-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Same classification as ci.yml: a documentation-only pull request or
-  # first-attempt `dev` push has no counter to measure. A push to `main`, a
-  # dispatch, a re-run of a `dev` push and every lookup or diff failure run the
-  # gate.
+  # Same classification as ci.yml: non-Rust and documentation-only PRs skip
+  # the compile gate. Pushes, dispatches, re-runs, and lookup/diff failures run
+  # everything.
   changes:
     name: Changed Paths
     runs-on: ubuntu-24.04
@@ -57,6 +56,7 @@ jobs:
       actions: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      rust: ${{ steps.classify.outputs.rust }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -68,12 +68,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python3 scripts/ci/classify_changes.py --workflow structural-perf.yml --base "$BASE_SHA" --head "$HEAD_SHA"
 
   structural-perf:
     name: Structural performance gate
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -137,6 +138,15 @@ jobs:
           code="$(echo "$NEEDS" | jq -r '.changes.outputs.code // ""')"
           if [ "$code" != true ] && [ "$code" != false ]; then
             echo "::error::Changed Paths gave code='$code'; expected true or false"
+            exit 1
+          fi
+          rust="$(echo "$NEEDS" | jq -r '.changes.outputs.rust // ""')"
+          if [ "$rust" != true ] && [ "$rust" != false ]; then
+            echo "::error::Changed Paths gave rust='$rust'; expected true or false"
+            exit 1
+          fi
+          if [ "$rust" = true ] && [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != success ]; then
+            echo "::error::Changed Paths enabled rust=true but structural-perf did not succeed"
             exit 1
           fi
           [ "$(echo "$NEEDS" | jq -r '.["structural-perf"].result')" != failure ]

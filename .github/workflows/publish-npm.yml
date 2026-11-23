@@ -73,12 +73,12 @@ on:
 permissions:
   contents: read
 
-# A second run would race the first for the same version and could publish a
-# platform package the other one just published. Queue instead of cancelling:
-# the later run re-checks the registry and skips what already landed.
+# Production releases queue sequentially per version; PR dry runs isolate per PR
+# number so unrelated PR checks cancel superseded commits without colliding with
+# release publishes.
 concurrency:
-  group: publish-npm-horon
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('publish-npm-horon-pr-{0}', github.event.pull_request.number) || 'publish-npm-horon' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
