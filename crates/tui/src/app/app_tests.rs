@@ -323,3 +323,21 @@ fn args_parse_goal_flag_accepts_space_and_equals_forms() {
         Err("--goal and --goal-budget must be used together".to_string())
     );
 }
+
+#[test]
+fn args_parse_plan_flag_is_bare_and_new_session_only() {
+    let parsed = crate::Args::parse(["--plan".to_string()]).expect("--plan parses");
+    assert!(parsed.plan);
+    assert_eq!(
+        crate::Args::parse(["--plan=true".to_string()]),
+        Err("unknown argument: --plan=true".to_string())
+    );
+    assert_eq!(
+        crate::Args::parse(["--plan".to_string(), "--session".to_string(), "sess-1".to_string(),]),
+        Err("--plan can only be used when starting a new session".to_string())
+    );
+    assert_eq!(
+        crate::Args::parse(["--plan".to_string(), "--gallery".to_string()]),
+        Err("--plan can only be used when starting a new session".to_string())
+    );
+}

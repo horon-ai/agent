@@ -241,3 +241,14 @@ fn losing_the_connection_forgets_consent() {
     app.tick_voice();
     assert!(!app.voice.consent_given());
 }
+
+#[test]
+fn voice_status_probes_lazily_on_first_request() {
+    let mut app = app();
+    app.run_voice("status");
+    assert!(
+        last_notice(&app).starts_with("voice: idle; no consent yet; "),
+        "lazy voice status probe gave unexpected notice: {}",
+        last_notice(&app)
+    );
+}
