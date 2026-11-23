@@ -1441,7 +1441,6 @@ impl RawClient {
             other => anyhow::bail!("unexpected state response: {other:?}"),
         }
     }
-
     async fn send_message(&mut self, content: &str) -> Result<u64> {
         let id = self.next_id;
         self.next_id += 1;
@@ -1451,6 +1450,7 @@ impl RawClient {
             images: vec![],
             system_reminder: None,
             active_skill: None,
+            expected_run_id: None,
             no_reply: false,
         })
         .await

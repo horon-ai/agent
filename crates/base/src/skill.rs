@@ -762,12 +762,11 @@ mod tests {
 
     #[test]
     fn list_is_sorted_by_name_regardless_of_insertion_order() {
-        // The "Available Skills" system-prompt section is built from `list()`.
-        // The backing store is a HashMap (per-instance randomized iteration
-        // order), and `current_skills_snapshot` can hand back a *different*
-        // HashMap instance via its lock-contended `self.skills.clone()` fallback.
-        // If `list()` did not sort, two snapshots of the same skill set could
-        // serialize the section in different orders: a same-length but
+        let _env_guard = crate::storage::lock_test_env();
+        // The "Available Skills" system-prompt section is built from `list()`. The backing store is a HashMap
+        // (per-instance randomized iteration order), and `current_skills_snapshot` can hand back a *different*
+        // HashMap instance via its lock-contended `self.skills.clone()` fallback. If `list()` did not sort, two
+        // snapshots of the same skill set could serialize the section in different orders: a same-length but
         // different-bytes system prompt that silently busts the KV cache.
         let names = ["zebra", "alpha", "mango", "beta", "yak"];
 
@@ -815,6 +814,7 @@ mod tests {
 
     #[test]
     fn load_for_working_dir_reads_project_local_horon_agent_skills() {
+        let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         write_test_skill(temp.path(), ".horon", "wd-only");
 
@@ -827,6 +827,7 @@ mod tests {
 
     #[test]
     fn load_for_working_dir_reads_project_local_agents_skills() {
+        let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         write_test_skill(temp.path(), ".agents", "agents-only");
 
@@ -841,6 +842,7 @@ mod tests {
 
     #[test]
     fn malformed_skill_does_not_block_directory_loaders() {
+        let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         let skills_dir = temp.path().join("skills");
         write_skill_file(
@@ -872,11 +874,11 @@ mod tests {
 
     #[test]
     fn project_overlay_is_session_scoped_and_composes_over_globals() {
+        let _env_guard = crate::storage::lock_test_env();
         let temp = tempfile::tempdir().expect("tempdir");
         write_test_skill(temp.path(), ".horon", "session-skill");
 
-        // The overlay resolves against the given workspace root, not the
-        // process cwd or a shared registry (issue #457).
+        // The overlay resolves against the given workspace root, not the process cwd or a shared registry (issue #457).
         let overlay = SkillRegistry::load_project_overlay(Some(temp.path())).expect("load overlay");
         assert!(overlay.get("session-skill").is_some());
 
@@ -981,6 +983,7 @@ mod tests {
 
     #[test]
     fn skill_snapshot_budget_registry_clone_shares_skill_bodies() {
+        let _env_guard = crate::storage::lock_test_env();
         let mut registry = SkillRegistry::default();
         let body = "x".repeat(64 * 1024);
         registry.insert_skill(test_skill("big", "Big skill", &body));
@@ -1160,6 +1163,7 @@ mod tests {
 
     #[test]
     fn skill_snapshot_budget_omitted_skill_still_invokes() {
+        let _env_guard = crate::storage::lock_test_env();
         let omitted_name = "skill-0999-padded-skill-name-for-budget-tests".to_string();
         let infos: Vec<crate::prompt::SkillInfo> = (0..1_000)
             .map(|index| crate::prompt::SkillInfo {

@@ -152,6 +152,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 // folder the client was launched in.
                 app.apply_session_directory(working_dir.as_deref());
             }
+            Incoming::RetryRefused(message) => app.retry_refused(&message),
             Incoming::RequestFailed(message) => app.request_failed(&message),
             Incoming::SideStarted { id, session_id } => app.side_started(id, session_id),
             Incoming::SideAnswer { id, answer } => app.side_answer(id, answer),
@@ -171,6 +172,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         Action::Send(text) => Command::Text(text),
         Action::Steer(text) => Command::Steer(text),
         Action::Cancel => Command::Cancel,
+        Action::Retry => Command::Retry,
         Action::CancelBackgroundTerminal(call_id) => Command::CancelBackgroundTerminal(call_id),
         Action::Approval {
             request_id,

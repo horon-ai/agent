@@ -399,6 +399,7 @@ impl AcpRuntime {
             system_reminder: None,
             active_skill: None,
             no_reply: false,
+            expected_run_id: None,
         };
         let mut events = match session.foreground_request(Some(prompt_id), &message).await {
             Ok(events) => events,

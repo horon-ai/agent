@@ -2498,7 +2498,6 @@ pub(super) mod connection_core {
             );
             task.abort();
         }
-
         let message = Request::Message {
             id: 99,
             content: "hi".to_string(),
@@ -2506,6 +2505,7 @@ pub(super) mod connection_core {
             system_reminder: None,
             active_skill: None,
             no_reply: false,
+            expected_run_id: None,
         };
         let _events = session.foreground_request(None, &message).await.unwrap();
         daemon.recv_type("message").await;

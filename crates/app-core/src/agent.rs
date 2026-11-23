@@ -62,7 +62,7 @@ mod resume_commit;
 mod rewind_summary;
 pub use rewind_summary::RewindSummaryOutcome;
 mod round_budget;
-mod run_journal;
+pub(crate) mod run_journal;
 mod session_hooks;
 mod session_replication;
 mod stable_hash;

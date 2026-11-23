@@ -1060,8 +1060,7 @@ fn recovery_events_are_delivered_and_filtered_by_session() {
 fn send_system_reminder_is_hidden_and_does_not_wait_for_acceptance() {
     let (sent, received) = channel();
     let client = fake_harness(move |frame, _writer| {
-        sent.send(frame.request.clone()).unwrap();
-        // Deliberately no reply or message_accepted event.
+        sent.send(frame.request.clone()).unwrap(); // Deliberately no reply or acceptance.
     });
     client.send_system_reminder("mine", "continue task").unwrap();
     assert_eq!(
@@ -1071,6 +1070,7 @@ fn send_system_reminder_is_hidden_and_does_not_wait_for_acceptance() {
             content: String::new(),
             system_reminder: Some("continue task".into()),
             images: vec![],
+            expected_run_id: None,
             no_reply: false,
         }
     );

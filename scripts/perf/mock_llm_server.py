@@ -57,6 +57,7 @@ SHELL_NAME_HINTS = ("bash", "shell", "exec", "terminal", "run_command", "cmd")
 # stay what they were.
 SKILL_MARKER = "[bench:skill]"
 MCP_MARKER = "[bench:mcp]"
+TUI_RETRY_MARKER = "[tui:retry-proof]"
 PACKAGE_MARKER = "[bench:package]"
 JOBS_MARKER = "[tui:jobs]"
 JOBS_COMMANDS = (
@@ -598,6 +599,7 @@ class Stats:
         self.lock = threading.Lock()
         self.requests: list[dict] = []
         self.started_at = time.time()
+        self.retry_fixture_ready = threading.Event()
         self._call_seq = 0
         self._seq_lock = threading.Lock()
 
@@ -718,6 +720,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True})
             return
         body = self._read_body()
+        if path == "/__retry_fixture":
+            if body.get("ready") is True:
+                STATS.retry_fixture_ready.set()
+            else:
+                STATS.retry_fixture_ready.clear()
+            self._send_json({"ok": True})
+            return
+        if path.endswith("/chat/completions") and TUI_RETRY_MARKER in json.dumps(body):
+            if not STATS.retry_fixture_ready.is_set():
+                self._send_json({"error": {"message": "TUI retry fixture provider failure"}}, status=400)
+                return
         if path.endswith("/chat/completions"):
             self._handle_chat(body)
         elif path.endswith("/responses"):
@@ -752,6 +765,10 @@ class Handler(BaseHTTPRequestHandler):
         results = tool_result_text(kind, body)
         transcript = json.dumps(body, ensure_ascii=False)
         side_fixture_question = "side fixture question" in transcript
+        if "[tui:context-proof]" in prompt:
+            plan_name = "context-proof"
+        elif TUI_RETRY_MARKER in transcript:
+            plan_name = "tui-retry"
         fork_fixture = "tui-fork-boundary-proof" in transcript
         counter = STATS.next_call_id()
         nonce = f"{NONCE_PREFIX}{counter}"
@@ -760,7 +777,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name in {"hint", "context-proof"} or side_fixture_question or fork_fixture:
+        if plan_name in {"hint", "tui-retry", "context-proof"} or side_fixture_question or fork_fixture:
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -956,7 +973,8 @@ class Handler(BaseHTTPRequestHandler):
             "arguments": arguments,
             "namespace": namespace if calls_tool else None,
             "text": (
-                "side-fixture-answer" if side_fixture_question
+                "retry-fixture-recovered" if plan_name == "tui-retry"
+                else "side-fixture-answer" if side_fixture_question
                 else f"context-verified-{prompt.rsplit(' ', 1)[-1]}" if plan_name == "context-proof"
                 else "fork-boundary-ready" if fork_fixture
                 else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT

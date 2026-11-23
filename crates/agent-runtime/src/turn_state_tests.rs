@@ -1,4 +1,5 @@
 use super::*;
+use crate::ContinuationVerdict;
 use crate::turn_recovery::MAX_AUTO_CONTINUATIONS;
 use crate::turn_state::MAX_RUN_STOP_HISTORY;
 
@@ -327,4 +328,82 @@ fn aborted_and_length_turns_may_carry_partial_text() {
         assert_eq!(state.outcome(), Some(outcome));
         assert_eq!(state.final_text(), "partial");
     }
+}
+
+// ---- continuing a failed run ------------------------------------------------
+
+/// A ledger holding one run that stopped for `cause`.
+fn ledger_stopped_as(run_id: &str, cause: StopProvenance) -> RunLedger {
+    let mut ledger = RunLedger::default();
+    ledger.begin_run(RunIdentity::new(run_id), true);
+    ledger.record_stop(RunStop::capture(run_id, cause));
+    ledger
+}
+
+#[test]
+fn a_failed_run_may_be_continued() {
+    for cause in [
+        StopProvenance::ProviderError,
+        StopProvenance::Timeout,
+        StopProvenance::InterruptedUnknown,
+    ] {
+        let mut ledger = ledger_stopped_as("run-a", cause);
+        assert_eq!(
+            ledger.continuation_verdict("run-a"),
+            ContinuationVerdict::Eligible,
+            "{cause:?} is a failure a later attempt can recover from"
+        );
+    }
+}
+
+#[test]
+fn a_completed_or_cancelled_run_may_not_be_continued() {
+    for cause in [
+        StopProvenance::Completed,
+        StopProvenance::UserCancelled,
+        StopProvenance::Shutdown,
+        StopProvenance::LoopGuard,
+        StopProvenance::Limit,
+    ] {
+        let mut ledger = ledger_stopped_as("run-a", cause);
+        assert_eq!(
+            ledger.continuation_verdict("run-a"),
+            ContinuationVerdict::Ineligible { cause },
+            "{cause:?} is a reason a retry would repeat"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_has_not_stopped_is_still_in_flight() {
+    let mut ledger = RunLedger::default();
+    ledger.begin_run(RunIdentity::new("run-a"), true);
+    assert_eq!(ledger.continuation_verdict("run-a"), ContinuationVerdict::InFlight);
+}
+
+#[test]
+fn a_second_continuation_of_the_same_run_is_stale() {
+    let mut ledger = ledger_stopped_as("run-a", StopProvenance::ProviderError);
+    assert_eq!(ledger.continuation_verdict("run-a"), ContinuationVerdict::Eligible);
+
+    // What the continuing turn does before it runs: its own run begins.
+    ledger.begin_run(RunIdentity::new("run-b"), true);
+    assert_eq!(
+        ledger.continuation_verdict("run-a"),
+        ContinuationVerdict::Stale {
+            current_run_id: Some("run-b".to_string())
+        },
+        "the failed run is no longer current, so a second request cannot act on it"
+    );
+}
+
+#[test]
+fn an_unknown_run_id_is_stale_and_starts_nothing() {
+    let mut ledger = ledger_stopped_as("run-a", StopProvenance::ProviderError);
+    assert_eq!(
+        ledger.continuation_verdict("run-elsewhere"),
+        ContinuationVerdict::Stale {
+            current_run_id: Some("run-a".to_string())
+        }
+    );
 }

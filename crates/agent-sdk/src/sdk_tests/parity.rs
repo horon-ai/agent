@@ -45,6 +45,7 @@ const CAPABILITIES: &[Capability] = &[
     cap("send_message", "sendMessage"),
     cap("send_message_with_reminder", "sendMessageWithReminder"),
     cap("send_system_reminder", "sendSystemReminder"),
+    cap("continue_run", "continueRun"),
     cap("send_context_message", "sendContextMessage"),
     cap("list_session_heads", "listSessionHeads"),
     cap("select_session_head", "selectSessionHead"),
@@ -351,6 +352,7 @@ fn rust_client_source() -> String {
         "cancellable_work.rs",
         "effective_settings.rs",
         "reports.rs",
+        "continuation.rs",
     ]
     .into_iter()
     .map(|file| {

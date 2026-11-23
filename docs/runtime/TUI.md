@@ -232,6 +232,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.submit` | `enter` | Send the typed message |
 | `app.cancel` | `ctrl+c` | Cancel the running turn, or leave when nothing is running |
 | `app.interrupt` | `esc` | Send the queued messages into the running turn; with nothing queued, interrupt it. No action when idle |
+| `app.retry_turn` | `alt+r` | Continue the last failed turn |
 | `app.quit` | `ctrl+d` | Delete at the cursor while the draft has text, or leave when the draft is empty and the editor is idle |
 | `app.scroll_page_up` | `pageup` | Hold the transcript one page higher |
 | `app.scroll_page_down` | `pagedown` | Move the transcript one page back towards the end |
@@ -477,6 +478,7 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/rename <title>` | Save a title for the attached session and update the window title after the daemon confirms |
 | `/replay [path\|stop]` | Replay a recording locally or return to the live session |
 | `/resume [id]` | Replay a stored session, or pick one from the list |
+| `/retry` | Continue the latest eligible failed turn in the attached session |
 | `/settings` | Open the settings screen |
 | `/side <question>` | Ask a separate read-only session a question |
 | `/skills` | List the skills the harness reports, and put one in the draft |
@@ -488,6 +490,7 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/unpin [id]` | Remove a session from the pinned group |
 | `/voice` | Dictate to the draft or play text on this device |
 
+`/retry` resumes the most recent eligible failed request in the attached session. It keeps one visible user message and uses the work already completed during that request. The daemon refuses to retry if the request was superseded, completed, or already resumed.
 Use `/diff` to see staged and unstaged changes separately. `/commit <message>` displays the staged files and the content identifier it will commit. `/commit --yes` commits that exact content to the reviewed branch if its previous commit is still current. `/commit --cancel` discards the review. Any change to staging requires a new review. The command works on an attached local branch and performs a local commit only.
 
 If a repository has a commit or reference-transaction hook configured, use `git commit` in the terminal after reviewing the changes. The TUI preserves Git's signing settings. If a checkout races with confirmation, only the reviewed branch can receive the commit.
@@ -498,7 +501,7 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-seven commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-eight commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -549,6 +552,7 @@ built-in commands:
   /rename              save a title for the current session
   /replay              play a recorded conversation (path, stop), or the newest one
   /resume              replay a stored session, or pick one from the list
+  /retry               continue the last failed turn of this session, keeping its one prompt
   /settings            open the settings screen
   /side                ask a separate read-only session a question
   /skills              list the skills the harness reports, and put one in the draft

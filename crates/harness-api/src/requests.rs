@@ -148,6 +148,17 @@ pub enum ApiRequest {
         /// Persist the message as context without starting a model turn.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         no_reply: bool,
+        /// Continue this run rather than start unrelated work.
+        ///
+        /// The run id is the one the daemon reported (for example the
+        /// `last_stop` of `get_runtime_state`), and the daemon decides whether
+        /// it may still be continued while it holds the session's agent. A run
+        /// that already moved on, one that never stopped, or one whose stop is
+        /// not a failure the caller may resume is refused with an error and no
+        /// turn runs, so a repeated click or a second attached client cannot
+        /// start the same continuation twice.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_run_id: Option<String>,
     },
 
     /// Replace the attached session's tool configuration.

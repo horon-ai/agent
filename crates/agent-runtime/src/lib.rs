@@ -2,9 +2,10 @@ use std::sync::{Arc, LockResult, Mutex, MutexGuard, PoisonError};
 
 mod turn_state;
 pub use turn_state::{
-    RunIdentity, RunLedger, RunStop, StopDisposition, StopProvenance, TurnOutcome, TurnState, TurnStateError,
-    begin_run, conversation_saved, current_run, current_stop, note_conversation_save, observe_cause, observed_cause,
-    outcome_for_stop_reason, provider_failure_provenance, record_stop, stop_history, with_run_ledger,
+    ContinuationVerdict, RunIdentity, RunLedger, RunStop, StopDisposition, StopProvenance, TurnOutcome, TurnState,
+    TurnStateError, begin_run, continuation_verdict, conversation_saved, current_run, current_stop,
+    note_conversation_save, observe_cause, observed_cause, outcome_for_stop_reason, provider_failure_provenance,
+    record_stop, stop_history, with_run_ledger,
 };
 
 #[cfg(test)]

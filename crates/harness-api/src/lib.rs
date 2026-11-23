@@ -92,7 +92,7 @@ pub use horon_agent_extension_types::control::{
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 30;
+pub const API_VERSION_MINOR: u32 = 31;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -183,6 +183,16 @@ pub const CAPABILITY_SESSION_FORK_AT_V1: &str = "session_fork_at_v1";
 /// serves.
 pub const CAPABILITY_TODO_EDIT_V1: &str = "todo_edit_v1";
 
+/// A `send_message` carrying `expected_run_id` continues the run it names, and
+/// the daemon decides under the session lock whether that run may still be
+/// continued.
+///
+/// The field is optional on the request, so a daemon without this capability
+/// would ignore it and run an ordinary turn against a stale run: the duplicate
+/// turn the field exists to prevent. A client therefore asks the daemon to
+/// continue a run only when this capability is advertised.
+pub const CAPABILITY_TURN_RETRY_V1: &str = "turn_retry_v1";
+
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
 ///
@@ -220,6 +230,7 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     ),
     (CAPABILITY_SESSION_FORK_AT_V1, &["fork_session_at"]),
     (CAPABILITY_TODO_EDIT_V1, &["set_todo_status"]),
+    (CAPABILITY_TURN_RETRY_V1, &["send_message.expected_run_id"]),
     (
         CAPABILITY_CONSULT_FORK_V1,
         &["fork_session.consult", "fork_session.boundary"],
@@ -240,6 +251,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_PACKAGE_COMMANDS_V1,
     CAPABILITY_SESSION_FORK_AT_V1,
     CAPABILITY_TODO_EDIT_V1,
+    CAPABILITY_TURN_RETRY_V1,
     CAPABILITY_CONSULT_FORK_V1,
 ];
 

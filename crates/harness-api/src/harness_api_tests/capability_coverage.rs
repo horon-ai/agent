@@ -288,6 +288,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "package_commands_v1",
         "session_fork_at_v1",
         "todo_edit_v1",
+        "turn_retry_v1",
         "consult_fork_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();

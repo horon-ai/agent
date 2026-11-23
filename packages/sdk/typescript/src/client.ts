@@ -1005,6 +1005,19 @@ export class HoronAgentClient extends EventEmitter {
     this.notify({ req: "send_message", session_id: sessionId, content: "", system_reminder: reminder });
   }
 
+  /** Continue the named failed run after the daemon accepts it. */
+  async continueRun(sessionId: string, expectedRunId: string): Promise<void> {
+    this.requireCapability("turn_retry_v1", "continueRun");
+    if (!expectedRunId.trim()) throw new HarnessError("invalid_option", "continueRun requires the failed run ID");
+    await this.requestOk({
+      req: "send_message",
+      session_id: sessionId,
+      content: "",
+      system_reminder: "Continue the failed task from where it left off. Do not repeat completed tool calls or edits.",
+      expected_run_id: expectedRunId,
+    });
+  }
+
   /** Persist a user message as context without starting a model turn. */
   async sendContextMessage(sessionId: string, content: string): Promise<void> {
     await this.requestOk({ req: "send_message", session_id: sessionId, content, no_reply: true });

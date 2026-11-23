@@ -12,6 +12,7 @@ pub(crate) enum SimpleKind {
     Ping,
     History,
     Ok,
+    ContinueRun,
     /// Awaiting `done`: the daemon acks a delete before it touches the store,
     /// and acknowledging a delete that later failed would report a transcript
     /// as gone while it is still there. Only `done` answers this one.
@@ -49,4 +50,10 @@ pub(crate) enum SimpleKind {
         provider: String,
         configured: bool,
     },
+}
+
+impl SimpleKind {
+    pub(super) fn error_is_reply_only(&self) -> bool {
+        matches!(self, Self::Tools | Self::ToolControl | Self::ContinueRun)
+    }
 }

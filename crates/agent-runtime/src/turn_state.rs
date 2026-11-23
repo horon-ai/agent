@@ -126,6 +126,16 @@ impl StopProvenance {
     pub fn parse(raw: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|cause| cause.as_str() == raw)
     }
+
+    /// Whether a later attempt can plausibly finish the work this run stopped.
+    ///
+    /// Only the causes a provider or a lost process produced qualify: a
+    /// completed run has nothing left to do, a cancelled or shut-down run was
+    /// ended on purpose, a budget stop needs a decision the user has not made,
+    /// and a loop guard ended the run for a reason a retry would repeat.
+    pub const fn can_continue(self) -> bool {
+        matches!(self, Self::ProviderError | Self::Timeout | Self::InterruptedUnknown)
+    }
 }
 
 /// The cause a provider failure names.
@@ -210,6 +220,32 @@ pub enum StopDisposition {
     /// It names a run that is no longer current, so it went to history only and
     /// the current run's state was left untouched.
     History,
+}
+
+/// Whether a client may continue the run it names, and why it may not.
+///
+/// The answer is decided under the run ledger's lock, and a turn decides it
+/// while it holds the agent. That is what makes it safe against a second click,
+/// a second attached client, and a message that arrived while the failed turn
+/// was still closing: whichever turn reaches the decision first begins a new
+/// run, and every later decision for the old id finds that run current instead
+/// and answers [`Stale`].
+///
+/// [`Stale`]: ContinuationVerdict::Stale
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContinuationVerdict {
+    /// The run is current, stopped, and stopped for a reason a later attempt can
+    /// recover from. The caller may begin a new run that continues it.
+    Eligible,
+    /// The named run is not the current one: a newer run already began, so a
+    /// continuation would act on work that has moved on.
+    Stale { current_run_id: Option<String> },
+    /// The named run has not recorded a stop yet, so its turn is still running
+    /// or never reached a turn boundary.
+    InFlight,
+    /// The run stopped for a reason that a retry cannot improve: it finished, it
+    /// was cancelled or shut down, it hit a budget, or the loop guard ended it.
+    Ineligible { cause: StopProvenance },
 }
 
 /// The current run, its stop, and the stops that arrived too late to be current.
@@ -334,6 +370,31 @@ impl RunLedger {
         }
         self.history.push(stop);
     }
+
+    /// Whether the current run may be continued, and why it may not.
+    ///
+    /// The run being continued stays current until [`Self::begin_run`] replaces
+    /// it, so a second decision for the same id — taken after the continuing
+    /// turn began its own run — finds a different current run and is
+    /// [`ContinuationVerdict::Stale`]. A run whose stop was never recorded is
+    /// still in flight, so continuing it would race the turn that owns it.
+    pub fn continuation_verdict(&mut self, expected_run_id: &str) -> ContinuationVerdict {
+        let current = self.current.as_ref().map(|run| run.run_id().to_string());
+        if current.as_deref() != Some(expected_run_id) {
+            return ContinuationVerdict::Stale {
+                current_run_id: current,
+            };
+        }
+        let Some(stop) = self.current_stop.as_ref() else {
+            return ContinuationVerdict::InFlight;
+        };
+        if !stop.provenance().can_continue() {
+            return ContinuationVerdict::Ineligible {
+                cause: stop.provenance(),
+            };
+        }
+        ContinuationVerdict::Eligible
+    }
 }
 
 /// Soft cap on the sessions whose run ledger this process keeps.
@@ -408,6 +469,15 @@ pub fn current_stop(session_id: &str) -> Option<RunStop> {
 /// The stops `session_id` kept because their run was no longer current.
 pub fn stop_history(session_id: &str) -> Vec<RunStop> {
     with_run_ledger(session_id, |ledger| ledger.history().to_vec())
+}
+
+/// Whether `session_id` may continue the run `expected_run_id`.
+///
+/// Read under the session's ledger lock. A caller that acts on an `Eligible`
+/// answer must do so while it holds the agent, because that is what keeps a
+/// competing turn from reaching its own decision before the new run begins.
+pub fn continuation_verdict(session_id: &str, expected_run_id: &str) -> ContinuationVerdict {
+    with_run_ledger(session_id, |ledger| ledger.continuation_verdict(expected_run_id))
 }
 
 /// Record whether `session_id`'s turn conversation save succeeded.
