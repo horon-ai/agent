@@ -203,7 +203,8 @@ pub(super) fn publish_copy(layout: &Layout, source: &Path, validated: &Validated
 
 /// Copy, validate and publish into `staging`; the caller removes it on error.
 fn stage_copy(layout: &Layout, source: &Path, validated: &ValidatedPackage, staging: &Path) -> Result<PublishedCopy> {
-    let mut copied: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut copied: BTreeMap<PathBuf, [u8; 32]> = BTreeMap::new();
+    let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
     for relative in &validated.files {
         let mut input = open_package_file(source, relative)?;
         let destination = staging.join(relative);
@@ -217,7 +218,6 @@ fn stage_copy(layout: &Layout, source: &Path, validated: &ValidatedPackage, stag
             .open(&destination)
             .with_context(|| format!("create {}", destination.display()))?;
         let mut hasher = Sha256::new();
-        let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
         loop {
             let read = input
                 .read(&mut buffer)
@@ -231,7 +231,7 @@ fn stage_copy(layout: &Layout, source: &Path, validated: &ValidatedPackage, stag
             hasher.update(&buffer[..read]);
         }
         sync_file(&output, SyncMode::Full).with_context(|| format!("flush {}", destination.display()))?;
-        copied.insert(relative.clone(), hex::encode(hasher.finalize()));
+        copied.insert(relative.clone(), hasher.finalize().into());
     }
     let executable = slash_path(&validated.executable)?;
     horon_agent_platform::set_permissions_executable(&staging.join(&validated.executable))
@@ -256,16 +256,16 @@ fn stage_copy(layout: &Layout, source: &Path, validated: &ValidatedPackage, stag
         let expected = copied
             .get(relative)
             .with_context(|| format!("{} was not copied", relative.display()))?;
-        let (len, sha256) = hash_file(&staging.join(relative))?;
+        let (len, digest) = hash_file(&staging.join(relative), &mut buffer)?;
         ensure!(
-            &sha256 == expected,
+            digest == *expected,
             "the copy of {} changed before it was published",
             relative.display()
         );
         files.push(StoredFile {
             path: slash_path(relative)?,
             len,
-            sha256,
+            sha256: hex::encode(digest),
         });
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
@@ -336,11 +336,11 @@ fn package_digest(kind: PackageKind, id: &str, version: &str, files: &[StoredFil
 }
 
 /// Whether `digest` is a lowercase hexadecimal SHA-256 name.
+///
+/// The spelling is defined once, next to the handshake that compares digests
+/// received on the wire.
 pub(super) fn is_digest(digest: &str) -> bool {
-    digest.len() == 64
-        && digest
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    horon_agent_extension_types::wire::is_sha256_hex(digest)
 }
 
 /// The directory name of a published copy, rejecting anything that is not a
@@ -355,11 +355,12 @@ pub(super) fn digest_dir(layout: &Layout, digest: &str) -> Result<PathBuf> {
 /// A link anywhere in the tree is refused instead of followed.
 pub(super) fn hash_tree(root: &Path) -> Result<BTreeMap<String, StoredFile>> {
     let mut files = BTreeMap::new();
-    walk_tree(root, root, &mut files)?;
+    let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
+    walk_tree(root, root, &mut files, &mut buffer)?;
     Ok(files)
 }
 
-fn walk_tree(root: &Path, directory: &Path, files: &mut BTreeMap<String, StoredFile>) -> Result<()> {
+fn walk_tree(root: &Path, directory: &Path, files: &mut BTreeMap<String, StoredFile>, buffer: &mut [u8]) -> Result<()> {
     for entry in fs::read_dir(directory).with_context(|| format!("read {}", directory.display()))? {
         let entry = entry.with_context(|| format!("read {}", directory.display()))?;
         let path = entry.path();
@@ -370,7 +371,7 @@ fn walk_tree(root: &Path, directory: &Path, files: &mut BTreeMap<String, StoredF
             path.display()
         );
         if metadata.is_dir() {
-            walk_tree(root, &path, files)?;
+            walk_tree(root, &path, files, buffer)?;
         } else {
             ensure!(
                 metadata.is_file(),
@@ -381,7 +382,7 @@ fn walk_tree(root: &Path, directory: &Path, files: &mut BTreeMap<String, StoredF
                 .strip_prefix(root)
                 .with_context(|| format!("{} is outside the package copy {}", path.display(), root.display()))?;
             let relative = slash_path(relative)?;
-            let (len, sha256) = hash_file(&path)?;
+            let (len, digest) = hash_file(&path, buffer)?;
             ensure!(
                 files
                     .insert(
@@ -389,7 +390,7 @@ fn walk_tree(root: &Path, directory: &Path, files: &mut BTreeMap<String, StoredF
                         StoredFile {
                             path: relative,
                             len,
-                            sha256,
+                            sha256: hex::encode(digest),
                         }
                     )
                     .is_none(),
@@ -400,24 +401,36 @@ fn walk_tree(root: &Path, directory: &Path, files: &mut BTreeMap<String, StoredF
     Ok(())
 }
 
-fn hash_file(path: &Path) -> Result<(u64, String)> {
+fn hash_file(path: &Path, buffer: &mut [u8]) -> Result<(u64, [u8; 32])> {
     let mut file = package_open_options()
         .open(path)
         .with_context(|| format!("open {}", path.display()))?;
+    hash_open_file(&mut file, buffer, || format!("read {}", path.display()))
+}
+
+/// Hash an open file in `buffer`-sized chunks.
+///
+/// The reader loop is shared by the copy check, the tree walk and the
+/// executable check; each caller supplies its own buffer and the context a
+/// failed read is reported with, so every one keeps its familiar message.
+pub(super) fn hash_open_file(
+    file: &mut File,
+    buffer: &mut [u8],
+    read_context: impl Fn() -> String,
+) -> Result<(u64, [u8; 32])> {
     let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; COPY_BUFFER_BYTES];
     let mut len = 0u64;
     loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("read {}", path.display()))?;
+        let read = file.read(buffer).with_context(&read_context)?;
         if read == 0 {
             break;
         }
         hasher.update(&buffer[..read]);
+        // A read returns at most `isize::MAX` bytes, so the total of a file that
+        // can exist on disk cannot overflow a `u64`.
         len += read as u64;
     }
-    Ok((len, hex::encode(hasher.finalize())))
+    Ok((len, hasher.finalize().into()))
 }
 
 fn slash_path(path: &Path) -> Result<String> {
@@ -701,14 +714,16 @@ pub(super) fn validate_owner(owner: &str) -> Result<()> {
 }
 
 fn is_windows_device_name(owner: &str) -> bool {
-    let upper = owner.to_ascii_uppercase();
-    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+    // The standalone names are reserved whatever their case; the numbered
+    // families are one prefix letter group and one trailing digit.
+    let reserved = ["CON", "PRN", "AUX", "NUL"];
+    if reserved.into_iter().any(|name| owner.eq_ignore_ascii_case(name)) {
         return true;
     }
     ["COM", "LPT"].into_iter().any(|prefix| {
-        upper
-            .strip_prefix(prefix)
-            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
+        owner.len() == prefix.len() + 1
+            && owner.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+            && matches!(owner.as_bytes()[prefix.len()], b'1'..=b'9')
     })
 }
 

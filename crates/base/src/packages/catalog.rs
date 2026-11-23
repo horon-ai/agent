@@ -143,6 +143,16 @@ impl CatalogView {
     pub fn is_empty(&self) -> bool {
         self.packages.is_empty()
     }
+
+    /// Take the record for `id` out of a view that is not needed again.
+    ///
+    /// A launch reads one record and drops the rest of the snapshot, so the
+    /// record moves out of the view instead of being cloned.
+    pub(super) fn into_record(mut self, id: &str) -> Result<PackageRecord> {
+        self.packages
+            .remove(id)
+            .with_context(|| format!("package {id} is not in the catalog"))
+    }
 }
 
 /// What to install, and whether an existing record with the same ID may be
@@ -379,7 +389,7 @@ impl PackageStore {
             .generation
             .checked_add(1)
             .context("the package catalog generation overflowed")?;
-        let record = record_for(&source, request.scope, generation, &validated, &published)?;
+        let record = record_for(&source, request.scope, generation, &validated, published)?;
         catalog.packages.insert(id, record.clone());
         catalog.generation = generation;
         write_catalog(&layout, &catalog)?;
@@ -734,7 +744,7 @@ fn record_for(
     scope: PackageScope,
     generation: u64,
     validated: &ValidatedPackage,
-    published: &PublishedCopy,
+    published: PublishedCopy,
 ) -> Result<PackageRecord> {
     Ok(PackageRecord {
         kind: validated.kind,
@@ -748,9 +758,9 @@ fn record_for(
         scope,
         state: PackageState::Installed,
         generation,
-        digest: Some(published.digest.clone()),
-        executable: Some(published.executable.clone()),
-        files: published.files.clone(),
+        digest: Some(published.digest),
+        executable: Some(published.executable),
+        files: published.files,
     })
 }
 

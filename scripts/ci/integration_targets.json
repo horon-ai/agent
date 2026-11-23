@@ -219,7 +219,7 @@
     {
       "package": "horon-agent-base",
       "target": "package_catalog",
-      "min_passed": 8
+      "min_passed": 9
     },
     {
       "package": "horon-agent-base",

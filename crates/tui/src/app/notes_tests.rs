@@ -231,6 +231,41 @@ fn a_repeated_text_keeps_its_occurrence_across_a_reattach() {
 }
 
 #[test]
+fn a_note_comes_back_when_its_message_is_sent_from_the_queue() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let mut app = app_at(directory.path().join("tui-notes.json"));
+    let both = [
+        ("user", "hello"),
+        ("assistant", "first"),
+        ("user", "hello"),
+        ("assistant", "second"),
+    ];
+    app.attach_session(attached("session_a", None, &both), false);
+    assert_eq!(app.submit("/note add u2 the repeat"), None);
+
+    // The second "hello" is gone, then typed again: queued, it is not a sent
+    // message and holds no note; once sent it is the second "hello" again.
+    let first = [("user", "hello"), ("assistant", "first")];
+    app.attach_session(attached("session_a", None, &first), false);
+    app.transcript.push_queued("hello");
+    assert!(!screen(&mut app).contains("note: the repeat"));
+    app.transcript.promote_queued("hello");
+    let drawn = screen(&mut app);
+    assert!(
+        drawn.contains("note: the repeat"),
+        "the sent message did not get its note back:\n{drawn}"
+    );
+
+    // Retracting that message drops the row via `remove_item`; its note must
+    // leave the screen on the next frame instead of surviving in a stale cache.
+    app.transcript.retract_user("hello");
+    assert!(
+        !screen(&mut app).contains("note: the repeat"),
+        "a retracted message kept its note on screen"
+    );
+}
+
+#[test]
 fn notes_of_sessions_sharing_a_title_stay_with_their_session() {
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("tui-notes.json");

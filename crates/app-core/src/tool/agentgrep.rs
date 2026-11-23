@@ -520,15 +520,21 @@ fn render_grep_context(
             return Ok(out);
         }
 
-        let path = root.join(&file.path);
-        let text = if file.path_bytes.is_none() && read_bytes_left != 0 && path.is_file() {
-            let mut bytes = Vec::new();
-            let bytes_limit = read_bytes_left.min(FILE_BYTES);
-            let read =
-                std::fs::File::open(&path).and_then(|file| file.take(bytes_limit as u64).read_to_end(&mut bytes));
-            read_bytes_left -= bytes.len();
-            if read.is_ok() && bytes.len() < bytes_limit && !bytes.contains(&0) {
-                Some(bytes)
+        // The join allocates, so it is built only on the route that reads the
+        // file; a match already carrying its own line text needs no path at all.
+        let text = if file.path_bytes.is_none() && read_bytes_left != 0 {
+            let path = root.join(&file.path);
+            if path.is_file() {
+                let mut bytes = Vec::new();
+                let bytes_limit = read_bytes_left.min(FILE_BYTES);
+                let read =
+                    std::fs::File::open(&path).and_then(|file| file.take(bytes_limit as u64).read_to_end(&mut bytes));
+                read_bytes_left -= bytes.len();
+                if read.is_ok() && bytes.len() < bytes_limit && !bytes.contains(&0) {
+                    Some(bytes)
+                } else {
+                    None
+                }
             } else {
                 None
             }
