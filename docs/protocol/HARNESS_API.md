@@ -687,8 +687,6 @@ client that cannot read it.
 
 Request `live_todo_v1` in `hello.event_capabilities` and check for the same capability in `hello_ok`. The daemon must support live updates. After a todo write is saved, the attached session receives `todo_changed` with its `session_id`. The event carries no todo data. Subscribe before reading the initial `get_todo_state` snapshot and read it again after changes for the attached session. One read can cover a batch of changes because the response holds the latest list. A client that omits the capability receives no `todo_changed` events and can still read snapshots.
 
-`todo_edit_v1` adds a revision to `todo_state` and enables `set_todo_status` for the attached session. Send `session_id`, `todo_id`, `expected_revision` and the requested `status`. The daemon saves the update only if the revision still matches. `todo_edit_result` includes `applied`, the current list and its revision, and `stale_revision` when a newer list takes precedence. Successful writes notify clients with the existing `todo_changed` event.
-
 ## Daemon effective settings (protocol 1.25)
 
 The harness API keeps major version 1 and moved from minor version 24 to 25.
@@ -791,6 +789,22 @@ cannot read it keeps working against the daemon defaults. The SDKs expose the
 call as `get_effective_settings` (Rust, Python) and `getEffectiveSettings`
 (TypeScript); each refuses it before sending when the capability was not
 advertised. The TUI's `Daemon` tab is the shipped consumer.
+
+## Forking before a stored message (protocol 1.28)
+
+The harness API keeps major version 1 and moved from minor version 27 to 28.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+`session_fork_at_v1` enables `fork_session_at`. Pass the attached `session_id` and a `boundary_message_id` read from `get_history`. The daemon saves a new session containing the history before that user message and returns `session_forked`. The original retains its full history. If the message is no longer a boundary on the active history, the request fails and the client stays attached to the original.
+
+## Editing a todo item (protocol 1.29)
+
+The harness API keeps major version 1 and moved from minor version 28 to 29.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+`todo_edit_v1` adds a revision to `todo_state` and enables `set_todo_status` for the attached session. Send `session_id`, `todo_id`, `expected_revision` and the requested `status`. The daemon saves the update only if the revision still matches. `todo_edit_result` includes `applied`, the current list and its revision, and `stale_revision` when a newer list takes precedence. Successful writes notify clients with the existing `todo_changed` event.
 
 ## Session event store and replication (protocol 1.12)
 

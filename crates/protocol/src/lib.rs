@@ -631,6 +631,7 @@ impl Request {
             Request::SetSessionSaved { id, .. } => *id,
             Request::SetTodoStatus { id, .. } => *id,
             Request::Split { id } => *id,
+            Request::SplitAt { id, .. } => *id,
             Request::Transfer { id } => *id,
             Request::Compact { id, .. } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,

@@ -14,6 +14,37 @@ impl Session {
         Ok(())
     }
 
+    /// Copy the messages the parent recorded before `boundary_message_id`.
+    ///
+    /// The boundary is the first message the child does *not* get, so the
+    /// child receives the exact prefix that came before the chosen turn. It is
+    /// resolved against the parent's own selected head rather than an index
+    /// the caller counted, and a boundary that head no longer records is
+    /// refused before the child is saved: a stale picker cannot fork half a
+    /// conversation, and the parent is never touched.
+    pub fn inherit_history_before(&mut self, parent: &Session, boundary_message_id: &str) -> Result<usize> {
+        anyhow::ensure!(self.id != parent.id, "fork requires an independent session identity");
+        anyhow::ensure!(!boundary_message_id.is_empty(), "fork requires a recorded boundary");
+        let mut history = parent.history_messages()?;
+        let boundary = history
+            .iter()
+            .position(|message| message.id == boundary_message_id)
+            .with_context(|| {
+                format!(
+                    "boundary {boundary_message_id} is not in session {} at its selected head",
+                    parent.id
+                )
+            })?;
+        history.truncate(boundary);
+        let kept = history.len();
+        self.replace_messages(history);
+        self.parent_id = Some(parent.id.clone());
+        self.event_state.fork_source = Some(serde_json::json!({
+            "source_session_id":parent.id,"source_head_event_id":parent.selected_event_head()
+        }));
+        Ok(kept)
+    }
+
     pub(super) fn refresh_active_context(&mut self) -> Result<()> {
         let paths = self.event_state.paths.clone().context("session paths missing")?;
         let id = store::SessionId::parse(&self.id)?;

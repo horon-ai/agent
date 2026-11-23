@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 const SESSION_ADDRESSED: &[&str] = &[
     "attach_session",
     "fork_session",
+    "fork_session_at",
     "transfer_session",
     "rewind",
     "export_session_markdown",

@@ -442,8 +442,13 @@ impl App {
                     self.recall_draft(&value);
                     None
                 }
-                // A skill is the same: the invocation goes into the draft, with
-                // the request still to be written after it.
+                // A boundary is a stored message id the daemon resolves; the
+                // first row may instead name the session this branch came
+                // from, which is an ordinary attach back.
+                Kind::Forks => {
+                    let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
+                    self.choose_fork(&value, &label)
+                }
                 Kind::Skills => {
                     self.draft_skill(&value);
                     None
@@ -513,6 +518,9 @@ impl App {
         }
         self.session_title = session.title;
         self.new_session_pending = false;
+        // The branch origin belongs to the session being left; a fork answer
+        // records its own right after this, in the handler that received it.
+        self.fork_origin = None;
         self.pending_turn = false;
         // A session the user switched to is a client they are watching, so an
         // outcome of the session before it is not worth a tab mark.
@@ -901,6 +909,9 @@ impl App {
     /// make the next successful attach claim it started a session.
     pub fn request_failed(&mut self, message: &str) {
         self.new_session_pending = false;
+        // A refused fork never moved, so the session it was asked from must not
+        // be treated as a branch's origin, and a later answer must not do it.
+        self.fork_pending = None;
         // A request that came back as a failure will never be answered, so the
         // level or model it asked for must not steer the cycle keys.
         self.effort_requested = None;

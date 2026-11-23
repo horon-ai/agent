@@ -145,6 +145,9 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // Listed so an SDK capability gate finds it; `hello_ok` drops it when the
     // daemon did not report `runtime_commands`.
     horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1,
+    // Advertised unconditionally and forwarded; older daemons return `unsupported`
+    // naming this capability.
+    horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
     horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
 ];
 
@@ -383,6 +386,7 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    let session_fork_at_supported = daemon_caps.iter().any(|cap| cap == "session_fork_at_api");
     // The daemon owns the package catalog. The bridge advertises the matching
     // API capability only when the daemon can serve it, and forwards nothing
     // when it cannot: an older daemon answers an unknown frame with an
@@ -438,6 +442,7 @@ where
     state.soft_interrupt_ids_supported = soft_interrupt_ids_supported;
     state.durable_runtime_api_supported = durable_runtime_api_supported;
     state.cancellable_work_api_supported = cancellable_work_api_supported;
+    state.session_fork_at_supported = session_fork_at_supported;
     // The daemon, and therefore this capability, is one per bridge process, so
     // the forwarding module records it instead of every `BridgeState` site.
     translate::effective_settings::set_supported(effective_settings_api_supported);
