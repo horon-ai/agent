@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# dry-run check
+
 import asyncio
 import os
 import pathlib
@@ -681,5 +683,3 @@ async def test_unknown_event_kinds_still_surface_on_the_generic_stream() -> None
         await stream.aclose()
         await client.close()
         await server.close()
-
-# dry-run check
