@@ -370,7 +370,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 ## 선택 목록
 
-모델, 추론 단계, 세션, 스킬, 링크와 초안 목록은 같은 선택 창을 씁니다. 창에는 제목, 검색 줄, 선택지별 행과 현재 선택의 위치가 표시됩니다. Enter로 선택하고 Esc로 닫습니다. 방향 키와 페이지 키로 이동하고 Backspace로 검색어를 편집합니다. 창이 열린 동안 입력한 글자는 검색어에 들어갑니다.
+모델, 추론 단계, 세션, 스킬, 링크, 도구와 초안 목록은 같은 선택 창을 씁니다. 창에는 제목, 검색 줄, 선택지별 행과 현재 선택의 위치가 표시됩니다. Enter로 선택하고 Esc로 닫습니다. 방향 키와 페이지 키로 이동하고 Backspace로 검색어를 편집합니다. 창이 열린 동안 입력한 글자는 검색어에 들어갑니다.
 
 거르기는 슬래시 팝업과 같은 부분 수열 맞추기이고, 행의 이름과 두 번째 열, 세션이면 미리보기가 담은 대화 줄까지 본다. 그 줄은 검색 대상이고 미리보기의 머리 줄은 아니다. 머리 줄은 한 디렉터리의 모든 행이 함께 쓰는 디렉터리와 시각을 적기 때문이다. 걸러 낸 행은 점수 순으로 놓이고 점수가 같으면 목록이 준 순서를 지키므로, 거르기가 비어 있으면 목록이 원래 순서대로 보인다. 아무것도 남지 않는 거르기는 `nothing matches that filter`라고 알린다.
 
@@ -478,6 +478,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/stats` | 연결된 세션에 기록된 토큰 사용량을 표시한다 |
 | `/swarm` | 연결된 세션의 직계 자식을 살펴보고 부모 세션으로 돌아간다 |
 | `/switch [id]` | 다른 저장 세션으로 옮기거나, 목록에서 고른다 |
+| `/tools` | 현재 세션에서 사용할 수 있는 도구를 실행 없이 살펴본다 |
 | `/unpin [id]` | 세션 고정을 해제한다 |
 | `/voice` | 받아쓴 내용을 초안에 넣거나 기기에서 텍스트를 재생한다 |
 
@@ -489,7 +490,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른세 명령을 이름 순으로 적었다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른네 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
 
@@ -540,6 +541,7 @@ built-in commands:
   /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
+  /tools               browse the current session's enabled tools without running them
   /unpin               take a session out of the pinned group
   /voice               dictate to the draft or play text on this device
 harness commands:

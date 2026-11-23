@@ -1,5 +1,6 @@
-//! The pickers: the model, session and swarm lists the harness owns, the search
-//! over this client's own drafts, and what a chosen row of any of them means.
+//! The pickers: the model, session, swarm and tool lists the harness owns, the
+//! search over this client's own drafts, and what a chosen row of any of them
+//! means.
 //!
 //! The screen itself ([`crate::overlays::picker`]) knows only rows; the meaning
 //! of a row is decided here, where the rest of the client state is. A session
@@ -8,6 +9,7 @@
 //! that was open, so they are cleared before the stored conversation is replayed.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use horon_agent_sdk::api::SessionToolDefinition;
 
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
@@ -259,6 +261,32 @@ impl App {
         self.fill(kind, rows);
     }
 
+    pub(crate) fn open_tools(&mut self) -> Option<Action> {
+        self.picker = Some(Picker::loading(
+            Kind::Tools,
+            "Session tools",
+            "no tools are enabled for this session",
+        ));
+        Some(Action::Tools)
+    }
+
+    pub(crate) fn show_tools(&mut self, mut tools: Vec<SessionToolDefinition>) {
+        tools.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        let rows = tools
+            .into_iter()
+            .map(|tool| {
+                let preview = (!tool.description.is_empty())
+                    .then_some(tool.description)
+                    .into_iter()
+                    .collect();
+                Row::new(tool.name, "")
+                    .with_detail("tier unknown")
+                    .with_preview(preview)
+            })
+            .collect();
+        self.fill(Kind::Tools, rows);
+    }
+
     /// The session rows in display order: pinned first, newest first in each.
     ///
     /// The split keeps the order the bridge sent inside both groups, so a pin
@@ -423,7 +451,7 @@ impl App {
                 // changes nothing rather than acting as some other kind of row.
                 // The job list is the same shape: `delete` cancels, and the
                 // generic selector never runs for it.
-                Kind::Queue | Kind::Jobs => None,
+                Kind::Queue | Kind::Tools | Kind::Jobs => None,
                 // A link is the one row that leaves the client: the reader
                 // pressed enter on it, so it goes to the platform handler and
                 // the list closes without an action for the bridge.

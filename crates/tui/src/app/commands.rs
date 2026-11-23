@@ -90,6 +90,7 @@ impl App {
             // them when it comes.
             Local::Skills => self.open_skills(),
             Local::Stats => Some(Action::Stats),
+            Local::Tools => self.open_tools(),
             Local::Mcp => {
                 if self.disconnected {
                     self.warn("the harness connection is gone; MCP servers cannot be inspected");
