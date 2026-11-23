@@ -62,7 +62,10 @@ impl Config {
     /// Load config from file only (no env overrides), preserving parse/read errors.
     pub(crate) fn load_from_file_strict() -> anyhow::Result<Option<Self>> {
         if overlay::active() {
-            return Ok(Self::load_file_layer()?.map(|(config, _)| config));
+            let Some(path) = Self::path() else {
+                return Ok(None);
+            };
+            return overlay::load_config(&path).map(Some);
         }
         Ok(Self::read_file_config()?.map(|(_, _, config)| config))
     }
