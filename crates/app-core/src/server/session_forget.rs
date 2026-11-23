@@ -88,6 +88,7 @@ pub(crate) fn forget_removed_session(session_id: &str, retired_sink: Option<&mps
     crate::server::session_observation::forget_session(session_id);
     crate::durable_input_runtime::forget_session(session_id);
     crate::server::control_receipts::forget_session(session_id);
+    crate::agent::hosted_notice::clear_session(session_id);
     if let Some(bus) = horon_agent_irc_core::global::get() {
         bus.forget(session_id);
     }
@@ -228,5 +229,20 @@ mod tests {
         );
 
         forget_removed_session(other_id, None);
+    }
+
+    #[test]
+    fn forget_removed_session_clears_queued_hosted_notices_without_touching_peer() {
+        let target_id = "session-forget-hosted-notice-target";
+        let peer_id = "session-forget-hosted-notice-peer";
+
+        crate::agent::hosted_notice::push(target_id, "target mcp refusal".to_string());
+        crate::agent::hosted_notice::push(peer_id, "peer mcp refusal".to_string());
+
+        forget_removed_session(target_id, None);
+
+        assert_eq!(crate::agent::hosted_notice::take(target_id), None);
+        let peer_notice = crate::agent::hosted_notice::take(peer_id).expect("peer notice remains queued");
+        assert!(peer_notice.contains("- peer mcp refusal"), "{peer_notice}");
     }
 }
