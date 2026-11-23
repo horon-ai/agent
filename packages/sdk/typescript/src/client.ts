@@ -61,6 +61,7 @@ import {
   type SessionToolDefinition,
   type TextMatch,
   type TodoEffects,
+  type TodoEditRefusal,
   type TodoSnapshot,
   type ToolVerdictName,
   type TurnStopReason,
@@ -911,6 +912,22 @@ export class HoronAgentClient extends EventEmitter {
     return frame.session;
   }
 
+  /**
+   * Fork a new idle session from the messages recorded before `boundaryMessageId`.
+   *
+   * The boundary is a stored message id from the source's history, not an index.
+   * A boundary the source no longer records is refused and the source is left
+   * untouched. Requires `session_fork_at_v1`.
+   */
+  async forkSessionAt(sessionId: string, boundaryMessageId: string): Promise<SessionInfo> {
+    this.requireCapability("session_fork_at_v1", "forkSessionAt");
+    const frame = await this.expectReply(
+      { req: "fork_session_at", session_id: sessionId, boundary_message_id: boundaryMessageId },
+      "session_forked",
+    );
+    return frame.session;
+  }
+
   async detachSession(sessionId: string): Promise<void> {
     await this.requestOk({ req: "detach_session", session_id: sessionId });
     this.toolCallbacks.abort(sessionId);
@@ -1445,6 +1462,32 @@ export class HoronAgentClient extends EventEmitter {
   async todoState(sessionId: string): Promise<TodoSnapshot> {
     const frame = await this.expectReply({ req: "get_todo_state", session_id: sessionId }, "todo_state");
     return frame.state;
+  }
+
+  /** Persisted todo state with the revision that names the stored list it was
+   * read from. The revision is absent on servers that predate it.
+   * Requires the `todo_state` capability. */
+  async todoSnapshot(sessionId: string): Promise<{ state: TodoSnapshot; revision?: string }> {
+    const frame = await this.expectReply({ req: "get_todo_state", session_id: sessionId }, "todo_state");
+    return { state: frame.state, revision: frame.revision };
+  }
+
+  /** Change one todo item's status only if the stored list is still the
+   * revision the caller read. A stale list answers with `applied: false`, the
+   * refusal `stale_revision`, and the current state, and writes nothing.
+   * Requires the `todo_edit_v1` capability. */
+  async setTodoStatus(
+    sessionId: string,
+    expectedRevision: string,
+    id: string,
+    status: string,
+  ): Promise<{ applied: boolean; refusal?: TodoEditRefusal; state: TodoSnapshot; revision: string }> {
+    this.requireCapability("todo_edit_v1", "setTodoStatus");
+    const frame = await this.expectReply(
+      { req: "set_todo_status", session_id: sessionId, expected_revision: expectedRevision, todo_id: id, status },
+      "todo_edit_result",
+    );
+    return { applied: frame.applied, refusal: frame.refusal, state: frame.state, revision: frame.revision };
   }
 
   /** Apply a follow-up decision's persistent effects. */

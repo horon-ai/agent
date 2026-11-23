@@ -1024,6 +1024,56 @@ def retry_turn_smoke(terminal: Terminal, home: str, base_url: str) -> None:
                 if '"kind":"message_appended"' in line and prompt in line]
     if len(matching) != 1:
         raise Failure(f"expected one stored user prompt across retry, found {len(matching)}")
+
+
+def todo_edit_smoke(terminal: Terminal, home: str) -> None:
+    from pathlib import Path
+
+    events = [path for path in Path(home).glob("sessions/*/events.jsonl")
+              if TOOL_FILE in path.read_text(encoding="utf-8")]
+    if len(events) != 1:
+        raise Failure(f"expected a single active session, got {len(events)}")
+    session_id = events[0].parent.name
+    todo = Path(home, "todos", f"{session_id}.json")
+    todo.parent.mkdir(exist_ok=True)
+    rows = [{"id": f"todo-{i}", "content": f"fixture item {i:02}", "status": "pending", "priority": "medium"}
+            for i in range(1, 13)]
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    # Writing the fixture out of process does not emit TodoChanged. Attaching
+    # reloads the saved snapshot through the same path as a real reconnect.
+    attach_start = len(terminal.transcript)
+    terminal.send(f"/resume {session_id}\r")
+    terminal.read_until("0/12 complete", STEP_TIMEOUT, "seeded todo snapshot loaded", since=attach_start)
+    picker_start = len(terminal.transcript)
+    terminal.send("/todo\r")
+    terminal.read_until("fixture item 01", STEP_TIMEOUT, "full todo picker is loaded", since=picker_start)
+    rows[0]["status"] = "in_progress"
+    rows[0]["content"] = "externally updated todo"
+    todo.write_text(json.dumps(rows), encoding="utf-8")
+    refusal_start = len(terminal.transcript)
+    terminal.send("\r")
+    terminal.read_until("externally updated todo", STEP_TIMEOUT, "stale edit refreshed the current list", since=refusal_start)
+    if json.loads(todo.read_text(encoding="utf-8"))[0]["status"] != "in_progress":
+        raise Failure("stale todo edit overwrote the newer list")
+    terminal.send("\r")
+    deadline = time.monotonic() + STEP_TIMEOUT
+    while time.monotonic() < deadline:
+        updated = json.loads(todo.read_text(encoding="utf-8"))[0]
+        if updated["status"] == "completed":
+            break
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            if not chunk:
+                break
+            terminal.transcript += chunk.decode("utf-8", "replace")
+    updated = json.loads(todo.read_text(encoding="utf-8"))[0]
+    if updated["status"] != "completed" or updated["content"] != "externally updated todo":
+        raise Failure(f"the refreshed edit did not preserve the updated todo: {updated!r}")
+    terminal.send("\x1b")
+
+
+
 def git(root: str, env: dict[str, str], *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
 
@@ -1429,9 +1479,36 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             observations_start = len(terminal.transcript)
             terminal.send("/observations\r")
             terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
+            terminal.read_until("idle", STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
+            todo_edit_smoke(terminal, home)
             retry_turn_smoke(terminal, home, base_url)
+            # The swarm smoke finds the parent by the approved tool call, so it
+            # runs before the fork below: a branch inherits that call, and two
+            # sessions holding it would make the parent ambiguous.
             context_request_smoke(terminal, home, base_url)
             swarm_picker_smoke(terminal, launch, home, case_root, env)
+            boundary_start = len(terminal.transcript)
+            terminal.send("tui-fork-boundary-proof\r")
+            terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
+            terminal.read_until("idle", STEP_TIMEOUT, "boundary turn ended", since=boundary_start)
+            terminal.send("/fork\r")
+            terminal.read_until("Fork from a message", STEP_TIMEOUT, "choose a saved message boundary")
+            filter_start = len(terminal.transcript)
+            terminal.send("tui-fork-boundary-proof")
+            terminal.read_until("the branch keeps", STEP_TIMEOUT, "saved boundary selected", since=filter_start)
+            fork_start = len(terminal.transcript)
+            terminal.send("\r")
+            terminal.read_until("resumed session_", STEP_TIMEOUT, "the fork was saved and attached", since=fork_start)
+            return_picker = len(terminal.transcript)
+            terminal.send("/fork")
+            terminal.read_until("/fork", STEP_TIMEOUT, "return command reached the composer", since=return_picker)
+            return_picker = len(terminal.transcript)
+            terminal.send("\r")
+            terminal.read_until("back to", STEP_TIMEOUT, "the fork menu can return to the parent", since=return_picker)
+            parent_start = len(terminal.transcript)
+            terminal.send("\r")
+            terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
+            terminal.read_until("resumed ", STEP_TIMEOUT, "parent session reattached", since=parent_start)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         archive_picker_start = len(terminal.transcript)

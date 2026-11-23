@@ -199,19 +199,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-      - name: Run clippy on horon-tui
-        # A separate `-p` selection, not `--workspace`: this is the one package
-        # the guardrail job would otherwise miss, because a bare `cargo clippy`
-        # at the root selects only the root package. It also keeps the terminal
-        # stack out of the root package's all-features build.
+      - name: Run clippy on workspace targets
+        # Bare `cargo clippy` above selects only the root package, so member
+        # crates' test, bench, and example targets (along with standalone
+        # members like `horon-tui`, `horon-agent-extension-sdk`, and
+        # `horon-package-example`) are not linted there. Running `--workspace
+        # --all-targets` with default features covers every member target while
+        # keeping the terminal stack out of the root `--all-features` build.
         if: ${{ !cancelled() }}
-        run: cargo clippy --locked --all-targets --all-features -p horon-tui -- -D warnings
-
-      - name: Run clippy on the author SDK and example
-        # Same reason as horon-tui above: these are workspace members the root
-        # package's clippy selection never reaches.
-        if: ${{ !cancelled() }}
-        run: cargo clippy --locked --all-targets --all-features -p horon-agent-extension-sdk -p horon-package-example -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Run the author SDK issue verification commands
         if: ${{ !cancelled() }}
@@ -1201,6 +1197,34 @@ jobs:
             --timeout 600 --min-passed 2 \
             -- update::release_notes::tests:: --nocapture
 
+      - name: Run self-update cohorts
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- update::github_fetch::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 31 \
+            -- update::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- update::update_metadata::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- update::update_rate_limit::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- update::activation::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::hot_exec::tests:: --nocapture
+
       - name: Run session forget cleanup cohort
         shell: bash
         run: |
@@ -2088,6 +2112,22 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
             --timeout 600 --min-passed 6 \
             -- translate::effective_settings::tests:: --nocapture
+
+      - name: Run todo status edit cohort
+        shell: bash
+        # `todo_edit_v1` has its wire snapshot in `horon-agent-harness-api` and
+        # its bridge translation in `horon-agent-harness-api-server`; both run
+        # only through these filters. `--min-passed` is the number of tests each
+        # filter matches, so a renamed module fails instead of passing empty.
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api \
+            --timeout 600 --min-passed 1 \
+            -- todo_edit_snapshot_tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-harness-api-server \
+            --timeout 600 --min-passed 1 \
+            -- translate::todo_tests:: --nocapture
 
       - name: Run stale API socket probe cohort
         shell: bash

@@ -40,6 +40,8 @@ pub enum Kind {
     Efforts,
     /// The sessions stored for this working directory.
     Sessions,
+    /// The recorded message boundaries this session can fork from.
+    Forks,
     /// The swarm children of the attached session, and the parent it returns to.
     ///
     /// Its rows are chosen like a session's: `enter` names a session id for the
@@ -69,6 +71,12 @@ pub enum Kind {
     /// can take back, delete or move, and its keys are answered before the
     /// generic list sees them.
     Queue,
+    /// The attached session's complete todo list.
+    ///
+    /// Like the queue, its rows are changed rather than chosen: `enter` toggles
+    /// an item and `delete` cancels it, and those keys are answered before the
+    /// generic list sees them.
+    Todos,
 }
 
 /// One row of the list.

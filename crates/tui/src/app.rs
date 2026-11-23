@@ -28,11 +28,15 @@ use crate::transcript::{CacheMiss, Decision, ToolState, Transcript};
 
 use self::copy::CopyRequest;
 
+pub use self::action::Action;
+use self::forks::ForkOrigin;
+
 mod action;
 mod commands;
 mod copy;
 mod draft_suggestions;
 mod effort;
+mod forks;
 mod history_search;
 mod jobs;
 mod keys;
@@ -63,6 +67,9 @@ mod copy_tests;
 mod effort_cmd_tests;
 
 #[cfg(test)]
+mod forks_tests;
+
+#[cfg(test)]
 mod history_search_tests;
 
 #[cfg(test)]
@@ -76,8 +83,6 @@ mod session_switch_tests;
 
 #[cfg(test)]
 mod steer_tests;
-
-pub use action::Action;
 
 /// One message from the user, before the harness has confirmed it.
 ///
@@ -294,6 +299,14 @@ pub struct App {
     /// client has to say which happened: `resumed` claims a stored conversation
     /// was replayed, which a session that was just created does not have.
     new_session_pending: bool,
+    /// The session the branch in force was forked from, while the client
+    /// follows the child. Cleared by any attach that is not that fork.
+    fork_origin: Option<ForkOrigin>,
+    /// A fork this client asked for and has not seen answered yet.
+    ///
+    /// Kept apart from `fork_origin` so a refused fork cannot make the session
+    /// it was asked from look like a branch's origin.
+    fork_pending: Option<ForkOrigin>,
     /// Working directory the `path` segment shows.
     pub cwd: Option<String>,
     /// Whether path completion may read this session's workspace on this machine.
@@ -473,6 +486,8 @@ impl App {
             session_id: None,
             session_title: None,
             new_session_pending: false,
+            fork_origin: None,
+            fork_pending: None,
             cwd: None,
             workspace_is_local: false,
             // A new session starts in the launch directory until it reports otherwise.
@@ -569,6 +584,8 @@ impl App {
             session_id: None,
             session_title: None,
             new_session_pending: false,
+            fork_origin: None,
+            fork_pending: None,
             cwd: None,
             workspace_is_local: false,
             workspace_known: true,

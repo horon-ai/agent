@@ -5,9 +5,9 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
-//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/pin`,
-//!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/tools`,
-//!    `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/retry`, `/diff`,
+//!    `/compact`, `/jobs`, `/model`, `/effort`, `/fork`, `/mcp`, `/new`, `/note`, `/pin`,
+//!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/todo`,
+//!    `/tools`, `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/retry`, `/diff`,
 //!    `/commit`, `/swarm` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -106,6 +106,8 @@ pub enum Local {
     Effort,
     /// Start a new session in this working directory.
     New,
+    /// Fork a new session from a recorded message boundary.
+    Fork,
     /// Open the settings screen.
     Settings,
     /// Rename the attached session.
@@ -148,6 +150,8 @@ pub enum Local {
     Queue,
     /// Continue the last failed turn of this session.
     Retry,
+    /// Show the attached session's todo list and change an item's status.
+    Todo,
     /// Show the staged and unstaged changes in the session's workspace.
     Diff,
     /// Review the staged set, and commit exactly it after a second line.
@@ -180,6 +184,7 @@ impl Local {
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
+            "fork" | "branch" => Some(Self::Fork),
             "settings" => Some(Self::Settings),
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
@@ -199,6 +204,7 @@ impl Local {
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
             "retry" => Some(Self::Retry),
+            "todo" | "todos" => Some(Self::Todo),
             "diff" => Some(Self::Diff),
             "commit" => Some(Self::Commit),
             "swarm" => Some(Self::Swarm),
@@ -221,6 +227,7 @@ impl Local {
             Self::Model => "model",
             Self::Effort => "effort",
             Self::New => "new",
+            Self::Fork => "fork",
             Self::Settings => "settings",
             Self::Rename => "rename",
             Self::Resume => "resume",
@@ -245,6 +252,7 @@ impl Local {
             Self::Replay => "replay",
             Self::Queue => "queue",
             Self::Retry => "retry",
+            Self::Todo => "todo",
             Self::Diff => "diff",
             Self::Commit => "commit",
             Self::Swarm => "swarm",
@@ -824,6 +832,7 @@ const LOCAL_NAMES: &[&str] = &[
     "effort",
     "exit",
     "export",
+    "fork",
     "help",
     "jobs",
     "keys",
@@ -845,6 +854,7 @@ const LOCAL_NAMES: &[&str] = &[
     "stats",
     "swarm",
     "switch",
+    "todo",
     "tools",
     "unpin",
     "voice",

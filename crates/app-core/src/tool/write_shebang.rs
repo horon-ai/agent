@@ -59,11 +59,33 @@ mod tests {
     use super::*;
     use crate::tool::{Tool, ToolContext};
 
-    fn restore_home(previous: Option<std::ffi::OsString>) {
-        if let Some(value) = previous {
-            crate::env::set_var("HORON_HOME", value);
-        } else {
-            crate::env::remove_var("HORON_HOME");
+    struct HomeSandbox {
+        previous: Option<std::ffi::OsString>,
+        _home: tempfile::TempDir,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl HomeSandbox {
+        fn new() -> Self {
+            let lock = crate::storage::lock_test_env();
+            let home = tempfile::tempdir().expect("home dir");
+            let previous = std::env::var_os("HORON_HOME");
+            crate::env::set_var("HORON_HOME", home.path());
+            Self {
+                previous,
+                _home: home,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for HomeSandbox {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                crate::env::set_var("HORON_HOME", value);
+            } else {
+                crate::env::remove_var("HORON_HOME");
+            }
         }
     }
 
@@ -87,11 +109,8 @@ mod tests {
 
     #[tokio::test]
     async fn write_shebang_create_makes_the_file_executable() {
-        let _lock = crate::storage::lock_test_env();
-        let previous_home = std::env::var_os("HORON_HOME");
+        let _home = HomeSandbox::new();
         let temp = tempfile::tempdir().expect("tempdir");
-        let home = tempfile::tempdir().expect("home dir");
-        crate::env::set_var("HORON_HOME", home.path());
         let output = WriteTool::new()
             .execute(
                 serde_json::json!({"file_path": "run.sh", "content": "#!/bin/sh\necho hi\n"}),
@@ -108,7 +127,6 @@ mod tests {
             "output={:?}",
             output.output
         );
-        restore_home(previous_home);
     }
 
     #[tokio::test]

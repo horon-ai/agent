@@ -682,12 +682,13 @@ failover keys in `ProviderConfig` (`crates/config-types/src/lib.rs`).
 - **Clippy run from the root does not check member crates' test targets.** The root `Cargo.toml` is both
   `[package]` and `[workspace]` and has no `default-members`. So running
   `cargo clippy --locked --all-targets --all-features -- -D warnings` from the root lints member crates' library
-  code but not their test and example targets. The command that checks the whole workspace is
-  `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`, and it passed with exit 0 on
-  `dev` on 2026-11-05.
-- **CI still runs the root form.** The `Run clippy with warnings denied` step in `.github/workflows/ci.yml` and
-  `scripts/ci/check_all.sh` run without `--workspace`. Lint regressions in member crates' test code are not caught in
-  CI, so if you changed that code, run the `--workspace` command above locally.
+  code but not their test and example targets. The command that checks the whole workspace (with default features,
+  and all features on root) combines it with
+  `cargo clippy --locked --workspace --all-targets -- -D warnings`.
+- **CI runs both forms.** The `Run clippy with warnings denied` and `Run clippy on workspace targets` steps in
+  `.github/workflows/ci.yml` (and `scripts/ci/check_all.sh`) run root `--all-targets --all-features` followed by
+  `--workspace --all-targets -- -D warnings`, so lint regressions in member crates' test, example, and bench targets
+  fail CI as well.
 
 ### Files to read first
 

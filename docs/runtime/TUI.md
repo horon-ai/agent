@@ -462,6 +462,7 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
 | `/export <path>` | Write this session's transcript to a standalone offline HTML report |
+| `/fork` | Start a separate saved session from a recorded history boundary |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
@@ -483,6 +484,7 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/stats` | Show the attached session's recorded token usage |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/todo` | Open the attached session's full todo list and update a selected item |
 | `/tools` | Browse the current session's enabled tools without running them |
 | `/unpin [id]` | Remove a session from the pinned group |
 | `/voice` | Dictate to the draft or play text on this device |
@@ -492,15 +494,19 @@ Use `/diff` to see staged and unstaged changes separately. `/commit <message>` d
 
 If a repository has a commit or reference-transaction hook configured, use `git commit` in the terminal after reviewing the changes. The TUI preserves Git's signing settings. If a checkout races with confirmation, only the reviewed branch can receive the commit.
 
+Choose a saved user message in `/fork` to start a separate session containing the conversation before that message. The parent keeps its full history. In the new session, `/fork` also offers a row to return to the parent. The daemon refuses a history boundary that disappeared after the picker opened.
+
 Use `/voice consent` in the attached session before recording. Press Ctrl+Space or run `/voice` to start or stop. `/voice cancel` discards the recording and `/voice forget` withdraws consent. Recognized text goes into the draft and only goes to the model if you submit it. `/voice say <text>` and `/voice read` play text on this device.
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-five commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-seven commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
 `/jobs` lists the background work this session is still running, read from the daemon each time rather than replayed from the transcript, so a job that started or ended on another client shows up as it stands. Each row shows the command, the job kind and its newest output. Delete cancels the selected background terminal; the session and every other job keep running, and Esc closes the list without cancelling anything. A tool-call job is listed but cannot be cancelled from this list, and the list says so instead of sending a request the daemon would refuse. Switching sessions clears the rows, because a job's call id only means something in the session that started it.
+
+In `/todo`, Enter completes or reopens the selected item and Delete cancels it. If a newer list was saved after the picker opened, the daemon returns the updated list and leaves that write in place. The edit does not start a model turn. A daemon that supplies no revision opens a read-only list.
 
 `/artifact` lists retained artifacts for the current local session. Enter `/artifact <id>` or paste the `artifact://<id>` pointer to edit a temporary copy with `VISUAL` or `EDITOR`. The retained file stays unchanged and the temporary copy is removed on return. An explicit socket or remote bridge disables local artifact access.
 
@@ -527,6 +533,7 @@ built-in commands:
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
   /export              write this session's transcript as a standalone offline HTML report (/export <path>)
+  /fork                start a separate session from a saved history point
   /help                list the commands and the keys in force
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
@@ -548,6 +555,7 @@ built-in commands:
   /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
+  /todo                show every todo in the session and mark one done, open or cancelled
   /tools               browse the current session's enabled tools without running them
   /unpin               take a session out of the pinned group
   /voice               dictate to the draft or play text on this device

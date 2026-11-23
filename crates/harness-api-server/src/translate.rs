@@ -9,8 +9,10 @@ pub(crate) mod package_control;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
+mod session_fork;
 mod simple_kind;
 mod support;
+mod todo;
 mod turn_retry;
 #[cfg(test)]
 #[path = "translate/turn_retry_tests.rs"]
@@ -68,11 +70,15 @@ const REQUIRES_ATTACH: &[&str] = &[
     "get_effective_settings",
     "get_runtime_info",
     "fork_session",
+    "fork_session_at",
     "transfer_session",
     "read_file",
     "find_files",
     "search_text",
     "file_status",
+    // An operator edit writes the attached session's stored list; a connection
+    // that never attached has no session whose list it could be editing.
+    "set_todo_status",
     "approval_ack",
     "failover_ack",
     "permission_response",
@@ -121,6 +127,8 @@ pub struct BridgeState {
     pub runtime_commands_supported: bool,
     /// Set only after a safe legacy ping capability probe succeeds.
     pub session_tools_supported: bool,
+    /// The daemon answers `split_at`; used to refuse `fork_session_at` locally.
+    pub session_fork_at_supported: bool,
     /// The daemon accepts soft interrupt ids and per-id cancellation, and
     /// replies to `background_tool` with a result.
     pub soft_interrupt_ids_supported: bool,
@@ -673,15 +681,8 @@ impl BridgeState {
                 turn_retry::forward_run_id(&mut message, request);
                 vec![Outbound::Legacy(message)]
             }
-            "fork_session" => {
-                let id = self.legacy_id();
-                self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "split", "id": id}))]
-            }
-            "transfer_session" => {
-                let id = self.legacy_id();
-                self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "transfer", "id": id}))]
+            "fork_session" | "fork_session_at" | "transfer_session" => {
+                session_fork::request(self, request, api_id, req)
             }
             "cancel" => {
                 let id = self.legacy_id();
@@ -1095,41 +1096,9 @@ impl BridgeState {
                     Err((code, message)) => Self::error_reply(api_id, code, &message),
                 }
             }
-            "get_todo_state" => {
-                let session_id = request["session_id"].as_str().unwrap_or_default();
-                match Self::todo_home(session_id) {
-                    Ok(home) => vec![Outbound::Reply(ServerFrame::reply(
-                        api_id,
-                        ApiEvent::TodoState {
-                            session_id: session_id.to_string(),
-                            state: horon_agent_todo_policy::store::load_snapshot(&home, session_id),
-                        },
-                    ))],
-                    Err((code, message)) => Self::error_reply(api_id, code, &message),
-                }
-            }
-            "ack_todo_follow_up" => {
-                let session_id = request["session_id"].as_str().unwrap_or_default();
-                let effects: horon_agent_todo_policy::TodoEffects =
-                    match serde_json::from_value(request["effects"].clone()) {
-                        Ok(effects) => effects,
-                        Err(error) => {
-                            return Self::error_reply(
-                                api_id,
-                                ErrorCode::InvalidRequest,
-                                &format!("invalid effects: {error}"),
-                            );
-                        }
-                    };
-                let result = Self::todo_home(session_id).and_then(|home| {
-                    horon_agent_todo_policy::store::apply_effects(&home, session_id, effects)
-                        .map_err(|error| (ErrorCode::Internal, error.to_string()))
-                });
-                match result {
-                    Ok(()) => vec![Outbound::Reply(ServerFrame::reply(api_id, ApiEvent::Ok))],
-                    Err((code, message)) => Self::error_reply(api_id, code, &message),
-                }
-            }
+            "get_todo_state" => todo::get(api_id, request),
+            "set_todo_status" => todo::set(self, api_id, request),
+            "ack_todo_follow_up" => todo::ack(api_id, request),
             "file_status" => {
                 let session_id = request["session_id"].as_str().unwrap_or_default();
                 let relative = request["path"].as_str().unwrap_or_default();
@@ -2351,6 +2320,10 @@ impl BridgeState {
             "todo_changed" => vec![ServerFrame::event(ApiEvent::TodoChanged {
                 session_id: session(self),
             })],
+            "todo_edit_result" => {
+                let attached = session(self);
+                todo::edit_result(self, event, &attached)
+            }
             // Background-task traffic reaches clients as a notification whose
             // body is the markdown the TUI renders. The API refuses to make
             // clients re-derive a progress bar from prose, so the two shapes
@@ -2990,13 +2963,6 @@ impl BridgeState {
     }
 
     /// HoronAgent home for a todo-state request, rejecting ids unsafe for a path.
-    fn todo_home(session_id: &str) -> Result<std::path::PathBuf, (ErrorCode, String)> {
-        if !horon_agent_todo_policy::store::is_safe_session_id(session_id) {
-            return Err((ErrorCode::InvalidRequest, "invalid session_id".to_string()));
-        }
-        Self::horon_agent_home().ok_or_else(|| (ErrorCode::Internal, "no horon-agent home".to_string()))
-    }
-
     pub(crate) fn horon_agent_home() -> Option<std::path::PathBuf> {
         std::env::var_os("HORON_HOME")
             .map(std::path::PathBuf::from)
@@ -3997,3 +3963,6 @@ mod replication_tests;
 #[cfg(test)]
 #[path = "history_page_perf_tests.rs"]
 mod history_page_perf_tests;
+
+#[cfg(test)]
+mod todo_tests;

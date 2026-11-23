@@ -1597,6 +1597,27 @@ class HoronAgentClient:
             raise HarnessError("unexpected_reply", "session_forked without a session")
         return session
 
+    async def fork_session_at(self, session_id: str, boundary_message_id: str) -> dict[str, Any]:
+        """Fork the messages recorded before ``boundary_message_id`` into a new session.
+
+        The boundary is a stored message id from the source's history, not an
+        index. A boundary the source no longer records is refused and the source
+        is left untouched. Requires ``session_fork_at_v1``.
+        """
+        self._require_capability("session_fork_at_v1", "fork_session_at")
+        frame = await self._expect_reply(
+            {
+                "req": "fork_session_at",
+                "session_id": session_id,
+                "boundary_message_id": boundary_message_id,
+            },
+            "session_forked",
+        )
+        session = frame.get("session")
+        if not isinstance(session, dict):
+            raise HarnessError("unexpected_reply", "session_forked without a session")
+        return session
+
     async def transfer_session(self, session_id: str) -> dict[str, Any]:
         frame = await self._expect_reply({"req": "transfer_session", "session_id": session_id}, "session_forked")
         session = frame.get("session")
@@ -2186,6 +2207,45 @@ class HoronAgentClient:
         frame = await self._expect_reply({"req": "get_todo_state", "session_id": session_id}, "todo_state")
         state = frame.get("state")
         return state if isinstance(state, dict) else {}
+
+    async def todo_snapshot(self, session_id: str) -> tuple[dict[str, Any], str | None]:
+        """Persisted todo state with the revision that names the stored list.
+
+        The revision is ``None`` on a server that predates revisions. Requires
+        the ``todo_state`` capability.
+        """
+        frame = await self._expect_reply({"req": "get_todo_state", "session_id": session_id}, "todo_state")
+        state = frame.get("state")
+        revision = frame.get("revision")
+        return (
+            state if isinstance(state, dict) else {},
+            revision if isinstance(revision, str) else None,
+        )
+
+    async def set_todo_status(
+        self,
+        session_id: str,
+        expected_revision: str,
+        id: str,
+        status: str,
+    ) -> dict[str, Any]:
+        """Change one todo item's status only if the stored list is unchanged.
+
+        A stale list answers with ``applied`` false, the refusal
+        ``stale_revision``, and the current state, and writes nothing. Requires
+        the ``todo_edit_v1`` capability.
+        """
+        self._require_capability("todo_edit_v1", "set_todo_status")
+        return await self._expect_reply(
+            {
+                "req": "set_todo_status",
+                "session_id": session_id,
+                "expected_revision": expected_revision,
+                "todo_id": id,
+                "status": status,
+            },
+            "todo_edit_result",
+        )
 
     async def ack_todo_follow_up(self, session_id: str, effects: dict[str, Any]) -> None:
         """Apply a follow-up decision's persistent effects."""

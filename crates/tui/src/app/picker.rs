@@ -11,10 +11,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use horon_agent_sdk::api::SessionToolDefinition;
 
+use horon_agent_sdk::todo::{TodoEditRefusal, TodoItem, canonical_todo_status};
+
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
 use crate::scroll::Scroll;
 use crate::sdk_bridge::{AttachedSession, SessionRow, SwarmRow};
+use crate::todo_panel::{TodoPanel, TodoStatusRequest};
 
 impl App {
     /// Open the model list; the bridge fills it when the catalog answers.
@@ -369,6 +372,11 @@ impl App {
     /// The list is taken out of the app while the key is read, so a key that
     /// closes it cannot leave a half-updated screen behind.
     pub(crate) fn picker_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The todo list edits rows instead of choosing one, so its keys are
+        // answered here before the generic list reads `enter` as a choice.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Todos) {
+            return self.todo_panel_key(key);
+        }
         let mut picker = self.picker.take()?;
         if picker.kind() == Kind::Sessions && key.code == KeyCode::Char('a') && key.modifiers == KeyModifiers::CONTROL {
             let Some(row) = picker.selected_row() else {
@@ -434,8 +442,13 @@ impl App {
                     self.recall_draft(&value);
                     None
                 }
-                // A skill is the same: the invocation goes into the draft, with
-                // the request still to be written after it.
+                // A boundary is a stored message id the daemon resolves; the
+                // first row may instead name the session this branch came
+                // from, which is an ordinary attach back.
+                Kind::Forks => {
+                    let label = picker.selected_label().unwrap_or(value.as_str()).to_string();
+                    self.choose_fork(&value, &label)
+                }
                 Kind::Skills => {
                     self.draft_skill(&value);
                     None
@@ -452,6 +465,9 @@ impl App {
                 // The job list is the same shape: `delete` cancels, and the
                 // generic selector never runs for it.
                 Kind::Queue | Kind::Tools | Kind::Jobs => None,
+                // The todo list answers its own keys before this list sees
+                // them, so no row is ever chosen from here either.
+                Kind::Todos => None,
                 // A link is the one row that leaves the client: the reader
                 // pressed enter on it, so it goes to the platform handler and
                 // the list closes without an action for the bridge.
@@ -495,8 +511,16 @@ impl App {
         // job rows nor an open job list may follow the client across.
         self.clear_background_jobs();
         self.todos = Default::default();
+        // The todo list belonged to the session being left; a key must not
+        // carry it into the one just attached.
+        if self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Todos) {
+            self.picker = None;
+        }
         self.session_title = session.title;
         self.new_session_pending = false;
+        // The branch origin belongs to the session being left; a fork answer
+        // records its own right after this, in the handler that received it.
+        self.fork_origin = None;
         self.pending_turn = false;
         // A session the user switched to is a client they are watching, so an
         // outcome of the session before it is not worth a tab mark.
@@ -639,6 +663,242 @@ impl App {
         self.reload_commands();
     }
 
+    /// Open the complete todo list of the attached session.
+    ///
+    /// Every stored item is shown, including completed and cancelled ones, so
+    /// the operator can restore work the agent finished or dropped. The list is
+    /// built from the same snapshot the passive panel summarizes; nothing is
+    /// fetched here, because a `TodoChanged` refresh has already brought the
+    /// current list.
+    ///
+    /// A harness that does not report a revision opens read-only: the server
+    /// could not check an edit against the list the operator sees, and an
+    /// unchecked write could overwrite work that landed in between.
+    pub(crate) fn open_todos(&mut self) -> Option<Action> {
+        if self.session_id.is_none() {
+            self.warn("todo: not attached to a session");
+            return None;
+        }
+        if self.todos.revision().is_none() {
+            self.transcript
+                .push_notice("todo: this harness does not report a list revision; the list is read-only");
+        }
+        let rows = todo_rows(self.todos.items());
+        self.picker = Some(Picker::new(Kind::Todos, "Todos", rows, "this session has no todos"));
+        None
+    }
+
+    /// Replace the stored list after a read or a committed change.
+    ///
+    /// Only the attached session's list reaches the panel, so a snapshot from
+    /// another session cannot replace the one on screen. The revision travels
+    /// with the items: the edit sends back exactly the revision these items came
+    /// from. A change still in flight is kept across the refresh, because the
+    /// answer it is waiting for has not arrived yet.
+    ///
+    /// Returns whether anything the screen shows changed.
+    pub(crate) fn set_todos(&mut self, session_id: &str, items: Vec<TodoItem>, revision: Option<String>) -> bool {
+        if self.session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        let pending = self.todos.pending().cloned();
+        let mut panel = TodoPanel::from_snapshot(&items, revision);
+        panel.restore_pending(pending);
+        if panel == self.todos {
+            return false;
+        }
+        self.todos = panel;
+        self.refresh_todo_picker();
+        true
+    }
+
+    /// Apply the answer to one status edit.
+    ///
+    /// A refusal is not a failure: the reply carries the current list and
+    /// revision, so the list refreshes from the same frame and the notice says
+    /// the change was not made. Nothing here retries a stale edit: the user saw
+    /// the new list by the time the notice lands and can press the key again.
+    pub(crate) fn todo_edit_reply(
+        &mut self,
+        session_id: &str,
+        applied: bool,
+        refusal: Option<TodoEditRefusal>,
+        items: Vec<TodoItem>,
+        revision: String,
+        (id, status): (&str, &str),
+    ) -> bool {
+        if self.session_id.as_deref() != Some(session_id) {
+            return false;
+        }
+        let label = items
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| item.content.trim())
+            .filter(|content| !content.is_empty())
+            .unwrap_or(id)
+            .to_string();
+        let changed = {
+            let pending = self.todos.pending().cloned();
+            let mut panel = TodoPanel::from_snapshot(&items, Some(revision));
+            panel.restore_pending(pending);
+            let changed = panel != self.todos;
+            self.todos = panel;
+            self.todos.clear_edit();
+            changed
+        };
+        self.refresh_todo_picker();
+        if applied {
+            self.transcript.push_notice(format!("todo: {label} is now {status}"));
+        } else {
+            let sentence = match refusal {
+                Some(TodoEditRefusal::StaleRevision) => format!(
+                    "todo: the list changed on the server; refreshed without changing {label} — press the key again to apply it to the new list"
+                ),
+                Some(TodoEditRefusal::UnknownItem) => {
+                    format!("todo: {label} is no longer in the list; refreshed")
+                }
+                Some(TodoEditRefusal::InvalidStatus) => {
+                    format!("todo: {status} is not a status the harness accepts; nothing was changed")
+                }
+                Some(TodoEditRefusal::InvalidBlocker) => format!(
+                    "todo: {label} is blocked on nothing; the harness needs a blocker note before it can be marked blocked"
+                ),
+                None => format!("todo: the change to {label} was not applied; refreshed"),
+            };
+            self.warn(sentence);
+        }
+        changed
+    }
+
+    /// One keystroke inside the todo list.
+    ///
+    /// `enter` toggles an item between done and open, and `delete` cancels it;
+    /// both are reversible from the same list, and neither removes the item.
+    /// Every other key is the list's own — filter, arrows, pages — and `esc`
+    /// closes without changing anything. Only keys that cannot be typed are
+    /// claimed, so the filter keeps every letter.
+    pub(crate) fn todo_panel_key(&mut self, key: KeyEvent) -> Option<Action> {
+        // The list belongs to the attached session: a switch closes it rather
+        // than letting a key edit a list the session no longer owns.
+        if self.session_id.is_none() {
+            self.picker = None;
+            return None;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.picker = None;
+                None
+            }
+            KeyCode::Enter => {
+                let id = self.todo_selected_id()?;
+                let status = self.todo_toggle_status(&id)?;
+                self.todo_commit(id, status)
+            }
+            KeyCode::Delete => {
+                let id = self.todo_selected_id()?;
+                self.todo_commit(id, "cancelled".to_string())
+            }
+            _ => {
+                let mut picker = self.picker.take()?;
+                if picker.on_key(key) == Outcome::Handled {
+                    self.picker = Some(picker);
+                }
+                None
+            }
+        }
+    }
+
+    /// The item id under the cursor.
+    fn todo_selected_id(&mut self) -> Option<String> {
+        let id = self.picker.as_ref()?.selected_row().map(|row| row.value.clone());
+        match id {
+            Some(id) if !id.is_empty() => Some(id),
+            _ => {
+                self.warn("todo: this item has no id, so the harness cannot address it");
+                None
+            }
+        }
+    }
+
+    /// The status `enter` asks for on one item.
+    fn todo_toggle_status(&self, id: &str) -> Option<String> {
+        let item = self.todos.items().iter().find(|item| item.id == id)?;
+        let current = canonical_todo_status(&item.status).unwrap_or("pending");
+        Some(
+            if current == "completed" || current == "cancelled" {
+                "pending"
+            } else {
+                "completed"
+            }
+            .to_string(),
+        )
+    }
+
+    /// Check one status change against what this client holds, then send it.
+    ///
+    /// Every refusal is local and changes nothing: no session, no revision, no
+    /// item in the current list, or an answer to an earlier change still on its
+    /// way. The last one matters most — two edits sent together would carry the
+    /// same expected revision, and the server would refuse the second after the
+    /// first had already landed.
+    fn todo_commit(&mut self, id: String, status: String) -> Option<Action> {
+        let Some(session_id) = self.session_id.clone() else {
+            self.warn("todo: not attached to a session");
+            return None;
+        };
+        if self.todos.pending().is_some() {
+            self.warn("todo: waiting for the previous change to be answered");
+            return None;
+        }
+        let Some(revision) = self
+            .todos
+            .revision()
+            .map(str::to_string)
+            .filter(|text| !text.is_empty())
+        else {
+            self.warn("todo: this harness did not report a list revision; the list is read-only");
+            return None;
+        };
+        if !self.todos.items().iter().any(|item| item.id == id) {
+            self.warn("todo: that item is no longer in the list; reopen the list to see the current one");
+            return None;
+        }
+        let Some(status) = canonical_todo_status(&status) else {
+            self.warn("todo: that status is not one the harness accepts");
+            return None;
+        };
+        let status = status.to_string();
+        if !self.todos.begin_edit(id.clone(), status.clone()) {
+            self.warn("todo: waiting for the previous change to be answered");
+            return None;
+        }
+        Some(Action::TodoStatus(TodoStatusRequest {
+            session_id,
+            revision,
+            id,
+            status,
+        }))
+    }
+
+    /// Rebuild the open todo list from the panel's current items, keeping the
+    /// row under the cursor selected by id.
+    fn refresh_todo_picker(&mut self) {
+        if !self.picker.as_ref().is_some_and(|picker| picker.kind() == Kind::Todos) {
+            return;
+        }
+        let keep = self
+            .picker
+            .as_ref()
+            .and_then(Picker::selected_row)
+            .map(|row| row.value.clone())
+            .and_then(|id| self.todos.items().iter().position(|item| item.id == id))
+            .unwrap_or(0);
+        let rows = todo_rows(self.todos.items());
+        if let Some(picker) = self.picker.as_mut() {
+            picker.replace_rows(rows, keep);
+        }
+    }
+
     /// A list or attach request the harness refused.
     ///
     /// The list goes with it: a picker waiting for rows that will never come
@@ -649,11 +909,17 @@ impl App {
     /// make the next successful attach claim it started a session.
     pub fn request_failed(&mut self, message: &str) {
         self.new_session_pending = false;
+        // A refused fork never moved, so the session it was asked from must not
+        // be treated as a branch's origin, and a later answer must not do it.
+        self.fork_pending = None;
         // A request that came back as a failure will never be answered, so the
         // level or model it asked for must not steer the cycle keys.
         self.effort_requested = None;
         self.model_requested = None;
         self.model_cycle_pending = None;
+        // A status change that failed on the wire will never be answered, so
+        // its marker must not keep the next key from being sent.
+        self.todos.clear_edit();
         if self.picker.as_ref().is_some_and(Picker::is_loading) {
             self.picker = None;
         }
@@ -720,4 +986,67 @@ fn join_names(names: &[String]) -> String {
         [only] => only.clone(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
+}
+
+/// One row per stored todo item, in stored order.
+///
+/// Every item is included, cancelled ones too: the list is the whole stored
+/// state, not the active subset the passive panel counts. The row's value is the
+/// item id because that is what a status edit addresses; an item without one is
+/// shown but cannot be edited, which the key handler says rather than guessing.
+fn todo_rows(items: &[TodoItem]) -> Vec<Row> {
+    items
+        .iter()
+        .map(|item| {
+            let status = canonical_todo_status(&item.status).unwrap_or("pending");
+            let content = item.content.trim();
+            let label = if content.is_empty() {
+                if item.id.is_empty() {
+                    "(untitled)".to_string()
+                } else {
+                    item.id.clone()
+                }
+            } else {
+                content.to_string()
+            };
+            let mut preview = vec![format!("status: {status}")];
+            if let Some(group) = item.group.as_deref().map(str::trim).filter(|group| !group.is_empty()) {
+                preview.push(format!("group: {group}"));
+            }
+            if !item.priority.trim().is_empty() {
+                preview.push(format!("priority: {}", item.priority.trim()));
+            }
+            if let Some(blocker) = item.blocker.as_deref().map(str::trim).filter(|note| !note.is_empty()) {
+                preview.push(format!("blocker: {blocker}"));
+            }
+            if let Some(owner) = item
+                .assigned_to
+                .as_deref()
+                .map(str::trim)
+                .filter(|owner| !owner.is_empty())
+            {
+                preview.push(format!("assigned: {owner}"));
+            }
+            if !item.blocked_by.is_empty() {
+                preview.push(format!("waiting on: {}", item.blocked_by.join(", ")));
+            }
+            if !item.id.is_empty() {
+                preview.push(format!("id: {}", item.id));
+            }
+            preview.push(if status == "completed" || status == "cancelled" {
+                "enter reopens this item".to_string()
+            } else {
+                "enter marks this item done".to_string()
+            });
+            let detail = if item.priority.trim().is_empty() {
+                status.to_string()
+            } else {
+                format!("{status} · {}", item.priority.trim())
+            };
+            Row::new(label, item.id.clone())
+                .with_detail(detail)
+                .marked(status == "in_progress")
+                .with_preview(preview)
+        })
+        .collect()
 }

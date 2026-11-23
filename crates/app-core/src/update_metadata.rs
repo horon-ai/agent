@@ -59,6 +59,26 @@ impl UpdateMetadata {
         }
     }
 
+    /// Load update metadata, recovering with defaults if the stored JSON is
+    /// truncated or corrupted while still propagating real filesystem errors.
+    pub fn load_or_recover() -> Result<Self> {
+        let path = metadata_path()?;
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let content = fs::read_to_string(&path)?;
+        match serde_json::from_str(&content) {
+            Ok(metadata) => Ok(metadata),
+            Err(error) => {
+                crate::logging::warn(&format!(
+                    "update: resetting unreadable metadata at {}: {error}",
+                    path.display()
+                ));
+                Ok(Self::default())
+            }
+        }
+    }
+
     pub fn save(&self) -> Result<()> {
         let path = metadata_path()?;
         if let Some(parent) = path.parent() {

@@ -85,6 +85,9 @@ impl App {
             // is in; nothing is claimed on screen until the daemon answers,
             // because a create can be refused.
             Local::New => self.start_new_session(),
+            // `/fork` lists the recorded messages this session can branch
+            // from; the daemon does the fork and the client follows the child.
+            Local::Fork => self.open_forks(),
             // `/skills` shows the list the harness reports: the rows it already
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
@@ -171,6 +174,10 @@ impl App {
             // Nothing is sent from here: the bridge reads which run failed from
             // the daemon and asks it to continue that run.
             Local::Retry => self.retry_turn(),
+            // `/todo` opens the complete stored list of the attached session.
+            // It reads what the passive panel already holds; no request leaves
+            // the client until a key asks to change an item.
+            Local::Todo => self.open_todos(),
             // `/diff` and `/commit` describe this machine's git state for the
             // session's workspace. Both refuse a session that works elsewhere,
             // and the commit needs a review of the staged set before it runs.

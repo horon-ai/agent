@@ -293,6 +293,10 @@ impl Adapter {
     /// row's group and the host's `blocked` status keeps the reason it waits on.
     pub(super) fn set_todos(&mut self, phases: &Value) -> Result<Value> {
         let todos = phases_to_todos(phases);
+        // The whole read-modify-save holds the same lock the todo tool and an
+        // operator edit take, so a concurrent writer cannot be overwritten by
+        // this host's snapshot of the list.
+        let _lock = crate::todo::lock_todos(&self.state.session_id)?;
         // A session with no todo file yet starts from an empty list, and the
         // review cycle compares against it rather than against nothing.
         let previous = crate::todo::load_todos(&self.state.session_id).unwrap_or_else(|error| {

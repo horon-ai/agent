@@ -768,6 +768,7 @@ class Handler(BaseHTTPRequestHandler):
             plan_name = "context-proof"
         elif TUI_RETRY_MARKER in transcript:
             plan_name = "tui-retry"
+        fork_fixture = "tui-fork-boundary-proof" in transcript
         counter = STATS.next_call_id()
         nonce = f"{NONCE_PREFIX}{counter}"
 
@@ -775,7 +776,7 @@ class Handler(BaseHTTPRequestHandler):
         arguments: dict = {}
         namespace = None
         via = None
-        if plan_name in {"hint", "tui-retry", "context-proof"}:
+        if plan_name in {"hint", "tui-retry", "context-proof"} or fork_fixture:
             pass
         elif plan_name == "skill":
             skill_tool = find_skill_tool(tools)
@@ -972,6 +973,7 @@ class Handler(BaseHTTPRequestHandler):
             "namespace": namespace if calls_tool else None,
             "text": "retry-fixture-recovered" if plan_name == "tui-retry" else (
                 f"context-verified-{prompt.rsplit(' ', 1)[-1]}" if plan_name == "context-proof"
+                else "fork-boundary-ready" if fork_fixture
                 else ROUTING_HINT_ANSWER if plan_name == "hint" else FINAL_TEXT
             ),
             "model": body.get("model") or MOCK_MODEL,

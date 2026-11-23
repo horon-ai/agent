@@ -127,7 +127,8 @@ fn github_comparison(release_tag: &str, current_hash: &str) -> Result<bool> {
     );
     let client =
         super::updater_client().context("Cannot safely install release: failed to create GitHub comparison client")?;
-    let response = super::github_api_request(client, &url).send().with_context(|| {
+    let token = horon_agent_base::github::github_public_api_token();
+    let response = super::github_fetch::send_github_api_get(client, &url, token.as_deref(), None).with_context(|| {
         format!(
             "Cannot safely install release: failed to compare {release_tag} to compiled commit {current_hash} on GitHub"
         )

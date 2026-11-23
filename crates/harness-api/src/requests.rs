@@ -103,6 +103,18 @@ pub enum ApiRequest {
     /// Clone an attached session's transcript into a new, idle session.
     ForkSession { session_id: String },
 
+    /// Clone the messages recorded before `boundary_message_id` into a new,
+    /// idle session, leaving the source untouched.
+    ///
+    /// The boundary is a stored message id the client read from the source's
+    /// history, not an index: the daemon resolves it against the source's
+    /// selected head and refuses a boundary that head no longer records.
+    /// Requires `session_fork_at_v1`. Replies with `SessionForked`.
+    ForkSessionAt {
+        session_id: String,
+        boundary_message_id: String,
+    },
+
     /// Create a fresh session containing a runtime-compacted handoff.
     /// The parent remains unchanged. Replies with `SessionForked`.
     TransferSession { session_id: String },
@@ -386,6 +398,28 @@ pub enum ApiRequest {
     /// observations, long-session review clock) for client-side auto-poke and
     /// quality gates. Replies with `TodoState`. Requires `todo_state`.
     GetTodoState { session_id: String },
+
+    /// Change the status of one todo item in the attached session's stored
+    /// list, but only if the list is still the revision the caller read.
+    ///
+    /// `expected_revision` is the `revision` from the `TodoState` (or
+    /// `TodoEditResult`) the client last showed. The server compares it with
+    /// the stored list before touching it: a list that moved since then
+    /// answers `TodoEditResult` with `applied: false`, the refusal
+    /// `stale_revision`, and the current list, so the client refreshes instead
+    /// of overwriting work it never saw. `status` is one of the canonical
+    /// statuses; `blocked` needs the item to already carry a blocker note.
+    ///
+    /// This is an operator edit of the stored list, not a model instruction:
+    /// nothing is sent to the agent and no turn starts. Requires
+    /// `todo_edit_v1` and an attached session.
+    SetTodoStatus {
+        session_id: String,
+        expected_revision: String,
+        #[serde(rename = "todo_id")]
+        id: String,
+        status: String,
+    },
 
     /// Apply the persistent effects of a follow-up decision made with
     /// `horon_agent_todo_policy::FollowUpPolicy` (consume the gate observation log,
@@ -690,6 +724,7 @@ impl ApiRequest {
             Self::DeleteSession { session_id, .. } => Some(session_id.as_str()),
             Self::AttachSession { session_id, .. } => Some(session_id.as_str()),
             Self::ForkSession { session_id, .. } => Some(session_id.as_str()),
+            Self::ForkSessionAt { session_id, .. } => Some(session_id.as_str()),
             Self::TransferSession { session_id, .. } => Some(session_id.as_str()),
             Self::DetachSession { session_id, .. } => Some(session_id.as_str()),
             Self::SendMessage { session_id, .. } => Some(session_id.as_str()),
@@ -719,6 +754,7 @@ impl ApiRequest {
             Self::FileStatus { session_id, .. } => Some(session_id.as_str()),
             Self::ListArtifacts { session_id, .. } => Some(session_id.as_str()),
             Self::GetTodoState { session_id, .. } => Some(session_id.as_str()),
+            Self::SetTodoStatus { session_id, .. } => Some(session_id.as_str()),
             Self::AckTodoFollowUp { session_id, .. } => Some(session_id.as_str()),
             Self::SetModel { session_id, .. } => Some(session_id.as_str()),
             Self::SetReasoningEffort { session_id, .. } => Some(session_id.as_str()),
@@ -759,6 +795,10 @@ impl ApiRequest {
     /// cannot disagree about which method needs which capability.
     pub fn required_capability(&self) -> Option<&'static str> {
         match self {
+            // The operator edit writes the stored list itself, never a model
+            // turn; a connection that did not negotiate the capability is
+            // refused before the request is served.
+            Self::SetTodoStatus { .. } => Some(crate::CAPABILITY_TODO_EDIT_V1),
             Self::GetRuntimeState { .. } | Self::ApplyControl { .. } | Self::GetControlReceipt { .. } => {
                 Some(crate::CAPABILITY_DURABLE_RUNTIME_V1)
             }
@@ -772,6 +812,7 @@ impl ApiRequest {
             Self::AskResponse { answer_id, .. } if answer_id.is_some() => Some(crate::CAPABILITY_ASK_RECEIPTS_V1),
             Self::GetEffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
             Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
+            Self::ForkSessionAt { .. } => Some(crate::CAPABILITY_SESSION_FORK_AT_V1),
             _ => None,
         }
     }

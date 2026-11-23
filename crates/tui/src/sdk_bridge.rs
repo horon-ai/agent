@@ -112,6 +112,23 @@ pub struct SkillRow {
     pub allowed_tools: Vec<String>,
 }
 
+/// One recorded boundary the fork picker offers, as the bridge built it.
+///
+/// `boundary` is the stored message id the daemon will resolve, never an index:
+/// a message that has since left the session's head comes back as an error
+/// rather than forking the wrong prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForkRow {
+    /// The stored message id the fork request carries.
+    pub boundary: String,
+    /// What the row reads as: the first line of the message it forks before.
+    pub label: String,
+    /// A short second column naming the message's place in the history.
+    pub detail: String,
+    /// Lines the preview pane shows while this row is selected.
+    pub preview: Vec<String>,
+}
+
 /// A session the bridge attached to, and what the client needs to show it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachedSession {
@@ -405,7 +422,10 @@ fn run_worker(
                     // Whether the answer moves the worker to another session,
                     // which is also when the skills of the one left behind stop
                     // being the client's.
-                    let resets_session = matches!(&command, Command::NewSession { .. } | Command::Attach(_));
+                    let resets_session = matches!(
+                        &command,
+                        Command::NewSession { .. } | Command::Attach(_) | Command::Fork(_)
+                    );
                     let applies_preset = matches!(&command, Command::Runtime { command: horon_agent_sdk::RuntimeCommand::ModelPreset, arguments } if arguments.first().is_some_and(|action| action == "apply"));
                     let served = match command {
                         Command::NewSession { working_dir } => {
@@ -436,6 +456,19 @@ fn run_worker(
                                         working_dir,
                                     }))
                                 }
+                                Err(error) => Err(error),
+                            }
+                        }
+                        // The daemon resolves the boundary against the source
+                        // it is attached to and refuses a stale one before any
+                        // session exists, so a refusal leaves `session_id` and
+                        // `stream` on the source.
+                        Command::Fork(boundary) => {
+                            match sessions::forked(&client, &boundary, &mut session_id, &mut stream, &socket) {
+                                Ok((attached, working_dir)) => Ok(Some(Incoming::Attached {
+                                    session: Box::new(attached),
+                                    working_dir,
+                                })),
                                 Err(error) => Err(error),
                             }
                         }
@@ -591,10 +624,11 @@ fn report_todos(events: &Sender<Incoming>, client: &HoronAgentClient, session_id
     if !client.supports("todo_state") || !client.supports(horon_agent_sdk::api::CAPABILITY_LIVE_TODO_V1) {
         return true;
     }
-    let incoming = match client.todo_state(session_id) {
-        Ok(snapshot) => Incoming::Todos {
+    let incoming = match client.todo_snapshot(session_id) {
+        Ok((snapshot, revision)) => Incoming::Todos {
             session_id: session_id.to_owned(),
             items: snapshot.todos,
+            revision,
         },
         Err(error) => Incoming::Notice(format!("could not read the todo list: {error}")),
     };
@@ -709,6 +743,14 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         }
         Command::Tools => client.list_tools(session_id).map(|tools| Some(Incoming::Tools(tools))),
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
+        // The fork list reads the session's own history once, when the user
+        // opens it: the rows are stored message ids, so a boundary that has
+        // since left the session's head is refused by the daemon instead of
+        // forking the wrong place.
+        Command::Forks => {
+            let messages = client.get_history(session_id)?;
+            Ok(Some(Incoming::Forks(sessions::boundaries(&messages))))
+        }
         // `/swarm` shows this session's own children; the rows are narrowed to
         // its lineage before they leave the bridge, so the list cannot name a
         // session outside the swarm it belongs to.
@@ -743,6 +785,31 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // client matches that against the messages it is holding, so one
         // refusal restores exactly the messages it was about.
         Command::Steer(text) => Ok(Some(steer::send(client, session_id, &text))),
+        // The edit belongs to the session whose list the user saw. A command
+        // that outlived an attach is not applied to the session the worker
+        // moved to; nothing is guessed about the list the new session holds.
+        Command::SetTodoStatus {
+            session_id: owner,
+            expected_revision,
+            id,
+            status,
+        } => {
+            if owner != session_id {
+                return Ok(Some(Incoming::Notice(
+                    "the session changed before the todo change was sent; nothing was edited".to_string(),
+                )));
+            }
+            let edit = client.set_todo_status(session_id, &expected_revision, &id, &status)?;
+            Ok(Some(Incoming::TodoEdit {
+                session_id: session_id.to_owned(),
+                applied: edit.applied,
+                refusal: edit.refusal,
+                items: edit.state.todos,
+                revision: edit.revision,
+                id,
+                status,
+            }))
+        }
         Command::Runtime { command, arguments } => runtime::command(client, session_id, command, arguments),
         // A package command is a request of its own: the answer decides whether
         // the client sends a message (a template) or shows a report (an
@@ -802,6 +869,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::Models
         | Command::Sessions { .. }
         | Command::Tools
+        | Command::Forks
         | Command::CheckSessions(_)
         | Command::Swarm
         | Command::Skills { .. }
@@ -811,11 +879,13 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         | Command::DaemonSettings
         | Command::Retry
         | Command::Steer(_)
+        | Command::SetTodoStatus { .. }
         | Command::Runtime { .. }
         | Command::PackageCommand { .. }
         | Command::Stats
         | Command::NewSession { .. }
-        | Command::Attach(_) => Ok(None),
+        | Command::Attach(_)
+        | Command::Fork(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
         Command::Approval {
             request_id,
@@ -861,6 +931,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
         Command::Tools => "could not list the session tools",
+        Command::Forks => "could not list the recorded messages",
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
@@ -871,8 +942,10 @@ fn describe(command: &Command) -> &'static str {
         Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",
+        Command::SetTodoStatus { .. } => "could not change the todo list",
         Command::NewSession { .. } => "could not start a new session",
         Command::Attach(_) => "could not attach to the session",
+        Command::Fork(_) => "could not fork the session",
         Command::Rename(_) => "could not rename the session",
         Command::Cancel => "could not cancel the turn",
         Command::Retry => "could not continue the failed turn",

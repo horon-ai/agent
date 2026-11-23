@@ -77,6 +77,10 @@ pub enum Command {
     NewSession { working_dir: Option<String> },
     /// Attach to another session; the bridge follows it from then on.
     Attach(String),
+    /// List the recorded boundaries this session can fork from.
+    Forks,
+    /// Fork a new session from the named stored message and follow it.
+    Fork(String),
     /// Save a title for the session the bridge follows.
     Rename(String),
     /// List the background work the attached session is still running.
@@ -121,6 +125,18 @@ pub enum Command {
     /// itself, so there is nothing here for a caller to name: the session the
     /// worker follows is the one asked about.
     DaemonSettings,
+    /// Change one todo item's status only if the stored list is still the
+    /// revision the user saw.
+    ///
+    /// The session travels with it because the answer belongs to the list it
+    /// named: a command that outlived an attach must not edit the session the
+    /// worker moved to.
+    SetTodoStatus {
+        session_id: String,
+        expected_revision: String,
+        id: String,
+        status: String,
+    },
     /// List the swarm children of the session the worker follows, and the
     /// parent it reports back to.
     ///
@@ -144,6 +160,22 @@ pub enum Incoming {
     Todos {
         session_id: String,
         items: Vec<horon_agent_sdk::todo::TodoItem>,
+        /// The revision of the stored list these items came from, absent on a
+        /// harness that does not report one.
+        revision: Option<String>,
+    },
+    /// The answer to one revision-checked todo status change.
+    ///
+    /// The list and revision travel with it whether or not the write landed, so
+    /// a stale editor refreshes from this one frame instead of asking again.
+    TodoEdit {
+        session_id: String,
+        applied: bool,
+        refusal: Option<horon_agent_sdk::todo::TodoEditRefusal>,
+        items: Vec<horon_agent_sdk::todo::TodoItem>,
+        revision: String,
+        id: String,
+        status: String,
     },
     /// A message the harness did not take: the text, the sentence saying why,
     /// and whether the connection itself is gone. The text travels with the
@@ -186,6 +218,9 @@ pub enum Incoming {
     DaemonSettings(crate::settings::DaemonSettings),
     /// The sessions the harness stored, newest first.
     Sessions(Vec<SessionRow>),
+    /// The recorded message boundaries this session can fork from, newest
+    /// first. Each row names a stored message id, not an index.
+    Forks(Vec<super::ForkRow>),
     /// The swarm children of the attached session, and the parent row after
     /// them, already narrowed to that lineage by the bridge.
     Swarm(Vec<super::SwarmRow>),
