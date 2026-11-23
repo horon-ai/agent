@@ -267,6 +267,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let delete_dir = tempfile::tempdir()?;
     seed_wiki(delete_dir.path(), 250, false)?;
     let mut delete_wiki = MemoryWiki::open(delete_dir.path())?;
+    let absent_id = PageId::parse("mem_9999_absent")?;
+    measure("mem_sweep_duplicates_250", || {
+        let outcome = delete_wiki.delete_page(&absent_id)?;
+        black_box(outcome.duplicate_files_removed);
+        Ok(())
+    })?;
     let mut delete_idx = 0usize;
     measure("mem_delete_page_250", || {
         let target = PageId::parse(&format!("mem_{delete_idx:04}_b"))?;
