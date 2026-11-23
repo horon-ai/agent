@@ -653,6 +653,16 @@ no separate redaction step for them.
 
 Memory injected into the prompt is truncated, and seeing the full content used to require a separate call to the `memory` tool. `read` now handles `memory://` references directly, with the same tool and the same paging rules as files.
 
+### Where memory lives
+
+Memory is stored in the per-user markdown wiki: one markdown page per memory plus a SQLite index rebuilt from those pages (`docs/runtime/MEMORY.md`). Every `memory` action and `read memory://` goes through it.
+
+- `remember` and `learn` write to the working folder's project store, or to the user-level store with `scope: "global"`. A `learn` with `all` is refused, because `all` is a read scope.
+- `search` keeps its substring contract: the query and the stored search text are normalized the same way (lowercase, whitespace and separators folded), so `side-panel` still matches `side_panel`. It deliberately does not use the wiki's ranked search, whose link, recency and kind-authority streams would change which memories the action returns.
+- `list` is newest first by `updated_at`, with the id as the final tie-break, so two records stored in the same millisecond list the same way every time.
+- `tag` with several tags is one store write, not one per tag.
+- The pre-wiki JSON files are imported on first use by a migration that never modifies them; `horon-agent memory migrate [--dry-run]` imports every project file at once. See "Migration from JSON" in `docs/runtime/MEMORY.md`.
+
 ### `read memory://`
 
 - `memory://<id>` returns the full content of that one memory. The output is an `id`, `category`, `scope`, `tags`, `created`, `updated`, `links` header plus a `content:` body. `links` holds the target ids of graph edges to other memories (related, supersedes, contradicts, derived); tag and cluster edges are metadata and are left out.

@@ -73,6 +73,9 @@ pub enum MemorySubcommand {
     },
     Stats,
     ClearTest,
+    Migrate {
+        dry_run: bool,
+    },
 }
 
 pub async fn run_memory_command(cmd: MemorySubcommand) -> Result<()> {
@@ -311,6 +314,8 @@ async fn run_memory_command_for_dir(cmd: MemorySubcommand, project_dir: Option<s
                 println!("Test memory storage is already empty");
             }
         }
+
+        MemorySubcommand::Migrate { dry_run } => super::memory_migrate::run(dry_run)?,
     }
 
     Ok(())

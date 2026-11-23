@@ -497,3 +497,58 @@ fn max_length_encoded_page_id_writes_and_reads_without_enametoolong() {
         assert_eq!(read_back.id.as_str(), raw_id);
     }
 }
+
+#[test]
+fn revision_tracks_mutations_across_writes_deletes_resync_and_clear() {
+    let root = TempRoot::new("revision-batch");
+    let mut wiki = open(&root);
+    assert_eq!(wiki.revision().expect("initial revision"), 0);
+
+    // No-op resync and reindex leave revision untouched on an empty store.
+    wiki.resync().expect("empty resync");
+    wiki.reindex().expect("empty reindex");
+    assert_eq!(wiki.revision().expect("still zero"), 0);
+
+    // Deleting an absent page is a no-op and keeps the revision unchanged.
+    wiki.delete_page(&id("mem_missing")).expect("absent delete");
+    assert_eq!(wiki.revision().expect("unchanged on absent delete"), 0);
+
+    // Single write advances revision; no-op resync leaves it steady.
+    wiki.write_page(&fact("mem_rev_1", "하나", "첫 본문", 1_700_000_000))
+        .expect("write");
+    let after_write = wiki.revision().expect("after write");
+    assert_eq!(after_write, 1);
+    wiki.resync().expect("unchanged resync");
+    assert_eq!(wiki.revision().expect("unchanged resync keeps rev"), 1);
+
+    // Discovering an externally added page via resync (upsert_batch) bumps revision.
+    let ext = fact("mem_rev_2", "둘", "외부 추가", 1_700_000_001);
+    let ext_path = root.path().join("wiki").join("facts").join("mem_rev_2.md");
+    std::fs::write(&ext_path, document::encode(&ext).expect("encode")).expect("write ext");
+    let report = wiki.resync().expect("resync added");
+    assert_eq!(report.indexed, 1);
+    assert_eq!(wiki.revision().expect("after batch upsert"), 2);
+
+    // Deleting an existing page advances revision.
+    wiki.delete_page(&id("mem_rev_1")).expect("delete present");
+    assert_eq!(wiki.revision().expect("after delete"), 3);
+
+    // Removing the remaining external file and resyncing (prune_missing_batch) bumps revision.
+    std::fs::remove_file(&ext_path).expect("unlink ext");
+    let report = wiki.resync().expect("resync pruned");
+    assert_eq!(report.pruned, 1);
+    assert_eq!(wiki.revision().expect("after batch prune"), 4);
+
+    // Reindexing a non-empty store whose pages were wiped on disk (clear_all) bumps revision.
+    wiki.write_page(&fact("mem_rev_3", "셋", "셋 본문", 1_700_000_002))
+        .expect("write 3");
+    assert_eq!(wiki.revision().expect("before clear"), 5);
+    std::fs::remove_file(root.path().join("wiki").join("facts").join("mem_rev_3.md")).expect("unlink 3");
+    let report = wiki.reindex().expect("reindex empty after removal");
+    assert_eq!(report.files, 0);
+    assert_eq!(wiki.revision().expect("after clear_all"), 6);
+
+    // Reindexing again while empty stays at 6.
+    wiki.reindex().expect("second empty reindex");
+    assert_eq!(wiki.revision().expect("unchanged empty reindex"), 6);
+}

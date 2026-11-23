@@ -1114,6 +1114,13 @@ pub(crate) enum MemoryCommand {
 
     /// Clear test memory storage (used by debug sessions)
     ClearTest,
+
+    /// Import the pre-wiki JSON memory files into the memory wiki
+    Migrate {
+        /// Report what would be imported without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[cfg(test)]

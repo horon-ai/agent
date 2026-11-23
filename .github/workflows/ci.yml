@@ -912,9 +912,12 @@ jobs:
         # thirteen hosted MCP and child-process gate tests (#668) bring it to
         # 1675, and the fifteen harness API exposure cases (fourteen resolution
         # tests plus the config-template documentation test) bring it to 1690.
+        # The memory integration (#665) adds fifteen: fourteen store-backend
+        # cases and one that keeps the memory event log inside HORON_HOME, for
+        # 1705.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1690 --timeout 1200
+            --package horon-agent-base --min-passed 1705 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -926,9 +929,10 @@ jobs:
         # to 1598. The fifty memory wiki store cases (#664) bring it to 1648, the
         # thirteen hosted MCP and child-process gate tests (#668) bring it to
         # 1661, and the fifteen harness API exposure cases bring it to 1676.
+        # The memory integration (#665) adds fifteen, for 1691.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1676 --timeout 1200
+            --package horon-agent-base --min-passed 1691 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''
@@ -1755,14 +1759,19 @@ jobs:
 
       - name: Run memory record cohort
         shell: bash
-        # `memory` update and `read memory://` both live in the
-        # `horon-agent-app-core` lib suite, which this workflow only ever runs
-        # through filtered cohorts. Without a step naming their prefixes the
-        # tests would compile and never execute, so each filter must report at
-        # least one pass (`--min-passed 1`): `memory_update` covers the in-place
-        # update (id, links and created_at kept, secret redaction, unknown id,
-        # empty update refused) and `memory_url` covers the full-record read,
-        # the newest-first listing, not-found and out-of-scope refusal.
+        # `memory` update, `read memory://` and the whole `memory` tool action
+        # surface live in the `horon-agent-app-core` lib suite, which this
+        # workflow only ever runs through filtered cohorts. Without a step naming
+        # their prefixes the tests would compile and never execute, so each
+        # filter must report its measured count: `memory_update` covers the
+        # in-place update (id, links and created_at kept, secret redaction,
+        # unknown id, empty update refused); `memory_url` covers the full-record
+        # read, the newest-first listing, not-found and out-of-scope refusal;
+        # `tool::memory::` covers every action end to end on the wiki store
+        # (remember/learn/recall/search/list/forget/update/tag/link/related,
+        # scope and limit handling, the fail-closed Jev recall, the lesson caps
+        # and redaction, managed-skill authoring) and is the command the issue
+        # names as its verification.
         # `run_lib_tests.py` forwards its arguments to libtest, which accepts a
         # single filter, so each filter needs its own call. The store-side
         # helpers (tag normalization, the one-line preview) sit in the
@@ -1776,6 +1785,10 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 1 \
             -- memory_url --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 900 --min-passed 22 \
+            -- tool::memory:: --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
             --timeout 600 --min-passed 1 \

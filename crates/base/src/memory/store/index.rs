@@ -101,6 +101,7 @@ impl Index {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .context("cannot start a memory index write")?;
         let rev = upsert_page_in_tx(&tx, page, path, stamp)?;
+        bump_revision(&tx)?;
         tx.commit().context("cannot commit a memory index write")?;
         Ok(rev)
     }
@@ -112,11 +113,20 @@ impl Index {
             .conn_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .context("cannot start a memory batch index write")?;
-        if clear_first {
+        let had_pages = if clear_first {
+            let had: bool = tx
+                .prepare_cached("SELECT EXISTS(SELECT 1 FROM pages)")?
+                .query_row([], |row| row.get(0))?;
             clear_in_tx(&tx)?;
-        }
+            had
+        } else {
+            false
+        };
         for (page, path, stamp) in entries {
             upsert_page_in_tx(&tx, page, path, *stamp).with_context(|| format!("cannot index {path}"))?;
+        }
+        if had_pages || !entries.is_empty() {
+            bump_revision(&tx)?;
         }
         tx.commit().context("cannot commit a memory batch index write")?;
         Ok(())
@@ -133,6 +143,9 @@ impl Index {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .context("cannot start a memory index delete")?;
         let removed = remove_page_in_tx(&tx, id)?;
+        if removed {
+            bump_revision(&tx)?;
+        }
         tx.commit().context("cannot commit a memory index delete")?;
         Ok(removed)
     }
@@ -161,6 +174,9 @@ impl Index {
             }
         }
         drop(remove_stamp);
+        if pruned > 0 {
+            bump_revision(&tx)?;
+        }
         tx.commit().context("cannot commit a memory index prune")?;
         Ok(pruned)
     }
@@ -171,7 +187,13 @@ impl Index {
             .conn_mut()
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .context("cannot start an index rebuild")?;
+        let had_pages: bool = tx
+            .prepare_cached("SELECT EXISTS(SELECT 1 FROM pages)")?
+            .query_row([], |row| row.get(0))?;
         clear_in_tx(&tx)?;
+        if had_pages {
+            bump_revision(&tx)?;
+        }
         tx.commit().context("cannot commit an index rebuild")?;
         Ok(())
     }
@@ -397,6 +419,41 @@ impl Index {
             versions: count("SELECT COUNT(*) FROM versions")?,
         })
     }
+
+    /// A counter that changes inside every write transaction.
+    ///
+    /// The markdown files cannot be stamped cheaply through the write-ahead log,
+    /// so a cache that wants "has anything changed" asks the index instead. The
+    /// counter lives in the same database as the rows, which means it moves only
+    /// when a row moved: a rollback leaves it where it was, and a rebuild that
+    /// changed no page keeps it.
+    pub fn revision(&self) -> Result<u64> {
+        let mut statement = self.conn().prepare_cached("SELECT value FROM meta WHERE key = ?1")?;
+        let stored: Option<String> = statement.query_row([REVISION_KEY], |row| row.get(0)).optional()?;
+        Ok(match stored {
+            Some(text) => text.parse::<u64>().unwrap_or(0),
+            None => 0,
+        })
+    }
+}
+
+/// The `meta` key holding the store revision.
+const REVISION_KEY: &str = "revision";
+
+/// Move the store revision forward inside the caller's transaction.
+fn bump_revision(tx: &Transaction<'_>) -> Result<()> {
+    let current: Option<String> = tx
+        .prepare_cached("SELECT value FROM meta WHERE key = ?1")?
+        .query_row([REVISION_KEY], |row| row.get(0))
+        .optional()?;
+    let next = match current {
+        Some(text) => text.parse::<u64>().unwrap_or(0),
+        None => 0,
+    }
+    .wrapping_add(1);
+    tx.prepare_cached("INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)")?
+        .execute(params![REVISION_KEY, next.to_string()])?;
+    Ok(())
 }
 
 const PAGE_ROW_SELECT: &str = "SELECT id, path, kind, category, project, title, updated_ms, created_ms,

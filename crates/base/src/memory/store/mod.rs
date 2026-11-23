@@ -256,6 +256,50 @@ impl MemoryWiki {
         self.index.counts()
     }
 
+    /// A counter that changes on every write to this store.
+    ///
+    /// It moves inside the write transaction, so a caller can key a cache on it
+    /// and be sure the next read after any write (by this handle, another
+    /// thread, another process) misses instead of answering from before that
+    /// write. A write that changed nothing did not move it.
+    pub fn revision(&self) -> Result<u64> {
+        self.index.revision()
+    }
+
+    /// Every page of one scope, read from its markdown file.
+    ///
+    /// `project` selects one project key or, for `None`, the user-level pages.
+    /// A page that cannot be read is reported and skipped, the same way
+    /// [`MemoryWiki::page`] reports one damaged file, so a single broken page
+    /// does not hide the rest of the scope.
+    pub fn scope_pages(&self, project: Option<&str>) -> Result<Vec<MemoryPage>> {
+        // `ListFilter::project` cannot express "the user-level pages": `None`
+        // there means "do not filter", so the scope is applied to the rows here.
+        let rows = self.list(&ListFilter {
+            include_inactive: true,
+            ..ListFilter::default()
+        })?;
+        let rows: Vec<PageRow> = rows
+            .into_iter()
+            .filter(|row| row.project.as_deref() == project)
+            .collect();
+        let mut pages = Vec::with_capacity(rows.len());
+        for row in rows {
+            let Ok(id) = PageId::parse(&row.id) else {
+                crate::logging::warn(&format!("memory index holds the unstorable page id {}", row.id));
+                continue;
+            };
+            match self.page(&id) {
+                Ok(Some(page)) => pages.push(page),
+                Ok(None) => {}
+                Err(error) => {
+                    crate::logging::warn(&format!("cannot read memory page {}: {error}", row.id));
+                }
+            }
+        }
+        Ok(pages)
+    }
+
     /// The absolute path of one page file, when the page is indexed.
     pub fn page_path(&self, id: &PageId) -> Result<Option<PathBuf>> {
         let Some(row) = self.index.page_row(id.as_str())? else {
