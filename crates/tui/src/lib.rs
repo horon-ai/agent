@@ -840,7 +840,6 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // before anything borrows the app to draw.
     app.sync_slash();
     app.sync_suggestions();
-    let ghost = app.suggestion_text();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -1020,21 +1019,22 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // The ghost suffix is drawn after the caret on the row the caret is on.
     // The offer was checked against the exact draft before this frame, so what
     // is drawn here is a suffix of the text already on screen.
-    let rows: Vec<Line<'static>> = view
+    let ghost = app.ghost_suffix();
+    let rows: Vec<Line<'_>> = view
         .rows
         .iter()
         .enumerate()
         .map(|(row, text)| {
-            let lead = if row == 0 { marker.clone() } else { padding.clone() };
+            let lead = if row == 0 { marker.as_str() } else { padding.as_str() };
             let mut spans = vec![
                 Span::styled(lead, Style::default().fg(theme.core.accent)),
-                Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
+                Span::styled(text.as_str(), Style::default().fg(theme.prompt.prompt_text)),
             ];
             if row == view.cursor_row
-                && let Some(ghost) = ghost.as_deref()
+                && let Some(ghost) = ghost
             {
                 let room = text_width.saturating_sub(crate::input::text_cells(text));
-                let tail = crate::input::clip_cells(ghost, room);
+                let tail = crate::input::clip_cells_str(ghost, room);
                 if !tail.is_empty() {
                     spans.push(Span::styled(tail, Style::default().fg(theme.core.muted)));
                 }

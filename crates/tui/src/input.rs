@@ -159,6 +159,15 @@ impl Input {
         self.characters.iter().collect()
     }
 
+    /// Whether the draft equals `expected`, without allocating a `String`.
+    pub(crate) fn matches_text(&self, expected: &str) -> bool {
+        if expected.len() < self.characters.len() || (expected.is_ascii() && expected.len() != self.characters.len()) {
+            return false;
+        }
+        let mut chars = expected.chars();
+        self.characters.iter().copied().all(|ch| chars.next() == Some(ch)) && chars.next().is_none()
+    }
+
     /// A cheap fingerprint of the draft, for callers that only need to know
     /// whether it changed.
     ///
@@ -789,10 +798,10 @@ pub fn text_cells(text: &str) -> u16 {
     cells_u16(text.graphemes(true).map(UnicodeWidthStr::width).sum())
 }
 
-/// The longest prefix of `text` that fits in `cells` cells.
+/// The longest prefix of `text` that fits in `cells` cells, borrowed.
 ///
 /// Keep whole graphemes so a wide or joined character never crosses the edge.
-pub fn clip_cells(text: &str, cells: u16) -> String {
+pub(crate) fn clip_cells_str(text: &str, cells: u16) -> &str {
     let room = usize::from(cells);
     let mut used = 0;
     let mut end = 0;
@@ -804,7 +813,14 @@ pub fn clip_cells(text: &str, cells: u16) -> String {
         used += width;
         end += grapheme.len();
     }
-    text[..end].to_owned()
+    &text[..end]
+}
+
+/// The longest prefix of `text` that fits in `cells` cells.
+///
+/// Keep whole graphemes so a wide or joined character never crosses the edge.
+pub fn clip_cells(text: &str, cells: u16) -> String {
+    clip_cells_str(text, cells).to_owned()
 }
 
 /// Characters hashed before the scan stops.
