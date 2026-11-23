@@ -42,15 +42,7 @@ impl Fixture {
         home
     }
 
-    fn memory_dir(&self) -> PathBuf {
-        self.home().join("memory")
-    }
-
     fn run(&self, args: &[&str]) -> Output {
-        self.run_with_env(args, &[])
-    }
-
-    fn run_with_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
         let home = self.home();
         let mut command = Command::new(env!("CARGO_BIN_EXE_horon-agent"));
         command
@@ -63,11 +55,10 @@ impl Fixture {
             .env("HORON_AGENT_NON_INTERACTIVE", "1")
             .env("HORON_AGENT_NO_AUTO_UPDATE", "1")
             .env("NO_COLOR", "1")
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default());
-        for (key, value) in extra {
-            command.env(key, value);
-        }
-        command.args(args).output().expect("the CLI runs")
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .args(args)
+            .output()
+            .expect("the CLI runs")
     }
 }
 
@@ -97,7 +88,7 @@ fn seed_page(home: &Path, file: &Path, text: &str) {
 }
 
 /// A page document with the fields the store requires.
-fn page_document<'a>(id: &str, title: &str, body: &'a str) -> String {
+fn page_document(id: &str, title: &str, body: &str) -> String {
     format!(
         "---\n\
 schema: 1\n\
