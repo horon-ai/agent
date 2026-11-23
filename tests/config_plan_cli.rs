@@ -65,3 +65,61 @@ fn run_plan_fails_before_any_request_when_plan_mode_is_off() {
     let stderr = text(&result.stderr);
     assert!(stderr.contains("Plan mode is off"), "{stderr}");
 }
+
+#[test]
+fn config_show_reflects_tool_launch_flags_and_isolated_profile_applies_to_offline_commands() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "[tools]\nprofile = \"core\"\nmcp_tools = \"eager\"\n\n[provider]\ndefault_provider = \"root_provider\"\ndefault_model = \"m-root\"\n\n[providers.root_provider]\ntype = \"openai-compatible\"\nbase_url = \"https://root.example.com/v1\"\nauth = \"none\"\ndefault_model = \"m-root\"\n",
+    )
+    .unwrap();
+
+    let plain = horon(home.path(), &["config", "show", "--json"]);
+    assert!(plain.status.success(), "{}", text(&plain.stderr));
+    let plain_json: serde_json::Value = serde_json::from_slice(&plain.stdout).unwrap();
+    let plain_rows = plain_json["settings"].as_array().unwrap();
+    let plain_profile = plain_rows.iter().find(|row| row["key"] == "tools.profile").unwrap();
+    assert_eq!(plain_profile["value"], "core");
+    assert_eq!(plain_profile["source"], "file");
+
+    let flagged = horon(
+        home.path(),
+        &[
+            "--tool-profile",
+            "full",
+            "--mcp-tools",
+            "deferred",
+            "config",
+            "show",
+            "--json",
+        ],
+    );
+    assert!(flagged.status.success(), "{}", text(&flagged.stderr));
+    let flagged_json: serde_json::Value = serde_json::from_slice(&flagged.stdout).unwrap();
+    let rows = flagged_json["settings"].as_array().unwrap();
+    let profile_row = rows.iter().find(|row| row["key"] == "tools.profile").unwrap();
+    assert_eq!(profile_row["value"], "full");
+    assert_eq!(profile_row["source"], "cli");
+    assert_eq!(profile_row["origin"], "--tool-profile");
+    let mcp_row = rows.iter().find(|row| row["key"] == "tools.mcp_tools").unwrap();
+    assert_eq!(mcp_row["value"], "deferred");
+    assert_eq!(mcp_row["source"], "cli");
+    assert_eq!(mcp_row["origin"], "--mcp-tools");
+
+    let profile_home = home.path().join("profiles").join("qa");
+    std::fs::create_dir_all(&profile_home).unwrap();
+    std::fs::write(
+        profile_home.join("config.toml"),
+        "[provider]\ndefault_provider = \"iso_provider\"\ndefault_model = \"m-iso\"\n\n[providers.iso_provider]\ntype = \"openai-compatible\"\nbase_url = \"https://iso.example.com/v1\"\nauth = \"none\"\ndefault_model = \"m-iso\"\n",
+    )
+    .unwrap();
+    let status = horon(
+        home.path(),
+        &["--isolated-profile", "qa", "provider", "status", "--json"],
+    );
+    assert!(status.status.success(), "{}", text(&status.stderr));
+    let status_text = text(&status.stdout);
+    assert!(status_text.contains("iso_provider"), "{status_text}");
+    assert!(!status_text.contains("root_provider"), "{status_text}");
+}

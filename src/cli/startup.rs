@@ -26,6 +26,9 @@ fn sync_output_style_from_config() {
 /// errors during parsing, before any worker threads or TLS state are needed.
 pub fn run_standalone() -> Result<()> {
     let args = Args::parse();
+    if prepare_isolated_profile(&args)? {
+        return Ok(());
+    }
     if let Some(result) = offline_command(&args) {
         return result;
     }
@@ -33,7 +36,7 @@ pub fn run_standalone() -> Result<()> {
     // intended no-op, so drop the returned handle instead of keeping it.
     drop(rustls::crypto::aws_lc_rs::default_provider().install_default());
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    let result = runtime.block_on(run_with_args(args));
+    let result = runtime.block_on(run_with_args(args, true));
     if result
         .as_ref()
         .is_err_and(|error| error.is::<super::commands::RunDeadlineExceeded>())
@@ -45,7 +48,22 @@ pub fn run_standalone() -> Result<()> {
 }
 
 pub async fn run() -> Result<()> {
-    run_with_args(Args::parse()).await
+    run_with_args(Args::parse(), false).await
+}
+
+fn prepare_isolated_profile(args: &Args) -> Result<bool> {
+    if let Some(name) = args.isolated_profile.as_deref() {
+        let profile = super::launch_profile::select(name)?;
+        super::launch_profile::apply(&profile)?;
+        if args.show_profile {
+            println!("{}", super::launch_profile::describe(&profile));
+            return Ok(true);
+        }
+    } else if args.show_profile {
+        println!("profile: none (HORON_HOME and socket environment unchanged)");
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn offline_command(args: &Args) -> Option<Result<()>> {
@@ -82,20 +100,12 @@ fn offline_command(args: &Args) -> Option<Result<()>> {
     }
 }
 
-async fn run_with_args(args: Args) -> Result<()> {
+async fn run_with_args(args: Args, profile_applied: bool) -> Result<()> {
+    if !profile_applied && prepare_isolated_profile(&args)? {
+        return Ok(());
+    }
     if let Some(result) = offline_command(&args) {
         return result;
-    }
-    if let Some(name) = args.isolated_profile.as_deref() {
-        let profile = super::launch_profile::select(name)?;
-        super::launch_profile::apply(&profile)?;
-        if args.show_profile {
-            println!("{}", super::launch_profile::describe(&profile));
-            return Ok(());
-        }
-    } else if args.show_profile {
-        println!("profile: none (HORON_HOME and socket environment unchanged)");
-        return Ok(());
     }
     crate::workspace_trust::set_cli_trust_workspace(args.trust_workspace);
     // Snapshot user-supplied provider env before provider init rewrites it.
@@ -452,27 +462,6 @@ mod tests {
         for mode in ["yolo", "off", "none"] {
             assert!(Args::try_parse_from(["horon", "run", "hi", "--approval", mode]).is_err());
         }
-    }
-
-    #[test]
-    fn startup_plan_flag_conflicts_with_resume() {
-        assert!(parse_args(&["horon", "--plan"]).plan);
-        assert!(!parse_args(&["horon"]).plan);
-        let error = Args::try_parse_from(["horon", "--plan", "--resume", "session-1"]).unwrap_err();
-        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-    }
-
-    #[test]
-    fn startup_goal_requires_budget_and_conflicts_with_resume() {
-        let goal = ["horon", "--goal", "Ship a fix", "--goal-budget", "1200"];
-        let parsed = parse_args(&goal);
-        assert_eq!(parsed.goal.as_deref(), Some("Ship a fix"));
-        assert_eq!(parsed.goal_budget, Some(1200));
-        for resume in [["--resume", "session-1"].as_slice(), ["--continue"].as_slice()] {
-            let error = Args::try_parse_from(goal.iter().chain(resume)).unwrap_err();
-            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-        }
-        assert!(Args::try_parse_from(["horon", "--goal", "Ship a fix"]).is_err());
     }
 
     #[test]

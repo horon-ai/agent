@@ -146,7 +146,7 @@ fn resolve_path(raw: &str) -> Result<PathBuf> {
 /// path crosses a symlinked ancestor (`/var` on macOS) is compared and written as
 /// the same path the strict session-store path checks see. Components that do not
 /// exist yet cannot be symlinks, so they are appended unchanged.
-fn canonical_output_path(path: PathBuf) -> Result<PathBuf> {
+pub(super) fn canonical_output_path(path: PathBuf) -> Result<PathBuf> {
     let mut missing: Vec<std::ffi::OsString> = Vec::new();
     let mut current = if path.is_absolute() {
         path

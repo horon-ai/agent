@@ -67,6 +67,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         };
         return super::install_release::run(assets, agent_version, source_binary).await;
     }
+    apply_tool_launch_flags(&args);
+    if let Some(Command::Config { ref command }) = args.command {
+        return commands::config_cli::run(command);
+    }
     continue_latest::resolve(&mut args)?;
 
     // One-time config migration: users whose config.toml still carries the old
@@ -74,6 +78,14 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     // current `inline` default. Cheap (single file read, marker-gated), and it
     // must run before the config cache is first populated.
     crate::config::Config::migrate_legacy_swarm_spawn_mode_once();
+
+    // Per-run config overlays must layer before --provider-profile, role/prewalk
+    // validation, and default tool-profile fallback read the effective config.
+    if let Some(Command::Run { model_overrides, .. }) = &args.command
+        && !model_overrides.config_overlay.is_empty()
+    {
+        crate::config::Config::set_run_overlays(&model_overrides.config_overlay)?;
+    }
 
     if let Some(profile_name) = args
         .provider_profile
@@ -87,35 +99,6 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         args.provider = provider_choice_for_named_profile(profile_name);
     }
     super::launch_overrides::apply(&mut args)?;
-    if let Some(tool_profile) = args.tool_profile.as_deref() {
-        crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
-        crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
-    }
-    if let Some(tools) = args.tools.as_deref() {
-        crate::env::set_var("HORON_AGENT_TOOLS", tools);
-    }
-    if let Some(disabled_tools) = args.disabled_tools.as_deref() {
-        crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", disabled_tools);
-    }
-    if args.disable_base_tools {
-        crate::env::set_var("HORON_AGENT_DISABLE_BASE_TOOLS", "1");
-    }
-    if let Some(mcp_tools) = args.mcp_tools.as_deref() {
-        crate::env::set_var("HORON_AGENT_MCP_TOOLS", mcp_tools);
-        crate::effective_settings::record_launch_flag("HORON_AGENT_MCP_TOOLS", "--mcp-tools");
-    }
-    if let Some(threshold) = args.mcp_tools_token_threshold {
-        crate::env::set_var("HORON_AGENT_MCP_TOOLS_TOKEN_THRESHOLD", threshold.to_string());
-    }
-    if args.tool_profile.is_some()
-        || args.tools.is_some()
-        || args.disabled_tools.is_some()
-        || args.disable_base_tools
-        || args.mcp_tools.is_some()
-        || args.mcp_tools_token_threshold.is_some()
-    {
-        crate::config::invalidate_config_cache();
-    }
 
     // Headless default tool profile. A plain `serve`/`run`/`api-bridge` launch
     // (or the bare no-subcommand run) that selects no profile exposes only the
@@ -394,6 +377,39 @@ fn default_tool_profile_for_launch(
         None
     } else {
         Some(crate::config::CORE_TOOL_PROFILE)
+    }
+}
+
+/// Export tool/MCP launch flags to process env and invalidate the config cache.
+fn apply_tool_launch_flags(args: &Args) {
+    if let Some(tool_profile) = args.tool_profile.as_deref() {
+        crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
+        crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
+    }
+    if let Some(tools) = args.tools.as_deref() {
+        crate::env::set_var("HORON_AGENT_TOOLS", tools);
+    }
+    if let Some(disabled_tools) = args.disabled_tools.as_deref() {
+        crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", disabled_tools);
+    }
+    if args.disable_base_tools {
+        crate::env::set_var("HORON_AGENT_DISABLE_BASE_TOOLS", "1");
+    }
+    if let Some(mcp_tools) = args.mcp_tools.as_deref() {
+        crate::env::set_var("HORON_AGENT_MCP_TOOLS", mcp_tools);
+        crate::effective_settings::record_launch_flag("HORON_AGENT_MCP_TOOLS", "--mcp-tools");
+    }
+    if let Some(threshold) = args.mcp_tools_token_threshold {
+        crate::env::set_var("HORON_AGENT_MCP_TOOLS_TOKEN_THRESHOLD", threshold.to_string());
+    }
+    if args.tool_profile.is_some()
+        || args.tools.is_some()
+        || args.disabled_tools.is_some()
+        || args.disable_base_tools
+        || args.mcp_tools.is_some()
+        || args.mcp_tools_token_threshold.is_some()
+    {
+        crate::config::invalidate_config_cache();
     }
 }
 

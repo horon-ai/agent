@@ -43,6 +43,12 @@ def main():
         os.symlink(root, os.path.join(home, "profiles", "linked"))
         linked = run(agent, home, runtime, "--isolated-profile", "linked", "--show-profile")
         assert linked.returncode != 0, "a linked profile directory was accepted"
+        with open(os.path.join(work["home"], "config.toml"), "w", encoding="utf-8") as handle:
+            handle.write(
+                '[provider]\ndefault_provider = "work_only"\n[providers.work_only]\ntype = "openai-compatible"\nbase_url = "https://work.example/v1"\nauth = "none"\ndefault_model = "m"\n'
+            )
+        offline = run(agent, home, runtime, "--isolated-profile", "work", "provider", "status", "--json")
+        assert offline.returncode == 0 and "work_only" in offline.stdout, offline.stdout + offline.stderr
         print("launch profiles are isolated")
 
 

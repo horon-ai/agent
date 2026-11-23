@@ -252,3 +252,92 @@ fn removal_only_touches_a_recorded_clean_worktree_that_no_session_uses() {
     assert!(!planned.exists());
     assert!(repo.join("tracked.txt").exists() && foreign.exists());
 }
+
+#[test]
+fn worktree_lifecycle_retains_history_filters_undone_canonicalizes_remove_and_guards_lock() {
+    let sandbox = Sandbox::new("worktree-history");
+    let home = sandbox.home("a");
+    let repo = worktree_fixture(&sandbox, &home);
+    let tree_a = sandbox.path().join("repo-worktrees").join("feat-a");
+    let tree_b = sandbox.path().join("repo-worktrees").join("feat-b");
+
+    worktree_json(
+        &sandbox,
+        &home,
+        &["move-to-worktree", "wt_one", "--branch", "feat-a", "--apply"],
+    );
+    worktree_json(&sandbox, &home, &["move-to-worktree", "wt_one", "--undo", "--apply"]);
+
+    // After undo, `sessions worktrees` must no longer list the tree as managed.
+    let listed = sandbox.run(
+        &home,
+        &["-C", repo.to_str().unwrap(), "sessions", "worktrees", "--json"],
+    );
+    assert_ok(&listed);
+    let rows: Value = serde_json::from_str(&stdout(&listed)).unwrap();
+    let row_a = rows["worktrees"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["path"] == json!(tree_a.to_str().unwrap()))
+        .expect("feat-a listed");
+    assert_eq!(row_a["managed"], json!(false), "{row_a}");
+    assert_eq!(row_a["sessions"], json!([]), "{row_a}");
+
+    // Moving the same session into a second worktree must not orphan the first record.
+    worktree_json(
+        &sandbox,
+        &home,
+        &["move-to-worktree", "wt_one", "--branch", "feat-b", "--apply"],
+    );
+    assert!(tree_b.exists());
+
+    // Relative removal path canonicalizes and still removes feat-a after move to feat-b.
+    let rel_a = tree_a
+        .strip_prefix(sandbox.path())
+        .expect("under sandbox")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_ok(&sandbox.run(&home, &["sessions", "remove-worktree", &rel_a, "--apply"]));
+    assert!(!tree_a.exists());
+
+    // Active `.writer.lock` must block `--undo --apply` and forward `--apply`.
+    let lock_path = home.join("sessions").join("wt_one").join(".writer.lock");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    lock_file.lock().unwrap();
+
+    let locked_undo = sandbox.run(&home, &["sessions", "move-to-worktree", "wt_one", "--undo", "--apply"]);
+    assert_refused(&locked_undo, "live writer");
+    drop(lock_file);
+
+    worktree_json(&sandbox, &home, &["move-to-worktree", "wt_one", "--undo", "--apply"]);
+    let tree_c = sandbox.path().join("repo-worktrees").join("feat-c");
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .unwrap();
+    lock_file.lock().unwrap();
+    let locked_move = sandbox.run(
+        &home,
+        &[
+            "sessions",
+            "move-to-worktree",
+            "wt_one",
+            "--branch",
+            "feat-c",
+            "--apply",
+        ],
+    );
+    assert_refused(&locked_move, "live writer");
+    assert!(!tree_c.exists(), "must not create worktree when writer lock is active");
+}
