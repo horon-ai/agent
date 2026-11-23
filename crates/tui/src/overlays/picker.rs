@@ -51,6 +51,8 @@ pub enum Kind {
     ArchivedSessions,
     /// The skills the harness reports for this session.
     Skills,
+    /// The effective tools the harness reports without invoking them.
+    Tools,
     /// The drafts sent before this one.
     History,
     /// The text this session can copy: the draft, answers, code blocks.

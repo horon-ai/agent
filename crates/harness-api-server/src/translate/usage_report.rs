@@ -23,15 +23,23 @@
 
 use horon_agent_harness_api::{ApiEvent, ErrorCode, UsageModel, UsageSession, UsageTotals};
 use serde::Deserialize;
+use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor, value::MapAccessDeserializer};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 /// Label every report carries instead of a price table it does not have.
 const PRICING_UNKNOWN: &str = "unknown";
 
 /// Bucket for sessions whose metadata never named a model.
 const MODEL_UNKNOWN: &str = "unknown";
+
+#[path = "usage_report_local.rs"]
+pub(super) mod local;
 
 /// What the daemon has told this bridge about usage on this connection.
 ///
@@ -152,7 +160,7 @@ fn add(slot: &mut Option<u64>, value: Option<u64>) {
 ///
 /// Every field is optional: records written before a metric existed, and
 /// providers that never report one, both leave the field out.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 struct StoredUsage {
     #[serde(default)]
     input_tokens: Option<u64>,
@@ -169,6 +177,12 @@ struct StoredUsage {
 struct Reading {
     model: Option<String>,
     sums: Sum,
+}
+
+#[derive(Debug)]
+struct UsageRecord {
+    usage: StoredUsage,
+    draft: Option<local::GroupDraft>,
 }
 
 /// Build the report for one request on this connection.
@@ -368,9 +382,409 @@ fn read_session(home: Option<&Path>, session_id: &str) -> Reading {
     let root = sessions_root(home);
     let canonical = root.join(session_id).join("events.jsonl");
     if canonical.is_file() {
-        return read_canonical(&canonical);
+        return read_canonical(&canonical, None);
     }
-    read_legacy(&root.join(format!("{session_id}.json")))
+    read_legacy(&root.join(format!("{session_id}.json")), None)
+}
+
+pub(super) enum LocalSession {
+    Canonical(PathBuf),
+    Legacy(PathBuf),
+}
+
+/// Discover local session storage paths in one pass without redundant stat calls.
+pub(super) fn enumerate_local_sessions(root: &Path) -> Vec<LocalSession> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut by_id: HashMap<String, LocalSession> = HashMap::new();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let path = entry.path();
+        let is_dir = if file_type.is_symlink() {
+            path.is_dir()
+        } else {
+            file_type.is_dir()
+        };
+        if is_dir {
+            let file_name = entry.file_name();
+            let Some(name) = file_name.to_str() else {
+                continue;
+            };
+            if !valid_id(name) {
+                continue;
+            }
+            let canonical = path.join("events.jsonl");
+            if canonical.is_file() {
+                by_id.insert(name.to_owned(), LocalSession::Canonical(canonical));
+            }
+        } else if path.extension().is_some_and(|extension| extension == "json")
+            && let Some(id) = path.file_stem().and_then(|name| name.to_str())
+            && valid_id(id)
+        {
+            by_id.entry(id.to_owned()).or_insert(LocalSession::Legacy(path));
+        }
+    }
+    by_id.into_values().collect()
+}
+
+/// Lenient borrowed-or-owned string: ignores non-string JSON values.
+#[derive(Default)]
+struct LenientStr<'a>(Option<Cow<'a, str>>);
+
+impl<'a> LenientStr<'a> {
+    fn as_deref(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+}
+
+impl<'de: 'a, 'a> Deserialize<'de> for LenientStr<'a> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct StrVisitor;
+        impl<'de> Visitor<'de> for StrVisitor {
+            type Value = LenientStr<'de>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an optional string")
+            }
+
+            fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E> {
+                Ok(LenientStr(Some(Cow::Borrowed(value))))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(LenientStr(Some(Cow::Owned(value.to_owned()))))
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+                Ok(LenientStr(Some(Cow::Owned(value))))
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(LenientStr(None))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(LenientStr(None))
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(LenientStr(None))
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(LenientStr(None))
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(LenientStr(None))
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(LenientStr(None))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(LenientStr(None))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(LenientStr(None))
+            }
+        }
+        deserializer.deserialize_any(StrVisitor)
+    }
+}
+
+enum NullableU64 {
+    Null,
+    Value(u64),
+    Invalid,
+}
+
+impl<'de> Deserialize<'de> for NullableU64 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct U64Visitor;
+        impl<'de> Visitor<'de> for U64Visitor {
+            type Value = NullableU64;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an optional u64")
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(NullableU64::Value(value))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+                Ok(match u64::try_from(value) {
+                    Ok(v) => NullableU64::Value(v),
+                    Err(_) => NullableU64::Invalid,
+                })
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(NullableU64::Null)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(NullableU64::Null)
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(NullableU64::Invalid)
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(NullableU64::Invalid)
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(NullableU64::Invalid)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(NullableU64::Invalid)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(NullableU64::Invalid)
+            }
+        }
+        deserializer.deserialize_any(U64Visitor)
+    }
+}
+
+#[derive(Default)]
+struct TokenUsageField(Option<StoredUsage>);
+
+impl<'de> Deserialize<'de> for TokenUsageField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct FieldVisitor;
+        impl<'de> Visitor<'de> for FieldVisitor {
+            type Value = TokenUsageField;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a token_usage object")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(TokenUsageField(None))
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut out = StoredUsage {
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                };
+                let mut valid = true;
+                while let Some(key) = map.next_key::<Cow<'de, str>>()? {
+                    if !valid {
+                        map.next_value::<IgnoredAny>()?;
+                        continue;
+                    }
+                    let slot = match key.as_ref() {
+                        "input_tokens" => &mut out.input_tokens,
+                        "output_tokens" => &mut out.output_tokens,
+                        "cache_read_input_tokens" => &mut out.cache_read_input_tokens,
+                        "cache_creation_input_tokens" => &mut out.cache_creation_input_tokens,
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                            continue;
+                        }
+                    };
+                    match map.next_value::<NullableU64>()? {
+                        NullableU64::Null => *slot = None,
+                        NullableU64::Value(v) => *slot = Some(v),
+                        NullableU64::Invalid => valid = false,
+                    }
+                }
+                Ok(TokenUsageField(if valid { Some(out) } else { None }))
+            }
+        }
+        deserializer.deserialize_any(FieldVisitor)
+    }
+}
+
+#[derive(Default)]
+struct LenientMap<T>(T);
+
+impl<'de, T: Default + Deserialize<'de>> Deserialize<'de> for LenientMap<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MapOrDefaultVisitor<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Default + Deserialize<'de>> Visitor<'de> for MapOrDefaultVisitor<T> {
+            type Value = LenientMap<T>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an optional object")
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_str<E>(self, _: &str) -> Result<Self::Value, E> {
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(LenientMap(T::default()))
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                T::deserialize(MapAccessDeserializer::new(map)).map(LenientMap)
+            }
+        }
+        deserializer.deserialize_any(MapOrDefaultVisitor(std::marker::PhantomData))
+    }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct CanonicalMetadata<'a> {
+    #[serde(borrow)]
+    model: LenientStr<'a>,
+    #[serde(borrow)]
+    provider_key: LenientStr<'a>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct CanonicalMessage<'a> {
+    #[serde(borrow)]
+    timestamp: LenientStr<'a>,
+    token_usage: TokenUsageField,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct CanonicalPayload<'a> {
+    #[serde(borrow)]
+    metadata: LenientMap<CanonicalMetadata<'a>>,
+    #[serde(borrow)]
+    message: LenientMap<CanonicalMessage<'a>>,
+    #[serde(borrow)]
+    target_event_id: LenientStr<'a>,
+    #[serde(borrow)]
+    replacement: LenientMap<CanonicalMessage<'a>>,
+}
+
+#[derive(Deserialize)]
+#[serde(default)]
+struct CanonicalEvent<'a> {
+    #[serde(borrow)]
+    kind: LenientStr<'a>,
+    #[serde(borrow)]
+    event_id: LenientStr<'a>,
+    #[serde(borrow)]
+    timestamp: LenientStr<'a>,
+    #[serde(borrow)]
+    payload: LenientMap<CanonicalPayload<'a>>,
+}
+
+impl Default for CanonicalEvent<'_> {
+    fn default() -> Self {
+        Self {
+            kind: LenientStr(None),
+            event_id: LenientStr(None),
+            timestamp: LenientStr(None),
+            payload: LenientMap(CanonicalPayload::default()),
+        }
+    }
 }
 
 /// Read the canonical event log.
@@ -380,50 +794,120 @@ fn read_session(home: Option<&Path>, session_id: &str) -> Reading {
 /// session on the machine, so a line without a usage record is skipped before
 /// it is parsed: transcripts are mostly message text and tool payloads, and
 /// deserializing all of it would make a usage screen cost seconds.
-fn read_canonical(path: &Path) -> Reading {
+fn read_canonical(path: &Path, mut groups: Option<&mut local::Groups>) -> Reading {
     let Ok(file) = std::fs::File::open(path) else {
         return Reading::default();
     };
+    let mut reader = BufReader::new(file);
+    let mut line = String::with_capacity(512);
     let mut reading = Reading::default();
-    let mut usage: BTreeMap<String, StoredUsage> = BTreeMap::new();
-    for line in std::io::BufRead::lines(std::io::BufReader::new(file)).map_while(Result::ok) {
-        if !line.contains("\"token_usage\"") && !line.contains("\"model\"") {
+    let mut usage: HashMap<Rc<str>, UsageRecord> = HashMap::new();
+    let mut model_rc: Option<Rc<str>> = None;
+    let mut provider_rc: Option<Rc<str>> = None;
+    let mut seen_events: HashSet<Rc<str>> = HashSet::new();
+    let track_groups = groups.is_some();
+
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        if !(line.contains("\"token_usage\"")
+            || line.contains("\"model\"")
+            || line.contains("\"message_revised\"")
+            || (track_groups && line.contains("\"provider_key\"")))
+        {
             continue;
         }
-        let Ok(event) = serde_json::from_str::<Value>(&line) else {
+        let Ok(event) = serde_json::from_str::<CanonicalEvent<'_>>(&line) else {
             continue;
         };
-        match event["kind"].as_str() {
+        let kind = event.kind.as_deref();
+        let event_key = if matches!(kind, Some("message_appended" | "message_revised"))
+            && let Some(id) = event.event_id.as_deref()
+        {
+            if seen_events.contains(id) {
+                continue;
+            }
+            let key: Rc<str> = Rc::from(id);
+            seen_events.insert(Rc::clone(&key));
+            Some(key)
+        } else {
+            None
+        };
+        match kind {
             Some("session_created" | "metadata_changed") => {
-                if let Some(model) = event["payload"]["metadata"]["model"]
-                    .as_str()
+                if let Some(model) = event
+                    .payload
+                    .0
+                    .metadata
+                    .0
+                    .model
+                    .as_deref()
                     .filter(|model| *model != MODEL_UNKNOWN)
+                    && model_rc.as_deref() != Some(model)
                 {
-                    reading.model = Some(model.to_string());
+                    model_rc = Some(Rc::from(model));
+                }
+                if track_groups && let Some(value) = event.payload.0.metadata.0.provider_key.as_deref() {
+                    let normalized = (!value.is_empty()).then_some(value);
+                    if provider_rc.as_deref() != normalized {
+                        provider_rc = normalized.map(Rc::from);
+                    }
                 }
             }
             Some("message_appended") => {
-                let Some(id) = event["event_id"].as_str() else {
+                let Some(key) = event_key else {
                     continue;
                 };
-                match serde_json::from_value::<StoredUsage>(event["payload"]["message"]["token_usage"].clone()) {
-                    Ok(value) => {
-                        usage.insert(id.to_string(), value);
-                    }
-                    Err(_) => {
-                        usage.remove(id);
-                    }
+                let message = &event.payload.0.message.0;
+                if let Some(value) = message.token_usage.0 {
+                    usage.entry(key).or_insert_with(|| UsageRecord {
+                        usage: value,
+                        draft: track_groups.then(|| local::GroupDraft {
+                            day: local::parse_day_index(
+                                message.timestamp.as_deref().or_else(|| event.timestamp.as_deref()),
+                            ),
+                            provider: provider_rc.clone(),
+                            model: model_rc.clone(),
+                        }),
+                    });
                 }
             }
             Some("message_revised") => {
-                let Some(target) = event["payload"]["target_event_id"].as_str() else {
+                let Some(target) = event.payload.0.target_event_id.as_deref() else {
                     continue;
                 };
-                match serde_json::from_value::<StoredUsage>(event["payload"]["replacement"]["token_usage"].clone()) {
-                    Ok(value) => {
-                        usage.insert(target.to_string(), value);
+                let message = &event.payload.0.replacement.0;
+                match message.token_usage.0 {
+                    Some(value) => {
+                        if let Some(record) = usage.get_mut(target) {
+                            record.usage = value;
+                            if let Some(draft) = record.draft.as_mut() {
+                                if let Some(replacement_ts) = message.timestamp.as_deref() {
+                                    draft.day = local::parse_day_index(Some(replacement_ts));
+                                }
+                                draft.provider = provider_rc.clone();
+                                draft.model = model_rc.clone();
+                            }
+                        } else {
+                            let revised_ts = message.timestamp.as_deref().or_else(|| event.timestamp.as_deref());
+                            let key: Rc<str> = Rc::from(target);
+                            usage.insert(
+                                key,
+                                UsageRecord {
+                                    usage: value,
+                                    draft: track_groups.then(|| local::GroupDraft {
+                                        day: local::parse_day_index(revised_ts),
+                                        provider: provider_rc.clone(),
+                                        model: model_rc.clone(),
+                                    }),
+                                },
+                            );
+                        }
                     }
-                    Err(_) => {
+                    None => {
                         usage.remove(target);
                     }
                 }
@@ -431,8 +915,12 @@ fn read_canonical(path: &Path) -> Reading {
             _ => {}
         }
     }
-    for value in usage.values() {
-        reading.sums.record(value);
+    reading.model = model_rc.map(|model| model.to_string());
+    for record in usage.into_values() {
+        reading.sums.record(&record.usage);
+        if let (Some(draft), Some(groups)) = (record.draft, groups.as_deref_mut()) {
+            groups.record_draft(draft, &record.usage);
+        }
     }
     reading
 }
@@ -441,7 +929,7 @@ fn read_canonical(path: &Path) -> Reading {
 ///
 /// Messages are keyed by message id so a message that appears in both the
 /// snapshot and the journal is counted once.
-fn read_legacy(path: &Path) -> Reading {
+fn read_legacy(path: &Path, mut groups: Option<&mut local::Groups>) -> Reading {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Reading::default();
     };
@@ -452,24 +940,49 @@ fn read_legacy(path: &Path) -> Reading {
     if let Some(model) = value["model"].as_str().filter(|model| *model != MODEL_UNKNOWN) {
         reading.model = Some(model.to_string());
     }
-    let mut usage: BTreeMap<String, StoredUsage> = BTreeMap::new();
-    collect_messages(&value["messages"], "snapshot", &mut usage);
+    let track_groups = groups.is_some();
+    let provider_rc = track_groups
+        .then(|| value["provider_key"].as_str().filter(|v| !v.is_empty()).map(Rc::from))
+        .flatten();
+    let model_rc = track_groups.then(|| reading.model.as_deref().map(Rc::from)).flatten();
+    let mut usage: HashMap<String, UsageRecord> = HashMap::new();
+    let draft = |message: &Value| {
+        track_groups.then(|| local::GroupDraft {
+            day: local::parse_day_index(message["timestamp"].as_str()),
+            provider: provider_rc.clone(),
+            model: model_rc.clone(),
+        })
+    };
+    collect_messages(&value["messages"], "snapshot", &mut usage, &draft);
     let journal = path.with_extension("journal.jsonl");
     if let Ok(lines) = std::fs::read_to_string(&journal) {
         for (index, line) in lines.lines().enumerate() {
             let Ok(entry) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
-            collect_messages(&entry["append_messages"], &format!("journal{index}"), &mut usage);
+            collect_messages(
+                &entry["append_messages"],
+                &format!("journal{index}"),
+                &mut usage,
+                &draft,
+            );
         }
     }
-    for value in usage.values() {
-        reading.sums.record(value);
+    for record in usage.into_values() {
+        reading.sums.record(&record.usage);
+        if let (Some(draft), Some(groups)) = (record.draft, groups.as_deref_mut()) {
+            groups.record_draft(draft, &record.usage);
+        }
     }
     reading
 }
 
-fn collect_messages(messages: &Value, source: &str, usage: &mut BTreeMap<String, StoredUsage>) {
+fn collect_messages(
+    messages: &Value,
+    source: &str,
+    usage: &mut HashMap<String, UsageRecord>,
+    draft: &impl Fn(&Value) -> Option<local::GroupDraft>,
+) {
     let Some(messages) = messages.as_array() else {
         return;
     };
@@ -478,9 +991,15 @@ fn collect_messages(messages: &Value, source: &str, usage: &mut BTreeMap<String,
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| format!("{source}:{index}"));
-        match serde_json::from_value::<StoredUsage>(message["token_usage"].clone()) {
+        match <StoredUsage as Deserialize>::deserialize(&message["token_usage"]) {
             Ok(value) => {
-                usage.insert(key, value);
+                usage.insert(
+                    key,
+                    UsageRecord {
+                        usage: value,
+                        draft: draft(message),
+                    },
+                );
             }
             Err(_) => {
                 usage.remove(&key);

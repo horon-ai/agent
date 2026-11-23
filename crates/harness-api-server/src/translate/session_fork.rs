@@ -40,6 +40,10 @@ pub(super) fn request(state: &mut BridgeState, request: &Value, api_id: u64, req
     }
     let id = state.legacy_id();
     state.pending_fork_id = Some((id, api_id));
-    let kind = if req == "fork_session" { "split" } else { "transfer" };
-    vec![Outbound::Legacy(json!({"type": kind, "id": id}))]
+    let frame = if req == "fork_session" {
+        json!({"type": "split", "id": id})
+    } else {
+        json!({"type": "transfer", "id": id})
+    };
+    vec![Outbound::Legacy(frame)]
 }

@@ -62,7 +62,8 @@
                 "group": "Architecture",
                 "pages": [
                   "reference/architecture/server",
-                  "reference/architecture/crates"
+                  "reference/architecture/crates",
+                  "reference/architecture/hosting"
                 ]
               },
               {
@@ -80,6 +81,8 @@
                 "group": "Runtime",
                 "pages": [
                   "reference/runtime/tools",
+                  "reference/runtime/memory",
+                  "reference/runtime/edit-diagnostics",
                   "reference/runtime/tool-scheduling",
                   "reference/runtime/turns",
                   "reference/runtime/prompt",
@@ -93,8 +96,12 @@
               {
                 "group": "Providers",
                 "pages": [
+                  "reference/provider/vision-policy",
                   "reference/provider/model",
+                  "reference/provider/local-helpers",
                   "reference/provider/diagnostics",
+                  "reference/provider/sampling",
+                  "reference/provider/quota-fallback",
                   "reference/provider/integrations"
                 ]
               },
@@ -172,7 +179,8 @@
                 "group": "아키텍처",
                 "pages": [
                   "ko/reference/architecture/server",
-                  "ko/reference/architecture/crates"
+                  "ko/reference/architecture/crates",
+                  "ko/reference/architecture/hosting"
                 ]
               },
               {
@@ -190,6 +198,8 @@
                 "group": "런타임",
                 "pages": [
                   "ko/reference/runtime/tools",
+                  "ko/reference/runtime/memory",
+                  "ko/reference/runtime/edit-diagnostics",
                   "ko/reference/runtime/tool-scheduling",
                   "ko/reference/runtime/turns",
                   "ko/reference/runtime/prompt",
@@ -203,8 +213,12 @@
               {
                 "group": "제공자",
                 "pages": [
+                  "ko/reference/provider/vision-policy",
                   "ko/reference/provider/model",
+                  "ko/reference/provider/local-helpers",
                   "ko/reference/provider/diagnostics",
+                  "ko/reference/provider/sampling",
+                  "ko/reference/provider/quota-fallback",
                   "ko/reference/provider/integrations"
                 ]
               },

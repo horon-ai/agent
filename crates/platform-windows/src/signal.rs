@@ -28,10 +28,10 @@ pub fn parent_pid() -> Option<u32> {
     None
 }
 
-/// Windows has no graceful termination request this process can receive, so
-/// the future never resolves.
-pub async fn wait_for_termination() {
-    std::future::pending::<()>().await;
+/// Windows has no graceful POSIX termination signal this process can receive,
+/// so the future never resolves.
+pub async fn wait_for_termination() -> &'static str {
+    std::future::pending::<&'static str>().await
 }
 
 /// Windows installs no POSIX signal watcher, so the callback never runs.

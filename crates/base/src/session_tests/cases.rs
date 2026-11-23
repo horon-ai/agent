@@ -436,14 +436,14 @@ fn additional_dirs_pass_an_older_build_s_metadata_allow_list() -> Result<()> {
 }
 
 #[test]
-#[allow(clippy::redundant_closure_call)]
 fn initial_session_context_preserves_explicitly_bound_cwd_when_inserted() -> Result<()> {
     let _env_lock = lock_env();
-    let original_cwd = std::env::current_dir().map_err(|e| anyhow!(e))?;
     let (_first_dir, first_path) = canonical_tempdir("horon-agent-session-context-first-")?;
     let (_second_dir, second_path) = canonical_tempdir("horon-agent-session-context-second-")?;
 
-    std::env::set_current_dir(&first_path).map_err(|e| anyhow!(e))?;
+    // Declared after the temp dirs it points into, so it restores the cwd
+    // first, even when an assertion below fails.
+    let cwd = crate::storage::CwdGuard::enter(&first_path)?;
     let mut session = Session::create_with_id(
         "session_context_cwd_refresh_test".to_string(),
         None,
@@ -451,94 +451,75 @@ fn initial_session_context_preserves_explicitly_bound_cwd_when_inserted() -> Res
     );
     assert_eq!(session.working_dir.as_deref(), Some(first_path.to_str().unwrap()));
 
-    std::env::set_current_dir(&second_path).map_err(|e| anyhow!(e))?;
-    let result: std::result::Result<(), anyhow::Error> = (|| {
-        assert!(session.ensure_initial_session_context_message());
-        let first = session.active_context()[0].content_preview();
-        assert!(
-            first.contains(&format!("Working directory: {}", first_path.display())),
-            "session context should preserve the bound cwd, got: {first}"
-        );
-        assert_eq!(session.working_dir.as_deref(), Some(first_path.to_str().unwrap()));
-        Ok(())
-    })();
-    std::env::set_current_dir(original_cwd).map_err(|e| anyhow!(e))?;
-    result?;
+    cwd.change(&second_path)?;
+    assert!(session.ensure_initial_session_context_message());
+    let first = session.active_context()[0].content_preview();
+    assert!(
+        first.contains(&format!("Working directory: {}", first_path.display())),
+        "session context should preserve the bound cwd, got: {first}"
+    );
+    assert_eq!(session.working_dir.as_deref(), Some(first_path.to_str().unwrap()));
 
     Ok(())
 }
 
 #[test]
-#[allow(clippy::redundant_closure_call)]
 fn initial_session_context_can_refresh_before_real_conversation() -> Result<()> {
     let _env_lock = lock_env();
-    let original_cwd = std::env::current_dir().map_err(|e| anyhow!(e))?;
     let (_first_dir, first_path) = canonical_tempdir("horon-agent-session-context-stale-")?;
     let (_second_dir, second_path) = canonical_tempdir("horon-agent-session-context-real-")?;
 
-    std::env::set_current_dir(&first_path).map_err(|e| anyhow!(e))?;
-    let result: std::result::Result<(), anyhow::Error> = (|| {
-        let mut session = Session::create_with_id(
-            "session_context_remote_cwd_refresh_test".to_string(),
-            None,
-            Some("Remote cwd refresh".to_string()),
-        );
-        assert!(session.ensure_initial_session_context_message());
-        assert!(
-            session.active_context()[0]
-                .content_preview()
-                .contains(&format!("Working directory: {}", first_path.display()))
-        );
+    let _cwd = crate::storage::CwdGuard::enter(&first_path)?;
+    let mut session = Session::create_with_id(
+        "session_context_remote_cwd_refresh_test".to_string(),
+        None,
+        Some("Remote cwd refresh".to_string()),
+    );
+    assert!(session.ensure_initial_session_context_message());
+    assert!(
+        session.active_context()[0]
+            .content_preview()
+            .contains(&format!("Working directory: {}", first_path.display()))
+    );
 
-        session.working_dir = Some(second_path.display().to_string());
-        assert!(session.refresh_initial_session_context_message());
-        let refreshed = session.active_context()[0].content_preview();
-        assert!(
-            refreshed.contains(&format!("Working directory: {}", second_path.display())),
-            "session context should refresh to subscribed cwd, got: {refreshed}"
-        );
-        assert!(!refreshed.contains(&format!("Working directory: {}", first_path.display())));
-        Ok(())
-    })();
-    std::env::set_current_dir(original_cwd).map_err(|e| anyhow!(e))?;
-    result?;
+    session.working_dir = Some(second_path.display().to_string());
+    assert!(session.refresh_initial_session_context_message());
+    let refreshed = session.active_context()[0].content_preview();
+    assert!(
+        refreshed.contains(&format!("Working directory: {}", second_path.display())),
+        "session context should refresh to subscribed cwd, got: {refreshed}"
+    );
+    assert!(!refreshed.contains(&format!("Working directory: {}", first_path.display())));
 
     Ok(())
 }
 
 #[test]
-#[allow(clippy::redundant_closure_call)]
 fn initial_session_context_does_not_refresh_after_real_conversation() -> Result<()> {
     let _env_lock = lock_env();
-    let original_cwd = std::env::current_dir().map_err(|e| anyhow!(e))?;
     let (_first_dir, first_path) = canonical_tempdir("horon-agent-session-context-original-")?;
     let (_second_dir, second_path) = canonical_tempdir("horon-agent-session-context-late-")?;
 
-    std::env::set_current_dir(&first_path).map_err(|e| anyhow!(e))?;
-    let result: std::result::Result<(), anyhow::Error> = (|| {
-        let mut session = Session::create_with_id(
-            "session_context_late_cwd_refresh_test".to_string(),
-            None,
-            Some("Late cwd refresh".to_string()),
-        );
-        assert!(session.ensure_initial_session_context_message());
-        session.add_message(
-            Role::User,
-            vec![ContentBlock::Text {
-                text: "hello".to_string(),
-                cache_control: None,
-            }],
-        );
+    let _cwd = crate::storage::CwdGuard::enter(&first_path)?;
+    let mut session = Session::create_with_id(
+        "session_context_late_cwd_refresh_test".to_string(),
+        None,
+        Some("Late cwd refresh".to_string()),
+    );
+    assert!(session.ensure_initial_session_context_message());
+    session.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "hello".to_string(),
+            cache_control: None,
+        }],
+    );
 
-        session.working_dir = Some(second_path.display().to_string());
-        assert!(!session.refresh_initial_session_context_message());
-        let original = session.active_context()[0].content_preview();
-        assert!(original.contains(&format!("Working directory: {}", first_path.display())));
-        assert!(!original.contains(&format!("Working directory: {}", second_path.display())));
-        Ok(())
-    })();
-    std::env::set_current_dir(original_cwd).map_err(|e| anyhow!(e))?;
-    result?;
+    session.working_dir = Some(second_path.display().to_string());
+    assert!(!session.refresh_initial_session_context_message());
+    let original = session.active_context()[0].content_preview();
+    assert!(original.contains(&format!("Working directory: {}", first_path.display())));
+    assert!(!original.contains(&format!("Working directory: {}", second_path.display())));
 
     Ok(())
 }

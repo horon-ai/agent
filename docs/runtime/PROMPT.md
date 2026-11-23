@@ -100,6 +100,12 @@ A turn in which `once` or `after-gap` actually fired is recorded per rule id in 
 
 The injection point marker is `S` (`STREAM_RULE_POINT`). It is distinct from the soft interrupt points A to D, so a client can tell which one it is without inspecting the content.
 
+### Stopping a repeated sentence ([features] repeat_guard)
+
+With `[features] repeat_guard = true`, a response that repeats the same sentence of at least 40 characters four times in a row stops with a `LimitReached` turn stop that quotes the sentence. The default is off (`crates/config-types/src/feature.rs`), so a run that never sets it behaves as before.
+
+The guard reads only prose and never calls a model. Text is judged one complete sentence or line at a time, so a repeat split across stream pieces still counts, and it fires at most once per response. Fenced code, table rows, headings, quotes and list items are skipped and reset the run, and any different sentence between two copies breaks it. Making the same point twice or repeating a line of code does not stop a response (`crates/app-core/src/agent/turn_streaming_mpsc/prose_repeat.rs`).
+
 ### Other agents' rule files (rulebook mode)
 
 `[features] foreign_rules = true` reads `.cursor/rules/*.mdc`, `.cursorrules`, `.clinerules`,

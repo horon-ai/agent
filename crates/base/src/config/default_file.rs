@@ -101,6 +101,9 @@ turn_recovery = "conservative"
 # a matching pattern aborts the response, injects the rule body as a system
 # reminder, and re-issues the request. Off by default.
 stream_rules = false
+# Stop a response that repeats the same long sentence four times in a row.
+# Code blocks, tables, headings and lists are not counted.
+repeat_guard = false
 # Each [[stream_rules]] entry names an id, a Rust regex pattern, and the body to
 # inject. Optional keys: scope (["text"] default, "tool", "tool:<name>"), paths
 # (globs matched against a tool call's file_path/path argument), repeat
@@ -736,6 +739,16 @@ port = 7643
 # Bind address (0.0.0.0 for LAN/Tailscale reachability)
 bind_addr = "0.0.0.0"
 
+[harness_api]
+# Serve the harness API on a TCP address beside its local socket. Every TCP
+# connection must present a bearer token issued with `horon-agent api-credentials`.
+# Absent means the local socket only, which is the default.
+# bind = "127.0.0.1:7946"
+# A TLS-terminating proxy must front a non-loopback bind: built-in TLS is not
+# implemented, so the bearer token is cleartext without one. Leave false unless
+# that proxy exists.
+insecure_behind_proxy = false
+
 [power]
 # Prevent automatic system sleep while any horon-agent session is actively working.
 # Linux also blocks lid-switch suspend.
@@ -827,6 +840,28 @@ mod tests {
         assert_eq!(parsed.prewalk, Config::default().prewalk);
         assert!(!parsed.prewalk.is_active(), "a fresh install must not hand off");
         parsed.prewalk.validate().expect("the shipped section is valid");
+    }
+
+    /// The shipped template documents the optional harness API listener and
+    /// keeps it off: no bind and no proxy acknowledgement.
+    #[test]
+    fn default_config_template_documents_the_harness_api_listener() {
+        let template = Config::default_config_file_contents();
+        assert!(
+            template.contains("[harness_api]"),
+            "the template must document the section"
+        );
+        assert!(template.contains("# bind = \"127.0.0.1:7946\""));
+        assert!(template.contains("insecure_behind_proxy = false"));
+        let document: toml::Value = toml::from_str(&template).expect("the shipped config template must parse");
+        let section: crate::harness_api::HarnessApiConfig = document
+            .get("harness_api")
+            .cloned()
+            .expect("the template carries the section")
+            .try_into()
+            .expect("the documented section parses");
+        assert_eq!(section.bind, None);
+        assert!(!section.insecure_behind_proxy);
     }
 
     /// The template is written once and then read by the daemon, saved back by

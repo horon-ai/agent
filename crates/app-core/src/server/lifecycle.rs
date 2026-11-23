@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -10,6 +11,7 @@ const OWNER_PID_ENV: &str = "HORON_AGENT_SERVER_OWNER_PID";
 const TEMP_IDLE_SECS_ENV: &str = "HORON_AGENT_TEMP_SERVER_IDLE_SECS";
 const DEFAULT_TEMP_IDLE_SECS: u64 = 30 * 60;
 const TEMP_SERVER_EXIT_CODE: i32 = super::EXIT_IDLE_TIMEOUT;
+static TERMINATION_SHUTDOWN_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the idle monitor may start counting idle time.
 ///
@@ -22,14 +24,65 @@ pub(crate) fn idle_monitor_should_start(client_count: usize, has_live_headless_w
 /// Wait (bounded) for an in-flight session save before the process exits.
 /// Exiting between a checkpoint's snapshot write and journal delete used to
 /// duplicate history on the next load (#1632).
-pub(crate) async fn drain_session_saves_before_exit() {
-    crate::logging::info("Server received SIGTERM, shutting down gracefully");
+pub(crate) async fn drain_session_saves_before_exit(signal_name: &str) {
+    crate::logging::info(&format!("Server received {signal_name}, shutting down gracefully"));
     let drained = tokio::task::spawn_blocking(|| crate::session::drain_saves_for_shutdown(Duration::from_secs(5)))
         .await
         .unwrap_or(false);
     if !drained {
         crate::logging::warn("Shutdown: a session save was still running after 5s; exiting anyway");
     }
+}
+
+/// Remove the sockets, temporary metadata, build-hash sidecar, and daemon lock
+/// owned by this server process.
+///
+/// `std::process::exit` skips `DaemonLockGuard::drop`, so every explicit exit
+/// path cleans up its own sockets and sidecars while still holding the lock and
+/// unlinks the lock file last.
+pub(crate) fn cleanup_server_runtime_files(socket_path: &Path, debug_socket_path: &Path) {
+    crate::transport::remove_socket(socket_path);
+    crate::transport::remove_socket(debug_socket_path);
+    cleanup_temporary_metadata(socket_path);
+    let _ = std::fs::remove_file(format!("{}.hash", socket_path.display()));
+    super::socket::cleanup_held_daemon_lock();
+}
+
+/// Watch for `SIGTERM` or `SIGINT` and run the graceful shutdown sequence once.
+///
+/// Cancels background compaction and drains in-flight session saves before
+/// unregistering from `servers.json` and removing runtime sockets/locks so a
+/// caller polling the socket sees the stop only after durable writes finish.
+/// Where the platform has no POSIX termination signal (Windows), the watcher
+/// stays pending.
+pub(crate) fn spawn_termination_signal_handler(
+    server_name: String,
+    sessions: super::SessionAgents,
+    socket_path: PathBuf,
+    debug_socket_path: PathBuf,
+) {
+    tokio::spawn(async move {
+        let signal_name = horon_agent_platform::signal::wait_for_termination().await;
+        if TERMINATION_SHUTDOWN_STARTED
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        // A job that is still summarizing must not race the save or apply after
+        // the transcript is drained.
+        for agent in sessions.read().await.values() {
+            if let Ok(mut agent) = agent.try_lock() {
+                agent.cancel_background_compaction(crate::compaction::jobs::CancelReason::Shutdown);
+            }
+        }
+        drain_session_saves_before_exit(signal_name).await;
+        if let Err(error) = crate::registry::unregister_server(&server_name).await {
+            crate::logging::warn(&format!("Shutdown: failed to unregister server {server_name}: {error}"));
+        }
+        cleanup_server_runtime_files(&socket_path, &debug_socket_path);
+        std::process::exit(0);
+    });
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -212,16 +265,7 @@ pub(crate) fn spawn_temporary_lifecycle_monitor(
 
 async fn shutdown_temporary_server(server_name: &str, socket_path: &Path, debug_socket_path: &Path) -> ! {
     let _ = crate::registry::unregister_server(server_name).await;
-    crate::transport::remove_socket(socket_path);
-    crate::transport::remove_socket(debug_socket_path);
-    cleanup_temporary_metadata(socket_path);
-    // `std::process::exit` skips `DaemonLockGuard::drop`, so clear the lock
-    // this process holds. Per-run sockets would otherwise leave one stale lock
-    // file behind per run.
-    super::socket::cleanup_held_daemon_lock();
-    // Same for the build-hash sidecar the registry publisher writes next to
-    // the socket: an ephemeral server must leave nothing behind.
-    let _ = std::fs::remove_file(format!("{}.hash", socket_path.display()));
+    cleanup_server_runtime_files(socket_path, debug_socket_path);
     std::process::exit(TEMP_SERVER_EXIT_CODE);
 }
 
@@ -315,5 +359,27 @@ mod tests {
     fn current_process_is_alive() {
         assert!(process_alive(std::process::id()));
         assert!(!process_alive(0));
+    }
+
+    #[test]
+    fn cleanup_server_runtime_files_removes_sockets_metadata_and_hash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir.path().join("horon-agent.sock");
+        let debug_socket = dir.path().join("horon-agent-debug.sock");
+        let metadata = metadata_path(&socket);
+        let hash = PathBuf::from(format!("{}.hash", socket.display()));
+        let unrelated = dir.path().join("keep.txt");
+
+        for path in [&socket, &debug_socket, &metadata, &hash, &unrelated] {
+            std::fs::write(path, "placeholder").expect("write fixture file");
+        }
+
+        cleanup_server_runtime_files(&socket, &debug_socket);
+
+        assert!(!socket.exists(), "main socket should be removed");
+        assert!(!debug_socket.exists(), "debug socket should be removed");
+        assert!(!metadata.exists(), "temporary server metadata should be removed");
+        assert!(!hash.exists(), "build-hash sidecar should be removed");
+        assert!(unrelated.exists(), "unrelated files must stay untouched");
     }
 }

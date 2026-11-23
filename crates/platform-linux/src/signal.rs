@@ -75,20 +75,52 @@ pub fn parent_pid() -> Option<u32> {
     (ppid > 0).then_some(ppid as u32)
 }
 
-/// Wait until the process is asked to terminate gracefully.
+/// Wait until the process is asked to terminate gracefully (`SIGTERM` or
+/// `SIGINT`).
 ///
-/// Resolves once SIGTERM has been delivered. Registration failures leave the
-/// future pending rather than resolving immediately: a caller that cannot
-/// receive the signal has nothing to do on this turn.
-pub async fn wait_for_termination() {
+/// Both signal handlers are registered before waiting so either signal triggers
+/// the same graceful shutdown path and subsequent signals arriving during
+/// shutdown drain do not kill the process via the default disposition.
+/// Registration failures log a warning and leave that signal unwatched; if
+/// neither signal can be registered the future stays pending rather than
+/// resolving immediately.
+pub async fn wait_for_termination() -> &'static str {
+    use std::task::Poll;
     use tokio::signal::unix::{SignalKind, signal};
 
-    match signal(SignalKind::terminate()) {
-        Ok(mut sigterm) => {
-            sigterm.recv().await;
+    let mut sigterm = match signal(SignalKind::terminate()) {
+        Ok(stream) => Some(stream),
+        Err(error) => {
+            report(Level::Warn, &format!("Failed to install SIGTERM handler: {error}"));
+            None
         }
-        Err(_) => std::future::pending::<()>().await,
-    }
+    };
+    let mut sigint = match signal(SignalKind::interrupt()) {
+        Ok(stream) => Some(stream),
+        Err(error) => {
+            report(Level::Warn, &format!("Failed to install SIGINT handler: {error}"));
+            None
+        }
+    };
+
+    std::future::poll_fn(|cx| {
+        if let Some(term) = sigterm.as_mut() {
+            match term.poll_recv(cx) {
+                Poll::Ready(Some(())) => return Poll::Ready("SIGTERM"),
+                Poll::Ready(None) => sigterm = None,
+                Poll::Pending => {}
+            }
+        }
+        if let Some(int) = sigint.as_mut() {
+            match int.poll_recv(cx) {
+                Poll::Ready(Some(())) => return Poll::Ready("SIGINT"),
+                Poll::Ready(None) => sigint = None,
+                Poll::Pending => {}
+            }
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 /// Watch the signals that end a CLI session and report each arrival to

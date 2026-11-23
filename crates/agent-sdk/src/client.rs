@@ -2338,6 +2338,8 @@ impl HoronAgentClient {
     }
 }
 
+mod package_commands;
+mod package_control;
 mod types;
 pub use types::*;
 

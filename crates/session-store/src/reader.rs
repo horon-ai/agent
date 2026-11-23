@@ -102,6 +102,124 @@ pub fn open(paths: &SessionPaths, id: &SessionId) -> Result<Option<SessionSource
     legacy_source(paths.root(), id.clone())
 }
 
+/// Result of inspecting a canonical session's event headers without replaying
+/// message payloads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CanonicalParent {
+    /// Strict linear ancestry ending in one head with this `parent_id`.
+    Known(Option<String>),
+    /// Non-linear heads, externalized metadata, missing metadata, or corrupt log:
+    /// fall back to [`EventGraph::open`] and [`EventGraph::replay`].
+    NeedsReplay,
+}
+
+#[derive(serde::Deserialize)]
+struct EnvelopeHeader<'a> {
+    schema_version: u32,
+    event_id: &'a str,
+    #[serde(default)]
+    parent_event_id: Option<&'a str>,
+    kind: &'a str,
+    #[serde(default)]
+    payload: Option<MetadataPayloadHeader>,
+    #[serde(default)]
+    payload_ref: Option<serde::de::IgnoredAny>,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataPayloadHeader {
+    #[serde(default)]
+    metadata: Option<MetadataParentHeader>,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataParentHeader {
+    #[serde(default)]
+    parent_id: Option<String>,
+}
+
+/// Reusable scanner for reading `parent_id` across many canonical sessions
+/// without constructing `EventGraph` or deserializing message payloads.
+#[derive(Default)]
+pub struct ParentScanner {
+    line_buf: Vec<u8>,
+    prev_event_id: String,
+}
+
+impl ParentScanner {
+    /// Create a new scanner with reusable internal line buffers.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inspect `events.jsonl` for `id` in one linear streaming pass.
+    ///
+    /// # Errors
+    /// Propagates an unsafe session id or an I/O failure opening/reading the log.
+    pub fn scan_canonical_parent(
+        &mut self,
+        paths: &SessionPaths,
+        id: &SessionId,
+    ) -> Result<CanonicalParent, StoreError> {
+        use std::io::BufRead;
+        let log = paths.events_log(id)?;
+        let file = fs::File::open(&log)?;
+        let mut reader = std::io::BufReader::new(file);
+        self.prev_event_id.clear();
+        let mut parent_id: Option<String> = None;
+        let mut saw_created = false;
+        let mut line_count = 0usize;
+
+        loop {
+            self.line_buf.clear();
+            let read = reader.read_until(b'\n', &mut self.line_buf)?;
+            if read == 0 {
+                break;
+            }
+            let mut end = self.line_buf.len();
+            while end > 0 && matches!(self.line_buf[end - 1], b'\n' | b'\r' | b' ' | b'\t') {
+                end -= 1;
+            }
+            if end == 0 {
+                return Ok(CanonicalParent::NeedsReplay);
+            }
+            let Ok(env) = serde_json::from_slice::<EnvelopeHeader<'_>>(&self.line_buf[..end]) else {
+                return Ok(CanonicalParent::NeedsReplay);
+            };
+            if env.schema_version != EVENT_SCHEMA_VERSION {
+                return Ok(CanonicalParent::NeedsReplay);
+            }
+            line_count += 1;
+            if self.prev_event_id.is_empty() {
+                if env.parent_event_id.is_some() || env.kind != "session_created" {
+                    return Ok(CanonicalParent::NeedsReplay);
+                }
+            } else if env.parent_event_id != Some(self.prev_event_id.as_str()) {
+                return Ok(CanonicalParent::NeedsReplay);
+            }
+            if env.kind == "session_created" || env.kind == "metadata_changed" {
+                if env.payload_ref.is_some() {
+                    return Ok(CanonicalParent::NeedsReplay);
+                }
+                let Some(meta) = env.payload.and_then(|p| p.metadata) else {
+                    return Ok(CanonicalParent::NeedsReplay);
+                };
+                parent_id = meta.parent_id;
+                if env.kind == "session_created" {
+                    saw_created = true;
+                }
+            }
+            self.prev_event_id.clear();
+            self.prev_event_id.push_str(env.event_id);
+        }
+
+        if line_count == 0 || !saw_created {
+            return Ok(CanonicalParent::NeedsReplay);
+        }
+        Ok(CanonicalParent::Known(parent_id))
+    }
+}
+
 /// The layout a session id currently uses, without reading its history.
 ///
 /// # Errors

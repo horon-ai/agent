@@ -5,12 +5,19 @@ mod cancellable_work;
 mod compact_handoff;
 mod credentials;
 pub(crate) mod effective_settings;
+pub(crate) mod package_control;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
 mod session_fork;
 mod simple_kind;
+mod support;
 mod usage_report;
+pub use usage_report::local::{LocalUsage, local_usage};
+
+#[cfg(test)]
+pub(crate) use support::horon_agent_home_test_lock;
+pub use support::legacy_event_may_block;
 
 use crate::background_progress::parse_background_notification;
 use horon_agent_harness_api::{
@@ -25,14 +32,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[cfg(test)]
-pub(crate) fn horon_agent_home_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 /// A `peek_session` returns a short tail so browsing many sessions stays cheap.
 const PEEK_LIMIT: u64 = 12;
@@ -62,6 +61,7 @@ const REQUIRES_ATTACH: &[&str] = &[
     "compact",
     "rename_session",
     "set_session_saved",
+    "get_effective_settings",
     "get_runtime_info",
     "fork_session",
     "fork_session_at",
@@ -340,15 +340,6 @@ impl From<&RecentSessionIndexEntry> for PersistedSessionMetadata {
 
 pub(super) use simple_kind::SimpleKind;
 
-/// Whether translating this daemon event may perform synchronous file I/O.
-///
-/// Keep in sync with the arms of [`BridgeState::legacy_event_to_api`] that
-/// read persisted session records or side-panel files. Everything else is
-/// pure in-memory translation and must not pay for `block_in_place`.
-pub fn legacy_event_may_block(event: &Value) -> bool {
-    matches!(event["type"].as_str(), Some("state" | "split_response" | "history"))
-}
-
 impl BridgeState {
     pub(super) fn legacy_id(&mut self) -> u64 {
         NEXT_LEGACY_ID.fetch_add(1, Ordering::Relaxed)
@@ -409,6 +400,9 @@ impl BridgeState {
     fn translate_request(&mut self, request: &Value) -> Vec<Outbound> {
         let api_id = request["id"].as_u64().unwrap_or(0);
         let req = request["req"].as_str().unwrap_or("");
+        if let Some(reply) = package_control::request(self, request) {
+            return reply;
+        }
         // Stateful requests only mean something once this connection is
         // attached. Forwarding one before then is not merely useless: the
         // daemon answers "Client must Subscribe with a working_dir before
@@ -746,7 +740,8 @@ impl BridgeState {
             | "export_session_record_blob"
             | "import_session_record_blob"
             | "get_session_record_blob_status"
-            | "export_session_markdown" => crate::replication::handle(request, self.request_envelope_bytes),
+            | "export_session_markdown"
+            | "export_session_html" => crate::replication::handle(request, self.request_envelope_bytes),
             // Answered from the stored record rather than the daemon: the legacy
             // protocol can only speak about the attached session, and attaching
             // merely to read it would disturb the very thing being previewed.
@@ -820,8 +815,7 @@ impl BridgeState {
                 ids.extend(self.user_connected_sessions.iter().cloned());
                 // Titles are deliberately not cached. A rename is persisted
                 // before `SessionRenamed` is broadcast, and every list call
-                // should reflect that newest canonical value even on another
-                // API connection.
+                // should reflect that newest canonical value even on another API connection.
                 let metadata: BTreeMap<String, PersistedSessionMetadata> = ids
                     .iter()
                     .filter_map(|id| {
@@ -1649,6 +1643,9 @@ impl BridgeState {
 
     fn translate_legacy_event(&mut self, event: &Value) -> Vec<ServerFrame> {
         let kind = event["type"].as_str().unwrap_or("");
+        if let Some(frames) = package_control::event(self, event) {
+            return frames;
+        }
         if kind == "runtime_command_result" {
             let legacy_id = event["id"].as_u64().unwrap_or(0);
             let Some(api_id) = self.take_simple(legacy_id, SimpleKind::RuntimeCommand) else {

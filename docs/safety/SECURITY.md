@@ -2,7 +2,7 @@
 
 Language: **English** | [한국어](SECURITY.ko.md)
 
-Workspace trust gates, local crash bundles, and dependency security classification.
+Workspace trust gates, hosted MCP and extension isolation, local crash bundles, and dependency security classification.
 
 ## Workspace trust
 
@@ -59,6 +59,48 @@ When `[tools] bash_direnv` is enabled, local shells also require an explicit Hor
 | Explicit commands such as `mcp test` and `mcp list` | That command | Records nothing. The command itself is the consent. |
 
 The environment variable is case-insensitive and recognizes only `trust` and `deny`. Any other value is ignored and the stored decision applies (`workspace_trust.rs:363` `env_decision`). An environment denial is applied before `--trust-workspace`, so if you pass both, the denial wins.
+
+## Hosted MCP and extension isolation
+
+A hosted deployment gives one customer one process, either a container or a Fly
+Machine with that customer's volume mounted as its home. The daemon runs under
+one of the modes in [hosting](../architecture/HOSTING.md). The mode decides which
+MCP servers and child processes it may run for a customer, and one module makes
+that decision (`crates/base/src/mcp/hosted.rs`).
+
+| Mode | MCP stdio child | Package or extension child | Editor-supplied stdio server | Shared-pool stdio connect | Remote MCP connection |
+| --- | --- | --- | --- | --- | --- |
+| No hosting (the ordinary process) | allowed | allowed | allowed | allowed | allowed |
+| `per-user-container` | allowed | allowed | allowed | allowed | allowed |
+| `per-user-container` with `[hosting] allow_shared_children = false` | refused | refused | refused | refused | allowed |
+| `shared-worker` | refused | refused | refused | refused | refused |
+
+- A shared worker refuses all five. A child process and the remote credential store would belong to one customer while the process serves every customer, so there is no per-user environment, process tree or token to prove.
+- A per-user container or Fly Machine keeps its own servers: the home volume, the OAuth store under it, and the process environment a `${VAR}` expansion reads are that customer's own. `allow_shared_children = false` closes its child processes and leaves remote connections alone, because a remote connection starts none.
+- `[hosting] allowed_mcp_servers` narrows the MCP servers a hosted process may connect: absent leaves all of them reachable, an empty list reaches none, and the match is exact against the name a source or an editor registered. It never widens a mode, and a process without hosting is unchanged, so a key left over on a reused volume does not take the operator's own servers away.
+- Package children pass one gate (`crates/base/src/packages/child_gate.rs`, called from `PackageExecutable::start_with_arguments`), so a package's MCP stdio server, its extension child, its declared commands and its observers are all covered by the same decision.
+
+A refusal is explicit and recorded once. The caller gets a typed error that names
+the policy and the operation, and the daemon writes one audit event:
+
+**`HOSTED_POLICY`** carries `policy` (`shared-worker`, `per-user-container`, or
+`unresolved`), `operation` (`mcp-stdio`, `session-mcp-stdio`,
+`pooled-mcp-stdio`, `mcp-remote`, `package-child`), `subject` (the server or
+package name, `-` when the gate knows none), `reason` (`shared-worker`,
+`children-disabled`, `not-allowed`, `unresolved-policy`) and `tenant` (the audit
+label, `-` outside hosting). It never carries a command argument, an environment
+value, a header, a URL or a token.
+
+A refused package MCP server is also queued for the session's next turn, so the
+model can tell the user why the tools are missing instead of the refusal ending
+as a log line. An editor whose server list is refused receives the request error
+itself, because the whole list is refused rather than silently reduced.
+
+Limits: this gate covers MCP servers and package children only. `bash`, `eval`
+and hook commands are outside it; a hosted deployment keeps those behind the
+per-user boundary from [hosting](../architecture/HOSTING.md) (a container or a
+Fly Machine, a dedicated `HORON_HOME`, a separate runtime directory, and no TCP
+gateway), not behind this gate.
 
 ## Python eval
 
@@ -127,6 +169,45 @@ The hook is installed once at startup (`src/cli/startup.rs:38`). Later calls onl
 - Writes are best effort. If creating the directory or writing a file fails, panic handling itself still continues.
 - Stack traces, full environment variables, and session transcripts are not included. Only the panic location and recent tool calls are.
 - Bundles stay local, so the user has to clean them up.
+
+## API exposure and credentials
+
+The harness API is local by default: a Unix socket or named pipe that only the
+owning OS user can open, or one stdio connection. `--api-bind` adds a TCP
+listener, and that listener is the only harness surface another machine can
+reach.
+
+- Every TCP connection presents `Authorization: Bearer <token>` before `hello`.
+  A failure closes the connection without writing a frame and without dialling
+  the daemon, so the listener never processes a request from an unauthenticated
+  peer. Pre-auth input is limited to 1 KiB and 10 seconds, so a silent or
+  slow-drip peer cannot hold a connection or memory.
+- Tokens are 32 random bytes stored only as `sha256:<hex>` digests in
+  `$HORON_HOME/harness-api/credentials.json`, a `0600` file in a `0700`
+  directory. The plaintext is printed once by
+  `horon-agent api-credentials issue` or `rotate`. The bridge re-reads the file
+  for every connection, so `revoke` and `rotate` apply immediately, and a store
+  that is a symlink, owned by another user, or not owner-only is refused rather
+  than trusted.
+- Built-in TLS is not implemented in this build. A non-loopback bind therefore
+  refuses to start unless the operator acknowledges a TLS-terminating proxy with
+  `--api-insecure-behind-proxy` or `insecure_behind_proxy = true`, and at least
+  one credential exists. Without that proxy the bearer token would travel in
+  cleartext; client certificates at the proxy are the supported mutual
+  authentication path.
+- Credentials are per `HORON_HOME`. A per-user container's home volume is that
+  tenant's, so one tenant's tokens cannot authenticate another tenant's listener.
+- The gateway (`[gateway]`, the WebSocket pairing surface) and the harness API
+  listener are separate surfaces with separate registries; neither surface's
+  token is accepted by the other.
+- Exposure does not authenticate a person, only a credential. On a hosting
+  provider the private network (`6PN` on Fly.io) keeps other organizations out
+  but treats every process on it as trusted, and a public port is public. The
+  token is required on both paths, and no forwarded header (`Fly-Client-IP` or
+  any other) is trusted for authentication or authorization.
+- A bind address is parsed as a literal IPv4 or IPv6 address. `[::]`,
+  `0.0.0.0` and a private `fdaa::/16` address are all non-loopback and all
+  require the proxy acknowledgement; only `127.0.0.0/8` and `::1` are loopback.
 
 ## Dependency security classification
 
@@ -241,10 +322,12 @@ An extension declares a Rust executable and a plugin adds resources to that
 extension. `horon package install <directory>` validates and registers either
 kind in the user catalog. The explicit `--project <root>` option limits the
 installed package to one canonical project root. Installation is consent.
-The inbox reconciler uses the same installer for completed folders under the
-user-owned `$HORON_HOME/packages/inbox/<id>/`. It leaves the source in place
-and skips IDs already recorded, including removed packages. Automatic daemon
-reconciliation, child spawning and session refresh are later steps.
+The daemon reconciles completed folders under the user-owned
+`$HORON_HOME/packages/inbox/<id>/` through the same installer. It leaves the
+source in place and skips IDs already recorded, including removed packages.
+The CLI sends mutations to the daemon when it is running. If a reply is lost
+after sending the request, the CLI returns an error. Session refresh is a
+separate step.
 
 SHA-256 is an internal integrity check. The versioned JSON-RPC handshake
 compares the declaration digest the child reports before any call is dispatched.

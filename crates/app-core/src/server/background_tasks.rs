@@ -1,4 +1,5 @@
 use super::live_turn::{LiveTurnSwarmContext, run_live_turn_if_idle};
+use super::session_notes::{NoteKind, record, record_work};
 use super::state::SwarmEvent;
 use super::{
     SessionAgents, SessionInterruptQueues, SwarmMember, fanout_session_event, queue_soft_interrupt_for_session,
@@ -47,6 +48,13 @@ pub(super) async fn dispatch_background_task_completion(
     event_counter: &Arc<AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
 ) {
+    record_work(&task.session_id, "background_task_completed", || {
+        format!(
+            "{} · {}",
+            crate::message::background_task_display_label(&task.tool_name, task.display_name.as_deref()),
+            task.task_id
+        )
+    });
     let notification = format_background_task_notification_markdown(task);
 
     if task.notify
@@ -133,6 +141,14 @@ pub(super) async fn dispatch_background_task_stalled(
     event_counter: &Arc<AtomicU64>,
     swarm_event_tx: &broadcast::Sender<SwarmEvent>,
 ) {
+    record_work(&task.session_id, "background_task_stalled", || {
+        format!(
+            "{} · {} · {}s",
+            crate::message::background_task_display_label(&task.tool_name, task.display_name.as_deref()),
+            task.task_id,
+            task.running_secs.round() as u64
+        )
+    });
     let notification = crate::message::format_background_task_stalled_markdown(task);
 
     if task.notify
@@ -291,6 +307,13 @@ pub(super) async fn dispatch_background_task_progress(
     task: &crate::bus::BackgroundTaskProgressEvent,
     swarm_members: &Arc<RwLock<HashMap<String, SwarmMember>>>,
 ) {
+    record_work(&task.session_id, "background_task_progress", || {
+        format!(
+            "{} · {}",
+            crate::message::background_task_display_label(&task.tool_name, task.display_name.as_deref()),
+            task.task_id
+        )
+    });
     let notification = format_background_task_progress_markdown(task);
     if fanout_session_event(
         swarm_members,
@@ -603,6 +626,9 @@ pub(super) async fn dispatch_ui_activity(
     let Some(session_id) = activity.session_id.as_deref() else {
         return;
     };
+    // The card's prose can carry arbitrary task text; the view needs only what
+    // kind of activity it was, so no message body is copied into a note.
+    record(session_id, NoteKind::Work, "ui_activity", Some(activity.kind.scope()));
 
     if fanout_session_event(
         swarm_members,

@@ -205,6 +205,33 @@ Use HTTPS for remote servers that require authentication. Loopback HTTP is
 acceptable for local development and integration tests. OAuth endpoint discovery and callback
 validation enforce secure URLs, resource binding, PKCE, and state validation.
 
+### Package-provided MCP servers
+
+An installed plugin may declare MCP servers in `plugin.toml`
+(`[resources] mcp = ["resources/mcp/servers.json"]`). Each entry names either the
+package's own executable or a server the user already configured:
+
+```json
+{"mcpServers": {
+  "echo": {"type": "stdio", "mode": "mcp"},
+  "clock": {"type": "remote", "server": "corp-clock"}
+}}
+```
+
+- `stdio` runs the package's installed executable with `mode` (and any extra
+  `args`) after the installed root, through the same supervision as every other
+  package process: digest-checked, pinned for the generation that started it,
+  and stopped with its own process group.
+- `remote` adds no endpoint and no credential. It refers to a server in the
+  user's own merged configuration, and the package connects through that
+  connection. A reference the user does not define is skipped with a log line.
+
+Every name is registered as `plugin_<id>_<name>` and merged after every user
+source, so a package never takes a name the user already uses: the user's
+definition of that exact name wins. Servers follow the catalog generation a turn
+captured; a replaced or removed package closes only its own connections, and a
+call still goes through the session's normal tool policy.
+
 ## Proposed isolated browser connector
 
 Status: design for #576. Horon already connects to configured MCP servers, and `webfetch` retrieves page content. A separate browser MCP connector would let a user explicitly open a page and request its accessibility snapshot or screenshot. [Tool reference](../runtime/TOOLS.md)

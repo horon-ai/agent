@@ -500,7 +500,11 @@ pub(super) async fn handle_client(
         }
 
         match decode_request(&line) {
-            Ok(request) => {
+            Ok(mut request) => {
+                if let Some(event) = super::package_control::reply(&mut request).await {
+                    write_direct_event(&writer, &event).await?;
+                    continue;
+                }
                 if request.is_lightweight_control_request() {
                     let keep_connection_open = matches!(request, Request::Ping { .. });
                     handle_lightweight_control_request(
@@ -972,6 +976,12 @@ pub(super) async fn handle_client(
                 }
             }
         };
+        if let Some(event) = super::package_control::reply(&mut request).await {
+            if write_direct_event(&writer, &event).await.is_err() {
+                break;
+            }
+            continue;
+        }
         let request_decoded_at = Instant::now();
         let request_id = request.id();
         let request_kind = request_type_from_line(&line);
@@ -1300,7 +1310,9 @@ pub(super) async fn handle_client(
         let sdk_session_before_request = client_session_id.clone();
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
-            Request::ClientResponse { .. } | Request::DeleteSession { .. } => unreachable!("dispatched earlier"),
+            Request::ClientResponse { .. } | Request::DeleteSession { .. } | Request::PackageControl { .. } => {
+                unreachable!("dispatched earlier")
+            }
             Request::Message {
                 id,
                 content,
@@ -2535,6 +2547,12 @@ pub(super) async fn handle_client(
                             "swarm_id": member.and_then(|m| m.swarm_id.as_deref()), "role": member.map(|m| &m.role)});
                         return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
                     }
+                    // A per-session status view must answer while the turn that
+                    // it describes still holds the agent lock, so it comes from
+                    // the notes registry instead of the agent.
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Observations {
+                        return super::session_notes::command(&client_session_id, &args);
+                    }
                     let mut guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry this runtime command after the current turn."))?;
                     super::runtime_commands::execute(&mut guard, parsed, &args, swarm_enabled, serde_json::Value::Null).await
                 }.await;
@@ -3200,7 +3218,14 @@ pub(super) async fn handle_client(
                     .as_ref()
                     .is_some_and(|(session, _)| session == &client_session_id);
                 let configs = if acp_attached {
-                    crate::tool::session_mcp::server_configs(servers)
+                    // The process policy decides whether this editor's servers
+                    // may start at all; an unreadable policy refuses the list.
+                    match crate::hosting::current() {
+                        Ok(policy) => crate::tool::session_mcp::server_configs(policy, servers),
+                        Err(error) => Err(format!(
+                            "MCP servers are refused: the hosting policy could not be resolved: {error}"
+                        )),
+                    }
                 } else {
                     Err(crate::tool::approval_override::NOT_ACP_MESSAGE.to_string())
                 };

@@ -748,3 +748,31 @@ fn export_markdown_with_a_bad_session_id_is_invalid_request() {
     let (code, _) = error_of(event);
     assert_eq!(code, ErrorCode::InvalidRequest);
 }
+
+/// `export_session_html` over the bridge answers one offline document.
+#[test]
+fn export_html_over_the_bridge_is_a_standalone_report() {
+    let home = ScopedHome::new("html-report");
+    let seeded = seed_session(&home.sessions(), "repl_html", 2);
+    let event = request(json!({"req": "export_session_html", "id": 1, "session_id": seeded.id.as_str()}));
+    let html = match event {
+        ApiEvent::SessionHtml { html, .. } => html,
+        other => panic!("expected session_html, got {other:?}"),
+    };
+    assert!(html.starts_with("<!DOCTYPE html>"));
+    assert!(html.contains("<h2>User</h2>"));
+    assert!(html.contains("<h2>Assistant</h2>"));
+    assert!(html.contains("message 0"));
+    assert!(html.contains("default-src 'none'"));
+    assert!(!html.contains("<script"), "a report carries no script");
+}
+
+/// An unknown session answers `unknown_session`, not a store failure.
+#[test]
+fn export_html_of_an_unknown_session_is_unknown_session() {
+    let home = ScopedHome::new("html-unknown");
+    let _ = home;
+    let event = request(json!({"req": "export_session_html", "id": 2, "session_id": "does_not_exist"}));
+    let (code, _) = error_of(event);
+    assert_eq!(code, ErrorCode::UnknownSession);
+}

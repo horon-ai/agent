@@ -41,6 +41,7 @@ mod history_search;
 mod jobs;
 mod keys;
 mod notes;
+mod package;
 mod picker;
 mod pins;
 mod prompts;
@@ -49,6 +50,7 @@ mod sending;
 mod sessions;
 mod settings;
 mod skills;
+pub(crate) mod state_file;
 mod status;
 mod terminal_signals;
 
@@ -125,6 +127,8 @@ pub struct App {
     /// The reader's own notes on transcript messages, in a file of this
     /// client's own. Never part of a message or a harness request.
     pub(crate) notes: crate::notes::NoteStore,
+    /// The note keys of the conversation the last frame drew.
+    pub(crate) note_keys: crate::notes::KeyCache,
     pub(crate) todos: crate::todo_panel::TodoPanel,
     /// The line being edited.
     pub input: Input,
@@ -188,6 +192,7 @@ pub struct App {
     /// Read here and acted on where the title is written, which also knows
     /// whether the terminal keeps a title worth adding to.
     pub title_state: bool,
+    pub(crate) work_notes: crate::work_notes::WorkNotes,
     /// What the client is attached to, for the status line.
     pub description: String,
     /// Events from the bridge thread.
@@ -355,6 +360,13 @@ pub struct App {
     /// picker needs the file and the tool list the harness named, so the report
     /// is kept whole here. It is cleared with the session it belongs to.
     pub skills: Vec<SkillRow>,
+    /// The send a package command's expansion asked for, until the loop takes it.
+    ///
+    /// A package command's answer arrives on the bridge's channel, where no
+    /// command sender is held. A template's answer is a user message, and the
+    /// action that sends it waits here for [`App::take_queued`], which the frame
+    /// loop drains right after every delivery.
+    package_send: Option<Action>,
     /// The background work the session reported as running, in its order.
     ///
     /// A row's value is its index here, so the selected row names the call id
@@ -391,12 +403,12 @@ pub struct App {
     pub(crate) terminal_signals: crate::progress::Options,
     /// How the last turn ended, until the user acts on it.
     ///
-    /// The status line goes back to `idle` the moment a turn ends, which is
-    /// right for the person already looking at the screen; a terminal tab behind
+    /// The status line returns to `idle` the moment a turn ends; a tab behind
     /// another window has no other way to say a turn finished or failed, so the
-    /// outcome is held here until the user does something and the mark is safe
-    /// to drop.
+    /// outcome stays until the user acts and the mark is safe to drop.
     pub(crate) outcome: Option<crate::progress::Outcome>,
+    /// The staged set a `/commit` preview showed and `/commit --yes` commits.
+    pub(crate) commit_review: Option<crate::git_review::Review>,
     /// A copy the app decided on, waiting for the loop to write it.
     ///
     /// It sits here rather than being written from the key handler so that the
@@ -417,6 +429,7 @@ pub struct App {
     /// The revision says the conversation was replaced (a clear or a session
     /// switch), and the count says how many of its answers were recorded.
     record_scan: (u64, usize),
+    record_generation: u64,
 }
 
 impl App {
@@ -427,6 +440,7 @@ impl App {
             // In memory until `run` gives the client the file it owns: a test
             // or an embedded user of `App` must not read or write `$HORON_HOME`.
             notes: crate::notes::NoteStore::memory(),
+            note_keys: Default::default(),
             todos: Default::default(),
             input: Input::new(),
             history: History::new(),
@@ -450,6 +464,7 @@ impl App {
             // Off unless a settings layer asks for it: a window named after its
             // session is what every setup saw before the key existed.
             title_state: false,
+            work_notes: crate::work_notes::WorkNotes::default(),
             description,
             events,
             model: None,
@@ -494,6 +509,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            package_send: None,
             background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
@@ -505,11 +521,13 @@ impl App {
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
+            commit_review: None,
             pending_copy: None,
             recorder: None,
             voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
+            record_generation: 0,
         }
     }
 
@@ -520,6 +538,7 @@ impl App {
         Self {
             transcript: Transcript::new(),
             notes: crate::notes::NoteStore::memory(),
+            note_keys: Default::default(),
             todos: Default::default(),
             input: Input::new(),
             history: History::new(),
@@ -543,6 +562,7 @@ impl App {
             // Off unless a settings layer asks for it: a window named after its
             // session is what every setup saw before the key existed.
             title_state: false,
+            work_notes: crate::work_notes::WorkNotes::default(),
             description: "not connected".to_string(),
             events: receiver,
             model: None,
@@ -586,6 +606,7 @@ impl App {
             suggestions: Suggestions::new(),
             commands: Registry::default(),
             skills: Vec::new(),
+            package_send: None,
             background_jobs: Vec::new(),
             settings: Settings::defaults(),
             daemon_settings: crate::settings::DaemonSettings::default(),
@@ -597,11 +618,13 @@ impl App {
             pending_change: None,
             terminal_signals: crate::progress::Options::default(),
             outcome: None,
+            commit_review: None,
             pending_copy: None,
             recorder: None,
             voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
+            record_generation: 0,
         }
     }
 

@@ -9,6 +9,7 @@ use crate::provider::{EventStream, RouteSelection};
 
 const START_MODEL: &str = "plan-model";
 const EXEC_MODEL: &str = "exec-model";
+const PLANNING_MODEL: &str = "deep-model";
 const PROFILE: &str = "prewalk-gw";
 
 /// Write the sandbox config, with an optional `[providers.<name>.roles]` block
@@ -92,7 +93,11 @@ impl Provider for PrewalkProvider {
     /// The catalog is what `prewalk` checks an `into` value against, so it has
     /// to offer both models this test switches between.
     fn available_models_for_switching(&self) -> Vec<String> {
-        vec![START_MODEL.to_string(), EXEC_MODEL.to_string()]
+        vec![
+            START_MODEL.to_string(),
+            EXEC_MODEL.to_string(),
+            PLANNING_MODEL.to_string(),
+        ]
     }
 
     fn fork(&self) -> Arc<dyn Provider> {
@@ -393,5 +398,59 @@ async fn prewalk_into_unknown_role_keeps_the_model_and_records_one_refusal() {
     assert!(
         events[0].contains("role:nope"),
         "the refusal names the role: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_planning_model_serves_the_first_request_and_the_handoff_still_follows() {
+    let config = format!("{}planning = \"{PLANNING_MODEL}\"\n", on(EXEC_MODEL));
+    let (_home, provider, mut agent) = setup(&config, false);
+    run(&mut agent).await;
+    write_todo(&agent, "t1");
+    run(&mut agent).await;
+
+    assert_eq!(
+        provider.calls(),
+        vec![PLANNING_MODEL.to_string(), EXEC_MODEL.to_string()],
+        "planning runs on the planning model, then the todo write hands off"
+    );
+}
+
+#[tokio::test]
+async fn the_planning_model_is_not_reapplied_after_the_first_response() {
+    let config = format!("{}planning = \"{PLANNING_MODEL}\"\n", on(EXEC_MODEL));
+    let (_home, provider, mut agent) = setup(&config, false);
+    run(&mut agent).await;
+    agent.set_model(START_MODEL).expect("the user picks another model");
+    run(&mut agent).await;
+
+    assert_eq!(
+        provider.calls(),
+        vec![PLANNING_MODEL.to_string(), START_MODEL.to_string()],
+        "a model chosen after planning started is left alone"
+    );
+}
+
+#[tokio::test]
+async fn an_unoffered_planning_model_keeps_the_session_model() {
+    let config = format!("{}planning = \"ghost-model\"\n", on(EXEC_MODEL));
+    let (_home, provider, mut agent) = setup(&config, false);
+    run(&mut agent).await;
+    assert_eq!(
+        provider.calls(),
+        vec![START_MODEL.to_string()],
+        "an unoffered planning model is refused"
+    );
+}
+
+#[tokio::test]
+async fn planning_needs_the_section_enabled() {
+    let config = format!("enabled = false\ninto = \"{EXEC_MODEL}\"\nplanning = \"{PLANNING_MODEL}\"\n");
+    let (_home, provider, mut agent) = setup(&config, false);
+    run(&mut agent).await;
+    assert_eq!(
+        provider.calls(),
+        vec![START_MODEL.to_string()],
+        "a disabled section never switches"
     );
 }
