@@ -84,7 +84,7 @@ A hosted process runs the same server; the only difference is a startup check. W
 
 The server exits in these cases.
 - **Idle deadline:** five minutes pass with no clients and no live unattended swarm workers (sessions the code marks `is_headless`). The shared-server deadline is fixed at 300 seconds (`IDLE_TIMEOUT_SECS` in `crates/app-core/src/server.rs`) and `[server]` cannot change it. The watcher checks every 10 seconds, so shutdown can land slightly after five minutes.
-- **Manual:** you kill the server process
+- **Graceful signal (`SIGTERM` or `SIGINT` on Linux and macOS):** the daemon runs one shutdown sequence once: cancel background compaction, drain in-flight session saves (bounded at 5 seconds), unregister from `servers.json`, remove the main and debug sockets, temporary metadata, build-hash sidecar and held daemon lock, and exit with status `0`. A second signal arriving while the drain runs does not interrupt or re-run cleanup. Windows has no POSIX termination signal, so its signal watcher stays pending.
 - **Reload:** the server execs into a new binary (the socket path stays the same)
 
 The debug control server turns the shared-server idle watcher off. Temporary servers use their own lifetime policy.

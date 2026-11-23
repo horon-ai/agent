@@ -1313,25 +1313,14 @@ impl Server {
             .await;
         });
 
-        // On SIGTERM: log, unregister, let in-flight saves finish, exit. Where
-        // the platform has no termination signal, the watcher never resolves.
-        {
-            let sigterm_server_name = self.identity.name.clone();
-            let sigterm_sessions = Arc::clone(&self.sessions);
-            tokio::spawn(async move {
-                horon_agent_platform::signal::wait_for_termination().await;
-                let _ = crate::registry::unregister_server(&sigterm_server_name).await;
-                // A job that is still summarizing must not race the save or
-                // apply after the transcript is drained.
-                for agent in sigterm_sessions.read().await.values() {
-                    if let Ok(mut agent) = agent.try_lock() {
-                        agent.cancel_background_compaction(crate::compaction::jobs::CancelReason::Shutdown);
-                    }
-                }
-                lifecycle::drain_session_saves_before_exit().await;
-                std::process::exit(0);
-            });
-        }
+        // On SIGTERM or SIGINT: cancel background compaction, drain in-flight
+        // session saves, unregister, clean up sockets/locks, and exit 0.
+        lifecycle::spawn_termination_signal_handler(
+            self.identity.name.clone(),
+            Arc::clone(&self.sessions),
+            self.socket_path.clone(),
+            self.debug_socket_path.clone(),
+        );
 
         Self::spawn_idle_compaction_monitor(Arc::clone(&self.sessions), Arc::clone(&self.swarm_state.members));
 

@@ -105,7 +105,7 @@ and this section is the contract it must satisfy.
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `stop_config.signal` | `SIGTERM` | Fly's default stop signal is `SIGINT`; the daemon drains in-flight session saves on `SIGTERM` and exits 0, and on the default signal it is killed with no drain and no registry cleanup. `fly.toml`: `kill_signal = "SIGTERM"` |
+| `stop_config.signal` | `SIGTERM` (recommended) | The daemon drains in-flight session saves, unregisters, cleans up sockets and locks, and exits 0 on both `SIGTERM` and Fly's default `SIGINT`. Setting `SIGTERM` explicitly remains recommended as defense in depth and to match other supervisors. `fly.toml`: `kill_signal = "SIGTERM"` |
 | `stop_config.timeout` | At least `30` seconds | Fly's default `kill_timeout` is 5 seconds, below the drain plus unregister plus exit. `fly.toml`: `kill_timeout = 30` |
 | `restart.policy` | `no`, or an explicit `on-failure` policy paired with an idle-exit policy the daemon agrees with | The daemon exits with code 44 after 300 seconds with no clients; `on-failure` then restarts it, which is restart churn. Pick one owner of idling: the daemon's self-exit with `restart = "no"`, or a hosted idle-exit switch with `auto_stop = "suspend"` |
 | `env` | `HORON_AGENT_HOSTING_MODE=per-user-container`, `HORON_AGENT_TENANT_ID=<tenant>`, `HORON_HOME=/data/home`, `HORON_AGENT_RUNTIME_DIR=/run/horon`, `HORON_AGENT_GATEWAY_ENABLED=0`, `HORON_AGENT_NO_AUTO_UPDATE=1` | The startup boundary above |
@@ -168,7 +168,7 @@ replacement Machine with the new volume, start it, then destroy the old Machine 
 volume.
 
 **Split of responsibility.** This repository exposes the stable environment and layout contract, the
-SIGTERM drain, readiness (the socket accepts), the write fence and quiesce command, and the memory
+`SIGTERM` and `SIGINT` drain, readiness (the socket accepts), the write fence and quiesce command, and the memory
 volume export, import and `delete_user` steps. It leaves to `horon-ai/server`: every Fly API call, the
 volume-Machine-user mapping, image publishing, region and placement, TLS and domains, customer
 authentication, quotas and billing, retries and idempotency, and snapshot scheduling. The agent never
@@ -176,9 +176,9 @@ calls the Fly API.
 
 ## Suspend, wake and restore
 
-Idling an instance is stopping its container or sending the daemon `SIGTERM`. The daemon drains in-flight session saves before it exits (`docs/architecture/SERVER.md`), so a stop is a durable stop and the next start opens the same volume.
+Idling an instance is stopping its container or sending the daemon `SIGTERM` or `SIGINT`. The daemon drains in-flight session saves, unregisters and removes its runtime sockets before it exits (`docs/architecture/SERVER.md`), so a stop is a durable stop and the next start opens the same volume.
 
-- Stop with `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, or the supervisor's termination signal. `stop_hosted_instance` in `horon-agent-sdk` is the same operation: it signals, waits for the endpoint to stop accepting, and reports the tenant as stopped only after that. On Fly, set the Machine's stop signal to `SIGTERM` first: the platform default is `SIGINT`, which the daemon does not drain on.
+- Stop with `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, or the supervisor's termination signal. `stop_hosted_instance` in `horon-agent-sdk` is the same operation: it signals, waits for the endpoint to stop accepting, and reports the tenant as stopped only after that. On Fly, configuring `SIGTERM` remains recommended as defense in depth, while the platform default `SIGINT` also drains cleanly.
 - Wake by starting the image or the daemon again with the same volume. Sessions, approvals, MCP config and memory files are read from the volume; a session resumes through the ordinary resume path.
 - Never copy a volume between tenants, and never mount one volume into two instances.
 - A suspended Machine keeps its volume and loses nothing from it. A cold start resets the root filesystem, so `/run/horon` is recreated and the daemon unlinks stale sockets before binding.
@@ -213,7 +213,7 @@ daemons are separate, and the boundary test starts two daemons and asserts exact
 - A central metadata service; the control plane owns the mapping and this repository does not implement it. The agent's client against that service and its request shapes are in the memory volume docs (`docs/runtime/MEMORY.md`); the service itself is `horon-ai/server#28`, whose contract is still a draft.
 - A Fly API client. The control plane calls the provider; the agent only exposes the volume commands it needs.
 - Envelope encryption of the page files and the export tar. The key contract (metadata, revocation, fail-closed open) is implemented; the cipher is not, because it needs a crate that is not in the lockfile.
-- A daemon SIGINT drain and a hosted idle-exit switch. The daemon drains on `SIGTERM`, so a Fly Machine must be configured to send it; changing what the daemon does with `SIGINT` is a separate decision.
+- A hosted idle-exit switch. Changing the shared-server idle deadline or adding a hosted idle-exit switch is outside this scope.
 - Authentication for non-local exposure beyond the authenticated TCP listener the harness API already implements.
 - Tenant ids inside application code paths, sessions or the wire protocol.
 - A general-purpose OS sandbox beyond the container boundary.
