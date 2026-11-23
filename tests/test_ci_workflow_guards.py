@@ -221,9 +221,39 @@ class WorkflowGuardTests(unittest.TestCase):
         for action in ('actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7',
                        'actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7',
                        'astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0',
-                       'mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11'):
+                       'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6'):
             with self.subTest(action=action):
                 self.assertIn(action, workflow)
+        self.assertNotIn('mozilla-actions/sccache-action', workflow)
+        self.assertNotIn('CARGO_INCREMENTAL=0', workflow)
+        self.assertNotIn('SCCACHE_CACHE_SIZE', workflow)
+
+    def test_stable_toolchain_and_rust_cache_policy_hold(self):
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        for job, nxt in (('quality', 'release-automation'),
+                         ('build', 'windows-build-test'),
+                         ('windows-build-test', 'typescript-sdk')):
+            block = ci_text.split(f'\n  {job}:\n', 1)[1].split(f'\n  {nxt}:\n', 1)[0]
+            with self.subTest(job=job):
+                self.assertIn('RUSTUP_TOOLCHAIN: stable', block)
+        soak_text = (ROOT / '.github/workflows/soak.yml').read_text()
+        self.assertIn('RUSTUP_TOOLCHAIN: stable', soak_text)
+        expected_save_if = (
+            "save-if: ${{ github.event_name == 'push' && "
+            "(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') "
+            "&& github.run_attempt == '1' }}"
+        )
+        for wf in ('ci.yml', 'soak.yml', 'package-windows.yml', 'package-compat.yml', 'structural-perf.yml'):
+            text = (ROOT / f'.github/workflows/{wf}').read_text()
+            blocks = text.split('uses: Swatinem/rust-cache@')[1:]
+            self.assertTrue(blocks, wf)
+            for idx, blk in enumerate(blocks):
+                segment = blk.split('\n      -', 1)[0]
+                with self.subTest(workflow=wf, idx=idx):
+                    if 'save-if: false' in segment:
+                        continue
+                    self.assertIn(expected_save_if, segment)
+                    self.assertIn('cache-on-failure: "false"', segment)
 
     def test_documentation_only_changes_never_leave_a_required_check_pending(self):
         # A skipped job reports "skipped", which a branch rule waits on forever.
@@ -258,6 +288,10 @@ class WorkflowGuardTests(unittest.TestCase):
         ci_block = (ROOT / '.github/workflows/ci.yml').read_text().split('\n  ci-required:\n', 1)[1]
         self.assertRegex(ci_block, r'if \[ "\$code" != true \] && \[ "\$docs_only" != true \]; then\n'
                                    r'\s+echo "::error::[^\n]*"\n\s+exit 1\n')
+        self.assertIn('.value.result != "success" and .value.result != "skipped"', ci_block)
+        sp_block = (ROOT / '.github/workflows/structural-perf.yml').read_text().split(
+            '\n  structural-perf-required:\n', 1)[1]
+        self.assertIn('[ "$perf_result" != success ] && [ "$perf_result" != skipped ]', sp_block)
         # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
         import importlib.util

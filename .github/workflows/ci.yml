@@ -52,8 +52,6 @@ env:
   # show zero warnings (AGENTS.md, "CI warnings"); this keeps a new one from
   # merging. Warnings in registry dependencies are never reported by cargo.
   CARGO_BUILD_WARNINGS: deny
-  # Keep per-compilation writes on the runner; share Cargo archives between runs.
-  SCCACHE_CACHE_SIZE: "512M"
   # Test and dev builds do not need debug info, and on a hosted runner every byte
   # is disk. The workspace profiles already set debug = 0; these make that hold
   # for member crates that might override the profile.
@@ -120,6 +118,8 @@ jobs:
       pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       # Run after checkout because the cleanup lives in the repository now: the
       # shared script is not on disk until the workspace exists. It renames the
@@ -144,7 +144,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: quality-${{ runner.os }}
           cache-all-crates: "true"
 
@@ -160,43 +161,6 @@ jobs:
         # Python standard library only; takes well under a second.
         if: ${{ !cancelled() }}
         run: python3 scripts/ci/check_docs_pairs.py
-
-      # sccache is enabled once for the whole job and never for a single step:
-      # a run that wrapped only one cargo invocation produced
-      # `<unknown rustc version>` artifacts that the next unwrapped invocation
-      # rejected with E0514 ("compiled by an incompatible version of rustc",
-      # run 42373575639). One wrapper for every cargo call keeps the
-      # fingerprints equal.
-      #
-      # CARGO_INCREMENTAL=0 is required, not an optimization: sccache cannot
-      # cache incremental units, and the profiles this job builds
-      # ([profile.dev] and [profile.release] in Cargo.toml) set incremental =
-      # true, so with incremental on nothing is ever cached.
-      - name: Setup sccache
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-
-      - name: Enable sccache
-        # Only a successful `sccache --start-server` writes the wrapper, so a
-        # runner without a usable sccache builds the whole job unwrapped instead
-        # of mixing wrapped and unwrapped cargo calls.
-        if: ${{ !cancelled() && runner.environment == 'github-hosted' }}
-        shell: bash
-        run: |
-          if ! command -v sccache >/dev/null 2>&1; then
-            echo "sccache is not available; this job builds without a wrapper"
-            exit 0
-          fi
-          if sccache --start-server; then
-            {
-              echo "RUSTC_WRAPPER=sccache"
-              echo "CARGO_INCREMENTAL=0"
-            } >> "$GITHUB_ENV"
-          else
-            echo "sccache failed to start; this job builds without a wrapper"
-          fi
 
       - name: Check formatting
         # These gates are independent. Report every failure in one run instead
@@ -488,16 +452,6 @@ jobs:
         shell: bash
         run: cargo machete
 
-      - name: sccache stats
-        # Printed only when the wrapper was actually enabled, so a run that
-        # built without sccache does not report misleading numbers. The
-        # condition starts with `!cancelled()` like every other quality step:
-        # a cancelled run should stop, and this is diagnostic output, not a
-        # gate.
-        if: ${{ !cancelled() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: bash
-        run: sccache --show-stats
-
   release-automation:
     name: Release Automation
     needs: changes
@@ -596,48 +550,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           # Suffix bumped to evict caches that held 1.83.0 / <unknown rustc>
           # artifacts produced before RUSTUP_TOOLCHAIN=stable pinned the job.
           key: ${{ matrix.os }}-stablepin
-
-      # The wrapper is set once for the whole job, before the first cargo call,
-      # so every compile in this job (release build, test compile, e2e, the
-      # SDK parity test and the macOS warning budget) shares one fingerprint.
-      # A run that wrapped only one step emitted `<unknown rustc version>`
-      # artifacts that the next unwrapped compile rejected with E0514,
-      # "compiled by an incompatible version of rustc" (run 42373575639).
-      #
-      # CARGO_INCREMENTAL=0 is required: sccache cannot cache incremental
-      # units and both profiles this job builds ([profile.dev] and
-      # [profile.release]) set incremental = true in Cargo.toml, so leaving
-      # incremental on would mean zero cache hits.
-      - name: Setup sccache
-        if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-
-      - name: Enable sccache
-        # Nothing is written unless `sccache --start-server` succeeds, so a
-        # runner without a working sccache builds the entire job without a
-        # wrapper rather than mixing wrapped and unwrapped cargo calls.
-        if: runner.environment == 'github-hosted'
-        shell: bash
-        run: |
-          if ! command -v sccache >/dev/null 2>&1; then
-            echo "sccache is not available; this job builds without a wrapper"
-            exit 0
-          fi
-          if sccache --start-server; then
-            {
-              echo "RUSTC_WRAPPER=sccache"
-              echo "CARGO_INCREMENTAL=0"
-            } >> "$GITHUB_ENV"
-          else
-            echo "sccache failed to start; this job builds without a wrapper"
-          fi
 
       - name: Install mold linker (Linux)
         if: runner.os == 'Linux'
@@ -667,9 +584,8 @@ jobs:
           rustflags = ["-C", "link-arg=-fuse-ld=mold"]
           EOF
           fi
-          # The sccache wrapper is not set here: the job-wide `Enable sccache`
-          # step above sets it for every cargo call, which is what keeps the
-          # artifacts of this build and the later test compiles consistent.
+          # Keep the toolchain and compiler fingerprint consistent across this
+          # release build and later test compiles.
           RUSTC="$(rustup which rustc)"
           export RUSTC
           CARGO_BIN="$(rustup which cargo)"
@@ -2476,19 +2392,14 @@ jobs:
         run: |
           scripts/ci/check_security.sh --strict
 
-      - name: sccache stats
-        # Runs even after a failed gate so the cache state is visible in the
-        # log, but only when the wrapper was really enabled.
-        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: bash
-        run: sccache --show-stats
-
   windows-build-test:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
     if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 75
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       - name: Report free disk space
         # D: carries the workspace and target dir on the Windows image. Logged,
@@ -2513,56 +2424,10 @@ jobs:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
 
-      # Job-wide, before the first cargo call: a wrapper applied to one step
-      # only left `<unknown rustc version>` artifacts that the next unwrapped
-      # compile rejected with E0514 ("compiled by an incompatible version of
-      # rustc", run 42373575639). Every cargo call in this job must share the
-      # same wrapper.
-      #
-      # CARGO_INCREMENTAL=0 is required, not a speed tweak: sccache cannot
-      # cache incremental units, and both [profile.dev] and [profile.release]
-      # in Cargo.toml set incremental = true, so nothing would be cached.
-      #
-      # This job runs on a GitHub-hosted Windows image only; the guard keeps
-      # the step out of any other environment.
-      - name: Setup sccache
-        if: runner.environment == 'github-hosted'
-        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-        with:
-          disable_annotations: true
-        continue-on-error: true
-
-      - name: Enable sccache
-        # The wrapper is written only when the server actually starts, so a
-        # runner without a working sccache runs every cargo call unwrapped
-        # instead of mixing wrapped and unwrapped builds.
-        if: runner.environment == 'github-hosted'
-        shell: pwsh
-        run: |
-          if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) {
-            Write-Host 'sccache is not available; this job builds without a wrapper'
-            exit 0
-          }
-          sccache --start-server
-          if ($LASTEXITCODE -eq 0) {
-            "RUSTC_WRAPPER=sccache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-            "CARGO_INCREMENTAL=0" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          } else {
-            Write-Host 'sccache failed to start; this job builds without a wrapper'
-          }
-          # A step is not a script: GitHub appends `exit $LASTEXITCODE` to a
-          # pwsh body, so a failed `sccache --start-server` would fail the whole
-          # job even though the branch above deliberately continues unwrapped.
-          # The bash twin has no such epilogue, which is why only Windows went
-          # red when the cache backend answered 503 ServerBusy ("Egress is over
-          # the account limit", run 43451256902) and every later step, including
-          # the build, was skipped. Ending with an explicit success keeps the
-          # decision here: the wrapper is opt-in, its absence is not a failure.
-          exit 0
-
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-latest
           cache-all-crates: "true"
 
@@ -2989,13 +2854,6 @@ jobs:
           & ./scripts/install/test_install_windows_launcher.ps1
           & ./scripts/install/test_windows_setup.ps1
 
-      - name: sccache stats
-        # Runs even after a failed test so the cache state is in the log, and
-        # only when the wrapper was enabled for this job.
-        if: ${{ always() && env.RUSTC_WRAPPER == 'sccache' }}
-        shell: pwsh
-        run: sccache --show-stats
-
   typescript-sdk:
     name: TypeScript SDK
     needs: changes
@@ -3186,7 +3044,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-arm64-release-check
           cache-all-crates: "true"
 
@@ -3237,7 +3096,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          save-if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') && github.run_attempt == '1' }}
+          cache-on-failure: "false"
           key: windows-cross-check
           cache-all-crates: "true"
 
@@ -3457,8 +3317,8 @@ jobs:
             echo "::error::every downstream gate was skipped; refused empty aggregate pass"
             exit 1
           fi
-          failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
-          if [ -n "$failed" ]; then
-            echo "::error::failed or cancelled: $failed"
+          bad="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key):\(.value.result)"')"
+          if [ -n "$bad" ]; then
+            echo "::error::unexpected downstream result(s): $bad"
             exit 1
           fi
