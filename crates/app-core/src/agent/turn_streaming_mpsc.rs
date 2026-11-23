@@ -3,7 +3,7 @@ use super::*;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
 
-mod prose_repeat;
+pub(in crate::agent) mod prose_repeat;
 mod run;
 mod tool_wait;
 
@@ -737,12 +737,7 @@ impl Agent {
                             if inline_output_tap {
                                 self.inline_tail.clear_live();
                             }
-                            let notice = format!(
-                                "Stopped: the response repeated the same sentence {} times in a row: \"{sentence}\"",
-                                prose_repeat::STOP_AFTER
-                            );
-                            self.record_stream_rule_stop(&notice);
-                            self.save_session()?;
+                            let notice = self.finish_prose_repeat_stop(&text_content, &sentence)?;
                             if event_tx
                                 .send(ServerEvent::TurnStopped {
                                     reason: crate::protocol::TurnStopReason::LimitReached,
@@ -981,6 +976,9 @@ impl Agent {
                         provider_native_items.clear();
                         provider_native_tracker.clear();
                         openai_native_compaction = None;
+                        if let Some(guard) = prose_guard.as_mut() {
+                            guard.reset_all();
+                        }
                         saw_message_end = false;
                         stop_reason = None;
                         let _ = event_tx.send(ServerEvent::RetryRollback { attempt, max });
