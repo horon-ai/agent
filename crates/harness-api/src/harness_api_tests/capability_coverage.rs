@@ -94,6 +94,9 @@ const LEDGER: &[(&str, Disposition)] = &[
     // ACP's session/set_mode; API clients answer prompts, not sessions.
     ("SetSessionApprovalMode", ClientInternal),
     ("SetSessionSaved", Covered),
+    // The daemon applies the revision-checked status edit itself, so the
+    // bridge forwards it instead of writing the stored list.
+    ("SetTodoStatus", Covered),
     ("SoftInterrupt", Covered),
     ("Split", Covered),
     // Forking from a recorded boundary. The API serves it as `fork_session_at`
@@ -284,6 +287,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "package_control_v1",
         "package_commands_v1",
         "session_fork_at_v1",
+        "todo_edit_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(

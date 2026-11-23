@@ -94,6 +94,8 @@ const CAPABILITIES: &[Capability] = &[
     cap("ack_approval", "ackApproval"),
     cap("ack_failover", "ackFailover"),
     cap("todo_state", "todoState"),
+    cap("todo_snapshot", "todoSnapshot"),
+    cap("set_todo_status", "setTodoStatus"),
     cap("ack_todo_follow_up", "ackTodoFollowUp"),
     cap("set_model", "setModel"),
     cap("configure_tools", "configureTools"),
@@ -331,6 +333,7 @@ fn rust_client_source() -> String {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     [
         "client.rs",
+        "todo_client.rs",
         "client/package_commands.rs",
         "client/package_control.rs",
         "client/session_fork.rs",
