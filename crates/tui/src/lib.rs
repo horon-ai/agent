@@ -301,21 +301,21 @@ pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::C
     }
 }
 
-fn parse_goal(value: Option<&str>) -> Result<String, String> {
+fn parse_goal(value: Option<&str>) -> Result<String, &'static str> {
     match value {
         Some(title) if !title.trim().is_empty() => Ok(title.to_string()),
-        _ => Err("--goal needs a nonempty objective".into()),
+        _ => Err("--goal needs a nonempty objective"),
     }
 }
 
-fn parse_goal_budget(value: Option<&str>) -> Result<u64, String> {
+fn parse_goal_budget(value: Option<&str>) -> Result<u64, &'static str> {
     let message = "--goal-budget needs a positive token count";
     let Some(raw) = value else {
-        return Err(message.into());
+        return Err(message);
     };
     let budget = raw.parse::<u64>().map_err(|_| message)?;
     if budget == 0 {
-        return Err(message.into());
+        return Err(message);
     }
     Ok(budget)
 }
