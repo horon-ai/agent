@@ -372,7 +372,6 @@ fn delete_user_finishes_every_step_before_reporting_deleted() {
 
 #[test]
 fn a_retried_delete_user_reports_the_failed_step_and_stays_retryable() {
-    let control = MockControlPlane::start();
     let fixture = Fixture::new();
     let home = fixture.home();
     seed_page(
