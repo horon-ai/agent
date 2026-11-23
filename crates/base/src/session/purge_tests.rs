@@ -54,7 +54,7 @@ fn seed(session_id: &str) -> Vec<std::path::PathBuf> {
         format!("sessions/edit-stats/{session_id}.json"),
         format!("sessions/edit-stats/{session_id}.lock"),
         format!("sessions/.catalog.dirty/{session_id}"),
-        format!("managed-skills/keep.md"),
+        "managed-skills/keep.md".to_string(),
     ];
     for relative in files {
         let path = home.join(&relative);

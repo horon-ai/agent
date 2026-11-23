@@ -265,11 +265,11 @@ fn thaw(path: &Path) {
         return;
     }
     drop(make_owner_writable(path, metadata.permissions()));
-    if metadata.is_dir() {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.flatten() {
-                thaw(&entry.path());
-            }
+    if metadata.is_dir()
+        && let Ok(entries) = fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            thaw(&entry.path());
         }
     }
 }

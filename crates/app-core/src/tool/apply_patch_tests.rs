@@ -524,7 +524,7 @@ async fn unified_patch_preflights_every_file_before_writing() {
 --- /dev/null\n+++ b/created.txt\n@@ -0,0 +1,1 @@\n+created\n\
 --- a/delete.txt\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-gone\n\
 --- a/fail.txt\n+++ b/fail.txt\n@@ -1,1 +1,1 @@\n-stale\n+changed\n";
-    let output = run_patch(dir.path(), session, &patch).await;
+    let output = run_patch(dir.path(), session, patch).await;
     let text = body(&output);
 
     assert!(text.contains("✗ fail.txt: "), "{text}");
