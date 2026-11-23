@@ -1270,6 +1270,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         env.pop("HORON_AGENT_API_SOCKET", None)
     git_fixture(case_root, env)
     if POSIX:
+        env["HORON_AGENT_HOOK_TURN_END"] = "true"
         voice_fixture(case_root, home, env)
     archive_label = "archive-pty-fixture"
     seeded = subprocess.run(
@@ -1325,6 +1326,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+            terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before observing work")
+            terminal.send("/observations\r")
+            terminal.read_until("recording  no", STEP_TIMEOUT, "observation recording defaults off")
+            terminal.send("/observations on\r")
+            terminal.read_until("recording  yes", STEP_TIMEOUT, "observation recording enabled explicitly")
         terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
         terminal.send("/tools\r")
         terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
@@ -1388,6 +1394,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.send("\x1b")
             terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
         if POSIX:
+            observations_start = len(terminal.transcript)
+            terminal.send("/observations\r")
+            terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
             context_request_smoke(terminal, home, base_url)
             swarm_picker_smoke(terminal, launch, home, case_root, env)
 

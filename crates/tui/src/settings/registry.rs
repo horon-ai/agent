@@ -420,6 +420,19 @@ pub const REGISTRY: &[SettingSpec] = &[
         },
     },
     SettingSpec {
+        id: "transcript.work_notes",
+        kind: SettingKind::Bool,
+        env: "HORON_TUI_TRANSCRIPT_WORK_NOTES",
+        default: DefaultValue::Bool(false),
+        ui: UiMeta {
+            tab: "Transcript",
+            group: "Content",
+            label: "Work notes",
+            description: "Show a few live notes about tools and background jobs while a turn runs; off keeps \
+                          the transcript unchanged.",
+        },
+    },
+    SettingSpec {
         id: "transcript.visual_blocks",
         kind: SettingKind::Bool,
         env: "HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS",

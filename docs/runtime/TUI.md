@@ -109,6 +109,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 | `transcript.turn_usage` | boolean | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
+| `transcript.work_notes` | boolean | `false` | `HORON_TUI_TRANSCRIPT_WORK_NOTES` |
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
@@ -119,6 +120,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+Set `transcript.work_notes = true` for up to four live work notes during each turn and a final count of tool calls, completed background jobs and omitted notes. These notes stay in the TUI.
 
 `motion.preset` controls the indicator beside `running`. `full` cycles its glyphs, `reduced` holds the first glyph and `static` hides the indicator. `motion.spinner_interval` sets the minimum time a glyph stays visible, from `40` to `2000` milliseconds. `motion.max_fps` caps automatic redraws due to incoming text or spinner ticks in all presets, from `1` to `240` frames per second. At `max_fps = 4`, automatic redraws are at least 250 milliseconds apart. Input, resize and other events that need immediate feedback can redraw sooner. Out-of-range values are rejected with a warning that names the default in use.
 
@@ -549,6 +552,8 @@ harness commands:
 ```
 
 Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page. The commands an installed package supplies sit in that same section under their `/id:command` name, and the section simply has no such rows when the session's packages supply none.
+
+`/observations [show|on|off|clear]` manages the daemon's in-memory observation notes for the attached session. Recording starts off. After `/observations on`, it keeps up to 24 recent work and hook rows, folds adjacent repeats, and counts omitted rows. `/observations clear` empties the summary and keeps the recording setting. These notes do not enter model context or saved conversation history.
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
 

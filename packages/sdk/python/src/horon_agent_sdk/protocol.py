@@ -82,6 +82,7 @@ RuntimeCommand: TypeAlias = Literal[
     "auth",
     "logout",
     "plan",
+    "observations",
     "goal",
     "advisor",
     "dirs",

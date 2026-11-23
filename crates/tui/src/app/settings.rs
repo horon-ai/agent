@@ -104,6 +104,10 @@ impl App {
         // Read here and acted on where the title is written, which is also the
         // only place that knows whether the terminal keeps a title at all.
         self.title_state = settings.boolean("title.state").unwrap_or(false);
+        // The summary is off unless the setting asks for it; turning it on or
+        // off here keeps the next event on the cheap path either way.
+        self.work_notes
+            .set_enabled(settings.boolean("transcript.work_notes").unwrap_or(false));
         // The preset decides what the spinner draws and how often a quiet turn
         // redraws; both are read here so the loop and the renderer agree on one
         // snapshot. A refused number is reported once, naming the default that

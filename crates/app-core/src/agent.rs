@@ -62,6 +62,7 @@ mod rewind_summary;
 pub use rewind_summary::RewindSummaryOutcome;
 mod round_budget;
 mod run_journal;
+mod session_hooks;
 mod session_replication;
 mod stable_hash;
 pub(crate) use stable_hash::{stable_hash_json, stable_hash_str, stable_json_len};
@@ -1630,23 +1631,6 @@ impl Agent {
         self.clear_pending_resume();
         self.persist_soft_interrupt_snapshot();
         self.session.mark_closed();
-    }
-
-    /// Fire a session lifecycle observer hook (`session_start`/`session_end`).
-    /// No-op when the hook is not configured.
-    pub(crate) fn fire_session_lifecycle_hook(&self, event_name: &'static str, source: &str) {
-        crate::extensions::observer::session_lifecycle(&self.session.id, event_name, source, self.working_dir());
-        if !crate::hooks::hook_configured(event_name) {
-            return;
-        }
-        let mut event = crate::hooks::HookEvent::new(event_name)
-            .session_id(self.session.id.clone())
-            .field("SOURCE", source)
-            .field("MODEL", self.provider_model());
-        if let Some(cwd) = self.working_dir() {
-            event = event.cwd(cwd);
-        }
-        crate::hooks::dispatch_observer(event);
     }
 
     pub fn mark_crashed(&mut self, message: Option<String>) {

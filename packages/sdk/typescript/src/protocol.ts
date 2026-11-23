@@ -67,6 +67,7 @@ export type RuntimeCommand =
   | "auth"
   | "logout"
   | "plan"
+  | "observations"
   | "goal"
   | "advisor"
   | "dirs"
