@@ -1034,18 +1034,20 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
-def side_question_smoke(terminal: Terminal, home: str) -> None:
+def side_question_smoke(terminal: Terminal, home: str, parent_session: str) -> None:
     from pathlib import Path
 
     originals = set(Path(home).glob("sessions/*/events.jsonl"))
-    parents = [path for path in originals if TOOL_FILE in path.read_text(encoding="utf-8")]
-    if len(parents) != 1:
-        raise Failure(f"expected one parent session, got {len(parents)}")
+    parent_path = Path(home, "sessions", parent_session, "events.jsonl")
+    if parent_path not in originals:
+        raise Failure(
+            f"expected saved parent session {parent_session}, got {sorted(path.parent.name for path in originals)}"
+        )
     question = "side fixture question"
     terminal.send(f"/side {question}\r")
     terminal.read_until("Side question", STEP_TIMEOUT, "separate panel opened")
     terminal.read_until("side-fixture-answer", STEP_TIMEOUT, "read-only child answered")
-    if question in parents[0].read_text(encoding="utf-8"):
+    if question in parent_path.read_text(encoding="utf-8"):
         raise Failure("the side question entered the parent history")
     children = list(set(Path(home).glob("sessions/*/events.jsonl")) - originals)
     if len(children) != 1 or question not in children[0].read_text(encoding="utf-8"):
@@ -1556,7 +1558,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             # question's child inherits the parent history and would make the
             # parent lookup below ambiguous.
             parent_session = swarm_picker_smoke(terminal, launch, home, case_root, env)
-            side_question_smoke(terminal, home)
+            side_question_smoke(terminal, home, parent_session)
             boundary_start = len(terminal.transcript)
             terminal.send("tui-fork-boundary-proof\r")
             terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
@@ -1955,12 +1957,21 @@ def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
     # "harness connection closed" once. Only that startup message is retried,
     # once; every other failure and every later assertion stays strict.
     for attempt in (1, 2):
-        terminal = Terminal(argv, cwd=root, env=env)
+        api_socket = os.path.join(
+            root,
+            "run",
+            f"horon-agent-api-title-{'flag' if from_flag else 'cfg'}-{attempt}.sock",
+        )
+        attempt_env = {**env, "HORON_AGENT_API_SOCKET": api_socket}
+        terminal = Terminal(argv, cwd=root, env=attempt_env)
         try:
             try:
                 terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
             except Failure:
-                if attempt == 1 and "harness connection closed" in terminal.transcript:
+                if attempt == 1 and any(
+                    marker in terminal.transcript
+                    for marker in ("harness connection closed", "cannot reach the harness")
+                ):
                     continue
                 raise
             terminal.send("/quit\r")
