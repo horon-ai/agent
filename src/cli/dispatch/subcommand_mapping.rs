@@ -18,6 +18,7 @@ pub(super) fn map_memory_subcommand(subcmd: MemoryCommand) -> commands::MemorySu
         },
         MemoryCommand::Stats => commands::MemorySubcommand::Stats,
         MemoryCommand::ClearTest => commands::MemorySubcommand::ClearTest,
+        MemoryCommand::Migrate { dry_run } => commands::MemorySubcommand::Migrate { dry_run },
     }
 }
 

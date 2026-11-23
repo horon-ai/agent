@@ -308,3 +308,28 @@ fn a_listing_keeps_the_view_where_the_user_put_it() {
         "the help listing pulled the view back to the end"
     );
 }
+
+#[test]
+fn soft_interrupt_injected_with_notice_shows_the_notice() {
+    let mut app = app();
+    app.apply_event(&ApiEvent::SoftInterruptInjected {
+        session_id: "session_a".to_string(),
+        client_ids: Vec::new(),
+        point: "native_tool_retry".to_string(),
+        tools_skipped: None,
+        notice: Some("call native tools instead of plain text".to_string()),
+        display_role: Some("system".to_string()),
+    });
+    assert_eq!(last_line(&app), "call native tools instead of plain text");
+
+    let count_before = app.transcript.items().len();
+    app.apply_event(&ApiEvent::SoftInterruptInjected {
+        session_id: "session_a".to_string(),
+        client_ids: Vec::new(),
+        point: "C".to_string(),
+        tools_skipped: Some(1),
+        notice: None,
+        display_role: None,
+    });
+    assert_eq!(app.transcript.items().len(), count_before);
+}

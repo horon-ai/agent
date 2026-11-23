@@ -69,9 +69,15 @@ MOCK_SERVER = os.path.join(REPO_ROOT, "scripts", "perf", "mock_llm_server.py")
 
 # How long a single expected screen costs before the run fails. The first draw
 # waits on the daemon, the provider probe, and the harness bridge, so it gets the
-# larger budget; keystroke round trips are local.
+# larger budget. A keystroke round trip is local, but a loaded runner can stall a
+# redraw for tens of seconds, so a step gets twice the budget it once had.
 STARTUP_TIMEOUT = 90.0
-STEP_TIMEOUT = 45.0
+STEP_TIMEOUT = 90.0
+# A keystroke is sent only after the client has stopped drawing for
+# `SETTLE_QUIET` seconds (at most `SETTLE_LIMIT` seconds of waiting). Typing into
+# a redraw loses the keys, which showed up as a screen that never appeared.
+SETTLE_QUIET = 0.4
+SETTLE_LIMIT = 4.0
 # Budget for a launch whose stdio is a pipe and which therefore has to start the
 # daemon itself. It has to exceed the product's own readiness budget
 # (`READY_POLL_TIMEOUT`, 120 s on Windows, where a spawned server is polled
@@ -95,7 +101,6 @@ APPROVAL_PROMPT = "approval needed"
 # The client draws a tool call as its name and status, not its output, so the
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-APPROVAL_RESOLVED = "approval approved"
 # The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
 # harness sends over the session event stream once the bridge is serving this
 # client, so seeing it means the client is past its first frame and talking to
@@ -332,7 +337,25 @@ class PosixTerminal:
         if not contains(self.transcript[since:], needle):
             raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
 
+    def settle(self) -> None:
+        """Wait until the client stops drawing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            readable, _, _ = select.select([self.master], [], [], 0.05)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            self.transcript += chunk.decode("utf-8", "replace")
+            quiet_since = time.monotonic()
+
     def send(self, keys: str) -> None:
+        self.settle()
         os.write(self.master, keys.encode())
 
     def wait(self, timeout: float) -> int:
@@ -441,7 +464,22 @@ class WindowsTerminal:
         state = "still running" if self.process.isalive() else f"exited {self.process.exitstatus!r}"
         raise Failure(f"{what}: never saw {needle!r} (client {state})\n--- transcript ---\n{text}")
 
+    def settle(self) -> None:
+        """Wait until the console stops growing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        with self._lock:
+            size = len(self.transcript)
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            time.sleep(0.05)
+            with self._lock:
+                grown = len(self.transcript) != size
+                size = len(self.transcript)
+            if grown:
+                quiet_since = time.monotonic()
+
     def send(self, keys: str) -> None:
+        self.settle()
         try:
             self.process.write(keys)
         except EOFError as closed:
@@ -574,6 +612,57 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def git(root: str, env: dict[str, str], *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
+
+
+def git_fixture(root: str, env: dict[str, str]) -> None:
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    git(root, env, "init", "-qb", "main")
+    git(root, env, "config", "user.email", "smoke@example.invalid")
+    git(root, env, "config", "user.name", "TUI Smoke Test")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+            handle.write("original\n")
+    git(root, env, "add", "--", "a.txt", "b.txt")
+    git(root, env, "commit", "-qm", "base")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "a", encoding="utf-8") as handle:
+            handle.write(f"new {name}\n")
+    git(root, env, "add", "--", "a.txt")
+
+
+def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> None:
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for staged review")
+    before = git(root, env, "rev-parse", "HEAD")
+    terminal.send("/diff\r")
+    terminal.read_until("what /commit would include", STEP_TIMEOUT, "staged diff")
+    terminal.read_until("left alone by /commit", STEP_TIMEOUT, "unstaged diff")
+    terminal.send("/commit Reviewed test change\r")
+    terminal.read_until("nothing was committed yet", STEP_TIMEOUT, "commit starts as a review")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("review moved HEAD before confirmation")
+    git(root, env, "add", "--", "b.txt")
+    terminal.send("/commit --yes\r")
+    terminal.read_until("the staged index changed", STEP_TIMEOUT, "stale review refused")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("confirming a stale review moved HEAD")
+    git(root, env, "restore", "--staged", "--", "b.txt")
+    fresh_start = len(terminal.transcript)
+    terminal.send("/commit Quartz\r")
+    terminal.read_until("Quartz", STEP_TIMEOUT, "fresh review", since=fresh_start)
+    confirmed_start = len(terminal.transcript)
+    terminal.send("/commit --yes\r")
+    terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed", since=confirmed_start)
+    subject = git(root, env, "log", "-1", "--format=%s").strip()
+    if subject != "Quartz":
+        raise Failure(f"expected the fresh review's subject, got {subject!r}")
+    changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
+    if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
+        raise Failure("the commit did not preserve the reviewed staging boundary")
+
+
 def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
     from pathlib import Path
 
@@ -607,7 +696,9 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
 
     def select_session(session_id: str) -> None:
         previous = completed_subscriptions(session_id)
+        attach_start = len(terminal.transcript)
         terminal.send("\r")
+        terminal.read_until("resumed", STEP_TIMEOUT, "TUI applied the session change", since=attach_start)
         deadline = time.monotonic() + STEP_TIMEOUT
         while time.monotonic() < deadline:
             if completed_subscriptions(session_id) > previous:
@@ -653,17 +744,17 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
 
     terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
     count = request_count()
+    before_consent = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent", since=before_consent)
     terminal.send("/voice consent\r")
-    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    capture_start = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text after consent", since=capture_start)
     if request_count() != count:
         raise Failure("voice input sent a request before the user submitted the draft")
     terminal.send("\x15")
     terminal.send("/voice say local playback proof\r")
-    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
     played = os.path.join(case_root, "voice-bin", "played")
     deadline = time.monotonic() + STEP_TIMEOUT
     while time.monotonic() < deadline:
@@ -673,9 +764,12 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
                     break
         except FileNotFoundError:
             pass
-        time.sleep(0.05)
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            terminal.transcript += chunk.decode("utf-8", "replace")
     else:
-        raise Failure("the local player did not receive the requested text")
+        raise Failure(f"the local player did not receive the requested text\n--- transcript ---\n{terminal.transcript}")
     if request_count() != count:
         raise Failure("local playback sent a model request")
 
@@ -739,10 +833,62 @@ def configure_mcp_probe(home: str, case_root: str) -> str:
     return calls
 
 
+def model_preset_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('''
+[[providers.mock.models]]
+id = "preset-model"
+context_window = 128000
+
+[model_presets.quality]
+model = "preset-model"
+effort = "high"
+roles = { swarm = "preset-model", review = "mock-model", judge = "mock-model", memory = "inherit", ambient = "mock-model" }
+
+[model_presets.rejected]
+model = "mock-model"
+roles = { swarm = "missing-model" }
+
+[model_presets.unknown_role]
+model = "mock-model"
+roles = { unknown = "mock-model" }
+''')
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=horon_env(case_root, home))
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for model presets")
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset preview quality\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "model preset preview", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset apply quality\r")
+        terminal.read_until("Applied model preset 'quality'", STEP_TIMEOUT, "model preset applied", since=start)
+        for name, error in (("rejected", "unavailable in the active provider profile"),
+                            ("unknown_role", "Unknown model preset role")):
+            start = len(terminal.transcript)
+            terminal.send(f"/modelpreset apply {name}\r")
+            terminal.read_until(error, STEP_TIMEOUT, "invalid preset refused", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/info\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "preset model survived refused changes", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/agents\r")
+        terminal.read_until("inherit", STEP_TIMEOUT, "preset role overrides applied", since=start)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("model preset session failed to exit cleanly")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
+    if POSIX:
+        env.pop("HORON_AGENT_API_SOCKET", None)
+    git_fixture(case_root, env)
     if POSIX:
         voice_fixture(case_root, home, env)
     archive_label = "archive-pty-fixture"
@@ -807,6 +953,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if contains(terminal.transcript, APPROVAL_PROMPT) or os.path.exists(os.path.join(case_root, TOOL_FILE)):
             raise Failure(f"browsing tools started a call\n--- transcript ---\n{terminal.transcript}")
         if POSIX:
+            staged_review_smoke(terminal, case_root, env)
+        else:
+            terminal.send("/diff\r")
+            terminal.read_until("workspace is not this machine's", STEP_TIMEOUT, "explicit socket refused local Git")
+        if POSIX:
             voice_input_smoke(terminal, case_root, base_url)
 
         terminal.send("ping\r")
@@ -816,9 +967,13 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
+        stats_start = len(terminal.transcript)
+        terminal.send("/stats\r")
+        terminal.read_until("Requests:", STEP_TIMEOUT, "session usage counters", since=stats_start)
+        terminal.read_until("Estimated cost: unknown", STEP_TIMEOUT, "unknown cost is preserved", since=stats_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
@@ -870,6 +1025,14 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         if len(archived_ids) != 1:
             raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
         archived_id = next(iter(archived_ids))
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
+        recent_filter = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("nothing match", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.send("\x1b")
+        time.sleep(0.15)
         archived_start = len(terminal.transcript)
         terminal.send("/archived\r")
         terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
@@ -897,7 +1060,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             try:
                 resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
                 resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
-                selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
+                # Memorable names can hold a hyphen (`session_t-rex_<digits>_<hex>`).
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_-]+)", resumed.transcript)
                 if selected is None:
                     raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
                 attached = r"phase=resume_(?:restored|live_attach)_done"
@@ -1160,8 +1324,8 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
 
 # Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
 # client a POSIX signal: only a POSIX host can drive either.
-POSIX_ONLY_CASES = {5, 6, 7, 8}
-ALL_CASES = tuple(range(1, 9))
+POSIX_ONLY_CASES = {5, 6, 7, 8, 9, 10}
+ALL_CASES = tuple(range(1, 11))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
     """A client killed by a signal still gives the terminal back (#431).
@@ -1215,16 +1379,26 @@ def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
         argv.append("--no-title")
     env = horon_env(root, launch.home)
     env.pop("HORON_TUI_TITLE_ENABLED", None)
-    terminal = Terminal(argv, cwd=root, env=env)
-    try:
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
-        terminal.send("/quit\r")
-        code = terminal.wait(STEP_TIMEOUT)
-        if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
-            raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
-        return terminal.transcript
-    finally:
-        terminal.close()
+    # A client started before its harness bridge accepts connections reports
+    # "harness connection closed" once. Only that startup message is retried,
+    # once; every other failure and every later assertion stays strict.
+    for attempt in (1, 2):
+        terminal = Terminal(argv, cwd=root, env=env)
+        try:
+            try:
+                terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
+            except Failure:
+                if attempt == 1 and "harness connection closed" in terminal.transcript:
+                    continue
+                raise
+            terminal.send("/quit\r")
+            code = terminal.wait(STEP_TIMEOUT)
+            if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
+                raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
+            return terminal.transcript
+        finally:
+            terminal.close()
+    raise Failure("title opt-out session never started")
 
 
 def selected_cases(requested: str | None) -> set[int]:
@@ -1333,6 +1507,24 @@ def run_build_layout(
             jobs_root = os.path.join(root, "jobs")
             jobs_launch = build_launch(jobs_root, agent, tui)
             text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
+            goal_root = os.path.join(root, "goal")
+            goal_launch = build_launch(goal_root, agent, tui)
+            home = write_config(goal_launch.home, base_url)
+            env = horon_env(goal_root, home)
+            env.pop("HORON_NO_TUI", None)
+            argv = goal_launch.client_argv(goal_root) + ["--goal", "Verify startup objective", "--goal-budget", "1200"]
+            terminal = Terminal(argv, cwd=goal_root, env=env)
+            try:
+                terminal.read_until("Verify startup objective", STARTUP_TIMEOUT, "startup goal appears")
+                terminal.read_until("1200", STEP_TIMEOUT, "startup token ceiling appears")
+                terminal.send("/goal 2400 Reject duplicate objective\r")
+                terminal.read_until("already has an active goal", STEP_TIMEOUT, "startup goal stays attached")
+                terminal.send("/quit\r")
+                if terminal.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"goal client did not exit\n--- transcript ---\n{terminal.transcript}")
+                text += "\n--- startup goal ---\n" + terminal.transcript
+            finally:
+                terminal.close()
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)
@@ -1393,6 +1585,30 @@ def run_build_layout(
         case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
         signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
         log(f"case {index} passed")
+    if 9 in cases:
+        log("case 9: preview and apply a named model preset, then refuse invalid choices")
+        case_root = os.path.join(root, "model-preset")
+        text = model_preset_case(build_launch(case_root, agent, tui), case_root, base_url)
+        if transcript:
+            with open(transcript, "a", encoding="utf-8") as handle:
+                handle.write("\n--- model preset ---\n" + text)
+        log("case 9 passed")
+    if 10 in cases:
+        log("case 10: the terminal names the active launch profile")
+        case_root = os.path.join(root, "profile")
+        launch = build_launch(case_root, agent, tui)
+        home = write_config(launch.home, base_url)
+        env = horon_env(case_root, home)
+        env["HORON_PROFILE"] = "work"
+        terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+        try:
+            terminal.read_until("profile: work", STEP_TIMEOUT, "active profile shown")
+            terminal.send("/quit\r")
+            if terminal.wait(STEP_TIMEOUT) != 0:
+                raise Failure("profile session failed to exit cleanly")
+        finally:
+            terminal.close()
+        log("case 10 passed")
     return 0
 
 

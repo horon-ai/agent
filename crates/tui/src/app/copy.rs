@@ -9,9 +9,11 @@
 //! of a turn ending, so a model's answer cannot quietly take the clipboard the
 //! user filled for something else.
 
+use std::borrow::Cow;
+
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Picker, Row};
-use crate::transcript::Item;
+use crate::transcript::{Item, Transcript};
 
 /// The title the list is drawn with.
 const TITLE: &str = "Copy to the terminal clipboard";
@@ -122,34 +124,7 @@ impl App {
     /// Enter took the draft, so the list always opens with an empty editor. The
     /// draft's own copy is the key, which needs no list to name one thing.
     pub(crate) fn open_copy_picker(&mut self) {
-        let mut rows = Vec::new();
-        for back in 0..ANSWERS {
-            if rows.len() >= MAX_ROWS {
-                break;
-            }
-            let Some(answer) = self.answer_at(back).map(str::to_string) else {
-                break;
-            };
-            let name = answer_name(back);
-            for (index, block) in code_blocks(&answer).into_iter().enumerate() {
-                if rows.len() >= MAX_ROWS {
-                    break;
-                }
-                let language = if block.language.is_empty() {
-                    "code".to_string()
-                } else {
-                    block.language.to_string()
-                };
-                let detail = format!("{language} · {} lines", block.lines.len());
-                let label = format!("code block {} of {name}", index + 1);
-                let value = format!("code:{back}:{index}");
-                let text = block.text();
-                rows.push(Row::new(label, value).with_detail(detail).with_preview(preview(&text)));
-            }
-            if rows.len() < MAX_ROWS {
-                rows.push(row(&name, &format!("answer:{back}"), &answer));
-            }
-        }
+        let rows = build_copy_rows(&self.transcript);
         if rows.is_empty() {
             self.warn("copy: nothing to copy yet; the answers are empty");
             return;
@@ -222,31 +197,70 @@ impl App {
 
     /// The `back`-th newest answer, counting a streamed one as the newest.
     fn answer_at(&self, back: usize) -> Option<&str> {
-        let mut seen = 0;
-        if let Some(text) = self.transcript.open_text() {
-            if back == 0 {
-                return Some(text);
-            }
-            seen = 1;
-        }
-        for item in self.transcript.items().iter().rev() {
-            if let Item::Assistant(text) = item {
-                if seen == back {
-                    return Some(text.as_str());
-                }
-                seen += 1;
-            }
-        }
-        None
+        answer_in_transcript(&self.transcript, back)
     }
 }
 
+fn answer_in_transcript(transcript: &Transcript, back: usize) -> Option<&str> {
+    let mut seen = 0;
+    if let Some(text) = transcript.open_text() {
+        if back == 0 {
+            return Some(text);
+        }
+        seen = 1;
+    }
+    for item in transcript.items().iter().rev() {
+        if let Item::Assistant(text) = item {
+            if seen == back {
+                return Some(text.as_str());
+            }
+            seen += 1;
+        }
+    }
+    None
+}
+
+fn build_copy_rows(transcript: &Transcript) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for back in 0..ANSWERS {
+        if rows.len() >= MAX_ROWS {
+            break;
+        }
+        let Some(answer) = answer_in_transcript(transcript, back) else {
+            break;
+        };
+        let name = answer_name(back);
+        for (index, block) in code_blocks(answer).into_iter().enumerate() {
+            if rows.len() >= MAX_ROWS {
+                break;
+            }
+            let language = if block.language.is_empty() {
+                "code"
+            } else {
+                block.language
+            };
+            let detail = format!("{language} · {} lines", block.lines.len());
+            let label = format!("code block {} of {name}", index + 1);
+            let value = format!("code:{back}:{index}");
+            rows.push(
+                Row::new(label, value)
+                    .with_detail(detail)
+                    .with_preview(preview_lines(block.lines.iter().copied())),
+            );
+        }
+        if rows.len() < MAX_ROWS {
+            rows.push(row(name.as_ref(), &format!("answer:{back}"), answer));
+        }
+    }
+    rows
+}
+
 /// What the transcript calls the `back`-th newest answer.
-fn answer_name(back: usize) -> String {
+fn answer_name(back: usize) -> Cow<'static, str> {
     match back {
-        0 => "the last answer".to_string(),
-        1 => "the answer before it".to_string(),
-        other => format!("answer {other} back"),
+        0 => Cow::Borrowed("the last answer"),
+        1 => Cow::Borrowed("the answer before it"),
+        other => Cow::Owned(format!("answer {other} back")),
     }
 }
 
@@ -260,7 +274,11 @@ fn row(label: &str, value: &str, text: &str) -> Row {
 /// The short second column: how much text the choice carries.
 fn detail(text: &str) -> String {
     let lines = text.lines().count();
-    let characters = text.chars().count();
+    let characters = if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().count()
+    };
     if lines > 1 {
         format!("{lines} lines · {characters} characters")
     } else {
@@ -274,12 +292,20 @@ fn detail(text: &str) -> String {
 /// character that would drive the terminal is dropped here rather than carried
 /// into a row: a model's answer is not a trusted drawing instruction.
 fn preview(text: &str) -> Vec<String> {
-    text.lines()
+    preview_lines(text.lines())
+}
+
+fn preview_lines<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<String> {
+    lines
         .take(PREVIEW_LINES)
         .map(|line| {
-            line.chars()
-                .filter(|character| !character.is_control() || *character == '\t')
-                .collect()
+            if line.is_ascii() && line.bytes().all(|byte| byte == b'\t' || (byte >= 0x20 && byte != 0x7f)) {
+                line.to_string()
+            } else {
+                line.chars()
+                    .filter(|character| !character.is_control() || *character == '\t')
+                    .collect()
+            }
         })
         .collect()
 }

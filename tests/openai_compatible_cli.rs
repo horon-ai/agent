@@ -346,6 +346,100 @@ async fn read_request(socket: &mut tokio::net::TcpStream) -> std::io::Result<Rec
     })
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn model_list_filters_locally_and_refreshes_only_supported_profiles() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/v1", listener.local_addr().unwrap());
+    let home = Home::new();
+    std::fs::write(
+        home.path().join("config.toml"),
+        format!(
+            r#"
+[provider]
+default_provider = "alpha"
+[providers.alpha]
+type = "openai-compatible"
+base_url = "{base}/chat/completions"
+default_model = "configured-alpha"
+models = [{{ id = "configured-alpha" }}]
+auth = "header"
+auth_header = "x-fixture-auth"
+api_key = "fixture-secret"
+[providers.beta]
+type = "openai-responses"
+base_url = "{base}/responses?fixture=private-query"
+default_model = "configured-beta"
+[providers.gamma]
+type = "anthropic-compatible"
+base_url = "{base}"
+default_model = "configured-gamma"
+"#
+        ),
+    )
+    .unwrap();
+
+    let local = home
+        .run(&["model", "list", "--profile", "ALPHA", "--search", "ALPHA", "--json"])
+        .await;
+    assert!(local.status.success(), "{}", text(&local.stderr));
+    let local: Value = serde_json::from_slice(&local.stdout).unwrap();
+    assert_eq!(local["profiles"][0]["models"], serde_json::json!(["configured-alpha"]));
+    let ordinary = home.run(&["model", "list"]).await;
+    assert!(ordinary.status.success(), "{}", text(&ordinary.stderr));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), listener.accept())
+            .await
+            .is_err()
+    );
+
+    let endpoint = tokio::spawn(async move {
+        for (path, status, body) in [
+            (
+                "/v1/models",
+                "200 OK",
+                r#"{"data":[{"id":"zeta"},{"id":"alpha"},{"id":"alpha"}]}"#,
+            ),
+            (
+                "/v1/models?fixture=private-query",
+                "503 Service Unavailable",
+                "fixture-secret private-query",
+            ),
+        ] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut socket).await.unwrap();
+            assert!(request.head.starts_with("GET "));
+            assert_eq!(request.path(), path);
+            if status == "200 OK" {
+                assert_eq!(request.header("x-fixture-auth"), Some("fixture-secret"));
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    let refreshed = home.run(&["model", "list", "--refresh", "--json"]).await;
+    assert!(refreshed.status.success(), "{}", text(&refreshed.stderr));
+    for output in [&refreshed.stdout, &refreshed.stderr] {
+        assert!(!text(output).contains("fixture-secret") && !text(output).contains("private-query"));
+    }
+    let report: Value = serde_json::from_slice(&refreshed.stdout).unwrap();
+    let profiles = report["profiles"].as_array().unwrap();
+    assert_eq!(profiles.len(), 3);
+    assert_eq!(profiles[0]["status"], "refreshed");
+    assert_eq!(profiles[0]["models"], serde_json::json!(["alpha", "zeta"]));
+    assert_eq!(profiles[1]["status"], "failed");
+    assert_eq!(profiles[1]["reason"], "model list returned HTTP 503");
+    assert_eq!(profiles[2]["status"], "unsupported");
+    endpoint.await.unwrap();
+}
+
 /// The `[providers.<name>].type` values that speak a wire other than Chat
 /// Completions, with the endpoint each one posts to.
 #[derive(Clone, Copy, Debug)]
@@ -638,6 +732,84 @@ async fn run_prints_mock_text_and_sees_the_tool_round() {
     assert!(prompt_seen, "the first request carries the prompt: {}", bodies[0]);
 }
 
+/// Every `Additional directories:` line the model was sent.
+fn additional_directories_lines(bodies: &[String]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for body in bodies {
+        let Ok(value) = serde_json::from_str::<Value>(body) else {
+            continue;
+        };
+        let Some(messages) = value["messages"].as_array() else {
+            continue;
+        };
+        for message in messages {
+            let text = match &message["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(blocks) => blocks
+                    .iter()
+                    .filter_map(|block| block["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                _ => continue,
+            };
+            lines.extend(
+                text.lines()
+                    .filter_map(|line| line.trim().strip_prefix("Additional directories: "))
+                    .map(|rest| rest.trim().to_string()),
+            );
+        }
+    }
+    lines
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_lists_one_canonical_root_in_the_session_context() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let extra = home.path().join("extra");
+    std::fs::create_dir(&extra).expect("extra directory");
+    let canonical = std::fs::canonicalize(&extra)
+        .expect("canonical extra")
+        .display()
+        .to_string();
+    let alias = format!("{canonical}/.");
+    let output = home
+        .run(&["run", "hi", "--no-update", "--add-dir", &canonical, "--add-dir", &alias])
+        .await;
+    assert!(output.status.success(), "run failed: {}", text(&output.stderr));
+    let lines = additional_directories_lines(&mock.bodies());
+    assert!(!lines.is_empty(), "the session context reached the model");
+    assert!(
+        lines.iter().all(|line| line == &canonical),
+        "one canonical entry: {lines:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn run_add_dir_refuses_a_missing_directory_before_the_model_call() {
+    let mock = Mock::start().await;
+    let home = Home::new();
+    home.write_config(&mock.base_url);
+    let missing = home.path().join("missing");
+    let output = home
+        .run(&[
+            "run",
+            "hi",
+            "--no-update",
+            "--add-dir",
+            missing.to_str().expect("utf-8"),
+        ])
+        .await;
+    assert!(!output.status.success(), "a missing directory fails the launch");
+    assert!(
+        text(&output.stderr).contains("no such directory"),
+        "{}",
+        text(&output.stderr)
+    );
+    assert_eq!(mock.requests(), 0, "no request is made for a path that names nothing");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
     let home = Home::new();
@@ -676,6 +848,102 @@ async fn max_time_disconnects_stalled_provider_and_reports_the_deadline() {
             assert!(text(&result.stderr).contains("run exceeded its --max-time limit"));
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stats_groups_durable_usage_by_date_and_route_without_double_counting() {
+    let home = Home::new();
+    let seed = |id: &str, events: &[Value]| {
+        let session = home.path().join("sessions").join(id);
+        std::fs::create_dir_all(&session).unwrap();
+        let text = events.iter().map(|event| format!("{event}\n")).collect::<String>();
+        std::fs::write(session.join("events.jsonl"), text).unwrap();
+    };
+    let created = |provider: &str, model: &str| json!({"kind":"session_created","payload":{"metadata":{"provider_key":provider,"model":model}}});
+    let appended = |id: &str, time: &str, input: u64| json!({"kind":"message_appended","event_id":id,"timestamp":time,"payload":{"message":{"token_usage":{"input_tokens":input,"output_tokens":2}}}});
+    let original = appended("a", "2026-11-20T23:50:00Z", 5);
+    let revised = json!({"kind":"message_revised","event_id":"r","timestamp":"2026-11-21T00:01:00Z","payload":{"target_event_id":"a","replacement":{"token_usage":{"input_tokens":12,"output_tokens":3}}}});
+    seed(
+        "s1",
+        &[
+            created("alpha", "m1"),
+            original.clone(),
+            revised.clone(),
+            original,
+            revised,
+            appended("b", "2026-11-21T00:10:00Z", 99),
+        ],
+    );
+    seed(
+        "s2",
+        &[created("beta", "m2"), appended("c", "2026-11-20T18:00:00-05:00", 7)],
+    );
+    let result = home
+        .run(&["stats", "--from", "2026-11-20", "--through", "2026-11-20", "--json"])
+        .await;
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["estimated_cost"], Value::Null);
+    let rows = report["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0],
+        json!({"date":"2026-11-20","provider":"alpha","model":"m1","input":12,"output":3,"cache_read_input":null,"cache_creation_input":null,"requests":1})
+    );
+    assert_eq!(rows[1]["provider"], "beta");
+    assert_eq!(rows[1]["model"], "m2");
+    assert_eq!(rows[1]["input"], 7);
+    assert_eq!(rows[1]["requests"], 1);
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn wait_async_reports_background_status_and_respects_run_deadline() {
+    let home = Home::new();
+    let mock = Mock::start_with_tool("bash", r#"{"command":"exit 0","run_in_background":true}"#).await;
+    home.write_config(&mock.base_url);
+    let result = home
+        .run(&[
+            "run",
+            "finish the background job",
+            "--no-update",
+            "--wait-async",
+            "--ndjson",
+        ])
+        .await;
+    assert!(result.status.success(), "{}", text(&result.stderr));
+    let rows: Vec<Value> = text(&result.stdout)
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let jobs: Vec<_> = rows.iter().filter(|row| row["type"] == "background_job").collect();
+    assert_eq!(jobs.len(), 1, "{rows:?}");
+    assert_eq!(jobs[0]["job"]["exit_code"], 0);
+    assert_eq!(rows.last().unwrap()["type"], "done");
+
+    let mock = Mock::start_with_tool("bash", r#"{"command":"sleep 20","run_in_background":true}"#).await;
+    home.write_config(&mock.base_url);
+    let result = home
+        .run(&[
+            "run",
+            "wait for the long job",
+            "--no-update",
+            "--wait-async",
+            "--max-time",
+            "4",
+            "--json",
+        ])
+        .await;
+    assert_eq!(result.status.code(), Some(124), "{}", text(&result.stderr));
+    let error: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(error["code"], "deadline_exceeded");
+    let stderr = text(&result.stderr);
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line.starts_with("background job ") && line.ends_with(": Running")),
+        "{stderr}"
+    );
 }
 
 #[cfg(unix)]
@@ -721,3 +989,7 @@ async fn unconfigured_provider_explains_setup() {
     assert!(stderr.contains("[providers."), "{stderr}");
     assert!(!stderr.contains("router"), "{stderr}");
 }
+
+// Session-less runs, provider diagnose, read-only preview and diagnostics cases.
+#[path = "openai_compatible_cli/offline_runs.rs"]
+mod offline_runs;

@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::de::Error as DeError;
+use serde::de::{Error as DeError, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
@@ -34,6 +34,10 @@ pub const MAX_PENDING_REQUESTS: usize = 64;
 
 /// Frames that may queue for the writer.
 pub const MAX_QUEUED_FRAMES: usize = MAX_PENDING_REQUESTS * 2;
+
+/// Stands in for an omitted payload, so decoding borrows it instead of
+/// allocating a value for every frame that carries no parameters.
+static ABSENT_PARAMS: Value = Value::Null;
 
 /// Protocol range the host implements today. Adding a compatible protocol
 /// raises only the upper bound.
@@ -73,8 +77,23 @@ impl Serialize for ProtocolVersion {
 
 impl<'de> Deserialize<'de> for ProtocolVersion {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let raw = String::deserialize(deserializer)?;
-        Self::parse(&raw).ok_or_else(|| DeError::custom("protocol version must be major.minor"))
+        // Parse the version straight from the borrowed text, so no `String` is
+        // built for a value that is used once.
+        struct VersionVisitor;
+
+        impl<'v> Visitor<'v> for VersionVisitor {
+            type Value = ProtocolVersion;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a string")
+            }
+
+            fn visit_str<E: DeError>(self, raw: &str) -> Result<Self::Value, E> {
+                ProtocolVersion::parse(raw).ok_or_else(|| E::custom("protocol version must be major.minor"))
+            }
+        }
+
+        deserializer.deserialize_str(VersionVisitor)
     }
 }
 
@@ -427,8 +446,7 @@ impl WireRequest {
 
     /// Decode this request's parameters as the payload its method declares.
     pub fn parse_params<T: for<'de> Deserialize<'de>>(&self) -> Result<T, FrameError> {
-        let value = self.params.clone().unwrap_or(Value::Null);
-        serde_json::from_value(value).map_err(|_| FrameError::InvalidParams)
+        decode_params(self.params.as_ref())
     }
 }
 
@@ -442,9 +460,16 @@ impl WireNotification {
     }
 
     pub fn parse_params<T: for<'de> Deserialize<'de>>(&self) -> Result<T, FrameError> {
-        let value = self.params.clone().unwrap_or(Value::Null);
-        serde_json::from_value(value).map_err(|_| FrameError::InvalidParams)
+        decode_params(self.params.as_ref())
     }
+}
+
+/// Decode parameters borrowed from the frame.
+///
+/// The payload is borrowed rather than cloned, and an omitted payload decodes
+/// as `null` exactly as an explicit one does.
+fn decode_params<T: for<'de> Deserialize<'de>>(params: Option<&Value>) -> Result<T, FrameError> {
+    T::deserialize(params.unwrap_or(&ABSENT_PARAMS)).map_err(|_| FrameError::InvalidParams)
 }
 
 /// Payload of `initialize`: what the host offers and which package it expects.

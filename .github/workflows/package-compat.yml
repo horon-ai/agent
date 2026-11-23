@@ -1,0 +1,362 @@
+name: Package compat
+
+# A user-installed package (an extension or a plugin) runs as a child process of
+# the agent, so "supported on this platform" is a claim only a native run can
+# settle: a cross-compiled build cannot start a child under the host's job
+# object or signal its process group, and its log is not execution evidence.
+#
+# One job per release target builds the agent binary and the worked example
+# natively and runs `tests/package_end_to_end.rs` against both, which installs
+# each kind, calls its tool from a later turn, invokes a plugin resource,
+# cancels, replaces, removes, reaps descendants and refuses a wrong target and a
+# corrupted copy. Each job keeps a JSON report; the final job refuses any target
+# whose report is incomplete and checks that `docs/release/INSTALL.md` advertises
+# only targets with a passing report.
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "crates/base/src/packages/**"
+      - "crates/base/src/**/package*"
+      - "crates/app-core/src/tool/package_tool/**"
+      - "crates/app-core/src/**/package*"
+      - "crates/app-core/src/extensions.rs"
+      - "crates/app-core/src/extensions/**"
+      - "crates/extension-sdk/**"
+      - "crates/extension-types/**"
+      - "crates/platform*/src/**/package_child.rs"
+      - "crates/platform/src/fs.rs"
+      - "crates/platform/src/process.rs"
+      - "crates/platform-api/src/lib.rs"
+      - "crates/platform-linux/src/child_exit.rs"
+      - "crates/platform-macos/src/lib.rs"
+      - "crates/platform-windows/src/lib.rs"
+      - "src/cli/packages.rs"
+      - "src/cli/packages/**"
+      - "examples/packages/example/**"
+      - "tests/package_end_to_end.rs"
+      - "tests/package_end_to_end/**"
+      - "scripts/ci/package_compat.py"
+      - "scripts/ci/test_package_compat.py"
+      - "docs/release/INSTALL.md"
+      - "docs/release/INSTALL.ko.md"
+      - ".github/workflows/package-compat.yml"
+  push:
+    branches: [dev, main]
+    paths:
+      - "crates/base/src/packages/**"
+      - "crates/base/src/**/package*"
+      - "crates/app-core/src/tool/package_tool/**"
+      - "crates/app-core/src/**/package*"
+      - "crates/app-core/src/extensions.rs"
+      - "crates/app-core/src/extensions/**"
+      - "crates/extension-sdk/**"
+      - "crates/extension-types/**"
+      - "crates/platform*/src/**/package_child.rs"
+      - "crates/platform/src/fs.rs"
+      - "crates/platform/src/process.rs"
+      - "crates/platform-api/src/lib.rs"
+      - "crates/platform-linux/src/child_exit.rs"
+      - "crates/platform-macos/src/lib.rs"
+      - "crates/platform-windows/src/lib.rs"
+      - "src/cli/packages.rs"
+      - "src/cli/packages/**"
+      - "examples/packages/example/**"
+      - "tests/package_end_to_end.rs"
+      - "tests/package_end_to_end/**"
+      - "scripts/ci/package_compat.py"
+      - "scripts/ci/test_package_compat.py"
+      - "docs/release/INSTALL.md"
+      - "docs/release/INSTALL.ko.md"
+      - ".github/workflows/package-compat.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # `actions/checkout` runs `git init` on a fresh runner and git prints a hint
+  # about the default branch name. Naming it removes the cause of the message.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  # CI builds without the local parallel-frontend rustc wrapper from
+  # .cargo/config.toml (a POSIX shell script; see scripts/dev/rustc_parallel_frontend).
+  CARGO_BUILD_RUSTC_WRAPPER: ""
+  CARGO_BUILD_WARNINGS: deny
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  RUSTUP_MAX_RETRIES: "10"
+  SCCACHE_CACHE_SIZE: "512M"
+  # Test and dev builds do not need debug info, and on a hosted runner every byte
+  # is disk.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  # Some dependencies ship their own `rust-toolchain.toml` (convert_case pins
+  # 1.83.0), and rustup honours it from inside that crate's directory.
+  # RUSTUP_TOOLCHAIN takes precedence, so every step uses this job's toolchain.
+  RUSTUP_TOOLCHAIN: stable
+
+jobs:
+  compat:
+    name: Package compat (${{ matrix.target }})
+    # The six targets answer different questions on different CPUs and operating
+    # systems, so one failing must not hide the others' results: a report is
+    # evidence for its own target only.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            msvc_arch: amd64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            msvc_arch: amd64_arm64
+    runs-on: ${{ matrix.os }}
+    # A cold workspace build plus the test compile on a hosted runner. Windows
+    # ARM64 is the slowest of the six; leave headroom rather than cancel a
+    # healthy run.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Free disk space (Linux)
+        if: ${{ !cancelled() && runner.os == 'Linux' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: bash scripts/ci/free_disk_space.sh
+
+      - name: Free disk space (macOS)
+        if: ${{ !cancelled() && runner.os == 'macOS' && runner.environment == 'github-hosted' }}
+        shell: bash
+        run: |
+          sudo rm -rf /Users/runner/Library/Android /usr/local/share/dotnet \
+            "$HOME/Library/Caches/Homebrew"
+          df -h /
+
+      - name: Configure MSVC build environment
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/msvc-dev-cmd
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      - name: Pin the rustup default host (Windows arm64)
+        # The other Windows jobs pass `--target` and install it explicitly. This
+        # workflow keeps the native build (so the artifacts stay in
+        # `target/debug`), which means the toolchain's own host decides the
+        # architecture: pin it before the toolchain is installed, and the step
+        # below proves the result.
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          rustup set default-host aarch64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'rustup set default-host failed' }
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          # Pre-install rust-src: some build-script and proc-macro units request
+          # it on demand, and parallel cargo processes then race on the shared
+          # download (see the Build & Test job in ci.yml).
+          components: rust-src
+
+      - name: Check the toolchain host matches the matrix target
+        # A native build proves a target only when rustc targets that host. On a
+        # runner whose rustup defaults to another architecture the build would
+        # produce that architecture's binary while the report claimed this
+        # target, so the mismatch stops the job instead.
+        shell: bash
+        run: |
+          set -euo pipefail
+          host=$(rustc -vV | sed -n 's/^host: //p')
+          echo "rustc host: $host (expected ${{ matrix.target }})"
+          if [ "$host" != "${{ matrix.target }}" ]; then
+            echo "::error::rustc host '$host' is not '${{ matrix.target }}'; a native build would not prove this target (pin the rustup default host before the toolchain step, as the Windows arm64 job does)"
+            exit 1
+          fi
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.run_attempt == '1' }}
+          key: package-compat-${{ matrix.target }}
+          cache-all-crates: "true"
+
+      - name: Build the agent binary and the example package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --bin horon-agent
+          cargo build --locked -p horon-package-example
+
+      - name: Build the agent binary and the example package (Windows)
+        # Git Bash puts its coreutils `link.exe` ahead of MSVC's in PATH, so a
+        # cargo build there can call the wrong linker (benchmark-os.yml, "Use the
+        # MSVC linker from bash"). PowerShell does not have that ordering.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & cargo build --locked --bin horon-agent
+          if ($LASTEXITCODE -ne 0) { throw 'the agent binary did not build' }
+          & cargo build --locked -p horon-package-example
+          if ($LASTEXITCODE -ne 0) { throw 'the example package did not build' }
+
+      - name: Point the test at the built example (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          example="$PWD/target/debug/horon-package-example"
+          test -x "$example"
+          reports="$RUNNER_TEMP/pkg-e2e"
+          mkdir -p "$reports"
+          {
+            echo "HORON_E2E_EXAMPLE_BIN=$example"
+            echo "HORON_E2E_REPORT=$reports/${{ matrix.target }}.json"
+            echo "HORON_E2E_LOG=$reports/${{ matrix.target }}.log"
+          } >> "$GITHUB_ENV"
+
+      - name: Point the test at the built example (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $example = Join-Path (Get-Location).Path 'target\debug\horon-package-example.exe'
+          if (-not (Test-Path -LiteralPath $example -PathType Leaf)) {
+            throw "the example binary was not built at $example"
+          }
+          $reports = Join-Path $env:RUNNER_TEMP 'pkg-e2e'
+          New-Item -ItemType Directory -Force -Path $reports | Out-Null
+          "HORON_E2E_EXAMPLE_BIN=$example" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "HORON_E2E_REPORT=$(Join-Path $reports '${{ matrix.target }}.json')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "HORON_E2E_LOG=$(Join-Path $reports '${{ matrix.target }}.log')" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run the package end-to-end contract (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          cargo test --locked --test package_end_to_end -- --nocapture 2>&1 | tee "$HORON_E2E_LOG" || status=$?
+          passed=$(grep -Eo 'test result: ok\. [0-9]+ passed' "$HORON_E2E_LOG" \
+            | grep -Eo '[0-9]+' | awk '{ total += $1 } END { print total + 0 }')
+          echo "PKG_E2E tests passed: $passed"
+          if [ "$status" -ne 0 ]; then
+            echo "::error::the package end-to-end contract failed on ${{ matrix.target }}"
+            exit "$status"
+          fi
+          # A filter that selects nothing makes libtest print `0 passed` and
+          # exit 0, which would leave every step in this file unproven.
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::the package end-to-end target ran no test on ${{ matrix.target }}"
+            exit 1
+          fi
+          # A test that skips (no example binary, say) returns early and still
+          # counts as passed, so the report is the proof that the run happened.
+          if [ ! -s "$HORON_E2E_REPORT" ]; then
+            echo "::error::the test wrote no report at $HORON_E2E_REPORT on ${{ matrix.target }}; a skipped run proves nothing"
+            exit 1
+          fi
+
+      - name: Run the package end-to-end contract (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $output = & cargo test --locked --test package_end_to_end -- --nocapture 2>&1
+          $exit = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          $output | Out-File -FilePath $env:HORON_E2E_LOG -Encoding utf8
+          $passed = 0
+          foreach ($line in $output) {
+            if ($line -match 'test result: ok\. (\d+) passed') { $passed += [int]$Matches[1] }
+          }
+          Write-Host "PKG_E2E tests passed: $passed"
+          if ($exit -ne 0) { throw "the package end-to-end contract failed on $env:TARGET" }
+          if ($passed -lt 1) {
+            throw "the package end-to-end target ran no test on $env:TARGET"
+          }
+          # A skipped test returns early and still counts as passed; the report
+          # is what proves the run happened.
+          if (-not (Test-Path -LiteralPath $env:HORON_E2E_REPORT -PathType Leaf)) {
+            throw "the test wrote no report at $env:HORON_E2E_REPORT on $env:TARGET"
+          }
+          if ((Get-Item -LiteralPath $env:HORON_E2E_REPORT).Length -le 0) {
+            throw "the report at $env:HORON_E2E_REPORT is empty"
+          }
+        env:
+          TARGET: ${{ matrix.target }}
+
+      - name: Upload the report and the log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: pkg-e2e-${{ matrix.target }}
+          path: ${{ runner.temp }}/pkg-e2e/
+          # A job that failed before the test wrote its report has nothing to
+          # upload, and that failure is already reported; a missing file here is
+          # not a second warning.
+          if-no-files-found: ignore
+
+  support-matrix:
+    name: Package support matrix
+    needs: compat
+    # Runs after a failed target as well, so the matrix names which target is
+    # missing instead of the run going quiet.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: pkg-e2e-*
+          path: ${{ runner.temp }}/reports
+          merge-multiple: true
+
+      - name: List the downloaded reports
+        shell: bash
+        run: ls -l "$RUNNER_TEMP/reports" || true
+
+      - name: Check every native report
+        # `cross_compiled` must be false, both kinds must hold every required
+        # step, no step may have failed, and all six targets must be present.
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/package_compat.py check \
+            --reports "$RUNNER_TEMP/reports" \
+            --require-targets "aarch64-apple-darwin,x86_64-apple-darwin,aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,aarch64-pc-windows-msvc,x86_64-pc-windows-msvc" \
+            --matrix-out "$RUNNER_TEMP/package-support-matrix.md"
+
+      - name: Check the install guide's package claims
+        # A row that says a target is verified needs that target's passing
+        # report; a target this workflow does not run cannot be advertised.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/package_compat.py docs-claims \
+            --install docs/release/INSTALL.md \
+            --install docs/release/INSTALL.ko.md \
+            --reports "$RUNNER_TEMP/reports"
+
+      - name: Upload the support matrix
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: package-support-matrix
+          path: ${{ runner.temp }}/package-support-matrix.md
+          if-no-files-found: ignore

@@ -186,6 +186,12 @@ State lives in a process-global map keyed by session id. It is not a field on th
 
 Plan mode is off by default. The configuration field defaults to `false` (`crates/base/src/config.rs:920`), and the default configuration file also sets `plan_mode = false` (`crates/base/src/config/default_file.rs:283`). A session that never touches configuration has no entry in the state map, so it always evaluates as `Off`.
 
+### Reviewing a plan before approval
+
+While a plan is `PendingApproval`, `/plan review` reads it and prints findings. The review is read-only and local: it sends no model request, records no verdict and leaves the plan waiting, so only `/plan approve` or `/plan reject` (or the approval policy) decides. Each review names a revision, the first 12 hex digits of a SHA-256 over the plan text and its file list. The same plan always gets the same revision and any edit changes it, so a verdict can be tied to exactly the text that was reviewed.
+
+The findings are structural: a plan that lists no files, a listed path that is absolute or climbs out of the workspace (`..`), a file listed twice, a text that names no test, check or build step, and a plan over 20,000 characters. The last three are advisory, because they are heuristics. `/plan review` with no pending plan is an error (`crates/app-core/src/plan_review.rs`).
+
 ### Approval tiers
 
 `[tools] approval_mode` defaults to `"yolo"` (`crates/base/src/config.rs:1023`). It auto-approves ordinary calls. Explicit `"off"` keeps its equivalent policy. To require prompts, set `approval_mode = "write"` or `approval_mode = "all"` under `[tools]` in `$HORON_HOME/config.toml` and reload the daemon configuration.
@@ -211,6 +217,8 @@ The gate sits before the `pre_tool` hook (`crates/app-core/src/tool/mod.rs:2051`
 ### Scoped grants
 
 An answer can cover a place instead of one call. `allow_path` approves the one file the request named; `allow_folder` approves its folder and everything under it. The grant lives in `<agent home>/approvals.json`, written with mode 0600 under `approvals/.grants.lock`, and every grant carries an expiry (`[tools] approval_grant_ttl_days`, default 7; `0` turns grants off).
+
+`horon approvals grants list [--json]` shows every stored grant with a stable id, its capability (`append` or `write`), scope (`path` or `folder`), canonical path, workspace and expiry, and marks expired ones. It writes nothing, and paths are printed with control characters escaped. `horon approvals grants revoke <id>...` removes the named grants, so the next matching call asks again. `revoke --all` prints how many grants in which workspaces it would remove and needs `--yes`. Revocation leaves other grants untouched, refuses to touch an `approvals.json` it cannot read, and cannot weaken `[tools] restricted_paths`, which no grant covers.
 
 A grant is consulted only after `evaluate` said "ask" for a reason a grant can answer: not a dual-confirm class, not a restricted path, not a bash-pattern verdict, and only for a call whose effect is a file mutation. A hit becomes an auto-approval with reason `grant`, so the audit line says why the user was not asked. Five things a grant is not:
 
@@ -583,6 +591,10 @@ The path-denial policy (`path_policy`) never treats the literal `skill://` as a 
 
 `{"action": "install", "name": "<endorsed name>"}` installs an endorsed catalog entry from the fixed repository its source names; the model never supplies a command. `{"action": "install", "source": "<git URL or path>", "ref": "<branch, tag, or commit>"}` installs any other skill, and `name` beside `source` chooses one skill inside a repository that holds several. The clone is shallow, lands in a staging directory beside the target, and moves into place with one rename only after its `SKILL.md` parsed and its name validated, so a refused install writes nothing. The name comes from the frontmatter, a description is taken from it as well, and `install-lock.json` in the managed directory records the name, source, requested ref, and resolved commit of every install. The installer lives in `crates/base/src/skill_install.rs`.
 
+From the command line, `horon skills list [--json]` shows each skill with its path and, for an installed one, the source and commit recorded in the install lock. `horon skills install <source> [--ref REF] [--name NAME] --approve` runs the same installer as `skill_manage install`. Without `--approve` nothing is written. It also needs `[tools] managed_skills = true`.
+
+A source is accepted only as an `https://`, `ssh://` or `file://` URL, a `user@host:path` remote, or an existing local directory. A leading `-`, a `transport::address` remote such as `ext::`, and unencrypted `http://` or `git://` are refused before any directory is created, so a refused source leaves no partial skill. The clone lands in a staging directory and one rename moves the finished skill into place. No install script runs, and an existing skill is never overwritten. Registry search and publication are not part of this command.
+
 The safety rules for `delete` live in one place, `remove` in `crates/base/src/managed_skills.rs`.
 
 - The name is revalidated, so `..` or a path separator cannot reach outside the managed directory.
@@ -644,6 +656,16 @@ no separate redaction step for them.
 
 Memory injected into the prompt is truncated, and seeing the full content used to require a separate call to the `memory` tool. `read` now handles `memory://` references directly, with the same tool and the same paging rules as files.
 
+### Where memory lives
+
+Memory is stored in the per-user markdown wiki: one markdown page per memory plus a SQLite index rebuilt from those pages (`docs/runtime/MEMORY.md`). Every `memory` action and `read memory://` goes through it.
+
+- `remember` and `learn` write to the working folder's project store, or to the user-level store with `scope: "global"`. A `learn` with `all` is refused, because `all` is a read scope.
+- `search` keeps its substring contract: the query and the stored search text are normalized the same way (lowercase, whitespace and separators folded), so `side-panel` still matches `side_panel`. It deliberately does not use the wiki's ranked search, whose link, recency and kind-authority streams would change which memories the action returns.
+- `list` is newest first by `updated_at`, with the id as the final tie-break, so two records stored in the same millisecond list the same way every time.
+- `tag` with several tags is one store write, not one per tag.
+- The pre-wiki JSON files are imported on first use by a migration that never modifies them; `horon-agent memory migrate [--dry-run]` imports every project file at once. See "Migration from JSON" in `docs/runtime/MEMORY.md`.
+
 ### `read memory://`
 
 - `memory://<id>` returns the full content of that one memory. The output is an `id`, `category`, `scope`, `tags`, `created`, `updated`, `links` header plus a `content:` body. `links` holds the target ids of graph edges to other memories (related, supersedes, contradicts, derived); tag and cluster edges are metadata and are left out.
@@ -685,6 +707,32 @@ Extraction stores memories one session at a time and never merges across session
 - `[agents] memory_consolidation_min_new` (Horon default `20`) is how many memories must have been stored since the previous pass before it runs. A pass reloads the graph, merges and rewrites it, so it is batched instead of run per session.
 - `[agents] memory_consolidation_summary_bytes` (Horon default `4096`) caps the injected summary. Over the cap the text is cut at a character boundary, never dropped.
 
+## Package tools
+
+An installed extension or plugin can declare native tools in its `extension.toml`. Installing the package is the consent to run its executable with the user's OS permissions, so no second prompt is added. Each call still goes through the ordinary tool path (`crates/app-core/src/tool/package_tool.rs`).
+
+| Question | Answer |
+| --- | --- |
+| Name | `ext__<package id>__<declared name>`. The installer caps the declared part so the whole name stays within 64 bytes. |
+| Which generation | The one the turn captured (see `docs/runtime/PACKAGES.md`). A package installed or removed since appears from the next turn; a running turn keeps its tools. |
+| Effect | `ToolEffects::process()` (`crates/app-core/src/tool/package_tool.rs:89`). The call is a write barrier and never overlaps another call in its round. |
+| Name collision | A name the registry already holds wins. The package never replaces an existing tool. |
+
+Exposure follows the session's frozen policy and adds no rule of its own:
+
+- A profile that names its tools (`minimal`, `none`, `acp`) exposes no package tool, because a package name is not on its list.
+- The untouched `core` profile lists package tools behind `toolbox`, like the core tools it does not send eagerly. The `full` default defers them.
+- An explicit `[tools] enabled` list or an SDK `enabled` overlay exposes exactly the names it gives, eagerly.
+- `[tools] disabled`, `[tools.load_mode] = "off"` and any `off` tier hide the name outright. A hidden or unknown name is refused before anything reaches a child.
+
+Plan mode refuses the process effect, the approval tiers that gate process effects ask before the child starts, and `off` and `yolo` behave as they do for every tool. A denied call starts no child. The `pre_tool` hook receives the exact input the child would receive.
+
+The child is started, or reused for the same session, package and installed copy, only after the call is approved. It runs from the copy the snapshot pinned, and the launcher checks the installed declaration against the catalog record and the declaration digest the child reports in the handshake. Input that holds an unresolved secret placeholder, or a value the session vault already knows, is refused before it crosses to the child.
+
+Disabling or removing the package cancels the pending request and reaps the child and its descendants. A handle obtained before the revocation is refused afterwards, even if the package is installed again.
+
+Limits: starting a child is serialized across the process, bounded by the 30-second wire deadline. Tool calls and package commands share the one child; observer notifications are a separate step. The tests run on Linux and macOS and compile on Windows (`cargo test --locked -p horon-agent-app-core --test package_tools`).
+
 ## Where MCP server configuration comes from
 
 MCP server definitions are merged in the order given by `crates/base/src/mcp/sources.rs`. Earlier sources come first, and the first definition of a name wins.
@@ -702,6 +750,7 @@ MCP server definitions are merged in the order given by `crates/base/src/mcp/sou
 - The project entry in `~/.claude.json` is selected by the canonical working folder path, so one project's servers never mix into another repository's session.
 - A user-level file is not re-parsed while its `FileStamp` holds; a process cache (up to 16 files) is used instead. A session start with no changed user settings reads no file at all. Working-folder files are not cached, because they must be parsed from the same single read that produced the trust decision.
 - Environment expansion (`${VAR}`) and removal of unlaunchable entries happen after merging, every time.
+- A hosted daemon refuses a server its mode forbids before anything starts: a shared worker refuses every MCP connection, and a per-user container keeps its own. `[hosting] allowed_mcp_servers` narrows the names a hosted process may connect (absent leaves all, empty refuses all). Each refusal is an explicit error to the caller and one `HOSTED_POLICY` audit line; [hosted MCP and extension isolation](/reference/safety/security) has the matrix, and a refused package server is reported to the session's next turn.
 
 ### Resources and prompts
 
@@ -816,6 +865,12 @@ In grep mode, set `before` and `after` to show neighboring lines with their orig
 
 Context rendering stays within 48 KiB. If a matching file cannot be reread within the context budget, the result still shows its matching lines and reports that neighboring lines are unavailable.
 
+### `agentgrep` locate mode
+
+`mode: "locate"` ranks code locations for a plain-language description in `query`, for example "remove old logins that timed out". The ranking is local and deterministic and needs no model: the description is split into words, each word becomes a concept (its stem plus a small built-in synonym group), and every window of six lines is scored by how rare the concepts it contains are across the scanned files. Nothing is sent to a provider and nothing is stored.
+
+The result lists up to `max_regions` locations (default 5) as `path:first-last` with the matched terms and up to two evidence lines, and starts with a `confidence` line: `ok`, `low` when the best location matches fewer than half of the query terms, or `none` when no scanned line contains any of them. A weak result says so and should be treated as a lead, not an answer. Only files under the searched root are read: symbolic links are not followed, `.gitignore` rules apply, files over 256 KiB and binary files are skipped, and at most `max_files` files (default 2000) are scanned.
+
 ### `read` deduplication
 
 Reading a file that was already read in the same session compares content hashes (`crates/app-core/src/tool/read_state.rs`).
@@ -827,6 +882,12 @@ Reading a file that was already read in the same session compares content hashes
 - Python cell reads bypass these records. Python receives the result directly and decides what to print into the model context.
 
 The setting is `[tools] read_dedup = true` (the default), with environment override `HORON_AGENT_READ_DEDUP`.
+
+### Require a current read before editing
+
+Set `[tools] enforce_seen_line_guard = true` to require the session to have read each line an `edit` will change. The default is `false`. Use `read` with `start_line` and `end_line` to show a fresh range. If the file changed or the range was unread, `edit` names the lines to read before retrying. The whole batch is checked before any write, including every `replace_all` match.
+
+With the guard enabled, normal file reads print the original page and track shown lines even if `read_dedup` is off. Path selectors, summaries, and width-truncated lines do not supply edit evidence. Existing write permissions still apply.
 
 ### Aging batches of old results
 
@@ -1011,3 +1072,13 @@ Tests: `crates/app-core/src/tool/checkpoint_tests.rs` covers the registration
 gate, the refusals and the pending map;
 `crates/app-core/src/agent/rewind_summary_tests.rs` covers the settle path, the
 report that replaces the branch, and undo.
+
+### Preview a read-only tool
+
+`horon preview <read|agentgrep|websearch> '<json input>'` runs one of these three built-ins once, without a model, a session or an approval prompt. The input is the tool's own JSON object, and the tool applies its normal path checks. Output is redacted for credentials and capped at 32 KiB. `--json` returns `tool`, `output`, `truncated` and, for `websearch`, the configured engine order as `backend`; the search endpoint and any key are never shown. Any other tool name is refused.
+
+### Diagnostics before delegating a fix
+
+`horon diagnostics <file>...` asks each file's language server for its diagnostics and lists them grouped by file, errors before warnings, with a number per entry. A file that cannot be checked (missing, no language server for its type, server not installed) stays in the list with the reason. Nothing is edited. `--json` returns the same list.
+
+`horon diagnostics <file>... --select 1,3 --delegate` prints the files of the selected entries and then runs a normal one-shot `horon run` that is asked to fix only those diagnostics, so its approvals, tool policy and isolation apply as for any run. A number that is not in the listing is refused before any model call. `--select` and `--delegate` go together.

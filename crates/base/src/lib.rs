@@ -51,7 +51,9 @@ pub mod git_clone_isolation;
 pub mod git_worktree;
 pub mod github;
 pub mod goal;
+pub mod harness_api;
 pub mod hooks;
+pub mod hosting;
 pub mod id;
 pub mod image_normalize;
 pub mod image_tool;
@@ -112,6 +114,7 @@ pub mod transcript_sample;
 pub mod transport;
 pub mod usage;
 pub mod util;
+pub mod workspace_dirs;
 pub mod workspace_trust;
 #[cfg(not(feature = "embeddings"))]
 pub use embedding_stub as embedding;

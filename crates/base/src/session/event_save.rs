@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 
 impl Session {
     pub(super) fn save_events(&mut self, force: bool) -> Result<()> {
+        if self.event_state.memory_only {
+            return Ok(());
+        }
         if let Some(block) = self.migration_lease_block() {
             bail!("session migration ownership conflict: {block}");
         }

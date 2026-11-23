@@ -746,13 +746,6 @@ fn usage_text(usage: Option<UsageTotals>) -> String {
     let Some(usage) = usage else {
         return String::new();
     };
-    let mut parts = Vec::new();
-    if let Some(input) = usage.input {
-        parts.push(format!("↑{}", compact(input)));
-    }
-    if let Some(output) = usage.output {
-        parts.push(format!("↓{}", compact(output)));
-    }
     // Cache tokens only when one of the two was reported and the sum is not
     // zero: a provider that omitted both measured nothing, and one that
     // reported zero has nothing worth a column.
@@ -760,13 +753,49 @@ fn usage_text(usage: Option<UsageTotals>) -> String {
         (None, None) => 0,
         (read, creation) => read.unwrap_or(0).saturating_add(creation.unwrap_or(0)),
     };
-    if cache > 0 {
-        parts.push(format!("⚡{}", compact(cache)));
-    }
-    if parts.is_empty() {
+    let parts = usize::from(usage.input.is_some()) + usize::from(usage.output.is_some()) + usize::from(cache > 0);
+    if parts == 0 {
         return String::new();
     }
-    format!("Σ{}", parts.join(" "))
+    // One buffer, written straight through: the segment is redrawn with every
+    // frame, and writing compact counts directly avoids per-part allocations
+    // and a reallocation on the three-part UTF-8 case.
+    let mut text = String::with_capacity(2 + parts * 10);
+    text.push('Σ');
+    if let Some(input) = usage.input {
+        text.push('↑');
+        push_compact(&mut text, input);
+    }
+    if let Some(output) = usage.output {
+        if usage.input.is_some() {
+            text.push(' ');
+        }
+        text.push('↓');
+        push_compact(&mut text, output);
+    }
+    if cache > 0 {
+        if usage.input.is_some() || usage.output.is_some() {
+            text.push(' ');
+        }
+        text.push('⚡');
+        push_compact(&mut text, cache);
+    }
+    text
+}
+
+/// Append [`compact`]'s representation directly into `out`.
+fn push_compact(out: &mut String, value: u64) {
+    use std::fmt::Write as _;
+    let result = if value >= 1_000_000 {
+        write!(out, "{:.1}m", value as f64 / 1_000_000.0)
+    } else if value >= 1_000 {
+        write!(out, "{:.1}k", value as f64 / 1_000.0)
+    } else {
+        write!(out, "{value}")
+    };
+    if result.is_err() {
+        // `fmt::Write` for `String` is infallible.
+    }
 }
 
 /// The daemon's spend estimate, or nothing when it publishes none.

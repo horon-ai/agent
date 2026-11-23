@@ -64,6 +64,8 @@ pub mod ids {
     pub const APP_REPAINT: &str = "app.repaint";
     /// Show or hide the model's reasoning for the rest of the session.
     pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
+    /// Put this session in read-only plan mode.
+    pub const APP_PLAN_MODE: &str = "app.plan_mode";
     /// Start or finish on-device voice input.
     pub const APP_VOICE: &str = "app.voice";
     /// Delete the character before the cursor.
@@ -206,6 +208,8 @@ pub const ACTIONS: &[ActionSpec] = &[
     // Reasoning display for this session: the draft keeps every letter, so the
     // toggle has to be a control key.
     ActionSpec::new(ids::APP_TOGGLE_THINKING, Scope::App, &["ctrl+t"]),
+    // Read-only plan mode, the same as `/plan on`. `alt+m` is free in the shipped map.
+    ActionSpec::new(ids::APP_PLAN_MODE, Scope::App, &["alt+m"]),
     // On-device voice input. `ctrl+space` is free in the shipped map; a
     // terminal that does not report it leaves `/voice` as the entry point, and
     // the key can be rebound in `keybindings.toml`.

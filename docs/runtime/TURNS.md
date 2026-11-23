@@ -297,8 +297,8 @@ Urgent mode (`urgent = true`) means the remaining tools may be skipped at point 
 
 The harness API advertises this feature only when the connected daemon's safety-feature probe reports `runtime_commands`.
 Older daemons return an explicit unsupported error.
-This is an additive API (the current minor version is 22), available from both the Rust and TypeScript SDKs
-(`crates/harness-api/src/lib.rs:72-74`).
+This is an additive API (the current minor version is 27), available from all three SDKs
+(`crates/harness-api/src/lib.rs:88-91`).
 
 ```rust,no_run
 use horon_agent_sdk::{HoronAgentClient, RuntimeCommand};
@@ -338,6 +338,20 @@ session's runtime host, including SSH and managed remote runtimes.
   session overrides, or keep the requested policy scope.
 - `subagent_model`: view, set, or inherit the spawned worker policy.
 - `autoreview`, `autojudge`: show status and keep explicit on/off/toggle.
+- `advisor`: show whether this session's advisor runs (`enabled`, with the configured
+  `default_enabled`), or turn it on or off for this session with `on`/`off`. Off stops new
+  advisor work for this session at once. The choice lives with the running session and does
+  not change `[advisor] enabled` or any other session. `horon run --advisor on|off` sets the
+  same choice for a single run.
+- `dirs`: list the session's extra workspace directories beside its working directory, or
+  `add <path>` and `remove <path>` one. An added path is resolved (symlinks and `..`
+  included) and must be an existing directory, so a missing path or a file is refused with
+  an error; a second spelling of a directory already listed is not added twice. Removal
+  changes only the list and never touches the directory. The list is part of the session's
+  context, so adding a root shows up in the next prompt's session context (or its one-time
+  reminder once the conversation has started), and it persists with the session metadata.
+  `horon --add-dir <path>` and `horon run --add-dir <path>` (both repeatable) set the list
+  when the session starts; it is a context root, not an approval grant.
 - `plan`: read and change plan mode state. No argument or `status` returns the current
   state, `on`/`off` turn plan mode on and off, and `approve`/`reject` approve or reject the
   plan pending in the session. When configuration has plan mode off, `on` and `approve`
@@ -370,9 +384,17 @@ session's runtime host, including SSH and managed remote runtimes.
   exists. The first response is acceptance of the request, not completion.
 - `auth`, `logout`: runtime host authentication inspection and explicitly confirmed
   removal of provider credentials. Supported shared credential stores are the target.
+- `package_commands`, `package_command`: the slash commands an installed package
+  supplies. `package_commands` lists them for the session's captured generation;
+  `package_command` takes `[package id, command, …argument words]` and answers
+  either the expanded template text or the child's answer after the tool policy
+  allowed it. Both are behind `package_commands_v1` and need
+  `runtime_commands`; the surfaces are in
+  [the harness API](../protocol/HARNESS_API.md#package-commands-protocol-127) and
+  the package side is in [PACKAGES.md](PACKAGES.md#package-commands).
 
 The names above are set by the runtime command enum
-(`crates/harness-api/src/runtime_commands.rs:7-33`).
+(`crates/harness-api/src/runtime_commands.rs:13-58`).
 Sending a name that is not in the enum answers with an error.
 `cache`, `cache stats`, `cache extend`, `cache 1h`, and `cache 5m` are not in the enum.
 This build has no runtime command that extends cache TTL and no client request that changes
@@ -666,6 +688,12 @@ Use `horon run --max-time 30 "..."` to limit turn processing to 30 seconds. The 
 
 Text mode reports the deadline on stderr. `--json` writes a single error object, and `--ndjson` finishes with an error record. Both structured formats use `"code":"deadline_exceeded"` and include `max_time_seconds` and the session ID.
 
+With `--wait-async`, the deadline also covers waiting for background jobs owned by the current invocation and session. Text mode prints one status per job to stderr. A successful `--json` run includes a `background_jobs` array, and `--ndjson` sends a `background_job` record for each job before `done`. On timeout, observed job statuses are printed to stderr and the normal deadline error is emitted in the selected format.
+
+## Visible reasoning in text mode
+
+`horon run --print-thoughts "..."` prints reasoning that the provider returns as visible text to stderr under a `[thinking]` label, ahead of the answer. The answer stays on stdout, so piped output is unchanged. Without the option, text output is byte-for-byte the same. Reasoning the provider does not return as visible text is not shown, and the option cannot be combined with `--json` or `--ndjson`, whose formats are unchanged.
+
 ## `--resume` behaviour
 
 Passing `--resume` with no value exits with a session picker error before the daemon starts.
@@ -691,6 +719,19 @@ an old config file are not read, and there is no window-selecting flag such as t
 `--fresh-spawn`.
 `crates/terminal-launch` keeps only the client terminal environment snapshot and hook
 command parsing.
+
+### Previewing a recovery
+
+`horon-agent session recovery <id> [--json]` shows what resuming one session would touch, without resuming it. It reads the stored originals only: it starts no daemon, opens no runtime journal and writes nothing, so it is safe while another process uses the session. The session and every child it owns (a stored session whose `parent_id` is that session) fall into one state:
+
+| State | Meaning | Offered for resume |
+| --- | --- | --- |
+| `empty` | No messages | No |
+| `complete` | The last message is the assistant's and no tool call is open | No |
+| `awaiting_reply` | The last message is the user's or a tool result, so the turn stopped before the model answered | Yes |
+| `unresolved_tool_calls` | An assistant tool call has no result; whether it ran is unknown and it may have side effects | No, parked until a human decides |
+
+The report names each parked tool call, counts eligible and parked sessions, and prints the existing resume command (`horon-agent --resume <id>`). Resuming itself is unchanged. Looking for children reads at most 5000 stored sessions and says so when it stops; a session it cannot read is listed under `unreadable_sessions`.
 
 ### Saved sessions
 

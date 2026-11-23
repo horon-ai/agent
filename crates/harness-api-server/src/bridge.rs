@@ -4,13 +4,15 @@
 //! stay separately readable; the accept loop, the single-instance lock and the
 //! idle/parent exit all live here (#429).
 
-use crate::{allocator, run_bridge_stream_with_deadline, writer};
+use crate::credentials::CredentialStore;
+use crate::{allocator, run_bridge_stream_with_deadline, tcp, writer};
 use anyhow::{Context, Result};
 use horon_agent_transport::{Listener, Stream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::net::TcpListener;
 
 /// How long the bridge keeps its socket with no client connected.
 ///
@@ -170,6 +172,99 @@ pub(crate) async fn run_bridge_with_lifecycle(
     idle_exit: Duration,
     parent: Option<u32>,
 ) -> Result<()> {
+    let lifecycle = Lifecycle::Terminal { idle_exit, parent };
+    run_bridge_serving(api_socket, legacy_socket, write_deadline, lifecycle, None).await
+}
+
+/// Serve the API on the local socket and, when asked, on a TCP listener that
+/// authenticates every connection.
+///
+/// This is the `--api-bind` entry point. Unlike the terminal-owned default it
+/// has no idle exit and no parent-process exit: an address an operator asked to
+/// expose stays served until the process is stopped. The exposure value comes
+/// from [`horon_agent_base::harness_api::resolve`], which already refused an
+/// unsafe bind; the credential store is re-checked here so this public entry
+/// point stays safe on its own.
+pub async fn run_bridge_exposed(
+    api_socket: PathBuf,
+    legacy_socket: PathBuf,
+    exposure: &horon_agent_base::harness_api::TcpExposure,
+) -> Result<()> {
+    let store = CredentialStore::default_store()?;
+    store.require_credential()?;
+    let listener = TcpListener::bind(exposure.bind())
+        .await
+        .with_context(|| format!("bind the exposed harness API listener on {}", exposure.bind()))?;
+    let tenant = current_tenant_label();
+    eprintln!(
+        "harness API bridge: exposing the API on {}",
+        tcp::describe(exposure.bind(), exposure.insecure_behind_proxy(), tenant.as_deref())
+    );
+    run_bridge_serving(
+        api_socket,
+        legacy_socket,
+        writer::WRITE_STALL_DEADLINE,
+        Lifecycle::Service,
+        Some(TcpService {
+            listener,
+            store,
+            auth_deadline: tcp::AUTH_DEADLINE,
+            tenant,
+        }),
+    )
+    .await
+}
+
+/// [`run_bridge_exposed`] with the listener already bound and the auth deadline
+/// injected, so a test binds port 0, learns the address and watches a stalled
+/// peer close early.
+#[cfg(test)]
+pub(crate) async fn run_bridge_exposed_on(
+    api_socket: PathBuf,
+    legacy_socket: PathBuf,
+    listener: TcpListener,
+    store: CredentialStore,
+    auth_deadline: Duration,
+) -> Result<()> {
+    run_bridge_serving(
+        api_socket,
+        legacy_socket,
+        writer::WRITE_STALL_DEADLINE,
+        Lifecycle::Service,
+        Some(TcpService {
+            listener,
+            store,
+            auth_deadline,
+            tenant: None,
+        }),
+    )
+    .await
+}
+
+/// A resolved non-local listener.
+struct TcpService {
+    listener: TcpListener,
+    store: CredentialStore,
+    auth_deadline: Duration,
+    tenant: Option<String>,
+}
+
+/// Who decides how long the bridge lives.
+enum Lifecycle {
+    /// The bridge belongs to the terminal that started it: it ends when its
+    /// parent is gone or after `idle_exit` with no client (#429).
+    Terminal { idle_exit: Duration, parent: Option<u32> },
+    /// An operator asked for the endpoint, so only the process ending stops it.
+    Service,
+}
+
+async fn run_bridge_serving(
+    api_socket: PathBuf,
+    legacy_socket: PathBuf,
+    write_deadline: std::time::Duration,
+    lifecycle: Lifecycle,
+    tcp_service: Option<TcpService>,
+) -> Result<()> {
     // Only one bridge may own the socket.
     //
     // This is the fix for clients seeing "disconnected: harness API stream
@@ -246,18 +341,45 @@ pub(crate) async fn run_bridge_with_lifecycle(
     // had closed or that the last client had left, and the single-instance
     // lock then made the oldest bridge the survivor of every later launch, so
     // an upgraded install kept answering from the previous release's binary.
-    // A bridge now ends when it has no client and either its parent is gone or
-    // it has been idle for `idle_exit`, releasing the lock and unlinking the
-    // socket node so the next launch binds one from the current release. A
-    // client that is still connected keeps it serving.
+    // A terminal-owned bridge now ends when it has no client and either its
+    // parent is gone or it has been idle for `idle_exit`, releasing the lock
+    // and unlinking the socket node so the next launch binds one from the
+    // current release. A client that is still connected keeps it serving. A
+    // service bridge (`--api-bind`) skips the watchdog entirely: the exposed
+    // listener has no terminal to belong to.
     let activity = Arc::new(Activity::new());
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel::<Option<ExitReason>>(None);
-    let watchdog = tokio::spawn(watch_lifecycle(activity.clone(), idle_exit, parent, shutdown_tx));
+    let watchdog = match lifecycle {
+        Lifecycle::Terminal { idle_exit, parent } => Some(tokio::spawn(watch_lifecycle(
+            activity.clone(),
+            idle_exit,
+            parent,
+            shutdown_tx.clone(),
+        ))),
+        Lifecycle::Service => None,
+    };
+    // The exposed listener runs beside the local one so SDK clients on this
+    // machine keep their byte-for-byte handshake. It is spawned so its accept
+    // future is never dropped and re-polled: that is the Windows named-pipe
+    // hazard the local loop's comment describes.
+    let mut exposed = tcp_service.map(|service| {
+        let legacy = legacy_socket.clone();
+        tokio::spawn(tcp::accept_loop(
+            service.listener,
+            legacy,
+            service.store,
+            service.auth_deadline,
+            write_deadline,
+            service.tenant,
+        ))
+    });
+    let mut end_reason: Option<ExitReason> = None;
+    let mut failure: Option<anyhow::Error> = None;
     loop {
         tokio::select! {
             // The watchdog decides; this side only notices. `changed` is cancel
             // safe, and the accept below is dropped at most once, on exit.
-            changed = shutdown_rx.changed() => {
+            changed = shutdown_rx.changed(), if watchdog.is_some() => {
                 if changed.is_err() || shutdown_rx.borrow().is_some() {
                     break;
                 }
@@ -279,10 +401,28 @@ pub(crate) async fn run_bridge_with_lifecycle(
                     allocator::trim();
                 });
             }
+            finished = join_optional(&mut exposed) => {
+                match finished {
+                    // The exposed listener only returns here when accepting
+                    // failed; either way the whole bridge must say so.
+                    Some(Ok(())) => end_reason = Some("the exposed listener stopped"),
+                    Some(Err(error)) => {
+                        failure = Some(error);
+                        end_reason = Some("the exposed listener failed");
+                    }
+                    None => {}
+                }
+                break;
+            }
         }
     }
-    watchdog.abort();
-    let reason = (*shutdown_rx.borrow()).unwrap_or("the accept loop ended");
+    if let Some(handle) = exposed.take() {
+        handle.abort();
+    }
+    if let Some(handle) = watchdog {
+        handle.abort();
+    }
+    let reason = end_reason.or(*shutdown_rx.borrow()).unwrap_or("the accept loop ended");
     // The socket node goes before the lock is released: a launch that finds no
     // socket starts a bridge, and one that finds the lock held exits, so
     // removing the node while still holding the lock keeps a new bridge from
@@ -292,10 +432,41 @@ pub(crate) async fn run_bridge_with_lifecycle(
         horon_agent_platform::ipc::remove_socket(&api_socket);
     }
     eprintln!("harness API bridge: exiting because {reason}");
-    Ok(())
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Await an optional spawned task; pending forever when there is none so the
+/// accept loop keeps its shape in the local-only case.
+async fn join_optional(handle: &mut Option<tokio::task::JoinHandle<Result<()>>>) -> Option<Result<()>> {
+    match handle {
+        Some(handle) => match handle.await {
+            Ok(result) => Some(result),
+            Err(error) => Some(Err(anyhow::anyhow!(
+                "the exposed harness API listener task failed: {error}"
+            ))),
+        },
+        None => std::future::pending().await,
+    }
+}
+
+/// The hosting tenant id, as the credential namespace for an audit line.
+fn current_tenant_label() -> Option<String> {
+    match horon_agent_base::hosting::current() {
+        Ok(policy) => policy.tenant_id().map(|tenant| tenant.as_str().to_string()),
+        Err(_) => None,
+    }
 }
 
 async fn handle_api_client(stream: Stream, legacy_socket: PathBuf, write_deadline: std::time::Duration) -> Result<()> {
     let (read_half, write_half) = stream.into_split();
-    run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, write_deadline).await
+    run_bridge_stream_with_deadline(
+        tokio::io::BufReader::new(read_half),
+        write_half,
+        legacy_socket,
+        write_deadline,
+    )
+    .await
 }

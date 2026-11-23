@@ -14,7 +14,15 @@
 //! [`record_prompt_source_read`] counts static prompt source files probed while
 //! assembling the system prompt, and [`record_session_context_git_spawn`] and
 //! [`record_session_context_gpu_probe_spawn`] count the `git` and GPU-probe
-//! child processes started to build a session context.
+//! child processes started to build a session context. [`record_package_area_read`]
+//! counts installed package files opened through the store's own open funnel (the
+//! catalog, a declaration, a bundled resource, and the executable verification a
+//! launch performs), [`record_package_dir_scan`] the four directory scans the
+//! package area makes on a session path, [`record_package_area_write`] every write
+//! into that area (catalog, reference directory, pin file),
+//! [`record_package_snapshot_build`] the turn snapshots a session had to rebuild,
+//! and [`record_package_child_start`] the package child processes the host
+//! actually started.
 //!
 //! Each recording call is one relaxed atomic read (the gate) plus one relaxed
 //! atomic add; high-water marks add a compare-and-swap that only spins when a new
@@ -70,6 +78,11 @@ static SKILL_FILE_READS: AtomicU64 = AtomicU64::new(0);
 static SKILL_BYTES_READ: AtomicU64 = AtomicU64::new(0);
 static MCP_CONFIG_READS: AtomicU64 = AtomicU64::new(0);
 static MCP_CONFIG_BYTES: AtomicU64 = AtomicU64::new(0);
+static PACKAGE_AREA_READS: AtomicU64 = AtomicU64::new(0);
+static PACKAGE_DIR_SCANS: AtomicU64 = AtomicU64::new(0);
+static PACKAGE_AREA_WRITES: AtomicU64 = AtomicU64::new(0);
+static PACKAGE_SNAPSHOT_BUILDS: AtomicU64 = AtomicU64::new(0);
+static PACKAGE_CHILD_STARTS: AtomicU64 = AtomicU64::new(0);
 static TOOL_OUTPUT_SPILLS: AtomicU64 = AtomicU64::new(0);
 static TOOL_OUTPUT_SPILL_ORIGINAL_BYTES: AtomicU64 = AtomicU64::new(0);
 static TOOL_OUTPUT_SPILL_KEPT_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -274,6 +287,68 @@ pub fn record_mcp_config_read(bytes: u64) {
     MCP_CONFIG_BYTES.fetch_add(bytes, Ordering::Relaxed);
 }
 
+/// One installed package file opened for reading.
+///
+/// Counted where the store opens a package file for its contents: the catalog
+/// (`read_catalog`), and every declaration, bundled resource and executable
+/// verification that goes through `open_package_file`. It is a file count, not a
+/// byte count, and it excludes reads made through other handles (the pin file and
+/// the reference lock, which the store reads directly). A turn that sees an
+/// unchanged catalog generation opens none of them.
+pub fn record_package_area_read() {
+    if !enabled() {
+        return;
+    }
+    PACKAGE_AREA_READS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// One directory scan of the package area, counted per `read_dir`.
+///
+/// Four sites report here: the inbox pass, the published-copy collection, the
+/// catalog-temporary cleanup, and the reader-reference scan. The install-time tree
+/// walks (hashing, fsync, freezing, removing a copy) and the single-file reads
+/// (the pin file, the reference lock) do not: those are install and collection
+/// work, not something a session start can trigger. A session that has no packages
+/// must not scan the area to find that out, which is what this counter proves.
+/// It is counted per call to `read_dir`, never per entry.
+pub fn record_package_dir_scan() {
+    if !enabled() {
+        return;
+    }
+    PACKAGE_DIR_SCANS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// One write into the package area: a catalog publication, a reference
+/// directory, or a pin file.
+///
+/// A package-free home never grows one, which is what keeps the area absent.
+pub fn record_package_area_write() {
+    if !enabled() {
+        return;
+    }
+    PACKAGE_AREA_WRITES.fetch_add(1, Ordering::Relaxed);
+}
+
+/// One turn snapshot a session had to rebuild. An unchanged catalog generation
+/// is served from the snapshot the session already holds and records nothing.
+pub fn record_package_snapshot_build() {
+    if !enabled() {
+        return;
+    }
+    PACKAGE_SNAPSHOT_BUILDS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// One package child process the host started.
+///
+/// A package that is installed but never called starts no child, and a call that
+/// finds its session's child already live starts none either.
+pub fn record_package_child_start() {
+    if !enabled() {
+        return;
+    }
+    PACKAGE_CHILD_STARTS.fetch_add(1, Ordering::Relaxed);
+}
+
 /// One oversized tool output condensed for the model's context, with the full
 /// text saved as a session artifact. `kept_bytes` is what the model received.
 pub fn record_tool_output_spill(original_bytes: u64, kept_bytes: u64) {
@@ -412,6 +487,11 @@ pub fn reset() {
         &SKILL_BYTES_READ,
         &MCP_CONFIG_READS,
         &MCP_CONFIG_BYTES,
+        &PACKAGE_AREA_READS,
+        &PACKAGE_DIR_SCANS,
+        &PACKAGE_AREA_WRITES,
+        &PACKAGE_SNAPSHOT_BUILDS,
+        &PACKAGE_CHILD_STARTS,
         &TOOL_OUTPUT_SPILLS,
         &TOOL_OUTPUT_SPILL_ORIGINAL_BYTES,
         &TOOL_OUTPUT_SPILL_KEPT_BYTES,
@@ -467,6 +547,11 @@ pub struct Snapshot {
     pub skill_bytes_read: u64,
     pub mcp_config_reads: u64,
     pub mcp_config_bytes: u64,
+    pub package_area_reads: u64,
+    pub package_dir_scans: u64,
+    pub package_area_writes: u64,
+    pub package_snapshot_builds: u64,
+    pub package_child_starts: u64,
     pub tool_output_spills: u64,
     pub tool_output_spill_original_bytes: u64,
     pub tool_output_spill_kept_bytes: u64,
@@ -534,6 +619,11 @@ pub fn snapshot() -> Snapshot {
         skill_bytes_read: SKILL_BYTES_READ.load(Ordering::Relaxed),
         mcp_config_reads: MCP_CONFIG_READS.load(Ordering::Relaxed),
         mcp_config_bytes: MCP_CONFIG_BYTES.load(Ordering::Relaxed),
+        package_area_reads: PACKAGE_AREA_READS.load(Ordering::Relaxed),
+        package_dir_scans: PACKAGE_DIR_SCANS.load(Ordering::Relaxed),
+        package_area_writes: PACKAGE_AREA_WRITES.load(Ordering::Relaxed),
+        package_snapshot_builds: PACKAGE_SNAPSHOT_BUILDS.load(Ordering::Relaxed),
+        package_child_starts: PACKAGE_CHILD_STARTS.load(Ordering::Relaxed),
         tool_output_spills: TOOL_OUTPUT_SPILLS.load(Ordering::Relaxed),
         tool_output_spill_original_bytes: TOOL_OUTPUT_SPILL_ORIGINAL_BYTES.load(Ordering::Relaxed),
         tool_output_spill_kept_bytes: TOOL_OUTPUT_SPILL_KEPT_BYTES.load(Ordering::Relaxed),
@@ -593,6 +683,14 @@ mod tests {
         record_skill_file_read(128);
         record_mcp_config_read(300);
         record_mcp_config_read(20);
+        record_package_area_read();
+        record_package_area_read();
+        record_package_area_read();
+        record_package_dir_scan();
+        record_package_area_write();
+        record_package_area_write();
+        record_package_snapshot_build();
+        record_package_child_start();
         record_tool_output_spill(1_000, 100);
         record_tool_output_spill(500, 50);
         record_read_unchanged(40);
@@ -622,6 +720,11 @@ mod tests {
         assert_eq!(snapshot.skill_bytes_read, 4_224);
         assert_eq!(snapshot.mcp_config_reads, 2);
         assert_eq!(snapshot.mcp_config_bytes, 320);
+        assert_eq!(snapshot.package_area_reads, 3, "every package file open counts once");
+        assert_eq!(snapshot.package_dir_scans, 1);
+        assert_eq!(snapshot.package_area_writes, 2);
+        assert_eq!(snapshot.package_snapshot_builds, 1);
+        assert_eq!(snapshot.package_child_starts, 1);
         assert_eq!(snapshot.tool_output_spills, 2);
         assert_eq!(snapshot.tool_output_spill_original_bytes, 1_500);
         assert_eq!(snapshot.tool_output_spill_kept_bytes, 150);
@@ -667,6 +770,11 @@ mod tests {
             "skill_bytes_read",
             "mcp_config_reads",
             "mcp_config_bytes",
+            "package_area_reads",
+            "package_dir_scans",
+            "package_area_writes",
+            "package_snapshot_builds",
+            "package_child_starts",
             "tool_output_spills",
             "tool_output_spill_original_bytes",
             "tool_output_spill_kept_bytes",

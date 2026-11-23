@@ -63,6 +63,9 @@ pub struct FeatureConfig {
     /// streams: a matching pattern aborts the response, injects the rule body as
     /// a system reminder, and re-issues the request (default: false)
     pub stream_rules: bool,
+    /// Stop a response that repeats the same long sentence four times in a row.
+    /// Fenced code, tables, headings and lists are never counted (default: false)
+    pub repeat_guard: bool,
     /// Fetch the models.dev pricing catalog in the background when the disk
     /// cache is missing or older than 24 hours. Off by default so a one-shot
     /// run never contacts an external site; a cached catalog on disk is still
@@ -89,6 +92,7 @@ impl Default for FeatureConfig {
             crash_bundles: true,
             turn_recovery: TurnRecoveryMode::default(),
             stream_rules: false,
+            repeat_guard: false,
             pricing_refresh: false,
             effort_keywords: true,
         }

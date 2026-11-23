@@ -87,6 +87,7 @@ PLATFORMS = (("linux", "Linux"), ("macos", "macOS"), ("windows", "Windows"))
 # (file name, title key used when the fragment is plain text or missing)
 FRAGMENTS = (
     ("compare.md", "compare"),
+    ("packages.md", "packages"),
     ("startup.txt", "startup"),
     ("loading-cold.txt", "loading_cold"),
     ("loading-warm.txt", "loading_warm"),
@@ -122,6 +123,7 @@ SUMMARY_METRICS = ("03-oneshot-time", "05-skill-time", "06-mcp-time",
 # block may be replaced: a compare-only run must not overwrite startup, loading
 # and TUI records from an earlier full run with "not measured".
 REQUIRED_SUITES = (("compare", ("compare.md",)),
+                   ("packages", ("packages.md",)),
                    ("startup", ("startup.txt",)),
                    ("loading", ("loading-cold.txt", "loading-warm.txt")),
                    ("tools", ("tools.md",)),
@@ -132,6 +134,7 @@ REQUIRED_SUITES = (("compare", ("compare.md",)),
 TEXT = {
     "en": {
         "compare": "Competitor comparison",
+        "packages": "User-installed package cost",
         "startup": "Startup",
         "loading_cold": "Session loading (COLD)",
         "loading_warm": "Session loading (WARM)",
@@ -179,6 +182,7 @@ TEXT = {
     },
     "ko": {
         "compare": "경쟁 도구 비교",
+        "packages": "사용자 설치 패키지 비용",
         "startup": "기동",
         "loading_cold": "세션 로딩 (COLD)",
         "loading_warm": "세션 로딩 (WARM)",

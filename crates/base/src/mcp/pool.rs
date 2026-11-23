@@ -361,6 +361,16 @@ impl SharedMcpPool {
     }
 
     async fn ensure_connected(&self, name: String, config: McpServerConfig) -> std::result::Result<bool, String> {
+        // The pool is one process per daemon and hands it to every session, so
+        // a hosted process must refuse here as well: this is where a server one
+        // customer configured could otherwise reach another's session.
+        let operation = if config.remote_transport().is_some() {
+            crate::mcp::hosted::HostedOperation::Remote
+        } else {
+            crate::mcp::hosted::HostedOperation::PooledStdio
+        };
+        crate::mcp::hosted::check_current(&crate::mcp::hosted::HostedRequest::server(operation, &name))
+            .map_err(|refusal| refusal.to_string())?;
         if let Some(record) = self.recent_failure(&name).await {
             let retry_after = FAILED_CONNECT_RETRY_COOLDOWN
                 .saturating_sub(record.failed_at.elapsed())
@@ -476,12 +486,10 @@ mod tests {
     #[tokio::test]
     async fn issue_790_reload_reuses_default_config_directory() {
         let _guard = crate::storage::lock_test_env();
-        let original_cwd = std::env::current_dir().expect("current cwd");
-        let previous_home = std::env::var_os("HORON_HOME");
         let home = tempfile::tempdir().expect("home tempdir");
         let first_project = tempfile::tempdir().expect("first project tempdir");
         let second_project = tempfile::tempdir().expect("second project tempdir");
-        crate::env::set_var("HORON_HOME", home.path());
+        let _home = crate::storage::HomeEnvGuard::set(home.path());
         std::fs::write(
             first_project.path().join(".mcp.json"),
             r#"{"mcpServers":{"first":{"command":"first-server","shared":false}}}"#,
@@ -495,7 +503,9 @@ mod tests {
         crate::workspace_trust::trust_for_tests(first_project.path());
         crate::workspace_trust::trust_for_tests(second_project.path());
 
-        std::env::set_current_dir(first_project.path()).expect("set first project cwd");
+        // Declared after the temp dirs it points into, so it restores the cwd
+        // first, even when an assertion below fails.
+        let cwd = crate::storage::CwdGuard::enter(first_project.path()).expect("set first project cwd");
         let pool = SharedMcpPool::from_default_config();
         let initially_loaded_first = pool.config().await.servers.contains_key("first");
 
@@ -506,16 +516,9 @@ mod tests {
         .expect("update first project config");
         crate::workspace_trust::trust_for_tests(first_project.path());
 
-        std::env::set_current_dir(second_project.path()).expect("set second project cwd");
+        cwd.change(second_project.path()).expect("set second project cwd");
         let _ = pool.reload().await;
         let reloaded = pool.config().await;
-
-        std::env::set_current_dir(original_cwd).expect("restore cwd");
-        if let Some(previous_home) = previous_home {
-            crate::env::set_var("HORON_HOME", previous_home);
-        } else {
-            crate::env::remove_var("HORON_HOME");
-        }
 
         assert!(initially_loaded_first);
         assert!(!reloaded.servers.contains_key("first"));

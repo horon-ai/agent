@@ -517,6 +517,9 @@ impl App {
         // session just left behind must not resolve.
         self.skills.clear();
         self.commands.set_skills(Vec::new());
+        // The package commands belong to the session for the same reason, and
+        // the bridge asks the new session for its own right after this answer.
+        self.commands.set_package_commands(Vec::new());
         // The effort belongs to the session being attached to, so it is the
         // one the bridge read for it. Nothing of the session left behind
         // survives: a report that names no effort leaves it unknown until the
@@ -557,6 +560,9 @@ impl App {
         // in flight when the answer landed cannot put strangers' rows under the
         // new session.
         self.picker = None;
+        // A commit review belongs to the previous session's confirmation flow,
+        // even when the newly attached session works in the same directory.
+        self.commit_review = None;
         // The candidates were read from the directory of the session being
         // left; the next Tab reads the directory this session reported.
         self.path_cycle = None;
@@ -616,6 +622,10 @@ impl App {
     /// root, and an answer that names no folder is not the old one either, so
     /// path completion stays off until a session names one.
     pub fn apply_session_directory(&mut self, directory: Option<&str>) {
+        // Every attach answer belongs to a freshly attached or switched session,
+        // so any staged commit review from before that attach is stale even if
+        // the directory happens to stay the same.
+        self.commit_review = None;
         let Some(directory) = directory.map(str::trim).filter(|directory| !directory.is_empty()) else {
             self.workspace_known = false;
             return;

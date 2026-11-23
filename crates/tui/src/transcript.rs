@@ -6,6 +6,7 @@
 //! replacement retracts text) are the same everywhere and are easy to get wrong
 //! at the call site.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 #[path = "transcript_recording.rs"]
@@ -356,6 +357,13 @@ pub struct Transcript {
     /// the conversation after it, and a reader that tracks positions (a
     /// recording counts the answers it already kept) has to start over.
     revision: u64,
+    /// Changes whenever a row is added, removed or replaced.
+    ///
+    /// Drawn from one process-wide counter, so a transcript swapped in for a
+    /// replay never repeats the value of the one it replaced. Only tool rows are
+    /// edited in place, and they carry no note key, so a reader that derives
+    /// something from the user and assistant rows can keep it while this holds.
+    items_generation: u64,
     /// The requests this session has decided, newest last.
     ///
     /// A refusal can reach the client after its prompt was answered, and the
@@ -410,6 +418,7 @@ impl Default for Transcript {
             starts: Vec::new(),
             expand: ExpandState::default(),
             revision: 0,
+            items_generation: next_items_generation(),
             decided: Vec::new(),
             turn: None,
             turn_usage: false,
@@ -490,6 +499,11 @@ impl Transcript {
         &self.stored
     }
 
+    /// See the `items_generation` field.
+    pub(crate) fn items_generation(&self) -> u64 {
+        self.items_generation
+    }
+
     /// Append an item, recording the stored message it came from.
     ///
     /// The only way an item enters the transcript, so `items` and `stored`
@@ -498,12 +512,14 @@ impl Transcript {
         debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
         self.items.push(item);
         self.stored.push(stored);
+        self.items_generation = next_items_generation();
     }
 
     /// Remove the item at `index`, and the stored message recorded for it.
     fn remove_item(&mut self, index: usize) -> Item {
         debug_assert_eq!(self.stored.len(), self.items.len(), "stored ids must track items");
         self.stored.remove(index);
+        self.items_generation = next_items_generation();
         self.items.remove(index)
     }
 
@@ -563,6 +579,7 @@ impl Transcript {
     pub fn clear(&mut self) {
         self.revision += 1;
         self.items.clear();
+        self.items_generation = next_items_generation();
         self.stored.clear();
         self.streaming = Streaming::default();
         self.reasoned = Reasoned::default();
@@ -658,6 +675,7 @@ impl Transcript {
         if let Some(index) = found {
             self.items[index] = Item::User(text.to_string());
             self.stored[index] = None;
+            self.items_generation = next_items_generation();
         }
     }
 
@@ -1164,6 +1182,12 @@ impl Transcript {
     fn last_assistant_index(&self) -> Option<usize> {
         self.items.iter().rposition(|item| matches!(item, Item::Assistant(_)))
     }
+}
+
+/// A value no transcript in this process has held.
+fn next_items_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 #[cfg(test)]
