@@ -60,6 +60,14 @@ pub(super) async fn connection_presence_pong(
             "effective_settings_api".into(),
             "background_output_v1".into(),
             "live_todo_v1".into(),
+            // The daemon owns the package catalog: it validates the catalog and
+            // the inbox at startup, serializes management operations with the
+            // inbox pass, and answers only after the resulting generation is
+            // published. The bridge forwards `package_control` only when this is
+            // present, and a management CLI treats its absence as "this daemon
+            // predates package management" instead of mutating offline behind
+            // its back.
+            "package_control".into(),
         ],
         user_connected_session_ids: Some(user_connected_session_ids),
     }

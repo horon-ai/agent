@@ -30,8 +30,12 @@ pub fn parent_pid() -> Option<u32> {
     os::parent_pid()
 }
 
-/// Wait until the process is asked to terminate gracefully.
-pub async fn wait_for_termination() {
+/// Wait until the process is asked to terminate gracefully (`SIGTERM` or
+/// `SIGINT` on Unix). Returns the name of the signal that arrived.
+///
+/// Windows has no catchable POSIX termination signal, so the future stays
+/// pending there.
+pub async fn wait_for_termination() -> &'static str {
     os::wait_for_termination().await
 }
 

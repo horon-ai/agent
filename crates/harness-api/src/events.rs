@@ -692,6 +692,14 @@ pub enum ApiEvent {
         markdown: String,
     },
 
+    /// Reply to `ExportSessionHtml`.
+    SessionHtml {
+        session_id: String,
+        /// Standalone HTML report: every transcript character escaped, the
+        /// stylesheet inline, and nothing loaded from the network.
+        html: String,
+    },
+
     /// Reply to `ExportSessionEvents`.
     SessionEventPage {
         session_id: String,
@@ -843,6 +851,14 @@ pub enum ApiEvent {
         settings: Vec<crate::EffectiveSetting>,
     },
 
+    /// Reply to `package_control`, carrying the catalog generation the daemon
+    /// published and the complete catalog at it.
+    ///
+    /// No session id: the catalog belongs to the daemon, not to a transcript.
+    /// Removed records stay in `receipt.catalog` with state `revoked`, so a
+    /// client can tell "never installed" from "removed".
+    PackageControl { receipt: crate::PackageControlReceipt },
+
     /// Forward-compatibility catch-all: clients must skip this silently.
     #[serde(other)]
     Unknown,
@@ -868,6 +884,7 @@ impl ApiEvent {
             Self::BackgroundOutput { .. } => Some(crate::CAPABILITY_BACKGROUND_OUTPUT_V1),
             Self::TodoChanged { .. } => Some(crate::CAPABILITY_LIVE_TODO_V1),
             Self::EffectiveSettings { .. } => Some(crate::CAPABILITY_EFFECTIVE_SETTINGS_V1),
+            Self::PackageControl { .. } => Some(crate::CAPABILITY_PACKAGE_CONTROL_V1),
             _ => None,
         }
     }

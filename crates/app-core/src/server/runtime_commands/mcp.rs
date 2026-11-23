@@ -58,6 +58,11 @@ async fn probe(name: &str, server: &McpServerConfig, working_dir: Option<&Path>)
     let mut client = match result {
         Ok(client) => client,
         Err(error) => {
+            // A hosting refusal already names the policy and the operation, so
+            // the generic transport guidance would hide the real answer.
+            if let Some(refusal) = crate::mcp::hosted::find(&error) {
+                bail!("{refusal}");
+            }
             // Connection errors can carry URLs or subprocess arguments. Keep
             // them off the client-facing surface, and name the local remedy.
             let guidance = if error

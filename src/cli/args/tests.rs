@@ -1,3 +1,4 @@
+use super::provider_args::ProviderTypeArg;
 use super::*;
 use crate::cli::provider_init::ProviderChoice;
 
@@ -134,7 +135,7 @@ fn remote_working_dir_option_parses() {
 fn model_list_subcommand_parses() {
     let args = Args::try_parse_from(["horon-agent", "model", "list", "--json", "--verbose"]).unwrap();
     match args.command {
-        Some(Command::Model(ModelCommand::List { json, verbose })) => {
+        Some(Command::Model(ModelCommand::List { json, verbose, .. })) => {
             assert!(json);
             assert!(verbose);
         }
@@ -454,7 +455,7 @@ fn api_bridge_socket_flags_do_not_collide() {
     assert_eq!(args.socket.as_deref(), Some("/tmp/daemon.sock"));
     assert!(matches!(
         args.command,
-        Some(Command::ApiBridge { api_socket: Some(ref path), stdio: false }) if path == "/tmp/api.sock"
+        Some(Command::ApiBridge { api_socket: Some(ref path), stdio: false, .. }) if path == "/tmp/api.sock"
     ));
 
     // The bare form must resolve both paths from the environment.
@@ -463,7 +464,8 @@ fn api_bridge_socket_flags_do_not_collide() {
         bare.command,
         Some(Command::ApiBridge {
             api_socket: None,
-            stdio: false
+            stdio: false,
+            ..
         })
     ));
 
@@ -477,7 +479,8 @@ fn api_bridge_socket_flags_do_not_collide() {
                 Some(_),
                 Some(Command::ApiBridge {
                     api_socket: None,
-                    stdio: false
+                    stdio: false,
+                    ..
                 })
             ))
         ),
@@ -504,7 +507,8 @@ fn api_stdio_accepts_alias_and_daemon_socket_but_not_api_socket() {
             args.command,
             Some(Command::ApiBridge {
                 api_socket: None,
-                stdio: true
+                stdio: true,
+                ..
             })
         ));
         assert!(

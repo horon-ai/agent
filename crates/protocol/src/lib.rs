@@ -191,6 +191,10 @@ pub struct ReloadRecoveryDirective {
 pub type ReloadRecoverySnapshot = ReloadRecoveryDirective;
 
 mod wire;
+pub use horon_agent_extension_types::control::{
+    PackageControlOperation, PackageControlReceipt, PackageControlRequest, PackageControlScope, PackageControlState,
+    PackageInboxSkip, PackageSummary,
+};
 pub use wire::{
     AcpClientCapabilities, AcpSubscribeOptions, AskSelection, BackgroundWorkEvent, BackgroundWorkItem, ClientRpcError,
     CompactMethod, FileDiffWire, HandoffCompactionReport, PermissionDecision, PlanEntryWire, Request,
@@ -640,7 +644,8 @@ impl Request {
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
             | Request::GetEffectiveSettings { id }
-            | Request::GetSnapshot { id, .. } => *id,
+            | Request::GetSnapshot { id, .. }
+            | Request::PackageControl { id, .. } => *id,
             Request::CommMessage { id, .. } => *id,
             Request::CommList { id, .. } => *id,
             Request::CommListSwarms { id, .. } => *id,

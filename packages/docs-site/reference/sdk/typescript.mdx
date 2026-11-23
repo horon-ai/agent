@@ -371,7 +371,10 @@ discovery pass only.
 | `clear(id)` / `rewind(id, index)`                                                                     | Edit history                                                                  |
 | `respondToPermission(id, requestId, decision)`                                                        | Answer a permission prompt                                                    |
 | `listModels(id)` / `setModel(id, model)`                                                              | List and choose the session's model                                           |
-| `getRuntimeInfo(id)`                                                                                  | Provider, model route, protocol, capability, and health metadata              |
+| `getRuntimeInfo(id)`                                                                                  | Provider, model route, protocol, capability, and health metadata                   |
+| `getEffectiveSettings(id)`                                                                            | Allow-listed daemon settings and their source layers (`effective_settings_v1`)     |
+| `packageControl(request)`                                                                             | Install, enable, disable, remove, sync, or inspect packages (`package_control_v1`) |
+| `listPackageCommands(id)` / `runPackageCommand(id, packageId, command, arguments?)`                   | List and run the slash commands installed packages supply (`package_commands_v1`)  |
 | `setApiKey(provider, key)` / `clearApiKey(provider)`                                                  | Atomically provision or remove owner-only API-key files                       |
 | `usageReport(sessionId?)`                                                                             | Token totals, per-model aggregates, context window, and subscription limits   |
 | `ackApproval(id, requestId)`                                                                          | Retire the daemon's durable copy of a resolved approval                       |
@@ -393,6 +396,7 @@ discovery pass only.
 | `exportSessionEvents(id, { heads?, knownIds?, cursor? })` / `importSessionEvents(page, retryCursor?)` | Exchange one bounded page of original events (`session_replication_v1`)       |
 | `exportSessionBlob(...)` / `importSessionBlob(chunk)` / `sessionBlobStatus(...)`                      | Move original blobs in verified 1 MiB chunks (`session_replication_v1`)       |
 | `exportSessionRecordBlob(...)` / `importSessionRecordBlob(chunk)` / `sessionRecordBlobStatus(...)`    | Move a whole canonical record the page carried by reference                   |
+| `exportSessionMarkdown(id)` / `exportSessionHtml(id)`                                                 | Redacted Markdown transcript or standalone HTML report (`session_replication_v1`) |
 | `ping()`                                                                                              | Liveness                                                                      |
 
 ## Models
@@ -487,7 +491,7 @@ before calling, because a missing capability answers `unsupported` naming it:
 | capability                  | gates                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `session_event_store_v1`    | `listSessionHeads`, `selectSessionHead`                                                                             |
-| `session_replication_v1`    | `exportSessionEvents`, `importSessionEvents`, the blob methods, and the whole-record blob pair                      |
+| `session_replication_v1`    | `exportSessionEvents`, `importSessionEvents`, `exportSessionMarkdown`, `exportSessionHtml`, the blob methods, and the whole-record blob pair |
 | `session_history_cursor_v1` | `getHistoryPage`                                                                                                    |
 | `structured_compaction_v1`  | nothing in this SDK; read it with `supports()` before interpreting a `compacted` record's structured summary fields |
 

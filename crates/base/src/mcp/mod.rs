@@ -7,8 +7,10 @@
 
 pub mod budget;
 mod client;
+pub mod hosted;
 mod manager;
 pub mod oauth;
+mod package_source;
 pub mod pool;
 mod protocol;
 mod remote;
@@ -22,6 +24,7 @@ pub use client::{
     unsupported_capability_message,
 };
 pub use manager::McpManager;
+pub use package_source::{PackageServerRegistration, package_servers};
 pub use pool::{SharedMcpPool, get_shared_pool, init_shared_pool};
 pub use protocol::*;
 pub use schema_cache::{McpSchemaCache, fingerprint_config};

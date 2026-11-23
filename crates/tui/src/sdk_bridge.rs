@@ -24,8 +24,10 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::context::ContextReport;
 
 mod daemon_settings;
+mod export;
 mod jobs;
 mod messages;
+mod package_commands;
 mod runtime;
 mod sessions;
 mod skills;
@@ -34,6 +36,9 @@ mod swarm;
 
 #[cfg(test)]
 mod jobs_tests;
+
+#[cfg(test)]
+mod package_tests;
 
 #[cfg(test)]
 mod runtime_tests;
@@ -49,6 +54,7 @@ mod skills_tests;
 
 pub use jobs::BackgroundJobRow;
 pub use messages::{Command, Incoming};
+pub use package_commands::PackageOutcome;
 pub use swarm::SwarmRow;
 
 /// How long the bridge waits for a command before it pumps the event stream
@@ -312,6 +318,12 @@ fn run_worker(
     if !report_skills(&events, skills::read(&client, &session_id, false)) {
         return;
     }
+    // The commands the installed packages supply, read for the same reason: a
+    // listed name resolves before the user types it, and `/help` lists the
+    // section without a round trip.
+    if !report_package_commands(&events, package_commands::read(&client, &session_id)) {
+        return;
+    }
     if !report_todos(&events, &client, &session_id) {
         return;
     }
@@ -393,6 +405,7 @@ fn run_worker(
                     // which is also when the skills of the one left behind stop
                     // being the client's.
                     let resets_session = matches!(&command, Command::NewSession { .. } | Command::Attach(_));
+                    let applies_preset = matches!(&command, Command::Runtime { command: horon_agent_sdk::RuntimeCommand::ModelPreset, arguments } if arguments.first().is_some_and(|action| action == "apply"));
                     let served = match command {
                         Command::NewSession { working_dir } => {
                             match sessions::created(&dial, working_dir.as_deref(), &socket) {
@@ -440,11 +453,25 @@ fn run_worker(
                             if events.send(incoming).is_err() {
                                 return;
                             }
+                            if applies_preset
+                                && let Ok(Some(info)) = runtime::read(&client, &session_id)
+                                && events.send(info).is_err()
+                            {
+                                return;
+                            }
                             // Read against the connection and the id the worker
                             // holds now, never the ones captured before the
                             // request: a create replaced the client, and an
                             // attach moved the id.
                             if resets_session && !report_skills(&events, skills::read(&client, &session_id, false)) {
+                                return;
+                            }
+                            // The package commands belong to the session too:
+                            // the new one supplies its own set, so the list is
+                            // read against it before the client offers any.
+                            if resets_session
+                                && !report_package_commands(&events, package_commands::read(&client, &session_id))
+                            {
                                 return;
                             }
                             if resets_session
@@ -607,6 +634,24 @@ fn report_skills(events: &Sender<Incoming>, result: Result<Option<Incoming>, Err
     }
 }
 
+/// Send the package command list the client reads for itself, reporting whether
+/// the UI is still listening.
+///
+/// A harness without the capability answered `None`, which is a session that
+/// supplies no package command rather than a failure. Any other refusal is one
+/// notice: the read was the client's own, not a command the user gave, so it
+/// must not settle state belonging to their requests.
+fn report_package_commands(events: &Sender<Incoming>, result: Result<Option<Incoming>, Error>) -> bool {
+    match result {
+        Ok(Some(incoming)) => events.send(incoming).is_ok(),
+        Ok(None) => true,
+        Err(error) => {
+            let notice = Incoming::Notice(format!("could not list the package commands: {error}"));
+            events.send(notice).is_ok()
+        }
+    }
+}
+
 /// What waiting on the command queue produced.
 #[derive(Debug)]
 enum CommandPoll {
@@ -662,6 +707,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
                 Incoming::Sessions(rows)
             }))
         }
+        Command::Tools => client.list_tools(session_id).map(|tools| Some(Incoming::Tools(tools))),
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
         // `/swarm` shows this session's own children; the rows are narrowed to
         // its lineage before they leave the bridge, so the list cannot name a
@@ -675,6 +721,9 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         // an answer rather than a silent skip: the rows are the point of the
         // request.
         Command::BackgroundJobs => jobs::read(client, session_id).map(Some),
+        // The report is the harness's own renderer output, so `/export` asks it
+        // for the document and only writes the file here.
+        Command::Export { path } => export::run(client, session_id, &path).map(|message| Some(Incoming::Info(message))),
         Command::CancelBackgroundTerminal(call_id) => jobs::cancel(client, session_id, &call_id).map(Some),
         // The daemon's allow-listed settings, read when the screen asks. A
         // server too old to answer is a state the screen explains, never an
@@ -715,6 +764,16 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
             }))
         }
         Command::Runtime { command, arguments } => runtime::command(client, session_id, command, arguments),
+        // A package command is a request of its own: the answer decides whether
+        // the client sends a message (a template) or shows a report (an
+        // executable command), so it never travels as a typed line.
+        Command::PackageCommand {
+            package_id,
+            command,
+            arguments,
+            display,
+        } => package_commands::run(client, session_id, &package_id, &command, &arguments, &display).map(Some),
+        Command::Stats => runtime::stats(client, session_id).map(Some),
         other => apply(client, session_id, other).map(|message| message.map(Incoming::Info)),
     }
 }
@@ -762,15 +821,19 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::Tools
         | Command::CheckSessions(_)
         | Command::Swarm
         | Command::Skills { .. }
         | Command::BackgroundJobs
+        | Command::Export { .. }
         | Command::CancelBackgroundTerminal(_)
         | Command::DaemonSettings
         | Command::Steer(_)
         | Command::SetTodoStatus { .. }
         | Command::Runtime { .. }
+        | Command::PackageCommand { .. }
+        | Command::Stats
         | Command::NewSession { .. }
         | Command::Attach(_) => Ok(None),
         Command::Cancel => client.cancel(session_id).map(|()| None),
@@ -809,18 +872,22 @@ fn describe(command: &Command) -> &'static str {
     match command {
         Command::Text(_) => "could not send the message",
         Command::Runtime { .. } => "could not run the command",
+        Command::PackageCommand { .. } => "could not run the package command",
+        Command::Stats => "could not read session token usage",
         Command::Context(crate::commands::ContextCommand::Clear) => "could not clear model context",
         Command::Context(crate::commands::ContextCommand::Compact) => "could not compact model context",
         Command::Model(_) => "could not switch the model",
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Tools => "could not list the session tools",
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",
         Command::Swarm => "could not list the swarm children",
         Command::Skills { .. } => "could not list the skills",
         Command::BackgroundJobs => "could not list the background jobs",
+        Command::Export { .. } => "could not write the HTML report",
         Command::CancelBackgroundTerminal(_) => "could not cancel the background terminal",
         Command::DaemonSettings => "could not read the daemon settings",
         Command::Steer(_) => "could not send the queued messages into the turn",

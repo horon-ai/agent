@@ -4,6 +4,8 @@
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SimpleKind {
     RuntimeCommand,
+    /// Awaiting `package_control_result`.
+    PackageControl,
     Detach,
     Tools,
     ToolControl,

@@ -163,7 +163,7 @@ class JobSelection(unittest.TestCase):
         units = {entry["unit"] for entry in bench_select.jobs("linux", "all")}
         self.assertEqual(
             units,
-            {"compare", "startup", "loading-cold", "loading-warm", "tools", "reload", "tui"},
+            {"compare", "packages", "startup", "loading-cold", "loading-warm", "tools", "reload", "tui"},
         )
         self.assertEqual(bench_select.compile_jobs("linux", "all"), [{"os": "linux", "runner": "ubuntu-24.04"}])
 
@@ -197,16 +197,19 @@ class JobSelection(unittest.TestCase):
     def test_merge_expects_tui_before_compile(self) -> None:
         self.assertEqual(
             bench_select.expected_units("all"),
-            ["compare", "startup", "loading-cold", "loading-warm", "tools", "reload", "tui", "compile"],
+            ["compare", "packages", "startup", "loading-cold", "loading-warm", "tools", "reload", "tui", "compile"],
         )
         # Naming tui alone still ends with compile last when compile is named too.
         self.assertEqual(bench_select.expected_units("tui,compile"), ["tui", "compile"])
 
     def test_an_input_without_tui_measures_exactly_what_it_measured_before(self) -> None:
         # The pre-change selector's unit lists, pinned so a new suite cannot leak
-        # into an existing selection.
+        # into an existing selection. `compare` is the one selection that now
+        # carries a second unit, because the before/after dispatch that owns the
+        # competitor cells is the one that must record what packages cost.
         self.assertEqual(bench_select.jobs("linux", "compare"), [
-            {"os": "linux", "runner": "ubuntu-24.04", "unit": "compare"}])
+            {"os": "linux", "runner": "ubuntu-24.04", "unit": "compare"},
+            {"os": "linux", "runner": "ubuntu-24.04", "unit": "packages"}])
         self.assertEqual(bench_select.expected_units("tools,reload"),
                          ["tools", "reload"])
         self.assertEqual(bench_select.expected_units("startup"), ["startup"])
@@ -233,9 +236,25 @@ class SelectorCli(unittest.TestCase):
         lines = self._stdout(["bench_select.py", "tools"])
         self.assertEqual(
             lines,
-            ["compare=false", "startup=false", "loading=false", "tools=true",
+            ["compare=false", "packages=false", "startup=false", "loading=false", "tools=true",
              "reload=false", "tui=false", "compile=false"],
         )
+
+    def test_plain_form_of_compare_switches_the_packages_unit_on_too(self) -> None:
+        # `--jobs compare` and `--expect compare` already expand to the packages
+        # unit; the per-suite flags the build job reads must agree, or the example
+        # package is never built and the unit runs without its binary.
+        lines = self._stdout(["bench_select.py", "compare"])
+        self.assertIn("compare=true", lines)
+        self.assertIn("packages=true", lines)
+        self.assertEqual(
+            [entry["unit"] for entry in bench_select.jobs("linux", "compare")], ["compare", "packages"]
+        )
+
+    def test_naming_packages_alone_does_not_switch_compare_on(self) -> None:
+        lines = self._stdout(["bench_select.py", "packages"])
+        self.assertIn("packages=true", lines)
+        self.assertIn("compare=false", lines)
 
     def test_plain_form_of_all_enables_tui(self) -> None:
         lines = self._stdout(["bench_select.py", "all"])

@@ -55,20 +55,22 @@ async fn load_for_workspace(start_dir: &Path, workspace: &Path) -> Result<Vec<(S
         bail!("direnv blocked the environment file. Review it and run `direnv allow` in its directory");
     }
     let exported = direnv_json(&["export", "json"], &start_dir).await?;
-    let values = exported
-        .as_object()
-        .context("direnv did not return an environment object")?;
-    let mut child_env = Vec::new();
+    let values = match exported {
+        Value::Object(values) => values,
+        _ => bail!("direnv did not return an environment object"),
+    };
+    let mut child_env = Vec::with_capacity(values.len());
     for (key, value) in values {
         if key.starts_with("DIRENV_")
             || key.starts_with("HORON_")
             || matches!(key.as_str(), "BASH_ENV" | "ENV")
-            || std::env::var_os(key).is_some()
+            || std::env::var_os(key.as_str()).is_some()
         {
             continue;
         }
-        if let Some(value) = value.as_str() {
-            child_env.push((key.clone(), value.to_owned()));
+        // The value is moved out of the parsed document rather than copied.
+        if let Value::String(value) = value {
+            child_env.push((key, value));
         }
     }
     Ok(child_env)

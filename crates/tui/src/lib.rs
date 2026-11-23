@@ -17,6 +17,7 @@ pub mod context;
 mod editor;
 mod fuzzy;
 pub mod gallery;
+mod git_review;
 pub mod help;
 pub mod history;
 pub mod input;
@@ -50,6 +51,7 @@ pub mod transcript;
 mod visual_blocks;
 mod voice;
 mod window;
+mod work_notes;
 mod wrap;
 
 #[cfg(test)]
@@ -129,6 +131,10 @@ mod fuzzy_tests;
 mod path_completion_tests;
 
 #[cfg(test)]
+#[path = "git_review_tests.rs"]
+mod git_review_tests;
+
+#[cfg(test)]
 #[path = "voice_tests.rs"]
 mod voice_tests;
 
@@ -162,8 +168,15 @@ pub struct Args {
     pub socket: Option<std::path::PathBuf>,
     /// Existing session to attach to instead of creating one.
     pub session: Option<String>,
+    /// Objective and token ceiling for a new session.
+    pub goal: Option<String>,
+    pub goal_budget: Option<u64>,
+    /// Start the new session in read-only plan mode.
+    pub plan: bool,
     /// Working directory for a session this client creates.
     pub cwd: Option<std::path::PathBuf>,
+    /// Extra workspace directories for the attached session, in the order given.
+    pub add_dirs: Vec<std::path::PathBuf>,
     /// Extra settings files, applied in the order given.
     pub config: Vec<std::path::PathBuf>,
     /// Gallery scene to preview instead of connecting, if the flag was given.
@@ -222,9 +235,16 @@ impl Args {
                     Some(session) if !session.is_empty() => parsed.session = Some(session),
                     _ => return Err("--session needs a session id".to_string()),
                 },
+                "--goal" => parsed.goal = Some(parse_goal(arguments.next().as_deref())?),
+                "--plan" => parsed.plan = true,
+                "--goal-budget" => parsed.goal_budget = Some(parse_goal_budget(arguments.next().as_deref())?),
                 "--cwd" => match arguments.next() {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
+                },
+                "--add-dir" => match arguments.next() {
+                    Some(path) if !path.is_empty() => parsed.add_dirs.push(path.into()),
+                    _ => return Err("--add-dir needs a directory".to_string()),
                 },
                 "--config" => match arguments.next() {
                     Some(path) if !path.is_empty() => parsed.config.push(path.into()),
@@ -240,11 +260,28 @@ impl Args {
                     Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
+                    Some(("--goal", title)) => parsed.goal = Some(parse_goal(Some(title))?),
+                    Some(("--goal-budget", budget)) => {
+                        parsed.goal_budget = Some(parse_goal_budget(Some(budget))?);
+                    }
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
+                    Some(("--add-dir", "")) => {
+                        return Err("--add-dir needs a value".to_string());
+                    }
+                    Some(("--add-dir", path)) => parsed.add_dirs.push(path.into()),
                     Some(("--config", path)) => parsed.config.push(path.into()),
                     _ => return Err(format!("unknown argument: {other}")),
                 },
             }
+        }
+        if parsed.goal.is_some() != parsed.goal_budget.is_some() {
+            return Err("--goal and --goal-budget must be used together".into());
+        }
+        if parsed.plan && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--plan can only be used when starting a new session".into());
+        }
+        if parsed.goal.is_some() && (parsed.session.is_some() || parsed.gallery.is_some()) {
+            return Err("--goal can only be used when starting a new session".into());
         }
         Ok(parsed)
     }
@@ -267,6 +304,25 @@ pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::C
         supports_ask_requests: true,
         ..horon_agent_sdk::ConnectOptions::default()
     }
+}
+
+fn parse_goal(value: Option<&str>) -> Result<String, &'static str> {
+    match value {
+        Some(title) if !title.trim().is_empty() => Ok(title.to_string()),
+        _ => Err("--goal needs a nonempty objective"),
+    }
+}
+
+fn parse_goal_budget(value: Option<&str>) -> Result<u64, &'static str> {
+    let message = "--goal-budget needs a positive token count";
+    let Some(raw) = value else {
+        return Err(message);
+    };
+    let budget = raw.parse::<u64>().map_err(|_| message)?;
+    if budget == 0 {
+        return Err(message);
+    }
+    Ok(budget)
 }
 
 /// Run the client and return the process exit code.
@@ -337,7 +393,41 @@ where
         args.session.as_deref(),
         working_dir.as_deref(),
     ) {
-        Ok(runtime) => run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking),
+        Ok(runtime) => {
+            // The session's extra roots are sent before the goal so a goal's
+            // first turn already sees them in its session context.
+            for directory in &args.add_dirs {
+                if let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Dirs,
+                    arguments: vec!["add".to_string(), directory.display().to_string()],
+                }) {
+                    show_failure(&format!(
+                        "could not add workspace directory {}: {error}",
+                        directory.display()
+                    ));
+                    return 1;
+                }
+            }
+            if let Some((title, budget)) = args.goal.zip(args.goal_budget)
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Goal,
+                    arguments: vec![budget.to_string(), title],
+                })
+            {
+                show_failure(&format!("could not queue the startup goal: {error}"));
+                return 1;
+            }
+            if args.plan
+                && let Err(error) = runtime.commands.send(Command::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Plan,
+                    arguments: vec!["on".into()],
+                })
+            {
+                show_failure(&format!("could not queue plan mode: {error}"));
+                return 1;
+            }
+            run_interactive(runtime, &mut reloader, &mut keys, launch_dir, args.hide_thinking)
+        }
         Err(message) => {
             // A failed connection is an ordinary state, not a crash: draw the
             // banner if a terminal is available, always leave the sentence on
@@ -398,6 +488,10 @@ fn run_interactive(
         };
         app.transcript
             .push_notice(format!("reasoning hidden by --hide-thinking; {shows}"));
+    }
+    if let Some(profile) = std::env::var_os("HORON_PROFILE").filter(|name| !name.is_empty()) {
+        app.transcript
+            .push_notice(format!("profile: {}", profile.to_string_lossy()));
     }
     // The session's own directory names the workspace: `--cwd` is what the
     // create was asked for, and a resumed session reports the directory it
@@ -751,7 +845,6 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // before anything borrows the app to draw.
     app.sync_slash();
     app.sync_suggestions();
-    let ghost = app.suggestion_text();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -931,21 +1024,22 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // The ghost suffix is drawn after the caret on the row the caret is on.
     // The offer was checked against the exact draft before this frame, so what
     // is drawn here is a suffix of the text already on screen.
-    let rows: Vec<Line<'static>> = view
+    let ghost = app.ghost_suffix();
+    let rows: Vec<Line<'_>> = view
         .rows
         .iter()
         .enumerate()
         .map(|(row, text)| {
-            let lead = if row == 0 { marker.clone() } else { padding.clone() };
+            let lead = if row == 0 { marker.as_str() } else { padding.as_str() };
             let mut spans = vec![
                 Span::styled(lead, Style::default().fg(theme.core.accent)),
-                Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
+                Span::styled(text.as_str(), Style::default().fg(theme.prompt.prompt_text)),
             ];
             if row == view.cursor_row
-                && let Some(ghost) = ghost.as_deref()
+                && let Some(ghost) = ghost
             {
                 let room = text_width.saturating_sub(crate::input::text_cells(text));
-                let tail = crate::input::clip_cells(ghost, room);
+                let tail = crate::input::clip_cells_str(ghost, room);
                 if !tail.is_empty() {
                     spans.push(Span::styled(tail, Style::default().fg(theme.core.muted)));
                 }

@@ -148,6 +148,9 @@ impl Agent {
         {
             return run;
         }
+        if self.session.is_memory_only() {
+            return RunIdentity::new(Self::mint_run_id());
+        }
         let identity = RunIdentity::new(Self::mint_run_id());
         let binding = match self.session.next_journal_binding() {
             Ok(binding) => Some(binding),
@@ -213,7 +216,7 @@ impl Agent {
     /// A failed commit closes a start that did land, so the journal is not left
     /// holding a live run for a turn that never began.
     pub(super) fn save_first_commit(&mut self) -> Result<()> {
-        if !self.closes_after_run {
+        if !self.closes_after_run || self.session.is_memory_only() {
             return self.save_session();
         }
         let run = self.begin_run();
@@ -274,7 +277,7 @@ impl Agent {
         let mut stop = RunStop::capture(run_id, provenance);
         let session_id = self.session.id.clone();
         let cause = journal_cause(provenance);
-        let binding = if self.closes_after_run {
+        let binding = if self.closes_after_run && !self.session.is_memory_only() {
             match self.session.closing_journal_binding() {
                 Ok(binding) => Some(binding),
                 Err(error) => {
@@ -286,10 +289,13 @@ impl Agent {
             None
         };
         let payload = Payload::RunStopped(RunStopped::with_binding(cause, None, binding.clone()));
-        let handle = dispatch_run_row(&session_id, run_id, payload);
-        // Synchronous join, for the same reason as the start: the turn's tail
-        // must not yield, and the write itself already runs off this thread.
-        let persisted = handle.join().unwrap_or(false);
+        let persisted = if self.session.is_memory_only() {
+            false
+        } else {
+            // Synchronous join, for the same reason as the start: the turn's tail
+            // must not yield, and the write itself already runs off this thread.
+            dispatch_run_row(&session_id, run_id, payload).join().unwrap_or(false)
+        };
         if persisted {
             stop.mark_persisted();
             if let Some(binding) = binding {

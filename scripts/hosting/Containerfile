@@ -1,0 +1,37 @@
+# Hosted per-tenant image: one customer, one container, one /data volume.
+#
+# Build context layout:
+#   bin/<TARGETARCH>/   the published release archive extracted here, with the
+#                       entry point renamed to `horon-agent`
+#   entrypoint.sh       copied from scripts/hosting/entrypoint.sh
+#
+# The base image and UID match the release image so both run the same bytes on
+# the same Debian generation that scripts/ci/check_linux_bare_runtime.sh checks.
+# /data is the tenant volume; /run/horon holds the sockets and is separate from
+# it. No port is exposed: the daemon only ever listens on Unix sockets inside
+# the container.
+FROM debian:13-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
+
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 horon \
+    && install -d -m 0700 -o horon -g horon /data /data/home /run/horon
+
+COPY --chmod=0755 bin/${TARGETARCH}/ /opt/horon-agent/
+COPY --chmod=0755 entrypoint.sh /usr/local/bin/horon-hosting-entrypoint
+RUN ln -s /opt/horon-agent/horon-agent /usr/local/bin/horon-agent
+
+USER horon
+WORKDIR /data/home
+ENV HORON_HOME=/data/home \
+    HORON_AGENT_RUNTIME_DIR=/run/horon \
+    HORON_AGENT_HOSTING_MODE=per-user-container \
+    HORON_AGENT_NO_AUTO_UPDATE=1
+
+VOLUME ["/data"]
+
+ENTRYPOINT ["/usr/local/bin/horon-hosting-entrypoint"]
+CMD ["serve"]

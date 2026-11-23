@@ -303,8 +303,9 @@ pub(super) async fn handle_set_session_saved(
 ///
 /// A refusal is not an error: the stored list stands, and the reply carries the
 /// refusal and the revision it stands at so the caller refreshes. Nothing here
-/// starts a turn or sends a prompt.
-pub(super) async fn handle_set_todo_status(
+/// starts a turn or sends a prompt, and no Agent lock is taken: the todo lock
+/// alone orders the edit with a tool write, so an edit during a turn is safe.
+pub(super) fn handle_set_todo_status(
     id: u64,
     expected_revision: String,
     todo_id: String,

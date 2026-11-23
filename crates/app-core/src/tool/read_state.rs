@@ -25,6 +25,7 @@ pub(crate) const READ_STATE_MAX_PATHS: usize = 512;
 pub(crate) struct ReadRecord {
     /// SHA-256 of the file bytes at the read.
     pub(crate) hash: [u8; 32],
+    pub(crate) edit_evidence: bool,
     /// Emitted `[start, end)` 0-based line ranges, sorted and merged.
     pub(crate) ranges: Vec<(usize, usize)>,
     pub(crate) hashline: bool,
@@ -87,6 +88,101 @@ pub(crate) fn lookup(session_id: &str, path: &Path) -> Option<ReadRecord> {
     state().sessions.get(session_id)?.records.get(path).cloned()
 }
 
+/// Byte positions of fully shown lines in the text the edit is applying to.
+pub(super) struct EditEvidence {
+    ranges: Vec<(usize, usize)>,
+    stale: bool,
+}
+
+impl EditEvidence {
+    pub(super) fn for_text(session: &str, path: &Path, text: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        let mut evidence = Self {
+            ranges: Vec::new(),
+            stale: false,
+        };
+        let Some(read) = lookup(session, &key_for(path)).filter(|record| record.edit_evidence) else {
+            return evidence;
+        };
+        let current: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        if read.hash != current {
+            evidence.stale = true;
+            return evidence;
+        }
+        let mut spans = read.ranges.into_iter().peekable();
+        let mut offset = 0;
+        for (line, part) in text.split_inclusive('\n').enumerate() {
+            let end = offset + part.len();
+            if spans.peek().is_some_and(|&(_, stop)| line == stop) {
+                spans.next();
+            }
+            if spans.peek().is_some_and(|&(start, _)| line >= start)
+                && part
+                    .lines()
+                    .next()
+                    .is_none_or(|body| body.len() <= super::read_selector::MAX_LINE_LEN)
+            {
+                match evidence.ranges.last_mut() {
+                    Some(last) if last.1 == offset => last.1 = end,
+                    _ => evidence.ranges.push((offset, end)),
+                }
+            }
+            offset = end;
+        }
+        evidence
+    }
+
+    /// Move evidence with the edit so a later operation can use its output.
+    pub(super) fn replace(
+        &mut self,
+        text: &str,
+        path: &str,
+        start: usize,
+        end: usize,
+        replacement: &str,
+    ) -> anyhow::Result<()> {
+        let joins_next =
+            end > start && end < text.len() && text.as_bytes()[end - 1] == b'\n' && !replacement.ends_with('\n');
+        // An empty slice (fuzzy match of a blank line) must still require that
+        // the line at `start` was read, rather than accepting `to == start`
+        // from an earlier line.
+        let required_end = if end == start {
+            (start + 1).min(text.len())
+        } else {
+            end + usize::from(joins_next)
+        };
+        let Some(index) = self
+            .ranges
+            .iter()
+            .position(|&(from, to)| from <= start && required_end <= to)
+        else {
+            let first = text.as_bytes()[..start].iter().filter(|&&byte| byte == b'\n').count() + 1;
+            let span_end = required_end.max((start + 1).min(text.len()));
+            let last = if span_end > start {
+                first
+                    + text.as_bytes()[start..span_end - 1]
+                        .iter()
+                        .filter(|&&byte| byte == b'\n')
+                        .count()
+            } else {
+                first
+            };
+            let status = if self.stale { "stale read" } else { "unread lines" };
+            anyhow::bail!(
+                "Cannot edit {path} lines {first}-{last}: {status}. Read the current text with start_line={first}, end_line={last}, full=true, then retry."
+            );
+        };
+        let removed = end - start;
+        let added = replacement.len();
+        self.ranges[index].1 = self.ranges[index].1 - removed + added;
+        for (from, to) in &mut self.ranges[index + 1..] {
+            *from = *from - removed + added;
+            *to = *to - removed + added;
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn record(session_id: &str, path: PathBuf, record: ReadRecord) {
     let mut state = state();
     if !state.sessions.contains_key(session_id) {
@@ -123,6 +219,7 @@ mod tests {
     fn record_with(ranges: &[(usize, usize)]) -> ReadRecord {
         let mut record = ReadRecord {
             hash: [0; 32],
+            edit_evidence: false,
             ranges: Vec::new(),
             hashline: false,
             total_lines: 100,
@@ -155,5 +252,48 @@ mod tests {
         assert!(lookup(session, Path::new(&format!("/p/{READ_STATE_MAX_PATHS}"))).is_some());
         forget_session(session);
         assert!(lookup(session, Path::new(&format!("/p/{READ_STATE_MAX_PATHS}"))).is_none());
+    }
+
+    #[test]
+    fn empty_span_blank_line_edit_rejects_unread_line_without_underflow_and_accepts_read_line() {
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("blank.txt");
+        let text = "\n\nalpha\n";
+        std::fs::write(&file, text).unwrap();
+        let hash: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        let key = key_for(&file);
+
+        // Only line 3 (`alpha\n`) was read: editing unread blank line 1 `(0, 0)` must fail cleanly.
+        let session_a = "read-state-blank-a";
+        forget_session(session_a);
+        let mut rec_a = record_with(&[(2, 3)]);
+        rec_a.hash = hash;
+        rec_a.edit_evidence = true;
+        record(session_a, key.clone(), rec_a);
+        let mut ev_a = EditEvidence::for_text(session_a, &file, text);
+        let err_a = ev_a
+            .replace(text, "blank.txt", 0, 0, "beta\n")
+            .expect_err("unread line 1 must be refused");
+        assert!(err_a.to_string().contains("lines 1-1: unread lines"), "{err_a}");
+        forget_session(session_a);
+
+        // Only line 1 `(0, 1)` was read: editing unread blank line 2 `(1, 1)` must also fail cleanly.
+        let session_b = "read-state-blank-b";
+        forget_session(session_b);
+        let mut rec_b = record_with(&[(0, 1)]);
+        rec_b.hash = hash;
+        rec_b.edit_evidence = true;
+        record(session_b, key, rec_b);
+        let mut ev_b = EditEvidence::for_text(session_b, &file, text);
+        let err_b = ev_b
+            .replace(text, "blank.txt", 1, 1, "beta\n")
+            .expect_err("unread line 2 must not satisfy via line 1 end");
+        assert!(err_b.to_string().contains("lines 2-2: unread lines"), "{err_b}");
+        // Line 1 itself `(0, 0)` was read and succeeds.
+        ev_b.replace(text, "blank.txt", 0, 0, "beta\n")
+            .expect("read line 1 accepts empty-span fuzzy edit");
+        forget_session(session_b);
     }
 }

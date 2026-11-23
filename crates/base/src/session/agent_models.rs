@@ -71,6 +71,20 @@ impl Session {
         Ok(())
     }
 
+    /// Update the selected roles in a single metadata write.
+    pub fn apply_agent_model_overrides(&mut self, roles: &AgentModelOverrides) -> Result<()> {
+        if roles.is_empty() {
+            return Ok(());
+        }
+        let _guard = UPDATE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.refresh_agent_model_overrides()?;
+        let mut overrides = self.agent_model_overrides.clone();
+        overrides.extend(roles.iter().map(|(role, model)| (role.clone(), model.clone())));
+        crate::storage::write_json(&path(&self.id)?, &overrides)?;
+        self.agent_model_overrides = overrides;
+        Ok(())
+    }
+
     /// Resolve session > global. "inherit" remains explicit for downstream
     /// routing, rather than becoming indistinguishable from use-global.
     pub fn effective_agent_model(&self, target: &str, global: Option<String>) -> Option<String> {

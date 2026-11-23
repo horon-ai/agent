@@ -89,15 +89,23 @@ impl App {
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.
             Local::Skills => self.open_skills(),
-            Local::Mcp => Some(Action::Runtime {
-                command: horon_agent_sdk::RuntimeCommand::Mcp,
-                arguments: arguments
-                    .splitn(2, char::is_whitespace)
-                    .map(str::trim)
-                    .filter(|argument| !argument.is_empty())
-                    .map(str::to_owned)
-                    .collect(),
-            }),
+            Local::Stats => Some(Action::Stats),
+            Local::Tools => self.open_tools(),
+            Local::Mcp => {
+                if self.disconnected {
+                    self.warn("the harness connection is gone; MCP servers cannot be inspected");
+                    return None;
+                }
+                Some(Action::Runtime {
+                    command: horon_agent_sdk::RuntimeCommand::Mcp,
+                    arguments: arguments
+                        .splitn(2, char::is_whitespace)
+                        .map(str::trim)
+                        .filter(|argument| !argument.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
+                })
+            }
             Local::Settings => self.open_settings(),
             // `/links` reads the answers already on screen. Opening one is the
             // reader's own enter in the list, so this arm answers itself and
@@ -143,6 +151,16 @@ impl App {
                 self.run_record(arguments);
                 None
             }
+            // `/export` names a destination and nothing else: the document is
+            // rendered by the harness from its redacted projection, so the
+            // client only carries the path.
+            Local::Export => match arguments.trim() {
+                "" => {
+                    self.warn("export: name the file to write, as /export <path>");
+                    None
+                }
+                path => Some(Action::Export(path.to_string())),
+            },
             Local::Replay => {
                 self.run_replay(arguments);
                 None
@@ -154,6 +172,11 @@ impl App {
             // It reads what the passive panel already holds; no request leaves
             // the client until a key asks to change an item.
             Local::Todo => self.open_todos(),
+            // `/diff` and `/commit` describe this machine's git state for the
+            // session's workspace. Both refuse a session that works elsewhere,
+            // and the commit needs a review of the staged set before it runs.
+            Local::Diff => self.run_diff(arguments),
+            Local::Commit => self.run_commit(arguments),
             // `/voice` is entirely local: consent, capture, recognition and
             // playback stay in this client, and recognized text is inserted as
             // a draft rather than sent.

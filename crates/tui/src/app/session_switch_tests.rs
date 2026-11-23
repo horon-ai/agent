@@ -529,3 +529,52 @@ fn a_swarm_choice_waits_for_the_running_turn() {
         "the refusal did not name the command and the reason: {said}"
     );
 }
+
+#[test]
+fn disconnected_session_refuses_alt_m_mcp_and_swarm_commands() {
+    let last_said = |app: &App| match said(app).pop() {
+        Some(line) => line,
+        None => panic!("expected a notice or warning"),
+    };
+    let mut app = App::failure("the harness connection closed");
+
+    assert_eq!(
+        app.on_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::ALT)),
+        None,
+        "alt+m must refuse locally when disconnected"
+    );
+    assert!(
+        last_said(&app).contains("the harness connection is gone"),
+        "alt+m warning missing: {}",
+        last_said(&app)
+    );
+
+    assert_eq!(submit(&mut app, "/mcp"), None);
+    assert!(
+        last_said(&app).contains("the harness connection is gone"),
+        "/mcp warning missing: {}",
+        last_said(&app)
+    );
+
+    assert_eq!(submit(&mut app, "/mcp probe docs"), None);
+    assert!(
+        last_said(&app).contains("the harness connection is gone"),
+        "/mcp probe warning missing: {}",
+        last_said(&app)
+    );
+
+    assert_eq!(submit(&mut app, "/swarm"), None);
+    assert!(app.picker.is_none());
+    assert!(
+        last_said(&app).contains("the harness connection is gone"),
+        "/swarm warning missing: {}",
+        last_said(&app)
+    );
+
+    assert_eq!(submit(&mut app, "/swarm status"), None);
+    assert!(
+        last_said(&app).contains("the harness connection is gone"),
+        "/swarm status warning missing: {}",
+        last_said(&app)
+    );
+}

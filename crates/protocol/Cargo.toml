@@ -7,6 +7,9 @@ publish = false
 [dependencies]
 horon-agent-batch-types = { path = "../batch-types" }
 horon-agent-config-types = { path = "../config-types" }
+# The package-management contract is shared with the daemon, the bridge and the
+# CLI, so the wire enum carries it instead of copying its shape.
+horon-agent-extension-types = { path = "../extension-types" }
 horon-agent-message-types = { path = "../message-types" }
 horon-agent-plan = { path = "../plan" }
 horon-agent-provider-core = { path = "../provider-core" }

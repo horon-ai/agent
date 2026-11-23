@@ -564,6 +564,65 @@ impl Config {
                 self.provider.gemini_project = Some(v.to_string());
             }
         }
+
+        // Launch-scoped model roles and prewalk. The CLI sets these from
+        // `--role`, `--prewalk` and `--no-prewalk` for one process; a settings
+        // save reads the file layer only, so they are never persisted.
+        let mut role_overrides = Vec::new();
+        for role in [
+            ModelRole::Default,
+            ModelRole::Plan,
+            ModelRole::Aux,
+            ModelRole::Judge,
+            ModelRole::Image,
+        ] {
+            if let Ok(value) = std::env::var(role.launch_env_key()) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    role_overrides.push((role, value.to_string()));
+                }
+            }
+        }
+        if !role_overrides.is_empty() {
+            let mut routed = None;
+            for key in [
+                "HORON_AGENT_LAUNCH_ROLE_PROFILE",
+                "HORON_AGENT_NAMED_PROVIDER_PROFILE",
+                "HORON_AGENT_PROVIDER_PROFILE_NAME",
+            ] {
+                if let Ok(value) = std::env::var(key) {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        routed = Some(value.to_string());
+                        break;
+                    }
+                }
+            }
+            let profile_name = routed.or_else(|| {
+                self.provider
+                    .default_provider
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+            if let Some(profile) = profile_name.and_then(|name| self.providers.get_mut(&name)) {
+                for (role, model) in role_overrides {
+                    profile.model_roles.roles.set(role, model);
+                }
+            }
+        }
+        if let Ok(v) = std::env::var(PrewalkConfig::ENABLED_ENV)
+            && let Some(enabled) = parse_env_bool(&v)
+        {
+            self.prewalk.enabled = enabled;
+        }
+        if let Ok(v) = std::env::var(PrewalkConfig::INTO_ENV) {
+            let trimmed = v.trim();
+            if !trimmed.is_empty() {
+                self.prewalk.into = Some(trimmed.to_string());
+            }
+        }
     }
 }
 

@@ -199,7 +199,7 @@ class WorkflowGuardTests(unittest.TestCase):
         pinned = ('ci.yml', 'structural-perf.yml', 'require-issue.yml', 'freebsd-smoke.yml',
                   'windows-smoke.yml', 'loading-ab.yml', 'benchmark.yml',
                   'benchmark-os.yml', 'benchmark-docs.yml', 'release-recovery.yml',
-                  'soak.yml')
+                  'soak.yml', 'package-compat.yml')
         use = re.compile(r'^\s*(?:- )?uses: (\S+)@(\S+)(?: # (\S+))?\s*$')
         for name in pinned:
             text = (ROOT / f'.github/workflows/{name}').read_text()

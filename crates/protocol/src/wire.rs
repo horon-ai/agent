@@ -996,6 +996,23 @@ pub enum Request {
     /// outside the allow-list.
     #[serde(rename = "get_effective_settings")]
     GetEffectiveSettings { id: u64 },
+
+    /// Apply one package-management operation to the catalog this daemon owns.
+    ///
+    /// Accepted on a one-shot connection before any session is attached: the
+    /// catalog is daemon-wide state, not session state. The daemon serializes
+    /// the operation with its inbox pass and answers only after the resulting
+    /// generation is published, so a client that receives the reply knows the
+    /// catalog is already authoritative.
+    ///
+    /// `operation_id` is chosen by the caller: a retry that reuses it reports
+    /// the recorded result instead of applying the operation twice.
+    #[serde(rename = "package_control")]
+    PackageControl {
+        id: u64,
+        operation_id: String,
+        operation: horon_agent_extension_types::control::PackageControlOperation,
+    },
 }
 
 pub mod acp_v2_events;

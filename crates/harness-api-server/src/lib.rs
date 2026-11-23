@@ -20,11 +20,13 @@
 pub mod allocator;
 pub mod background_progress;
 mod bridge;
+pub mod credentials;
 mod degradation_receipts;
 mod message_content;
 mod message_modes;
 pub mod replication;
 pub mod session_prefix;
+mod tcp;
 mod tool_args_repaired;
 pub mod translate;
 mod writer;
@@ -44,9 +46,11 @@ mod stdio_tests;
 #[cfg(test)]
 mod writer_tests;
 
-pub use bridge::run_bridge;
+pub use bridge::{run_bridge, run_bridge_exposed};
 #[cfg(test)]
-pub(crate) use bridge::{run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock};
+pub(crate) use bridge::{
+    run_bridge_exposed_on, run_bridge_with_deadline, run_bridge_with_lifecycle, single_instance_lock,
+};
 
 use anyhow::{Context, Result};
 use horon_agent_harness_api::{
@@ -133,6 +137,14 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // it is refused with a structured `unsupported` naming this capability
     // rather than being sent a frame it would answer with no correlation.
     horon_agent_harness_api::CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    // The daemon owns the package catalog, so the bridge answers nothing itself:
+    // it forwards when the daemon reported `package_control`, and otherwise
+    // refuses with `unsupported` naming this capability. Advertising it
+    // unconditionally is what lets a client find it before sending.
+    horon_agent_harness_api::CAPABILITY_PACKAGE_CONTROL_V1,
+    // Listed so an SDK capability gate finds it; `hello_ok` drops it when the
+    // daemon did not report `runtime_commands`.
+    horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1,
     horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
 ];
 
@@ -272,22 +284,27 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Send + 'static + Unpin,
 {
-    run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, writer::WRITE_STALL_DEADLINE).await
+    run_bridge_stream_with_deadline(
+        BufReader::new(read_half),
+        write_half,
+        legacy_socket,
+        writer::WRITE_STALL_DEADLINE,
+    )
+    .await
 }
 
 /// [`run_bridge_stream`] with the write deadline injected, so a test can watch a
 /// stalled peer close the connection without waiting the production interval.
 pub(crate) async fn run_bridge_stream_with_deadline<R, W>(
-    read_half: R,
+    mut reader: R,
     mut write_half: W,
     legacy_socket: PathBuf,
     write_deadline: std::time::Duration,
 ) -> Result<()>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
     W: tokio::io::AsyncWrite + Send + 'static + Unpin,
 {
-    let mut reader = BufReader::new(read_half);
     let mut line = String::new();
 
     // 1. Handshake: first frame must be hello with a compatible version.
@@ -366,6 +383,12 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    // The daemon owns the package catalog. The bridge advertises the matching
+    // API capability only when the daemon can serve it, and forwards nothing
+    // when it cannot: an older daemon answers an unknown frame with an
+    // uncorrelated error, which a client would read as a timeout.
+    let package_control_supported = daemon_caps.iter().any(|cap| cap == "package_control");
+    translate::package_control::set_supported(package_control_supported);
     let requested_events = hello["event_capabilities"].as_array();
     let event_capabilities: [Option<&str>; OPT_IN_EVENT_CAPABILITIES.len()] = std::array::from_fn(|index| {
         let capability = OPT_IN_EVENT_CAPABILITIES[index];
@@ -382,6 +405,12 @@ where
                 .iter()
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
+                // The package commands ride the runtime-command request, so a
+                // daemon without that surface cannot answer them at all. The
+                // bridge cannot see which variants a daemon's enum holds; the
+                // release keeps them in step, and an older daemon answers the
+                // unknown value with an error the client shows.
+                .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1 || runtime_commands_supported)
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))

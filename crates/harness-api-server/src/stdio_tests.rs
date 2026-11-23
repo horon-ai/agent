@@ -99,7 +99,7 @@ async fn stale_socket_probe_closes_without_a_reply() {
     let (client, bridge) = tokio::io::duplex(8192);
     let (bridge_read, bridge_write) = tokio::io::split(bridge);
     let task = tokio::spawn(run_bridge_stream_with_deadline(
-        bridge_read,
+        BufReader::new(bridge_read),
         bridge_write,
         PathBuf::from("/nonexistent-stale-probe.sock"),
         std::time::Duration::from_secs(1),
