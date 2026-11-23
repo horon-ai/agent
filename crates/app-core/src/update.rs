@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime};
 
 mod activation;
 mod digest;
+mod github_fetch;
 mod release_asset;
 mod release_notes;
 pub use release_notes::{ReleaseNotes, fetch_release_notes_blocking, normalize_tag, release_url};
@@ -223,82 +224,27 @@ fn request_latest_release(
     github: bool,
     cache: Option<&CachedRelease>,
 ) -> Result<(GitHubRelease, Option<String>)> {
-    let mut request = if github {
-        github_api_request(client, url)
+    let token = if github {
+        horon_agent_base::github::github_public_api_token()
     } else {
-        client.get(url).timeout(UPDATE_CHECK_TIMEOUT)
+        None
     };
-    if let Some(cache) = cache {
-        request = request.header(reqwest::header::IF_NONE_MATCH, &cache.etag);
-    }
-    let response = request.send().context("Failed to fetch release info")?;
-    let status = response.status();
-
-    if let Some(cache) = cache.filter(|_| status == reqwest::StatusCode::NOT_MODIFIED) {
-        return Ok((cache.release.clone(), None));
-    }
-    if let Some(error) = rate_limit_error(&response) {
-        return Err(error);
-    }
-    if status == reqwest::StatusCode::NOT_FOUND {
-        if github && horon_agent_base::github::github_public_api_token().is_none() {
-            anyhow::bail!(
-                "No releases found for {GITHUB_REPO}; a private repository needs GH_TOKEN, GITHUB_TOKEN, or `gh auth login`"
-            );
-        }
-        anyhow::bail!("No releases found for {GITHUB_REPO}");
-    }
-    if !status.is_success() {
-        anyhow::bail!("GitHub API error: {}", status);
-    }
-
-    let etag = response
-        .headers()
-        .get(reqwest::header::ETAG)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    let release: GitHubRelease = response.json().context("Failed to parse release info")?;
-    Ok((release, etag))
-}
-
-fn github_api_request(client: &reqwest::blocking::Client, url: &str) -> reqwest::blocking::RequestBuilder {
-    let request = client
-        .get(url)
-        .timeout(UPDATE_CHECK_TIMEOUT)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
-
-    // Authenticated requests use the user's 5000 req/h quota instead of the
-    // shared unauthenticated 60 req/h per-IP bucket, which other tools on the
-    // same machine or NAT can exhaust and cause spurious 403s on update
-    // checks. Falls back to unauthenticated when no token is available.
-    if let Some(token) = horon_agent_base::github::github_public_api_token() {
-        request.bearer_auth(token)
-    } else {
-        request
-    }
+    github_fetch::fetch_latest_release_with_fallback(
+        client,
+        url,
+        github_fetch::GITHUB_WEB_BASE,
+        github,
+        token.as_deref(),
+        cache,
+    )
 }
 
 /// Branch the source (main) channel tracks.
 const SOURCE_UPDATE_BRANCH: &str = "dev";
 
 fn latest_source_sha_blocking() -> Result<String> {
-    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/commits/{SOURCE_UPDATE_BRANCH}");
-    let response = github_api_request(updater_client()?, &url)
-        .send()
-        .context("Failed to check the source branch")?;
-    if let Some(error) = rate_limit_error(&response) {
-        return Err(error);
-    }
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "GitHub API error checking {SOURCE_UPDATE_BRANCH}: {}",
-            response.status()
-        );
-    }
-
-    let commit: serde_json::Value = response.json().context("Failed to parse commit info")?;
-    Ok(commit["sha"].as_str().unwrap_or("").get(..7).unwrap_or("").to_string())
+    let token = horon_agent_base::github::github_public_api_token();
+    github_fetch::fetch_branch_short_sha(updater_client()?, SOURCE_UPDATE_BRANCH, token.as_deref())
 }
 
 /// One process-wide HTTP client for every updater request. There is no total
@@ -327,20 +273,24 @@ fn asset_download_route<'a>(asset: &'a GitHubAsset, token: Option<&'a str>) -> (
     }
 }
 
-/// GitHub redirects the API asset URL to signed storage on another host;
-/// reqwest drops `Authorization` on that cross-host redirect, while `Range`
-/// survives so resume keeps working.
-fn asset_request(client: &reqwest::blocking::Client, asset: &GitHubAsset) -> reqwest::blocking::RequestBuilder {
+/// Compute primary route and optional unauthenticated public fallback route.
+fn asset_routes<'a>(asset: &'a GitHubAsset, token: Option<&'a str>) -> (&'a str, Option<&'a str>, Option<&'a str>) {
+    let (primary_url, primary_token) = asset_download_route(asset, token);
+    let fallback_url = if primary_token.is_some()
+        && !asset.browser_download_url.is_empty()
+        && asset.browser_download_url != primary_url
+    {
+        Some(asset.browser_download_url.as_str())
+    } else {
+        None
+    };
+    (primary_url, primary_token, fallback_url)
+}
+
+pub(super) fn download_small_asset(client: &reqwest::blocking::Client, asset: &GitHubAsset) -> Result<Vec<u8>> {
     let token = horon_agent_base::github::github_public_api_token();
-    let (url, token) = asset_download_route(asset, token.as_deref());
-    let request = client.get(url).timeout(DOWNLOAD_ATTEMPT_TIMEOUT);
-    match token {
-        Some(token) => request
-            .header(reqwest::header::ACCEPT, "application/octet-stream")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .bearer_auth(token),
-        None => request,
-    }
+    let (primary_url, primary_token, fallback_url) = asset_routes(asset, token.as_deref());
+    github_fetch::download_small_asset_with_routes(client, primary_url, primary_token, fallback_url)
 }
 
 /// What an update check found; installing it is a separate step.
@@ -368,24 +318,6 @@ pub fn install_update_blocking(
     }
 }
 
-/// Authenticate git against the private updater repository without putting the token in argv.
-fn github_git_auth(command: &mut std::process::Command) {
-    command.env("GIT_TERMINAL_PROMPT", "0");
-    if std::env::var_os("GIT_CONFIG_COUNT").is_some() {
-        crate::logging::info("update: GIT_CONFIG_COUNT already set; not injecting GitHub credentials");
-        return;
-    }
-    let Some(token) = horon_agent_base::github::github_public_api_token() else {
-        return;
-    };
-    use base64::Engine as _;
-    let basic = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{token}"));
-    command
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "http.https://github.com/.extraheader")
-        .env("GIT_CONFIG_VALUE_0", format!("AUTHORIZATION: basic {basic}"));
-}
-
 /// The source build is confirmed against the published release of the same
 /// version, whose `SHA256SUMS` identifies the release before the multi-minute build.
 fn install_main_source_update_blocking(latest_sha: &str) -> Result<PathBuf> {
@@ -393,13 +325,14 @@ fn install_main_source_update_blocking(latest_sha: &str) -> Result<PathBuf> {
     let version = source_package_version(&repo_dir)?;
     let tag = format!("v{version}");
     let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{tag}");
-    let response = github_api_request(updater_client()?, &url)
-        .send()
-        .context("Failed to look up the source release")?;
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        anyhow::bail!("main channel needs the published release {tag} on {GITHUB_REPO} for its checksums; none found");
-    }
-    let release: GitHubRelease = response.error_for_status()?.json()?;
+    let token = horon_agent_base::github::github_public_api_token();
+    let release = github_fetch::fetch_release_by_tag_with_fallback(
+        updater_client()?,
+        &url,
+        github_fetch::GITHUB_WEB_BASE,
+        &tag,
+        token.as_deref(),
+    )?;
     if release.tag_name != tag {
         anyhow::bail!("source build and release metadata name different versions");
     }
@@ -438,11 +371,37 @@ fn short_update_error(context: &str, error: &anyhow::Error) -> String {
     summarize_update_error(&format!("{:#}", error))
 }
 
+/// Outcome of an explicit `horon update` check.
+pub enum ExplicitUpdateCheck {
+    Available(UpdateCandidate),
+    UpToDate {
+        latest_tag: Option<String>,
+        kept_dev_build: bool,
+    },
+}
+
 pub fn check_for_update_blocking() -> Result<Option<UpdateCandidate>> {
     let channel = crate::config::config().features.update_channel;
     match channel {
         crate::config::UpdateChannel::Main => check_for_main_update_blocking(),
         crate::config::UpdateChannel::Stable => check_for_stable_update_blocking(),
+    }
+}
+
+/// Explicit `horon update` check: distinguishes up-to-date from a newer
+/// release that lacks a prebuilt binary for this platform, and notes when a
+/// development build is kept ahead of the latest published release.
+pub fn check_for_explicit_update_blocking() -> Result<ExplicitUpdateCheck> {
+    let channel = crate::config::config().features.update_channel;
+    match channel {
+        crate::config::UpdateChannel::Main => match check_for_main_update_blocking()? {
+            Some(candidate) => Ok(ExplicitUpdateCheck::Available(candidate)),
+            None => Ok(ExplicitUpdateCheck::UpToDate {
+                latest_tag: None,
+                kept_dev_build: false,
+            }),
+        },
+        crate::config::UpdateChannel::Stable => check_for_stable_update_explicit_blocking(),
     }
 }
 
@@ -455,6 +414,47 @@ fn check_for_stable_update_blocking() -> Result<Option<UpdateCandidate>> {
     }
 
     Ok(None)
+}
+
+fn check_for_stable_update_explicit_blocking() -> Result<ExplicitUpdateCheck> {
+    let release = fetch_latest_release_blocking()?;
+    check_for_stable_update_explicit_with(
+        release,
+        current_update_semver(),
+        is_release_build(),
+        |tag| update_dev_guard::should_install_release(tag),
+        |release| release_asset::binary_asset(release).map(|_| ()),
+    )
+}
+
+fn check_for_stable_update_explicit_with(
+    release: GitHubRelease,
+    current: &str,
+    release_build: bool,
+    dev_guard: impl FnOnce(&str) -> Result<bool>,
+    verify_platform_asset: impl FnOnce(&GitHubRelease) -> Result<()>,
+) -> Result<ExplicitUpdateCheck> {
+    if !version_is_newer(&release.tag_name, current) {
+        return Ok(ExplicitUpdateCheck::UpToDate {
+            latest_tag: Some(release.tag_name),
+            kept_dev_build: false,
+        });
+    }
+    if !release_build && !dev_guard(&release.tag_name)? {
+        return Ok(ExplicitUpdateCheck::UpToDate {
+            latest_tag: Some(release.tag_name),
+            kept_dev_build: true,
+        });
+    }
+    if let Err(asset_error) = verify_platform_asset(&release) {
+        anyhow::bail!(
+            "Release {} is published, but has no prebuilt binary for this platform ({}). Check {} or retry once release assets finish uploading.",
+            release.tag_name,
+            asset_error,
+            release_url(&release.tag_name)
+        );
+    }
+    Ok(ExplicitUpdateCheck::Available(UpdateCandidate::Release(release)))
 }
 
 /// Check for updates on the main (cutting edge) channel.
@@ -531,16 +531,29 @@ fn checkout_source(expected_sha: &str) -> Result<PathBuf> {
         if !source_git(&repo_dir, &["status", "--porcelain"])?.is_empty() {
             anyhow::bail!("source checkout has local changes; update did not overwrite them");
         }
-        let mut pull = std::process::Command::new("git");
-        pull.args(["pull", "--ff-only", "origin", SOURCE_UPDATE_BRANCH])
-            .current_dir(&repo_dir);
-        github_git_auth(&mut pull);
-        run_source_command(pull, "source checkout command failed")?;
+        github_fetch::run_github_git_command(
+            &["pull", "--ff-only", "origin", SOURCE_UPDATE_BRANCH],
+            &repo_dir,
+            "source checkout command failed",
+        )?;
     } else {
+        if let Ok(metadata) = fs::symlink_metadata(&repo_dir) {
+            if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                crate::logging::warn(&format!(
+                    "update: removing incomplete source checkout at {} before cloning",
+                    repo_dir.display()
+                ));
+                fs::remove_dir_all(&repo_dir)?;
+            } else {
+                anyhow::bail!(
+                    "source checkout path {} exists and is not a git repository",
+                    repo_dir.display()
+                );
+            }
+        }
         let clone_url = format!("https://github.com/{GITHUB_REPO}.git");
-        let mut clone = std::process::Command::new("git");
-        clone
-            .args([
+        github_fetch::run_github_git_command(
+            &[
                 "clone",
                 "--depth",
                 "1",
@@ -548,10 +561,10 @@ fn checkout_source(expected_sha: &str) -> Result<PathBuf> {
                 SOURCE_UPDATE_BRANCH,
                 &clone_url,
                 "horon-agent",
-            ])
-            .current_dir(&build_dir);
-        github_git_auth(&mut clone);
-        run_source_command(clone, "git clone failed")?;
+            ],
+            &build_dir,
+            "git clone failed",
+        )?;
     }
     if source_git(&repo_dir, &["rev-parse", "--short=7", "HEAD"])? != expected_sha {
         anyhow::bail!("source head changed since the update check; no version was installed");
@@ -630,10 +643,31 @@ fn download_asset_with_resume(
     total_hint: Option<u64>,
     on_progress: &mut impl FnMut(DownloadProgress),
 ) -> Result<(Vec<u8>, Option<u64>)> {
+    let token = horon_agent_base::github::github_public_api_token();
+    let (primary_url, primary_token, fallback_url) = asset_routes(asset, token.as_deref());
+    download_asset_with_routes(
+        client,
+        primary_url,
+        primary_token,
+        fallback_url,
+        total_hint,
+        on_progress,
+    )
+}
+
+fn download_asset_with_routes(
+    client: &reqwest::blocking::Client,
+    primary_url: &str,
+    primary_token: Option<&str>,
+    fallback_url: Option<&str>,
+    total_hint: Option<u64>,
+    on_progress: &mut impl FnMut(DownloadProgress),
+) -> Result<(Vec<u8>, Option<u64>)> {
     let mut bytes: Vec<u8> = Vec::with_capacity(total_hint.unwrap_or_default().min(usize::MAX as u64) as usize);
     let mut total = total_hint;
     let mut next_progress_at = 0_u64;
     let mut last_error: Option<anyhow::Error> = None;
+    let mut use_primary = true;
     // Count only *consecutive stalls* (attempts that made no forward progress).
     // A slow-but-advancing download resets this and keeps resuming, so it can
     // take as long as it needs; only a genuinely stuck connection gives up.
@@ -645,7 +679,12 @@ fn download_asset_with_resume(
     while stalls < DOWNLOAD_MAX_ATTEMPTS {
         attempt += 1;
         let resume_from = bytes.len() as u64;
-        let mut request = asset_request(client, asset);
+        let (active_url, active_token) = if use_primary {
+            (primary_url, primary_token)
+        } else {
+            (fallback_url.unwrap_or(primary_url), None)
+        };
+        let mut request = github_fetch::build_asset_request(client, active_url, active_token);
         if resume_from > 0 {
             // Ask the server to continue where we left off.
             request = request.header(reqwest::header::RANGE, format!("bytes={}-", resume_from));
@@ -662,6 +701,18 @@ fn download_asset_with_resume(
         };
 
         let status = response.status();
+        if use_primary
+            && primary_token.is_some()
+            && github_fetch::should_fallback_asset_status(status)
+            && fallback_url.is_some()
+        {
+            crate::logging::warn(&format!(
+                "update: GitHub API asset download returned {} at {} bytes; switching to direct release URL",
+                status, resume_from
+            ));
+            use_primary = false;
+            continue;
+        }
         if resume_from > 0 && status == reqwest::StatusCode::OK {
             // Server ignored the Range header and is resending from the start;
             // discard the partial buffer so we don't corrupt the result.
@@ -808,7 +859,7 @@ fn lock_release_update(builds: &Path) -> Result<fs::File> {
 }
 
 fn activate_prepared_version(version: &str, installed_version: &str, installed_from: &str) -> Result<()> {
-    let paths = [
+    let mut paths = vec![
         build::stable_binary_path()?,
         build::current_binary_path()?,
         build::shared_server_binary_path()?,
@@ -818,8 +869,9 @@ fn activate_prepared_version(version: &str, installed_version: &str, installed_f
         build::shared_server_version_file()?,
         update_metadata::metadata_path()?,
     ];
+    paths.extend(build::launcher_alias_paths()?);
     activation::with_rollback(&paths, || {
-        let mut metadata = UpdateMetadata::load()?;
+        let mut metadata = UpdateMetadata::load_or_recover()?;
         build::advance_shared_server_if_tracking_stable(version)?;
         build::update_stable_symlink(version)?;
         build::update_current_symlink(version)?;
