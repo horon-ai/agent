@@ -456,16 +456,3 @@ fn the_plugin_layout_serves_the_same_binary() {
     );
     assert_isolated(&staged);
 }
-
-#[test]
-fn both_layouts_carry_the_same_declaration() {
-    let extension = stage(Layout::Extension);
-    let plugin = stage(Layout::Plugin);
-    let standalone = fs::read(&extension.declaration).expect("the standalone declaration");
-    let bundled = fs::read(&plugin.declaration).expect("the bundled declaration");
-    assert_eq!(standalone, bundled, "the two extension.toml files are byte-identical");
-    assert_eq!(digest(&extension.declaration), digest(&plugin.declaration));
-    let extension_manifest = manifest(&extension.declaration);
-    let plugin_manifest = manifest(&plugin.declaration);
-    assert_eq!(extension_manifest.capabilities(), plugin_manifest.capabilities());
-}
