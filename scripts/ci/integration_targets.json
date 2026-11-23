@@ -63,6 +63,11 @@
     },
     {
       "package": "horon-agent",
+      "target": "server_signal_shutdown",
+      "min_passed": 3
+    },
+    {
+      "package": "horon-agent",
       "target": "install_release_cli",
       "min_passed": 3
     },

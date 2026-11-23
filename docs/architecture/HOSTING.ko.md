@@ -83,9 +83,9 @@
 
 ## 정지, 깨우기, 복원
 
-인스턴스를 유휴 상태로 두는 일은 컨테이너를 멈추거나 데몬에 `SIGTERM`을 보내는 것입니다. 데몬은 종료 전에 진행 중인 세션 저장을 비우므로(`docs/architecture/SERVER.md`), 정지는 영속적인 정지이고 다음 시작은 같은 볼륨을 엽니다.
+인스턴스를 유휴 상태로 두는 일은 컨테이너를 멈추거나 데몬에 `SIGTERM`이나 `SIGINT`를 보내는 것입니다. 데몬은 종료 전에 진행 중인 세션 저장을 비우고 등록 해제와 런타임 소켓 정리를 마치므로(`docs/architecture/SERVER.md`), 정지는 영속적인 정지이고 다음 시작은 같은 볼륨을 엽니다.
 
-- `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, 슈퍼바이저의 종료 신호로 멈춥니다. `horon-agent-sdk`의 `stop_hosted_instance`가 같은 동작입니다. 신호를 보내고, 엔드포인트가 접속을 받지 않을 때까지 기다린 뒤에야 테넌트를 정지됐다고 보고합니다. Fly에서는 Machine의 종료 신호를 먼저 `SIGTERM`으로 맞춥니다. 플랫폼 기본값은 `SIGINT`인데, 데몬은 그 신호로는 저장을 비우지 않습니다.
+- `scripts/hosting/instance.sh stop <tenant>`, `docker stop`, 슈퍼바이저의 종료 신호로 멈춥니다. `horon-agent-sdk`의 `stop_hosted_instance`가 같은 동작입니다. 신호를 보내고, 엔드포인트가 접속을 받지 않을 때까지 기다린 뒤에야 테넌트를 정지됐다고 보고합니다. Fly에서는 방어선으로 `SIGTERM` 고정을 계속 권장하지만, 플랫폼 기본값인 `SIGINT`에서도 같은 저장 비우기와 정리가 동작합니다.
 - 같은 볼륨으로 이미지나 데몬을 다시 시작해 깨웁니다. 세션, 승인, MCP 설정, 기억 파일은 볼륨에서 읽고, 세션은 일반 재개 경로로 이어집니다.
 - 테넌트 사이에서 볼륨을 복사하지 않고, 한 볼륨을 두 인스턴스에 마운트하지 않습니다.
 - 유휴 상태인 Machine은 볼륨을 그대로 두고 잃는 것이 없습니다. 콜드 스타트는 루트 파일시스템을 초기화하므로 `/run/horon`을 다시 만들고, 데몬은 바인드 전에 남은 소켓을 지웁니다.
@@ -109,7 +109,7 @@
 
 | 설정 | 값 | 이유 |
 | --- | --- | --- |
-| `stop_config.signal` | `SIGTERM` | Fly의 기본 종료 신호는 `SIGINT`입니다. 데몬은 `SIGTERM`에서 진행 중인 세션 저장을 비우고 종료 코드 0으로 끝나지만, 기본 신호에서는 비우지 못하고 레지스트리 정리 없이 죽습니다. `fly.toml`: `kill_signal = "SIGTERM"` |
+| `stop_config.signal` | `SIGTERM`(권장) | 데몬은 `SIGTERM`뿐 아니라 Fly의 기본 종료 신호인 `SIGINT`에서도 진행 중인 세션 저장을 비우고 등록 해제와 소켓·잠금 정리를 마친 뒤 종료 코드 0으로 끝납니다. 다른 슈퍼바이저와 일관된 방어선으로 `SIGTERM` 명시를 계속 권장합니다. `fly.toml`: `kill_signal = "SIGTERM"` |
 | `stop_config.timeout` | 최소 `30`초 | Fly의 기본 `kill_timeout`은 5초이며, 저장 비우기와 등록 해제, 종료를 합친 시간보다 짧습니다. `fly.toml`: `kill_timeout = 30` |
 | `restart.policy` | `no`, 또는 데몬이 동의하는 유휴 종료 정책과 짝지은 명시적 `on-failure` | 데몬은 클라이언트가 300초 없으면 종료 코드 44로 끝납니다. `on-failure`는 이를 다시 띄워 재시작이 반복됩니다. 유휴의 주인을 하나로 정합니다. 데몬 자체 종료와 `restart = "no"`를 쓰거나, 호스팅 유휴 종료 스위치와 `auto_stop = "suspend"`를 씁니다 |
 | `env` | `HORON_AGENT_HOSTING_MODE=per-user-container`, `HORON_AGENT_TENANT_ID=<tenant>`, `HORON_HOME=/data/home`, `HORON_AGENT_RUNTIME_DIR=/run/horon`, `HORON_AGENT_GATEWAY_ENABLED=0`, `HORON_AGENT_NO_AUTO_UPDATE=1` | 위 시작 경계입니다 |
@@ -157,7 +157,7 @@ config:
 
 **수명 호출:** 볼륨을 만들고(리전, 크기, 보존 1일에서 60일, 예약 스냅숏), Machine을 만들고(볼륨 id, 환경, 서비스 없음), `started`를 기다리고, 서비스하고, 정비를 위해 `cordon`하고, `SIGTERM`으로 멈추고, quiesce한 뒤 스냅숏을 찍고, `--snapshot-id`로 새 볼륨에 복원하고, 새 볼륨으로 대체 Machine을 만들어 시작한 뒤, 이전 Machine을 지우고 마지막으로 이전 볼륨을 지웁니다.
 
-**책임 분담.** 이 저장소는 안정된 환경과 배치 계약, SIGTERM 저장 비우기, 준비 상태(소켓이 접속을 받음), 쓰기 펜스와 quiesce 명령, 기억 볼륨 내보내기·가져오기·`delete_user` 단계를 제공합니다. Fly API 호출, 볼륨·Machine·사용자 매핑, 이미지 게시, 리전과 배치, TLS와 도메인, 고객 인증, 할당량과 과금, 재시도와 멱등성, 스냅숏 예약은 `horon-ai/server`에 남깁니다. 에이전트는 절대 Fly API를 호출하지 않습니다.
+**책임 분담.** 이 저장소는 안정된 환경과 배치 계약, `SIGTERM`·`SIGINT` 저장 비우기, 준비 상태(소켓이 접속을 받음), 쓰기 펜스와 quiesce 명령, 기억 볼륨 내보내기·가져오기·`delete_user` 단계를 제공합니다. Fly API 호출, 볼륨·Machine·사용자 매핑, 이미지 게시, 리전과 배치, TLS와 도메인, 고객 인증, 할당량과 과금, 재시도와 멱등성, 스냅숏 예약은 `horon-ai/server`에 남깁니다. 에이전트는 절대 Fly API를 호출하지 않습니다.
 
 ## 고객 삭제
 
@@ -185,7 +185,7 @@ config:
 - 중앙 메타데이터 서비스. 매핑은 컨트롤 플레인이 소유하고 이 저장소는 구현하지 않습니다. 그 서비스에 대한 에이전트 쪽 클라이언트와 요청 형태는 기억 볼륨 문서(`docs/runtime/MEMORY.ko.md`)에 있고, 서비스 자체는 `horon-ai/server#28`이며 계약은 아직 초안입니다.
 - Fly API 클라이언트. 공급자를 호출하는 것은 컨트롤 플레인이고, 에이전트는 필요한 볼륨 명령만 노출합니다.
 - 페이지 파일과 내보내기 tar의 봉투 암호화. 키 계약(메타데이터, 폐기, 폐기 시 열기 거부)은 구현했지만, 잠금 파일에 없는 크레이트가 필요해 암호 구현은 하지 않았습니다.
-- 데몬의 SIGINT 저장 비우기와 호스팅 유휴 종료 스위치. 데몬은 `SIGTERM`에서 비우므로 Fly Machine이 그 신호를 보내도록 설정해야 하고, `SIGINT`에 대한 데몬 동작을 바꾸는 일은 별도 결정입니다.
+- 호스팅 유휴 종료 스위치. 공유 서버 유휴 기한을 바꾸거나 호스팅 유휴 종료 스위치를 두는 일은 이 범위에 포함하지 않습니다.
 - 하네스 API가 이미 구현한 인증된 TCP 리스너를 넘어서는 비로컬 노출 인증.
 - 애플리케이션 코드 경로, 세션, 와이어 프로토콜에 테넌트 id를 넣는 작업.
 - 컨테이너 경계를 넘어서는 범용 OS 샌드박스.
