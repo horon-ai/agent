@@ -1145,3 +1145,6 @@ fn a_shared_worker_refusal_reaches_the_audit_log_child() {
         assert!(line.contains(field), "{field} missing from: {line}");
     }
 }
+
+#[path = "session_mcp_package_tests.rs"]
+mod package_tests;

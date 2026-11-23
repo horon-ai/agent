@@ -12,7 +12,7 @@ use crate::credentials::{AuthenticatedCredential, CredentialStore};
 use crate::run_bridge_stream_with_deadline;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
 use tokio::net::TcpListener;
 
 /// Largest first line a TCP peer may send before authentication.
@@ -51,9 +51,14 @@ impl AuthFailure {
     }
 }
 
+enum AuthLine {
+    Buffered(usize),
+    Owned(Vec<u8>),
+}
+
 /// Read the pre-authentication line and verify it against the store.
-pub(crate) async fn authenticate<R: AsyncRead + Unpin>(
-    reader: &mut R,
+async fn authenticate<R: AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
     store: &CredentialStore,
     deadline: Duration,
 ) -> Result<AuthenticatedCredential, AuthFailure> {
@@ -62,7 +67,19 @@ pub(crate) async fn authenticate<R: AsyncRead + Unpin>(
         Ok(Err(failure)) => return Err(failure),
         Err(_) => return Err(AuthFailure::TimedOut),
     };
-    let Ok(text) = std::str::from_utf8(&line) else {
+    let result = match line {
+        AuthLine::Buffered(pos) => {
+            let outcome = authenticate_slice(&reader.buffer()[..pos], store);
+            reader.consume(pos + 1);
+            outcome
+        }
+        AuthLine::Owned(bytes) => authenticate_slice(&bytes, store),
+    }?;
+    Ok(result)
+}
+
+fn authenticate_slice(slice: &[u8], store: &CredentialStore) -> Result<AuthenticatedCredential, AuthFailure> {
+    let Ok(text) = std::str::from_utf8(slice) else {
         return Err(AuthFailure::Malformed);
     };
     let token = parse_authorization_line(text).ok_or(AuthFailure::Malformed)?;
@@ -75,21 +92,45 @@ pub(crate) async fn authenticate<R: AsyncRead + Unpin>(
 
 /// Read exactly one newline-terminated line without consuming a byte of the
 /// next frame: the hello the client sends after authenticating must survive.
-async fn read_auth_line<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>, AuthFailure> {
-    let mut line = Vec::new();
-    loop {
-        let byte = match reader.read_u8().await {
-            Ok(byte) => byte,
-            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Err(AuthFailure::Closed),
-            Err(_) => return Err(AuthFailure::Closed),
-        };
-        if byte == b'\n' {
-            return Ok(line);
-        }
-        if line.len() >= MAX_AUTH_FRAME_BYTES {
+async fn read_auth_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<AuthLine, AuthFailure> {
+    let first = match reader.fill_buf().await {
+        Ok([]) => return Err(AuthFailure::Closed),
+        Ok(chunk) => chunk,
+        Err(_) => return Err(AuthFailure::Closed),
+    };
+    if let Some(pos) = first.iter().position(|&byte| byte == b'\n') {
+        if pos > MAX_AUTH_FRAME_BYTES {
             return Err(AuthFailure::Oversized);
         }
-        line.push(byte);
+        return Ok(AuthLine::Buffered(pos));
+    }
+    if first.len() > MAX_AUTH_FRAME_BYTES {
+        return Err(AuthFailure::Oversized);
+    }
+    let mut line = Vec::with_capacity((first.len() + 64).min(MAX_AUTH_FRAME_BYTES));
+    line.extend_from_slice(first);
+    let consumed = first.len();
+    reader.consume(consumed);
+    loop {
+        let chunk = match reader.fill_buf().await {
+            Ok([]) => return Err(AuthFailure::Closed),
+            Ok(chunk) => chunk,
+            Err(_) => return Err(AuthFailure::Closed),
+        };
+        if let Some(pos) = chunk.iter().position(|&byte| byte == b'\n') {
+            if line.len() + pos > MAX_AUTH_FRAME_BYTES {
+                return Err(AuthFailure::Oversized);
+            }
+            line.extend_from_slice(&chunk[..pos]);
+            reader.consume(pos + 1);
+            return Ok(AuthLine::Owned(line));
+        }
+        if line.len() + chunk.len() > MAX_AUTH_FRAME_BYTES {
+            return Err(AuthFailure::Oversized);
+        }
+        let chunk_len = chunk.len();
+        line.extend_from_slice(chunk);
+        reader.consume(chunk_len);
     }
 }
 
@@ -118,8 +159,9 @@ pub(crate) async fn serve_client<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    let (mut read_half, write_half) = tokio::io::split(stream);
-    match authenticate(&mut read_half, &store, auth_deadline).await {
+    let (read_half, write_half) = tokio::io::split(stream);
+    let mut reader = BufReader::new(read_half);
+    match authenticate(&mut reader, &store, auth_deadline).await {
         Ok(credential) => {
             let namespace = match tenant.as_deref() {
                 Some(tenant) => format!(" tenant={tenant}"),
@@ -129,7 +171,7 @@ where
                 "harness API bridge: authenticated credential {} ({}){namespace} on the exposed listener",
                 credential.id, credential.label
             );
-            run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, write_deadline).await
+            run_bridge_stream_with_deadline(reader, write_half, legacy_socket, write_deadline).await
         }
         Err(failure) => {
             eprintln!("harness API bridge: refused a TCP connection: {}", failure.reason());

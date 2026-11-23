@@ -447,7 +447,7 @@ async fn the_writer_is_joined_when_the_client_disconnects() {
     };
     let socket = daemon.socket.clone();
     let task = tokio::spawn(run_bridge_stream_with_deadline(
-        bridge_read,
+        BufReader::new(bridge_read),
         signal,
         socket,
         Duration::from_secs(5),

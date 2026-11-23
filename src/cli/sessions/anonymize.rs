@@ -57,7 +57,9 @@ fn collect(paths: &store::SessionPaths, root: &store::SessionId, with_children: 
     if !with_children {
         return Ok(found);
     }
-    let mut children: BTreeMap<String, Vec<Exported>> = BTreeMap::new();
+    let mut parent_to_ids: BTreeMap<String, Vec<store::SessionId>> = BTreeMap::new();
+    let mut fallback_ids: Vec<store::SessionId> = Vec::new();
+    let mut scanner = store::reader::ParentScanner::new();
     // List the store by reading its directory: the catalog helpers refresh a
     // derived cache on disk, and this command must not write to the store.
     for entry in std::fs::read_dir(paths.root())? {
@@ -71,19 +73,41 @@ fn collect(paths: &store::SessionPaths, root: &store::SessionId, with_children: 
         if id == *root || !entry.file_type()?.is_dir() {
             continue;
         }
+        match scanner.scan_canonical_parent(paths, &id) {
+            Ok(store::reader::CanonicalParent::Known(Some(parent))) => {
+                parent_to_ids.entry(parent).or_default().push(id);
+            }
+            Ok(store::reader::CanonicalParent::Known(None)) => {}
+            Ok(store::reader::CanonicalParent::NeedsReplay) => fallback_ids.push(id),
+            Err(_) => {}
+        }
+    }
+    let mut fallback_children: BTreeMap<String, Vec<Exported>> = BTreeMap::new();
+    for id in fallback_ids {
         // A session whose log cannot be replayed is not part of any tree here.
         if let Ok(session) = load(paths, &id)
             && let Some(parent) = session.parent.clone()
         {
-            children.entry(parent).or_default().push(session);
+            fallback_children.entry(parent).or_default().push(session);
         }
     }
     let mut seen = BTreeSet::from([root.as_str().to_string()]);
     let mut queue = VecDeque::from([root.as_str().to_string()]);
     while let Some(parent) = queue.pop_front() {
-        let Some(mut direct) = children.remove(&parent) else {
+        let mut direct = Vec::new();
+        if let Some(items) = fallback_children.remove(&parent) {
+            direct = items;
+        }
+        if let Some(candidate_ids) = parent_to_ids.remove(&parent) {
+            for child_id in candidate_ids {
+                if let Ok(session) = load(paths, &child_id) {
+                    direct.push(session);
+                }
+            }
+        }
+        if direct.is_empty() {
             continue;
-        };
+        }
         direct.sort_by(|a, b| (&a.created_at, a.id.as_str()).cmp(&(&b.created_at, b.id.as_str())));
         for child in direct {
             if seen.insert(child.id.as_str().to_string()) {
@@ -109,41 +133,79 @@ impl Scrub {
     }
 }
 
-fn block(value: &Value, options: &Options, scrub: &Scrub, tools: &mut BTreeMap<String, String>) -> Value {
-    let kind = value.get("type").and_then(Value::as_str).unwrap_or("unknown");
-    let mut tool_id = |raw: Option<&str>| {
+struct CountingWriter(usize);
+
+impl std::io::Write for CountingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_byte_len<T: serde::Serialize + ?Sized>(value: &T) -> usize {
+    let mut writer = CountingWriter(0);
+    match serde_json::to_writer(&mut writer, value) {
+        Ok(()) => writer.0,
+        Err(_) => 0,
+    }
+}
+
+fn block_type_name(content: &ContentBlock) -> &'static str {
+    match content {
+        ContentBlock::Text { .. } => "text",
+        ContentBlock::Reasoning { .. } => "reasoning",
+        ContentBlock::ReasoningTrace { .. } => "reasoning_trace",
+        ContentBlock::AnthropicThinking { .. } => "anthropic_thinking",
+        ContentBlock::OpenAIReasoning { .. } => "open_a_i_reasoning",
+        ContentBlock::ToolUse { .. } => "tool_use",
+        ContentBlock::ToolResult { .. } => "tool_result",
+        ContentBlock::Image { .. } => "image",
+        ContentBlock::Audio { .. } => "audio",
+        ContentBlock::OpenAICompaction { .. } => "open_a_i_compaction",
+        ContentBlock::ToolReference { .. } => "tool_reference",
+        ContentBlock::ProviderNative { .. } => "provider_native",
+    }
+}
+
+fn block(content: &ContentBlock, options: &Options, scrub: &Scrub, tools: &mut BTreeMap<String, String>) -> Value {
+    let mut tool_id = |raw: &str| {
         let next = tools.len() + 1;
-        raw.map(|raw| {
-            tools
-                .entry(raw.to_string())
-                .or_insert_with(|| format!("t{next}"))
-                .clone()
-        })
+        tools
+            .entry(raw.to_string())
+            .or_insert_with(|| format!("t{next}"))
+            .clone()
     };
-    let size = |field: &str| value.get(field).map_or(0, |inner| inner.to_string().len());
-    match kind {
-        "text" => {
-            let text = value.get("text").and_then(Value::as_str).unwrap_or("");
+    match content {
+        ContentBlock::Text { text, .. } => {
             let mut out = json!({"type": "text", "chars": text.chars().count()});
             if options.keep_text {
                 out["text"] = json!(scrub.text(text));
             }
             out
         }
-        "tool_use" => json!({
+        ContentBlock::ToolUse { id, name, input, .. } => json!({
             "type": "tool_use",
-            "id": tool_id(value.get("id").and_then(Value::as_str)),
-            "name": if options.keep_tool_names { value.get("name").cloned().unwrap_or(Value::Null) } else { json!("tool") },
-            "input_bytes": size("input"),
+            "id": tool_id(id),
+            "name": if options.keep_tool_names { json!(name) } else { json!("tool") },
+            "input_bytes": serialized_byte_len(input),
         }),
-        "tool_result" => json!({
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content: body,
+            is_error,
+            ..
+        } => json!({
             "type": "tool_result",
-            "tool_use_id": tool_id(value.get("tool_use_id").and_then(Value::as_str)),
-            "is_error": value.get("is_error").cloned().unwrap_or(Value::Null),
-            "content_bytes": size("content"),
+            "tool_use_id": tool_id(tool_use_id),
+            "is_error": is_error.map_or(Value::Null, Value::Bool),
+            "content_bytes": serialized_byte_len(body),
         }),
         // Reasoning and every attachment: only the kind and the size survive.
-        other => json!({"type": other, "bytes": value.to_string().len()}),
+        other => json!({"type": block_type_name(other), "bytes": serialized_byte_len(other)}),
     }
 }
 
@@ -171,14 +233,7 @@ fn anonymize(sessions: &[Exported], options: &Options) -> Result<Value> {
             let blocks: Vec<Value> = message
                 .content
                 .iter()
-                .map(|content: &ContentBlock| {
-                    block(
-                        &serde_json::to_value(content).unwrap_or(Value::Null),
-                        options,
-                        &scrub,
-                        &mut tools,
-                    )
-                })
+                .map(|content: &ContentBlock| block(content, options, &scrub, &mut tools))
                 .collect();
             let mut row = json!({
                 "id": format!("{name}.m{}", position + 1),

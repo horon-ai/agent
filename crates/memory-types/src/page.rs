@@ -17,9 +17,12 @@ use crate::{MemoryCategory, MemoryEntry, Reinforcement, TrustLevel};
 use horon_agent_time::Timestamp;
 use std::fmt;
 
-/// Longest accepted page id, in bytes. The id has to fit a file name with room
-/// for the reversible encoding and the `.md` suffix.
-pub const PAGE_ID_MAX_BYTES: usize = 256;
+/// Longest accepted page id, in bytes.
+///
+/// Any non-plain id encodes as `~` plus `2 * bytes` of lowercase hex plus `.md`
+/// (`2 * N + 4` bytes), which must fit POSIX `NAME_MAX` (255 bytes):
+/// `2 * 125 + 4 = 254 <= 255`.
+pub const PAGE_ID_MAX_BYTES: usize = 125;
 /// Longest accepted page title, in characters.
 pub const PAGE_TITLE_MAX_CHARS: usize = 400;
 /// Longest accepted project slug, in characters.

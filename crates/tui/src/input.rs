@@ -159,6 +159,15 @@ impl Input {
         self.characters.iter().collect()
     }
 
+    /// Whether the draft equals `expected`, without allocating a `String`.
+    pub(crate) fn matches_text(&self, expected: &str) -> bool {
+        if expected.len() < self.characters.len() || (expected.is_ascii() && expected.len() != self.characters.len()) {
+            return false;
+        }
+        let mut chars = expected.chars();
+        self.characters.iter().copied().all(|ch| chars.next() == Some(ch)) && chars.next().is_none()
+    }
+
     /// A cheap fingerprint of the draft, for callers that only need to know
     /// whether it changed.
     ///
@@ -385,11 +394,18 @@ impl Input {
     /// edit drops it: a click between an edit and the next frame is ignored
     /// rather than mapped through cells that no longer describe the draft.
     pub fn note_view(&mut self, placement: Placement, view: &View) {
-        self.drawn = Some(Drawn {
+        // The records are overwritten in place and the row list is copied over
+        // the one already there: `clone_from` keeps that list's allocation, so a
+        // frame that draws the same draft again does not buy a new one for a
+        // click that may never come.
+        let drawn = self.drawn.get_or_insert_with(|| Drawn {
             placement,
             first_line: view.first_line,
-            row_starts: view.row_starts.clone(),
+            row_starts: Vec::new(),
         });
+        drawn.placement = placement;
+        drawn.first_line = view.first_line;
+        drawn.row_starts.clone_from(&view.row_starts);
     }
 
     /// Move the caret to a cell of a mouse click, and say whether the click
@@ -782,10 +798,10 @@ pub fn text_cells(text: &str) -> u16 {
     cells_u16(text.graphemes(true).map(UnicodeWidthStr::width).sum())
 }
 
-/// The longest prefix of `text` that fits in `cells` cells.
+/// The longest prefix of `text` that fits in `cells` cells, borrowed.
 ///
 /// Keep whole graphemes so a wide or joined character never crosses the edge.
-pub fn clip_cells(text: &str, cells: u16) -> String {
+pub(crate) fn clip_cells_str(text: &str, cells: u16) -> &str {
     let room = usize::from(cells);
     let mut used = 0;
     let mut end = 0;
@@ -797,7 +813,14 @@ pub fn clip_cells(text: &str, cells: u16) -> String {
         used += width;
         end += grapheme.len();
     }
-    text[..end].to_owned()
+    &text[..end]
+}
+
+/// The longest prefix of `text` that fits in `cells` cells.
+///
+/// Keep whole graphemes so a wide or joined character never crosses the edge.
+pub fn clip_cells(text: &str, cells: u16) -> String {
+    clip_cells_str(text, cells).to_owned()
 }
 
 /// Characters hashed before the scan stops.

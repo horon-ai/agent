@@ -15,13 +15,16 @@ use super::schema::Index;
 use anyhow::{Context, Result, anyhow};
 use horon_agent_memory_types::page::MemoryPage;
 use horon_agent_time::Timestamp;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Largest page file read, in bytes: the body cap plus frontmatter headroom.
 pub const MAX_PAGE_FILE_BYTES: u64 = MAX_BODY_BYTES as u64 + 64 * 1024;
 /// Deepest directory level the walk descends.
-const MAX_DEPTH: usize = 8;
+pub(super) const MAX_DEPTH: usize = 8;
+/// Batch caps per `BEGIN IMMEDIATE` transaction during sync/reindex.
+const BATCH_MAX_PAGES: usize = 512;
+const BATCH_MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// A page file the walk found.
 #[derive(Debug, Clone)]
@@ -63,38 +66,55 @@ pub struct ReindexReport {
 /// With `force`, every file is re-read and the index tables are cleared first;
 /// without it, a file whose stamp matches the recorded one is left alone.
 pub fn sync(index: &mut Index, wiki_root: &Path, force: bool) -> Result<ReindexReport> {
-    if force {
-        clear(index)?;
+    let existing_stamps = if force {
+        Vec::new()
+    } else {
+        index.file_stamps_with_ids()?
+    };
+    let mut stamp_map: HashMap<&str, FileStamp> = HashMap::with_capacity(existing_stamps.len());
+    for (path, _, stamp) in &existing_stamps {
+        stamp_map.insert(path.as_str(), *stamp);
     }
+
     let files = scan(wiki_root)?;
     let mut report = ReindexReport {
         files: files.len(),
         ..ReindexReport::default()
     };
-    let mut seen_paths: HashSet<String> = HashSet::with_capacity(files.len());
-    let mut ids: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut seen_paths: HashSet<&str> = HashSet::with_capacity(files.len());
+    let mut ids: HashMap<String, &str> = HashMap::with_capacity(files.len());
+    let mut batch: Vec<(MemoryPage, &str, FileStamp)> = Vec::new();
+    let mut batch_bytes = 0usize;
+    let mut pending_clear = force;
+
     for file in &files {
-        seen_paths.insert(file.relative.clone());
-        let known = if force { None } else { index.file_stamp(&file.relative)? };
+        let rel = file.relative.as_str();
+        seen_paths.insert(rel);
+        let known = if force { None } else { stamp_map.get(rel).copied() };
         if known == Some(file.stamp) {
             report.unchanged += 1;
             continue;
         }
         match read_page(file) {
             Ok(page) => {
-                let id = page.id.as_str().to_string();
-                if let Some(first) = ids.get(&id) {
+                let id = page.id.as_str();
+                if let Some(first) = ids.get(id) {
                     report.skipped.push(SkippedPage {
                         path: file.relative.clone(),
                         reason: format!("page id {id} is already stored at {first}"),
                     });
                     continue;
                 }
-                ids.insert(id, file.relative.clone());
-                index
-                    .upsert_page(&page, &file.relative, file.stamp)
-                    .with_context(|| format!("cannot index {}", file.relative))?;
-                report.indexed += 1;
+                ids.insert(id.to_string(), rel);
+                batch_bytes += page.body.len();
+                batch.push((page, rel, file.stamp));
+                if batch.len() >= BATCH_MAX_PAGES || batch_bytes >= BATCH_MAX_BODY_BYTES {
+                    index.upsert_batch(pending_clear, &batch)?;
+                    pending_clear = false;
+                    report.indexed += batch.len();
+                    batch.clear();
+                    batch_bytes = 0;
+                }
             }
             Err(error) => report.skipped.push(SkippedPage {
                 path: file.relative.clone(),
@@ -102,50 +122,25 @@ pub fn sync(index: &mut Index, wiki_root: &Path, force: bool) -> Result<ReindexR
             }),
         }
     }
-    report.pruned = prune_missing(index, &seen_paths)?;
+
+    if !batch.is_empty() {
+        index.upsert_batch(pending_clear, &batch)?;
+        report.indexed += batch.len();
+    } else if pending_clear {
+        index.clear_all()?;
+    }
+
+    if !force {
+        let mut stale: Vec<(String, Option<String>)> = Vec::new();
+        for (path, id, _) in existing_stamps {
+            if !seen_paths.contains(path.as_str()) {
+                stale.push((path, id));
+            }
+        }
+        stale.sort();
+        report.pruned = index.prune_missing_batch(&stale)?;
+    }
     Ok(report)
-}
-
-/// Remove index rows whose file is no longer on disk.
-fn prune_missing(index: &mut Index, seen_paths: &HashSet<String>) -> Result<usize> {
-    let mut stale: Vec<(String, Option<String>)> = Vec::new();
-    for (path, _) in index.file_stamps()? {
-        if !seen_paths.contains(&path) {
-            let id = index.page_id_for_path(&path)?;
-            stale.push((path, id));
-        }
-    }
-    stale.sort();
-    let mut pruned = 0;
-    for (path, id) in stale {
-        match id {
-            Some(id) => {
-                if index.remove_page(&id)? {
-                    pruned += 1;
-                }
-            }
-            None => {
-                index.remove_file_stamp(&path)?;
-            }
-        }
-    }
-    Ok(pruned)
-}
-
-/// Empty every derived table. The caller follows with a forced sync.
-pub fn clear(index: &mut Index) -> Result<()> {
-    let tx = index
-        .conn_mut()
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .context("cannot start an index rebuild")?;
-    for table in ["pages", "tags", "links", "entities", "versions", "files"] {
-        tx.execute(&format!("DELETE FROM {table}"), [])?;
-    }
-    for table in ["pages_fts", "pages_bigram", "pages_grams"] {
-        tx.execute(&format!("DELETE FROM {table}"), [])?;
-    }
-    tx.commit().context("cannot commit an index rebuild")?;
-    Ok(())
 }
 
 /// Every page file under `wiki_root`, sorted by relative path.
@@ -228,6 +223,9 @@ pub fn stamp_of(metadata: &std::fs::Metadata) -> FileStamp {
 }
 
 fn read_page(file: &ScannedFile) -> Result<MemoryPage> {
+    if file.stamp.mtime_ns < 0 {
+        return Err(anyhow!("page file is over {MAX_PAGE_FILE_BYTES} bytes"));
+    }
     let bytes = std::fs::read(&file.absolute).with_context(|| format!("cannot read {}", file.relative))?;
     if bytes.len() as u64 > MAX_PAGE_FILE_BYTES {
         return Err(anyhow!("page file is over {MAX_PAGE_FILE_BYTES} bytes"));
@@ -254,4 +252,75 @@ pub fn relative_slash_path(root: &Path, path: &Path) -> Option<String> {
         parts.push(component.as_os_str().to_str()?.to_string());
     }
     Some(parts.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::store::tests_support::{TempRoot, fact};
+
+    #[test]
+    fn oversized_file_short_circuits_before_reading_bytes() {
+        let root = TempRoot::new("reindex-oversized");
+        let wiki = root.path().join("wiki");
+        let facts = wiki.join("facts");
+        std::fs::create_dir_all(&facts).expect("facts dir");
+        // Invalid UTF-8 bytes exceeding MAX_PAGE_FILE_BYTES: if read_page read the
+        // file instead of short-circuiting on `mtime_ns == -1`, the error would say
+        // "not UTF-8" instead of "over ... bytes".
+        let oversized = vec![0xffu8; usize::try_from(MAX_PAGE_FILE_BYTES).expect("fits") + 32];
+        std::fs::write(facts.join("huge.md"), oversized).expect("write oversized");
+
+        let mut index = Index::open(&root.path().join("index.sqlite")).expect("open index");
+        let report = sync(&mut index, &wiki, true).expect("sync");
+        assert_eq!(report.files, 1);
+        assert_eq!(report.indexed, 0);
+        assert_eq!(report.skipped.len(), 1);
+        assert!(
+            report.skipped[0].reason.contains("over") && report.skipped[0].reason.contains("bytes"),
+            "expected size limit error without reading bytes, got {:?}",
+            report.skipped[0]
+        );
+    }
+
+    #[test]
+    fn batch_sync_indexes_skips_unchanged_updates_changed_and_prunes_deleted() {
+        let root = TempRoot::new("reindex-batch");
+        let wiki = root.path().join("wiki");
+        let facts = wiki.join("facts");
+        std::fs::create_dir_all(&facts).expect("facts dir");
+
+        let p1 = fact("mem_1_a", "하나", "첫 번째 본문", 1_700_000_000);
+        let p2 = fact("mem_2_b", "둘", "두 번째 본문", 1_700_000_001);
+        let dup = fact("mem_1_a", "중복", "중복 본문", 1_700_000_002);
+        std::fs::write(facts.join("mem_1_a.md"), document::encode(&p1).expect("encode")).expect("write p1");
+        std::fs::write(facts.join("mem_2_b.md"), document::encode(&p2).expect("encode")).expect("write p2");
+        std::fs::write(facts.join("z_dup.md"), document::encode(&dup).expect("encode")).expect("write dup");
+
+        let mut index = Index::open(&root.path().join("index.sqlite")).expect("open index");
+        let first = sync(&mut index, &wiki, true).expect("initial forced sync");
+        assert_eq!(first.files, 3);
+        assert_eq!(first.indexed, 2);
+        assert_eq!(first.skipped.len(), 1);
+        assert!(first.skipped[0].path.ends_with("z_dup.md"));
+
+        // Remove duplicate, remove p2, update p1.
+        std::fs::remove_file(facts.join("z_dup.md")).expect("remove dup");
+        std::fs::remove_file(facts.join("mem_2_b.md")).expect("remove p2");
+        let mut p1_updated = p1.clone();
+        p1_updated.body = "고친 첫 번째 본문입니다".to_string();
+        std::fs::write(facts.join("mem_1_a.md"), document::encode(&p1_updated).expect("encode")).expect("rewrite p1");
+
+        let second = sync(&mut index, &wiki, false).expect("incremental sync");
+        assert_eq!(second.files, 1);
+        assert_eq!(second.indexed, 1);
+        assert_eq!(second.unchanged, 0);
+        assert_eq!(second.pruned, 1);
+
+        let third = sync(&mut index, &wiki, false).expect("noop sync");
+        assert_eq!(third.files, 1);
+        assert_eq!(third.indexed, 0);
+        assert_eq!(third.unchanged, 1);
+        assert_eq!(third.pruned, 0);
+    }
 }

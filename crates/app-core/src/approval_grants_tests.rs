@@ -154,7 +154,7 @@ fn a_path_grant_does_not_cover_a_sibling() {
 
     let now = Timestamp::now();
     assert!(covered_by(
-        &[grant.clone()],
+        std::slice::from_ref(&grant),
         &workspace,
         &[canonical_target(&first).expect("first")],
         GrantCapability::Write,
@@ -432,7 +432,7 @@ fn restricted_paths_match_the_raw_text_and_the_canonical_path() {
     let canonical = secret.canonicalize().expect("canonical");
     let pattern = format!("{}/**", workspace.display());
     assert_eq!(
-        restricted_matched(&[pattern.clone()], "write", &input, Some(&workspace)).as_deref(),
+        restricted_matched(std::slice::from_ref(&pattern), "write", &input, Some(&workspace)).as_deref(),
         Some(pattern.as_str()),
         "a glob matches the resolved place too, so `..` cannot dodge it"
     );

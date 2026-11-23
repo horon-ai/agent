@@ -49,3 +49,7 @@ horon-agent-background-types = { path = "../background-types" }
 [[bin]]
 name = "horon-agent-harness-api-bridge"
 path = "src/bin/bridge.rs"
+
+[[bench]]
+name = "opt_r3_hosting"
+harness = false

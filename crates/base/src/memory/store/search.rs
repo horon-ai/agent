@@ -15,11 +15,11 @@
 
 use super::index::{PageRow, page_row_from};
 use super::schema::Index;
-use super::text::{bigram_expression, entity_query, token_expression, trigram_expression};
+use super::text::prepare_query;
 use anyhow::{Context, Result};
 use horon_agent_memory_types::page::{PageKind, is_iso_date};
 use rusqlite::{ToSql, params_from_iter};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Reciprocal-rank constant. 60 is the value from the RRF paper and keeps one
 /// stream's first place from dominating the fusion.
@@ -130,22 +130,26 @@ pub fn search(index: &Index, query: &SearchQuery) -> Result<SearchResults> {
     {
         anyhow::bail!("search date must be YYYY-MM-DD, not `{at}`");
     }
+    let prepared = prepare_query(&query.text);
+    let filter_plan = FilterPlan::build(query);
     let mut ranks: HashMap<String, StreamRanks> = HashMap::new();
 
-    if let Some(expression) = token_expression(&query.text) {
-        let hits = fts_stream(index, "pages_fts", &expression, query)?;
+    if let Some(expression) = prepared.tokens.as_deref() {
+        let hits = fts_stream(index, "pages_fts", expression, &filter_plan)?;
         record(&mut ranks, hits, |entry, rank| entry.tokens = Some(rank));
     }
-    if let Some(expression) = trigram_expression(&query.text) {
-        let hits = fts_stream(index, "pages_bigram", &expression, query)?;
+    if let Some(expression) = prepared.trigrams.as_deref() {
+        let hits = fts_stream(index, "pages_bigram", expression, &filter_plan)?;
         record(&mut ranks, hits, |entry, rank| entry.trigram = Some(rank));
     }
-    if let Some(expression) = bigram_expression(&query.text) {
-        let hits = fts_stream(index, "pages_grams", &expression, query)?;
+    if let Some(expression) = prepared.bigrams.as_deref() {
+        let hits = fts_stream(index, "pages_grams", expression, &filter_plan)?;
         record(&mut ranks, hits, |entry, rank| entry.bigram = Some(rank));
     }
-    let entity_hits = entity_stream(index, &entity_query(&query.text), query)?;
-    record(&mut ranks, entity_hits, |entry, rank| entry.entity = Some(rank));
+    if !prepared.entity.is_empty() {
+        let entity_hits = entity_stream(index, &prepared.entity, &filter_plan)?;
+        record(&mut ranks, entity_hits, |entry, rank| entry.entity = Some(rank));
+    }
 
     let text_candidates: Vec<(usize, String)> = ranks
         .iter()
@@ -159,8 +163,34 @@ pub fn search(index: &Index, query: &SearchQuery) -> Result<SearchResults> {
     }
 
     let mut pages = pages_by_id(index, ranks.keys())?;
-    let tag_ok = allowed_by_tag(index, query)?;
-    pages.retain(|id, row| row_matches(query, row) && tag_ok.as_ref().is_none_or(|ids| ids.contains(id)));
+    let link_only_ids: Vec<&str> = if query.tags.is_empty() {
+        Vec::new()
+    } else {
+        pages
+            .keys()
+            .filter(|id| {
+                ranks
+                    .get(id.as_str())
+                    .is_some_and(|entry| entry.best_text_rank().is_none())
+            })
+            .map(String::as_str)
+            .collect()
+    };
+    let link_tag_ok = if link_only_ids.is_empty() {
+        None
+    } else {
+        let wanted: Vec<&str> = query.tags.iter().map(String::as_str).collect();
+        Some(index.page_ids_with_all_tags(&link_only_ids, &wanted)?)
+    };
+    pages.retain(|id, row| {
+        if ranks
+            .get(id.as_str())
+            .is_some_and(|entry| entry.best_text_rank().is_some())
+        {
+            return true;
+        }
+        row_matches(query, row) && link_tag_ok.as_ref().is_none_or(|ids| ids.contains(id))
+    });
     // Recency stream: newest first among the candidates.
     let mut by_recency: Vec<&String> = pages.keys().collect();
     by_recency.sort_by(|left, right| {
@@ -237,23 +267,21 @@ fn record(ranks: &mut HashMap<String, StreamRanks>, hits: StreamHits, set: impl 
     }
 }
 
-fn fts_stream(index: &Index, table: &str, expression: &str, query: &SearchQuery) -> Result<StreamHits> {
-    let mut filters = Filters::new();
-    let match_placeholder = filters.bind(expression.to_string());
-    filters.apply(query)?;
+fn fts_stream(index: &Index, table: &str, expression: &str, filter_plan: &FilterPlan<'_>) -> Result<StreamHits> {
     let sql = format!(
         "SELECT p.id, rank FROM {table} f JOIN pages p ON p.rowid = f.rowid
-         WHERE {table} MATCH {match_placeholder}{}
+         WHERE {table} MATCH ?1{}
          ORDER BY rank, p.id ASC LIMIT {STREAM_LIMIT}",
-        filters.suffix()
+        filter_plan.suffix
     );
     let mut statement = index
         .conn()
-        .prepare(&sql)
+        .prepare_cached(&sql)
         .with_context(|| format!("cannot prepare the {table} search"))?;
-    let rows = statement.query_map(params_from_iter(filters.params()), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-    })?;
+    let rows = statement.query_map(
+        params_from_iter(std::iter::once(&expression as &dyn ToSql).chain(filter_plan.params())),
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+    )?;
     let mut scored = Vec::new();
     for row in rows {
         scored.push(row?);
@@ -261,24 +289,19 @@ fn fts_stream(index: &Index, table: &str, expression: &str, query: &SearchQuery)
     Ok(dense_ranks(scored))
 }
 
-fn entity_stream(index: &Index, compact_query: &str, query: &SearchQuery) -> Result<StreamHits> {
-    if compact_query.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut filters = Filters::new();
-    let needle = filters.bind(compact_query.to_string());
-    filters.apply(query)?;
+fn entity_stream(index: &Index, compact_query: &str, filter_plan: &FilterPlan<'_>) -> Result<StreamHits> {
     let sql = format!(
         "SELECT p.id, MAX(length(e.name_norm)) AS score FROM entities e JOIN pages p ON p.id = e.page_id
-         WHERE e.name_norm <> '' AND instr({needle}, e.name_norm) > 0{}
+         WHERE e.name_norm <> '' AND instr(?1, e.name_norm) > 0{}
          GROUP BY p.id
          ORDER BY score DESC, p.id ASC LIMIT {STREAM_LIMIT}",
-        filters.suffix()
+        filter_plan.suffix
     );
-    let mut statement = index.conn().prepare(&sql)?;
-    let rows = statement.query_map(params_from_iter(filters.params()), |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
-    })?;
+    let mut statement = index.conn().prepare_cached(&sql)?;
+    let rows = statement.query_map(
+        params_from_iter(std::iter::once(&compact_query as &dyn ToSql).chain(filter_plan.params())),
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?)),
+    )?;
     let mut scored = Vec::new();
     for row in rows {
         scored.push(row?);
@@ -292,14 +315,21 @@ fn link_stream(index: &Index, mut text_candidates: Vec<(usize, String)>) -> Resu
     }
     text_candidates.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     text_candidates.truncate(LINK_SEEDS);
+    let seed_refs: Vec<&str> = text_candidates.iter().map(|(_, id)| id.as_str()).collect();
+    let edges = index.links_for_seeds(&seed_refs)?;
+    if edges.is_empty() {
+        return Ok(Vec::new());
+    }
     // (seed rank, weight, neighbour) then keep the strongest rank per neighbour.
-    let mut neighbours: Vec<(usize, f32, String)> = Vec::new();
+    let mut neighbours: Vec<(usize, f32, String)> = Vec::with_capacity(edges.len());
     for (seed_rank, seed) in &text_candidates {
-        for link in index.links_from(seed)? {
-            neighbours.push((*seed_rank, link.weight, link.dst_id));
-        }
-        for link in index.links_to(seed)? {
-            neighbours.push((*seed_rank, link.weight, link.src_id));
+        for (src_id, dst_id, weight) in &edges {
+            if src_id == seed {
+                neighbours.push((*seed_rank, *weight, dst_id.clone()));
+            }
+            if dst_id == seed {
+                neighbours.push((*seed_rank, *weight, src_id.clone()));
+            }
         }
     }
     neighbours.sort_by(|left, right| {
@@ -308,14 +338,13 @@ fn link_stream(index: &Index, mut text_candidates: Vec<(usize, String)>) -> Resu
             .then_with(|| right.1.total_cmp(&left.1))
             .then_with(|| left.2.cmp(&right.2))
     });
-    let mut seen: Vec<String> = Vec::new();
-    let mut hits = Vec::new();
+    let mut seen: HashSet<String> = HashSet::with_capacity(neighbours.len());
+    let mut hits = Vec::with_capacity(neighbours.len());
     for (_, _, id) in neighbours {
-        if seen.contains(&id) {
-            continue;
+        if !seen.contains(&id) {
+            seen.insert(id.clone());
+            hits.push((hits.len() + 1, id));
         }
-        seen.push(id.clone());
-        hits.push((hits.len() + 1, id));
     }
     Ok(hits)
 }
@@ -351,32 +380,14 @@ fn pages_by_id<'a>(index: &Index, ids: impl Iterator<Item = &'a String>) -> Resu
         "SELECT id, path, kind, category, project, title, updated_ms, created_ms, active,
                 valid_from, valid_to, source FROM pages WHERE id IN ({placeholders})"
     );
-    let mut statement = index.conn().prepare(&sql)?;
+    let mut statement = index.conn().prepare_cached(&sql)?;
     let rows = statement.query_map(params_from_iter(sorted.iter()), page_row_from)?;
-    let mut out = HashMap::new();
+    let mut out = HashMap::with_capacity(sorted.len());
     for row in rows {
         let row = row?;
         out.insert(row.id.clone(), row);
     }
     Ok(out)
-}
-
-/// Page ids carrying every requested tag, or `None` when no tag filter is set.
-fn allowed_by_tag(index: &Index, query: &SearchQuery) -> Result<Option<std::collections::HashSet<String>>> {
-    if query.tags.is_empty() {
-        return Ok(None);
-    }
-    let mut by_page: HashMap<String, Vec<String>> = HashMap::new();
-    for (page_id, tag) in index.all_tags()? {
-        by_page.entry(page_id).or_default().push(tag);
-    }
-    let mut ids = std::collections::HashSet::new();
-    for (page_id, tags) in by_page {
-        if query.tags.iter().all(|wanted| tags.contains(wanted)) {
-            ids.insert(page_id);
-        }
-    }
-    Ok(Some(ids))
 }
 
 /// The in-memory half of the filters, so a link neighbour cannot slip past a
@@ -408,64 +419,51 @@ fn row_matches(query: &SearchQuery, row: &PageRow) -> bool {
     true
 }
 
-/// Bound `WHERE` clauses with their parameters, numbered as they are added.
-struct Filters<'a> {
-    clauses: Vec<String>,
-    params: Vec<Box<dyn ToSql + 'a>>,
+/// Pre-built SQL filter suffix and borrowed parameter slice starting at `?2`,
+/// shared across all four search streams (`?1` is each stream's query text).
+struct FilterPlan<'a> {
+    suffix: String,
+    params: Vec<&'a str>,
 }
 
-impl<'a> Filters<'a> {
-    fn new() -> Self {
-        Self {
-            clauses: Vec::new(),
-            params: Vec::new(),
+impl<'a> FilterPlan<'a> {
+    fn build(query: &'a SearchQuery) -> Self {
+        let mut suffix = String::new();
+        let mut params: Vec<&'a str> = Vec::new();
+        if !query.kinds.is_empty() {
+            suffix.push_str(" AND p.kind IN (");
+            for (idx, kind) in query.kinds.iter().enumerate() {
+                if idx > 0 {
+                    suffix.push_str(", ");
+                }
+                suffix.push('\'');
+                suffix.push_str(kind.as_str());
+                suffix.push('\'');
+            }
+            suffix.push(')');
         }
-    }
-
-    fn bind(&mut self, value: String) -> String {
-        self.params.push(Box::new(value));
-        format!("?{}", self.params.len())
+        if let Some(project) = query.project.as_deref() {
+            params.push(project);
+            suffix.push_str(&format!(" AND p.project = ?{}", params.len() + 1));
+        }
+        for tag in &query.tags {
+            params.push(tag.as_str());
+            suffix.push_str(&format!(
+                " AND p.id IN (SELECT page_id FROM tags WHERE tag = ?{})",
+                params.len() + 1
+            ));
+        }
+        if let Some(at) = query.at.as_deref() {
+            params.push(at);
+            let at_idx = params.len() + 1;
+            suffix.push_str(&format!(
+                " AND (p.valid_from IS NULL OR p.valid_from <= ?{at_idx}) AND (p.valid_to IS NULL OR p.valid_to >= ?{at_idx})"
+            ));
+        }
+        Self { suffix, params }
     }
 
     fn params(&self) -> impl Iterator<Item = &dyn ToSql> {
-        self.params.iter().map(|param| param.as_ref())
-    }
-
-    fn suffix(&self) -> String {
-        if self.clauses.is_empty() {
-            String::new()
-        } else {
-            format!(" AND {}", self.clauses.join(" AND "))
-        }
-    }
-
-    fn apply(&mut self, query: &SearchQuery) -> Result<()> {
-        if !query.kinds.is_empty() {
-            let kinds = query
-                .kinds
-                .iter()
-                .map(|kind| format!("'{}'", kind.as_str()))
-                .collect::<Vec<_>>()
-                .join(", ");
-            self.clauses.push(format!("p.kind IN ({kinds})"));
-        }
-        if let Some(project) = &query.project {
-            let placeholder = self.bind(project.clone());
-            self.clauses.push(format!("p.project = {placeholder}"));
-        }
-        for tag in &query.tags {
-            let placeholder = self.bind(tag.clone());
-            self.clauses
-                .push(format!("p.id IN (SELECT page_id FROM tags WHERE tag = {placeholder})"));
-        }
-        if let Some(at) = &query.at {
-            let at_after = self.bind(at.clone());
-            let at_before = self.bind(at.clone());
-            self.clauses
-                .push(format!("(p.valid_from IS NULL OR p.valid_from <= {at_after})"));
-            self.clauses
-                .push(format!("(p.valid_to IS NULL OR p.valid_to >= {at_before})"));
-        }
-        Ok(())
+        self.params.iter().map(|param| param as &dyn ToSql)
     }
 }

@@ -11,6 +11,7 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 use crate::git_worktree;
@@ -25,39 +26,99 @@ struct MoveRecord {
     moved: bool,
 }
 
+#[derive(Debug)]
+struct StoredRecord {
+    file_path: PathBuf,
+    record: MoveRecord,
+}
+
 fn records_dir(home: &Path) -> PathBuf {
     home.join("worktree-moves")
 }
 
-fn record_path(home: &Path, session_id: &str) -> PathBuf {
-    records_dir(home).join(format!("{session_id}.json"))
-}
-
-fn read_record(home: &Path, session_id: &str) -> Result<Option<MoveRecord>> {
-    match std::fs::read(record_path(home, session_id)) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
+fn normalize_worktree_path(raw: &str) -> String {
+    match super::canonical_output_path(PathBuf::from(raw)) {
+        Ok(canonical) => canonical.display().to_string(),
+        Err(_) => raw.to_owned(),
     }
 }
 
-fn write_record(home: &Path, record: &MoveRecord) -> Result<()> {
-    super::create_private_dir(&records_dir(home))?;
-    super::write_file(
-        &record_path(home, &record.session_id),
-        &serde_json::to_vec_pretty(record)?,
-    )
+fn same_worktree_path(left: &str, right: &str) -> bool {
+    left == right || normalize_worktree_path(left) == normalize_worktree_path(right)
 }
 
-fn all_records(home: &Path) -> Vec<MoveRecord> {
+fn worktree_key(worktree_path: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let normalized = normalize_worktree_path(worktree_path);
+    let digest = Sha256::digest(normalized.as_bytes());
+    let mut hex = String::with_capacity(32);
+    for &byte in digest.iter().take(16) {
+        hex.push(char::from(HEX[usize::from(byte >> 4)]));
+        hex.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    hex
+}
+
+fn record_path(home: &Path, worktree_path: &str) -> PathBuf {
+    records_dir(home).join(format!("wt-{}.json", worktree_key(worktree_path)))
+}
+
+fn all_records(home: &Path) -> Vec<StoredRecord> {
     let Ok(entries) = std::fs::read_dir(records_dir(home)) else {
         return Vec::new();
     };
-    entries
-        .flatten()
-        .flat_map(|entry| std::fs::read(entry.path()))
-        .flat_map(|bytes| serde_json::from_slice::<MoveRecord>(&bytes))
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .filter_map(|file_path| {
+            let bytes = match std::fs::read(&file_path) {
+                Ok(bytes) => bytes,
+                Err(_) => return None,
+            };
+            let record = match serde_json::from_slice::<MoveRecord>(&bytes) {
+                Ok(record) => record,
+                Err(_) => return None,
+            };
+            Some(StoredRecord { file_path, record })
+        })
         .collect()
+}
+
+fn active_record(home: &Path, session_id: &str) -> Option<StoredRecord> {
+    all_records(home)
+        .into_iter()
+        .find(|stored| stored.record.session_id == session_id && stored.record.moved)
+}
+
+fn write_record_for_worktree(home: &Path, record: &MoveRecord, old_path: Option<&Path>) -> Result<()> {
+    super::create_private_dir(&records_dir(home))?;
+    let path = record_path(home, &record.worktree_path);
+    super::write_file(&path, &serde_json::to_vec_pretty(record)?)?;
+    if let Some(old) = old_path
+        && old != path
+    {
+        match std::fs::remove_file(old) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// A live writer owns the session while it holds the `.writer.lock` flock.
+fn writer_is_active(home: &Path, id: &str) -> Result<bool> {
+    let path = home.join("sessions").join(id).join(".writer.lock");
+    if !path.exists() {
+        return Ok(false);
+    }
+    let file = std::fs::OpenOptions::new().read(true).write(true).open(&path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(false),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+    }
 }
 
 fn uncommitted_paths(dir: &str) -> Result<usize> {
@@ -94,8 +155,8 @@ pub(super) fn list(home: &Path, json_output: bool) -> Result<()> {
     for (index, tree) in git_worktree::list(&cwd)?.into_iter().enumerate() {
         let owners: Vec<&str> = recorded
             .iter()
-            .filter(|record| record.worktree_path == tree.path)
-            .map(|record| record.session_id.as_str())
+            .filter(|stored| stored.record.moved && same_worktree_path(&stored.record.worktree_path, &tree.path))
+            .map(|stored| stored.record.session_id.as_str())
             .collect();
         let dirty = !tree.bare && git_worktree::is_dirty(&tree.path).unwrap_or(false);
         rows.push(json!({
@@ -146,12 +207,13 @@ pub(super) fn move_session(
         .working_dir
         .clone()
         .with_context(|| format!("session {id} has no working directory"))?;
-    let record = read_record(home, &id)?;
+    let active = active_record(home, &id);
 
     if undo {
-        let Some(record) = record.filter(|record| record.moved) else {
+        let Some(stored) = active else {
             bail!("session {id} is not in a worktree this command created");
         };
+        let record = stored.record;
         let mut report = json!({
             "session_id": id, "action": "undo", "from": current, "to": record.previous_working_dir,
             "applied": apply,
@@ -168,9 +230,12 @@ pub(super) fn move_session(
             ),
         ];
         if apply {
+            if writer_is_active(home, &id)? {
+                bail!("session {id} has a live writer; end it before moving its working directory");
+            }
             session.working_dir = Some(record.previous_working_dir.clone());
             session.save()?;
-            write_record(home, &MoveRecord { moved: false, ..record })?;
+            write_record_for_worktree(home, &MoveRecord { moved: false, ..record }, Some(&stored.file_path))?;
             lines.push("moved back.".into());
         } else {
             lines.push("preview only; add --apply to move back".into());
@@ -180,7 +245,7 @@ pub(super) fn move_session(
     }
 
     let branch = branch.context("a new branch name is required: --branch <name>")?;
-    if record.as_ref().is_some_and(|record| record.moved) {
+    if active.is_some() {
         bail!("session {id} already works in a managed worktree; run with --undo first");
     }
     let changed = uncommitted_paths(&current)?;
@@ -206,8 +271,11 @@ pub(super) fn move_session(
         lines.push("preview only; add --apply to create the worktree and move the session".into());
         return finish(json_output, report, lines);
     }
+    if writer_is_active(home, &id)? {
+        bail!("session {id} has a live writer; end it before moving its working directory");
+    }
     let created = git_worktree::create(&current, branch)?;
-    write_record(
+    write_record_for_worktree(
         home,
         &MoveRecord {
             session_id: id.clone(),
@@ -216,10 +284,11 @@ pub(super) fn move_session(
             branch: branch.to_string(),
             moved: true,
         },
+        None,
     )?;
     session.working_dir = Some(created.path.clone());
     if let Err(error) = session.save() {
-        write_record(
+        write_record_for_worktree(
             home,
             &MoveRecord {
                 session_id: id.clone(),
@@ -228,6 +297,7 @@ pub(super) fn move_session(
                 branch: branch.to_string(),
                 moved: false,
             },
+            None,
         )?;
         return Err(error.context(format!(
             "the worktree {} was created but the session was not moved",
@@ -241,20 +311,23 @@ pub(super) fn move_session(
 
 /// `sessions remove-worktree`: remove a worktree a move created, never past uncommitted work.
 pub(super) fn remove(home: &Path, path: &str, apply: bool, json_output: bool) -> Result<()> {
-    let target = super::resolve_path(path)?.display().to_string();
-    let Some(record) = all_records(home)
+    let resolved = super::resolve_path(path)?;
+    let target = super::canonical_output_path(resolved)?.display().to_string();
+    let matches: Vec<StoredRecord> = all_records(home)
         .into_iter()
-        .find(|record| record.worktree_path == target)
-    else {
+        .filter(|stored| same_worktree_path(&stored.record.worktree_path, &target))
+        .collect();
+    let Some(first) = matches.first() else {
         bail!("{target} was not created by `sessions move-to-worktree`; it is not removed");
     };
-    if record.moved {
+    if let Some(active) = matches.iter().find(|stored| stored.record.moved) {
         bail!(
             "session {} still works in {target}; run `sessions move-to-worktree {} --undo --apply` first",
-            record.session_id,
-            record.session_id
+            active.record.session_id,
+            active.record.session_id
         );
     }
+    let record = &first.record;
     let dirty = git_worktree::is_dirty(&target)?;
     let report = json!({
         "worktree": target, "branch": record.branch, "uncommitted_changes": dirty, "applied": apply,
@@ -265,10 +338,12 @@ pub(super) fn remove(home: &Path, path: &str, apply: bool, json_output: bool) ->
     let mut lines = vec![format!("would remove {target} (branch {} is kept)", record.branch)];
     if apply {
         git_worktree::remove(&record.previous_working_dir, &target)?;
-        match std::fs::remove_file(record_path(home, &record.session_id)) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+        for stored in &matches {
+            match std::fs::remove_file(&stored.file_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         lines = vec![format!("removed {target}; branch {} is kept", record.branch)];
     } else {

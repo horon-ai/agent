@@ -85,10 +85,18 @@ impl Agent {
     /// turn after a removal. They are the lowest priority source: a name an
     /// authored skill already claims shadows the package entry.
     pub(super) fn current_skills_snapshot(&self) -> std::sync::Arc<crate::skill::SkillRegistry> {
+        let package_text = self.package_text_resources();
+        self.skills_snapshot_for(package_text.as_deref())
+    }
+
+    pub(super) fn skills_snapshot_for(
+        &self,
+        package_text: Option<&crate::packages::PackageTextResources>,
+    ) -> std::sync::Arc<crate::skill::SkillRegistry> {
         let effective = self.session_skills_snapshot();
-        match self.package_text_resources() {
+        match package_text {
             Some(resources) => {
-                std::sync::Arc::new(crate::skill::SkillRegistry::with_package_skills(&effective, &resources))
+                std::sync::Arc::new(crate::skill::SkillRegistry::with_package_skills(&effective, resources))
             }
             None => effective,
         }
@@ -133,21 +141,29 @@ impl Agent {
     pub(super) fn request_skills_section(
         &self,
         package_text: Option<&crate::packages::PackageTextResources>,
+        skills_snapshot: Option<&crate::skill::SkillRegistry>,
     ) -> Option<std::borrow::Cow<'_, str>> {
-        if let Some(section) = self.package_skills_section(package_text) {
+        if let Some(section) = self.package_skills_section(package_text, skills_snapshot) {
             return Some(std::borrow::Cow::Owned(section));
         }
         self.prompt_skills_section.as_deref().map(std::borrow::Cow::Borrowed)
     }
 
-    fn package_skills_section(&self, package_text: Option<&crate::packages::PackageTextResources>) -> Option<String> {
+    fn package_skills_section(
+        &self,
+        package_text: Option<&crate::packages::PackageTextResources>,
+        skills_snapshot: Option<&crate::skill::SkillRegistry>,
+    ) -> Option<String> {
         package_text?.skills().next()?;
-        let infos = self
-            .current_skills_snapshot()
-            .list()
-            .iter()
-            .map(Self::skill_info)
-            .collect::<Vec<_>>();
+        let owned;
+        let snapshot = match skills_snapshot {
+            Some(existing) => existing,
+            None => {
+                owned = self.skills_snapshot_for(package_text);
+                &owned
+            }
+        };
+        let infos = snapshot.list().iter().map(Self::skill_info).collect::<Vec<_>>();
         crate::prompt::build_available_skills_section(&infos)
     }
 

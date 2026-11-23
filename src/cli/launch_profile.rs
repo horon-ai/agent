@@ -63,6 +63,7 @@ pub(crate) fn apply(profile: &Profile) -> Result<()> {
         profile.runtime_dir.join("horon-agent-api.sock"),
     );
     crate::env::set_var(PROFILE_ENV, &profile.name);
+    crate::config::invalidate_config_cache();
     Ok(())
 }
 

@@ -1102,6 +1102,74 @@ fn move_previews_first_and_only_apply_changes_the_stored_working_root() {
     assert_refused(&missing, "does not exist");
 }
 
+#[test]
+fn images_resolves_a_renamed_session_by_name() {
+    let sandbox = Sandbox::new("images-by-name");
+    let home = sandbox.home("a");
+    write_legacy(&home, "old");
+    assert_ok(&sandbox.migrate(&home, "old"));
+    assert_ok(&sandbox.run(&home, &["sessions", "rename", "old", "my-art"]));
+
+    let out = sandbox.run(&home, &["images", "--session", "my-art", "--json"]);
+    assert_ok(&out);
+    let report: Value = serde_json::from_slice(&out.stdout).expect("json report");
+    assert_eq!(report["session"], "old");
+    assert_eq!(report["images"], json!([]));
+}
+
+#[test]
+fn anonymized_export_walks_grandchildren_skips_strangers_and_keeps_block_kinds() {
+    let sandbox = Sandbox::new("anonymize-tree");
+    let home = sandbox.home("a");
+    write_nested(&home);
+    let snap = |id: &str, parent: Value, created: &str, blocks: Vec<Value>| {
+        json!({"id":id,"created_at":created,"updated_at":created,"title":id,"provider_key":"openai",
+               "model":"test","route_api_method":"openai-api",
+               "messages":[{"id":"m1","role":"assistant","content":blocks}],
+               "parent_id":parent,"working_dir":null,"status":"completed","last_pid":null})
+    };
+    let blocks = vec![
+        json!({"type":"open_a_i_reasoning","id":"rs_1","summary":["s"]}),
+        json!({"type":"open_a_i_compaction","encrypted_content":"enc","window":[]}),
+        json!({"type":"provider_native","provider":"openai","item":{"id":"ws_1"}}),
+    ];
+    for (id, val) in [
+        (
+            "grandchild_one",
+            snap("grandchild_one", json!("child_one"), "2020-01-01T00:20:00Z", blocks),
+        ),
+        (
+            "stranger_one",
+            snap(
+                "stranger_one",
+                Value::Null,
+                "2020-01-01T00:30:00Z",
+                vec![json!({"type":"text","text":"x"})],
+            ),
+        ),
+    ] {
+        fs::write(
+            home.join("sessions").join(format!("{id}.json")),
+            serde_json::to_vec(&val).unwrap(),
+        )
+        .unwrap();
+    }
+    for id in ["root_one", "child_one", "grandchild_one", "stranger_one"] {
+        assert_ok(&sandbox.migrate(&home, id));
+    }
+    let (_, doc) = anonymized(&sandbox, &home, &["--with-children"]);
+    let sessions = doc["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 3, "must include root, child, grandchild only: {doc}");
+    assert_eq!(sessions[2]["parent"], "s2");
+    let kinds: Vec<&str> = sessions[2]["messages"][0]["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["type"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["open_a_i_reasoning", "open_a_i_compaction", "provider_native"]);
+}
+
 /// The session store's files minus its rebuildable caches. Reading a session may
 /// repair a cache, which is not a change to anything the user owns.
 fn originals(root: &Path) -> BTreeMap<String, String> {

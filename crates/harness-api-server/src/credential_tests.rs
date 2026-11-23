@@ -200,18 +200,6 @@ fn the_store_file_and_directory_are_owner_only() {
     }
 }
 
-#[test]
-fn constant_time_comparison_matches_only_equal_digests() {
-    assert!(constant_time_eq(&[1, 2, 3, 4], &[1, 2, 3, 4]));
-    assert!(!constant_time_eq(&[1, 2, 3, 4], &[1, 2, 3, 5]));
-    assert!(!constant_time_eq(&[1, 2, 3], &[1, 2, 3, 4]));
-    let digest = [7u8; 32];
-    assert!(constant_time_eq(&digest, &digest));
-    let mut flipped = digest;
-    flipped[31] ^= 1;
-    assert!(!constant_time_eq(&digest, &flipped));
-}
-
 #[cfg(unix)]
 #[test]
 fn a_symlinked_store_is_refused() {

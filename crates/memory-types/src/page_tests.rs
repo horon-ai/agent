@@ -64,6 +64,15 @@ fn ids_that_would_escape_the_wiki_are_rejected() {
             len: PAGE_ID_MAX_BYTES + 1
         })
     );
+    assert_eq!(PageId::parse(&"A".repeat(200)), Err(PageIdError::TooLong { len: 200 }));
+    assert_eq!(PageId::parse(&"가".repeat(50)), Err(PageIdError::TooLong { len: 150 }));
+    let max_encoded = PageId::parse(&"A".repeat(PAGE_ID_MAX_BYTES)).expect("max encoded id fits NAME_MAX");
+    assert!(
+        max_encoded.file_name().len() <= 255,
+        "encoded file name {} exceeds POSIX NAME_MAX",
+        max_encoded.file_name().len()
+    );
+    assert_eq!(PageId::from_file_stem(&max_encoded.file_stem()), Ok(max_encoded));
 }
 
 #[test]

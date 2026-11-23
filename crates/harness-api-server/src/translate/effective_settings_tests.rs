@@ -162,3 +162,42 @@ fn a_reply_no_request_is_waiting_for_is_dropped() {
     );
     assert!(frames.is_empty(), "an uncorrelated reply answers nothing");
 }
+
+#[test]
+fn get_effective_settings_requires_an_attached_session() {
+    let mut unattached = BridgeState::default();
+    let frame = match only(unattached.api_request_to_legacy(&request(46, "s1"))) {
+        Outbound::Reply(frame) => frame,
+        other => panic!("expected unattached error reply, got {other:?}"),
+    };
+    assert_eq!(frame.reply_to, Some(46));
+    assert!(
+        matches!(
+            &frame.event,
+            ApiEvent::Error {
+                code: ErrorCode::UnknownSession,
+                ..
+            }
+        ),
+        "unattached get_effective_settings must be refused before reaching the daemon, got {:?}",
+        frame.event
+    );
+
+    let mut attached_other = state();
+    let frame = match only(attached_other.api_request_to_legacy(&request(47, "s2"))) {
+        Outbound::Reply(frame) => frame,
+        other => panic!("expected mismatched session error reply, got {other:?}"),
+    };
+    assert_eq!(frame.reply_to, Some(47));
+    assert!(
+        matches!(
+            &frame.event,
+            ApiEvent::Error {
+                code: ErrorCode::UnknownSession,
+                ..
+            }
+        ),
+        "mismatched session_id must be refused before reaching the daemon, got {:?}",
+        frame.event
+    );
+}

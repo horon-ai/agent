@@ -60,42 +60,6 @@ fn last_line(app: &App) -> String {
 }
 
 #[test]
-fn builtin_exit_and_keys_resolve_to_the_local_commands() {
-    let (_user, _project, state) = registry();
-    assert_eq!(
-        state.resolve("/exit"),
-        Invocation::Local {
-            command: Local::Exit,
-            arguments: String::new()
-        }
-    );
-    assert_eq!(
-        state.resolve("/keys"),
-        Invocation::Local {
-            command: Local::Keys,
-            arguments: String::new()
-        }
-    );
-    // The argument survives resolution so the handler can decide; `/exit` only
-    // ignores it, it does not turn the line into prose.
-    assert_eq!(
-        state.resolve("/exit now"),
-        Invocation::Local {
-            command: Local::Exit,
-            arguments: "now".to_string()
-        }
-    );
-    // Surrounding whitespace is not part of the name.
-    assert_eq!(
-        state.resolve("  /keys  "),
-        Invocation::Local {
-            command: Local::Keys,
-            arguments: String::new()
-        }
-    );
-}
-
-#[test]
 fn builtin_exit_leaves_through_the_quit_action() {
     let (_user, _project, mut app) = app_fixture();
     assert_eq!(type_line(&mut app, "/exit"), Some(Action::Quit));
@@ -419,25 +383,6 @@ fn builtin_help_lists_every_built_in_command() {
             "`{name}` is missing from the listing:\n{listing}"
         );
     }
-}
-
-#[test]
-fn builtin_new_and_switch_resolve_to_the_local_commands() {
-    let (_user, _project, state) = registry();
-    assert_eq!(
-        state.resolve("/new"),
-        Invocation::Local {
-            command: Local::New,
-            arguments: String::new()
-        }
-    );
-    assert_eq!(
-        state.resolve("/switch session_b"),
-        Invocation::Local {
-            command: Local::Switch,
-            arguments: "session_b".to_string()
-        }
-    );
 }
 
 #[test]

@@ -1,6 +1,62 @@
 //! Tests for the strict frontmatter dialect.
 
-use super::frontmatter::{Document, MAX_KEYS, Value};
+use super::frontmatter::{Document, MAX_KEYS, Value, render_string, write_float};
+
+fn render_value(out: &mut String, value: &Value) {
+    use std::fmt::Write;
+    match value {
+        Value::Str(text) => render_string(out, text),
+        Value::Int(number) => {
+            let _written = write!(out, "{number}");
+        }
+        Value::Float(number) => write_float(out, *number),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Null => out.push_str("null"),
+        Value::List(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                render_value(out, item);
+            }
+            out.push(']');
+        }
+        Value::MapList(entries_list) => {
+            out.push('[');
+            for (index, entries) in entries_list.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push('{');
+                for (entry_index, (key, entry_value)) in entries.iter().enumerate() {
+                    if entry_index > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(key);
+                    out.push_str(": ");
+                    render_value(out, entry_value);
+                }
+                out.push('}');
+            }
+            out.push(']');
+        }
+    }
+}
+
+fn render(doc: &Document) -> String {
+    let mut out = String::with_capacity(256 + doc.body.len());
+    out.push_str("---\n");
+    for (key, value) in &doc.fields {
+        out.push_str(key);
+        out.push_str(": ");
+        render_value(&mut out, value);
+        out.push('\n');
+    }
+    out.push_str("---\n");
+    out.push_str(&doc.body);
+    out
+}
 
 fn document(fields: Vec<(&str, Value)>, body: &str) -> Document {
     Document {
@@ -35,10 +91,10 @@ fn canonical_render_parses_back_to_the_same_document() {
         ],
         "본문 첫 줄\n---\n본문 둘째 줄\n",
     );
-    let text = doc.render();
+    let text = render(&doc);
     let parsed = Document::parse(&text).expect("parse");
     assert_eq!(parsed, doc);
-    assert_eq!(parsed.render(), text);
+    assert_eq!(render(&parsed), text);
     assert_eq!(parsed.body, "본문 첫 줄\n---\n본문 둘째 줄\n");
     assert!(
         text.contains("confidence: 0.8\n"),
@@ -59,8 +115,8 @@ fn round_trip_is_byte_identical() {
         ],
         "",
     );
-    let once = doc.render();
-    let twice = Document::parse(&once).expect("parse").render();
+    let once = render(&doc);
+    let twice = render(&Document::parse(&once).expect("parse"));
     assert_eq!(once, twice);
 }
 
@@ -74,7 +130,7 @@ fn quotes_newlines_and_controls_cannot_break_out_of_a_value() {
         ],
         "본문",
     );
-    let text = doc.render();
+    let text = render(&doc);
     // The injected `kind:` line and the injected closing delimiter are escapes
     // inside one quoted value, so the file still has exactly one frontmatter
     // block and one `kind` field.
@@ -129,9 +185,9 @@ fn oversized_frontmatter_is_refused() {
 fn a_body_that_looks_like_frontmatter_is_just_a_body() {
     let body = "---\ntitle: \"가짜\"\n---\n끝";
     let doc = document(vec![("title", Value::Str("진짜".to_string()))], body);
-    let text = doc.render();
+    let text = render(&doc);
     let parsed = Document::parse(&text).expect("parse");
     assert_eq!(parsed.get_str("title"), Some("진짜"));
     assert_eq!(parsed.body, body);
-    assert_eq!(parsed.render(), text);
+    assert_eq!(render(&parsed), text);
 }

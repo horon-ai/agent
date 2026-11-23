@@ -141,10 +141,12 @@ fn resolve(path: &Path, forced: Option<TranscriptFormat>) -> Result<(TranscriptF
     }
 }
 
-/// Read `path` and describe what importing it would create. Writes nothing.
-pub fn preview(path: &Path, forced: Option<TranscriptFormat>) -> Result<TranscriptPreview> {
-    let (format, source_id) = resolve(path, forced)?;
-    let session = with_preview_only(|| parse(path, format, &source_id))?;
+fn preview_from_session(
+    format: TranscriptFormat,
+    source_id: String,
+    already_imported: bool,
+    session: &Session,
+) -> TranscriptPreview {
     let text_of = |blocks: &[ContentBlock]| {
         blocks
             .iter()
@@ -155,10 +157,10 @@ pub fn preview(path: &Path, forced: Option<TranscriptFormat>) -> Result<Transcri
             .filter(|text| !text.is_empty())
     };
     let messages = session.active_context();
-    Ok(TranscriptPreview {
+    TranscriptPreview {
         format,
         session_id: session.id.clone(),
-        already_imported: crate::session::session_exists(&session.id),
+        already_imported,
         title: session.title.clone(),
         working_dir: session.working_dir.clone(),
         model: session.model.clone(),
@@ -172,19 +174,46 @@ pub fn preview(path: &Path, forced: Option<TranscriptFormat>) -> Result<Transcri
             .filter(|message| message.role == Role::User)
             .find_map(|message| text_of(&message.content)),
         source_id,
-    })
+    }
+}
+
+fn imported_session_id(format: TranscriptFormat, source_id: &str) -> String {
+    match format {
+        TranscriptFormat::Claude => imported_claude_code_session_id(source_id),
+        TranscriptFormat::Codex => imported_codex_session_id(source_id),
+    }
+}
+
+/// Read `path` and describe what importing it would create. Writes nothing.
+pub fn preview(path: &Path, forced: Option<TranscriptFormat>) -> Result<TranscriptPreview> {
+    let (format, source_id) = resolve(path, forced)?;
+    let session = with_preview_only(|| parse(path, format, &source_id))?;
+    let already_imported = crate::session::session_exists(&session.id);
+    Ok(preview_from_session(format, source_id, already_imported, &session))
 }
 
 /// Import `path` under its own Horon id with the source recorded on the session.
 /// Importing the same transcript again reuses the stored session.
 pub fn import(path: &Path, forced: Option<TranscriptFormat>) -> Result<Session> {
     let (format, source_id) = resolve(path, forced)?;
-    let target = match format {
-        TranscriptFormat::Claude => imported_claude_code_session_id(&source_id),
-        TranscriptFormat::Codex => imported_codex_session_id(&source_id),
-    };
+    let target = imported_session_id(format, &source_id);
     if crate::session::session_exists(&target) {
         return Session::load(&target);
     }
     parse(path, format, &source_id)
+}
+
+/// Preview and import `path` in one pass, reusing the parsed session instead of
+/// reading and parsing the source transcript twice.
+pub fn preview_and_import(path: &Path, forced: Option<TranscriptFormat>) -> Result<(TranscriptPreview, Session)> {
+    let (format, source_id) = resolve(path, forced)?;
+    let target = imported_session_id(format, &source_id);
+    let already_imported = crate::session::session_exists(&target);
+    let session = if already_imported {
+        Session::load(&target)?
+    } else {
+        parse(path, format, &source_id)?
+    };
+    let preview = preview_from_session(format, source_id, already_imported, &session);
+    Ok((preview, session))
 }

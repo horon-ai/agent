@@ -193,21 +193,38 @@ fn a_blank_tool_profile_variable_is_the_source_the_daemon_applied() {
 
 #[test]
 fn a_recorded_origin_replaces_the_one_before_it() {
-    // The launcher may choose a default and then apply a flag; the flag is the
-    // answer that lasts.
-    record_launch_origin("HORON_AGENT_TEST_ONLY_LAUNCH_ORIGIN", LaunchOrigin::Default);
-    assert_eq!(
-        launch_origin("HORON_AGENT_TEST_ONLY_LAUNCH_ORIGIN"),
-        Some(LaunchOrigin::Default)
-    );
-    record_launch_origin(
-        "HORON_AGENT_TEST_ONLY_LAUNCH_ORIGIN",
-        LaunchOrigin::Flag("--tool-profile"),
-    );
-    assert_eq!(
-        launch_origin("HORON_AGENT_TEST_ONLY_LAUNCH_ORIGIN"),
-        Some(LaunchOrigin::Flag("--tool-profile"))
-    );
+    // The launcher may choose a default and then apply a flag; the public
+    // effective_settings() report reflects the flag as the winning origin.
+    let _guard = crate::storage::lock_test_env();
+    let previous_home = std::env::var_os("HORON_HOME");
+    let previous_profile = std::env::var_os("HORON_AGENT_TOOL_PROFILE");
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    crate::env::set_var("HORON_HOME", dir.path());
+    crate::env::set_var("HORON_AGENT_TOOL_PROFILE", "core");
+    Config::invalidate_cache();
+
+    record_launch_default("HORON_AGENT_TOOL_PROFILE");
+    let first_rows = effective_settings();
+    let first = pick(&first_rows, "tools.profile");
+    assert_eq!(first.source, EffectiveSource::Default);
+    assert_eq!(first.origin, None);
+
+    record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
+    let second_rows = effective_settings();
+    let second = pick(&second_rows, "tools.profile");
+    assert_eq!(second.value, "core");
+    assert_eq!(second.source, EffectiveSource::Cli);
+    assert_eq!(second.origin.as_deref(), Some("--tool-profile"));
+
+    match previous_home {
+        Some(home) => crate::env::set_var("HORON_HOME", home),
+        None => crate::env::remove_var("HORON_HOME"),
+    }
+    match previous_profile {
+        Some(profile) => crate::env::set_var("HORON_AGENT_TOOL_PROFILE", profile),
+        None => crate::env::remove_var("HORON_AGENT_TOOL_PROFILE"),
+    }
+    Config::invalidate_cache();
 }
 
 #[test]

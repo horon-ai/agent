@@ -141,19 +141,32 @@ impl EditEvidence {
         end: usize,
         replacement: &str,
     ) -> anyhow::Result<()> {
-        let joins_next = end < text.len() && text.as_bytes()[end - 1] == b'\n' && !replacement.ends_with('\n');
-        let required_end = end + usize::from(joins_next);
+        let joins_next =
+            end > start && end < text.len() && text.as_bytes()[end - 1] == b'\n' && !replacement.ends_with('\n');
+        // An empty slice (fuzzy match of a blank line) must still require that
+        // the line at `start` was read, rather than accepting `to == start`
+        // from an earlier line.
+        let required_end = if end == start {
+            (start + 1).min(text.len())
+        } else {
+            end + usize::from(joins_next)
+        };
         let Some(index) = self
             .ranges
             .iter()
             .position(|&(from, to)| from <= start && required_end <= to)
         else {
             let first = text.as_bytes()[..start].iter().filter(|&&byte| byte == b'\n').count() + 1;
-            let last = first
-                + text.as_bytes()[start..required_end - 1]
-                    .iter()
-                    .filter(|&&byte| byte == b'\n')
-                    .count();
+            let span_end = required_end.max((start + 1).min(text.len()));
+            let last = if span_end > start {
+                first
+                    + text.as_bytes()[start..span_end - 1]
+                        .iter()
+                        .filter(|&&byte| byte == b'\n')
+                        .count()
+            } else {
+                first
+            };
             let status = if self.stale { "stale read" } else { "unread lines" };
             anyhow::bail!(
                 "Cannot edit {path} lines {first}-{last}: {status}. Read the current text with start_line={first}, end_line={last}, full=true, then retry."
@@ -239,5 +252,48 @@ mod tests {
         assert!(lookup(session, Path::new(&format!("/p/{READ_STATE_MAX_PATHS}"))).is_some());
         forget_session(session);
         assert!(lookup(session, Path::new(&format!("/p/{READ_STATE_MAX_PATHS}"))).is_none());
+    }
+
+    #[test]
+    fn empty_span_blank_line_edit_rejects_unread_line_without_underflow_and_accepts_read_line() {
+        use sha2::{Digest, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("blank.txt");
+        let text = "\n\nalpha\n";
+        std::fs::write(&file, text).unwrap();
+        let hash: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+        let key = key_for(&file);
+
+        // Only line 3 (`alpha\n`) was read: editing unread blank line 1 `(0, 0)` must fail cleanly.
+        let session_a = "read-state-blank-a";
+        forget_session(session_a);
+        let mut rec_a = record_with(&[(2, 3)]);
+        rec_a.hash = hash;
+        rec_a.edit_evidence = true;
+        record(session_a, key.clone(), rec_a);
+        let mut ev_a = EditEvidence::for_text(session_a, &file, text);
+        let err_a = ev_a
+            .replace(text, "blank.txt", 0, 0, "beta\n")
+            .expect_err("unread line 1 must be refused");
+        assert!(err_a.to_string().contains("lines 1-1: unread lines"), "{err_a}");
+        forget_session(session_a);
+
+        // Only line 1 `(0, 1)` was read: editing unread blank line 2 `(1, 1)` must also fail cleanly.
+        let session_b = "read-state-blank-b";
+        forget_session(session_b);
+        let mut rec_b = record_with(&[(0, 1)]);
+        rec_b.hash = hash;
+        rec_b.edit_evidence = true;
+        record(session_b, key, rec_b);
+        let mut ev_b = EditEvidence::for_text(session_b, &file, text);
+        let err_b = ev_b
+            .replace(text, "blank.txt", 1, 1, "beta\n")
+            .expect_err("unread line 2 must not satisfy via line 1 end");
+        assert!(err_b.to_string().contains("lines 2-2: unread lines"), "{err_b}");
+        // Line 1 itself `(0, 0)` was read and succeeds.
+        ev_b.replace(text, "blank.txt", 0, 0, "beta\n")
+            .expect("read line 1 accepts empty-span fuzzy edit");
+        forget_session(session_b);
     }
 }

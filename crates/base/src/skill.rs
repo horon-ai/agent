@@ -327,12 +327,7 @@ impl SkillRegistry {
     /// random order per instance, which would emit the "Available Skills" prompt
     /// section in different bytes and bust the strict-prefix KV cache.
     pub fn list(&self) -> Vec<&Skill> {
-        let mut skills: Vec<&Skill> = self
-            .skills
-            .iter()
-            .filter(|(key, skill)| filter::allows(key, &skill.name))
-            .map(|(_, skill)| skill)
-            .collect();
+        let mut skills = filter::SkillFilter::from_env().select(&self.skills);
         skills.sort_by(|a, b| a.name.cmp(&b.name));
         skills
     }

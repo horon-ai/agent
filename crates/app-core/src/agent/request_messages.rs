@@ -13,7 +13,7 @@
 use horon_agent_message_types::Message;
 
 #[path = "tool_result_trim.rs"]
-pub(crate) mod tool_result_trim;
+pub mod tool_result_trim;
 
 /// Project `messages` for one provider request.
 ///

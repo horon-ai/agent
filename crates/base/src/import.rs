@@ -1272,7 +1272,10 @@ pub(crate) use takeover::remove_prepared_takeover_session;
 pub use takeover::take_over_live_claude_session;
 mod text;
 mod transcript;
-pub use transcript::{TranscriptFormat, TranscriptPreview, import as import_transcript, preview as preview_transcript};
+pub use transcript::{
+    TranscriptFormat, TranscriptPreview, import as import_transcript, preview as preview_transcript,
+    preview_and_import as preview_and_import_transcript,
+};
 
 #[cfg(test)]
 #[path = "import_tests.rs"]

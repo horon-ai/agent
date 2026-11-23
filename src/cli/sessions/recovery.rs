@@ -151,6 +151,7 @@ pub(super) fn build_report(paths: &store::SessionPaths, id: &store::SessionId) -
     let mut unreadable = Vec::new();
     let mut scanned = 0usize;
     let mut truncated = false;
+    let mut scanner = store::reader::ParentScanner::new();
     for source in store::reader::sources(paths)? {
         if source.layout != store::reader::SourceLayout::Canonical || source.session_id == *id {
             continue;
@@ -160,7 +161,20 @@ pub(super) fn build_report(paths: &store::SessionPaths, id: &store::SessionId) -
             break;
         }
         scanned += 1;
-        match read_session(paths, &source.session_id) {
+        let record_result = match scanner.scan_canonical_parent(paths, &source.session_id) {
+            Ok(store::reader::CanonicalParent::Known(parent)) => {
+                if parent.as_deref() != Some(id.as_str()) {
+                    continue;
+                }
+                read_session(paths, &source.session_id)
+            }
+            Ok(store::reader::CanonicalParent::NeedsReplay) => read_session(paths, &source.session_id),
+            Err(error) => {
+                unreadable.push(json!({"session_id": source.session_id.as_str(), "error": error.to_string()}));
+                continue;
+            }
+        };
+        match record_result {
             Ok(read) if read.parent_id.as_deref() == Some(id.as_str()) => {
                 children.push(state_json(
                     source.session_id.as_str(),
@@ -186,13 +200,15 @@ pub(super) fn build_report(paths: &store::SessionPaths, id: &store::SessionId) -
                 .is_some_and(|calls| !calls.is_empty())
         })
         .count();
-    report["children"] = Value::Array(children.clone());
+    let eligible_children = count("eligible", true);
+    let child_count = children.len();
+    report["children"] = Value::Array(children);
     report["unreadable_sessions"] = json!(unreadable);
     report["child_scan_truncated"] = json!(truncated);
     report["summary"] = json!({
-        "eligible_sessions": count("eligible", true) + usize::from(target.state.eligible()),
+        "eligible_sessions": eligible_children + usize::from(target.state.eligible()),
         "parked_sessions": parked_children + usize::from(!target.state.parked().is_empty()),
-        "children": children.len(),
+        "children": child_count,
     });
     report["resume_command"] = json!(format!("horon-agent --resume {}", id.as_str()));
     Ok(report)

@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
 
-use crate::import::{TranscriptFormat, TranscriptPreview, import_transcript, preview_transcript};
+use crate::import::{TranscriptFormat, TranscriptPreview, preview_and_import_transcript, preview_transcript};
 
 fn parse_format(raw: Option<&str>) -> Result<Option<TranscriptFormat>> {
     match raw {
@@ -33,10 +33,14 @@ fn describe(preview: &TranscriptPreview) -> Value {
 pub(super) fn run(file: &str, format: Option<&str>, apply: bool, json_output: bool) -> Result<()> {
     let path = super::resolve_path(file)?;
     let format = parse_format(format)?;
-    let preview = preview_transcript(&path, format)?;
+    let (preview, imported_session) = if apply {
+        let (preview, session) = preview_and_import_transcript(&path, format)?;
+        (preview, Some(session))
+    } else {
+        (preview_transcript(&path, format)?, None)
+    };
     let mut report = describe(&preview);
-    if apply {
-        let session = import_transcript(&path, format)?;
+    if let Some(session) = imported_session {
         report["imported"] = json!(true);
         report["session_id"] = json!(session.id);
         report["resume"] = json!(format!("horon --resume {}", session.id));

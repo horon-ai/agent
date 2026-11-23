@@ -532,6 +532,9 @@ impl App {
         // in flight when the answer landed cannot put strangers' rows under the
         // new session.
         self.picker = None;
+        // A commit review belongs to the previous session's confirmation flow,
+        // even when the newly attached session works in the same directory.
+        self.commit_review = None;
         // The candidates were read from the directory of the session being
         // left; the next Tab reads the directory this session reported.
         self.path_cycle = None;
@@ -591,11 +594,12 @@ impl App {
     /// root, and an answer that names no folder is not the old one either, so
     /// path completion stays off until a session names one.
     pub fn apply_session_directory(&mut self, directory: Option<&str>) {
+        // Every attach answer belongs to a freshly attached or switched session,
+        // so any staged commit review from before that attach is stale even if
+        // the directory happens to stay the same.
+        self.commit_review = None;
         let Some(directory) = directory.map(str::trim).filter(|directory| !directory.is_empty()) else {
             self.workspace_known = false;
-            // A review describes the index of one work tree, and this session
-            // now names none, so there is nothing it could be confirmed against.
-            self.commit_review = None;
             return;
         };
         self.workspace_known = true;
@@ -603,9 +607,6 @@ impl App {
             return;
         }
         self.cwd = Some(directory.to_string());
-        // The review was read from the directory being left; its commit would
-        // land in a repository this session no longer works in.
-        self.commit_review = None;
         self.reload_commands();
     }
 

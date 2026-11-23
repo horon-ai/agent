@@ -1,3 +1,4 @@
+use crate::message::Role;
 use horon_agent_time::Timestamp;
 
 use super::model::{StoredReplayEvent, StoredReplayEventKind};
@@ -30,5 +31,12 @@ impl super::Session {
             .iter()
             .map(|event| &event.kind)
             .find(|kind| matches!(kind, StoredReplayEventKind::Prewalk { .. }))
+    }
+
+    /// Whether this session already has any visible assistant message.
+    pub fn has_visible_assistant_message(&self) -> bool {
+        self.messages
+            .iter()
+            .any(|message| message.role == Role::Assistant && super::is_visible_conversation_message(message))
     }
 }

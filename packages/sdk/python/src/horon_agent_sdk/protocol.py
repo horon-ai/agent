@@ -135,6 +135,126 @@ class PackageCommandOutcome(TypedDict, total=False):
     data: Any
 
 
+PackageKind: TypeAlias = Literal["extension", "plugin"]
+
+
+class PackageControlGlobalScope(TypedDict):
+    """Package installed in the user's shared catalog."""
+
+    kind: Literal["global"]
+
+
+class PackageControlProjectScope(TypedDict):
+    """Package installed for one canonical project root."""
+
+    kind: Literal["project"]
+    root: str
+
+
+PackageControlScope: TypeAlias = PackageControlGlobalScope | PackageControlProjectScope
+
+
+class _PackageControlInstallRequired(TypedDict):
+    kind: Literal["install"]
+    directory: str
+    scope: PackageControlScope
+
+
+class PackageControlInstallOperation(_PackageControlInstallRequired, total=False):
+    """Install one package directory into ``scope``."""
+
+    replace: bool
+
+
+class PackageControlDisableOperation(TypedDict):
+    """Disable an installed package without removing its files."""
+
+    kind: Literal["disable"]
+    id: str
+
+
+class PackageControlEnableOperation(TypedDict):
+    """Re-enable a disabled package."""
+
+    kind: Literal["enable"]
+    id: str
+
+
+class PackageControlRemoveOperation(TypedDict):
+    """Remove an installed package while reserving its id tombstone."""
+
+    kind: Literal["remove"]
+    id: str
+
+
+class PackageControlSyncInboxOperation(TypedDict):
+    """Install every complete directory under ``inbox/``."""
+
+    kind: Literal["sync_inbox"]
+
+
+class PackageControlStatusOperation(TypedDict):
+    """Read the published catalog without changing it."""
+
+    kind: Literal["status"]
+
+
+PackageControlOperation: TypeAlias = (
+    PackageControlInstallOperation
+    | PackageControlDisableOperation
+    | PackageControlEnableOperation
+    | PackageControlRemoveOperation
+    | PackageControlSyncInboxOperation
+    | PackageControlStatusOperation
+)
+
+
+class PackageControlRequest(TypedDict):
+    """One catalog request, identified by a caller-chosen operation id."""
+
+    operation_id: str
+    operation: PackageControlOperation
+
+
+PackageControlState: TypeAlias = Literal["installed", "disabled", "revoked"]
+
+
+class PackageSummary(TypedDict):
+    """One catalog record as a management client sees it."""
+
+    kind: PackageKind
+    id: str
+    version: str
+    name: str
+    scope: PackageControlScope
+    state: PackageControlState
+    generation: int
+
+
+class PackageInboxSkip(TypedDict):
+    """One inbox entry a pass left in place, with the reason."""
+
+    name: str
+    reason: str
+
+
+class _PackageControlReceiptRequired(TypedDict):
+    operation_id: str
+    generation: int
+    catalog: list[PackageSummary]
+
+
+class PackageControlReceipt(_PackageControlReceiptRequired, total=False):
+    """The authoritative answer to one ``package_control`` request.
+
+    ``operation_id``, ``generation``, and ``catalog`` are always present.
+    """
+
+    replayed: bool
+    changed: list[str]
+    skipped: list[PackageInboxSkip]
+
+
 PermissionDecision: TypeAlias = Literal["allow", "allow_always", "deny"]
 
 
