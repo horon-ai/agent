@@ -415,6 +415,7 @@ pub struct App {
     /// The revision says the conversation was replaced (a clear or a session
     /// switch), and the count says how many of its answers were recorded.
     record_scan: (u64, usize),
+    record_generation: u64,
 }
 
 impl App {
@@ -509,6 +510,7 @@ impl App {
             voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
+            record_generation: 0,
         }
     }
 
@@ -602,6 +604,7 @@ impl App {
             voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
+            record_generation: 0,
         }
     }
 
