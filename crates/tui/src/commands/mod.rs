@@ -6,7 +6,7 @@
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/fork`, `/mcp`, `/new`, `/note`, `/pin`,
-//!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/todo`,
+//!    `/rename`, `/settings`, `/side`, `/resume`, `/skills`, `/stats`, `/switch`, `/todo`,
 //!    `/tools`, `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/retry`, `/diff`,
 //!    `/commit`, `/swarm` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
@@ -110,6 +110,8 @@ pub enum Local {
     Fork,
     /// Open the settings screen.
     Settings,
+    /// Ask a read-only child of this conversation a side question.
+    Side,
     /// Rename the attached session.
     Rename,
     /// Resume a session stored for this working directory.
@@ -186,6 +188,9 @@ impl Local {
             "new" => Some(Self::New),
             "fork" | "branch" => Some(Self::Fork),
             "settings" => Some(Self::Settings),
+            // `/btw` is the name the workflow is known by elsewhere; both ask
+            // the same question and open the same screen.
+            "side" | "btw" => Some(Self::Side),
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
             "archived" => Some(Self::Archived),
@@ -229,6 +234,7 @@ impl Local {
             Self::New => "new",
             Self::Fork => "fork",
             Self::Settings => "settings",
+            Self::Side => "side",
             Self::Rename => "rename",
             Self::Resume => "resume",
             Self::Archived => "archived",
@@ -850,6 +856,7 @@ const LOCAL_NAMES: &[&str] = &[
     "resume",
     "retry",
     "settings",
+    "side",
     "skills",
     "stats",
     "swarm",

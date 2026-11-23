@@ -3,6 +3,7 @@
 
 mod cancellable_work;
 mod compact_handoff;
+mod consult;
 mod credentials;
 pub(crate) mod effective_settings;
 pub(crate) mod package_control;

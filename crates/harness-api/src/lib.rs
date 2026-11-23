@@ -92,7 +92,7 @@ pub use horon_agent_extension_types::control::{
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 30;
+pub const API_VERSION_MINOR: u32 = 31;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -142,6 +142,9 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// all. The reply never carries a value outside the allow-list, so no credential
 /// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
+/// `fork_session` accepts `consult` and `boundary`: the daemon stores the
+/// read-only classification and resolves the boundary before answering.
+pub const CAPABILITY_CONSULT_FORK_V1: &str = "consult_fork_v1";
 /// A client can manage the daemon's package catalog: install, disable, enable,
 /// remove, sync the inbox and read the published generation. Gates
 /// `package_control` and the `package_control` reply.
@@ -228,6 +231,10 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_SESSION_FORK_AT_V1, &["fork_session_at"]),
     (CAPABILITY_TODO_EDIT_V1, &["set_todo_status"]),
     (CAPABILITY_TURN_RETRY_V1, &["send_message.expected_run_id"]),
+    (
+        CAPABILITY_CONSULT_FORK_V1,
+        &["fork_session.consult", "fork_session.boundary"],
+    ),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -245,6 +252,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_SESSION_FORK_AT_V1,
     CAPABILITY_TODO_EDIT_V1,
     CAPABILITY_TURN_RETRY_V1,
+    CAPABILITY_CONSULT_FORK_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

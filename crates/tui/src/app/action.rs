@@ -84,6 +84,12 @@ pub enum Action {
     NewSession,
     /// Attach to another session and replay its stored conversation.
     Attach(String),
+    /// Ask a read-only child of this conversation a question.
+    SideQuestion {
+        id: u64,
+        question: String,
+        boundary: Option<String>,
+    },
     /// Save a title for the attached session.
     Rename(String),
     /// Ask the harness for the skills it reports for the session.

@@ -140,6 +140,8 @@ Commands:
   /replay [path] play a recording, or the newest one (stop)
   /resume [id]   replay a stored session, or pick one from the list
   /settings      open the settings screen, generated from the registry
+  /side [question]
+                 ask a separate read-only session a question
   /skills        list the skills the harness reports, and put one in the
                  draft
   /stats         show the attached session's recorded token usage
@@ -325,6 +327,9 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "resume" => "replay a stored session, or pick one from the list",
         "retry" => "continue the last failed turn of this session, keeping its one prompt",
         "settings" => "open the settings screen",
+        "side" => {
+            "ask a read-only side session about this conversation (also /btw; --at <id> forks before a stored message), then esc back"
+        }
         "skills" => "list the skills the harness reports, and put one in the draft",
         "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
         "switch" => "move to another stored session, or pick one from the list",

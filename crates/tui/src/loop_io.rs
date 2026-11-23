@@ -154,6 +154,12 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
             }
             Incoming::RetryRefused(message) => app.retry_refused(&message),
             Incoming::RequestFailed(message) => app.request_failed(&message),
+            Incoming::SideStarted { id, session_id } => app.side_started(id, session_id),
+            Incoming::SideAnswer { id, answer } => app.side_answer(id, answer),
+            Incoming::SideProgress { id, line } => app.side_progress(id, line),
+            Incoming::SideNotice { id, line } => app.side_notice(id, line),
+            Incoming::SideDone { id, answer } => app.side_done(id, answer),
+            Incoming::SideFailed { id, message } => app.side_failed(id, message),
             Incoming::Closed(message) => app.disconnect(&message),
         }
     }
@@ -226,6 +232,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
             working_dir: app.cwd.clone(),
         },
         Action::Attach(session_id) => Command::Attach(session_id),
+        Action::SideQuestion { id, question, boundary } => Command::SideQuestion { id, question, boundary },
         Action::Forks => Command::Forks,
         Action::Fork(boundary) => Command::Fork(boundary),
         Action::Rename(title) => Command::Rename(title),

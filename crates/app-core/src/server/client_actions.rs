@@ -531,19 +531,38 @@ fn load_split_parent(parent_session_id: &str, live_parent: Option<&Session>) -> 
     })
 }
 
-fn clone_split_session(parent_session_id: &str, live_parent: Option<&Session>) -> anyhow::Result<(String, String)> {
+fn clone_split_session(
+    parent_session_id: &str,
+    live_parent: Option<&Session>,
+    consult: bool,
+    boundary: Option<&str>,
+) -> anyhow::Result<(String, String)> {
     let parent = load_split_parent(parent_session_id, live_parent)?;
 
     let mut child = Session::create(Some(parent_session_id.to_string()), None);
-    child.inherit_history(&parent)?;
+    // A summary covers a window the boundary may have cut, so a boundary fork
+    // starts uncompacted; the full fork keeps the parent's compaction.
+    if let Some(boundary) = boundary {
+        let boundary = boundary.trim();
+        anyhow::ensure!(!boundary.is_empty(), "fork requires a recorded boundary");
+        child.inherit_history_before(&parent, boundary)?;
+        child.compaction = None;
+    } else {
+        child.inherit_history(&parent)?;
+        child.compaction = parent.compaction.clone();
+    }
     child.inherit_cache_root(&parent);
-    child.compaction = parent.compaction.clone();
     child.system_prompt = parent.system_prompt.clone();
     child.working_dir = parent.working_dir.clone();
     child.model = parent.model.clone();
     child.provider_key = parent.provider_key.clone();
     child.route_api_method = parent.route_api_method.clone();
     child.status = crate::session::SessionStatus::Closed;
+    // A read-only consult child is persisted with the flag, so it is already
+    // narrow when its id is answered and stays narrow after a daemon restart.
+    // A normal parent does not become consult, but a consult parent can never
+    // be copied into a wider child: the classification only ever narrows.
+    child.consult = consult || parent.consult;
     // The parent agent keeps ownership of any in-flight request; tell the
     // forked agent so it treats the next prompt as fresh work instead of
     // continuing (and duplicating) the parent's current turn.
@@ -567,22 +586,7 @@ fn clone_split_session_at(
     boundary_message_id: &str,
     live_parent: Option<&Session>,
 ) -> anyhow::Result<(String, String)> {
-    let parent = load_split_parent(parent_session_id, live_parent)?;
-
-    let mut child = Session::create(Some(parent_session_id.to_string()), None);
-    child.inherit_history_before(&parent, boundary_message_id)?;
-    child.inherit_cache_root(&parent);
-    child.system_prompt = parent.system_prompt.clone();
-    child.working_dir = parent.working_dir.clone();
-    child.model = parent.model.clone();
-    child.provider_key = parent.provider_key.clone();
-    child.route_api_method = parent.route_api_method.clone();
-    child.status = crate::session::SessionStatus::Closed;
-    child.append_fork_notice(parent_session_id, parent.display_name());
-    child.save()?;
-
-    let name = child.display_name().to_string();
-    Ok((child.id.clone(), name))
+    clone_split_session(parent_session_id, live_parent, false, Some(boundary_message_id))
 }
 
 fn transfer_active_messages(session: &Session) -> Vec<crate::message::Message> {
@@ -616,6 +620,8 @@ fn create_transfer_child_session(
     child.improve_mode = parent.improve_mode;
     child.autoreview_enabled = parent.autoreview_enabled;
     child.autojudge_enabled = parent.autojudge_enabled;
+    // A handoff of a read-only consult child is still a consult child.
+    child.consult = parent.consult;
     child.provider_session_id = None;
     child.status = crate::session::SessionStatus::Closed;
     child.save()?;
@@ -635,7 +641,9 @@ pub(super) async fn dispatch_split(
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
 ) {
     match request {
-        Request::Split { id } => handle_split(id, client_session_id, agent, client_event_tx).await,
+        Request::Split { id, consult, boundary } => {
+            handle_split(id, client_session_id, agent, client_event_tx, consult, boundary).await
+        }
         Request::SplitAt {
             id,
             boundary_message_id,
@@ -651,6 +659,8 @@ pub(super) async fn handle_split(
     client_session_id: &str,
     agent: &Arc<Mutex<Agent>>,
     client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
+    consult: bool,
+    boundary: Option<String>,
 ) {
     run_split_request(
         id,
@@ -659,7 +669,7 @@ pub(super) async fn handle_split(
         client_event_tx,
         "split",
         "Failed to save split session",
-        |live_parent| clone_split_session(client_session_id, live_parent),
+        |live_parent| clone_split_session(client_session_id, live_parent, consult, boundary.as_deref()),
     )
     .await;
 }

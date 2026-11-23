@@ -1589,13 +1589,38 @@ class HoronAgentClient:
             raise HarnessError("unexpected_reply", "attached without a session")
         return session
 
-    async def fork_session(self, session_id: str) -> dict[str, Any]:
-        """Clone a session's complete persisted context into a new idle session."""
-        frame = await self._expect_reply({"req": "fork_session", "session_id": session_id}, "session_forked")
+    async def fork_session(
+        self,
+        session_id: str,
+        *,
+        consult: bool = False,
+        boundary: str | None = None,
+    ) -> dict[str, Any]:
+        """Clone a session's context into a new idle session.
+
+        ``consult`` makes the child read-only; the daemon stores the flag before
+        answering. ``boundary`` is a stored message id the child stops before,
+        keeping the prefix before it; a stale id is refused and forks nothing.
+        """
+        request: dict[str, Any] = {"req": "fork_session", "session_id": session_id}
+        if consult:
+            request["consult"] = True
+        if boundary is not None:
+            request["boundary"] = boundary
+        frame = await self._expect_reply(request, "session_forked")
         session = frame.get("session")
         if not isinstance(session, dict):
             raise HarnessError("unexpected_reply", "session_forked without a session")
         return session
+
+    async def fork_consult(self, session_id: str, boundary: str | None = None) -> dict[str, Any]:
+        """Fork a read-only consult child, optionally before a stored message id."""
+        if "consult_fork_v1" not in self.capabilities:
+            raise HarnessError(
+                "unsupported",
+                "This harness cannot create a read-only side session. Update the runtime and API bridge.",
+            )
+        return await self.fork_session(session_id, consult=True, boundary=boundary)
 
     async def fork_session_at(self, session_id: str, boundary_message_id: str) -> dict[str, Any]:
         """Fork the messages recorded before ``boundary_message_id`` into a new session.

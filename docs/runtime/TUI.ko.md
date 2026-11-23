@@ -480,6 +480,7 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 | `/resume [id]` | 저장된 세션을 다시 그리거나, 목록에서 고른다 |
 | `/retry` | 연결된 세션의 최근 실패 턴이 재시도 대상이면 이어서 실행한다 |
 | `/settings` | 설정 화면을 연다 |
+| `/side <질문>` | 별도의 읽기 전용 세션에 질문한다 |
 | `/skills` | 하네스가 보고한 스킬을 나열하고 그 가운데 하나를 초안에 넣는다 |
 | `/stats` | 연결된 세션에 기록된 토큰 사용량을 표시한다 |
 | `/swarm` | 연결된 세션의 직계 자식을 살펴보고 부모 세션으로 돌아간다 |
@@ -500,9 +501,11 @@ Ctrl+G를 누르면 `VISUAL`에서 초안을 편집합니다. `VISUAL`이 비어
 
 받아쓰려면 로컬 `whisper-cli`와 `$HORON_HOME/models/`의 `ggml-*.bin` 모델이 필요합니다. macOS에서는 `ffmpeg`로 녹음하고 `say`로 재생합니다. Linux에서는 `arecord`로 녹음하고 `espeak-ng`나 `espeak`로 재생합니다. `/voice status`에서 빠진 항목을 확인할 수 있습니다. 필요한 프로그램과 모델은 사용자가 직접 설치합니다. 필요한 프로그램이 없어도 키보드로 입력할 수 있습니다.
 
-이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른일곱 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
+이 표가 내장 명령 목록(`crates/tui/src/commands/mod.rs`의 `Local`)이고, 클라이언트가 스스로 답하는 서른여덟 명령을 이름 순으로 적었다. `/tools`는 데몬이 현재 세션에 제공하는 도구 목록을 읽고, 데몬이 로딩 단계를 보고하지 않으면 `unknown`으로 표시한다.
 
 `/queue`에서 Enter를 누르면 선택한 메시지가 입력란으로 돌아온다. Delete로 메시지를 지우고 Alt+위쪽이나 Alt+아래쪽 방향 키로 순서를 바꾼다. 이미 전송 중인 메시지는 목록에 들지 않는다. 편집한 초안은 준비되면 다시 보낼 수 있다.
+
+`/side <질문>`의 답변은 별도 패널에 표시됩니다. 저장된 메시지 직전까지의 대화로 질문하려면 `/side --at <메시지-id> <질문>`을 사용합니다. Escape를 누르면 패널을 닫고 원래 대화를 이어갑니다. 패널에 저장된 세션이 나오면 Enter를 눌러 다시 열 수 있습니다. 데몬은 다시 연 자식 세션에도 읽기 전용 제한을 적용합니다.
 
 `/jobs`는 현재 세션이 아직 실행 중인 백그라운드 작업을 나열한다. 전사에 남은 알림을 다시 그리는 대신 데몬에 매번 새로 묻기 때문에, 다른 클라이언트에서 시작하거나 끝난 작업도 지금 상태 그대로 보인다. 행마다 명령, 작업 종류와 가장 최근 출력을 보여 준다. Delete는 선택한 백그라운드 터미널을 취소하며, 세션과 다른 작업은 계속 실행된다. Esc는 아무것도 취소하지 않고 목록만 닫는다. 도구 호출 작업은 목록에 나오지만 여기서는 취소할 수 없고, 데몬이 거부할 요청을 보내는 대신 그렇다고 알린다. 세션을 바꾸면 행을 비우는데, 호출 id는 그 작업을 시작한 세션에서만 뜻이 있기 때문이다.
 
@@ -551,6 +554,7 @@ built-in commands:
   /resume              replay a stored session, or pick one from the list
   /retry               continue the last failed turn of this session, keeping its one prompt
   /settings            open the settings screen
+  /side                ask a separate read-only session a question
   /skills              list the skills the harness reports, and put one in the draft
   /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one

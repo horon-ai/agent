@@ -145,11 +145,11 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // Listed so an SDK capability gate finds it; `hello_ok` drops it when the
     // daemon did not report `runtime_commands`.
     horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1,
-    // Advertised unconditionally and forwarded; older daemons return `unsupported`
-    // naming this capability.
+    // Forwarded to daemon; unsupported or non-advertising daemons are filtered or return `unsupported`.
     horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
     horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
     horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1,
+    horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -383,6 +383,7 @@ where
     let user_connections_supported = daemon_caps.iter().any(|cap| cap == "session_connections");
     let runtime_commands_supported = daemon_caps.iter().any(|cap| cap == "runtime_commands");
     let session_tools_supported = daemon_caps.iter().any(|cap| cap == "session_tools");
+    let consult_fork_supported = daemon_caps.iter().any(|cap| cap == "consult_fork_v1");
     let soft_interrupt_ids_supported = daemon_caps.iter().any(|cap| cap == "soft_interrupt_ids");
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
@@ -413,12 +414,10 @@ where
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
                 .filter(|cap| retry_supported || *cap != retry_capability)
-                // The package commands ride the runtime-command request, so a
-                // daemon without that surface cannot answer them at all. The
-                // bridge cannot see which variants a daemon's enum holds; the
-                // release keeps them in step, and an older daemon answers the
-                // unknown value with an error the client shows.
+                // Package commands ride `runtime_command` and consult forks require daemon
+                // `consult_fork_v1`; drop them when the connected daemon lacks support.
                 .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_PACKAGE_COMMANDS_V1 || runtime_commands_supported)
+                .filter(|cap| *cap != horon_agent_harness_api::CAPABILITY_CONSULT_FORK_V1 || consult_fork_supported)
                 .map(str::to_string)
                 .chain(user_connections_supported.then(|| "session_connections".to_string()))
                 .chain(runtime_commands_supported.then(|| "runtime_commands".to_string()))

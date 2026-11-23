@@ -30,15 +30,6 @@ pub(crate) fn launch_directory(explicit: Option<PathBuf>) -> Option<PathBuf> {
     Some(dir)
 }
 
-/// The user's home directory, which the status line shortens to `~`.
-pub(crate) fn home_directory() -> Option<String> {
-    let value = match std::env::var_os("HOME") {
-        Some(home) => home,
-        None => std::env::var_os("USERPROFILE")?,
-    };
-    Some(value.to_string_lossy().into_owned())
-}
-
 /// Entries one Tab may read before the directory is treated as unbounded.
 ///
 /// A partial listing could fill a prefix no candidate actually shares, so past

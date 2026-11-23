@@ -576,6 +576,10 @@ impl App {
         self.usage = None;
         self.cost = None;
         self.scroll = Scroll::new();
+        // A side question belongs to the session it was asked of. Moving to
+        // another session closes it; the child stays stored, and its answer is
+        // reachable from the session list like any other conversation.
+        self.side = None;
         self.slash.dismiss();
         // A list that is still open describes the session being left: its rows
         // were fetched for that session's swarm or directory, and a selection

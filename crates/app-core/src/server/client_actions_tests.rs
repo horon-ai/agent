@@ -139,7 +139,8 @@ fn clone_split_session_uses_persisted_session_state() {
             cache_control: None,
         }],
     );
-    let (child_id, _child_name) = clone_split_session(&parent.id, Some(&unsaved_parent)).expect("clone split");
+    let (child_id, _child_name) =
+        clone_split_session(&parent.id, Some(&unsaved_parent), false, None).expect("clone split");
     let child = crate::session::Session::load(&child_id).expect("load child");
 
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
@@ -175,6 +176,41 @@ fn clone_split_session_uses_persisted_session_state() {
     } else {
         crate::env::remove_var("HORON_HOME");
     }
+}
+
+#[test]
+fn a_consult_fork_stores_the_flag_and_no_fork_can_widen_it() {
+    let _guard = crate::storage::lock_test_env();
+    let _home = SplitTestHome::new();
+
+    let mut parent = crate::session::Session::create_with_id("session_consult_parent".to_string(), None, None);
+    parent.working_dir = Some("/tmp/horon-agent-consult-test".to_string());
+    parent.add_message(
+        Role::User,
+        vec![ContentBlock::Text {
+            text: "parent turn".into(),
+            cache_control: None,
+        }],
+    );
+    parent.save().expect("save parent");
+
+    let (consult_id, _) = clone_split_session(&parent.id, None, true, None).expect("consult split");
+    let consult = crate::session::Session::load(&consult_id).expect("load consult");
+    assert!(
+        consult.consult,
+        "the consult classification must be stored before the child id is answered"
+    );
+
+    // The classification only ever narrows: a normal fork of a consult child
+    // cannot become a full-permission session, while a normal parent's fork
+    // stays ordinary.
+    let (narrow_id, _) = clone_split_session(&consult_id, None, false, None).expect("fork of consult");
+    let narrow = crate::session::Session::load(&narrow_id).expect("load fork of consult");
+    assert!(narrow.consult, "a consult child was copied into a wider session");
+
+    let (plain_id, _) = clone_split_session(&parent.id, None, false, None).expect("normal split");
+    let plain = crate::session::Session::load(&plain_id).expect("load normal");
+    assert!(!plain.consult, "a normal fork inherited the consult classification");
 }
 
 struct SplitTestHome {
@@ -247,7 +283,7 @@ async fn split_empty_live_session_without_persisted_parent() {
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
 
-    handle_split(17, &parent.id, &agent, &tx).await;
+    handle_split(17, &parent.id, &agent, &tx, false, None).await;
     let child = split_response(&mut rx, 17);
     assert_ne!(child.id, parent.id);
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
@@ -289,9 +325,12 @@ async fn split_busy_session_uses_persisted_state_without_waiting_for_agent() {
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
 
-    timeout(Duration::from_millis(100), handle_split(18, &parent.id, &agent, &tx))
-        .await
-        .expect("split must not wait on the held streaming Agent lock");
+    timeout(
+        Duration::from_millis(100),
+        handle_split(18, &parent.id, &agent, &tx, false, None),
+    )
+    .await
+    .expect("split must not wait on the held streaming Agent lock");
     let child = split_response(&mut rx, 18);
     assert_eq!(child.active_context().len(), parent.active_context().len() + 1);
     assert_eq!(
@@ -325,9 +364,12 @@ async fn split_busy_unsaved_session_returns_error_without_waiting() {
     let parent_id = busy.session_id().to_owned();
     assert!(!crate::session::session_exists(&parent_id));
     let (tx, mut rx) = mpsc::unbounded_channel();
-    timeout(Duration::from_millis(100), handle_split(19, &parent_id, &agent, &tx))
-        .await
-        .expect("missing snapshot must not block a busy session");
+    timeout(
+        Duration::from_millis(100),
+        handle_split(19, &parent_id, &agent, &tx, false, None),
+    )
+    .await
+    .expect("missing snapshot must not block a busy session");
     assert!(matches!(rx.try_recv(), Ok(ServerEvent::Error { id: 19, .. })));
     assert!(rx.try_recv().is_err());
     drop(busy);
@@ -382,7 +424,7 @@ fn split_missing_parent_never_uses_another_live_session() {
     let _guard = crate::storage::lock_test_env();
     let _home = SplitTestHome::new();
     let other = crate::session::Session::create(None, None);
-    assert!(clone_split_session("session_missing_parent", Some(&other)).is_err());
+    assert!(clone_split_session("session_missing_parent", Some(&other), false, None).is_err());
 }
 
 #[test]
@@ -408,7 +450,7 @@ fn split_corrupt_persisted_parent_is_not_hidden_by_live_fallback() {
     // original has to surface, never be replaced by the live in-memory copy.
     let path = parent.event_log_path().expect("event log path");
     std::fs::write(&path, b"invalid session JSON").unwrap();
-    assert!(clone_split_session(&parent.id, Some(&parent)).is_err());
+    assert!(clone_split_session(&parent.id, Some(&parent), false, None).is_err());
     assert_eq!(std::fs::read(&path).unwrap(), b"invalid session JSON");
 }
 

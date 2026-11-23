@@ -80,6 +80,10 @@ pub(crate) fn configure(
     config: SessionToolConfig,
     sender: mpsc::UnboundedSender<ServerEvent>,
 ) -> Result<()> {
+    anyhow::ensure!(
+        !crate::tool::session_is_consult(session),
+        "This session is a read-only consult child; its tool list cannot be configured"
+    );
     let valid_name = |name: &str| {
         !name.is_empty()
             && name.len() <= 128

@@ -479,7 +479,17 @@ pub enum Request {
 
     /// Split the current session — clone conversation into a new session
     #[serde(rename = "split")]
-    Split { id: u64 },
+    Split {
+        id: u64,
+        /// Make the fork a read-only consult child: the stored session carries
+        /// the flag, so every later agent starts on the consult tool list.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        consult: bool,
+        /// The stored message the child does not get: it keeps the prefix before
+        /// this id. A stale id refuses the fork before a child exists.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boundary: Option<String>,
+    },
 
     /// Fork the current session from a recorded boundary.
     ///

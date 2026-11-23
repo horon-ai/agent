@@ -37,6 +37,11 @@ pub(super) async fn connection_presence_pong(
         native_ssh_protocol: Some(1),
         capabilities: vec![
             "session_tools".into(),
+            // `split` accepts `consult: true`, which stores the flag on the
+            // child before its id is answered. A client that needs a read-only
+            // fork checks this first: an older daemon would ignore the field
+            // and hand back a fork with the parent's tools.
+            "consult_fork_v1".into(),
             "soft_interrupt_ids".into(),
             "runtime_commands".into(),
             "session_connections".into(),

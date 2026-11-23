@@ -41,7 +41,7 @@ pub(super) fn request(state: &mut BridgeState, request: &Value, api_id: u64, req
     let id = state.legacy_id();
     state.pending_fork_id = Some((id, api_id));
     let frame = if req == "fork_session" {
-        json!({"type": "split", "id": id})
+        super::consult::fork_frame(id, request)
     } else {
         json!({"type": "transfer", "id": id})
     };

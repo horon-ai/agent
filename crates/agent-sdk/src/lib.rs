@@ -136,6 +136,7 @@ mod cancellable_work;
 mod client;
 pub mod collections;
 mod connect_options;
+mod consult;
 mod continuation;
 pub use continuation::CONTINUATION_REMINDER;
 mod diagnostics;

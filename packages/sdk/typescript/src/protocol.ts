@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 30;
+export const API_VERSION_MINOR = 31;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -35,6 +35,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["session_fork_at_v1", ["fork_session_at"]],
   ["todo_edit_v1", ["set_todo_status"]],
   ["turn_retry_v1", ["send_message.expected_run_id"]],
+  ["consult_fork_v1", ["fork_session.consult", "fork_session.boundary"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -744,7 +745,14 @@ export type ApiRequest =
   | { req: "set_retention_policy"; archive_after_days?: number }
   | { req: "create_session"; working_dir?: string; system_prompt?: string }
   | { req: "attach_session"; session_id: string }
-  | { req: "fork_session"; session_id: string }
+  | {
+      req: "fork_session";
+      session_id: string;
+      /** Create a read-only consult child; stored before the reply. */
+      consult?: boolean;
+      /** Stored message id the child stops before; a stale id is refused. */
+      boundary?: string;
+    }
   | { req: "fork_session_at"; session_id: string; boundary_message_id: string }
   | { req: "transfer_session"; session_id: string }
   | { req: "detach_session"; session_id: string }

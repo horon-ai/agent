@@ -83,8 +83,9 @@ pub fn expand_path(argument: &str) -> PathBuf {
     PathBuf::from(argument)
 }
 
-/// The home directory `~/` is resolved against.
-fn home_directory() -> Option<String> {
+/// The home directory `~/` is resolved against, and the one the status line
+/// shortens to `~`.
+pub(crate) fn home_directory() -> Option<String> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|home| home.to_string_lossy().into_owned())

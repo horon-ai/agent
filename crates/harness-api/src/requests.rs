@@ -101,7 +101,20 @@ pub enum ApiRequest {
     AttachSession { session_id: String },
 
     /// Clone an attached session's transcript into a new, idle session.
-    ForkSession { session_id: String },
+    ///
+    /// `consult` makes the fork a read-only consult child: the flag is stored
+    /// with the child before its id is answered, and every agent built for it
+    /// starts on the consult tool list, including after a daemon restart. A
+    /// normal fork never inherits the flag.
+    ForkSession {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        consult: bool,
+        /// Stored message id the fork stops before: the child keeps the prefix
+        /// before it. A stale id is refused and no child is created.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boundary: Option<String>,
+    },
 
     /// Clone the messages recorded before `boundary_message_id` into a new,
     /// idle session, leaving the source untouched.

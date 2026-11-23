@@ -6,6 +6,7 @@ use horon_agent_session_store::{SessionId, SessionMetadata, SessionPaths};
 use horon_agent_time::Timestamp;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Host-local only. Replica export never carries this execution ownership.
@@ -356,6 +357,16 @@ pub(crate) mod mirror_writes {
     }
 }
 
+fn ext(base: &BTreeMap<String, Value>, consult: bool) -> Value {
+    let mut extensions = base.clone();
+    if consult {
+        extensions.insert("consult".into(), json!(true));
+    } else {
+        extensions.remove("consult");
+    }
+    json!(extensions)
+}
+
 impl Session {
     /// Record that the runtime journal now states `binding` for this session.
     ///
@@ -431,7 +442,7 @@ impl Session {
         map.insert("created_at".into(), json!(self.created_at));
         map.insert("route_api_method".into(), json!(self.route_api_method));
         map.insert("migration_epoch".into(), json!(self.migration_epoch));
-        map.insert("legacy_extensions".into(), json!(self.legacy_extensions));
+        map.insert("legacy_extensions".into(), ext(&self.legacy_extensions, self.consult));
         let mut metadata: SessionMetadata = serde_json::from_value(value)?;
         // Local execution bindings are not metadata edits. Preserve a remote
         // explicit NULL (and all other canonical provenance) until the caller
@@ -487,6 +498,11 @@ impl Serialize for Session {
             .as_object_mut()
             .ok_or_else(|| S::Error::custom("invalid session metadata"))?;
         map.extend(self.legacy_extensions.clone());
+        if self.consult {
+            map.insert("consult".into(), json!(true));
+        } else {
+            map.remove("consult");
+        }
         map.insert("id".into(), json!(self.id));
         map.insert("created_at".into(), json!(self.created_at));
         map.insert("route_api_method".into(), json!(self.route_api_method));

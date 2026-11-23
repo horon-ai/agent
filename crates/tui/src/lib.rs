@@ -1055,6 +1055,14 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
             areas[index],
         );
     }
+    // The side question covers the conversation rather than the input, so
+    // closing it reveals the transcript unchanged. It sits above the settings
+    // screen and the picker because it is opened from the draft, where neither
+    // can be open, and every key it takes is one they would not see.
+    if let Some(side) = app.side.as_mut() {
+        overlays::side::draw(frame, transcript_area, side, theme, symbols);
+        return;
+    }
     // The settings screen covers the conversation rather than the input, so
     // closing it reveals the transcript unchanged and the message being typed
     // stays visible under it; a picker covers the same area and sits above it.
@@ -1103,6 +1111,10 @@ fn status_widget(app: &App, width: u16) -> Paragraph<'static> {
 #[cfg(test)]
 #[path = "picker_app_tests.rs"]
 mod picker_app_tests;
+
+#[cfg(test)]
+#[path = "app/side_tests.rs"]
+mod side_app_tests;
 
 #[cfg(test)]
 #[path = "tests.rs"]

@@ -20,6 +20,8 @@ pub(crate) mod client_fs;
 mod codemode;
 mod communicate;
 mod config_edit_notice;
+mod consult;
+pub(crate) use consult::{mark_session_consult_policy, session_is_consult};
 mod context_notes;
 mod conversation_search;
 pub mod diagnostics_list;
@@ -233,6 +235,8 @@ struct SessionToolPolicy {
     /// that read it - `toolbox` and the `mcp` management tool - hold a registry
     /// and cannot reach the session's own state.
     listed_mcp_surface: bool,
+    /// A read-only consult child: no client tool configuration can widen its stored allow list.
+    consult: bool,
     owner: Option<u64>,
 }
 
@@ -469,9 +473,8 @@ pub(crate) fn register_session_tool_policy(
         Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
-            load_tiers: None,
-            listed_mcp_surface: false,
             owner: Some(owner),
+            ..Default::default()
         }),
     );
     SessionToolPolicyRegistration {
@@ -533,9 +536,7 @@ pub(crate) fn set_session_tool_policy(
         Arc::new(SessionToolPolicy {
             allowed_tools,
             disabled_tools,
-            load_tiers: None,
-            listed_mcp_surface: false,
-            owner: None,
+            ..Default::default()
         }),
     );
 }
@@ -567,7 +568,7 @@ fn session_tool_policy_shared(session_id: &str) -> Option<Arc<SessionToolPolicy>
         .unwrap_or_else(|e| e.into_inner())
         .get(session_id)
         .cloned();
-    let Some(config) = sdk::config(session_id) else {
+    let Some(config) = sdk::config(session_id).filter(|_| !stored.as_deref().is_some_and(|p| p.consult)) else {
         return stored;
     };
     let mut policy = stored.map_or_else(SessionToolPolicy::default, Arc::unwrap_or_clone);
