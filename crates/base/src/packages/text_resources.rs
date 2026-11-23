@@ -249,28 +249,36 @@ impl PackageTextCache {
         workspace: Option<&Path>,
         records: impl IntoIterator<Item = &'a PackageRecord>,
     ) -> Arc<PackageTextResources> {
-        let workspace = canonical_workspace(workspace);
+        let mut canonical_ws: Option<Option<PathBuf>> = None;
         let mut entries = self.lock();
-        let mut listed = BTreeSet::new();
+        let mut listed = (!entries.is_empty()).then(BTreeSet::new);
         let mut packages = BTreeMap::new();
         let mut rejections = BTreeMap::new();
         for record in records {
-            listed.insert(record.id.clone());
-            if record.state != PackageState::Installed
-                || record.kind != PackageKind::Plugin
-                || !in_workspace(&record.scope, workspace.as_deref())
-            {
+            if let Some(set) = listed.as_mut() {
+                set.insert(record.id.as_str());
+            }
+            if record.state != PackageState::Installed || record.kind != PackageKind::Plugin {
                 entries.remove(&record.id);
                 continue;
             }
+            if matches!(record.scope, PackageScope::Project { .. }) {
+                let resolved = canonical_ws
+                    .get_or_insert_with(|| canonical_workspace(workspace))
+                    .as_deref();
+                if !in_workspace(&record.scope, resolved) {
+                    entries.remove(&record.id);
+                    continue;
+                }
+            }
             // The cache is read and released before the map is touched again:
             // holding an entry across an insert would borrow the map twice.
-            let fresh = entries
-                .get(&record.id)
-                .is_some_and(|cached| Some(cached.digest.as_str()) == record.digest.as_deref() && cached.is_fresh());
-            if fresh {
-                if let Some(text) = entries.get(&record.id).and_then(|cached| cached.text.clone()) {
-                    packages.insert(record.id.clone(), text);
+            if let Some(cached) = entries.get(&record.id)
+                && Some(cached.digest.as_str()) == record.digest.as_deref()
+                && cached.is_fresh()
+            {
+                if let Some(text) = cached.text.as_ref() {
+                    packages.insert(record.id.clone(), Arc::clone(text));
                 }
                 continue;
             }
@@ -294,7 +302,9 @@ impl PackageTextCache {
         }
         // Only packages this generation did not list at all are dropped here: a
         // removal leaves every other package's entry exactly as it was.
-        entries.retain(|id, _| listed.contains(id));
+        if let Some(set) = listed {
+            entries.retain(|id, _| set.contains(id.as_str()));
+        }
         Arc::new(PackageTextResources { packages, rejections })
     }
 

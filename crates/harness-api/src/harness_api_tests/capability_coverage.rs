@@ -97,6 +97,7 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("SoftInterrupt", Covered),
     ("Split", Covered),
     ("Subscribe", Covered),
+    ("ToolResult", Covered),
     ("Transfer", Covered),
     // ACP retracts a queued prompt before the model sees it; the API exposes
     // cancel and soft_interrupt instead.

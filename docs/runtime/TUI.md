@@ -306,7 +306,7 @@ A tool call is drawn as one head row and the rows under it. The head carries the
 
 Results are matched to calls by call id, so two calls that ran in parallel cannot swap their results, and a result whose start this client never saw gets a row of its own instead of being attached to another call's. A finished call keeps a preview of its output under the head: three rows by default, each cut to 160 cells, and `+N lines` for the rows the preview does not show. A failure puts its message on its own row instead of in the head, because the message is usually longer than the pane and would push the argument and the duration off the right edge.
 
-The marker of the newest call whose preview hides something names the key that shows the rest: `+N lines · ctrl+o expands`, where the key is the one the map in force gives `app.expand_tool`. The key draws that call's whole output and puts the preview back on the next press, and it moves the view to the end of the conversation, where the block it changed usually is. With nothing kept to show it says `no tool output to expand`. The whole text is kept for the sixteen most recent cut calls, at most 64 KiB of each; longer output stops on a character boundary and its last kept line reads `… output truncated`. A call cut only at the right edge of a row counts as cut and carries `cut` instead of a row count, and a call whose text has fallen out of the window stops naming the key rather than promising a view that is gone.
+The marker of the selected kept call whose preview hides something names the key that shows the rest: `+N lines · ctrl+o expands`, where the key is the one the map in force gives `app.expand_tool`. That selection follows the newest kept call while the view follows the end, or moves to the retained call visible in a scrolled-back view. The key draws that call's whole output and puts the preview back on the next press, reflowing a held view in place rather than jumping to the end of the conversation. With nothing kept to show it says `no tool output to expand`. The whole text is kept for the sixteen most recent cut calls, at most 64 KiB of each; longer output stops on a character boundary and its last kept line reads `… output truncated`. A call cut only at the right edge of a row counts as cut and carries `cut` instead of a row count, and a call whose text has fallen out of the window stops naming the key rather than promising a view that is gone.
 
 A call the approval gate refused is drawn with one short label rather than the daemon's whole sentence, because the prompt beside it already asks the question, and the label follows the request: while the decision is pending the head row says `◐ needs approval`; once it is answered the row states the answer, `• allowed`, `• allowed always`, `✕ denied` for `n` or `esc`, or `✕ not answered` for a prompt that went away unanswered (a lost connection, a cancelled turn). None of those three says `failed`, because the call never ran: the gate held it and the model has to issue it again. Answering that prompt does not run the call: the decision is recorded and the model has to call the tool again, and the transcript says so.
 
@@ -370,7 +370,7 @@ Typing `/` opens a list of the commands the typed letters match: the same comman
 
 ## Pickers
 
-The model, effort, session, skill, link and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
+The model, effort, session, skill, link, tool and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
 
 The filter is the subsequence match the slash popup uses, over a row's name and its second column and, for a session, over the conversation lines its preview carries. Those lines are searchable and a preview's header line is not, because the header names the directory and the time every row of one directory shares. Matches are ranked, and rows that rank the same keep the order the list gave them, so an empty filter shows the list in its own order. A filter that leaves nothing says `nothing matches that filter`.
 
@@ -478,6 +478,7 @@ A package command answers as `/id:command`, where `id` is the package id and `co
 | `/stats` | Show the attached session's recorded token usage |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/tools` | Browse the current session's enabled tools without running them |
 | `/unpin [id]` | Remove a session from the pinned group |
 | `/voice` | Dictate to the draft or play text on this device |
 
@@ -489,7 +490,7 @@ Use `/voice consent` in the attached session before recording. Press Ctrl+Space 
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-three commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-four commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -540,6 +541,7 @@ built-in commands:
   /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
+  /tools               browse the current session's enabled tools without running them
   /unpin               take a session out of the pinned group
   /voice               dictate to the draft or play text on this device
 harness commands:
@@ -614,7 +616,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - A turn the daemon starts by itself sends this client no start event, so the `esc` delivery marker does not move: messages sent with `esc` stay drawn as sent into the turn that ended.
 - Starting with `--session <id>` attaches without drawing the stored conversation; `/resume <id>` replays it.
 - With the popup closed, Tab completes built-in, harness and command-file names and can complete local workspace paths. Choose a skill from the popup or `/skills`.
-- Only the newest kept tool call expands. Expanding moves the view to the end of the conversation, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
+- Only one kept tool call is expanded at a time (the retained call in view when scrolled back, or the newest kept call while following the end). Expanding or folding keeps a held view in place instead of jumping to the end, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
 - A second `/new` typed before the first answer arrives reports its session as resumed, because the client holds one flag for the session it is starting.
 - The session list asks the daemon once or twice for every session it shows, so a directory with many sessions delays the list and the events behind it while they load.
 - The session preview reads the newest twenty stored messages, leaves out injected `<system-reminder>` messages, and shows its head line alone for a session the daemon cannot read back.

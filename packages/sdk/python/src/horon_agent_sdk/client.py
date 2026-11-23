@@ -37,6 +37,8 @@ from .protocol import (
     MessageModes,
     PackageCommandList,
     PackageCommandOutcome,
+    PackageControlReceipt,
+    PackageControlRequest,
     SessionSearchHit,
     SessionToolDefinition,
     UsageReport,
@@ -1958,7 +1960,7 @@ class HoronAgentClient:
         settings = frame.get("settings")
         return cast(list[EffectiveSetting], settings if isinstance(settings, list) else [])
 
-    async def package_control(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def package_control(self, request: PackageControlRequest) -> PackageControlReceipt:
         """Apply one package-management operation and return the published catalog receipt.
 
         Requires ``package_control_v1``. The daemon owns the catalog, so this needs
@@ -1968,7 +1970,7 @@ class HoronAgentClient:
         self._require_capability("package_control_v1", "package_control")
         frame = await self._expect_reply({"req": "package_control", **request}, "package_control")
         receipt = frame.get("receipt")
-        return cast(dict[str, Any], receipt if isinstance(receipt, dict) else {})
+        return cast(PackageControlReceipt, receipt if isinstance(receipt, dict) else {})
 
     async def list_package_commands(self, session_id: str) -> PackageCommandList:
         """List the slash commands the installed packages supply for this session.

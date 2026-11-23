@@ -50,6 +50,12 @@ pub(crate) fn take(session_id: &str) -> Option<String> {
     Some(reminder)
 }
 
+/// Drop any unconsumed notices queued for `session_id` when the session is removed.
+pub(crate) fn clear_session(session_id: &str) {
+    let mut notices = NOTICES.lock().unwrap_or_else(PoisonError::into_inner);
+    notices.remove(session_id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,5 +98,15 @@ mod tests {
     #[test]
     fn a_session_without_a_notice_takes_nothing() {
         assert_eq!(take("session-notice-empty"), None);
+    }
+
+    #[test]
+    fn clear_session_evicts_unconsumed_notices_without_touching_others() {
+        push("session-notice-clear-a", "refused a".to_string());
+        push("session-notice-clear-b", "refused b".to_string());
+        clear_session("session-notice-clear-a");
+        assert_eq!(take("session-notice-clear-a"), None);
+        let kept = take("session-notice-clear-b").expect("other session kept");
+        assert!(kept.contains("- refused b"), "{kept}");
     }
 }

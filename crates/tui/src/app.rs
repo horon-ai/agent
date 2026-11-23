@@ -46,6 +46,7 @@ mod sending;
 mod sessions;
 mod settings;
 mod skills;
+pub(crate) mod state_file;
 mod status;
 mod terminal_signals;
 
@@ -121,6 +122,8 @@ pub struct App {
     /// The reader's own notes on transcript messages, in a file of this
     /// client's own. Never part of a message or a harness request.
     pub(crate) notes: crate::notes::NoteStore,
+    /// The note keys of the conversation the last frame drew.
+    pub(crate) note_keys: crate::notes::KeyCache,
     pub(crate) todos: crate::todo_panel::TodoPanel,
     /// The line being edited.
     pub input: Input,
@@ -412,6 +415,7 @@ pub struct App {
     /// The revision says the conversation was replaced (a clear or a session
     /// switch), and the count says how many of its answers were recorded.
     record_scan: (u64, usize),
+    record_generation: u64,
 }
 
 impl App {
@@ -422,6 +426,7 @@ impl App {
             // In memory until `run` gives the client the file it owns: a test
             // or an embedded user of `App` must not read or write `$HORON_HOME`.
             notes: crate::notes::NoteStore::memory(),
+            note_keys: Default::default(),
             todos: Default::default(),
             input: Input::new(),
             history: History::new(),
@@ -505,6 +510,7 @@ impl App {
             voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
+            record_generation: 0,
         }
     }
 
@@ -515,6 +521,7 @@ impl App {
         Self {
             transcript: Transcript::new(),
             notes: crate::notes::NoteStore::memory(),
+            note_keys: Default::default(),
             todos: Default::default(),
             input: Input::new(),
             history: History::new(),
@@ -597,6 +604,7 @@ impl App {
             voice: crate::voice::Voice::new(),
             replay: None,
             record_scan: (0, 0),
+            record_generation: 0,
         }
     }
 

@@ -45,8 +45,40 @@ impl TrimPolicy {
     }
 }
 
-fn eligible(content: &str, is_error: Option<bool>, policy: TrimPolicy) -> bool {
-    is_error != Some(true) && content.chars().count() > policy.max_chars
+#[inline]
+fn char_len(content: &str) -> usize {
+    if content.is_ascii() {
+        content.len()
+    } else {
+        content.chars().count()
+    }
+}
+
+#[inline]
+fn head_end_for_trim(content: &str) -> usize {
+    if content.is_ascii() {
+        return HEAD_CHARS.min(content.len());
+    }
+    content
+        .char_indices()
+        .nth(HEAD_CHARS)
+        .map_or(content.len(), |(idx, _)| idx)
+}
+
+fn push_usize(out: &mut String, mut value: usize) {
+    let mut buf = [0u8; 20];
+    let mut pos = buf.len();
+    loop {
+        pos -= 1;
+        buf[pos] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    if let Ok(digits) = std::str::from_utf8(&buf[pos..]) {
+        out.push_str(digits);
+    }
 }
 
 /// What a trim would do to `messages`, without changing anything.
@@ -56,10 +88,14 @@ pub fn preview(messages: &[Message], policy: TrimPolicy) -> TrimStats {
     for message in &messages[..protected_from] {
         for block in &message.content {
             if let ContentBlock::ToolResult { content, is_error, .. } = block
-                && eligible(content, *is_error, policy)
+                && *is_error != Some(true)
+                && content.len() > policy.max_chars
             {
-                stats.results += 1;
-                stats.chars_removed += content.chars().count().saturating_sub(HEAD_CHARS);
+                let total = char_len(content);
+                if total > policy.max_chars {
+                    stats.results += 1;
+                    stats.chars_removed += total.saturating_sub(HEAD_CHARS);
+                }
             }
         }
     }
@@ -71,26 +107,37 @@ pub fn preview(messages: &[Message], policy: TrimPolicy) -> TrimStats {
 /// Returns `None` when nothing is eligible, so an unaffected request keeps
 /// borrowing its snapshot.
 pub fn apply(messages: &[Message], policy: TrimPolicy) -> Option<Vec<Message>> {
-    if preview(messages, policy).results == 0 {
-        return None;
-    }
     let protected_from = messages.len().saturating_sub(KEEP_RECENT_MESSAGES);
-    let mut trimmed = messages.to_vec();
-    for message in &mut trimmed[..protected_from] {
-        for block in &mut message.content {
-            if let ContentBlock::ToolResult { content, is_error, .. } = block
-                && eligible(content, *is_error, policy)
-            {
-                let total = content.chars().count();
-                let head: String = content.chars().take(HEAD_CHARS).collect();
-                *content = format!(
-                    "{head}\n[{} characters trimmed from this request. The full result is stored in the session history (history://current).]",
-                    total - HEAD_CHARS
+    let mut trimmed: Option<Vec<Message>> = None;
+    for (msg_idx, message) in messages[..protected_from].iter().enumerate() {
+        for (block_idx, block) in message.content.iter().enumerate() {
+            let ContentBlock::ToolResult { content, is_error, .. } = block else {
+                continue;
+            };
+            if *is_error == Some(true) || content.len() <= policy.max_chars {
+                continue;
+            }
+            let total = char_len(content);
+            if total <= policy.max_chars {
+                continue;
+            }
+            let head_end = head_end_for_trim(content);
+            let out = trimmed.get_or_insert_with(|| messages.to_vec());
+            if let Some(ContentBlock::ToolResult { content: dst, .. }) = out[msg_idx].content.get_mut(block_idx) {
+                let head = &content[..head_end];
+                let removed = total.saturating_sub(HEAD_CHARS);
+                let mut replacement = String::with_capacity(head.len() + 132);
+                replacement.push_str(head);
+                replacement.push_str("\n[");
+                push_usize(&mut replacement, removed);
+                replacement.push_str(
+                    " characters trimmed from this request. The full result is stored in the session history (history://current).]",
                 );
+                *dst = replacement;
             }
         }
     }
-    Some(trimmed)
+    trimmed
 }
 
 static POLICIES: OnceLock<Mutex<HashMap<String, TrimPolicy>>> = OnceLock::new();

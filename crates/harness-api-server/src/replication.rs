@@ -258,12 +258,19 @@ fn home_paths() -> Result<store::SessionPaths, store::StoreError> {
         .with_sync_mode(horon_agent_base::config::config().storage_sync_mode()))
 }
 
+fn missing_sessions_root(paths: &store::SessionPaths) -> bool {
+    matches!(
+        std::fs::symlink_metadata(paths.root()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
 fn existing_session(
     paths: &store::SessionPaths,
     session_id: &str,
 ) -> Result<(store::SessionPaths, store::SessionId), store::StoreError> {
     let (paths, id) = parse_session(paths, session_id)?;
-    if !paths.events_log(&id)?.is_file() {
+    if missing_sessions_root(&paths) || !paths.events_log(&id)?.is_file() {
         return Err(store::StoreError::unknown_session("session has no event log"));
     }
     Ok((paths, id))
@@ -274,7 +281,7 @@ fn existing_session_dir(
     session_id: &str,
 ) -> Result<(store::SessionPaths, store::SessionId), store::StoreError> {
     let (paths, id) = parse_session(paths, session_id)?;
-    if !paths.session_dir(&id)?.is_dir() {
+    if missing_sessions_root(&paths) || !paths.session_dir(&id)?.is_dir() {
         return Err(store::StoreError::unknown_session("session has no local replica"));
     }
     Ok((paths, id))

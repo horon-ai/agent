@@ -9,7 +9,8 @@
 
 use anyhow::{Result, bail};
 use ignore::WalkBuilder;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::io::Read;
 use std::path::Path;
 
 const DEFAULT_RESULTS: usize = 5;
@@ -23,7 +24,7 @@ const EVIDENCE_CHARS: usize = 160;
 const STOPWORDS: &[&str] = &[
     "a", "an", "the", "of", "in", "on", "at", "to", "for", "from", "by", "with", "and", "or", "is", "are", "was",
     "were", "be", "it", "its", "this", "that", "these", "those", "when", "where", "which", "who", "what", "how", "why",
-    "code", "function", "method", "where", "find", "does", "do", "did", "into", "than", "then", "so", "as", "if",
+    "code", "function", "method", "find", "does", "do", "did", "into", "than", "then", "so", "as", "if",
 ];
 
 /// Words that usually name the same behavior in code. Each group is one concept.
@@ -69,15 +70,20 @@ const SYNONYMS: &[&[&str]] = &[
     &["connect", "attach", "link", "bind"],
 ];
 
-fn stem(word: &str) -> String {
+#[inline]
+fn stem_slice(word: &str) -> &str {
     for suffix in ["ing", "ed", "es", "s"] {
         if word.len() > suffix.len() + 2
             && let Some(base) = word.strip_suffix(suffix)
         {
-            return base.to_string();
+            return base;
         }
     }
-    word.to_string()
+    word
+}
+
+fn stem(word: &str) -> String {
+    stem_slice(word).to_string()
 }
 
 /// Lowercase words of `text`, split on non-alphanumerics and camelCase humps.
@@ -105,16 +111,12 @@ fn words(text: &str) -> Vec<String> {
     out
 }
 
-fn stems(text: &str) -> BTreeSet<String> {
-    words(text).iter().map(|word| stem(word)).collect()
-}
-
 struct Concept {
     label: String,
     forms: BTreeSet<String>,
 }
 
-/// One concept per distinct idea in the query; words of one synonym group merge.
+/// One concept per distinct idea in the query; words of overlapping synonym groups merge.
 fn concepts(query: &str) -> Vec<Concept> {
     let mut out: Vec<Concept> = Vec::new();
     for word in words(query) {
@@ -123,9 +125,9 @@ fn concepts(query: &str) -> Vec<Concept> {
         }
         let own = stem(&word);
         let mut forms = BTreeSet::from([own.clone()]);
-        if let Some(group) = SYNONYMS
+        for group in SYNONYMS
             .iter()
-            .find(|group| group.iter().any(|member| *member == word || stem(member) == own))
+            .filter(|group| group.iter().any(|member| *member == word || stem_slice(member) == own))
         {
             forms.extend(group.iter().map(|member| stem(member)));
         }
@@ -135,6 +137,37 @@ fn concepts(query: &str) -> Vec<Concept> {
         }
     }
     out
+}
+
+struct ConceptIndex<'a> {
+    forms: HashMap<&'a str, u32>,
+    min_len: usize,
+    max_len: usize,
+    all_mask: u32,
+}
+
+impl<'a> ConceptIndex<'a> {
+    fn new(concepts: &'a [Concept]) -> Self {
+        let mut forms = HashMap::new();
+        let mut min_len = usize::MAX;
+        let mut max_len = 0usize;
+        let mut all_mask = 0u32;
+        for (index, concept) in concepts.iter().enumerate() {
+            let bit = 1u32 << index;
+            all_mask |= bit;
+            for form in &concept.forms {
+                min_len = min_len.min(form.len());
+                max_len = max_len.max(form.len());
+                *forms.entry(form.as_str()).or_insert(0) |= bit;
+            }
+        }
+        Self {
+            forms,
+            min_len,
+            max_len,
+            all_mask,
+        }
+    }
 }
 
 struct FileLines {
@@ -151,18 +184,72 @@ struct Hit {
     matched: Vec<String>,
 }
 
-fn mask_of(text: &str, concepts: &[Concept]) -> u32 {
-    let present = stems(text);
-    concepts
-        .iter()
-        .enumerate()
-        .filter(|(_, concept)| !concept.forms.is_disjoint(&present))
-        .fold(0, |mask, (index, _)| mask | (1 << index))
+#[inline]
+fn flush_stem(index: &ConceptIndex<'_>, scratch: &mut String, mask: &mut u32) {
+    if !scratch.is_empty() {
+        let stemmed = stem_slice(scratch);
+        if stemmed.len() >= index.min_len
+            && stemmed.len() <= index.max_len
+            && let Some(&bits) = index.forms.get(stemmed)
+        {
+            *mask |= bits;
+        }
+        scratch.clear();
+    }
 }
 
-fn scan(root: &Path, concepts: &[Concept], max_files: usize) -> (Vec<FileLines>, usize) {
+fn mask_of_with_scratch(text: &str, index: &ConceptIndex<'_>, scratch: &mut String) -> u32 {
+    scratch.clear();
+    let mut mask = 0u32;
+    let mut previous_lower = false;
+    if text.is_ascii() {
+        for &byte in text.as_bytes() {
+            if !byte.is_ascii_alphanumeric() {
+                flush_stem(index, scratch, &mut mask);
+                if mask == index.all_mask {
+                    return mask;
+                }
+                previous_lower = false;
+                continue;
+            }
+            if byte.is_ascii_uppercase() && previous_lower && !scratch.is_empty() {
+                flush_stem(index, scratch, &mut mask);
+                if mask == index.all_mask {
+                    return mask;
+                }
+            }
+            previous_lower = byte.is_ascii_lowercase() || byte.is_ascii_digit();
+            scratch.push(byte.to_ascii_lowercase() as char);
+        }
+    } else {
+        for ch in text.chars() {
+            if !ch.is_alphanumeric() {
+                flush_stem(index, scratch, &mut mask);
+                if mask == index.all_mask {
+                    return mask;
+                }
+                previous_lower = false;
+                continue;
+            }
+            if ch.is_uppercase() && previous_lower && !scratch.is_empty() {
+                flush_stem(index, scratch, &mut mask);
+                if mask == index.all_mask {
+                    return mask;
+                }
+            }
+            previous_lower = ch.is_lowercase() || ch.is_ascii_digit();
+            scratch.extend(ch.to_lowercase());
+        }
+    }
+    flush_stem(index, scratch, &mut mask);
+    mask
+}
+
+fn scan(root: &Path, index: &ConceptIndex<'_>, max_files: usize) -> (Vec<FileLines>, usize) {
     let mut files = Vec::new();
     let mut total_lines = 0usize;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    let mut scratch = String::with_capacity(64);
     let walker = WalkBuilder::new(root)
         .follow_links(false)
         .sort_by_file_path(|a, b| a.cmp(b))
@@ -175,22 +262,31 @@ fn scan(root: &Path, concepts: &[Concept], max_files: usize) -> (Vec<FileLines>,
             continue;
         }
         let path = entry.path();
-        match std::fs::metadata(path) {
-            Ok(meta) if meta.len() <= MAX_FILE_BYTES => {}
-            _ => continue,
-        }
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(file) = std::fs::File::open(path) else {
             continue;
         };
+        match file.metadata() {
+            Ok(meta) if meta.len() <= MAX_FILE_BYTES => {
+                bytes.clear();
+                bytes.reserve(meta.len() as usize);
+            }
+            _ => continue,
+        }
+        if file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes).is_err() || bytes.len() as u64 > MAX_FILE_BYTES {
+            continue;
+        }
         if bytes[..bytes.len().min(8192)].contains(&0) {
             continue;
         }
         let text = String::from_utf8_lossy(&bytes);
         let relative = path.strip_prefix(root).unwrap_or(path).display().to_string();
-        let masks: Vec<u32> = text.lines().map(|line| mask_of(line, concepts)).collect();
+        let mut masks = Vec::with_capacity(bytes.len() / 48 + 1);
+        for line in text.lines() {
+            masks.push(mask_of_with_scratch(line, index, &mut scratch));
+        }
         total_lines += masks.len();
         files.push(FileLines {
-            path_mask: mask_of(&relative, concepts),
+            path_mask: mask_of_with_scratch(&relative, index, &mut scratch),
             path: relative,
             masks,
         });
@@ -261,16 +357,23 @@ fn rank(files: &[FileLines], concepts: &[Concept], limit: usize) -> Vec<Hit> {
     hits
 }
 
-fn evidence(root: &Path, hit: &Hit, concepts: &[Concept]) -> Vec<String> {
+fn evidence(root: &Path, hit: &Hit, index: &ConceptIndex<'_>) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(root.join(&hit.path)) else {
         return Vec::new();
     };
+    let mut scratch = String::with_capacity(64);
     let mut lines: Vec<(usize, u32, String)> = text
         .lines()
         .enumerate()
         .skip(hit.start - 1)
         .take(hit.end - hit.start + 1)
-        .map(|(index, line)| (index + 1, mask_of(line, concepts).count_ones(), line.trim().to_string()))
+        .map(|(idx, line)| {
+            (
+                idx + 1,
+                mask_of_with_scratch(line, index, &mut scratch).count_ones(),
+                line.trim().to_string(),
+            )
+        })
         .filter(|(_, count, _)| *count > 0)
         .collect();
     lines.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -295,7 +398,8 @@ pub(super) fn run_locate(
     }
     let dropped = concepts.len().saturating_sub(MAX_CONCEPTS);
     concepts.truncate(MAX_CONCEPTS);
-    let (files, scanned) = scan(root, &concepts, max_files.unwrap_or(DEFAULT_MAX_FILES));
+    let index = ConceptIndex::new(&concepts);
+    let (files, scanned) = scan(root, &index, max_files.unwrap_or(DEFAULT_MAX_FILES));
     let hits = rank(&files, &concepts, max_results.unwrap_or(DEFAULT_RESULTS).max(1));
 
     let mut out = format!("locate: {}\n", crate::util::truncate_str(query, 200));
@@ -321,17 +425,17 @@ pub(super) fn run_locate(
         out.push_str(&format!(" {dropped} further terms were ignored."));
     }
     out.push_str(&format!("\nscanned: {scanned} files\n"));
-    for (index, hit) in hits.iter().enumerate() {
+    for (rank, hit) in hits.iter().enumerate() {
         out.push_str(&format!(
             "{}. {}:{}-{}  score {:.2}  matched: {}\n",
-            index + 1,
+            rank + 1,
             hit.path,
             hit.start,
             hit.end,
             hit.score,
             hit.matched.join(", ")
         ));
-        for line in evidence(root, hit, &concepts) {
+        for line in evidence(root, hit, &index) {
             out.push_str(&format!("     {line}\n"));
         }
     }
@@ -425,6 +529,30 @@ mod tests {
         assert!(
             first.lines().any(|line| line.starts_with("1. src/render.rs")),
             "{first}"
+        );
+    }
+
+    #[test]
+    fn credential_matches_secrets_and_auth_synonyms() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("secret_rotate.rs"),
+            "fn rotate_password() -> bool {\n    true\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("auth_check.rs"),
+            "fn verify_auth() -> bool {\n    true\n}\n",
+        )
+        .unwrap();
+        let out = run_locate(dir.path(), "credential", None, None).unwrap();
+        assert!(
+            out.contains("secret_rotate.rs:1-1"),
+            "credential should expand into secrets synonyms (password): {out}"
+        );
+        assert!(
+            out.contains("auth_check.rs:1-1"),
+            "credential should expand into auth synonyms (auth): {out}"
         );
     }
 }

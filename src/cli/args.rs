@@ -338,7 +338,7 @@ pub(crate) enum Command {
         wait_async: bool,
 
         /// Render this template once as the system prompt. Variables: {{cwd}}, {{date}}, {{model}}
-        #[arg(long, value_name = "FILE")]
+        #[arg(long, value_name = "FILE", conflicts_with = "system_prompt")]
         system_template: Option<std::path::PathBuf>,
 
         /// Print provider-supplied visible reasoning to stderr under a label

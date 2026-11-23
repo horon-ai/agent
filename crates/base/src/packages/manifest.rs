@@ -270,12 +270,15 @@ fn portable_component(name: &str) -> bool {
         return false;
     }
     let stem = name.split_once('.').map_or(name, |(stem, _)| stem);
-    let stem = stem.to_ascii_uppercase();
-    !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        && !["COM", "LPT"].into_iter().any(|prefix| {
-            stem.strip_prefix(prefix)
-                .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit())
-        })
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+    if reserved.into_iter().any(|word| stem.eq_ignore_ascii_case(word)) {
+        return false;
+    }
+    !["COM", "LPT"].into_iter().any(|prefix| {
+        stem.len() == prefix.len() + 1
+            && stem.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+            && stem.as_bytes()[prefix.len()].is_ascii_digit()
+    })
 }
 
 /// The package ID grammar, shared with the names accepted in the inbox.

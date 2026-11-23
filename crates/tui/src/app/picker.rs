@@ -1,5 +1,6 @@
-//! The pickers: the model, session and swarm lists the harness owns, the search
-//! over this client's own drafts, and what a chosen row of any of them means.
+//! The pickers: the model, session, swarm and tool lists the harness owns, the
+//! search over this client's own drafts, and what a chosen row of any of them
+//! means.
 //!
 //! The screen itself ([`crate::overlays::picker`]) knows only rows; the meaning
 //! of a row is decided here, where the rest of the client state is. A session
@@ -8,6 +9,7 @@
 //! that was open, so they are cleared before the stored conversation is replayed.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use horon_agent_sdk::api::SessionToolDefinition;
 
 use super::{Action, App};
 use crate::overlays::picker::{Kind, Outcome, Picker, Row};
@@ -259,6 +261,32 @@ impl App {
         self.fill(kind, rows);
     }
 
+    pub(crate) fn open_tools(&mut self) -> Option<Action> {
+        self.picker = Some(Picker::loading(
+            Kind::Tools,
+            "Session tools",
+            "no tools are enabled for this session",
+        ));
+        Some(Action::Tools)
+    }
+
+    pub(crate) fn show_tools(&mut self, mut tools: Vec<SessionToolDefinition>) {
+        tools.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        let rows = tools
+            .into_iter()
+            .map(|tool| {
+                let preview = (!tool.description.is_empty())
+                    .then_some(tool.description)
+                    .into_iter()
+                    .collect();
+                Row::new(tool.name, "")
+                    .with_detail("tier unknown")
+                    .with_preview(preview)
+            })
+            .collect();
+        self.fill(Kind::Tools, rows);
+    }
+
     /// The session rows in display order: pinned first, newest first in each.
     ///
     /// The split keeps the order the bridge sent inside both groups, so a pin
@@ -423,7 +451,7 @@ impl App {
                 // changes nothing rather than acting as some other kind of row.
                 // The job list is the same shape: `delete` cancels, and the
                 // generic selector never runs for it.
-                Kind::Queue | Kind::Jobs => None,
+                Kind::Queue | Kind::Tools | Kind::Jobs => None,
                 // A link is the one row that leaves the client: the reader
                 // pressed enter on it, so it goes to the platform handler and
                 // the list closes without an action for the bridge.
@@ -532,6 +560,9 @@ impl App {
         // in flight when the answer landed cannot put strangers' rows under the
         // new session.
         self.picker = None;
+        // A commit review belongs to the previous session's confirmation flow,
+        // even when the newly attached session works in the same directory.
+        self.commit_review = None;
         // The candidates were read from the directory of the session being
         // left; the next Tab reads the directory this session reported.
         self.path_cycle = None;
@@ -591,11 +622,12 @@ impl App {
     /// root, and an answer that names no folder is not the old one either, so
     /// path completion stays off until a session names one.
     pub fn apply_session_directory(&mut self, directory: Option<&str>) {
+        // Every attach answer belongs to a freshly attached or switched session,
+        // so any staged commit review from before that attach is stale even if
+        // the directory happens to stay the same.
+        self.commit_review = None;
         let Some(directory) = directory.map(str::trim).filter(|directory| !directory.is_empty()) else {
             self.workspace_known = false;
-            // A review describes the index of one work tree, and this session
-            // now names none, so there is nothing it could be confirmed against.
-            self.commit_review = None;
             return;
         };
         self.workspace_known = true;
@@ -603,9 +635,6 @@ impl App {
             return;
         }
         self.cwd = Some(directory.to_string());
-        // The review was read from the directory being left; its commit would
-        // land in a repository this session no longer works in.
-        self.commit_review = None;
         self.reload_commands();
     }
 

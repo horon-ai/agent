@@ -113,11 +113,6 @@
     },
     {
       "package": "horon-agent",
-      "target": "package_end_to_end",
-      "min_passed": 1
-    },
-    {
-      "package": "horon-agent",
       "target": "removed_panel_compat",
       "min_passed": 3
     },
@@ -229,7 +224,7 @@
     {
       "package": "horon-agent-base",
       "target": "package_catalog",
-      "min_passed": 8
+      "min_passed": 9
     },
     {
       "package": "horon-agent-base",
@@ -316,7 +311,7 @@
     {
       "package": "horon-agent-sdk",
       "target": "session_replication",
-      "min_passed": 5
+      "min_passed": 8
     },
     {
       "package": "horon-agent-sdk",

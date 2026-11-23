@@ -803,7 +803,9 @@ pub(crate) fn history_message(
     include_message_ids: bool,
 ) -> crate::protocol::HistoryMessage {
     let verdict = stored_verdict(&msg, stored);
-    let message_id = msg.stored_id.clone().filter(|_| include_message_ids);
+    // The row carries its own id, so moving it out costs no copy, and a
+    // connection that did not ask for ids allocates nothing here.
+    let message_id = if include_message_ids { msg.stored_id } else { None };
     let turn_start = message_id
         .as_deref()
         .and_then(|id| stored.iter().find(|message| message.id == id))

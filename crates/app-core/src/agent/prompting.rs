@@ -13,6 +13,11 @@ impl Agent {
         run_prompt::set_appended(&self.session.id, text)
     }
 
+    /// Clear any per-run appended system prompt text recorded for `session_id`.
+    pub(crate) fn clear_appended_system_text(session_id: &str) {
+        run_prompt::clear_appended(session_id);
+    }
+
     pub(crate) fn runtime_skills_snapshot(&self) -> serde_json::Value {
         let registry = self.current_skills_snapshot();
         let mut loaded = registry.list();
@@ -298,11 +303,13 @@ impl Agent {
             };
         }
 
-        let skills = self.current_skills_snapshot();
+        let package_text = self.package_text_resources();
+        let mut skills_snapshot: Option<std::sync::Arc<crate::skill::SkillRegistry>> = None;
         // A skill whose file is unreadable drops out of this request's active
         // section instead of failing the whole prompt: the transcript keeps
         // going and one log line names the skill and error.
         let skill_prompt = self.active_skill.as_ref().and_then(|name| {
+            let skills = skills_snapshot.get_or_insert_with(|| self.skills_snapshot_for(package_text.as_deref()));
             let skill = skills.get(name)?;
             match skill.get_prompt() {
                 Ok(prompt) => Some(prompt),
@@ -319,8 +326,7 @@ impl Agent {
         // system prefix. A package skill is the exception: the section is then
         // re-rendered from the turn's package generation, so the package set
         // that did not move still renders the same bytes.
-        let package_text = self.package_text_resources();
-        let skills_section = self.request_skills_section(package_text.as_deref());
+        let skills_section = self.request_skills_section(package_text.as_deref(), skills_snapshot.as_deref());
 
         let working_dir = self.session.working_dir.as_ref().map(std::path::PathBuf::from);
 

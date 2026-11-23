@@ -14,7 +14,8 @@
 pub use horon_agent_config_types::hosting::{
     HostingConfigError, HostingMode, HostingPolicy, HostingSection, MAX_TENANT_ID_LEN, TenantId,
 };
-use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
 /// The only authority for the hosting mode.
@@ -139,6 +140,23 @@ pub fn confirm_container_boundary(policy: &HostingPolicy, paths: &HostingPaths) 
     if runtime_dir == home || runtime_dir.starts_with(home) {
         return Err(HostingBoundaryError::RuntimeInsideHome(runtime_dir.to_path_buf()));
     }
+    match std::fs::symlink_metadata(runtime_dir) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err(HostingBoundaryError::RuntimeIsSymlink(runtime_dir.to_path_buf()));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(HostingBoundaryError::RuntimeUnusable {
+                runtime: runtime_dir.to_path_buf(),
+                reason: error.to_string(),
+            });
+        }
+    }
+    let candidate_runtime = resolve_candidate_path(runtime_dir);
+    if candidate_runtime == resolved_home || candidate_runtime.starts_with(&resolved_home) {
+        return Err(HostingBoundaryError::RuntimeInsideHome(runtime_dir.to_path_buf()));
+    }
     std::fs::create_dir_all(runtime_dir).map_err(|error| HostingBoundaryError::RuntimeUnusable {
         runtime: runtime_dir.to_path_buf(),
         reason: error.to_string(),
@@ -150,6 +168,10 @@ pub fn confirm_container_boundary(policy: &HostingPolicy, paths: &HostingPaths) 
         })?;
     if runtime_metadata.file_type().is_symlink() {
         return Err(HostingBoundaryError::RuntimeIsSymlink(runtime_dir.to_path_buf()));
+    }
+    let resolved_runtime = std::fs::canonicalize(runtime_dir).unwrap_or_else(|_| runtime_dir.to_path_buf());
+    if resolved_runtime == resolved_home || resolved_runtime.starts_with(&resolved_home) {
+        return Err(HostingBoundaryError::RuntimeInsideHome(runtime_dir.to_path_buf()));
     }
     if !runtime_metadata.is_dir() || !horon_agent_platform::fs::is_private_dir(&runtime_metadata) {
         horon_agent_platform::fs::set_dir_permissions_owner_only(runtime_dir).map_err(|error| {
@@ -177,6 +199,39 @@ pub fn confirm_container_boundary(policy: &HostingPolicy, paths: &HostingPaths) 
     Ok(())
 }
 
+/// Resolve a candidate path before creating missing leaf directories so symlinked
+/// ancestors cannot place `runtime_dir` inside `HORON_HOME`.
+fn resolve_candidate_path(path: &Path) -> PathBuf {
+    let mut resolved = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
+            Component::RootDir => resolved.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(part) => {
+                resolved.push(part);
+                if let Ok(canonical) = std::fs::canonicalize(&resolved) {
+                    resolved = canonical;
+                }
+            }
+        }
+    }
+    resolved
+}
+
+/// Derive the 12-hex-digit runtime directory digest for a tenant home path.
+///
+/// Uses the first 12 lowercase hex characters of SHA-256 over the raw path
+/// bytes so both `horon-agent-sdk` and `scripts/hosting/instance.sh` derive the
+/// identical `horon-tenant-<12hex>` runtime directory.
+pub fn tenant_runtime_digest(home: &Path) -> String {
+    let digest = Sha256::digest(home.as_os_str().as_encoded_bytes());
+    hex::encode(&digest[..6])
+}
+
 /// The process-wide policy, resolved once.
 ///
 /// A daemon resolves it at startup and #668/#669 read it from here. An invalid
@@ -200,23 +255,47 @@ fn section_from_config_file() -> HostingSection {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return HostingSection::default();
     };
-    let Ok(document) = text.parse::<toml::Value>() else {
+    if !text.contains("hosting") && !text.contains("\\u") && !text.contains("\\U") {
         return HostingSection::default();
-    };
-    let Some(table) = document.get("hosting") else {
-        return HostingSection::default();
-    };
-    if table.get("mode").is_some() {
-        crate::logging::warn(&format!(
-            "Ignoring [hosting] mode in {}: {HOSTING_MODE_ENV} is the only authority for the hosting mode",
-            path.display()
-        ));
     }
-    match table.clone().try_into::<HostingSection>() {
-        Ok(section) => section,
-        Err(error) => {
-            crate::logging::warn(&format!("Ignoring [hosting] section in {}: {error}", path.display()));
-            HostingSection::default()
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default)]
+    struct ConfigHostingSlice {
+        hosting: Option<HostingSection>,
+    }
+    match toml::from_str::<ConfigHostingSlice>(&text) {
+        Ok(slice) => {
+            let Some(section) = slice.hosting else {
+                return HostingSection::default();
+            };
+            if section.mode.is_some() {
+                crate::logging::warn(&format!(
+                    "Ignoring [hosting] mode in {}: {HOSTING_MODE_ENV} is the only authority for the hosting mode",
+                    path.display()
+                ));
+            }
+            section
+        }
+        Err(_) => {
+            let Ok(document) = text.parse::<toml::Value>() else {
+                return HostingSection::default();
+            };
+            let Some(table) = document.get("hosting") else {
+                return HostingSection::default();
+            };
+            if table.get("mode").is_some() {
+                crate::logging::warn(&format!(
+                    "Ignoring [hosting] mode in {}: {HOSTING_MODE_ENV} is the only authority for the hosting mode",
+                    path.display()
+                ));
+            }
+            match table.clone().try_into::<HostingSection>() {
+                Ok(section) => section,
+                Err(error) => {
+                    crate::logging::warn(&format!("Ignoring [hosting] section in {}: {error}", path.display()));
+                    HostingSection::default()
+                }
+            }
         }
     }
 }

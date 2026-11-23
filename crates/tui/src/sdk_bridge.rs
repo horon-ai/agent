@@ -706,6 +706,7 @@ fn serve(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
                 Incoming::Sessions(rows)
             }))
         }
+        Command::Tools => client.list_tools(session_id).map(|tools| Some(Incoming::Tools(tools))),
         Command::CheckSessions(sessions) => Ok(Some(sessions_checked(client, &sessions))),
         // `/swarm` shows this session's own children; the rows are narrowed to
         // its lineage before they leave the bridge, so the list cannot name a
@@ -794,6 +795,7 @@ fn apply(client: &HoronAgentClient, session_id: &str, command: Command) -> Resul
         Command::Effort(_)
         | Command::Models
         | Command::Sessions { .. }
+        | Command::Tools
         | Command::CheckSessions(_)
         | Command::Swarm
         | Command::Skills { .. }
@@ -851,6 +853,7 @@ fn describe(command: &Command) -> &'static str {
         Command::Effort(_) => "could not set the reasoning effort",
         Command::Models => "could not list the models",
         Command::Sessions { .. } => "could not list the sessions",
+        Command::Tools => "could not list the session tools",
         Command::Archive { archived: true, .. } => "could not archive the session",
         Command::Archive { archived: false, .. } => "could not restore the session",
         Command::CheckSessions(_) => "could not check the noted sessions",

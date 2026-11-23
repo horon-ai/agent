@@ -91,6 +91,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 }
             }
             Incoming::Models { models, current } => app.show_models(models, current),
+            Incoming::Tools(tools) => app.show_tools(tools),
             Incoming::Usage(snapshot) => app.usage(snapshot),
             Incoming::RuntimeInfo {
                 provider,
@@ -199,6 +200,7 @@ pub(crate) fn dispatch(app: &mut App, commands: &std::sync::mpsc::Sender<Command
         // The user opened the list, so a failure is theirs to see and the
         // request announces itself.
         Action::Skills => Command::Skills { announce: true },
+        Action::Tools => Command::Tools,
         Action::BackgroundJobs => Command::BackgroundJobs,
         Action::Export(path) => Command::Export { path },
         // The frame loop answers these two: the editor needs the terminal that

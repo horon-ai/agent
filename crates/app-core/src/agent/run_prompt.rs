@@ -36,6 +36,13 @@ pub(super) fn appended(session_id: &str) -> Option<String> {
         .cloned()
 }
 
+pub(crate) fn clear_appended(session_id: &str) {
+    APPENDED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(session_id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

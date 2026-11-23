@@ -335,7 +335,13 @@ def summarize(runs: list[dict], expect_call: bool) -> dict:
 
 
 def size_facts(
-    binary: str, package_binary: str, home: str, installed_layout: Path | None, plugin_root: Path
+    binary: str,
+    package_binary: str,
+    home: str,
+    installed_layout: Path | None,
+    plugin_root: Path,
+    *,
+    plugin_bytes: int | None = None,
 ) -> dict:
     """What this scenario occupies, on disk and as installed.
 
@@ -344,15 +350,18 @@ def size_facts(
     `empty` installs nothing and reports no layout bytes.
     """
     store = Path(home) / "packages"
+    store_facts = directory_facts(store)
     return {
         "agent_binary_bytes": Path(binary).stat().st_size if Path(binary).is_file() else None,
         "package_binary_bytes": Path(package_binary).stat().st_size if Path(package_binary).is_file() else None,
         "package_extension_bytes": (
             directory_facts(installed_layout)["bytes"] if installed_layout is not None else None
         ),
-        "package_plugin_bytes": directory_facts(plugin_root)["bytes"],
-        "installed_area_bytes": directory_facts(store)["bytes"],
-        "installed_area_files": directory_facts(store)["files"],
+        "package_plugin_bytes": (
+            plugin_bytes if plugin_bytes is not None else directory_facts(plugin_root)["bytes"]
+        ),
+        "installed_area_bytes": store_facts["bytes"],
+        "installed_area_files": store_facts["files"],
     }
 
 
@@ -421,7 +430,6 @@ def prepare_build(
         # area without any environment left over from the other build.
         bcmp.write_horon_config(str(work), base_url)
         env = envs.setdefault(scenario, bcmp.horon_env(str(work), binary))
-        env["HORON_AGENT_PERF_COUNTERS"] = "1"
         homes[scenario] = env["HORON_HOME"]
         cwds[scenario] = str(cwd)
         if scenario == SCENARIO_EMPTY:
@@ -465,6 +473,7 @@ def measure_scenarios(prepared: list[Prepared], runs: int, timeout: float, mock)
     first, and the reset/measure windows of the two builds sit next to each other.
     """
     by_label: dict[str, dict[str, dict]] = {build.label: {} for build in prepared}
+    plugin_bytes_by_build: dict[str, int] = {}
     for scenario in SCENARIOS:
         prompt, tools = surface(scenario)
         repeats: dict[str, list[dict]] = {build.label: [] for build in prepared}
@@ -506,6 +515,10 @@ def measure_scenarios(prepared: list[Prepared], runs: int, timeout: float, mock)
                 "scenario": scenario,
                 **summarize(repeats[build.label], scenario == SCENARIO_CALLED),
             }
+            plugin_bytes = plugin_bytes_by_build.get(build.label)
+            if plugin_bytes is None:
+                plugin_bytes = directory_facts(build.plugin_root)["bytes"]
+                plugin_bytes_by_build[build.label] = plugin_bytes
             row.update(
                 size_facts(
                     build.binary,
@@ -513,6 +526,7 @@ def measure_scenarios(prepared: list[Prepared], runs: int, timeout: float, mock)
                     build.homes[scenario],
                     build.layouts.get(scenario),
                     build.plugin_root,
+                    plugin_bytes=plugin_bytes,
                 )
             )
             by_label[build.label][scenario] = row
@@ -619,6 +633,7 @@ def measure(binary: str, package_binary: str, baseline_binary: str | None,
     if baseline_binary:
         labels.insert(0, ("baseline", baseline_binary))
     mock = bcmp.MockServer().start()
+    prepared: list[Prepared] = []
     try:
         # Both builds are staged and installed first; only then are the scenarios
         # timed, alternating build by build inside every repetition.
@@ -627,8 +642,26 @@ def measure(binary: str, package_binary: str, baseline_binary: str | None,
             for label, path in labels
         ]
         measured = measure_scenarios(prepared, runs, timeout, mock)
+        candidate = next(build for build in prepared if build.label == "candidate")
+        candidate_called = (measured.get("candidate") or {}).get(SCENARIO_CALLED) or {}
+        sizes = {
+            # The payload is the shipped layout with only its target table rewritten,
+            # which is the copy `called` installs.
+            "payload_extension_bytes": (
+                candidate_called["package_extension_bytes"]
+                if candidate_called.get("package_extension_bytes") is not None
+                else payload_unpacked_bytes(candidate.layouts[SCENARIO_CALLED] / "extension.toml")
+            ),
+            "payload_plugin_bytes": (
+                candidate_called["package_plugin_bytes"]
+                if candidate_called.get("package_plugin_bytes") is not None
+                else payload_unpacked_bytes(candidate.plugin_root / "plugin.toml")
+            ),
+        }
     finally:
         mock.stop()
+        for build in prepared:
+            shutil.rmtree(build.root, ignore_errors=True)
 
     skipped: list[dict] = []
     for build in prepared:
@@ -646,15 +679,6 @@ def measure(binary: str, package_binary: str, baseline_binary: str | None,
             if label == "candidate":
                 row["comparison"] = comparison(baseline_rows.get(scenario), row)
             results.append(row)
-    candidate = next(build for build in prepared if build.label == "candidate")
-    sizes = {
-        # The payload is the shipped layout with only its target table rewritten,
-        # which is the copy `called` installs.
-        "payload_extension_bytes": payload_unpacked_bytes(
-            candidate.layouts[SCENARIO_CALLED] / "extension.toml"
-        ),
-        "payload_plugin_bytes": payload_unpacked_bytes(candidate.plugin_root / "plugin.toml"),
-    }
     report = bc.build_report("packages", results, skipped, started_at=started_at)
     report["sizes"] = sizes
     report["runs_per_scenario"] = max(1, runs)
@@ -662,8 +686,9 @@ def measure(binary: str, package_binary: str, baseline_binary: str | None,
         f"One turn of `horon run` against the mock model per sample; the median of {max(1, runs)}.",
         "Both builds are staged and installed first, then the scenarios are timed with the builds "
         "alternating inside every repetition.",
-        "`installed` and `called` install the shipped example layout with its observation "
-        "subscription removed, so a turn that does not call it never starts the child.",
+        "`installed` installs the shipped example layout with its observation subscription removed "
+        "so a turn that does not call it never starts the child; `called` keeps the declaration's "
+        "observation subscription as shipped.",
         "Size facts are absolute and are read from the installed area, not from a build log.",
         "`horon-tui` is measured by its own suite and never appears here.",
     ]

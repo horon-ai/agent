@@ -61,86 +61,113 @@ pub const PAGE_SCHEMA: i64 = 1;
 
 /// Render a page as its file text.
 pub fn encode(page: &MemoryPage) -> Result<String> {
+    use std::fmt::Write;
+
     validate(page)?;
-    let mut fields: Vec<(String, Value)> = Vec::with_capacity(KNOWN_KEYS.len());
-    let mut push = |key: &str, value: Value| fields.push((key.to_string(), value));
-    push("schema", Value::Int(PAGE_SCHEMA));
-    push("id", Value::Str(page.id.as_str().to_string()));
-    push("title", Value::Str(page.title.clone()));
-    push("kind", Value::Str(page.kind.as_str().to_string()));
-    push("category", Value::Str(page.category.to_string()));
-    push(
-        "project",
-        match &page.project {
-            Some(project) => Value::Str(project.clone()),
-            None => Value::Null,
-        },
-    );
-    push("tags", Value::List(page.tags.iter().cloned().map(Value::Str).collect()));
-    push(
-        "entities",
-        Value::List(page.entities.iter().cloned().map(Value::Str).collect()),
-    );
-    push("links", encode_map_list(page.links.iter().map(encode_link).collect()));
-    push("valid_from", optional_str(&page.valid_from));
-    push("valid_to", optional_str(&page.valid_to));
-    push("confidence", Value::Float(page.confidence));
-    push("source", optional_str(&page.source));
-    push("created_at", Value::Str(page.created_at.to_string()));
-    push("updated_at", Value::Str(page.updated_at.to_string()));
-    push("access_count", Value::Int(i64::from(page.access_count)));
-    push("trust", Value::Str(trust_str(page.trust).to_string()));
-    push("strength", Value::Int(i64::from(page.strength)));
-    push("active", Value::Bool(page.active));
-    push("superseded_by", optional_str(&page.superseded_by));
-    push(
-        "reinforcements",
-        encode_map_list(page.reinforcements.iter().map(encode_reinforcement).collect()),
-    );
-    let document = Document {
-        fields,
-        body: page.body.clone(),
-    };
-    Ok(document.render())
+    let mut out = String::with_capacity(512 + page.body.len());
+    out.push_str("---\n");
+
+    writeln!(out, "schema: {PAGE_SCHEMA}")?;
+    out.push_str("id: ");
+    super::frontmatter::render_string(&mut out, page.id.as_str());
+    out.push_str("\ntitle: ");
+    super::frontmatter::render_string(&mut out, &page.title);
+    out.push_str("\nkind: ");
+    super::frontmatter::render_string(&mut out, page.kind.as_str());
+    out.push_str("\ncategory: ");
+    let category_text = page.category.to_string();
+    super::frontmatter::render_string(&mut out, &category_text);
+    out.push_str("\nproject: ");
+    render_optional_str(&mut out, page.project.as_deref());
+    out.push_str("\ntags: ");
+    render_str_list(&mut out, &page.tags);
+    out.push_str("\nentities: ");
+    render_str_list(&mut out, &page.entities);
+    out.push_str("\nlinks: ");
+    render_links(&mut out, &page.links);
+    out.push_str("\nvalid_from: ");
+    render_optional_str(&mut out, page.valid_from.as_deref());
+    out.push_str("\nvalid_to: ");
+    render_optional_str(&mut out, page.valid_to.as_deref());
+    out.push_str("\nconfidence: ");
+    super::frontmatter::write_float(&mut out, page.confidence);
+    out.push_str("\nsource: ");
+    render_optional_str(&mut out, page.source.as_deref());
+    out.push_str("\ncreated_at: ");
+    let created_str = page.created_at.to_string();
+    super::frontmatter::render_string(&mut out, &created_str);
+    out.push_str("\nupdated_at: ");
+    let updated_str = page.updated_at.to_string();
+    super::frontmatter::render_string(&mut out, &updated_str);
+    writeln!(out, "\naccess_count: {}", page.access_count)?;
+    out.push_str("trust: ");
+    super::frontmatter::render_string(&mut out, trust_str(page.trust));
+    writeln!(out, "\nstrength: {}", page.strength)?;
+    out.push_str("active: ");
+    out.push_str(if page.active { "true" } else { "false" });
+    out.push_str("\nsuperseded_by: ");
+    render_optional_str(&mut out, page.superseded_by.as_deref());
+    out.push_str("\nreinforcements: ");
+    render_reinforcements(&mut out, &page.reinforcements)?;
+    out.push_str("\n---\n");
+    out.push_str(&page.body);
+    Ok(out)
 }
 
-/// An empty map list is written as an empty list so it parses back to the same
-/// value (`[]` cannot say which list shape it was).
-fn encode_map_list(entries: Vec<Vec<(String, Value)>>) -> Value {
-    if entries.is_empty() {
-        Value::List(Vec::new())
-    } else {
-        Value::MapList(entries)
-    }
-}
-
-fn optional_str(value: &Option<String>) -> Value {
+fn render_optional_str(out: &mut String, value: Option<&str>) {
     match value {
-        Some(text) => Value::Str(text.clone()),
-        None => Value::Null,
+        Some(text) => super::frontmatter::render_string(out, text),
+        None => out.push_str("null"),
     }
 }
 
-fn encode_link(link: &PageLink) -> Vec<(String, Value)> {
-    let mut entries = vec![
-        ("kind".to_string(), Value::Str(link.kind.as_str().to_string())),
-        ("dst".to_string(), Value::Str(link.dst.as_str().to_string())),
-    ];
-    if let Some(weight) = link.weight {
-        entries.push(("weight".to_string(), Value::Float(weight)));
+fn render_str_list(out: &mut String, values: &[String]) {
+    out.push('[');
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        super::frontmatter::render_string(out, value);
     }
-    entries
+    out.push(']');
 }
 
-fn encode_reinforcement(reinforcement: &Reinforcement) -> Vec<(String, Value)> {
-    vec![
-        ("session".to_string(), Value::Str(reinforcement.session_id.clone())),
-        (
-            "message_index".to_string(),
-            Value::Int(i64::try_from(reinforcement.message_index).unwrap_or(i64::MAX)),
-        ),
-        ("timestamp".to_string(), Value::Str(reinforcement.timestamp.to_string())),
-    ]
+fn render_links(out: &mut String, links: &[PageLink]) {
+    out.push('[');
+    for (index, link) in links.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        out.push_str("{kind: ");
+        super::frontmatter::render_string(out, link.kind.as_str());
+        out.push_str(", dst: ");
+        super::frontmatter::render_string(out, link.dst.as_str());
+        if let Some(weight) = link.weight {
+            out.push_str(", weight: ");
+            super::frontmatter::write_float(out, weight);
+        }
+        out.push('}');
+    }
+    out.push(']');
+}
+
+fn render_reinforcements(out: &mut String, reinforcements: &[Reinforcement]) -> std::fmt::Result {
+    use std::fmt::Write;
+    out.push('[');
+    for (index, item) in reinforcements.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        out.push_str("{session: ");
+        super::frontmatter::render_string(out, &item.session_id);
+        let msg_idx = i64::try_from(item.message_index).unwrap_or(i64::MAX);
+        write!(out, ", message_index: {msg_idx}, timestamp: ")?;
+        let ts_str = item.timestamp.to_string();
+        super::frontmatter::render_string(out, &ts_str);
+        out.push('}');
+    }
+    out.push(']');
+    Ok(())
 }
 
 fn trust_str(trust: TrustLevel) -> &'static str {
@@ -170,9 +197,12 @@ pub fn decode(text: &str, file_stem: &str, fallback_time: Timestamp) -> Result<M
             bail!("frontmatter field `{key}` is not part of the page schema");
         }
     }
-    let schema = int_field(&document, "schema").unwrap_or(PAGE_SCHEMA);
-    if schema != PAGE_SCHEMA {
-        bail!("page schema {schema} is not supported (this build writes {PAGE_SCHEMA})");
+    match document.get("schema") {
+        None | Some(Value::Int(PAGE_SCHEMA)) => {}
+        Some(Value::Int(schema)) => {
+            bail!("page schema {schema} is not supported (this build writes {PAGE_SCHEMA})");
+        }
+        Some(_) => bail!("frontmatter `schema` must be integer {PAGE_SCHEMA}"),
     }
     let id = match document.get_str("id") {
         Some(raw) => PageId::parse(raw)?,
@@ -314,13 +344,6 @@ fn string_list_field(document: &Document, key: &str) -> Result<Vec<String>> {
         }
     }
     Ok(values)
-}
-
-fn int_field(document: &Document, key: &str) -> Option<i64> {
-    match document.get(key) {
-        Some(Value::Int(number)) => Some(*number),
-        _ => None,
-    }
 }
 
 fn u32_field(document: &Document, key: &str) -> Result<Option<u32>> {

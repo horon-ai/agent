@@ -23,7 +23,7 @@ horon-tui - terminal client for the horon-agent harness
 
 Usage: horon-tui [--socket <path>] [--session <id>] [--cwd <dir>]
                  [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
-                 [--goal <objective> --goal-budget <tokens>]
+                 [--plan] [--goal <objective> --goal-budget <tokens>]
                  [--motion <full|reduced|static>]
                  [--spinner-interval <ms>] [--max-fps <n>]
                  [--hide-thinking] [--no-title]
@@ -32,8 +32,9 @@ Options:
   --socket <path>           Harness API socket to connect to (default: the
                             resolved harness socket for this user)
   --session <id>            Attach to an existing session instead of creating one
-  --goal <objective>       Attach a goal when creating a new session
-  --goal-budget <tokens>   Set the new goal's token ceiling
+  --plan                    Start a newly created session in read-only plan mode
+  --goal <objective>        Attach a goal when creating a new session
+  --goal-budget <tokens>    Set the new goal's token ceiling
   --cwd <dir>               Working directory for a newly created session
   --add-dir <dir>           Extra workspace directory for the session; must
                             exist, and repeats add several (repeatable)
@@ -66,7 +67,9 @@ Keys:
   Enter          send the typed message
   Alt-Enter      start a new line (Ctrl-J does the same; most terminals
                  send Shift-Enter as a plain Enter, which sends)
-  Tab            complete the slash command being typed
+  Tab            complete the slash command, or fill a @path from the workspace
+  Ctrl-Right     fill the draft with the local suggestion shown after the caret
+  Ctrl-G         edit the draft in $VISUAL or $EDITOR, then load the saved text
   Esc            send the queued messages into the running turn, or
                  interrupt it when nothing is queued
   Ctrl-C         cancel a running turn, or leave when nothing is running
@@ -78,12 +81,15 @@ Keys:
   Shift-Up/Down  scroll the transcript one row
   Ctrl-End       follow the end of the conversation again
   Ctrl-L         redraw the screen without changing the draft or selection
-  Ctrl-O         show or hide the whole output of the newest cut tool call
+  Ctrl-O         show or hide the whole output of the selected cut tool call
+  Alt-T          hide or show the record of finished tool calls
   Shift-Tab      step to the next reasoning effort
   Ctrl-T         show or hide the model's reasoning for this session
+  Alt-M          put this session in read-only plan mode, like /plan on
   Ctrl-Space     start or finish on-device voice input; /voice has the rest
                  (consent, stop, cancel, say <text>, read, status)
   Alt-P          pick the model this session uses
+  Ctrl-P         step forward through models.shortlist (Ctrl-Alt-P moves back)
   Alt-D          copy the draft to the terminal clipboard
   Alt-K          copy the line under the cursor to the terminal clipboard
   Alt-L          copy the last answer to the terminal clipboard
@@ -107,12 +113,15 @@ Commands:
                  $EDITOR, as a private copy; with no id, list them
   /clear         clear only the transcript pane
   /clear-context start fresh model context and keep the saved conversation
+  /commit [msg]  review the staged set and commit it after a second line; never pushes
   /compact       summarize older model context and keep the saved conversation
   /copy [last|code]
                  open the list of recent answers and code blocks, or copy
                  the last answer or the newest code block
+  /diff          show the staged and unstaged changes in the session's workspace
   /effort        set the reasoning effort, or pick one from the ladder
   /exit          leave, the same as /quit
+  /export <path> write this session's transcript as a standalone offline HTML report
   /jobs          list this session's background work, and cancel a terminal
                  with Delete
   /keys          list the keys in force and what each does
@@ -120,8 +129,10 @@ Commands:
   /mcp [probe <server>] list trusted MCP servers or test one connection
   /model [name]  pick a model from a list, or switch to the one named
   /new           start a new session in this directory
+  /note [action] note, list or remove a local note on a transcript message
   /pin [id]      keep a session at the top of the session list, or pin the
                  one attached
+  /queue         edit, remove or reorder the messages waiting for the turn to end
   /quit          leave
   /record [path] record the conversation to a local file (stop, status)
   /rename <title> save a title for the current session
@@ -130,7 +141,10 @@ Commands:
   /settings      open the settings screen, generated from the registry
   /skills        list the skills the harness reports, and put one in the
                  draft
+  /stats         show the attached session's recorded token usage
+  /swarm         list this session's swarm children and parent, and attach to one
   /switch [id]   move to another stored session, or pick one from the list
+  /tools         browse the current session's enabled tools
   /unpin [id]    take a session out of the pinned group
   /voice [consent|forget|stop|cancel|say <text>|read|status]
                  on-device speech: consent to capture, dictate into the
@@ -309,6 +323,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "skills" => "list the skills the harness reports, and put one in the draft",
         "swarm" => "list this session's swarm children and the parent it returns to, and attach to one",
         "switch" => "move to another stored session, or pick one from the list",
+        "tools" => "browse the current session's enabled tools without running them",
         "voice" => "on-device speech input and playback (consent, stop, cancel, say, read, status)",
         _ => "",
     }

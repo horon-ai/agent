@@ -151,20 +151,33 @@ fn section_from_config_file() -> HarnessApiConfig {
     let Ok(text) = std::fs::read_to_string(&path) else {
         return HarnessApiConfig::default();
     };
-    let Ok(document) = text.parse::<toml::Value>() else {
+    if !text.contains("harness_api") && !text.contains("\\u") && !text.contains("\\U") {
         return HarnessApiConfig::default();
-    };
-    let Some(table) = document.get("harness_api") else {
-        return HarnessApiConfig::default();
-    };
-    match table.clone().try_into::<HarnessApiConfig>() {
-        Ok(section) => section,
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "Ignoring [harness_api] section in {}: {error}",
-                path.display()
-            ));
-            HarnessApiConfig::default()
+    }
+    #[derive(serde::Deserialize, Default)]
+    #[serde(default)]
+    struct ConfigHarnessApiSlice {
+        harness_api: Option<HarnessApiConfig>,
+    }
+    match toml::from_str::<ConfigHarnessApiSlice>(&text) {
+        Ok(slice) => slice.harness_api.unwrap_or_else(HarnessApiConfig::default),
+        Err(_) => {
+            let Ok(document) = text.parse::<toml::Value>() else {
+                return HarnessApiConfig::default();
+            };
+            let Some(table) = document.get("harness_api") else {
+                return HarnessApiConfig::default();
+            };
+            match table.clone().try_into::<HarnessApiConfig>() {
+                Ok(section) => section,
+                Err(error) => {
+                    crate::logging::warn(&format!(
+                        "Ignoring [harness_api] section in {}: {error}",
+                        path.display()
+                    ));
+                    HarnessApiConfig::default()
+                }
+            }
         }
     }
 }

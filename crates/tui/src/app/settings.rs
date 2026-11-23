@@ -20,8 +20,7 @@ impl App {
         if self.disconnected && matches!(self.daemon_settings, DaemonSettings::Unknown) {
             self.daemon_settings = DaemonSettings::Failed("the connection is closed".to_string());
         }
-        let mut overlay = SettingsOverlay::new(self.themes_dir.clone());
-        overlay.refresh(&self.settings);
+        let mut overlay = SettingsOverlay::with_settings(self.themes_dir.clone(), &self.settings);
         overlay.set_daemon(self.daemon_settings.clone());
         self.overlay = Some(overlay);
         (!self.disconnected).then_some(Action::DaemonSettings)

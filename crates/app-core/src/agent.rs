@@ -54,6 +54,7 @@ mod pruning_tests;
 mod request_messages;
 #[cfg(test)]
 pub(crate) use request_messages::request_extra_clone_counters;
+pub use request_messages::tool_result_trim;
 pub(crate) use request_messages::{join_request_messages, record_request_extra_clone};
 mod response_recovery;
 mod resume_commit;
@@ -92,6 +93,7 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+pub use turn_streaming_mpsc::prose_repeat;
 mod usage;
 mod utils;
 #[cfg(test)]

@@ -58,7 +58,7 @@ fn dry_run_writes_nothing_and_apply_removes_only_inactive_derived_files() {
     let busy_log = fs::read(paths.events_log(&busy).unwrap()).unwrap();
 
     let preview = reclaim_derived(&paths, false).unwrap();
-    assert_eq!(preview.active, [busy.clone()]);
+    assert_eq!(preview.active, std::slice::from_ref(&busy));
     assert_eq!(preview.files.len(), idle_before.len());
     assert!(
         preview

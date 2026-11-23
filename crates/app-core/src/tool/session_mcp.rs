@@ -35,7 +35,7 @@ use crate::mcp::{
     ContentBlock, McpClient, McpConfig, McpHandle, McpManager, McpServerConfig, McpToolDef, dispatch_names,
     package_servers, render_resource_content, take_accept_large_output,
 };
-use crate::packages::{PackageMcpKind, PackageProcess, PackageRecord, PackageStore};
+use crate::packages::{PackageKind, PackageMcpKind, PackageProcess, PackageRecord, PackageState, PackageStore};
 use crate::protocol::{ServerEvent, SessionMcpServer};
 use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
@@ -475,9 +475,10 @@ struct PackageConnection {
     live: Arc<StdMutex<Vec<PackageLive>>>,
     /// Set before teardown, so a handshake that finishes late publishes nothing.
     cancelled: Arc<AtomicBool>,
-    task: tokio::task::JoinHandle<()>,
+    /// Task running handshakes; `None` when every server was refused before start.
+    task: Option<tokio::task::JoinHandle<()>>,
     /// Unregisters the revocation callback when the connection goes away.
-    _holder: PackageLifecycleHolder,
+    _holder: Option<PackageLifecycleHolder>,
 }
 
 /// One package's servers for one generation, resolved against the user's
@@ -532,11 +533,34 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
     let Some(snapshot) = session.current() else {
         return;
     };
+    let has_installed_plugin = !snapshot.is_empty()
+        && snapshot
+            .packages()
+            .any(|record| record.state == PackageState::Installed && matches!(record.kind, PackageKind::Plugin));
+    let store = session.store();
+    if !has_installed_plugin || !store.root().exists() {
+        let Some(state) = existing_package_state(session_id) else {
+            return;
+        };
+        if state.generation.load(Ordering::SeqCst) == snapshot.generation() {
+            return;
+        }
+        let stale: Vec<PackageConnection> = {
+            let mut packages = state.packages.lock().await;
+            let stale = std::mem::take(&mut *packages).into_values().collect();
+            state.generation.store(snapshot.generation(), Ordering::SeqCst);
+            stale
+        };
+        for connection in stale {
+            stop_connection(connection, Some(registry.clone())).await;
+        }
+        return;
+    }
     let state = package_state(session_id, &registry);
     if state.generation.load(Ordering::SeqCst) == snapshot.generation() {
         return;
     }
-    let store = session.store().clone();
+    let store = store.clone();
     let workspace = snapshot.workspace().map(PathBuf::from);
     let records: Vec<PackageRecord> = snapshot.packages().cloned().collect();
     let plan_store = store.clone();
@@ -568,7 +592,7 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
                 stale.push(connection);
             }
         }
-        for plan in planned {
+        for mut plan in planned {
             if packages
                 .get(&plan.package_id)
                 .is_some_and(|connection| connection.generation == plan.generation)
@@ -576,7 +600,42 @@ pub(crate) async fn refresh_package_mcp(session_id: &str, registry: Registry, se
                 // Another turn published this generation while this one planned.
                 continue;
             }
+            // Check process hosting policy synchronously before returning so Turn 1
+            // observes any `<hosted-policy>` notice via `report_hosted_refusals()`.
+            plan.servers.retain(|registration| {
+                let public_name = &registration.server.public_name;
+                let operation = match &registration.server.kind {
+                    PackageMcpKind::Stdio { .. } => HostedOperation::Stdio,
+                    PackageMcpKind::Remote { .. } => HostedOperation::Remote,
+                };
+                if let Err(refusal) = crate::mcp::hosted::check_current(&HostedRequest::server(operation, public_name))
+                {
+                    crate::logging::warn(&format!(
+                        "MCP: package {} server '{public_name}' was refused: {refusal}",
+                        plan.package_id
+                    ));
+                    report_hosted_refusal(session_id, public_name, &refusal);
+                    return false;
+                }
+                true
+            });
             let catalog_generation = snapshot.generation();
+            if plan.servers.is_empty() {
+                let id = plan.package_id;
+                packages.insert(
+                    id.clone(),
+                    PackageConnection {
+                        package_id: id,
+                        generation: plan.generation,
+                        servers: Vec::new(),
+                        live: Arc::new(StdMutex::new(Vec::new())),
+                        cancelled: Arc::new(AtomicBool::new(false)),
+                        task: None,
+                        _holder: None,
+                    },
+                );
+                continue;
+            }
             let Some(holder) = package_revocation_holder(session_id, &plan.package_id, catalog_generation) else {
                 continue;
             };
@@ -599,9 +658,12 @@ fn plan_packages(
     records: &[PackageRecord],
     workspace: Option<&std::path::Path>,
 ) -> Vec<PackagePlan> {
-    let merged = McpConfig::load_for_dir(workspace);
+    let mut merged: Option<McpConfig> = None;
     let mut planned = Vec::new();
     for record in records {
+        if record.state != PackageState::Installed || !matches!(record.kind, PackageKind::Plugin) {
+            continue;
+        }
         let servers = match store.mcp_servers(record) {
             Ok(servers) => servers,
             Err(error) => {
@@ -615,6 +677,7 @@ fn plan_packages(
         if servers.is_empty() {
             continue;
         }
+        let merged = merged.get_or_insert_with(|| McpConfig::load_for_dir(workspace));
         let servers = package_servers(&merged.servers, &servers);
         if servers.is_empty() {
             continue;
@@ -752,8 +815,8 @@ fn start_connection(
         servers: names,
         live,
         cancelled,
-        task,
-        _holder: holder,
+        task: Some(task),
+        _holder: Some(holder),
     }
 }
 
@@ -901,13 +964,15 @@ fn package_tools(server: &str, handle: &McpHandle) -> Vec<(String, Arc<dyn Tool>
 /// tools, and shut down exactly the clients this connection started.
 async fn stop_connection(connection: PackageConnection, registry: Option<Registry>) {
     connection.cancelled.store(true, Ordering::SeqCst);
-    connection.task.abort();
-    // The abort above makes a cancelled join the expected answer; anything
-    // else means the connection task panicked and is worth a line in the log.
-    if let Err(error) = connection.task.await
-        && !error.is_cancelled()
-    {
-        crate::logging::warn(&format!("MCP package connection task failed: {error}"));
+    if let Some(task) = connection.task {
+        task.abort();
+        // The abort above makes a cancelled join the expected answer; anything
+        // else means the connection task panicked and is worth a line in the log.
+        if let Err(error) = task.await
+            && !error.is_cancelled()
+        {
+            crate::logging::warn(&format!("MCP package connection task failed: {error}"));
+        }
     }
     if let Some(registry) = registry {
         for name in &connection.servers {

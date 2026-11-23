@@ -28,8 +28,8 @@ pub(super) async fn run(args: &Args) -> Result<()> {
         wait_async: *wait_async,
         print_thoughts: *print_thoughts,
     };
-    if !overrides.config_overlay.is_empty() {
-        crate::config::Config::set_run_overlays(&overrides.config_overlay)?;
+    if system_template.is_some() && overrides.system_prompt.is_some() {
+        anyhow::bail!("--system-prompt and --system-template cannot be combined: both replace the system prompt");
     }
     register_on_demand_server_spawner_for_run(args.provider.clone(), args.model.clone(), args.provider_profile.clone());
     let provider = provider_init::init_provider_for_run(&args.provider, args.model.as_deref()).await?;

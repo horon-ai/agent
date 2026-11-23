@@ -187,7 +187,7 @@ struct Job {
 /// The session's voice state: consent, the probe, and the one activity.
 pub(crate) struct Voice {
     consent: bool,
-    capability: Capability,
+    capability: std::cell::OnceCell<Capability>,
     /// What is running, for the hint and the keys.
     pub(crate) phase: Phase,
     /// The generation of the current activity; a result from another is stale.
@@ -209,18 +209,19 @@ impl Default for Voice {
 }
 
 impl Voice {
-    /// Probe this machine for the programs and model.
+    /// Delay probing `PATH` and `$HORON_HOME/models` until voice is actually
+    /// used, so plain TUI startup avoids directory walks and `stat` syscalls.
     pub(crate) fn new() -> Self {
-        let dirs = match std::env::var_os("PATH") {
-            Some(value) => std::env::split_paths(&value).collect::<Vec<PathBuf>>(),
-            None => Vec::new(),
-        };
-        let models = model_files(&models_dir());
-        Self::with_capability(probe(std::env::consts::OS, &dirs, &models))
+        Self::with_cell(std::cell::OnceCell::new())
     }
 
     /// A voice state over a capability already decided.
+    #[cfg(test)]
     pub(crate) fn with_capability(capability: Capability) -> Self {
+        Self::with_cell(std::cell::OnceCell::from(capability))
+    }
+
+    fn with_cell(capability: std::cell::OnceCell<Capability>) -> Self {
         let (sender, events) = mpsc::channel();
         Self {
             consent: false,
@@ -233,6 +234,17 @@ impl Voice {
             events,
             sender,
         }
+    }
+
+    fn capability(&self) -> &Capability {
+        self.capability.get_or_init(|| {
+            let dirs = match std::env::var_os("PATH") {
+                Some(value) => std::env::split_paths(&value).collect::<Vec<PathBuf>>(),
+                None => Vec::new(),
+            };
+            let models = model_files(&models_dir());
+            probe(std::env::consts::OS, &dirs, &models)
+        })
     }
 
     /// Whether consent was given for this session.
@@ -264,9 +276,17 @@ impl Voice {
         if self.phase != Phase::Idle {
             return Start::Busy(self.phase);
         }
-        if let Some(problem) = self.capability.recognition_problem() {
-            return Start::Unavailable(problem);
-        }
+        let (capture, recognize, model) = {
+            let capability = self.capability();
+            if let Some(problem) = capability.recognition_problem() {
+                return Start::Unavailable(problem);
+            }
+            (
+                capability.capture.clone(),
+                capability.recognize.clone(),
+                capability.model.clone(),
+            )
+        };
         let dir = scratch_dir();
         if let Err(error) = fs::create_dir_all(&dir) {
             return Start::Unavailable(format!("cannot create {}: {error}", dir.display()));
@@ -281,9 +301,9 @@ impl Voice {
         let finish = Arc::new(AtomicBool::new(false));
         self.finish = Some(Arc::clone(&finish));
         let job = Job {
-            capture: self.capability.capture.clone(),
-            recognize: self.capability.recognize.clone(),
-            model: self.capability.model.clone(),
+            capture,
+            recognize,
+            model,
             speak: None,
             base: scratch_path(&dir),
             generation,
@@ -345,9 +365,13 @@ impl Voice {
         if self.phase != Phase::Idle {
             return Start::Busy(self.phase);
         }
-        if let Some(problem) = self.capability.playback_problem() {
-            return Start::Unavailable(problem);
-        }
+        let speak = {
+            let capability = self.capability();
+            if let Some(problem) = capability.playback_problem() {
+                return Start::Unavailable(problem);
+            }
+            capability.speak.clone()
+        };
         let spoken = speech_text(text);
         if spoken.is_empty() {
             return Start::Unavailable("there is no text to speak".to_string());
@@ -364,7 +388,7 @@ impl Voice {
             capture: None,
             recognize: None,
             model: None,
-            speak: self.capability.speak.clone(),
+            speak,
             base: scratch_path(&dir),
             generation,
             recorder: Arc::new(AtomicU32::new(0)),
@@ -480,7 +504,7 @@ impl Voice {
         format!(
             "voice: {}; {consent}; {}",
             self.phase.label(),
-            self.capability.describe()
+            self.capability().describe()
         )
     }
 }

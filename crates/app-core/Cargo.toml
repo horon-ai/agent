@@ -23,6 +23,18 @@ path = "src/bin/horon-package-probe.rs"
 test = false
 doc = false
 
+[[bench]]
+name = "opt_round2"
+harness = false
+
+[[bench]]
+name = "opt_r3_export"
+harness = false
+
+[[bench]]
+name = "opt_r3_core"
+harness = false
+
 [dependencies]
 # NOTE: the jemalloc allocator stats live in `horon-agent-base` (process_memory) and
 # local embeddings live in `horon-agent-base` (embedding); this crate forwards those

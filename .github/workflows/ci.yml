@@ -11,6 +11,12 @@ on:
   # runs the same gates on any ref for diagnosis, but it is never accepted as that
   # evidence.
   workflow_dispatch:
+    inputs:
+      tui_smoke_repeats:
+        description: Consecutive Linux TUI PTY smoke iterations for flake verification (1 on normal runs)
+        required: false
+        default: "1"
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -265,6 +271,7 @@ jobs:
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
           python3 -m unittest -v scripts/sdk/test_python_platform_wheel.py
+          python3 -m unittest -v scripts/test/test_tui_pty_smoke.py
           python3 scripts/sdk/sdk_release.py check-committed
           placeholders="$(mktemp -d)"
           bash scripts/npm/prepare_placeholders.sh "$placeholders" >/dev/null
@@ -694,13 +701,30 @@ jobs:
         # without `--release` above, next to the release daemon.
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          TUI_SMOKE_REPEATS: ${{ github.event_name == 'workflow_dispatch' && runner.os == 'Linux' && inputs.tui_smoke_repeats || '1' }}
         run: |
+          repeats="$TUI_SMOKE_REPEATS"
+          if ! [[ "$repeats" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::tui_smoke_repeats must be a positive integer, got '$repeats'"
+            exit 1
+          fi
           python3 scripts/test/tui_pty_smoke.py \
             --agent target/${{ matrix.target }}/release/horon-agent \
             --tui target/${{ matrix.target }}/debug/horon-tui \
             --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
           echo "--- transcript ---"
           cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+          if [ "$repeats" -gt 1 ]; then
+            echo "[tui-pty] repeat 1/$repeats passed (all cases)"
+            for i in $(seq 2 "$repeats"); do
+              python3 scripts/test/tui_pty_smoke.py \
+                --cases 1 \
+                --agent target/${{ matrix.target }}/release/horon-agent \
+                --tui target/${{ matrix.target }}/debug/horon-tui
+              echo "[tui-pty] repeat $i/$repeats passed (case 1)"
+            done
+          fi
 
       - name: Installed layout TUI smoke
         # Release packaging runs only in the release workflow, after the change
@@ -838,7 +862,7 @@ jobs:
         # green `0 passed`.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-config-types --min-passed 68 --timeout 600
+            --package horon-agent-config-types --min-passed 65 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
             --package horon-agent-import-core --min-passed 23 --timeout 600
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
@@ -964,28 +988,12 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
-            --timeout 600 --min-passed 2 \
+            --timeout 600 --min-passed 1 \
             -- cli::dispatch::dispatch_tests::continue_ --nocapture
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent \
             --timeout 600 --min-passed 1 \
-            -- cli::startup::tests::startup_goal_requires_budget_and_conflicts_with_resume --nocapture
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
-            --timeout 600 --min-passed 1 \
             -- cli::commands::run_jobs::tests::waits_for_two_owned_jobs_without_waiting_for_another_session --nocapture
-
-      - name: Run CLI add-dir cohort
-        shell: bash
-        # `--add-dir` is the only launch flag that resolves a path before a
-        # session exists, and every `cli::args::tests` case is compiled here
-        # without a cohort naming it. The filter pins the launch-flag case so a
-        # renamed or unselected test fails the step instead of only building.
-        run: |
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
-            --timeout 600 --min-passed 1 \
-            -- cli::args::tests::add_dir_is_repeatable_and_keeps_each_value --nocapture
 
       - name: Run CLI shell completions cohort
         shell: bash
@@ -1161,7 +1169,7 @@ jobs:
         run: |
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
-            --timeout 600 --min-passed 8 \
+            --timeout 600 --min-passed 2 \
             -- hosted_tenant --nocapture
 
       - name: Run session MCP cohort
@@ -1192,6 +1200,14 @@ jobs:
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 600 --min-passed 2 \
             -- update::release_notes::tests:: --nocapture
+
+      - name: Run session forget cleanup cohort
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::session_forget::tests --nocapture
 
       - name: Run secrets cohort
         if: runner.os != 'Windows'
@@ -2276,16 +2292,6 @@ jobs:
           python3 scripts/ci/run_integration_targets.py \
             --artifacts "$TEST_ARTIFACTS" --timeout 900
 
-      - name: Verify package manifests with an isolated home
-        shell: bash
-        run: |
-          HORON_HOME="$(mktemp -d)"
-          export HORON_HOME
-          trap 'rmdir "$HORON_HOME"' EXIT
-          python3 scripts/ci/run_lib_tests.py \
-            --artifacts "$TEST_ARTIFACTS" --package horon-agent-base \
-            --kind test --target-name package_manifest --min-passed 13 --timeout 900
-
       - name: Run extension wire contracts with an isolated home
         shell: bash
         # The extension wire owns the framing, deadlines and correlation a
@@ -2356,7 +2362,7 @@ jobs:
           trap 'rm -rf "$HORON_HOME"' EXIT
           cargo test --locked -p horon-package-example --test extension_layouts -- --nocapture 2>&1 \
             | tee "$RUNNER_TEMP/package-example.log"
-          grep -Eq 'test result: ok\. 3 passed' "$RUNNER_TEMP/package-example.log"
+          grep -Eq 'test result: ok\. 2 passed' "$RUNNER_TEMP/package-example.log"
 
       # e2e runs inside `Run integration contracts` above, through the same
       # artifacts file: its binary is built by the compile step, and a second

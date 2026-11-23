@@ -192,3 +192,53 @@ fn a_list_the_session_context_already_carries_gets_a_reminder_after_a_change() {
         Some("Additional directories: (none)")
     );
 }
+
+#[test]
+fn canonical_roots_deduplicates_aliases_and_preserves_first_seen_order() {
+    let (_temp, root) = tempdir();
+    let first = root.join("first");
+    let second = root.join("second");
+    let third = root.join("third");
+    std::fs::create_dir(&first).expect("first dir");
+    std::fs::create_dir(&second).expect("second dir");
+    std::fs::create_dir(&third).expect("third dir");
+
+    let raw = vec![
+        first.to_string_lossy().into_owned(),
+        second.to_string_lossy().into_owned(),
+        format!("{}/.", first.display()),
+        format!("{}/../second", first.display()),
+        format!("{}/", second.display()),
+        third.to_string_lossy().into_owned(),
+    ];
+    let resolved = canonical_roots(&raw).expect("canonical roots");
+    assert_eq!(
+        resolved,
+        vec![
+            first.to_string_lossy().into_owned(),
+            second.to_string_lossy().into_owned(),
+            third.to_string_lossy().into_owned(),
+        ]
+    );
+}
+
+#[test]
+fn a_removed_root_with_parent_components_still_leaves_the_list() {
+    let (_temp, root) = tempdir();
+    let a = root.join("a");
+    let b = a.join("b");
+    let c = a.join("c");
+    std::fs::create_dir_all(&b).expect("create a/b");
+    std::fs::create_dir_all(&c).expect("create a/c");
+    let stored = std::fs::canonicalize(&c)
+        .expect("canonical a/c")
+        .to_string_lossy()
+        .into_owned();
+    std::fs::remove_dir(&c).expect("remove a/c");
+
+    let mut session = session();
+    session.set_additional_dirs(vec![stored]);
+    let parent_alias = format!("{}/../c", b.display());
+    assert!(session.remove_additional_dir(&parent_alias));
+    assert!(session.additional_dirs().is_empty());
+}
