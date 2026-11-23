@@ -73,6 +73,25 @@ impl StoreScope {
 #[path = "backend_tests.rs"]
 mod backend_tests;
 
+/// The exclusive writer lock on one store root, held by the caller.
+///
+/// The memory manager takes it around every mutation; the volume lifecycle takes
+/// the same lock so an export reads one revision and a quiesce waits out an
+/// in-flight write. It is the file lock on `memory/.write.lock`, so the two
+/// callers exclude each other inside one process and across processes alike.
+pub struct StoreWriteLock {
+    _lock: WriteLock,
+}
+
+impl StoreWriteLock {
+    /// Take the lock at `store_root`, creating the directory when needed.
+    pub(crate) fn acquire(store_root: &Path) -> Result<Self> {
+        ensure_private_dir(store_root)?;
+        let lock = WriteLock::acquire(&store_root.join(".write.lock"))?;
+        Ok(Self { _lock: lock })
+    }
+}
+
 /// A resolved store location plus the project of one caller.
 #[derive(Debug, Clone)]
 pub(crate) struct Store {

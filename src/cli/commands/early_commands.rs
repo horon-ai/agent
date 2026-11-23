@@ -33,6 +33,12 @@ pub(crate) async fn run_early_command(command: &Option<Command>) -> Result<Early
             super::config_cli::run(command)?;
             Ok(Early::Done)
         }
+        // Every volume command reads or writes one volume and needs no model,
+        // daemon or session, so it runs before provider setup.
+        Some(Command::Volume(command)) => {
+            crate::cli::volume::run(command)?;
+            Ok(Early::Done)
+        }
         _ => Ok(Early::Pass),
     }
 }

@@ -37,6 +37,7 @@ mod activity;
 mod backend;
 mod cache;
 mod consolidation;
+pub mod export;
 mod graph_pages;
 mod migrate;
 mod pending;
@@ -846,6 +847,7 @@ impl Default for MemoryManager {
 }
 
 /// The `memory migrate` report, re-exported for the CLI.
+pub use backend::StoreWriteLock;
 pub use migrate::MigrateReport;
 
 /// Import every pre-wiki JSON memory file under this home into the wiki.
@@ -854,6 +856,15 @@ pub use migrate::MigrateReport;
 pub fn migrate_pre_wiki_memories(dry_run: bool) -> Result<MigrateReport> {
     let store = Store::open(false, None)?;
     migrate::migrate_all(&store, dry_run)
+}
+
+/// Take the store's exclusive writer lock at `store_root`.
+///
+/// The volume lifecycle uses it to read one consistent revision (export) or to
+/// wait out an in-flight write before a checkpoint (quiesce). Returns the lock
+/// guard, which releases on drop.
+pub fn write_lock(store_root: &std::path::Path) -> Result<StoreWriteLock> {
+    StoreWriteLock::acquire(store_root)
 }
 
 #[cfg(test)]

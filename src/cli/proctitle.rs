@@ -36,6 +36,7 @@ pub(crate) fn initial_title(args: &Args) -> String {
         Some(Command::Provider(_)) => "horon-agent provider".to_string(),
         Some(Command::Skills(_)) => "horon-agent skills".to_string(),
         Some(Command::Memory(_)) => "horon-agent memory".to_string(),
+        Some(Command::Volume(_)) => "horon-agent volume".to_string(),
         Some(Command::Session(_)) => "horon-agent session".to_string(),
         Some(Command::Export { .. }) => "horon-agent export".to_string(),
         Some(Command::Ambient(_)) => "horon-agent ambient".to_string(),

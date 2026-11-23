@@ -28,7 +28,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | `diagram/` | [`README.md`](diagram/README.md) | Eight hand-written SVG diagrams with the code paths each one draws: system overview, run modes, turn lifecycle, provider wires, ACP negotiation, session storage, tool loading, branch and release flow |
 | `architecture/` | [`SERVER.md`](architecture/SERVER.md) | Server, session, and socket structure |
 | | [`CRATES.md`](architecture/CRATES.md) | Crate ownership boundaries, platform adapters, storage durability, and the TLS trust set |
-| | [`HOSTING.md`](architecture/HOSTING.md) | The per-user hosting boundary: the `HORON_AGENT_HOSTING_MODE` contract, the container image and volume layout, the control-plane routing contract, suspend and wake, and tenant deletion |
+| | [`HOSTING.md`](architecture/HOSTING.md) | The per-user hosting boundary: the `HORON_AGENT_HOSTING_MODE` contract, the container image and volume layout, the control-plane routing contract, the Fly Machines and Volume lifecycle with the quiesce requirement, suspend and wake, and tenant deletion |
 | `protocol/` | [`ACP.md`](protocol/ACP.md) | ACP v1 and v2 adapters, editor connections, and the stdio contract |
 | | [`HARNESS_API.md`](protocol/HARNESS_API.md) | Harness API credential setup, the optional authenticated TCP exposure, and the request and event surface |
 | | [`SESSION_STORE.md`](protocol/SESSION_STORE.md) | Session event storage format, delivery contract, writer pool, durable runtime journal |
@@ -36,7 +36,7 @@ Every change keeps the three rules below. The source of truth is `AGENTS.md` at 
 | | [`RPC.md`](protocol/RPC.md) | stdio JSONL RPC mode: commands, frames, and the omp conformance table |
 | | [`SHARING.md`](protocol/SHARING.md) | Proposed encrypted session sharing and revocation |
 | `runtime/` | [`TOOLS.md`](runtime/TOOLS.md) | Tool loading, effect and approval tiers, edit safety devices, parent `AGENTS.md`, `skill://` and `memory://` reads and MCP config sources, auxiliary calls |
-| | [`MEMORY.md`](runtime/MEMORY.md) | The memory wiki: markdown pages as the truth, the derived SQLite index and its schema, the search streams and their fusion, deletion and secure-delete order, rebuild, the Korean evaluation and its measured recall |
+| | [`MEMORY.md`](runtime/MEMORY.md) | The memory wiki: markdown pages as the truth, the derived SQLite index and its schema, the search streams and their fusion, deletion and secure-delete order, rebuild, the Korean evaluation and its measured recall, and the volume export, import, quiesce, key contract and `delete_user` step machine |
 | | [`EDIT_DIAGNOSTICS.md`](runtime/EDIT_DIAGNOSTICS.md) | Proposed post-edit language diagnostics |
 | | [`TOOL_SCHEDULING.md`](runtime/TOOL_SCHEDULING.md) | Tool scheduling and loop prevention |
 | | [`TURNS.md`](runtime/TURNS.md) | Turn recovery, mid-run message insertion, the `[prewalk]` plan-to-execution model handoff, goal continuation and its token budget, runtime commands, `--resume` |
