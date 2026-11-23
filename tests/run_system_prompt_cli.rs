@@ -131,3 +131,28 @@ fn an_oversized_append_fails_before_any_request() {
     assert!(String::from_utf8_lossy(&result.stderr).contains("byte limit"));
     assert!(bodies.lock().unwrap().is_empty());
 }
+
+#[test]
+fn system_prompt_and_system_template_conflict_before_any_request() {
+    let home = tempfile::tempdir().unwrap();
+    let (url, bodies) = mock();
+    let template = home.path().join("tpl.txt");
+    std::fs::write(&template, "TEMPLATE-TEXT {{cwd}}").unwrap();
+    let result = run(
+        home.path(),
+        &url,
+        &[
+            "--system-prompt",
+            "INLINE-TEXT",
+            "--system-template",
+            template.to_str().unwrap(),
+        ],
+    );
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("--system-template") || stderr.contains("--system-prompt"),
+        "{stderr}"
+    );
+    assert!(bodies.lock().unwrap().is_empty());
+}

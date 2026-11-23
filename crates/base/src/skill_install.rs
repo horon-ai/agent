@@ -21,6 +21,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// File inside the managed directory that records every installed skill.
 pub const LOCK_FILE: &str = "install-lock.json";
@@ -209,11 +210,13 @@ fn discard(staging: &Path) {
 
 fn unique_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
+    static NEXT_SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
-    format!("{nanos:x}")
+    let seq = NEXT_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}-{seq}")
 }
 
 fn clone_into(source: &str, git_ref: Option<&str>, name_hint: Option<&str>, staging: &Path) -> Result<InstalledSkill> {
@@ -366,7 +369,9 @@ fn write_lock(dir: &Path, record: InstallRecord) -> Result<()> {
     lock.installs.retain(|existing| existing.name != record.name);
     lock.installs.push(record);
     lock.installs.sort_by(|left, right| left.name.cmp(&right.name));
-    let temporary = dir.join(format!(".{LOCK_FILE}.tmp-{}", std::process::id()));
+    static NEXT_LOCK_TMP: AtomicU64 = AtomicU64::new(0);
+    let seq = NEXT_LOCK_TMP.fetch_add(1, Ordering::Relaxed);
+    let temporary = dir.join(format!(".{LOCK_FILE}.tmp-{}-{seq}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(&lock)?;
     std::fs::write(&temporary, bytes).with_context(|| format!("cannot write {}", temporary.display()))?;
     std::fs::rename(&temporary, &path).with_context(|| format!("cannot replace {}", path.display()))?;

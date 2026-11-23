@@ -88,3 +88,46 @@ default_model = "beta-model"
         );
     });
 }
+
+#[test]
+fn fetch_named_openai_models_preserves_build_error_context() {
+    let runtime = enter_test_runtime();
+    let profile = crate::config::NamedProviderConfig {
+        base_url: "not-a-valid-url".to_string(),
+        ..Default::default()
+    };
+    let error = runtime
+        .block_on(external::fetch_named_openai_models("broken-profile", &profile))
+        .expect_err("invalid base_url must fail");
+    let message = error.to_string();
+    assert!(message.contains("broken-profile"), "{message}");
+    assert!(message.contains("invalid base_url"), "{message}");
+}
+
+#[test]
+fn profile_credential_status_matches_localhost_key_policy() {
+    let local = crate::config::NamedProviderConfig {
+        base_url: "http://localhost:11434/v1".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(external::profile_credential_status(&local), ("none", "unknown"));
+
+    let local_requiring_key = crate::config::NamedProviderConfig {
+        base_url: "http://localhost:11434/v1".to_string(),
+        requires_api_key: Some(true),
+        ..Default::default()
+    };
+    assert_eq!(
+        external::profile_credential_status(&local_requiring_key),
+        ("none", "unauthenticated")
+    );
+
+    let remote = crate::config::NamedProviderConfig {
+        base_url: "https://api.example.com/v1".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(
+        external::profile_credential_status(&remote),
+        ("none", "unauthenticated")
+    );
+}

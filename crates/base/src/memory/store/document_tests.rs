@@ -96,6 +96,23 @@ fn unknown_fields_and_other_schema_versions_are_refused() {
     let text = "---\nschema: 2\ntitle: \"t\"\nkind: \"fact\"\n---\n";
     let error = document::decode(text, "mem_1_a", at(0)).expect_err("schema");
     assert!(format!("{error}").contains("schema 2"), "{error}");
+
+    for bad_schema in [
+        "schema: \"2\"",
+        "schema: \"1\"",
+        "schema: 2.0",
+        "schema: 1.0",
+        "schema: true",
+        "schema: null",
+        "schema: []",
+    ] {
+        let text = format!("---\n{bad_schema}\ntitle: \"t\"\nkind: \"fact\"\n---\n");
+        let error = document::decode(&text, "mem_1_a", at(0)).expect_err(&format!("{bad_schema} must be refused"));
+        assert!(
+            format!("{error}").contains("schema"),
+            "unexpected error for {bad_schema}: {error}"
+        );
+    }
 }
 
 #[test]

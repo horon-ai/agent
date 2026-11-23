@@ -283,22 +283,27 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Send + 'static + Unpin,
 {
-    run_bridge_stream_with_deadline(read_half, write_half, legacy_socket, writer::WRITE_STALL_DEADLINE).await
+    run_bridge_stream_with_deadline(
+        BufReader::new(read_half),
+        write_half,
+        legacy_socket,
+        writer::WRITE_STALL_DEADLINE,
+    )
+    .await
 }
 
 /// [`run_bridge_stream`] with the write deadline injected, so a test can watch a
 /// stalled peer close the connection without waiting the production interval.
 pub(crate) async fn run_bridge_stream_with_deadline<R, W>(
-    read_half: R,
+    mut reader: R,
     mut write_half: W,
     legacy_socket: PathBuf,
     write_deadline: std::time::Duration,
 ) -> Result<()>
 where
-    R: tokio::io::AsyncRead + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
     W: tokio::io::AsyncWrite + Send + 'static + Unpin,
 {
-    let mut reader = BufReader::new(read_half);
     let mut line = String::new();
 
     // 1. Handshake: first frame must be hello with a compatible version.

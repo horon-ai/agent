@@ -20,7 +20,8 @@ use crate::message::ContentBlock;
 const IMAGE_TOOL: &str = "generate_image";
 
 pub(super) fn run(args: &ImagesArgs) -> Result<()> {
-    let session = crate::session::Session::load(&args.session)
+    let session_id = crate::session::find_session_by_name_or_id(&args.session)?;
+    let session = crate::session::Session::load(&session_id)
         .with_context(|| format!("cannot read session {:?}", args.session))?;
     let history = session.history_messages()?;
     let logged = collect(history.iter().flat_map(|message| message.content.iter()));
@@ -29,7 +30,7 @@ pub(super) fn run(args: &ImagesArgs) -> Result<()> {
     if let Some(copy) = &args.copy {
         return copy_one(&images, &copy[0], Path::new(&copy[1]));
     }
-    report(&args.session, &images, args.json, io::stdout().lock())
+    report(&session_id, &images, args.json, io::stdout().lock())
 }
 
 #[derive(Debug, PartialEq, Eq)]

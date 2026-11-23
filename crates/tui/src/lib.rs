@@ -230,23 +230,9 @@ impl Args {
                     Some(session) if !session.is_empty() => parsed.session = Some(session),
                     _ => return Err("--session needs a session id".to_string()),
                 },
-                "--goal" => match arguments.next() {
-                    Some(title) if !title.trim().is_empty() => parsed.goal = Some(title),
-                    _ => return Err("--goal needs a nonempty objective".into()),
-                },
+                "--goal" => parsed.goal = Some(parse_goal(arguments.next().as_deref())?),
                 "--plan" => parsed.plan = true,
-                "--goal-budget" => {
-                    let Some(value) = arguments.next() else {
-                        return Err("--goal-budget needs a positive token count".into());
-                    };
-                    let budget = value
-                        .parse::<u64>()
-                        .map_err(|_| "--goal-budget needs a positive token count")?;
-                    if budget == 0 {
-                        return Err("--goal-budget needs a positive token count".into());
-                    }
-                    parsed.goal_budget = Some(budget);
-                }
+                "--goal-budget" => parsed.goal_budget = Some(parse_goal_budget(arguments.next().as_deref())?),
                 "--cwd" => match arguments.next() {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
@@ -269,6 +255,10 @@ impl Args {
                     Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
+                    Some(("--goal", title)) => parsed.goal = Some(parse_goal(Some(title))?),
+                    Some(("--goal-budget", budget)) => {
+                        parsed.goal_budget = Some(parse_goal_budget(Some(budget))?);
+                    }
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
                     Some(("--add-dir", "")) => {
                         return Err("--add-dir needs a value".to_string());
@@ -309,6 +299,25 @@ pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::C
         supports_ask_requests: true,
         ..horon_agent_sdk::ConnectOptions::default()
     }
+}
+
+fn parse_goal(value: Option<&str>) -> Result<String, &'static str> {
+    match value {
+        Some(title) if !title.trim().is_empty() => Ok(title.to_string()),
+        _ => Err("--goal needs a nonempty objective"),
+    }
+}
+
+fn parse_goal_budget(value: Option<&str>) -> Result<u64, &'static str> {
+    let message = "--goal-budget needs a positive token count";
+    let Some(raw) = value else {
+        return Err(message);
+    };
+    let budget = raw.parse::<u64>().map_err(|_| message)?;
+    if budget == 0 {
+        return Err(message);
+    }
+    Ok(budget)
 }
 
 /// Run the client and return the process exit code.
@@ -831,7 +840,6 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // before anything borrows the app to draw.
     app.sync_slash();
     app.sync_suggestions();
-    let ghost = app.suggestion_text();
     let theme: &Theme = &app.theme;
     let symbols = app.symbols;
     let prompt_lines = app.prompt_lines();
@@ -1011,21 +1019,22 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &mut App) {
     // The ghost suffix is drawn after the caret on the row the caret is on.
     // The offer was checked against the exact draft before this frame, so what
     // is drawn here is a suffix of the text already on screen.
-    let rows: Vec<Line<'static>> = view
+    let ghost = app.ghost_suffix();
+    let rows: Vec<Line<'_>> = view
         .rows
         .iter()
         .enumerate()
         .map(|(row, text)| {
-            let lead = if row == 0 { marker.clone() } else { padding.clone() };
+            let lead = if row == 0 { marker.as_str() } else { padding.as_str() };
             let mut spans = vec![
                 Span::styled(lead, Style::default().fg(theme.core.accent)),
-                Span::styled(text.clone(), Style::default().fg(theme.prompt.prompt_text)),
+                Span::styled(text.as_str(), Style::default().fg(theme.prompt.prompt_text)),
             ];
             if row == view.cursor_row
-                && let Some(ghost) = ghost.as_deref()
+                && let Some(ghost) = ghost
             {
                 let room = text_width.saturating_sub(crate::input::text_cells(text));
-                let tail = crate::input::clip_cells(ghost, room);
+                let tail = crate::input::clip_cells_str(ghost, room);
                 if !tail.is_empty() {
                     spans.push(Span::styled(tail, Style::default().fg(theme.core.muted)));
                 }

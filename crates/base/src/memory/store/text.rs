@@ -42,73 +42,77 @@ pub fn normalize_entity(name: &str) -> String {
     out
 }
 
-/// Lowercase `text` and drop everything that is not a letter or digit. This is
-/// the form the trigram and entity streams compare.
-pub fn compact(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for ch in text.chars() {
-        if ch.is_alphanumeric() {
-            for lower in ch.to_lowercase() {
-                out.push(lower);
-            }
-        }
-    }
-    out
-}
-
 /// Expand every CJK-bearing word into overlapping bigrams, space separated.
 ///
 /// A run of letters and digits that contains at least one CJK character becomes
 /// its 2-character windows (`회의를선호` -> `회의 의를 를선 선호`); a run of Latin
 /// text alone is left out, because the token index already covers it.
 pub fn bigram_expansion(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut run: Vec<char> = Vec::new();
-    let flush = |run: &mut Vec<char>, out: &mut String| {
-        if run.len() >= 2 && run.iter().any(|ch| is_cjk(*ch)) {
-            for pair in run.windows(2) {
-                if !out.is_empty() {
-                    out.push(' ');
-                }
-                out.extend(pair.iter());
-            }
-        }
-        run.clear();
-    };
-    for ch in text.chars() {
-        if ch.is_alphanumeric() {
-            run.push(ch);
-        } else {
-            flush(&mut run, &mut out);
-        }
+    bigram_expansion_parts(&[text])
+}
+
+/// Expand every CJK-bearing word across `parts` into overlapping bigrams
+/// without allocating a concatenated temporary string.
+pub fn bigram_expansion_parts(parts: &[&str]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        push_bigram_expansion(part, &mut out);
     }
-    flush(&mut run, &mut out);
     out
 }
 
-/// The distinct bigram terms of a query, in first-seen order.
-pub fn bigram_terms(text: &str) -> Vec<String> {
-    let mut terms: Vec<String> = Vec::new();
-    for term in bigram_expansion(text).split_whitespace() {
-        if !terms.iter().any(|existing| existing == term) {
-            terms.push(term.to_string());
-        }
-        if terms.len() >= MAX_PHRASES {
-            break;
+fn push_bigram_expansion(text: &str, out: &mut String) {
+    let mut run_start: Option<usize> = None;
+    let mut char_count = 0usize;
+    let mut has_cjk = false;
+    for (idx, ch) in text.char_indices() {
+        if ch.is_alphanumeric() {
+            if run_start.is_none() {
+                run_start = Some(idx);
+            }
+            char_count += 1;
+            if is_cjk(ch) {
+                has_cjk = true;
+            }
+        } else if let Some(start) = run_start.take() {
+            if char_count >= 2 && has_cjk {
+                emit_bigrams(&text[start..idx], out);
+            }
+            char_count = 0;
+            has_cjk = false;
         }
     }
-    terms
+    if let Some(start) = run_start
+        && char_count >= 2
+        && has_cjk
+    {
+        emit_bigrams(&text[start..], out);
+    }
 }
 
-/// Split `text` into the words the `unicode61` tokenizer would see: runs of
-/// letters and digits, lowercased.
-pub fn words(text: &str) -> Vec<String> {
+fn emit_bigrams(slice: &str, out: &mut String) {
+    let mut prev: Option<char> = None;
+    for ch in slice.chars() {
+        if let Some(first) = prev {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push(first);
+            out.push(ch);
+        }
+        prev = Some(ch);
+    }
+}
+
+fn words_and_compact(text: &str) -> (Vec<String>, String) {
     let mut words = Vec::new();
     let mut current = String::new();
+    let mut compacted = String::with_capacity(text.len());
     for ch in text.chars() {
         if ch.is_alphanumeric() {
             for lower in ch.to_lowercase() {
                 current.push(lower);
+                compacted.push(lower);
             }
         } else if !current.is_empty() {
             words.push(std::mem::take(&mut current));
@@ -117,71 +121,85 @@ pub fn words(text: &str) -> Vec<String> {
     if !current.is_empty() {
         words.push(current);
     }
-    words
+    (words, compacted)
 }
 
-/// Turn one term into an FTS5 phrase, doubling an embedded quote.
-fn phrase(term: &str) -> String {
-    let mut quoted = String::with_capacity(term.len() + 2);
-    quoted.push('"');
+/// Append one term as a quoted FTS5 phrase, doubling any embedded quote.
+fn push_phrase(out: &mut String, term: &str) {
+    out.push('"');
     for ch in term.chars() {
         if ch == '"' {
-            quoted.push('"');
+            out.push('"');
         }
-        quoted.push(ch);
+        out.push(ch);
     }
-    quoted.push('"');
-    quoted
+    out.push('"');
 }
 
-fn disjunction(terms: Vec<String>) -> Option<String> {
-    if terms.is_empty() {
-        return None;
+fn disjunction_strs<'a>(terms: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut out = String::new();
+    let mut count = 0usize;
+    for term in terms {
+        if count > 0 {
+            out.push_str(" OR ");
+        }
+        push_phrase(&mut out, term);
+        count += 1;
     }
-    Some(
-        terms
-            .into_iter()
-            .map(|term| phrase(&term))
-            .collect::<Vec<_>>()
-            .join(" OR "),
-    )
+    if count == 0 { None } else { Some(out) }
 }
 
-/// The `pages_fts` expression for a query, or `None` when it has no word.
-pub fn token_expression(text: &str) -> Option<String> {
-    let mut terms = words(text);
-    terms.truncate(MAX_PHRASES);
-    disjunction(terms)
-}
-
-/// The `pages_bigram` (trigram) expression: quoted substrings of three or more
-/// characters, which the trigram tokenizer matches anywhere in the text.
-pub fn trigram_expression(text: &str) -> Option<String> {
-    let mut terms: Vec<String> = Vec::new();
-    let mut push = |term: String| {
-        if !terms.iter().any(|existing| existing == &term) && terms.len() < MAX_PHRASES {
+fn trigram_expression_from<'a>(words: &'a [String], all: &'a str) -> Option<String> {
+    let mut terms: Vec<&'a str> = Vec::new();
+    let mut push = |term: &'a str| {
+        if !terms.contains(&term) && terms.len() < MAX_PHRASES {
             terms.push(term);
         }
     };
-    for word in words(text) {
+    for word in words {
         if word.chars().count() >= 3 {
-            push(word);
+            push(word.as_str());
         }
     }
-    let all = compact(text);
     if all.chars().count() >= 3 {
         push(all);
     }
-    disjunction(terms)
+    disjunction_strs(terms)
 }
 
 /// The `pages_grams` expression for a query, or `None` when no CJK bigram can be
-/// formed (Latin words are already covered by [`token_expression`]).
+/// formed (Latin words are already covered by [`prepare_query`]).
 pub fn bigram_expression(text: &str) -> Option<String> {
-    disjunction(bigram_terms(text))
+    let expanded = bigram_expansion(text);
+    let mut terms: Vec<&str> = Vec::new();
+    for term in expanded.split_whitespace() {
+        if !terms.contains(&term) {
+            terms.push(term);
+        }
+        if terms.len() >= MAX_PHRASES {
+            break;
+        }
+    }
+    disjunction_strs(terms)
 }
 
-/// The compacted, lowercased query used to match entity names.
-pub fn entity_query(text: &str) -> String {
-    compact(text)
+/// All four query-stream representations computed in one pass over `query_text`.
+pub(super) struct PreparedQuery {
+    pub tokens: Option<String>,
+    pub trigrams: Option<String>,
+    pub bigrams: Option<String>,
+    pub entity: String,
+}
+
+pub(super) fn prepare_query(text: &str) -> PreparedQuery {
+    let (words, entity) = words_and_compact(text);
+    let tokens = disjunction_strs(words.iter().take(MAX_PHRASES).map(String::as_str));
+    let trigrams = trigram_expression_from(&words, &entity);
+    let bigrams = bigram_expression(text);
+    PreparedQuery {
+        tokens,
+        trigrams,
+        bigrams,
+        entity,
+    }
 }

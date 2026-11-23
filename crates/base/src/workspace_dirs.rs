@@ -59,7 +59,7 @@ pub fn canonical_roots(raw: &[String]) -> Result<Vec<String>, DirError> {
     let mut roots: Vec<String> = Vec::with_capacity(raw.len());
     for value in raw {
         let root = canonical_root(value)?.to_string_lossy().into_owned();
-        if !roots.iter().any(|existing| same_directory(existing, &root)) {
+        if !roots.iter().any(|existing| existing == &root) {
             roots.push(root);
         }
     }
@@ -79,14 +79,32 @@ pub fn same_directory(left: &str, right: &str) -> bool {
     }
 }
 
-/// The path with redundant separators and `.` components dropped.
+fn matches_canonical(existing: &str, canonical_right: &Path, right_str: &str) -> bool {
+    match std::fs::canonicalize(existing.trim()) {
+        Ok(left) => left == canonical_right,
+        Err(_) => lexical(existing) == lexical(right_str),
+    }
+}
+
+/// The path with redundant separators, `.` and resolvable `..` components normalized.
 fn lexical(raw: &str) -> PathBuf {
-    let mut path = PathBuf::new();
+    let mut components: Vec<Component<'_>> = Vec::new();
     for component in Path::new(raw.trim()).components() {
         match component {
             Component::CurDir => {}
-            other => path.push(other.as_os_str()),
+            Component::ParentDir => {
+                if matches!(components.last(), Some(Component::Normal(_))) {
+                    components.pop();
+                } else if !matches!(components.last(), Some(Component::RootDir)) {
+                    components.push(component);
+                }
+            }
+            other => components.push(other),
         }
+    }
+    let mut path = PathBuf::new();
+    for component in components {
+        path.push(component.as_os_str());
     }
     path
 }
@@ -98,9 +116,13 @@ impl crate::session::Session {
     /// existing directory. A directory already on the list under any spelling
     /// is not added twice. Answers whether the list changed.
     pub fn add_additional_dir(&mut self, raw: &str) -> Result<bool, DirError> {
-        let root = canonical_root(raw)?.to_string_lossy().into_owned();
+        let canonical = canonical_root(raw)?;
+        let root = canonical.to_string_lossy().into_owned();
         let mut directories = self.additional_dirs();
-        if directories.iter().any(|existing| same_directory(existing, &root)) {
+        if directories
+            .iter()
+            .any(|existing| existing == &root || matches_canonical(existing, &canonical, &root))
+        {
             return Ok(false);
         }
         directories.push(root);
@@ -117,8 +139,43 @@ impl crate::session::Session {
     /// list changed.
     pub fn remove_additional_dir(&mut self, raw: &str) -> bool {
         let mut directories = self.additional_dirs();
+        if directories.is_empty() {
+            return false;
+        }
+        let trimmed_raw = raw.trim();
+        let resolved_raw = if trimmed_raw.is_empty() {
+            None
+        } else {
+            match std::fs::canonicalize(trimmed_raw) {
+                Ok(path) if path.is_dir() => Some(path),
+                Ok(_) | Err(_) => None,
+            }
+        };
+        let resolved_str = resolved_raw.as_ref().map(|path| path.to_string_lossy());
+        let mut lexical_raw: Option<PathBuf> = None;
         let before = directories.len();
-        directories.retain(|existing| !same_directory(existing, raw));
+        directories.retain(|existing| {
+            let matches = match (&resolved_raw, &resolved_str) {
+                (Some(target), Some(target_str)) => {
+                    existing == target_str.as_ref()
+                        || existing.trim() == trimmed_raw
+                        || match std::fs::canonicalize(existing.trim()) {
+                            Ok(left) => left == *target,
+                            Err(_) => {
+                                let lex_raw = lexical_raw.get_or_insert_with(|| lexical(trimmed_raw));
+                                lexical(existing) == *lex_raw
+                            }
+                        }
+                }
+                _ => {
+                    existing.trim() == trimmed_raw || {
+                        let lex_raw = lexical_raw.get_or_insert_with(|| lexical(trimmed_raw));
+                        lexical(existing) == *lex_raw
+                    }
+                }
+            };
+            !matches
+        });
         if directories.len() == before {
             return false;
         }

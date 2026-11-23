@@ -130,6 +130,9 @@ pub(crate) async fn sync_session_tools(registry: &Registry, session_id: &str, se
     let Some(snapshot) = session.current() else {
         return Vec::new();
     };
+    if snapshot.is_empty() && lock_registered().get(session_id).is_none_or(HashMap::is_empty) {
+        return Vec::new();
+    }
     let store = session.store();
     let mut desired: Vec<(String, Arc<dyn Tool>)> = Vec::new();
     for record in snapshot.packages() {
@@ -158,6 +161,9 @@ pub(crate) async fn sync_session_tools(registry: &Registry, session_id: &str, se
         }
     }
 
+    if desired.is_empty() && lock_registered().get(session_id).is_none_or(HashMap::is_empty) {
+        return Vec::new();
+    }
     let present: HashSet<String> = {
         let tools = registry.tools.read().await;
         desired

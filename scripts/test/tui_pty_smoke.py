@@ -102,7 +102,6 @@ APPROVAL_PROMPT = "approval needed"
 # The client draws a tool call as its name and status, not its output, so the
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-APPROVAL_RESOLVED = "approval approved"
 # The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
 # harness sends over the session event stream once the bridge is serving this
 # client, so seeing it means the client is past its first frame and talking to

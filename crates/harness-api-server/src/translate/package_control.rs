@@ -45,7 +45,7 @@ pub(super) fn request(state: &mut BridgeState, request: &Value) -> Option<Vec<Ou
             "package_control",
         ))]);
     }
-    let typed = match serde_json::from_value::<PackageControlRequest>(request.clone()) {
+    let typed = match <PackageControlRequest as serde::Deserialize>::deserialize(request) {
         Ok(typed) => typed,
         Err(error) => {
             return Some(BridgeState::error_reply(
@@ -88,7 +88,7 @@ pub(super) fn event(state: &mut BridgeState, event: &Value) -> Option<Vec<Server
         // let it fall through to the generic arms, which do not know this type.
         return Some(Vec::new());
     };
-    let receipt = match serde_json::from_value::<PackageControlReceipt>(event["receipt"].clone()) {
+    let receipt = match <PackageControlReceipt as serde::Deserialize>::deserialize(&event["receipt"]) {
         Ok(receipt) => receipt,
         Err(error) => {
             return Some(vec![ServerFrame::reply(

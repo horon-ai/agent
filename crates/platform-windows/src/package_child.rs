@@ -143,6 +143,13 @@ impl WindowsPackageChild {
         Ok(())
     }
 
+    /// Record the leader's exit status and close the Job Object handle.
+    fn record_settled(&mut self, status: ExitStatus) -> ExitStatus {
+        self.job = None;
+        self.status = Some(status);
+        status
+    }
+
     /// Record an exit only after its tree was swept, then release the job.
     ///
     /// Reporting an exit means no descendant outlives it: the job is terminated
@@ -151,9 +158,7 @@ impl WindowsPackageChild {
     /// in between.
     fn settle(&mut self, status: ExitStatus) -> io::Result<ExitStatus> {
         self.terminate_job()?;
-        self.job = None;
-        self.status = Some(status);
-        Ok(status)
+        Ok(self.record_settled(status))
     }
 }
 
@@ -217,9 +222,12 @@ impl PackageChildProcess for WindowsPackageChild {
         }
         // Windows has no catchable termination request, so the forced stop is
         // the whole stop: descendants still writing are killed with it.
+        // Note: callers that never sent a wire `shutdown` frame (such as
+        // `Child::revoke` or `PackageChild::drop`) still pay `grace` above
+        // while `PackageChildProcess::terminate` keeps one uniform contract.
         self.terminate_job()?;
         let status = self.child.wait()?;
-        self.settle(status)
+        Ok(self.record_settled(status))
     }
 }
 

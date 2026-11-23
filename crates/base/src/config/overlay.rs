@@ -15,28 +15,72 @@ static OVERLAYS: LazyLock<Mutex<Vec<PathBuf>>> = LazyLock::new(Default::default)
 impl Config {
     /// Record the overlays for this process after checking that each one parses.
     pub fn set_run_overlays(paths: &[PathBuf]) -> anyhow::Result<()> {
-        for path in paths {
-            read_table(path)?;
-        }
-        *OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner) = paths.to_vec();
-        Self::invalidate_cache();
-        // The ordinary loader falls back to defaults on a bad file. A run that
-        // asked for overlays must fail before provider use instead.
-        if let Err(error) = Self::load_file_layer() {
-            OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner).clear();
+        if paths.is_empty() {
+            let mut guard = OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner);
+            if guard.is_empty() {
+                return Ok(());
+            }
+            guard.clear();
+            drop(guard);
             Self::invalidate_cache();
-            return Err(error);
+            return Ok(());
+        }
+        let mut tables = Vec::with_capacity(paths.len());
+        for path in paths {
+            match read_table(path) {
+                Ok(table) => tables.push(table),
+                Err(error) => {
+                    clear_overlays_if_set();
+                    return Err(error);
+                }
+            }
+        }
+        let validated = match Self::path() {
+            Some(path) => match merge_and_parse(&path, tables) {
+                Ok(config) => Some(config),
+                Err(error) => {
+                    clear_overlays_if_set();
+                    return Err(error);
+                }
+            },
+            None => None,
+        };
+        *OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner) = paths.to_vec();
+        if let Some(mut config) = validated {
+            config.apply_env_overrides();
+            publish_loaded_config(config);
+        } else {
+            Self::invalidate_cache();
         }
         Ok(())
     }
 }
 
-fn overlays() -> Vec<PathBuf> {
-    OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner).clone()
+fn clear_overlays_if_set() {
+    let mut guard = OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner);
+    if !guard.is_empty() {
+        guard.clear();
+        drop(guard);
+        Config::invalidate_cache();
+    }
+}
+
+fn publish_loaded_config(config: Config) {
+    let published = super::super::leak_config(config);
+    let mut cache = super::super::CONFIG_CACHE
+        .write()
+        .unwrap_or_else(PoisonError::into_inner);
+    cache.config = published;
+    cache.fingerprint = super::super::ConfigCacheFingerprint::current();
+    cache.last_checked = std::time::Instant::now();
+    cache.force_reload = false;
+    drop(cache);
+    super::super::notify_config_reloaded();
+    super::super::populate_context_limits_from_config_ref(published);
 }
 
 pub(super) fn active() -> bool {
-    !overlays().is_empty()
+    !OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner).is_empty()
 }
 
 fn read_table(path: &Path) -> anyhow::Result<toml::Table> {
@@ -58,30 +102,64 @@ fn merge(base: &mut toml::Table, top: toml::Table) {
     }
 }
 
-/// The config file (when it exists) with every overlay applied, parsed as a
-/// whole, with the document that produced it.
-pub(super) fn load(path: &Path) -> anyhow::Result<(Config, toml::Value)> {
-    let mut table = if path.exists() {
+fn read_base_table(path: &Path) -> anyhow::Result<toml::Table> {
+    if path.exists() {
         let text = std::fs::read_to_string(path)
             .map_err(|error| anyhow::anyhow!("Failed to read config file {}: {error}", path.display()))?;
         text.parse::<toml::Table>()
-            .map_err(|error| anyhow::anyhow!("Failed to parse config file {}: {error}", path.display()))?
+            .map_err(|error| anyhow::anyhow!("Failed to parse config file {}: {error}", path.display()))
     } else {
-        toml::Table::new()
-    };
-    for overlay in overlays() {
-        merge(&mut table, read_table(&overlay)?);
+        Ok(toml::Table::new())
     }
-    let document = toml::Value::Table(table);
-    let config: Config = document
-        .clone()
-        .try_into()
-        .map_err(|error| anyhow::anyhow!("Invalid configuration after applying the run overlays: {error}"))?;
+}
+
+fn validate_merged_config(config: Config) -> anyhow::Result<Config> {
     config
         .prewalk
         .validate()
         .map_err(|error| anyhow::anyhow!("Invalid [prewalk] section after applying the run overlays: {error}"))?;
-    Ok((config, document))
+    Ok(config)
+}
+
+fn merge_and_parse(path: &Path, tables: impl IntoIterator<Item = toml::Table>) -> anyhow::Result<Config> {
+    let mut table = read_base_table(path)?;
+    for overlay_table in tables {
+        merge(&mut table, overlay_table);
+    }
+    let config: Config = toml::Value::Table(table)
+        .try_into()
+        .map_err(|error| anyhow::anyhow!("Invalid configuration after applying the run overlays: {error}"))?;
+    validate_merged_config(config)
+}
+
+fn read_merged_table_from_active_overlays(path: &Path) -> anyhow::Result<toml::Table> {
+    let mut table = read_base_table(path)?;
+    let guard = OVERLAYS.lock().unwrap_or_else(PoisonError::into_inner);
+    for overlay in guard.iter() {
+        merge(&mut table, read_table(overlay)?);
+    }
+    Ok(table)
+}
+
+/// The config file (when it exists) with every active overlay applied, without
+/// retaining or cloning the intermediate TOML document.
+pub(super) fn load_config(path: &Path) -> anyhow::Result<Config> {
+    let table = read_merged_table_from_active_overlays(path)?;
+    let config: Config = toml::Value::Table(table)
+        .try_into()
+        .map_err(|error| anyhow::anyhow!("Invalid configuration after applying the run overlays: {error}"))?;
+    validate_merged_config(config)
+}
+
+/// The config file (when it exists) with every overlay applied, parsed as a
+/// whole, with the document that produced it.
+pub(super) fn load(path: &Path) -> anyhow::Result<(Config, toml::Value)> {
+    let document = toml::Value::Table(read_merged_table_from_active_overlays(path)?);
+    let config: Config = document
+        .clone()
+        .try_into()
+        .map_err(|error| anyhow::anyhow!("Invalid configuration after applying the run overlays: {error}"))?;
+    Ok((validate_merged_config(config)?, document))
 }
 
 #[cfg(test)]

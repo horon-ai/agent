@@ -60,6 +60,7 @@ const REQUIRES_ATTACH: &[&str] = &[
     "compact",
     "rename_session",
     "set_session_saved",
+    "get_effective_settings",
     "get_runtime_info",
     "fork_session",
     "transfer_session",

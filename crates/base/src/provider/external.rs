@@ -183,7 +183,7 @@ pub async fn fetch_named_openai_models(
         return Ok(None);
     }
     let runtime = build_named_runtime(profile_name, profile)
-        .map_err(|_| anyhow::anyhow!("profile endpoint or authentication is invalid"))?;
+        .map_err(|error| anyhow::anyhow!("profile '{profile_name}' endpoint or authentication is invalid: {error}"))?;
     runtime.fetch_models().await.map(Some)
 }
 
@@ -385,9 +385,12 @@ pub fn profile_credential_status(profile: &crate::config::NamedProviderConfig) -
     } else {
         "none"
     };
+    let local = crate::provider_catalog::normalize_api_base(&profile.base_url)
+        .is_some_and(|base| crate::provider_catalog::api_base_uses_localhost(&base));
+    let requires_api_key = profile.requires_api_key.unwrap_or(!local);
     let state = if named_profile_api_key(profile).is_some() {
         "authenticated"
-    } else if profile.requires_api_key == Some(false) {
+    } else if !requires_api_key {
         "unknown"
     } else {
         "unauthenticated"
@@ -449,6 +452,8 @@ pub struct ImageEndpoint {
     pub profile: String,
     /// Endpoint root, without a `/chat/completions` or `/images/…` suffix.
     pub base_url: String,
+    /// Configured `image` role model for this profile.
+    pub model: String,
     /// How the profile presents its credential.
     pub auth: ChatAuth,
     /// The credential, when the profile has one.
@@ -484,16 +489,16 @@ pub fn image_endpoint(profile_name: &str) -> anyhow::Result<Option<ImageEndpoint
             named_provider_type_name(&profile.provider_type)
         );
     }
-    let model = profile
+    let Some(model) = profile
         .model_roles
         .roles
         .image
         .as_deref()
         .map(str::trim)
-        .filter(|model| !model.is_empty());
-    if model.is_none() {
+        .filter(|model| !model.is_empty())
+    else {
         return Ok(None);
-    }
+    };
     let base_url = crate::provider_catalog::normalize_api_base(&profile.base_url).ok_or_else(|| {
         anyhow::anyhow!(
             "Provider profile '{profile_name}' has invalid base_url '{}'. Use an absolute https:// URL (or http://localhost).",
@@ -504,6 +509,7 @@ pub fn image_endpoint(profile_name: &str) -> anyhow::Result<Option<ImageEndpoint
     Ok(Some(ImageEndpoint {
         profile: profile_name.to_string(),
         base_url,
+        model: model.to_string(),
         auth,
         api_key: named_profile_api_key(profile),
         extra_body: profile.extra_body.clone(),

@@ -9,6 +9,12 @@
       "reason": "Both tests are #[ignore]d: they assert on the JSON report of the external acp-tck suite, which scripts/test/acp_tck.sh clones and runs (a first run downloads it and takes minutes). The two tests would report `0 passed, 2 ignored` under the normal cohort, so running them here would only be noise."
     },
     {
+      "package": "horon-agent",
+      "target": "package_end_to_end",
+      "path": "tests/package_end_to_end.rs",
+      "reason": "Requires HORON_E2E_EXAMPLE_BIN (the built horon-package-example executable) and HORON_E2E_REPORT to run real package installs and child processes; without HORON_E2E_EXAMPLE_BIN it returns early with a skip line and reports a vacuous pass in ci.yml. .github/workflows/package-compat.yml builds horon-package-example natively across all six release targets and gates on a non-empty JSON report."
+    },
+    {
       "package": "horon-agent-base",
       "target": "header_cost_probe",
       "path": "crates/base/tests/header_cost_probe.rs",

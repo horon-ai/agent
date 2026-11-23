@@ -34,7 +34,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, ErrorKind, Read};
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout, ExitStatus};
 use std::time::Duration;
@@ -43,7 +43,6 @@ use anyhow::{Context, Result, ensure};
 use horon_agent_extension_types::PackageKind;
 use horon_agent_platform::fs::{create_private_dir, is_executable, is_path_link, set_dir_permissions_owner_only};
 use horon_agent_platform::process::package_child::{self, DEFAULT_GRACE, PackageChild, PackageChildSpec};
-use sha2::{Digest, Sha256};
 
 use super::catalog::{PackageLease, PackageRecord, PackageState, PackageStore};
 use super::manifest::open_package_file;
@@ -71,10 +70,7 @@ impl PackageStore {
             .pin_package(&mut lease, id)
             .with_context(|| format!("read the package catalog for {id}"))?;
         let generation = view.generation();
-        let record = view
-            .get(id)
-            .with_context(|| format!("package {id} is not in the catalog"))?
-            .clone();
+        let record = view.into_record(id)?;
         ensure!(
             record.state == PackageState::Installed,
             "package {id} is {}; only an installed package starts",
@@ -82,14 +78,14 @@ impl PackageStore {
         );
         let digest = record
             .digest
-            .clone()
+            .as_deref()
             .with_context(|| format!("package {id} has no published copy"))?;
         let executable = record
             .executable
-            .clone()
+            .as_deref()
             .with_context(|| format!("package {id} has no recorded executable"))?;
         let layout = Layout::new(self.root());
-        let root = store::digest_dir(&layout, &digest)?;
+        let root = store::digest_dir(&layout, digest)?;
         ensure!(
             root.is_dir(),
             "the installed copy {digest} of package {id} is missing: {}",
@@ -97,12 +93,13 @@ impl PackageStore {
         );
         verify_executable(&root, &record)?;
         let state_dir = private_state_dir(self.root(), id)?;
+        let executable = root.join(executable);
         Ok(PackageExecutable {
             lease,
             id: id.to_owned(),
             record,
             generation,
-            executable: root.join(Path::new(&executable)),
+            executable,
             root,
             state_dir,
             grace: DEFAULT_GRACE,
@@ -355,20 +352,11 @@ fn verify_executable(root: &Path, record: &PackageRecord) -> Result<()> {
         .with_context(|| format!("package {} has no recorded executable {relative}", record.id))?;
     let mut file = open_package_file(root, Path::new(relative))
         .with_context(|| format!("open the executable of package {}", record.id))?;
-    let mut hasher = Sha256::new();
-    let mut len = 0u64;
     let mut buffer = vec![0u8; HASH_BUFFER_BYTES];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("read the executable of package {}", record.id))?;
-        if read == 0 {
-            break;
-        }
-        len += u64::try_from(read).context("the executable chunk length overflowed")?;
-        hasher.update(&buffer[..read]);
-    }
-    let sha256 = hex::encode(hasher.finalize());
+    let (len, digest) = store::hash_open_file(&mut file, &mut buffer, || {
+        format!("read the executable of package {}", record.id)
+    })?;
+    let sha256 = hex::encode(digest);
     ensure!(
         len == recorded.len && sha256 == recorded.sha256,
         "the installed executable of package {} is {len} bytes with sha256 {sha256}, recorded {} bytes with {}",
