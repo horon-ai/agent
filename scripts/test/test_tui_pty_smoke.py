@@ -99,6 +99,57 @@ class TerminalScreenTests(unittest.TestCase):
         # Alt screen itself does not carry main-screen text into its cells.
         self.assertNotIn("Continuing session", screen.render())
 
+    def test_live_contains_rejects_overwritten_pre_turn_idle_echo_until_post_turn_idle(self) -> None:
+        screen = SMOKE.TerminalScreen(rows=40, cols=120)
+        initial = "\x1b[?1049h\x1b[40;1Hidle · mock/mock-model · ~/work"
+        screen.feed(initial)
+        start = len(initial)
+
+        # Untouched live status row before `start` does not satisfy a fresh turn wait.
+        self.assertFalse(screen.live_contains("idle · mock/mock-model", since=start))
+
+        # Pre-turn typing echoes redraw the old `idle` status row after `start`, then the
+        # submitted turn switches row 40 to `running` before reply text arrives.
+        screen.feed("\x1b[39;1H> [tui:context-proof] original\x1b[40;1Hidle · mock/mock-model · ~/work")
+        screen.feed("\x1b[40;1Hrunning ⠋ · mock/mock-model · ~/work")
+        screen.feed("\x1b[38;1Hcontext-verified-original (still not idle)")
+        self.assertFalse(screen.live_contains("idle · mock/mock-model", since=start))
+
+        screen.feed("\x1b[40;1Hidle · mock/mock-model · ~/work      ")
+        self.assertTrue(screen.live_contains("idle · mock/mock-model", since=start))
+
+    def test_live_contains_matches_coalesced_reply_and_idle_frame(self) -> None:
+        screen = SMOKE.TerminalScreen(rows=40, cols=120)
+        initial = "\x1b[?1049h\x1b[40;1Hidle · mock/mock-model · ~/work"
+        screen.feed(initial)
+        start = len(initial)
+
+        screen.feed("\x1b[40;1Hrunning ⠋ · mock/mock-model · ~/work")
+        screen.feed(
+            "\x1b[38;1Hcontext-verified-reset"
+            "\x1b[40;1Hidle · mock/mock-model · ~/work      "
+        )
+        self.assertTrue(screen.contains("context-verified-reset", since=start))
+        self.assertTrue(screen.live_contains("idle · mock/mock-model", since=start))
+
+    def test_session_id_resume_wait_ignores_redrawn_previous_session_until_target_arrives(self) -> None:
+        screen = SMOKE.TerminalScreen(rows=40, cols=120)
+        before_close = (
+            "\x1b[?1049h"
+            "\x1b[10;1H  Swarm children"
+            "\x1b[12;1H  parent: session_parent_2"
+        )
+        screen.feed(before_close)
+        attach_start = len(before_close)
+
+        # Closing the picker redraws the old session's transcript before attach completes.
+        screen.feed("\x1b[10;1H\x1b[K\x1b[12;1H\x1b[K\x1b[38;1H• resumed session_child_1")
+        self.assertFalse(screen.contains("resumed session_parent_2", since=attach_start))
+
+        # Differential redraw replaces only the trailing session suffix on row 38.
+        screen.feed("\x1b[38;19Hparent_2")
+        self.assertTrue(screen.contains("resumed session_parent_2", since=attach_start))
+
 
 if __name__ == "__main__":
     unittest.main()

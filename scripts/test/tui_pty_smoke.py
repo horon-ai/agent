@@ -31,6 +31,7 @@ cases through a ConPTY with `pywinpty`, which the Windows job installs.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import hashlib
 import json
 import os
@@ -107,6 +108,10 @@ APPROVAL_PROMPT = "approval needed"
 # client, so seeing it means the client is past its first frame and talking to
 # a live bridge.
 SESSION_READY = "mock/mock-model"
+# `Preset::Default` places `Status` before `Model` separated by `" · "`
+# (`SymbolPreset::Unicode`), so an idle turn at 120x40 renders this prefix on
+# the live status row on both POSIX and Windows.
+IDLE_STATUS = f"idle · {SESSION_READY}"
 TOOL_FILE = "tui-smoke.txt"
 TOOL_FILE_TEXT = "retry"
 # The sequences the client writes when it gives the terminal back (#431). A
@@ -479,12 +484,17 @@ class TerminalScreen:
                 self._state = "normal" if ch == "\\" else ("st_esc" if ch == "\x1b" else "st")
         self._commit_touched(record_block=True)
 
-    def contains(self, needle: str, *, since: int = 0) -> bool:
+    def live_contains(self, needle: str, *, since: int = 0) -> bool:
+        """Check only live grid rows modified at or after `since`, ignoring overwritten history."""
         target = WHITESPACE.sub(" ", needle)
         dirty = self._dirty
         active_lines = [self._row_text(r) for r in range(self.rows) if dirty[r] >= since]
-        if active_lines and target in WHITESPACE.sub(" ", " ".join(active_lines)):
+        return bool(active_lines) and target in WHITESPACE.sub(" ", " ".join(active_lines))
+
+    def contains(self, needle: str, *, since: int = 0) -> bool:
+        if self.live_contains(needle, since=since):
             return True
+        target = WHITESPACE.sub(" ", needle)
         for offset, text in reversed(self._row_events):
             if offset < since:
                 break
@@ -691,10 +701,18 @@ class PosixTerminal:
         self.transcript += text
         self.screen.feed(text)
 
-    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+    def _read_until(
+        self,
+        matcher: Callable[..., bool],
+        needle: str,
+        timeout: float,
+        what: str,
+        *,
+        since: int = 0,
+    ) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.screen.contains(needle, since=since):
+            if matcher(needle, since=since):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -705,11 +723,18 @@ class PosixTerminal:
                 if not chunk:
                     break
                 self.append(chunk.decode("utf-8", "replace"))
-        if not self.screen.contains(needle, since=since):
+        if not matcher(needle, since=since):
             raise Failure(
                 f"{what}: never saw {needle!r}\n--- rendered screen ---\n{self.screen.render()}"
                 f"\n--- transcript ---\n{self.transcript}"
             )
+
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        self._read_until(self.screen.contains, needle, timeout, what, since=since)
+
+    def read_until_live(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        """Wait until `needle` is present on the live screen grid (not overwritten history)."""
+        self._read_until(self.screen.live_contains, needle, timeout, what, since=since)
 
     def settle(self) -> None:
         """Wait until the client stops drawing, so a keystroke never lands in a redraw."""
@@ -825,14 +850,24 @@ class WindowsTerminal:
                 self.transcript += chunk
                 self.screen.feed(chunk)
 
-    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+    def _read_until(
+        self,
+        matcher: Callable[..., bool],
+        needle: str,
+        timeout: float,
+        what: str,
+        *,
+        since: int = 0,
+    ) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._lock:
-                if self.screen.contains(needle, since=since):
+                if matcher(needle, since=since):
                     return
             time.sleep(0.05)
         with self._lock:
+            if matcher(needle, since=since):
+                return
             rendered = self.screen.render()
             text = self.transcript
         # An empty transcript has two very different causes: a client that is
@@ -843,6 +878,13 @@ class WindowsTerminal:
             f"{what}: never saw {needle!r} (client {state})"
             f"\n--- rendered screen ---\n{rendered}\n--- transcript ---\n{text}"
         )
+
+    def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        self._read_until(self.screen.contains, needle, timeout, what, since=since)
+
+    def read_until_live(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
+        """Wait until `needle` is present on the live screen grid (not overwritten history)."""
+        self._read_until(self.screen.live_contains, needle, timeout, what, since=since)
 
     def settle(self) -> None:
         """Wait until the console stops growing, so a keystroke never lands in a redraw."""
@@ -1043,7 +1085,7 @@ def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> N
         raise Failure("the commit did not preserve the reviewed staging boundary")
 
 
-def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
+def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> str:
     from pathlib import Path
 
     originals = set(Path(home).glob("sessions/*/events.jsonl"))
@@ -1078,7 +1120,7 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
         previous = completed_subscriptions(session_id)
         attach_start = len(terminal.transcript)
         terminal.send("\r")
-        terminal.read_until("resumed", STEP_TIMEOUT, "TUI applied the session change", since=attach_start)
+        terminal.read_until(f"resumed {session_id}", STEP_TIMEOUT, f"TUI applied session {session_id}", since=attach_start)
         deadline = time.monotonic() + STEP_TIMEOUT
         while time.monotonic() < deadline:
             if completed_subscriptions(session_id) > previous:
@@ -1091,6 +1133,7 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
     terminal.send("/swarm\r")
     terminal.read_until("parent:", STEP_TIMEOUT, "parent return row", since=picker_start)
     select_session(parent)
+    return parent
 
 
 def voice_fixture(case_root: str, home: str, env: dict[str, str]) -> None:
@@ -1165,7 +1208,7 @@ def context_request_smoke(terminal: Terminal, home: str, base_url: str) -> None:
         start = len(terminal.transcript)
         terminal.send(f"{prompt}\r")
         terminal.read_until(f"context-verified-{label.rsplit(' ', 1)[-1]}", STEP_TIMEOUT, f"reply to {label}", since=start)
-        terminal.read_until("idle", STEP_TIMEOUT, f"turn ended for {label}", since=start)
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, f"turn ended for {label}", since=start)
         with urlopen(base_url + "/__stats", timeout=5) as response:
             requests = json.load(response)["requests"]
         request = next(
@@ -1355,7 +1398,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.send("y")
 
         terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
-        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
         stats_start = len(terminal.transcript)
         terminal.send("/stats\r")
         terminal.read_until("Requests:", STEP_TIMEOUT, "session usage counters", since=stats_start)
@@ -1371,7 +1414,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         # The reply text streams before the turn ends, so `/pin` (and the
         # `/switch` that follows it) would be refused while the turn is still
         # running on a slow host. Wait for idle from the same `reply_start`.
-        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before pinning", since=reply_start)
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before pinning", since=reply_start)
         pin_start = len(terminal.transcript)
         terminal.send("/pin\r")
         pin_path = os.path.join(home, "tui-pins.json")
@@ -1401,11 +1444,11 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             # runs before the fork below: a branch inherits that call, and two
             # sessions holding it would make the parent ambiguous.
             context_request_smoke(terminal, home, base_url)
-            swarm_picker_smoke(terminal, launch, home, case_root, env)
+            parent_session = swarm_picker_smoke(terminal, launch, home, case_root, env)
             boundary_start = len(terminal.transcript)
             terminal.send("tui-fork-boundary-proof\r")
             terminal.read_until("fork-boundary-ready", STEP_TIMEOUT, "the later parent message has a reply")
-            terminal.read_until("idle", STEP_TIMEOUT, "boundary turn ended", since=boundary_start)
+            terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "boundary turn ended", since=boundary_start)
             terminal.send("/fork\r")
             terminal.read_until("Fork from a message", STEP_TIMEOUT, "choose a saved message boundary")
             filter_start = len(terminal.transcript)
@@ -1423,9 +1466,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             parent_start = len(terminal.transcript)
             terminal.send("\r")
             terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
-            terminal.read_until("resumed ", STEP_TIMEOUT, "parent session reattached", since=parent_start)
+            terminal.read_until(f"resumed {parent_session}", STEP_TIMEOUT, "parent session reattached", since=parent_start)
 
-        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
+        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         archive_picker_start = len(terminal.transcript)
         terminal.send("/resume\r")
         terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list", since=archive_picker_start)
