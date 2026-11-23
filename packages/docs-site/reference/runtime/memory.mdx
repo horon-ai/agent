@@ -5,7 +5,7 @@ description: "The memory wiki is the per-user storage engine behind memory: one 
 
 {/* Generated from docs/runtime/MEMORY.md by scripts/ci/sync_docs_site.py. Edit that file, not this one. */}
 
-The memory wiki is the per-user storage engine behind memory: one markdown file per page as the source of truth, and a SQLite index that can always be rebuilt from those files. It stores no embeddings and needs no network round trip. This page describes the layout, the page format, the index schema, the search signals, deletion and rebuild semantics, the Korean evaluation, and the current limits. The `memory` tool itself still reads the JSON store; wiring this engine into the tool is tracked separately, so nothing here changes today's tool behavior yet.
+The memory wiki is the per-user storage engine behind memory: one markdown file per page as the source of truth, and a SQLite index that can always be rebuilt from those files. It stores no embeddings and needs no network round trip. This page describes the layout, the page format, the index schema, the search signals, deletion and rebuild semantics, the Korean evaluation, and the current limits. This wiki is the store behind the `memory` tool and the prompt-injection path: every `memory` action reads and writes it, and the pre-wiki JSON files are read once as a migration source.
 
 ## Layout
 
@@ -170,6 +170,91 @@ The store carries a curated fixture of synthetic Korean assistant memories and t
 - Queries: 15, including unspaced forms (`아침회의선호`, `테스트격리`, `빌드잠금`), particle-bearing forms (`디자인 리뷰 일정`, `배포는 언제 하나`) and entity-only forms (`김서연`, `박준호`).
 - Method: build the store from the fixture, run each query, count a query as a hit when one of its expected page ids is in the top k.
 - Result measured on 2026-11-23: recall@1 15/15, recall@3 15/15, recall@5 15/15. The test pins those numbers, so a ranking change that loses a query fails instead of quietly lowering the bar.
+
+## The memory tool's store
+
+The wiki is not a parallel engine any more: `MemoryManager` reads and writes it
+through a backend that keeps the manager's own vocabulary, one memory graph per
+scope (`crates/base/src/memory/backend.rs`).
+
+- **Reads** build a scope's graph from that scope's pages. **Writes** diff the
+  changed graph against the pages: a page whose fields changed is rewritten, a
+  page that left the graph is deleted, and an unchanged page is left alone. A
+  tool action is one graph change and one store write; `tag` with several tags is
+  one write, not one per tag.
+- **One writer per store.** Every mutation holds an exclusive lock on
+  `memory/.write.lock` for the whole read-change-write step, so two handles in one
+  process or two processes cannot both read the same graph and overwrite each
+  other. The index's own `BEGIN IMMEDIATE` transactions serialise underneath it.
+- **No stale reads.** The index keeps a revision counter in its `meta` table that
+  moves inside every write transaction. The process-wide graph cache is keyed by
+  (store, scope, revision), so a write through any handle, thread or process
+  makes the next read recompute instead of answering from before the write. The
+  consolidation summary is keyed the same way, so a forget or an update rebuilds
+  the injected digest.
+- **Embeddings are not stored.** They are derived data. The dense and hybrid
+  helpers in `crates/base/src/memory/retrieval.rs` still score vectors a caller
+  supplies in the same call, but no production path asks for one today: recall is
+  Jev's and local search is the substring match that `search` has always done.
+  `backfill_embeddings` reports zero because there is nothing on disk to backfill.
+  A memory stored by the JSON format keeps its vector only in the original JSON
+  file, which migration never touches.
+
+### Project keys
+
+A project's memories live under a key derived from its directory: the SHA-256 hex
+prefix (32 characters) of the canonical path. Two spellings of one directory — a
+symlink, `/var` against `/private/var`, a trailing `.` — land on one key; two
+different directories with the same basename never collide; and nothing is
+written into the user's project. The key is in
+`crates/base/src/memory/project_key.rs`.
+
+The pre-wiki key was `DefaultHasher` over the caller's `PathBuf`. That value is
+not an invertible or stable on-disk contract, so it survives only as a migration
+source name: opening a project computes both the old hash (the same algorithm and
+spelling as before) and the new key, and imports the old file for that hash the
+first time it is seen.
+
+### Migration from JSON
+
+`horon-agent memory migrate [--dry-run]` imports every pre-wiki file it finds —
+`memory/global.json` and every `memory/projects/<hash>.json` — into the wiki. The
+manager also imports the global file and the current project's file on first use,
+so an upgrade needs no explicit command; the command exists to migrate every
+project at once and to report the result.
+
+- **Idempotent.** Each page is written by the id its source carries, one write per
+  page, so a run that stopped halfway leaves what it wrote and the next run
+  finishes. A source file is recorded in `memory/migration.json` with its path,
+  size, SHA-256, entry and edge counts, import time and tool version, and a file
+  whose bytes did not change is skipped without being parsed. A second run writes
+  no page and changes no byte under `wiki/`.
+- **The originals are never modified or deleted.** Not the JSON file, not its
+  `.bak`. That is what makes the migration safe and what makes a byte-for-byte
+  comparison possible.
+- **A failure cannot half-migrate.** A page that cannot be stored is reported and
+  the rest of the file still imports; a run interrupted partway leaves the pages
+  it wrote, the index rebuildable from them, and the next run completing. The
+  source is untouched either way.
+- **A file this build cannot read is refused, not guessed at.** A `graph_version`
+  other than 2, or JSON that does not parse, fails with a message naming the file
+  and the version, and nothing is written. The old loader's version trap (a graph
+  of another version fell through to a flat-store parse error) is now one explicit
+  refusal.
+- **An existing wiki copy wins when it is newer.** Re-importing a stale JSON file
+  counts those entries as skipped rather than overwriting newer pages.
+- **Pages imported from a hash-named file start under `legacy-<hash>`.** The hash
+  cannot be turned back into a path, so the command cannot file them under a
+  project key. The first time that project is opened, its pages move to the stable
+  key; the page id is unchanged, so the move rewrites a file rather than copying
+  one.
+
+**Rollback.** Delete `memory/wiki` and `memory/index.sqlite` (with its `-wal` and
+`-shm` sidecars). The JSON originals are still in place, so the previous release
+reads them exactly as before. No state outside `memory/` is involved.
+
+**What is not migrated:** embeddings (derived, and re-derivable), and anything a
+store-level merge would change — none of the entry fields or edges are dropped.
 
 ## Limits
 

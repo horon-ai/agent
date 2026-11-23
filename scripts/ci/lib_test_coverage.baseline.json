@@ -236,8 +236,6 @@
       "tool::mcp::resources_tests",
       "tool::mcp::tests",
       "tool::mcp_allow_list_tests",
-      "tool::memory::memory_learn_tests",
-      "tool::memory::tests",
       "tool::minimizer::tests",
       "tool::monitor_tool",
       "tool::nested_agents::tests",

@@ -200,6 +200,7 @@ impl Index {
             "INSERT INTO versions (page_id, rev, body, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![id, rev, page.body, page.updated_at.to_string()],
         )?;
+        bump_revision(&tx)?;
         tx.commit().context("cannot commit a memory index write")?;
         Ok(rev)
     }
@@ -224,6 +225,7 @@ impl Index {
         clear_page_rows(&tx, rowid, id)?;
         tx.execute("DELETE FROM versions WHERE page_id = ?1", [id])?;
         tx.execute("DELETE FROM files WHERE page_id = ?1", [id])?;
+        bump_revision(&tx)?;
         tx.commit().context("cannot commit a memory index delete")?;
         Ok(true)
     }
@@ -377,6 +379,48 @@ impl Index {
             versions: count("SELECT COUNT(*) FROM versions")?,
         })
     }
+
+    /// A counter that changes inside every write transaction.
+    ///
+    /// The markdown files cannot be stamped cheaply through the write-ahead log,
+    /// so a cache that wants "has anything changed" asks the index instead. The
+    /// counter lives in the same database as the rows, which means it moves only
+    /// when a row moved: a rollback leaves it where it was, and a rebuild that
+    /// changed no page keeps it.
+    pub fn revision(&self) -> Result<u64> {
+        let stored: Option<String> = self
+            .conn()
+            .query_row("SELECT value FROM meta WHERE key = ?1", [REVISION_KEY], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        Ok(match stored {
+            Some(text) => text.parse::<u64>().unwrap_or(0),
+            None => 0,
+        })
+    }
+}
+
+/// The `meta` key holding the store revision.
+const REVISION_KEY: &str = "revision";
+
+/// Move the store revision forward inside the caller's transaction.
+fn bump_revision(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    let current: Option<String> = tx
+        .query_row("SELECT value FROM meta WHERE key = ?1", [REVISION_KEY], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    let next = match current {
+        Some(text) => text.parse::<u64>().unwrap_or(0),
+        None => 0,
+    }
+    .wrapping_add(1);
+    tx.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+        params![REVISION_KEY, next.to_string()],
+    )?;
+    Ok(())
 }
 
 const PAGE_ROW_SELECT_BASE: &str = "SELECT id, path, kind, category, project, title, updated_ms, created_ms,

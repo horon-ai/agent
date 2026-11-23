@@ -292,6 +292,13 @@ what is released and what stays.
 `0` disables the sweep, and the daemon checks every ten seconds, so
 the release lands up to one tick after the threshold passes.
 
+Memory is stored in the per-user markdown wiki under `$HORON_HOME/memory` — one
+markdown page per memory plus a SQLite index rebuilt from those pages — and the
+pre-wiki `memory/*.json` files are a migration source only
+(`docs/runtime/MEMORY.md`). Project memory is keyed by the canonical project
+directory, not by the caller's path spelling, and every `memory` action and the
+prompt-injection path read and write that store.
+
 Tools outside the core set (memory, irc) stay in the tree but off.
 `irc` is agent-to-agent messaging inside one daemon; `[tools] irc = true` adds
 it to every non-empty allow list, and with the switch off it refuses to run
@@ -575,7 +582,7 @@ still states the old behaviour. To find the pages:
 |`crates/base/src/hosting.rs`, `crates/config-types/src/hosting.rs`, `crates/app-core/src/server/hosted_tenant.rs`, `crates/agent-sdk/src/launch_hosted.rs`, `scripts/hosting/`|`docs/architecture/HOSTING.md`|
 |`crates/session-store/`, `crates/storage/`, `[storage] sync`|`docs/protocol/SESSION_STORE.md`, `docs/architecture/CRATES.md`, `docs/diagram/06-session-storage`|
 |`crates/app-core/src/tool/`, `crates/tool-*`, `crates/edit-safety/`, tool profiles|`docs/runtime/TOOLS.md`, `docs/runtime/TOOL_SCHEDULING.md`, `docs/diagram/07-tool-loading`, "What this build is" above|
-|`crates/base/src/memory*`, `crates/memory-types/`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`|
+|`crates/base/src/memory*`, `crates/memory-types/`, `horon memory migrate`|`docs/runtime/MEMORY.md`, `docs/runtime/TOOLS.md`, `docs/architecture/CRATES.md`|
 |`crates/provider-*`, `crates/base/src/provider*`, `crates/config-types/`|`docs/provider/MODEL.md`, `docs/diagram/04-provider-wires`, "What this build is" above|
 |`crates/irc-core/`, `crates/app-core/src/server/irc/`|`docs/runtime/IRC.md`|
 |`crates/plan/`, `crates/swarm-core/`|`docs/runtime/SWARM_TASK_GRAPH.md`|
