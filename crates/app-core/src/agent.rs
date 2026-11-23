@@ -93,6 +93,7 @@ mod turn_start_tests;
 #[path = "agent/turn_state_transition_tests.rs"]
 mod turn_state_transition_tests;
 mod turn_streaming_mpsc;
+pub use turn_streaming_mpsc::prose_repeat;
 mod usage;
 mod utils;
 #[cfg(test)]

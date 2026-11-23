@@ -22,11 +22,13 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use horon_agent_app_core::agent::Agent;
+use horon_agent_app_core::agent::prose_repeat::ProseRepeatGuard;
 use horon_agent_app_core::agent::tool_result_trim::{self, TrimPolicy};
 use horon_agent_app_core::config;
 use horon_agent_app_core::message::{ContentBlock, Message, Role, StreamEvent, ToolDefinition};
 use horon_agent_app_core::packages::{InstallRequest, PackageRecord, PackageScope, PackageStore, PackageTextCache};
 use horon_agent_app_core::provider::{EventStream, Provider};
+use horon_agent_app_core::session::Session;
 use horon_agent_app_core::tool::{Registry, ToolContext, ToolExecutionMode, ToolOutput};
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -448,6 +450,104 @@ async fn bench_prose_repeat(home: &Path, work: &Path) -> Result<(), Box<dyn Erro
         times_long_us[RUNS - 1]
     );
     Ok(())
+}
+
+fn bench_prose_repeat_unit() -> Result<(), Box<dyn Error>> {
+    let mut full_text = String::with_capacity(20_000);
+    for i in 0..160 {
+        if i % 10 == 4 {
+            full_text.push_str("| column_a | column_b | column_c | description |\n");
+        } else if i % 10 == 7 {
+            full_text.push_str("- Bullet item summarizing intermediate validation state.\n");
+        } else {
+            full_text.push_str(&format!(
+                "Paragraph index {i:03} confirms that validation step number {i} completed cleanly without errors. "
+            ));
+        }
+    }
+    let chunk_bytes: Vec<String> = full_text
+        .as_bytes()
+        .chunks(8)
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect();
+
+    let long_sentence = format!(
+        "Detailed verification narrative {} ends cleanly here. ",
+        "including invariant checks across modules ".repeat(60)
+    );
+    let small_chunks: Vec<String> = long_sentence
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect();
+
+    measure_sync(
+        "prose_repeat_guard_feed_unit",
+        10,
+        |_| -> Result<usize, Box<dyn Error>> {
+            let mut fired = 0usize;
+            let mut guard = ProseRepeatGuard::default();
+            for chunk in &chunk_bytes {
+                if guard.feed(chunk).is_some() {
+                    fired += 1;
+                }
+            }
+            guard.reset_all();
+            for chunk in &small_chunks {
+                if guard.feed(chunk).is_some() {
+                    fired += 1;
+                }
+            }
+            Ok(fired)
+        },
+    )
+}
+
+fn bench_prewalk_unit() -> Result<(), Box<dyn Error>> {
+    let build_session = |with_assistant: bool| {
+        let mut session = Session::create(None, None);
+        for i in 0..40 {
+            if with_assistant && i == 30 {
+                session.add_message(
+                    Role::Assistant,
+                    vec![ContentBlock::Text {
+                        text: "Assistant checked the module layout cleanly.".to_string(),
+                        cache_control: None,
+                    }],
+                );
+            } else if i % 4 == 1 {
+                session.add_message(
+                    Role::User,
+                    vec![ContentBlock::Text {
+                        text: "<system-reminder>Internal context refresh</system-reminder>".to_string(),
+                        cache_control: None,
+                    }],
+                );
+            } else {
+                session.add_message(
+                    Role::User,
+                    vec![ContentBlock::Text {
+                        text: format!("User step {i}: inspect subsystem configuration."),
+                        cache_control: None,
+                    }],
+                );
+            }
+        }
+        session
+    };
+
+    let with_assistant = build_session(true);
+    let without_assistant = build_session(false);
+
+    measure_sync(
+        "prewalk_has_visible_assistant_unit",
+        1_000,
+        |_| -> Result<usize, Box<dyn Error>> {
+            let a = usize::from(with_assistant.has_visible_assistant_message());
+            let b = usize::from(without_assistant.has_visible_assistant_message());
+            Ok(a + b)
+        },
+    )
 }
 
 fn build_trim_messages(oversized_count: usize) -> Vec<Message> {
@@ -889,6 +989,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 async fn async_main() -> Result<(), Box<dyn Error>> {
+    let unit_only = std::env::args().any(|arg| arg == "unit_only");
+    bench_prose_repeat_unit()?;
+    bench_prewalk_unit()?;
+    if unit_only {
+        return Ok(());
+    }
+
     let home = tempfile::tempdir()?;
     let work = tempfile::tempdir()?;
     reset_home(home.path(), "[tools]\nprofile = \"core\"\n")?;

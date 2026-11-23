@@ -3,7 +3,7 @@ use super::*;
 
 use super::stream_rules::{MAX_INJECTIONS, STREAM_RULE_POINT, StreamRuleAction, ToolRuleAction, TurnStreamRules};
 
-pub(in crate::agent) mod prose_repeat;
+pub mod prose_repeat;
 mod run;
 mod tool_wait;
 

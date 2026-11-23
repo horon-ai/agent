@@ -19,7 +19,7 @@ const MIN_FRAGMENT_CHARS: usize = 12;
 pub(in crate::agent) const STOP_AFTER: usize = 4;
 
 #[derive(Default)]
-pub(in crate::agent) struct ProseRepeatGuard {
+pub struct ProseRepeatGuard {
     tail: String,
     cursor: usize,
     scan_pos: usize,
@@ -29,19 +29,20 @@ pub(in crate::agent) struct ProseRepeatGuard {
 #[derive(Default)]
 struct ProseState {
     in_fence: bool,
-    last: Option<String>,
+    last: String,
+    has_last: bool,
     run: usize,
     fired: bool,
 }
 
 impl ProseRepeatGuard {
     /// Discard all buffered text and repetition state (e.g. on a provider retry rollback).
-    pub(in crate::agent) fn reset_all(&mut self) {
+    pub fn reset_all(&mut self) {
         self.tail.clear();
         self.cursor = 0;
         self.scan_pos = 0;
         self.state.in_fence = false;
-        self.state.last = None;
+        self.state.has_last = false;
         self.state.run = 0;
         self.state.fired = false;
     }
@@ -49,7 +50,7 @@ impl ProseRepeatGuard {
     /// Feed the next piece of assistant text. Returns the repeated sentence the
     /// first time it reaches [`STOP_AFTER`] consecutive occurrences, and never
     /// again afterwards.
-    pub(in crate::agent) fn feed(&mut self, delta: &str) -> Option<String> {
+    pub fn feed(&mut self, delta: &str) -> Option<String> {
         if self.state.fired || delta.is_empty() {
             return None;
         }
@@ -57,9 +58,6 @@ impl ProseRepeatGuard {
         while let Some(end) = self.next_boundary() {
             let segment = &self.tail[self.cursor..end];
             self.cursor = end;
-            if self.scan_pos < end {
-                self.scan_pos = end;
-            }
             if let Some(sentence) = self.state.observe(segment) {
                 self.state.fired = true;
                 self.tail.clear();
@@ -72,7 +70,7 @@ impl ProseRepeatGuard {
             self.tail.clear();
             self.cursor = 0;
             self.scan_pos = 0;
-        } else if self.cursor > 0 {
+        } else if self.cursor >= 4096 {
             self.tail.drain(..self.cursor);
             self.scan_pos = self.scan_pos.saturating_sub(self.cursor);
             self.cursor = 0;
@@ -80,39 +78,43 @@ impl ProseRepeatGuard {
         None
     }
 
-    /// Byte end of the first complete segment in `self.tail[self.scan_pos..]`: a
-    /// line, or a sentence ended by `.`, `!` or `?` followed by whitespace. A
-    /// terminator at the very end of the tail is not a boundary yet, because the
-    /// next piece may continue the word.
+    /// Byte length of the first complete segment in the tail: a line, or a
+    /// sentence ended by `.`, `!` or `?` followed by whitespace. A terminator at
+    /// the very end of the tail is not a boundary yet, because the next piece
+    /// may continue the word.
     fn next_boundary(&mut self) -> Option<usize> {
         let bytes = self.tail.as_bytes();
-        let len = bytes.len();
-        let mut i = self.scan_pos;
-        while i < len {
-            let b = bytes[i];
-            if b == b'\n' {
-                self.scan_pos = i + 1;
-                return Some(i + 1);
+        while self.scan_pos < bytes.len() {
+            let Some(rel) = bytes[self.scan_pos..]
+                .iter()
+                .position(|&b| matches!(b, b'\n' | b'.' | b'!' | b'?'))
+            else {
+                self.scan_pos = bytes.len();
+                return None;
+            };
+            let index = self.scan_pos + rel;
+            if bytes[index] == b'\n' {
+                self.scan_pos = index + 1;
+                return Some(index + 1);
             }
-            if matches!(b, b'.' | b'!' | b'?') {
-                if i + 1 >= len {
-                    self.scan_pos = i;
-                    return None;
-                }
-                let next = bytes[i + 1];
-                let is_ws = if next < 0x80 {
-                    next.is_ascii_whitespace()
-                } else {
-                    self.tail[i + 1..].chars().next().is_some_and(char::is_whitespace)
-                };
-                if is_ws {
-                    self.scan_pos = i + 1;
-                    return Some(i + 1);
-                }
+            let next_pos = index + 1;
+            if next_pos >= bytes.len() {
+                self.scan_pos = index;
+                return None;
             }
-            i += 1;
+            let next_byte = bytes[next_pos];
+            let next_is_ws = if matches!(next_byte, b' ' | b'\n' | b'\r' | b'\t') {
+                true
+            } else if next_byte < 0x80 && next_byte != 0x0B && next_byte != 0x0C {
+                false
+            } else {
+                self.tail[next_pos..].chars().next().is_some_and(char::is_whitespace)
+            };
+            self.scan_pos = next_pos;
+            if next_is_ws {
+                return Some(next_pos);
+            }
         }
-        self.scan_pos = len;
         None
     }
 }
@@ -132,12 +134,7 @@ impl ProseState {
         if trimmed.len() < MIN_FRAGMENT_CHARS {
             return None;
         }
-        let mut words = trimmed.split_whitespace();
-        let first = words.next()?;
-        let mut length = char_count(first);
-        for word in words {
-            length += 1 + char_count(word);
-        }
+        let length = normalized_char_len(trimmed);
         if length < MIN_FRAGMENT_CHARS {
             return None;
         }
@@ -145,64 +142,66 @@ impl ProseState {
             self.reset();
             return None;
         }
-        if self
-            .last
-            .as_deref()
-            .is_some_and(|last| matches_normalized(last, trimmed))
-        {
+        if self.has_last && matches_normalized(&self.last, trimmed) {
             self.run += 1;
             if self.run >= STOP_AFTER {
-                return self.last.take();
+                self.has_last = false;
+                return Some(std::mem::take(&mut self.last));
             }
             return None;
         }
-        let buf = self.last.get_or_insert_with(String::new);
-        buf.clear();
-        for (idx, word) in trimmed.split_whitespace().enumerate() {
-            if idx > 0 {
-                buf.push(' ');
-            }
-            buf.push_str(word);
-        }
+        self.last.clear();
+        write_normalized(&mut self.last, trimmed);
+        self.has_last = true;
         self.run = 1;
         None
     }
 
     fn reset(&mut self) {
-        self.last = None;
+        self.has_last = false;
         self.run = 0;
     }
 }
 
-#[inline]
-fn char_count(text: &str) -> usize {
-    if text.is_ascii() {
-        text.len()
-    } else {
-        text.chars().count()
+fn normalized_char_len(trimmed: &str) -> usize {
+    let is_ascii = trimmed.is_ascii();
+    let mut len = 0usize;
+    for (idx, word) in trimmed.split_whitespace().enumerate() {
+        if idx > 0 {
+            len += 1;
+        }
+        len += if is_ascii { word.len() } else { word.chars().count() };
     }
+    len
 }
 
 fn matches_normalized(last: &str, trimmed: &str) -> bool {
-    let mut rem = last;
     let mut words = trimmed.split_whitespace();
     let Some(first) = words.next() else {
-        return rem.is_empty();
+        return last.is_empty();
     };
-    let Some(rest) = rem.strip_prefix(first) else {
+    let Some(mut rest) = last.strip_prefix(first) else {
         return false;
     };
-    rem = rest;
     for word in words {
-        let Some(after_space) = rem.strip_prefix(' ') else {
+        let Some(after_space) = rest.strip_prefix(' ') else {
             return false;
         };
-        let Some(rest) = after_space.strip_prefix(word) else {
+        let Some(after_word) = after_space.strip_prefix(word) else {
             return false;
         };
-        rem = rest;
+        rest = after_word;
     }
-    rem.is_empty()
+    rest.is_empty()
+}
+
+fn write_normalized(out: &mut String, trimmed: &str) {
+    for (idx, word) in trimmed.split_whitespace().enumerate() {
+        if idx > 0 {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
 }
 
 /// Lines that carry structure rather than prose: table rows, headings, quotes
@@ -211,7 +210,7 @@ fn is_structure(line: &str) -> bool {
     if line.starts_with(['|', '#', '>']) || line.starts_with("- ") || line.starts_with("* ") {
         return true;
     }
-    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    let digits = line.as_bytes().iter().take_while(|b| b.is_ascii_digit()).count();
     digits > 0 && line[digits..].starts_with(['.', ')'])
 }
 
