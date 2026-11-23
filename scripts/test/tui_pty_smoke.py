@@ -45,6 +45,7 @@ import tempfile
 import threading
 import time
 import traceback
+import unicodedata
 
 POSIX = os.name != "nt"
 if POSIX:
@@ -69,9 +70,15 @@ MOCK_SERVER = os.path.join(REPO_ROOT, "scripts", "perf", "mock_llm_server.py")
 
 # How long a single expected screen costs before the run fails. The first draw
 # waits on the daemon, the provider probe, and the harness bridge, so it gets the
-# larger budget; keystroke round trips are local.
+# larger budget. A keystroke round trip is local, but a loaded runner can stall a
+# redraw for tens of seconds, so a step gets twice the budget it once had.
 STARTUP_TIMEOUT = 90.0
-STEP_TIMEOUT = 45.0
+STEP_TIMEOUT = 90.0
+# A keystroke is sent only after the client has stopped drawing for
+# `SETTLE_QUIET` seconds (at most `SETTLE_LIMIT` seconds of waiting). Typing into
+# a redraw loses the keys, which showed up as a screen that never appeared.
+SETTLE_QUIET = 0.4
+SETTLE_LIMIT = 4.0
 # Budget for a launch whose stdio is a pipe and which therefore has to start the
 # daemon itself. It has to exceed the product's own readiness budget
 # (`READY_POLL_TIMEOUT`, 120 s on Windows, where a spawned server is polled
@@ -95,7 +102,6 @@ APPROVAL_PROMPT = "approval needed"
 # The client draws a tool call as its name and status, not its output, so the
 # approved retry is proven by the status line plus the file the command writes
 # (`APPROVAL_ROUND_TRIP_COMMAND` in mock_llm_server.py), not by printed text.
-APPROVAL_RESOLVED = "approval approved"
 # The status line draws `provider/model` from `ApiEvent::ModelInfo`, which the
 # harness sends over the session event stream once the bridge is serving this
 # client, so seeing it means the client is past its first frame and talking to
@@ -131,6 +137,371 @@ def screen_text(raw: str) -> str:
 
 def contains(raw: str, needle: str) -> bool:
     return WHITESPACE.sub(" ", needle) in screen_text(raw)
+
+
+def _char_cell_width(ch: str) -> int:
+    if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        return 0
+    if unicodedata.east_asian_width(ch) in ("W", "F"):
+        return 2
+    return 1
+
+
+class TerminalScreen:
+    """Minimal VT100/ANSI screen grid for matching ratatui's differential redraws.
+
+    Full-screen clients such as `ratatui` diff each frame against the previous
+    one cell-by-cell and emit cursor moves (`CSI row;col H`) to skip any cell
+    whose character and style already match what is on screen. Stripping escape
+    sequences from the raw PTY byte stream splits words whenever an earlier
+    frame happened to leave a matching glyph at that column (for instance
+    `/tmp/htui-XXXXXXXX` sharing `t`, `c`, or `h` with `nothing matches that
+    filter` on row 19). Applying the stream to a virtual grid keeps composed
+    rows intact while recording which transcript offset touched each row so
+    `since=` waits stay scoped to fresh output.
+    """
+
+    def __init__(self, rows: int = 40, cols: int = 120) -> None:
+        self.rows = rows
+        self.cols = cols
+        self._main = self._blank_grid()
+        self._alt = self._blank_grid()
+        self._main_dirty = [-1] * rows
+        self._alt_dirty = [-1] * rows
+        self._use_alt = False
+        self._row = 0
+        self._col = 0
+        self._pending_wrap = False
+        self._saved: dict[bool, tuple[int, int]] = {False: (0, 0), True: (0, 0)}
+        self._state = "normal"
+        self._csi = ""
+        self._offset = 0
+        self._last_offset = -1
+        self._touched: set[int] = set()
+        self._row_events: list[tuple[int, str]] = []
+        self._block_events: list[tuple[int, str]] = []
+
+    def _blank_grid(self) -> list[list[str]]:
+        return [[" "] * self.cols for _ in range(self.rows)]
+
+    @property
+    def _grid(self) -> list[list[str]]:
+        return self._alt if self._use_alt else self._main
+
+    @property
+    def _dirty(self) -> list[int]:
+        return self._alt_dirty if self._use_alt else self._main_dirty
+
+    def _row_text(self, row: int) -> str:
+        return WHITESPACE.sub(" ", "".join(self._grid[row])).strip()
+
+    def _commit_touched(self, *, record_block: bool = False) -> None:
+        if not self._touched:
+            return
+        rows = sorted(self._touched)
+        self._touched.clear()
+        stamp = self._last_offset
+        lines: list[str] = []
+        for row in rows:
+            self._dirty[row] = stamp
+            text = self._row_text(row)
+            if text:
+                self._row_events.append((stamp, text))
+                lines.append(text)
+        if record_block and len(lines) > 1:
+            self._block_events.append((stamp, WHITESPACE.sub(" ", " ".join(lines))))
+
+    def _set_cursor(self, row: int, col: int) -> None:
+        new_row = max(0, min(self.rows - 1, row))
+        new_col = max(0, min(self.cols - 1, col))
+        if new_row != self._row:
+            self._commit_touched()
+        self._row = new_row
+        self._col = new_col
+        self._pending_wrap = False
+
+    def _line_feed(self) -> None:
+        self._commit_touched()
+        self._pending_wrap = False
+        if self._row + 1 < self.rows:
+            self._row += 1
+        else:
+            grid = self._grid
+            dirty = self._dirty
+            grid.pop(0)
+            grid.append([" "] * self.cols)
+            dirty.pop(0)
+            dirty.append(self._last_offset)
+            self._touched.add(self._row)
+
+    def _put_char(self, ch: str) -> None:
+        width = _char_cell_width(ch)
+        if width == 0:
+            return
+        if self._pending_wrap:
+            self._col = 0
+            self._line_feed()
+        if width == 2 and self._col == self.cols - 1:
+            self._grid[self._row][self._col] = " "
+            self._touched.add(self._row)
+            self._col = 0
+            self._line_feed()
+        row_cells = self._grid[self._row]
+        row_cells[self._col] = ch
+        if width == 2 and self._col + 1 < self.cols:
+            row_cells[self._col + 1] = ""
+        self._touched.add(self._row)
+        self._dirty[self._row] = self._last_offset
+        if self._col + width >= self.cols:
+            self._col = self.cols - 1
+            self._pending_wrap = True
+        else:
+            self._col += width
+
+    def _erase_in_line(self, mode: int) -> None:
+        row_cells = self._grid[self._row]
+        if mode == 0:
+            start, end = self._col, self.cols
+        elif mode == 1:
+            start, end = 0, self._col + 1
+        elif mode == 2:
+            start, end = 0, self.cols
+        else:
+            return
+        for c in range(start, end):
+            row_cells[c] = " "
+        self._touched.add(self._row)
+        self._dirty[self._row] = self._last_offset
+
+    def _erase_in_display(self, mode: int) -> None:
+        self._commit_touched(record_block=True)
+        grid = self._grid
+        if mode == 0:
+            self._erase_in_line(0)
+            for r in range(self._row + 1, self.rows):
+                grid[r] = [" "] * self.cols
+                self._dirty[r] = self._last_offset
+        elif mode == 1:
+            for r in range(0, self._row):
+                grid[r] = [" "] * self.cols
+                self._dirty[r] = self._last_offset
+            self._erase_in_line(1)
+        elif mode in (2, 3):
+            for r in range(self.rows):
+                grid[r] = [" "] * self.cols
+                self._dirty[r] = self._last_offset
+
+    def _switch_alt(self, enable: bool) -> None:
+        if enable == self._use_alt:
+            return
+        self._commit_touched(record_block=True)
+        if enable:
+            self._saved[False] = (self._row, self._col)
+            self._use_alt = True
+            self._alt = self._blank_grid()
+            self._alt_dirty = [-1] * self.rows
+            self._row = 0
+            self._col = 0
+            self._pending_wrap = False
+        else:
+            self._use_alt = False
+            self._row, self._col = self._saved.get(False, (0, 0))
+            self._pending_wrap = False
+
+    def _handle_csi(self, params: str, final: str) -> None:
+        private = params.startswith("?")
+        raw_params = params[1:] if private else params
+        parts = raw_params.split(";") if raw_params else []
+
+        def param(index: int, default: int) -> int:
+            if index >= len(parts) or not parts[index]:
+                return default
+            digits = "".join(ch for ch in parts[index] if ch.isdigit())
+            return int(digits) if digits else default
+
+        if private:
+            if final in ("h", "l"):
+                enable = final == "h"
+                for item in parts:
+                    if item in ("1049", "1047", "47"):
+                        self._switch_alt(enable)
+            return
+
+        if final in ("H", "f"):
+            self._set_cursor(param(0, 1) - 1, param(1, 1) - 1)
+        elif final == "A":
+            self._set_cursor(self._row - max(1, param(0, 1)), self._col)
+        elif final == "B":
+            self._set_cursor(self._row + max(1, param(0, 1)), self._col)
+        elif final == "C":
+            self._set_cursor(self._row, self._col + max(1, param(0, 1)))
+        elif final == "D":
+            self._set_cursor(self._row, self._col - max(1, param(0, 1)))
+        elif final == "E":
+            self._set_cursor(self._row + max(1, param(0, 1)), 0)
+        elif final == "F":
+            self._set_cursor(self._row - max(1, param(0, 1)), 0)
+        elif final in ("G", "`"):
+            self._set_cursor(self._row, param(0, 1) - 1)
+        elif final == "d":
+            self._set_cursor(param(0, 1) - 1, self._col)
+        elif final == "J":
+            self._erase_in_display(param(0, 0))
+        elif final == "K":
+            self._erase_in_line(param(0, 0))
+        elif final == "X":
+            count = max(1, param(0, 1))
+            row_cells = self._grid[self._row]
+            for c in range(self._col, min(self.cols, self._col + count)):
+                row_cells[c] = " "
+            self._touched.add(self._row)
+            self._dirty[self._row] = self._last_offset
+        elif final == "P":
+            count = max(1, param(0, 1))
+            row_cells = self._grid[self._row]
+            tail = row_cells[self._col + count :]
+            row_cells[self._col :] = tail + [" "] * (self.cols - self._col - len(tail))
+            self._touched.add(self._row)
+            self._dirty[self._row] = self._last_offset
+        elif final == "@":
+            count = max(1, param(0, 1))
+            row_cells = self._grid[self._row]
+            row_cells[self._col :] = ([" "] * count + row_cells[self._col :])[: self.cols - self._col]
+            self._touched.add(self._row)
+            self._dirty[self._row] = self._last_offset
+        elif final == "L":
+            self._commit_touched(record_block=True)
+            count = min(self.rows - self._row, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.insert(self._row, [" "] * self.cols)
+                grid.pop()
+                dirty.insert(self._row, self._last_offset)
+                dirty.pop()
+        elif final == "M":
+            self._commit_touched(record_block=True)
+            count = min(self.rows - self._row, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.pop(self._row)
+                grid.append([" "] * self.cols)
+                dirty.pop(self._row)
+                dirty.append(self._last_offset)
+        elif final == "S":
+            self._commit_touched(record_block=True)
+            count = min(self.rows, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.pop(0)
+                grid.append([" "] * self.cols)
+                dirty.pop(0)
+                dirty.append(self._last_offset)
+        elif final == "T":
+            self._commit_touched(record_block=True)
+            count = min(self.rows, max(1, param(0, 1)))
+            grid = self._grid
+            dirty = self._dirty
+            for _ in range(count):
+                grid.insert(0, [" "] * self.cols)
+                grid.pop()
+                dirty.insert(0, self._last_offset)
+                dirty.pop()
+        elif final == "s":
+            self._saved[self._use_alt] = (self._row, self._col)
+        elif final == "u":
+            row, col = self._saved.get(self._use_alt, (0, 0))
+            self._set_cursor(row, col)
+
+    def feed(self, text: str) -> None:
+        for ch in text:
+            self._last_offset = self._offset
+            self._offset += 1
+            state = self._state
+            if state == "normal":
+                if ch == "\x1b":
+                    self._state = "esc"
+                elif ch == "\r":
+                    self._col = 0
+                    self._pending_wrap = False
+                elif ch in ("\n", "\x0b", "\x0c"):
+                    self._line_feed()
+                elif ch == "\b":
+                    self._col = max(0, self._col - 1)
+                    self._pending_wrap = False
+                elif ch == "\t":
+                    next_stop = min(self.cols - 1, ((self._col // 8) + 1) * 8)
+                    self._col = next_stop
+                    self._pending_wrap = False
+                elif ord(ch) >= 32:
+                    self._put_char(ch)
+            elif state == "esc":
+                if ch == "[":
+                    self._state = "csi"
+                    self._csi = ""
+                elif ch == "]":
+                    self._state = "osc"
+                elif ch in ("P", "X", "^", "_"):
+                    self._state = "st"
+                elif ch in ("(", ")", "*", "+"):
+                    self._state = "charset"
+                elif ch == "7":
+                    self._saved[self._use_alt] = (self._row, self._col)
+                    self._state = "normal"
+                elif ch == "8":
+                    row, col = self._saved.get(self._use_alt, (0, 0))
+                    self._set_cursor(row, col)
+                    self._state = "normal"
+                else:
+                    self._state = "normal"
+            elif state == "charset":
+                self._state = "normal"
+            elif state == "csi":
+                if "\x40" <= ch <= "\x7e":
+                    self._handle_csi(self._csi, ch)
+                    self._csi = ""
+                    self._state = "normal"
+                else:
+                    self._csi += ch
+            elif state == "osc":
+                if ch == "\x07":
+                    self._state = "normal"
+                elif ch == "\x1b":
+                    self._state = "osc_esc"
+            elif state == "osc_esc":
+                self._state = "normal" if ch == "\\" else ("osc_esc" if ch == "\x1b" else "osc")
+            elif state == "st":
+                if ch == "\x1b":
+                    self._state = "st_esc"
+            elif state == "st_esc":
+                self._state = "normal" if ch == "\\" else ("st_esc" if ch == "\x1b" else "st")
+        self._commit_touched(record_block=True)
+
+    def contains(self, needle: str, *, since: int = 0) -> bool:
+        target = WHITESPACE.sub(" ", needle)
+        dirty = self._dirty
+        active_lines = [self._row_text(r) for r in range(self.rows) if dirty[r] >= since]
+        if active_lines and target in WHITESPACE.sub(" ", " ".join(active_lines)):
+            return True
+        for offset, text in reversed(self._row_events):
+            if offset < since:
+                break
+            if target in text:
+                return True
+        for offset, text in reversed(self._block_events):
+            if offset < since:
+                break
+            if target in text:
+                return True
+        return False
+
+    def render(self) -> str:
+        lines = ["".join(row).rstrip() for row in self._grid]
+        while lines and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
 
 
 def log(message: str) -> None:
@@ -299,6 +670,7 @@ class PosixTerminal:
     def __init__(self, argv: list[str], cwd: str, env: dict) -> None:
         self.argv = argv
         self.transcript = ""
+        self.screen = TerminalScreen(rows=40, cols=120)
         self.master, slave = pty.openpty()
         # A fresh PTY reports a 0x0 window, and a full-screen client draws
         # nothing into a zero area, so the size is set before the child starts.
@@ -315,10 +687,14 @@ class PosixTerminal:
         )
         os.close(slave)
 
+    def append(self, text: str) -> None:
+        self.transcript += text
+        self.screen.feed(text)
+
     def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if contains(self.transcript[since:], needle):
+            if self.screen.contains(needle, since=since):
                 return
             readable, _, _ = select.select([self.master], [], [], 0.1)
             if readable:
@@ -328,11 +704,32 @@ class PosixTerminal:
                     break
                 if not chunk:
                     break
-                self.transcript += chunk.decode("utf-8", "replace")
-        if not contains(self.transcript[since:], needle):
-            raise Failure(f"{what}: never saw {needle!r}\n--- transcript ---\n{self.transcript}")
+                self.append(chunk.decode("utf-8", "replace"))
+        if not self.screen.contains(needle, since=since):
+            raise Failure(
+                f"{what}: never saw {needle!r}\n--- rendered screen ---\n{self.screen.render()}"
+                f"\n--- transcript ---\n{self.transcript}"
+            )
+
+    def settle(self) -> None:
+        """Wait until the client stops drawing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            readable, _, _ = select.select([self.master], [], [], 0.05)
+            if not readable:
+                continue
+            try:
+                chunk = os.read(self.master, 65536)
+            except OSError:
+                return
+            if not chunk:
+                return
+            self.append(chunk.decode("utf-8", "replace"))
+            quiet_since = time.monotonic()
 
     def send(self, keys: str) -> None:
+        self.settle()
         os.write(self.master, keys.encode())
 
     def wait(self, timeout: float) -> int:
@@ -352,7 +749,7 @@ class PosixTerminal:
                         master_open = False
                     else:
                         if chunk:
-                            self.transcript += chunk.decode("utf-8", "replace")
+                            self.append(chunk.decode("utf-8", "replace"))
                         else:
                             master_open = False
             else:
@@ -371,7 +768,7 @@ class PosixTerminal:
                         break
                     if not chunk:
                         break
-                    self.transcript += chunk.decode("utf-8", "replace")
+                    self.append(chunk.decode("utf-8", "replace"))
                 return code
         self.process.kill()
         raise Failure(f"process did not exit within {timeout}s\n--- transcript ---\n{self.transcript}")
@@ -405,6 +802,7 @@ class WindowsTerminal:
                 f"{CONPTY_IMPORT_ERROR or 'import failed'}"
             )
         self.transcript = ""
+        self.screen = TerminalScreen(rows=40, cols=120)
         self._lock = threading.Lock()
         # A list, not a command line: `spawn` splits a string with
         # `shlex.split(posix=False)`, which keeps the quotes and then fails to
@@ -425,23 +823,43 @@ class WindowsTerminal:
                 return
             with self._lock:
                 self.transcript += chunk
+                self.screen.feed(chunk)
 
     def read_until(self, needle: str, timeout: float, what: str, *, since: int = 0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._lock:
-                if contains(self.transcript[since:], needle):
+                if self.screen.contains(needle, since=since):
                     return
             time.sleep(0.05)
         with self._lock:
+            rendered = self.screen.render()
             text = self.transcript
         # An empty transcript has two very different causes: a client that is
         # still starting (it has drawn nothing yet) and one that died before its
         # first write. The console cannot tell them apart, the process can.
         state = "still running" if self.process.isalive() else f"exited {self.process.exitstatus!r}"
-        raise Failure(f"{what}: never saw {needle!r} (client {state})\n--- transcript ---\n{text}")
+        raise Failure(
+            f"{what}: never saw {needle!r} (client {state})"
+            f"\n--- rendered screen ---\n{rendered}\n--- transcript ---\n{text}"
+        )
+
+    def settle(self) -> None:
+        """Wait until the console stops growing, so a keystroke never lands in a redraw."""
+        deadline = time.monotonic() + SETTLE_LIMIT
+        quiet_since = time.monotonic()
+        with self._lock:
+            size = len(self.transcript)
+        while time.monotonic() < deadline and time.monotonic() - quiet_since < SETTLE_QUIET:
+            time.sleep(0.05)
+            with self._lock:
+                grown = len(self.transcript) != size
+                size = len(self.transcript)
+            if grown:
+                quiet_since = time.monotonic()
 
     def send(self, keys: str) -> None:
+        self.settle()
         try:
             self.process.write(keys)
         except EOFError as closed:
@@ -606,6 +1024,55 @@ def retry_turn_smoke(terminal: Terminal, home: str, base_url: str) -> None:
                 if '"kind":"message_appended"' in line and prompt in line]
     if len(matching) != 1:
         raise Failure(f"expected one stored user prompt across retry, found {len(matching)}")
+def git(root: str, env: dict[str, str], *args: str) -> str:
+    return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
+
+
+def git_fixture(root: str, env: dict[str, str]) -> None:
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    git(root, env, "init", "-qb", "main")
+    git(root, env, "config", "user.email", "smoke@example.invalid")
+    git(root, env, "config", "user.name", "TUI Smoke Test")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "w", encoding="utf-8") as handle:
+            handle.write("original\n")
+    git(root, env, "add", "--", "a.txt", "b.txt")
+    git(root, env, "commit", "-qm", "base")
+    for name in ("a.txt", "b.txt"):
+        with open(os.path.join(root, name), "a", encoding="utf-8") as handle:
+            handle.write(f"new {name}\n")
+    git(root, env, "add", "--", "a.txt")
+
+
+def staged_review_smoke(terminal: Terminal, root: str, env: dict[str, str]) -> None:
+    terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for staged review")
+    before = git(root, env, "rev-parse", "HEAD")
+    terminal.send("/diff\r")
+    terminal.read_until("what /commit would include", STEP_TIMEOUT, "staged diff")
+    terminal.read_until("left alone by /commit", STEP_TIMEOUT, "unstaged diff")
+    terminal.send("/commit Reviewed test change\r")
+    terminal.read_until("nothing was committed yet", STEP_TIMEOUT, "commit starts as a review")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("review moved HEAD before confirmation")
+    git(root, env, "add", "--", "b.txt")
+    terminal.send("/commit --yes\r")
+    terminal.read_until("the staged index changed", STEP_TIMEOUT, "stale review refused")
+    if git(root, env, "rev-parse", "HEAD") != before:
+        raise Failure("confirming a stale review moved HEAD")
+    git(root, env, "restore", "--staged", "--", "b.txt")
+    fresh_start = len(terminal.transcript)
+    terminal.send("/commit Quartz\r")
+    terminal.read_until("Quartz", STEP_TIMEOUT, "fresh review", since=fresh_start)
+    confirmed_start = len(terminal.transcript)
+    terminal.send("/commit --yes\r")
+    terminal.read_until("not pushed", STEP_TIMEOUT, "local commit confirmed", since=confirmed_start)
+    subject = git(root, env, "log", "-1", "--format=%s").strip()
+    if subject != "Quartz":
+        raise Failure(f"expected the fresh review's subject, got {subject!r}")
+    changed = git(root, env, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").splitlines()
+    if changed != ["a.txt"] or git(root, env, "diff", "--name-only").splitlines() != ["b.txt"]:
+        raise Failure("the commit did not preserve the reviewed staging boundary")
 
 
 def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str, env: dict) -> None:
@@ -641,7 +1108,9 @@ def swarm_picker_smoke(terminal: Terminal, launch: Launch, home: str, root: str,
 
     def select_session(session_id: str) -> None:
         previous = completed_subscriptions(session_id)
+        attach_start = len(terminal.transcript)
         terminal.send("\r")
+        terminal.read_until("resumed", STEP_TIMEOUT, "TUI applied the session change", since=attach_start)
         deadline = time.monotonic() + STEP_TIMEOUT
         while time.monotonic() < deadline:
             if completed_subscriptions(session_id) > previous:
@@ -687,17 +1156,17 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
 
     terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before local voice input")
     count = request_count()
+    before_consent = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent")
+    terminal.read_until("Type /voice consent", STEP_TIMEOUT, "microphone blocked before consent", since=before_consent)
     terminal.send("/voice consent\r")
-    terminal.read_until("consent recorded for this session", STEP_TIMEOUT, "microphone consent")
+    capture_start = len(terminal.transcript)
     terminal.send("/voice\r")
-    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text in the draft")
+    terminal.read_until("hello from voice", STEP_TIMEOUT, "recognized text after consent", since=capture_start)
     if request_count() != count:
         raise Failure("voice input sent a request before the user submitted the draft")
     terminal.send("\x15")
     terminal.send("/voice say local playback proof\r")
-    terminal.read_until("speaking locally", STEP_TIMEOUT, "local playback started")
     played = os.path.join(case_root, "voice-bin", "played")
     deadline = time.monotonic() + STEP_TIMEOUT
     while time.monotonic() < deadline:
@@ -707,9 +1176,12 @@ def voice_input_smoke(terminal: Terminal, case_root: str, base_url: str) -> None
                     break
         except FileNotFoundError:
             pass
-        time.sleep(0.05)
+        readable, _, _ = select.select([terminal.master], [], [], 0.05)
+        if readable:
+            chunk = os.read(terminal.master, 65536)
+            terminal.append(chunk.decode("utf-8", "replace"))
     else:
-        raise Failure("the local player did not receive the requested text")
+        raise Failure(f"the local player did not receive the requested text\n--- transcript ---\n{terminal.transcript}")
     if request_count() != count:
         raise Failure("local playback sent a model request")
 
@@ -773,11 +1245,64 @@ def configure_mcp_probe(home: str, case_root: str) -> str:
     return calls
 
 
+def model_preset_case(launch: Launch, case_root: str, base_url: str) -> str:
+    home = write_config(launch.home, base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('''
+[[providers.mock.models]]
+id = "preset-model"
+context_window = 128000
+
+[model_presets.quality]
+model = "preset-model"
+effort = "high"
+roles = { swarm = "preset-model", review = "mock-model", judge = "mock-model", memory = "inherit", ambient = "mock-model" }
+
+[model_presets.rejected]
+model = "mock-model"
+roles = { swarm = "missing-model" }
+
+[model_presets.unknown_role]
+model = "mock-model"
+roles = { unknown = "mock-model" }
+''')
+    terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=horon_env(case_root, home))
+    try:
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready for model presets")
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset preview quality\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "model preset preview", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/modelpreset apply quality\r")
+        terminal.read_until("Applied model preset 'quality'", STEP_TIMEOUT, "model preset applied", since=start)
+        for name, error in (("rejected", "unavailable in the active provider profile"),
+                            ("unknown_role", "Unknown model preset role")):
+            start = len(terminal.transcript)
+            terminal.send(f"/modelpreset apply {name}\r")
+            terminal.read_until(error, STEP_TIMEOUT, "invalid preset refused", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/info\r")
+        terminal.read_until("preset-model", STEP_TIMEOUT, "preset model survived refused changes", since=start)
+        start = len(terminal.transcript)
+        terminal.send("/agents\r")
+        terminal.read_until("inherit", STEP_TIMEOUT, "preset role overrides applied", since=start)
+        terminal.send("/quit\r")
+        if terminal.wait(STEP_TIMEOUT) != 0:
+            raise Failure("model preset session failed to exit cleanly")
+        return terminal.transcript
+    finally:
+        terminal.close()
+
+
 def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
     home = write_config(launch.home, base_url)
     env = horon_env(case_root, home)
     env.pop("HORON_NO_TUI", None)
     if POSIX:
+        env.pop("HORON_AGENT_API_SOCKET", None)
+    git_fixture(case_root, env)
+    if POSIX:
+        env["HORON_AGENT_HOOK_TURN_END"] = "true"
         voice_fixture(case_root, home, env)
     archive_label = "archive-pty-fixture"
     seeded = subprocess.run(
@@ -833,6 +1358,23 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until(name, STEP_TIMEOUT, "persisted title in session picker", since=picker_start)
             terminal.send(f"{name}\r")
             terminal.read_until("resumed ", STEP_TIMEOUT, "reattach to the renamed session", since=picker_start)
+            terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before observing work")
+            terminal.send("/observations\r")
+            terminal.read_until("recording  no", STEP_TIMEOUT, "observation recording defaults off")
+            terminal.send("/observations on\r")
+            terminal.read_until("recording  yes", STEP_TIMEOUT, "observation recording enabled explicitly")
+        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready before listing tools")
+        terminal.send("/tools\r")
+        terminal.read_until("Session tools", STEP_TIMEOUT, "tool picker")
+        terminal.read_until("tier unknown", STEP_TIMEOUT, "unreported loading tier")
+        terminal.send("bash\r")
+        if contains(terminal.transcript, APPROVAL_PROMPT) or os.path.exists(os.path.join(case_root, TOOL_FILE)):
+            raise Failure(f"browsing tools started a call\n--- transcript ---\n{terminal.transcript}")
+        if POSIX:
+            staged_review_smoke(terminal, case_root, env)
+        else:
+            terminal.send("/diff\r")
+            terminal.read_until("workspace is not this machine's", STEP_TIMEOUT, "explicit socket refused local Git")
         if POSIX:
             voice_input_smoke(terminal, case_root, base_url)
 
@@ -843,9 +1385,13 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         terminal.read_until(APPROVAL_PROMPT, STEP_TIMEOUT, "approval prompt")
         reply_start = len(terminal.transcript)
         terminal.send("y")
-        terminal.read_until(APPROVAL_RESOLVED, STEP_TIMEOUT, "approval resolved")
 
-        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply")
+        terminal.read_until(REPLY_TEXT, STEP_TIMEOUT, "streamed reply after approval", since=reply_start)
+        terminal.read_until("idle", STEP_TIMEOUT, "turn ended before reading session usage", since=reply_start)
+        stats_start = len(terminal.transcript)
+        terminal.send("/stats\r")
+        terminal.read_until("Requests:", STEP_TIMEOUT, "session usage counters", since=stats_start)
+        terminal.read_until("Estimated cost: unknown", STEP_TIMEOUT, "unknown cost is preserved", since=stats_start)
         written = os.path.join(case_root, TOOL_FILE)
         try:
             with open(written, encoding="utf-8") as handle:
@@ -880,24 +1426,37 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.send("\x1b")
             terminal.read_until("unpinned ", STEP_TIMEOUT, "unpin from the session picker")
         if POSIX:
+            observations_start = len(terminal.transcript)
+            terminal.send("/observations\r")
+            terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
             retry_turn_smoke(terminal, home, base_url)
             context_request_smoke(terminal, home, base_url)
             swarm_picker_smoke(terminal, launch, home, case_root, env)
 
         terminal.read_until("idle", STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
+        archive_picker_start = len(terminal.transcript)
         terminal.send("/resume\r")
-        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list")
+        terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list", since=archive_picker_start)
         filter_start = len(terminal.transcript)
         terminal.send(archive_label)
         terminal.read_until("1/1", STEP_TIMEOUT, "select the matching session", since=filter_start)
+        archive_start = len(terminal.transcript)
         terminal.send("\x01")
-        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive")
+        terminal.read_until("session archived", STEP_TIMEOUT, "daemon confirmed archive", since=archive_start)
         archive_path = os.path.join(home, "sdk-archive.json")
         with open(archive_path, encoding="utf-8") as handle:
             archived_ids = json.load(handle)["sessions"]
         if len(archived_ids) != 1:
             raise Failure(f"expected one explicitly archived session, got {archived_ids!r}")
         archived_id = next(iter(archived_ids))
+        recent_start = len(terminal.transcript)
+        terminal.send("/resume\r")
+        terminal.read_until("enter attach", STEP_TIMEOUT, "recent picker reopened", since=recent_start)
+        recent_filter = len(terminal.transcript)
+        terminal.send(archive_label)
+        terminal.read_until("nothing match", STEP_TIMEOUT, "archived session left recent list", since=recent_filter)
+        terminal.send("\x1b")
+        time.sleep(0.15)
         archived_start = len(terminal.transcript)
         terminal.send("/archived\r")
         terminal.read_until(archive_label, STEP_TIMEOUT, "archived session loaded", since=archived_start)
@@ -925,7 +1484,8 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             try:
                 resumed.read_until("Continuing session session_", STARTUP_TIMEOUT, "named continued session")
                 resumed.read_until(SESSION_READY, STEP_TIMEOUT, "continued session ready")
-                selected = re.search(r"Continuing session (session_[A-Za-z0-9_]+)", resumed.transcript)
+                # Memorable names can hold a hyphen (`session_t-rex_<digits>_<hex>`).
+                selected = re.search(r"Continuing session (session_[A-Za-z0-9_-]+)", resumed.transcript)
                 if selected is None:
                     raise Failure(f"continue did not print a session ID\n{resumed.transcript}")
                 attached = r"phase=resume_(?:restored|live_attach)_done"
@@ -1188,8 +1748,8 @@ def stale_socket_case(launch: Launch, case_root: str, base_url: str, transcript:
 
 # Case 5 scans `/proc` or `ps` for the case's bridge processes and 6-8 send the
 # client a POSIX signal: only a POSIX host can drive either.
-POSIX_ONLY_CASES = {5, 6, 7, 8}
-ALL_CASES = tuple(range(1, 9))
+POSIX_ONLY_CASES = {5, 6, 7, 8, 9, 10}
+ALL_CASES = tuple(range(1, 11))
 DEFAULT_CASES = {"windows": (1, 2), "posix": ALL_CASES}
 def signal_teardown_case(launch: Launch, root: str, base_url: str, signum: int) -> str:
     """A client killed by a signal still gives the terminal back (#431).
@@ -1243,16 +1803,26 @@ def title_disabled_case(launch: Launch, root: str, from_flag: bool) -> str:
         argv.append("--no-title")
     env = horon_env(root, launch.home)
     env.pop("HORON_TUI_TITLE_ENABLED", None)
-    terminal = Terminal(argv, cwd=root, env=env)
-    try:
-        terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
-        terminal.send("/quit\r")
-        code = terminal.wait(STEP_TIMEOUT)
-        if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
-            raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
-        return terminal.transcript
-    finally:
-        terminal.close()
+    # A client started before its harness bridge accepts connections reports
+    # "harness connection closed" once. Only that startup message is retried,
+    # once; every other failure and every later assertion stays strict.
+    for attempt in (1, 2):
+        terminal = Terminal(argv, cwd=root, env=env)
+        try:
+            try:
+                terminal.read_until(SESSION_READY, STEP_TIMEOUT, "session ready with title disabled")
+            except Failure:
+                if attempt == 1 and "harness connection closed" in terminal.transcript:
+                    continue
+                raise
+            terminal.send("/quit\r")
+            code = terminal.wait(STEP_TIMEOUT)
+            if code != 0 or any(seq in terminal.transcript for seq in ("\x1b[22;2t", TITLE_POP, "\x1b]0;", "\x1b]2;")):
+                raise Failure(f"title opt-out failed (exit {code})\n--- transcript ---\n{terminal.transcript}")
+            return terminal.transcript
+        finally:
+            terminal.close()
+    raise Failure("title opt-out session never started")
 
 
 def selected_cases(requested: str | None) -> set[int]:
@@ -1269,6 +1839,29 @@ def selected_cases(requested: str | None) -> set[int]:
             raise Failure(f"case {sorted(cases & POSIX_ONLY_CASES)} needs a POSIX host")
         return cases
     return set(DEFAULT_CASES["posix" if POSIX else "windows"])
+
+
+def empty_tool_picker(launch: Launch, root: str, base_url: str) -> str:
+    home = write_config(os.path.join(root, "home"), base_url)
+    with open(os.path.join(home, "config.toml"), "a", encoding="utf-8") as handle:
+        handle.write('profile = "none"\n')
+    env = horon_env(root, home)
+    env.pop("HORON_AGENT_TOOL_PROFILE", None)
+    env.pop("HORON_NO_TUI", None)
+    terminal = Terminal(launch.client_argv(root), cwd=root, env=env)
+    try:
+        terminal.read_until(SESSION_READY, STARTUP_TIMEOUT, "empty-profile session ready")
+        terminal.send("/tools\r")
+        terminal.read_until("are enabled for this session", STEP_TIMEOUT, "empty tool picker")
+        terminal.send("\x1b")
+        time.sleep(0.15)
+        terminal.send("/quit\r")
+        code = terminal.wait(STEP_TIMEOUT)
+        if code != 0:
+            raise Failure(f"empty tool picker exited {code}\n--- transcript ---\n{terminal.transcript}")
+        return terminal.transcript
+    finally:
+        terminal.close()
 
 
 def background_jobs_case(launch: Launch, case_root: str, base_url: str) -> str:
@@ -1334,9 +1927,28 @@ def run_build_layout(
                 source = "--no-title" if from_flag else "title.enabled=false"
                 text += f"\n--- {source} ---\n" + title_disabled_case(launch, os.path.join(root, "happy"), from_flag)
                 log(f"{source}: no title or title stack sequences")
+            text += "\n--- empty tool profile ---\n" + empty_tool_picker(launch, os.path.join(root, "empty-tools"), base_url)
             jobs_root = os.path.join(root, "jobs")
             jobs_launch = build_launch(jobs_root, agent, tui)
             text += "\n--- background jobs ---\n" + background_jobs_case(jobs_launch, jobs_root, base_url)
+            goal_root = os.path.join(root, "goal")
+            goal_launch = build_launch(goal_root, agent, tui)
+            home = write_config(goal_launch.home, base_url)
+            env = horon_env(goal_root, home)
+            env.pop("HORON_NO_TUI", None)
+            argv = goal_launch.client_argv(goal_root) + ["--goal", "Verify startup objective", "--goal-budget", "1200"]
+            terminal = Terminal(argv, cwd=goal_root, env=env)
+            try:
+                terminal.read_until("Verify startup objective", STARTUP_TIMEOUT, "startup goal appears")
+                terminal.read_until("1200", STEP_TIMEOUT, "startup token ceiling appears")
+                terminal.send("/goal 2400 Reject duplicate objective\r")
+                terminal.read_until("already has an active goal", STEP_TIMEOUT, "startup goal stays attached")
+                terminal.send("/quit\r")
+                if terminal.wait(STEP_TIMEOUT) != 0:
+                    raise Failure(f"goal client did not exit\n--- transcript ---\n{terminal.transcript}")
+                text += "\n--- startup goal ---\n" + terminal.transcript
+            finally:
+                terminal.close()
         if transcript:
             with open(transcript, "w", encoding="utf-8") as handle:
                 handle.write(text)
@@ -1397,6 +2009,30 @@ def run_build_layout(
         case_root = os.path.join(root, f"signal-{signal.Signals(signum).name.lower()}")
         signal_teardown_case(build_launch(case_root, agent, tui), case_root, base_url, signum)
         log(f"case {index} passed")
+    if 9 in cases:
+        log("case 9: preview and apply a named model preset, then refuse invalid choices")
+        case_root = os.path.join(root, "model-preset")
+        text = model_preset_case(build_launch(case_root, agent, tui), case_root, base_url)
+        if transcript:
+            with open(transcript, "a", encoding="utf-8") as handle:
+                handle.write("\n--- model preset ---\n" + text)
+        log("case 9 passed")
+    if 10 in cases:
+        log("case 10: the terminal names the active launch profile")
+        case_root = os.path.join(root, "profile")
+        launch = build_launch(case_root, agent, tui)
+        home = write_config(launch.home, base_url)
+        env = horon_env(case_root, home)
+        env["HORON_PROFILE"] = "work"
+        terminal = Terminal(launch.client_argv(case_root), cwd=case_root, env=env)
+        try:
+            terminal.read_until("profile: work", STEP_TIMEOUT, "active profile shown")
+            terminal.send("/quit\r")
+            if terminal.wait(STEP_TIMEOUT) != 0:
+                raise Failure("profile session failed to exit cleanly")
+        finally:
+            terminal.close()
+        log("case 10 passed")
     return 0
 
 

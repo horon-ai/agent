@@ -46,3 +46,23 @@ pub(super) fn forward_run_id(message: &mut Value, request: &Value) {
         message["expected_run_id"] = request["expected_run_id"].clone();
     }
 }
+
+/// Refuse a continuation the source daemon cannot check, before it is sent.
+///
+/// A daemon that predates `turn_retry_v1` would ignore `expected_run_id` and
+/// run the message as new work, so the bridge answers `unsupported` instead.
+pub(crate) fn refuse_unsupported(request: &Value, daemon_supports: bool) -> Option<ServerFrame> {
+    (!daemon_supports && request["req"] == "send_message" && continues_run(request)).then(|| {
+        ServerFrame::reply(
+            request["id"].as_u64().unwrap_or(0),
+            ApiEvent::Error {
+                code: ErrorCode::Unsupported,
+                message: format!(
+                    "the source daemon does not support {}",
+                    horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1
+                ),
+                details: None,
+            },
+        )
+    })
+}

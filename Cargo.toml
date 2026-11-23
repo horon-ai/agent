@@ -366,11 +366,15 @@ horon-agent-sdk = { path = "crates/agent-sdk" }
 # tests/support/acp_schema.rs validates agent-written JSON-RPC frames against the
 # vendored ACP v1 schema (tests/fixtures/acp/). Same feature set the SDK already
 # uses, so the lockfile keeps the single existing `jsonschema` entry.
+jsonschema = { version = "0.49.3", default-features = false }
+# tests/memory_volume.rs reads the export tar the CLI wrote, to assert a deleted
+# page is in no metadata line. `tar` is already in the lockfile through
+# `horon-agent-app-core`, so this adds no package.
+tar = "0.4"
 # tests/e2e measures its own CPU time with getrusage and sends a real SIGKILL to
 # a crash fixture; tests/support/change_watch.rs arms no syscalls itself. Product
 # code reaches the OS only through `horon-agent-platform`, so libc is a test
 # dependency and never a runtime one.
 libc = "0.2"
-jsonschema = { version = "0.49.3", default-features = false }
 
 [build-dependencies]

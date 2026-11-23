@@ -22,6 +22,7 @@ mod communicate;
 mod config_edit_notice;
 mod context_notes;
 mod conversation_search;
+pub mod diagnostics_list;
 mod discover;
 mod discover_secrets;
 mod edit;
@@ -48,16 +49,19 @@ mod monitor;
 mod name_suggestions;
 pub(crate) mod nested_agents;
 pub(crate) mod new_context;
+pub(crate) mod package_tool;
 mod patch;
 pub mod path_policy;
 mod path_suffix;
 pub(crate) mod permission_bridge;
 pub(crate) mod post_tool_feedback;
+pub mod preview;
 mod read;
 mod read_selector;
 pub(crate) mod read_state;
 pub(crate) mod repair_event;
 mod replace;
+pub mod run_approval;
 pub(crate) mod sdk;
 pub(crate) mod serde_coerce;
 pub(crate) mod session_mcp;
@@ -81,6 +85,7 @@ pub(crate) mod yield_result;
 
 use crate::compaction::CompactionManager;
 use crate::provider::Provider;
+use crate::server::session_notes;
 use crate::skill::SkillRegistry;
 use anyhow::Result;
 use futures::future::BoxFuture;
@@ -390,7 +395,10 @@ async fn run_gated_pre_tool_hook(
 ) -> crate::hooks::GateDecision {
     let queue_budget = hook_serial_queue_budget();
     match acquire_hook_serial(queue_budget).await {
-        Some(_serial) => crate::hooks::run_pre_tool_gate(session_id, working_dir, tool_name, input_json).await,
+        Some(_serial) => {
+            session_notes::note_hook(session_id, "pre_tool", Some(tool_name));
+            crate::hooks::run_pre_tool_gate(session_id, working_dir, tool_name, input_json).await
+        }
         None => {
             crate::logging::warn(&format!(
                 "pre_tool hook gate still busy after {}ms; allowing tool '{tool_name}' for session {session_id} without running the gate (fail-open)",
@@ -422,6 +430,7 @@ impl Drop for SessionToolPolicyRegistration {
             policies.remove(&self.session_id);
             sdk::remove_session(&self.session_id);
             eval::forget_session(&self.session_id);
+            crate::extensions::package_snapshot::forget_session(&self.session_id);
         }
     }
 }
@@ -1852,14 +1861,9 @@ impl Registry {
         if !crate::hooks::hook_configured("post_tool") {
             return;
         }
-        crate::hooks::dispatch_observer(Self::post_tool_event(
-            "post_tool",
-            resolved_name,
-            input,
-            ctx,
-            result.as_ref(),
-            latency_ms,
-        ));
+        session_notes::note_hook(&ctx.session_id, "post_tool", Some(resolved_name));
+        let event = Self::post_tool_event("post_tool", resolved_name, input, ctx, result.as_ref(), latency_ms);
+        crate::hooks::dispatch_observer(event);
     }
 
     /// Run the synchronous `post_tool_feedback` hooks after a successful tool
@@ -1878,6 +1882,7 @@ impl Registry {
         if !crate::hooks::hook_configured("post_tool_feedback") {
             return;
         }
+        session_notes::note_hook(&ctx.session_id, "post_tool_feedback", Some(resolved_name));
         let event = Self::post_tool_event("post_tool_feedback", resolved_name, input, ctx, Ok(output), latency_ms);
         let input_json = input.to_string();
         let feedback = {
@@ -2029,16 +2034,15 @@ impl Registry {
         }
 
         let working_dir = ctx.working_dir.as_ref().map(|dir| dir.display().to_string());
-        // The dispatch clock starts before the hooks. A transformer or gate that
-        // queues on `HOOK_SERIAL` or runs long is time the caller waited, and
-        // starting at `Tool::execute` made that wait invisible.
+        // Include time spent waiting for and running hooks in dispatch latency.
         let dispatch_started_at = std::time::Instant::now();
-        // User-configured input transformer: may replace the tool input before
-        // anything reads it, so it is serialized with the other awaited hooks;
-        // see `HOOK_SERIAL`. It is skipped entirely when not configured, and for
-        // the dispatcher, whose payload the target's own transformer rewrites.
+        // Serialize input transforms with other hooks. The dispatcher leaves
+        // its payload for the target's own transformer.
         let input = if policy_on_self {
             let _serial = HOOK_SERIAL.lock().await;
+            if crate::hooks::hook_configured("pre_tool_transform") {
+                session_notes::note_hook(&ctx.session_id, "pre_tool_transform", Some(resolved_name));
+            }
             crate::hooks::transform_tool_input(&ctx.session_id, working_dir.as_deref(), resolved_name, input).await
         } else {
             input
@@ -2060,15 +2064,14 @@ impl Registry {
         // external gate as if it had been dispatched. The command-risk hard
         // refusal inside `bash` is untouched; this only decides whether the user
         // must answer first. The dispatcher asks nothing on its own behalf: the
-        // inner call applies the same mode to the tool it runs, so one prompt
-        // names that tool and its arguments.
+        // inner call applies the same mode to the tool it runs, so one prompt names it.
         let refusal = if policy_on_self {
-            // An ACP connection may set the mode for the turns it starts; every other
-            // turn, including a desktop or daemon turn on the same session, keeps the
-            // configured mode.
+            // An ACP connection may set the mode for its own turns; any other turn keeps the configured mode.
             let approval_effects = plan_effects.unwrap_or(ToolEffects::write());
-            let approval_mode =
-                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode);
+            let approval_mode = run_approval::stricter(
+                &ctx.session_id,
+                approval_override::get(&ctx.session_id).unwrap_or(crate::config::config().tools.approval_mode),
+            );
             let dual_confirm = crate::config::config().tools.dual_confirm_classes.clone();
             let danger = crate::approval::danger_class(resolved_name, &input, ctx.working_dir.as_deref());
             // Explicit `[[tools.bash_patterns]]` rules are the user's own policy,
@@ -2209,14 +2212,15 @@ impl Registry {
         };
         let hook_gate_ms = elapsed_ms(gate_started_at);
 
-        // Input and context stay as they are from here on, so the lifecycle
-        // fields are built once: lent to the start line, relabelled below.
+        // Input and context stay as they are from here on: the lifecycle fields are built once, lent to the start line.
+        crate::extensions::observer::tool_before(&ctx, resolved_name);
         let mut fields = lifecycle::fields("start", name, resolved_name, &input, &ctx);
         crate::logging::event_info("TOOL_LIFECYCLE", lifecycle::borrowed(&fields));
 
         let execute_started_at = std::time::Instant::now();
         let result = tool.execute(input.clone(), ctx.clone()).await;
         let execute_ms = elapsed_ms(execute_started_at);
+        crate::extensions::observer::tool_after(&ctx, resolved_name, result.is_ok(), execute_ms);
 
         // The `post_tool` observer fires as soon as the tool returns, before the
         // feedback and guard stages exist, so its DURATION_MS stays the execute

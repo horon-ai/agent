@@ -241,15 +241,17 @@ Every method mirrors the Rust SDK's name exactly:
 - Interaction: `respond_to_permission`, `respond_to_ask`,
   `respond_to_ask_with_id`, `ack_approval`, `ack_failover`.
 - Reads: `get_history`, `get_history_with_images`, `peek_session`,
-  `list_models`, `get_runtime_info`, `runtime_command`, `read_file`,
-  `find_files`, `search_text`, `list_artifacts`, `file_status`, `todo_state`,
-  `ack_todo_follow_up`.
+  `list_models`, `get_runtime_info`, `get_effective_settings`,
+  `runtime_command`, `read_file`, `find_files`, `search_text`,
+  `list_artifacts`, `file_status`, `todo_state`, `ack_todo_follow_up`.
+- Packages: `package_control`, `list_package_commands`, `run_package_command`.
 - Usage: `usage_report`.
 - Tools: `configure_tools`, `list_tools`, `submit_tool_result`.
 - Runtime: `get_runtime_state`, `apply_control`, `get_control_receipt`,
   `get_snapshot`, `snapshot_with_buffered_events`.
 - Replication: `list_session_heads`, `select_session_head`,
   `get_history_page`, `export_session_events`, `import_session_events`,
+  `export_session_markdown`, `export_session_html`,
   `export_session_blob`, `import_session_blob`, `session_blob_status`,
   `export_session_record_blob`, `import_session_record_blob`,
   `session_record_blob_status`.

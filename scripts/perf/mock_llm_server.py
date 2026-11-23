@@ -58,6 +58,7 @@ SHELL_NAME_HINTS = ("bash", "shell", "exec", "terminal", "run_command", "cmd")
 SKILL_MARKER = "[bench:skill]"
 MCP_MARKER = "[bench:mcp]"
 TUI_RETRY_MARKER = "[tui:retry-proof]"
+PACKAGE_MARKER = "[bench:package]"
 JOBS_MARKER = "[tui:jobs]"
 JOBS_COMMANDS = (
     "printf 'output-one\\n'; sleep 120 # job-one",
@@ -354,6 +355,25 @@ def flatten_tools(tools, namespace: str | None = None) -> list[tuple[dict, str |
     return flat
 
 
+# The registry name the host gives a package tool: `ext__<package>__<tool>`.
+PACKAGE_TOOL_NAME = re.compile(r"ext__[a-z0-9][a-z0-9_-]*__[a-z0-9][a-z0-9_]*")
+
+
+def find_package_tool(tools) -> str | None:
+    """The installed package tool a package scenario calls.
+
+    horon defers a package schema out of the cached prefix, so a request may not
+    carry the tool definition at all; the listed-tool index in the system prompt
+    names it, and the host still dispatches the call by name. The offered list is
+    therefore searched first and the transcript second.
+    """
+    for tool, _namespace in flatten_tools(tools):
+        name = _tool_name(tool)
+        if PACKAGE_TOOL_NAME.fullmatch(name):
+            return name
+    return None
+
+
 def _tool_named(tools, names: tuple[str, ...]) -> dict | None:
     wanted = {name.casefold() for name in names}
     for tool, _namespace in flatten_tools(tools):
@@ -543,6 +563,8 @@ def _plan_name(body: dict, prompt: str) -> str:
         return "skill"
     if MCP_MARKER in blob:
         return "mcp"
+    if PACKAGE_MARKER in blob:
+        return "package"
     if JOBS_MARKER in blob:
         return "jobs"
     if "[tui:context-proof]" in prompt:
@@ -728,8 +750,9 @@ class Handler(BaseHTTPRequestHandler):
 
         A request's plan comes from a marker in the request's prompt:
         `[bench:skill]` invokes the fixture skill, `[bench:mcp]` calls the
-        fixture MCP tool, and anything else keeps the original `ls` behaviour
-        (so one-shot and session numbers are unchanged). omp's skill-routing
+        fixture MCP tool, `[bench:package]` calls an installed package's tool,
+        and anything else keeps the original `ls` behaviour (so one-shot and
+        session numbers are unchanged). omp's skill-routing
         hint request carries no marker; answering it plainly would make omp
         retry, so it gets a valid hint instead.
         """
@@ -842,6 +865,16 @@ class Handler(BaseHTTPRequestHandler):
                 tool_name = _tool_name(read_tool)
                 via = "mcp-route"
                 arguments = {prop: route}
+        elif plan_name == "package":
+            offered = find_package_tool(tools)
+            named = PACKAGE_TOOL_NAME.search(transcript)
+            if not saw_result and (offered or named):
+                tool_name = offered or named.group(0)
+                via = "package-tool"
+                # The nonce travels as the call's argument and the child's answer
+                # carries it back, which is how the result proves the call ran
+                # instead of being refused.
+                arguments = {"name": nonce}
         elif plan_name == "jobs":
             shell = find_shell_tool(tools)
             issued = tool_call_count(kind, body)
@@ -884,6 +917,8 @@ class Handler(BaseHTTPRequestHandler):
             sentinel_seen = SKILL_SENTINEL in transcript
         elif plan_name == "mcp":
             sentinel_seen = NONCE_RE.search(results) is not None
+        elif plan_name == "package":
+            sentinel_seen = NONCE_RE.search(results) is not None
         else:
             sentinel_seen = False
         entry = {
@@ -925,7 +960,7 @@ class Handler(BaseHTTPRequestHandler):
             # The tail of the tool results so far, kept only for the skill and
             # MCP plans: a call that ran without returning the fixture's proof
             # is diagnosed from this instead of a re-run.
-            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp") and results else None,
+            "result_excerpt": results[-400:] if plan_name in ("skill", "mcp", "package") and results else None,
             "ts": time.time(),
         }
         STATS.record(entry)

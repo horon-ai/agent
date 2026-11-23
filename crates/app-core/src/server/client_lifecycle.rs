@@ -506,7 +506,11 @@ pub(super) async fn handle_client(
         }
 
         match decode_request(&line) {
-            Ok(request) => {
+            Ok(mut request) => {
+                if let Some(event) = super::package_control::reply(&mut request).await {
+                    write_direct_event(&writer, &event).await?;
+                    continue;
+                }
                 if request.is_lightweight_control_request() {
                     let keep_connection_open = matches!(request, Request::Ping { .. });
                     handle_lightweight_control_request(
@@ -978,6 +982,12 @@ pub(super) async fn handle_client(
                 }
             }
         };
+        if let Some(event) = super::package_control::reply(&mut request).await {
+            if write_direct_event(&writer, &event).await.is_err() {
+                break;
+            }
+            continue;
+        }
         let request_decoded_at = Instant::now();
         let request_id = request.id();
         let request_kind = request_type_from_line(&line);
@@ -1235,58 +1245,32 @@ pub(super) async fn handle_client(
         // A continuation is acked by the turn that decides it, and a refusal is
         // answered there with an error, so the generic ack never claims it.
         if !crate::agent::run_journal::is_continuation_request(&request) {
-            let ack = ServerEvent::Ack { id: request.id() };
-            let json = encode_event(&ack);
-            {
-                let ack_start = Instant::now();
-                let mut w = writer.lock().await;
-                if w.write_all(json.as_bytes()).await.is_err() {
-                    if request_lifecycle_logged {
-                        let mut fields =
-                            server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                                phase: "ack_write_failed",
-                                request_id,
-                                request_kind: &request_kind,
-                                client_session_id: &client_session_id,
-                                client_connection_id: &client_connection_id,
-                                client_instance_id: current_client_instance_id.as_deref(),
-                                client_is_processing,
-                                message_id: processing_message_id,
-                                processing_session_id: processing_session_id.as_deref(),
-                                line_bytes: line.len(),
-                            });
-                        fields.push((
-                            "ack_write_ms".to_string(),
-                            ack_start.elapsed().as_millis().to_string(),
-                        ));
-                        crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
-                    }
-                    break;
-                }
-                if request_lifecycle_logged {
-                    let mut fields =
-                        server_request_lifecycle_fields(ServerRequestLifecycleFields {
-                            phase: "acked",
-                            request_id,
-                            request_kind: &request_kind,
-                            client_session_id: &client_session_id,
-                            client_connection_id: &client_connection_id,
-                            client_instance_id: current_client_instance_id.as_deref(),
-                            client_is_processing,
-                            message_id: processing_message_id,
-                            processing_session_id: processing_session_id.as_deref(),
-                            line_bytes: line.len(),
-                        });
-                    fields.push((
-                        "ack_write_ms".to_string(),
-                        ack_start.elapsed().as_millis().to_string(),
-                    ));
-                    fields.push((
-                        "since_decode_ms".to_string(),
-                        request_decoded_at.elapsed().as_millis().to_string(),
-                    ));
+            let json = encode_event(&ServerEvent::Ack { id: request.id() });
+            let ack_start = Instant::now();
+            let failed = writer.lock().await.write_all(json.as_bytes()).await.is_err();
+            if request_lifecycle_logged {
+                let mut fields = server_request_lifecycle_fields(ServerRequestLifecycleFields {
+                    phase: if failed { "ack_write_failed" } else { "acked" },
+                    request_id,
+                    request_kind: &request_kind,
+                    client_session_id: &client_session_id,
+                    client_connection_id: &client_connection_id,
+                    client_instance_id: current_client_instance_id.as_deref(),
+                    client_is_processing,
+                    message_id: processing_message_id,
+                    processing_session_id: processing_session_id.as_deref(),
+                    line_bytes: line.len(),
+                });
+                fields.push(("ack_write_ms".to_string(), ack_start.elapsed().as_millis().to_string()));
+                if failed {
+                    crate::logging::event_warn("SERVER_REQUEST_LIFECYCLE", fields);
+                } else {
+                    fields.push(("since_decode_ms".to_string(), request_decoded_at.elapsed().as_millis().to_string()));
                     crate::logging::event_info("SERVER_REQUEST_LIFECYCLE", fields);
                 }
+            }
+            if failed {
+                break;
             }
         }
 
@@ -1310,7 +1294,9 @@ pub(super) async fn handle_client(
         let sdk_session_before_request = client_session_id.clone();
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
-            Request::ClientResponse { .. } | Request::DeleteSession { .. } => unreachable!("dispatched earlier"),
+            Request::ClientResponse { .. } | Request::DeleteSession { .. } | Request::PackageControl { .. } => {
+                unreachable!("dispatched earlier")
+            }
             Request::Message {
                 id,
                 content,
@@ -2548,6 +2534,12 @@ pub(super) async fn handle_client(
                             "swarm_id": member.and_then(|m| m.swarm_id.as_deref()), "role": member.map(|m| &m.role)});
                         return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
                     }
+                    // A per-session status view must answer while the turn that
+                    // it describes still holds the agent lock, so it comes from
+                    // the notes registry instead of the agent.
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Observations {
+                        return super::session_notes::command(&client_session_id, &args);
+                    }
                     let mut guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry this runtime command after the current turn."))?;
                     super::runtime_commands::execute(&mut guard, parsed, &args, swarm_enabled, serde_json::Value::Null).await
                 }.await;
@@ -3213,7 +3205,14 @@ pub(super) async fn handle_client(
                     .as_ref()
                     .is_some_and(|(session, _)| session == &client_session_id);
                 let configs = if acp_attached {
-                    crate::tool::session_mcp::server_configs(servers)
+                    // The process policy decides whether this editor's servers
+                    // may start at all; an unreadable policy refuses the list.
+                    match crate::hosting::current() {
+                        Ok(policy) => crate::tool::session_mcp::server_configs(policy, servers),
+                        Err(error) => Err(format!(
+                            "MCP servers are refused: the hosting policy could not be resolved: {error}"
+                        )),
+                    }
                 } else {
                     Err(crate::tool::approval_override::NOT_ACP_MESSAGE.to_string())
                 };

@@ -139,3 +139,65 @@ fn a_lock_file_an_earlier_build_wrote_keeps_its_ref() {
         "the row is rewritten in the current shape: {text}"
     );
 }
+
+#[test]
+fn only_plain_remotes_and_existing_directories_are_accepted_as_sources() {
+    let local = tempfile::tempdir().unwrap();
+    for allowed in [
+        "https://github.com/owner/repo.git",
+        "ssh://git@example.com/owner/repo.git",
+        "file:///srv/skills/repo",
+        "git@example.com:owner/repo.git",
+        local.path().to_str().unwrap(),
+    ] {
+        assert!(check_source(allowed).is_ok(), "{allowed}");
+    }
+    for refused in [
+        "--upload-pack=touch /tmp/x",
+        "ext::sh -c touch% /tmp/x",
+        "fd::17/repo",
+        "http://example.com/repo.git",
+        "git://example.com/repo.git",
+        "/no/such/directory",
+        "owner/repo",
+    ] {
+        assert!(check_source(refused).is_err(), "{refused}");
+    }
+}
+
+#[test]
+fn concurrent_write_lock_calls_never_collide_on_temp_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_path_buf();
+    std::thread::scope(|scope| {
+        for thread_idx in 0..8usize {
+            let root = &root;
+            scope.spawn(move || {
+                for iter in 0..4usize {
+                    write_lock(
+                        root,
+                        InstallRecord {
+                            name: format!("skill-{thread_idx}-{iter}"),
+                            source: "https://example.com/repo.git".to_string(),
+                            git_ref: None,
+                            commit: "a".repeat(40),
+                        },
+                    )
+                    .expect("concurrent write_lock must not collide on temp file");
+                }
+            });
+        }
+    });
+
+    let entries: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !entries.iter().any(|name| name.contains(".tmp-")),
+        "no leftover temp files expected: {entries:?}"
+    );
+    let text = std::fs::read_to_string(dir.path().join(LOCK_FILE)).unwrap();
+    let lock: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(!lock["installs"].as_array().unwrap().is_empty());
+}

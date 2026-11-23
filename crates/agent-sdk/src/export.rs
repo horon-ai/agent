@@ -24,4 +24,20 @@ impl HoronAgentClient {
             other => Err(unexpected("session_markdown", &other)),
         }
     }
+
+    /// Export the conversation as a standalone offline HTML report.
+    ///
+    /// Returns one self-contained document built from the same redacted
+    /// projection as [`Self::export_session_markdown`]: every transcript
+    /// character is escaped, the stylesheet is inline, and the page loads
+    /// nothing from the network. Requires `session_replication_v1`.
+    pub fn export_session_html(&self, session_id: &str) -> Result<String> {
+        self.require_capability("session_replication_v1", "export_session_html")?;
+        match self.replication_request(ApiRequest::ExportSessionHtml {
+            session_id: session_id.to_string(),
+        })? {
+            ApiEvent::SessionHtml { html, .. } => Ok(html),
+            other => Err(unexpected("session_html", &other)),
+        }
+    }
 }

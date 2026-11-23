@@ -2,7 +2,32 @@ use super::*;
 
 #[test]
 fn manager_without_project_dir_does_not_use_process_cwd() {
-    assert!(MemoryManager::new().get_project_dir().is_none());
+    with_temp_home(|_home| {
+        // A manager with no project directory must not silently read or write
+        // the process's own directory: project-scoped storage is unavailable
+        // until a caller names a directory.
+        let manager = MemoryManager::new();
+        assert!(
+            manager
+                .remember_project(MemoryEntry::new(MemoryCategory::Fact, "process cwd leak probe"))
+                .is_err()
+        );
+        // A read of a scope this manager cannot address is empty, never some
+        // other directory's memory: `collect_memories_scoped` treats an
+        // unresolvable scope as empty, as it always has.
+        assert!(
+            manager
+                .list_all_scoped(MemoryScope::Project)
+                .expect("project read")
+                .is_empty()
+        );
+        assert!(
+            manager
+                .list_all_scoped(MemoryScope::Global)
+                .expect("the global scope is always available")
+                .is_empty()
+        );
+    });
 }
 use crate::message::{ContentBlock, Message, Role};
 use serde_json::json;
@@ -556,15 +581,13 @@ fn retrieval_candidates_include_local_skills() {
             )
             .expect("write skill");
 
-        let old_cwd = std::env::current_dir().expect("current dir");
-        std::env::set_current_dir(&project_dir).expect("set current dir");
+        // The guard restores the cwd when this closure ends, assertions included.
+        let _cwd = crate::storage::CwdGuard::enter(&project_dir).expect("set current dir");
 
         let manager = MemoryManager::new().with_project_dir(&project_dir).with_skills(true);
         let candidates = manager
             .collect_retrieval_candidates_scoped(MemoryScope::All)
             .expect("collect retrieval candidates");
-
-        std::env::set_current_dir(old_cwd).expect("restore current dir");
 
         assert!(candidates.iter().any(|entry| entry.id == "skill:firefox-browser"));
         assert!(candidates.iter().any(|entry| {

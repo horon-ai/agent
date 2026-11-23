@@ -4,10 +4,24 @@
 //! - Project (per working directory)
 //! - Global (user-level preferences)
 //!
+//! # Storage
+//!
+//! Memory is stored in the per-user markdown wiki described in
+//! [`crate::memory::store`]: one markdown page per memory and a SQLite index
+//! that is derived from those pages. A [`MemoryManager`] reads and writes a
+//! [`MemoryGraph`] per scope, and [`backend`] turns that graph into pages.
+//!
+//! The pre-wiki JSON files (`memory/global.json`, `memory/projects/<hash>.json`)
+//! are a migration source only: they are read once and never written again
+//! ([`migrate`]). `memory migrate` imports every one of them on demand.
+//!
+//! Embeddings are not stored: they are derived per query, so the dense retrieval
+//! helpers below only see vectors a caller supplies in the same call.
+//!
 //! Jev provides typed relevance decisions. Optional text-generating extraction
 //! is independent of recall and is never required to read existing memories.
 
-use crate::memory_graph::{GRAPH_VERSION, MemoryGraph};
+use crate::memory_graph::MemoryGraph;
 use crate::memory_types::{
     InjectedMemoryItem, MemoryActivity, MemoryEvent, MemoryEventKind, MemoryState, StepResult, StepStatus,
     ranking::{top_k_by_ord, top_k_by_score},
@@ -16,30 +30,35 @@ use crate::sidecar::Sidecar;
 use crate::storage;
 use anyhow::Result;
 use horon_agent_time::Timestamp;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Instant;
 
 mod activity;
+mod backend;
 mod cache;
 mod consolidation;
+pub mod export;
+mod graph_pages;
+mod migrate;
 mod pending;
+mod project_key;
 #[path = "memory_prompt.rs"]
 mod prompt_support;
+mod retrieval;
+pub mod store;
 
 pub use crate::memory_types::{
     MemoryCategory, MemoryEntry, MemoryScope, MemoryStore, Reinforcement, TrustLevel, format_relevant_display_prompt,
     format_relevant_prompt,
 };
 use crate::memory_types::{
-    collect_skill_query_terms, format_entries_for_prompt, memory_matches_search, normalize_memory_search_text,
-    normalize_search_text, skill_retrieval_bonus,
+    collect_skill_query_terms, format_entries_for_prompt, memory_matches_search, normalize_search_text,
+    skill_retrieval_bonus,
 };
 pub use activity::{
     activity_snapshot, add_event, apply_remote_activity_snapshot, check_staleness, clear_activity, get_activity,
     pipeline_start, pipeline_update, record_injected_prompt, set_state,
 };
-use cache::{cache_graph, cached_graph};
 #[cfg(test)]
 use pending::backdate_injected_memory_for_test;
 pub use pending::{
@@ -50,13 +69,18 @@ pub use pending::{
 pub(crate) use prompt_support::format_context_for_extraction;
 pub use prompt_support::{focus_query_text, format_context_for_relevance, format_focused_query_for_relevance};
 
-const LEGACY_NOTE_CATEGORY: &str = "note";
+use backend::{Store, StoreScope};
+
+/// Category the flat note files migrated into, before the graph format existed.
+const PRE_WIKI_NOTE_CATEGORY: &str = "note";
+/// Source recorded for an entry that came from those note files.
+const PRE_WIKI_NOTES_SOURCE: &str = "legacy_remember_migration";
 const MEMORY_RELEVANCE_MAX_CANDIDATES: usize = 30;
 const MEMORY_RELEVANCE_MAX_RESULTS: usize = 10;
 
 /// Producer of synthetic [`MemoryEntry`] values contributed by a higher layer.
 ///
-/// Used to invert the legacy `memory -> skill` dependency: the `skill` layer
+/// Used to invert the former `memory -> skill` dependency: the `skill` layer
 /// (which already depends on `MemoryEntry`) registers a provider that turns the
 /// shared skill registry into synthetic memory entries, instead of `memory`
 /// reaching up into `skill::SkillRegistry`.
@@ -88,14 +112,14 @@ fn collect_synthetic_entries() -> Vec<MemoryEntry> {
     entries
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct LegacyNotesFile {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct PreWikiNotesFile {
     #[serde(default)]
-    entries: Vec<LegacyNoteEntry>,
+    entries: Vec<PreWikiNoteEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct LegacyNoteEntry {
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PreWikiNoteEntry {
     id: String,
     content: String,
     created_at: Timestamp,
@@ -119,44 +143,16 @@ pub fn memory_runtime_active() -> bool {
     crate::jev::JevClient::available()
 }
 
-trait MemoryEntryEmbeddingExt {
-    fn ensure_embedding(&mut self) -> bool;
-}
-
-impl MemoryEntryEmbeddingExt for MemoryEntry {
-    /// Generate and set embedding if not already present.
-    /// Returns true if embedding was generated, false if already exists or failed.
-    fn ensure_embedding(&mut self) -> bool {
-        if self.embedding.is_some() {
-            return false;
-        }
-
-        match crate::embedding_backend::embed_passage_active(&self.content) {
-            Ok((embedding, model_id)) => {
-                // Tag with the ACTIVE backend's model id so dense search only
-                // compares vectors from the same model/vector space. Untagged
-                // legacy memories are treated as local MiniLM via
-                // effective_embedding_model().
-                self.set_embedding(Some(embedding), Some(model_id));
-                true
-            }
-            Err(err) => {
-                crate::logging::info(&format!("Failed to generate embedding: {err}"));
-                false
-            }
-        }
-    }
-}
-
-/// Per-project memory file for `project_dir`. Keyed by the absolute path, so a
-/// migrated session that keeps the same repo path keeps the same memories.
+/// The pre-wiki JSON file a project's memories were stored in before the wiki.
+///
+/// Nothing writes this file any more — the wiki is the store — but `cloud move`
+/// transfers it between hosts and the migration reads it, so the path stays as
+/// the one name for that file. It is derived from the caller's `PathBuf` with
+/// `DefaultHasher`, exactly as before; the wiki's own project key lives in
+/// [`project_key`].
 pub fn project_memory_file(project_dir: &std::path::Path) -> Result<PathBuf> {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    project_dir.hash(&mut hasher);
-    let project_hash = format!("{:016x}", hasher.finish());
-    let memory_dir = storage::horon_agent_dir()?.join("memory").join("projects");
+    let project_hash = project_key::pre_wiki_project_hash(project_dir);
+    let memory_dir = crate::storage::horon_agent_dir()?.join("memory").join("projects");
     Ok(memory_dir.join(format!("{}.json", project_hash)))
 }
 
@@ -212,163 +208,34 @@ impl MemoryManager {
             anyhow::bail!("clear_test_storage only allowed in test mode");
         }
 
-        let test_dir = storage::horon_agent_dir()?.join("memory").join("test");
+        let test_dir = crate::storage::horon_agent_dir()?.join("memory").join("test");
         if test_dir.exists() {
             std::fs::remove_dir_all(&test_dir)?;
+            // The store handle and every cached graph for that directory are
+            // still open in this process; drop them or the next read answers
+            // from the deleted pages.
+            backend::forget_all();
             crate::logging::info("Cleared test memory storage");
         }
         Ok(())
     }
 
-    fn get_project_dir(&self) -> Option<PathBuf> {
-        self.project_dir.clone()
-    }
-
-    fn project_memory_path(&self) -> Result<Option<PathBuf>> {
-        // In test mode, use test directory
-        if self.test_mode {
-            let test_dir = storage::horon_agent_dir()?.join("memory").join("test");
-            std::fs::create_dir_all(&test_dir)?;
-            return Ok(Some(test_dir.join("test_project.json")));
-        }
-
-        let project_dir = match self.get_project_dir() {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-
-        project_memory_file(&project_dir).map(Some)
-    }
-
-    fn legacy_notes_path(&self) -> Result<Option<PathBuf>> {
-        if self.test_mode {
-            let test_dir = storage::horon_agent_dir()?.join("notes").join("test");
-            std::fs::create_dir_all(&test_dir)?;
-            return Ok(Some(test_dir.join("test_notes.json")));
-        }
-
-        let project_dir = match self.get_project_dir() {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-
-        let project_hash = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            project_dir.hash(&mut hasher);
-            format!("{:016x}", hasher.finish())
-        };
-
-        Ok(Some(
-            storage::horon_agent_dir()?
-                .join("notes")
-                .join(format!("{}.json", project_hash)),
-        ))
-    }
-
-    fn normalize_graph_search_text(graph: &mut MemoryGraph) -> bool {
-        let mut changed = false;
-        for memory in graph.memories.values_mut() {
-            let expected = normalize_memory_search_text(&memory.content, &memory.tags);
-            if memory.search_text != expected {
-                memory.search_text = expected;
-                changed = true;
-            }
-        }
-        changed
-    }
-
-    fn import_legacy_notes_into_graph(&self, graph: &mut MemoryGraph) -> Result<bool> {
-        let Some(path) = self.legacy_notes_path()? else {
-            return Ok(false);
-        };
-        if !path.exists() {
-            return Ok(false);
-        }
-
-        let legacy: LegacyNotesFile = storage::read_json(&path)?;
-        if legacy.entries.is_empty() {
-            return Ok(false);
-        }
-
-        let mut changed = false;
-        for note in legacy.entries {
-            if graph.memories.contains_key(&note.id) {
-                continue;
-            }
-
-            let mut entry = MemoryEntry::new(MemoryCategory::Custom(LEGACY_NOTE_CATEGORY.to_string()), note.content);
-            entry.id = note.id;
-            entry.created_at = note.created_at;
-            entry.updated_at = note.created_at;
-            entry.source = Some("legacy_remember_migration".to_string());
-            if let Some(tag) = note.tag {
-                entry.tags.push(tag);
-            }
-            graph.add_memory(entry);
-            changed = true;
-        }
-
-        Ok(changed)
-    }
-
-    fn global_memory_path(&self) -> Result<PathBuf> {
-        if self.test_mode {
-            let test_dir = storage::horon_agent_dir()?.join("memory").join("test");
-            std::fs::create_dir_all(&test_dir)?;
-            Ok(test_dir.join("test_global.json"))
-        } else {
-            Ok(storage::horon_agent_dir()?.join("memory").join("global.json"))
-        }
-    }
-
-    pub fn load_project(&self) -> Result<MemoryStore> {
-        match self.project_memory_path()? {
-            Some(path) if path.exists() => storage::read_json(&path),
-            _ => Ok(MemoryStore::new()),
-        }
-    }
-
-    pub fn load_global(&self) -> Result<MemoryStore> {
-        let path = self.global_memory_path()?;
-        if path.exists() {
-            storage::read_json(&path)
-        } else {
-            Ok(MemoryStore::new())
-        }
-    }
-
-    pub fn save_project(&self, store: &MemoryStore) -> Result<()> {
-        if let Some(path) = self.project_memory_path()? {
-            storage::write_json(&path, store)?;
-        }
-        Ok(())
-    }
-
-    pub fn save_global(&self, store: &MemoryStore) -> Result<()> {
-        let path = self.global_memory_path()?;
-        storage::write_json(&path, store)
+    /// The store this manager addresses.
+    pub(crate) fn store(&self) -> Result<Store> {
+        Store::open(self.test_mode, self.project_dir.as_deref())
     }
 
     /// Store without embedding inference. Exact duplicates reinforce an existing
     /// entry only within the requested scope, never mutate a different project.
     pub fn remember_project(&self, entry: MemoryEntry) -> Result<String> {
-        anyhow::ensure!(
-            self.project_memory_path()?.is_some(),
-            "Project memory requires a working directory; use global scope explicitly"
-        );
-        let mut graph = self.load_project_graph()?;
-        let id = Self::remember_in_graph(&mut graph, entry);
-        self.save_project_graph(&graph)?;
-        Ok(id)
+        let store = self.store()?;
+        store.project_key()?;
+        store.update(StoreScope::Project, |graph| Ok(Self::remember_in_graph(graph, entry)))
     }
 
     pub fn remember_global(&self, entry: MemoryEntry) -> Result<String> {
-        let mut graph = self.load_global_graph()?;
-        let id = Self::remember_in_graph(&mut graph, entry);
-        self.save_global_graph(&graph)?;
-        Ok(id)
+        self.store()?
+            .update(StoreScope::Global, |graph| Ok(Self::remember_in_graph(graph, entry)))
     }
 
     fn remember_in_graph(graph: &mut MemoryGraph, entry: MemoryEntry) -> String {
@@ -391,23 +258,23 @@ impl MemoryManager {
     /// Preserves existing inbound/outbound graph relationships while refreshing
     /// content and tags.
     pub fn upsert_project_memory(&self, entry: MemoryEntry) -> Result<String> {
-        let mut graph = self.load_project_graph()?;
-        let id = self.upsert_memory_in_graph(&mut graph, entry);
-        self.save_project_graph(&graph)?;
-        Ok(id)
+        let store = self.store()?;
+        store.project_key()?;
+        store.update(StoreScope::Project, |graph| {
+            Ok(Self::upsert_memory_in_graph(graph, entry))
+        })
     }
 
     /// Insert or update a memory with a stable ID in the global graph.
     /// Preserves existing inbound/outbound graph relationships while refreshing
     /// content and tags.
     pub fn upsert_global_memory(&self, entry: MemoryEntry) -> Result<String> {
-        let mut graph = self.load_global_graph()?;
-        let id = self.upsert_memory_in_graph(&mut graph, entry);
-        self.save_global_graph(&graph)?;
-        Ok(id)
+        self.store()?.update(StoreScope::Global, |graph| {
+            Ok(Self::upsert_memory_in_graph(graph, entry))
+        })
     }
 
-    fn upsert_memory_in_graph(&self, graph: &mut crate::memory_graph::MemoryGraph, entry: MemoryEntry) -> String {
+    fn upsert_memory_in_graph(graph: &mut MemoryGraph, entry: MemoryEntry) -> String {
         let id = entry.id.clone();
 
         let Some(existing_snapshot) = graph.get_memory(&id).cloned() else {
@@ -443,179 +310,8 @@ impl MemoryManager {
         id
     }
 
-    pub fn find_similar(&self, text: &str, threshold: f32, limit: usize) -> Result<Vec<(MemoryEntry, f32)>> {
-        // Generate embedding for query text
-        let query_embedding = match crate::embedding_backend::embed_query_active(text) {
-            Ok((emb, _model)) => emb,
-            Err(e) => {
-                crate::logging::info(&format!("Embedding failed, falling back to keyword search: {}", e));
-                return Ok(Vec::new());
-            }
-        };
-
-        self.find_similar_with_embedding(&query_embedding, threshold, limit)
-    }
-
-    pub fn find_similar_scoped(
-        &self,
-        text: &str,
-        threshold: f32,
-        limit: usize,
-        scope: MemoryScope,
-    ) -> Result<Vec<(MemoryEntry, f32)>> {
-        let query_embedding = match crate::embedding_backend::embed_query_active(text) {
-            Ok((emb, _model)) => emb,
-            Err(e) => {
-                crate::logging::info(&format!("Embedding failed, falling back to keyword search: {}", e));
-                return Ok(Vec::new());
-            }
-        };
-
-        self.find_similar_with_embedding_scoped(&query_embedding, threshold, limit, scope)
-    }
-
-    /// Find memories similar to the given embedding
-    pub fn find_similar_with_embedding(
-        &self,
-        query_embedding: &[f32],
-        threshold: f32,
-        limit: usize,
-    ) -> Result<Vec<(MemoryEntry, f32)>> {
-        let entries_with_emb = self.collect_all_memories_with_embeddings()?;
-        Self::score_and_filter(entries_with_emb, query_embedding, "", threshold, limit)
-    }
-
-    pub fn find_similar_with_embedding_scoped(
-        &self,
-        query_embedding: &[f32],
-        threshold: f32,
-        limit: usize,
-        scope: MemoryScope,
-    ) -> Result<Vec<(MemoryEntry, f32)>> {
-        let entries_with_emb = self.collect_memories_with_embeddings_scoped(scope)?;
-        Self::score_and_filter(entries_with_emb, query_embedding, "", threshold, limit)
-    }
-
-    /// Hybrid retrieval: fuse dense (embedding cosine) and sparse (BM25 over
-    /// memory search text) rankings with Reciprocal Rank Fusion.
-    ///
-    /// This is the recall-oriented live retrieval path. Unlike
-    /// `find_similar_with_embedding`, it does NOT apply a hard cosine floor
-    /// (which benchmarking showed zeroes out recall): instead it pulls a
-    /// generous candidate pool from each retriever and lets RRF + the
-    /// downstream sidecar/rerank decide. Lexical signal is essential for the
-    /// identifier/path/term-heavy memories agents store.
-    pub fn find_similar_hybrid(
-        &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Result<Vec<(MemoryEntry, f32)>> {
-        self.find_similar_hybrid_scoped(query_text, query_embedding, limit, MemoryScope::All)
-    }
-
-    pub fn find_similar_hybrid_scoped(
-        &self,
-        query_text: &str,
-        query_embedding: &[f32],
-        limit: usize,
-        scope: MemoryScope,
-    ) -> Result<Vec<(MemoryEntry, f32)>> {
-        let entries = self.collect_memories_with_embeddings_scoped(scope)?;
-        Ok(Self::hybrid_fuse(entries, query_text, query_embedding, limit))
-    }
-
-    /// Pull pool, rank by dense and BM25 separately, fuse with RRF.
-    fn hybrid_fuse(
-        entries: Vec<MemoryEntry>,
-        query_text: &str,
-        query_embedding: &[f32],
-        limit: usize,
-    ) -> Vec<(MemoryEntry, f32)> {
-        let entries: Vec<MemoryEntry> = entries.into_iter().filter(|e| e.embedding.is_some()).collect();
-        if entries.is_empty() {
-            return Vec::new();
-        }
-
-        // Generous per-retriever pool so fusion has signal to work with.
-        let pool = (limit * 5).max(HYBRID_POOL_MIN);
-
-        // Dense ranking (no hard threshold; just take the top by cosine).
-        // Vector-space gate: only entries embedded by the ACTIVE backend share a
-        // comparable space, so dense scores are computed over those only. Other
-        // entries (different model, e.g. not-yet-re-embedded local memories when
-        // OpenAI is active) still participate via the BM25 lexical half below, so
-        // they remain reachable rather than disappearing on a backend switch.
-        let active_model = crate::embedding_backend::active_model_id();
-        let dense_eligible: Vec<usize> = entries
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.effective_embedding_model() == active_model)
-            .map(|(i, _)| i)
-            .collect();
-        let emb_refs: Vec<&[f32]> = dense_eligible
-            .iter()
-            .filter_map(|&i| entries[i].embedding.as_deref())
-            .collect();
-        let dense_scores = crate::embedding::batch_cosine_similarity(query_embedding, &emb_refs);
-        let mut dense: Vec<(usize, f32)> = dense_eligible.iter().copied().zip(dense_scores).collect();
-        dense.sort_by(|a, b| b.1.total_cmp(&a.1));
-        dense.truncate(pool);
-
-        // Sparse (BM25) ranking over memory search text.
-        let sparse = bm25_rank(&entries, query_text, pool);
-
-        // RRF fusion.
-        const RRF_K: f32 = 60.0;
-        let mut fused: std::collections::HashMap<usize, f32> = std::collections::HashMap::new();
-        for (rank, (idx, _)) in dense.iter().enumerate() {
-            *fused.entry(*idx).or_insert(0.0) += 1.0 / (RRF_K + rank as f32 + 1.0);
-        }
-        for (rank, (idx, _)) in sparse.iter().enumerate() {
-            *fused.entry(*idx).or_insert(0.0) += 1.0 / (RRF_K + rank as f32 + 1.0);
-        }
-
-        let mut entries: Vec<Option<MemoryEntry>> = entries.into_iter().map(Some).collect();
-        top_k_by_score(
-            fused
-                .into_iter()
-                .filter_map(|(idx, score)| entries[idx].take().map(|e| (e, score))),
-            limit,
-        )
-    }
-
-    fn collect_all_memories_with_embeddings(&self) -> Result<Vec<MemoryEntry>> {
-        self.collect_memories_with_embeddings_scoped(MemoryScope::All)
-    }
-
-    fn collect_memories_with_embeddings_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
-        let mut entries: Vec<MemoryEntry> = Vec::new();
-        if scope.includes_project()
-            && let Ok(project) = self.load_project_graph()
-        {
-            entries.extend(project.active_memories().filter(|m| m.embedding.is_some()).cloned());
-        }
-        if scope.includes_global()
-            && let Ok(global) = self.load_global_graph()
-        {
-            entries.extend(global.active_memories().filter(|m| m.embedding.is_some()).cloned());
-        }
-        Ok(entries)
-    }
-
     fn collect_memories_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
-        let mut entries = Vec::new();
-        if scope.includes_project()
-            && let Ok(project) = self.load_project_graph()
-        {
-            entries.extend(project.all_memories().cloned());
-        }
-        if scope.includes_global()
-            && let Ok(global) = self.load_global_graph()
-        {
-            entries.extend(global.all_memories().cloned());
-        }
-        Ok(entries)
+        retrieval::collect_memories_scoped(self, scope)
     }
 
     #[cfg(test)]
@@ -636,6 +332,63 @@ impl MemoryManager {
         Ok(entries)
     }
 
+    /// Find memories similar to `text` through the active embedding backend.
+    pub fn find_similar(&self, text: &str, threshold: f32, limit: usize) -> Result<Vec<(MemoryEntry, f32)>> {
+        retrieval::find_similar(self, text, threshold, limit)
+    }
+
+    pub fn find_similar_scoped(
+        &self,
+        text: &str,
+        threshold: f32,
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        retrieval::find_similar_scoped(self, text, threshold, limit, scope)
+    }
+
+    /// Find memories similar to the given embedding
+    pub fn find_similar_with_embedding(
+        &self,
+        query_embedding: &[f32],
+        threshold: f32,
+        limit: usize,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        retrieval::find_similar_with_embedding(self, query_embedding, threshold, limit)
+    }
+
+    pub fn find_similar_with_embedding_scoped(
+        &self,
+        query_embedding: &[f32],
+        threshold: f32,
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        retrieval::find_similar_with_embedding_scoped(self, query_embedding, threshold, limit, scope)
+    }
+
+    /// Hybrid dense plus lexical retrieval fused with reciprocal rank fusion.
+    pub fn find_similar_hybrid(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        retrieval::find_similar_hybrid(self, query_text, query_embedding, limit)
+    }
+
+    pub fn find_similar_hybrid_scoped(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+        scope: MemoryScope,
+    ) -> Result<Vec<(MemoryEntry, f32)>> {
+        retrieval::find_similar_hybrid_scoped(self, query_text, query_embedding, limit, scope)
+    }
+
+    /// Score and filter candidates against one query vector.
+    #[cfg(test)]
     fn score_and_filter(
         entries: Vec<MemoryEntry>,
         query_embedding: &[f32],
@@ -643,140 +396,28 @@ impl MemoryManager {
         threshold: f32,
         limit: usize,
     ) -> Result<Vec<(MemoryEntry, f32)>> {
-        if entries.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut filtered_entries = Vec::with_capacity(entries.len());
-        let mut skipped_missing_embeddings = 0usize;
-        // Vector-space gate: only compare embeddings produced by the ACTIVE
-        // backend (same model id). When the active backend differs from an
-        // entry's stored model (e.g. user switched to OpenAI but this memory was
-        // embedded with local MiniLM, not yet re-embedded), the cosine would be
-        // meaningless, so we exclude it from dense scoring. Such memories remain
-        // reachable via the lexical/BM25 path in hybrid retrieval.
-        let active_model = crate::embedding_backend::active_model_id();
-        let mut skipped_model_mismatch = 0usize;
-        for entry in entries {
-            if entry.embedding.is_none() {
-                skipped_missing_embeddings += 1;
-            } else if entry.effective_embedding_model() != active_model {
-                skipped_model_mismatch += 1;
-            } else {
-                filtered_entries.push(entry);
-            }
-        }
-        if skipped_missing_embeddings > 0 {
-            crate::logging::warn(&format!(
-                "Skipped {} retrieval candidate(s) without embeddings during similarity scoring",
-                skipped_missing_embeddings
-            ));
-        }
-        if skipped_model_mismatch > 0 {
-            crate::logging::info(&format!(
-                "Skipped {} retrieval candidate(s) embedded with a different model than the active backend ({})",
-                skipped_model_mismatch, active_model
-            ));
-        }
-        if filtered_entries.is_empty() {
-            return Ok(Vec::new());
-        }
-        let emb_refs: Vec<&[f32]> = filtered_entries
-            .iter()
-            .filter_map(|entry| entry.embedding.as_deref())
-            .collect();
-        let scores = crate::embedding::batch_cosine_similarity(query_embedding, &emb_refs);
-        let skill_query_terms = collect_skill_query_terms(query_text);
-
-        let scored = top_k_by_score(
-            filtered_entries
-                .into_iter()
-                .zip(scores)
-                .map(|(entry, sim)| {
-                    let adjusted = sim + skill_retrieval_bonus(&entry, &skill_query_terms);
-                    (entry, adjusted)
-                })
-                .filter(|(_, sim)| *sim >= threshold),
-            limit,
-        );
-
-        let scored = Self::apply_gap_filter(scored);
-
-        Ok(scored)
+        retrieval::score_and_filter(entries, query_embedding, query_text, threshold, limit)
     }
 
-    /// Drop trailing low-relevance results by detecting natural gaps in the
-    /// score distribution. If the top hit is 0.85 and the next cluster is
-    /// 0.40-0.42, the 0.15+ gap tells us those lower results are noise.
+    /// Generate the missing embeddings of every stored memory.
     ///
-    /// Algorithm: walk the sorted scores and cut when the drop from one score
-    /// to the next exceeds `GAP_FACTOR` of the range (top - floor_threshold).
-    fn apply_gap_filter(scored: Vec<(MemoryEntry, f32)>) -> Vec<(MemoryEntry, f32)> {
-        if scored.len() <= 1 {
-            return scored;
-        }
-
-        const GAP_FACTOR: f32 = 0.25;
-        const MIN_KEEP: usize = 1;
-
-        let top_score = scored[0].1;
-        let range = (top_score - EMBEDDING_SIMILARITY_THRESHOLD).max(0.01);
-        let max_gap = range * GAP_FACTOR;
-
-        let mut keep = scored.len();
-        for i in 1..scored.len() {
-            let drop = scored[i - 1].1 - scored[i].1;
-            if drop > max_gap && i >= MIN_KEEP {
-                keep = i;
-                break;
-            }
-        }
-
-        scored.into_iter().take(keep).collect()
+    /// The wiki does not keep vectors, so nothing is written here: the counts
+    /// report that the store has no embedding to backfill, which is the
+    /// documented behavior change of the wiki backend. A caller that needs a
+    /// vector embeds the content when it needs one.
+    pub fn backfill_embeddings(&self) -> Result<(usize, usize)> {
+        Ok((0, 0))
     }
 
-    /// Ensure all memories have embeddings (backfill for existing memories)
-    pub fn backfill_embeddings(&self) -> Result<(usize, usize)> {
-        let mut generated = 0;
-        let mut failed = 0;
-
-        // Process project memories
-        if let Ok(mut graph) = self.load_project_graph() {
-            let mut changed = false;
-            for entry in graph.memories.values_mut() {
-                if entry.embedding.is_none() {
-                    if entry.ensure_embedding() {
-                        generated += 1;
-                        changed = true;
-                    } else {
-                        failed += 1;
-                    }
-                }
-            }
-            if changed {
-                self.save_project_graph(&graph)?;
-            }
-        }
-
-        // Process global memories
-        if let Ok(mut graph) = self.load_global_graph() {
-            let mut changed = false;
-            for entry in graph.memories.values_mut() {
-                if entry.embedding.is_none() {
-                    if entry.ensure_embedding() {
-                        generated += 1;
-                        changed = true;
-                    } else {
-                        failed += 1;
-                    }
-                }
-            }
-            if changed {
-                self.save_global_graph(&graph)?;
-            }
-        }
-
-        Ok((generated, failed))
+    /// Fuse a dense ranking and a lexical ranking with reciprocal rank fusion.
+    #[cfg(test)]
+    fn hybrid_fuse(
+        entries: Vec<MemoryEntry>,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Vec<(MemoryEntry, f32)> {
+        retrieval::hybrid_fuse(entries, query_text, query_embedding, limit)
     }
 
     pub fn get_prompt_memories(&self, limit: usize) -> Option<String> {
@@ -828,6 +469,14 @@ impl MemoryManager {
         self.search_scoped(query, MemoryScope::All)
     }
 
+    /// Every memory of `scope` whose search text contains the query.
+    ///
+    /// This is the substring match the `memory` tool has always used: the query
+    /// and the stored text are normalized the same way (lowercase, whitespace and
+    /// separators folded), so `side-panel` and `BUILD.CACHE` still match. It
+    /// deliberately does not go through the store index, whose ranking adds
+    /// streams (links, recency, kind authority) that would change which memories
+    /// this action returns.
     pub fn search_scoped(&self, query: &str, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
         let query_lower = normalize_search_text(query);
         if query_lower.is_empty() {
@@ -849,27 +498,34 @@ impl MemoryManager {
         self.list_all_scoped(MemoryScope::All)
     }
 
+    /// Every memory of `scope`, newest first with the id as the final tie-break.
     pub fn list_all_scoped(&self, scope: MemoryScope) -> Result<Vec<MemoryEntry>> {
         let mut all = self.collect_memories_scoped(scope)?;
-        all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        all.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
         Ok(all)
     }
 
+    /// Forget one memory, project scope first.
+    ///
+    /// The scope that holds the id is read before either is written, so a
+    /// forget in the global store does not rewrite the project store first.
+    /// A manager with no working directory has no project scope to read and
+    /// goes straight to the global store, the same refusal-free read the rest
+    /// of the manager uses.
     pub fn forget(&self, id: &str) -> Result<bool> {
-        // Try graph-based removal first (new format)
-        let mut project_graph = self.load_project_graph()?;
-        if project_graph.remove_memory(id).is_some() {
-            self.save_project_graph(&project_graph)?;
-            return Ok(true);
+        let store = self.store()?;
+        let in_project = store
+            .read(StoreScope::Project)
+            .is_ok_and(|graph| graph.memories.contains_key(id));
+        if in_project {
+            return store.update(StoreScope::Project, |graph| Ok(graph.remove_memory(id).is_some()));
         }
-
-        let mut global_graph = self.load_global_graph()?;
-        if global_graph.remove_memory(id).is_some() {
-            self.save_global_graph(&global_graph)?;
-            return Ok(true);
-        }
-
-        Ok(false)
+        store.update(StoreScope::Global, |graph| Ok(graph.remove_memory(id).is_some()))
     }
 
     // === Sidecar Integration ===
@@ -907,7 +563,7 @@ impl MemoryManager {
         Ok(ids)
     }
 
-    /// Recall directly through Jev. The legacy `max_candidates` argument now
+    /// Recall directly through Jev. The former `max_candidates` argument now
     /// limits output, not the input pool: old memories must remain discoverable.
     pub async fn get_relevant_for_context(&self, context: &str, max_candidates: usize) -> Result<Vec<MemoryEntry>> {
         Ok(
@@ -950,177 +606,94 @@ impl MemoryManager {
         Ok(matches)
     }
 
-    /// Load the existing project graph without generating embeddings.
+    /// Load the project graph.
     pub fn load_project_graph(&self) -> Result<MemoryGraph> {
-        let Some(path) = self.project_memory_path()? else {
-            return Ok(MemoryGraph::new());
-        };
-
-        if !self.test_mode
-            && let Some(mut graph) = cached_graph(&path)
-        {
-            if Self::normalize_graph_search_text(&mut graph) {
-                cache_graph(path.clone(), &graph);
-            }
-            return Ok(graph);
-        }
-
-        if path.exists() {
-            // Try loading as MemoryGraph first
-            if let Ok(graph) = storage::read_json::<MemoryGraph>(&path)
-                && graph.graph_version == GRAPH_VERSION
-            {
-                let mut graph = graph;
-                let normalized = Self::normalize_graph_search_text(&mut graph);
-                if self.import_legacy_notes_into_graph(&mut graph)? {
-                    self.save_project_graph(&graph)?;
-                } else if normalized {
-                    storage::write_json(&path, &graph)?;
-                }
-                if !self.test_mode {
-                    cache_graph(path, &graph);
-                }
-                return Ok(graph);
-            }
-
-            // Fall back to legacy MemoryStore and migrate
-            let store: MemoryStore = storage::read_json(&path)?;
-            let mut graph = MemoryGraph::from_legacy_store(store);
-            let _ = self.import_legacy_notes_into_graph(&mut graph)?;
-
-            // Save migrated format (create backup first)
-            let backup_path = path.with_extension("json.bak");
-            if !backup_path.exists() {
-                let _ = std::fs::copy(&path, &backup_path);
-            }
-            storage::write_json(&path, &graph)?;
-
-            crate::logging::info(&format!("Migrated memory store to graph format: {}", path.display()));
-            if !self.test_mode {
-                cache_graph(path, &graph);
-            }
-            Ok(graph)
-        } else {
-            let mut graph = MemoryGraph::new();
-            if self.import_legacy_notes_into_graph(&mut graph)? {
-                self.save_project_graph(&graph)?;
-            }
-            if !self.test_mode {
-                cache_graph(path, &graph);
-            }
-            Ok(graph)
-        }
+        self.store()?.read(StoreScope::Project)
     }
 
-    /// Load global memories as a MemoryGraph with automatic migration
+    /// Load the global graph.
     pub fn load_global_graph(&self) -> Result<MemoryGraph> {
-        let path = self.global_memory_path()?;
-        if !self.test_mode
-            && let Some(mut graph) = cached_graph(&path)
-        {
-            if Self::normalize_graph_search_text(&mut graph) {
-                cache_graph(path.clone(), &graph);
-            }
-            return Ok(graph);
-        }
-
-        if path.exists() {
-            // Try loading as MemoryGraph first
-            if let Ok(graph) = storage::read_json::<MemoryGraph>(&path)
-                && graph.graph_version == GRAPH_VERSION
-            {
-                let mut graph = graph;
-                if Self::normalize_graph_search_text(&mut graph) {
-                    storage::write_json(&path, &graph)?;
-                }
-                if !self.test_mode {
-                    cache_graph(path, &graph);
-                }
-                return Ok(graph);
-            }
-
-            // Fall back to legacy MemoryStore and migrate
-            let store: MemoryStore = storage::read_json(&path)?;
-            let graph = MemoryGraph::from_legacy_store(store);
-
-            // Save migrated format (create backup first)
-            let backup_path = path.with_extension("json.bak");
-            if !backup_path.exists() {
-                let _ = std::fs::copy(&path, &backup_path);
-            }
-            storage::write_json(&path, &graph)?;
-
-            crate::logging::info(&format!(
-                "Migrated global memory store to graph format: {}",
-                path.display()
-            ));
-            if !self.test_mode {
-                cache_graph(path, &graph);
-            }
-            Ok(graph)
-        } else {
-            let graph = MemoryGraph::new();
-            if !self.test_mode {
-                cache_graph(path, &graph);
-            }
-            Ok(graph)
-        }
+        self.store()?.read(StoreScope::Global)
     }
 
-    /// Save project memories as a MemoryGraph
+    /// Replace the project graph with `graph`.
+    ///
+    /// A whole-scope write: pages the graph no longer names are deleted and
+    /// pages that changed are rewritten. Used by consolidation, which merges
+    /// records in place, and by callers that already hold the graph they want.
     pub fn save_project_graph(&self, graph: &MemoryGraph) -> Result<()> {
-        if let Some(path) = self.project_memory_path()? {
-            storage::write_json(&path, graph)?;
-            if !self.test_mode {
-                cache_graph(path, graph);
-            }
-        }
-        Ok(())
+        let store = self.store()?;
+        store.project_key()?;
+        store.update(StoreScope::Project, |target| {
+            *target = graph.clone();
+            Ok(())
+        })
     }
 
-    /// Save global memories as a MemoryGraph
+    /// Replace the global graph with `graph`.
     pub fn save_global_graph(&self, graph: &MemoryGraph) -> Result<()> {
-        let path = self.global_memory_path()?;
-        storage::write_json(&path, graph)?;
-        if !self.test_mode {
-            cache_graph(path, graph);
-        }
-        Ok(())
+        self.store()?.update(StoreScope::Global, |target| {
+            *target = graph.clone();
+            Ok(())
+        })
     }
 
-    /// Add a tag to a memory
+    /// Add one tag to a memory.
     pub fn tag_memory(&self, memory_id: &str, tag: &str) -> Result<()> {
-        // Try project first
-        let mut graph = self.load_project_graph()?;
-        if graph.memories.contains_key(memory_id) {
-            graph.tag_memory(memory_id, tag);
-            return self.save_project_graph(&graph);
-        }
+        self.tag_memories(memory_id, std::slice::from_ref(&tag.to_string()))
+    }
 
-        // Try global
-        let mut graph = self.load_global_graph()?;
-        if graph.memories.contains_key(memory_id) {
-            graph.tag_memory(memory_id, tag);
-            return self.save_global_graph(&graph);
+    /// Add every tag in `tags` to one memory in a single write.
+    ///
+    /// The `memory` tool's `tag` action used to write the whole graph once per
+    /// tag; one write keeps the store consistent if a later tag fails, and it is
+    /// the only difference callers can observe.
+    pub fn tag_memories(&self, memory_id: &str, tags: &[String]) -> Result<()> {
+        let store = self.store()?;
+        let tagged = store.update(StoreScope::Project, |graph| {
+            Ok(match graph.get_memory(memory_id) {
+                Some(_) => {
+                    for tag in tags {
+                        graph.tag_memory(memory_id, tag);
+                    }
+                    true
+                }
+                None => false,
+            })
+        })?;
+        if tagged {
+            return Ok(());
         }
-
-        Err(anyhow::anyhow!("Memory not found: {}", memory_id))
+        let tagged = store.update(StoreScope::Global, |graph| {
+            Ok(match graph.get_memory(memory_id) {
+                Some(_) => {
+                    for tag in tags {
+                        graph.tag_memory(memory_id, tag);
+                    }
+                    true
+                }
+                None => false,
+            })
+        })?;
+        if tagged {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Memory not found: {}", memory_id))
+        }
     }
 
     /// Link two memories with a RelatesTo edge
     pub fn link_memories(&self, from_id: &str, to_id: &str, weight: f32) -> Result<()> {
-        // Try project first
-        let mut graph = self.load_project_graph()?;
-        if graph.memories.contains_key(from_id) && graph.memories.contains_key(to_id) {
-            graph.link_memories(from_id, to_id, weight);
-            return self.save_project_graph(&graph);
-        }
-
-        // Try global
-        let mut graph = self.load_global_graph()?;
-        if graph.memories.contains_key(from_id) && graph.memories.contains_key(to_id) {
-            graph.link_memories(from_id, to_id, weight);
-            return self.save_global_graph(&graph);
+        let store = self.store()?;
+        let link = |graph: &mut MemoryGraph| -> Result<bool> {
+            if graph.memories.contains_key(from_id) && graph.memories.contains_key(to_id) {
+                graph.link_memories(from_id, to_id, weight);
+                return Ok(true);
+            }
+            Ok(false)
+        };
+        if store.update(StoreScope::Project, link)? || store.update(StoreScope::Global, link)? {
+            return Ok(());
         }
 
         // Cross-store links not supported for now
@@ -1132,19 +705,13 @@ impl MemoryManager {
     /// Get memories related to a given memory via graph traversal
     pub fn get_related(&self, memory_id: &str, depth: usize) -> Result<Vec<MemoryEntry>> {
         // Find which store contains the memory
-        let (mut graph, _is_project) = {
-            let project_graph = self.load_project_graph()?;
-            if project_graph.memories.contains_key(memory_id) {
-                (project_graph, true)
-            } else {
-                let global_graph = self.load_global_graph()?;
-                if global_graph.memories.contains_key(memory_id) {
-                    (global_graph, false)
-                } else {
-                    return Err(anyhow::anyhow!("Memory not found: {}", memory_id));
-                }
+        let mut graph = self.load_project_graph()?;
+        if !graph.memories.contains_key(memory_id) {
+            graph = self.load_global_graph()?;
+            if !graph.memories.contains_key(memory_id) {
+                return Err(anyhow::anyhow!("Memory not found: {}", memory_id));
             }
-        };
+        }
 
         // Use cascade retrieval to find related memories
         let results = graph.cascade_retrieve(&[memory_id.to_string()], &[1.0], depth, 20);
@@ -1270,9 +837,6 @@ pub const EMBEDDING_SIMILARITY_THRESHOLD: f32 = 0.5;
 /// Maximum embedding hits to verify with sidecar
 pub const EMBEDDING_MAX_HITS: usize = 10;
 
-/// Minimum per-retriever candidate pool size for hybrid fusion.
-const HYBRID_POOL_MIN: usize = 50;
-
 #[path = "memory/ranking.rs"]
 mod ranking;
 use ranking::bm25_rank;
@@ -1281,6 +845,31 @@ impl Default for MemoryManager {
         Self::new()
     }
 }
+
+/// The `memory migrate` report, re-exported for the CLI.
+pub use backend::StoreWriteLock;
+pub use migrate::MigrateReport;
+
+/// Import every pre-wiki JSON memory file under this home into the wiki.
+///
+/// `dry_run` reports what would be imported and writes nothing.
+pub fn migrate_pre_wiki_memories(dry_run: bool) -> Result<MigrateReport> {
+    let store = Store::open(false, None)?;
+    migrate::migrate_all(&store, dry_run)
+}
+
+/// Take the store's exclusive writer lock at `store_root`.
+///
+/// The volume lifecycle uses it to read one consistent revision (export) or to
+/// wait out an in-flight write before a checkpoint (quiesce). Returns the lock
+/// guard, which releases on drop.
+pub fn write_lock(store_root: &std::path::Path) -> Result<StoreWriteLock> {
+    StoreWriteLock::acquire(store_root)
+}
+
+#[cfg(test)]
+#[path = "tests_support.rs"]
+pub(crate) mod memory_test_support;
 
 #[cfg(test)]
 #[path = "memory_tests.rs"]

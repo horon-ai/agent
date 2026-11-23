@@ -282,3 +282,85 @@ fn a_session_without_recorded_usage_reports_unknown_not_zero() {
     assert_eq!(totals.input, None);
     assert_eq!(totals.requests, 0);
 }
+
+#[test]
+fn message_revised_uses_event_timestamp_fallback_and_updates_bucket() {
+    let home = ScopedHome::new("revised-bucket");
+    let dir = home.path.join("sessions").join("session_rev");
+    std::fs::create_dir_all(&dir).expect("create session dir");
+    let lines = [
+        json!({
+            "event_id": "rev-created",
+            "session_id": "session_rev",
+            "kind": "session_created",
+            "payload": {"metadata": {"model": "model-a", "provider_key": "openai"}},
+        }),
+        json!({
+            "event_id": "rev-m1",
+            "session_id": "session_rev",
+            "kind": "message_appended",
+            "timestamp": "2026-11-22T23:59:00Z",
+            "payload": {"message": {"id": "m1", "role": "assistant", "token_usage": {"input_tokens": 100, "output_tokens": 10}}},
+        }),
+        json!({
+            "event_id": "rev-meta",
+            "session_id": "session_rev",
+            "kind": "metadata_changed",
+            "payload": {"metadata": {"model": "model-b", "provider_key": "anthropic"}},
+        }),
+        json!({
+            "event_id": "rev-m1-edit",
+            "session_id": "session_rev",
+            "kind": "message_revised",
+            "timestamp": "2026-11-23T00:01:00Z",
+            "payload": {
+                "target_event_id": "rev-m1",
+                "replacement": {
+                    "id": "m1",
+                    "role": "assistant",
+                    "timestamp": "2026-11-23T00:01:00Z",
+                    "token_usage": {"input_tokens": 250, "output_tokens": 25}
+                }
+            },
+        }),
+        json!({
+            "event_id": "rev-m2-edit",
+            "session_id": "session_rev",
+            "kind": "message_revised",
+            "timestamp": "2026-11-24T00:01:00Z",
+            "payload": {
+                "target_event_id": "rev-m2",
+                "replacement": {"id": "m2", "role": "assistant", "token_usage": {"input_tokens": 50, "output_tokens": 5}}
+            },
+        }),
+    ];
+    let text = lines
+        .iter()
+        .map(|line| serde_json::to_string(line).expect("serialize"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join("events.jsonl"), format!("{text}\n")).expect("write");
+
+    let old_day = local_usage(&home.path, Some("2026-11-22"), Some("2026-11-22")).expect("old day");
+    assert!(
+        old_day.rows.is_empty(),
+        "revised message should have moved out of 2026-11-22: {:?}",
+        old_day.rows.len()
+    );
+
+    let new_day = local_usage(&home.path, Some("2026-11-23"), Some("2026-11-23")).expect("new day");
+    assert_eq!(new_day.rows.len(), 1);
+    let rendered = format!("{new_day}");
+    assert!(
+        rendered.contains("2026-11-23\tanthropic\tmodel-b\t250\t25"),
+        "{rendered}"
+    );
+
+    let fallback_day = local_usage(&home.path, Some("2026-11-24"), Some("2026-11-24")).expect("fallback day");
+    assert_eq!(fallback_day.rows.len(), 1);
+    let fallback_rendered = format!("{fallback_day}");
+    assert!(
+        fallback_rendered.contains("2026-11-24\tanthropic\tmodel-b\t50\t5"),
+        "{fallback_rendered}"
+    );
+}

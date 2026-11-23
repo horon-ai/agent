@@ -8,12 +8,10 @@ fn empty_config() -> McpConfig {
 #[test]
 fn issue_790_owned_manager_keeps_its_initial_config_directory() {
     let _guard = crate::storage::lock_test_env();
-    let original_cwd = std::env::current_dir().expect("current cwd");
-    let previous_home = std::env::var_os("HORON_HOME");
     let home = tempfile::tempdir().expect("home tempdir");
     let project = tempfile::tempdir().expect("project tempdir");
     let elsewhere = tempfile::tempdir().expect("elsewhere tempdir");
-    crate::env::set_var("HORON_HOME", home.path());
+    let _home = crate::storage::HomeEnvGuard::set(home.path());
     std::fs::write(
         project.path().join(".mcp.json"),
         r#"{"mcpServers":{"project-only":{"command":"project-server"}}}"#,
@@ -21,17 +19,12 @@ fn issue_790_owned_manager_keeps_its_initial_config_directory() {
     .expect("write project config");
     crate::workspace_trust::trust_for_tests(project.path());
 
-    std::env::set_current_dir(project.path()).expect("set project cwd");
+    // Declared after the temp dirs it points into, so it restores the cwd
+    // first, even when an assertion below fails.
+    let cwd = crate::storage::CwdGuard::enter(project.path()).expect("set project cwd");
     let manager = McpManager::new();
-    std::env::set_current_dir(elsewhere.path()).expect("set different cwd");
+    cwd.change(elsewhere.path()).expect("set different cwd");
     let fresh = manager.load_fresh_config();
-
-    std::env::set_current_dir(original_cwd).expect("restore cwd");
-    if let Some(previous_home) = previous_home {
-        crate::env::set_var("HORON_HOME", previous_home);
-    } else {
-        crate::env::remove_var("HORON_HOME");
-    }
 
     assert!(fresh.servers.contains_key("project-only"));
 }

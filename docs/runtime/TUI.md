@@ -20,12 +20,14 @@ A resumed session is handed over as well. `horon --resume <id>` passes `--sessio
 
 `horon --continue` selects the most recently active saved session in the working directory and hands it to the client the same way.
 
+`horon --goal "Ship a fix" --goal-budget 1200` starts a new session and shows its goal and token ceiling. The flags also work with `horon run` and conflict with `--resume` and `--continue`. In a terminal session, `/goal 1200 Ship a fix` creates and attaches a goal without sending a model prompt. An existing active goal stays attached when reconnecting.
+
 The client reaches the daemon through the harness API bridge, and starts that bridge when no listening socket answers. The bridge serves the terminal that started it and ends with it: while a client is connected it keeps serving, and once none is it stops, as soon as the process that started it exits or after a minute without a client, releasing its single-instance lock and removing the socket file (`horon-agent-api.sock`). The next launch therefore starts a bridge from the installed release instead of reconnecting to one that stayed resident across an upgrade, and the daemon keeps running throughout. A socket file left by a bridge that was killed outright is not taken as a running bridge: `horon` and `horon-tui` check the socket with a connection, and when nothing answers they start the bridge again, which replaces the leftover file. No manual cleanup is needed.
 
 The client takes its own arguments:
 
 ```text
-horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--config <file>]... [--gallery[=<scene>]]
+horon-tui [--socket <path>] [--session <id>] [--cwd <dir>] [--add-dir <dir>]... [--config <file>]... [--gallery[=<scene>]]
            [--motion <mode>] [--spinner-interval <ms>] [--max-fps <n>] [--hide-thinking] [--no-title]
 ```
 
@@ -36,6 +38,7 @@ The three motion flags are per-launch overrides: they outrank every settings fil
 | `--socket <path>` | Harness API socket instead of the resolved default |
 | `--session <id>` | Attach to an existing session instead of creating one |
 | `--cwd <dir>` | Working directory for a session this client creates |
+| `--add-dir <dir>` | Extra workspace directory for the session, repeatable; each must exist and is resolved and de-duplicated, and `/dirs` lists them |
 | `--config <file>` | Extra settings file, repeatable |
 | `--gallery[=<scene>]` | Open an offline preview of the terminal renderer |
 | `--motion <mode>` | `full`, `reduced` or `static` for this launch, over `motion.preset` |
@@ -106,6 +109,7 @@ The settings of one process are the registry defaults, then the global file, the
 | `transcript.show_reasoning` | boolean | `false` | `HORON_TUI_TRANSCRIPT_SHOW_REASONING` |
 | `transcript.markdown` | boolean | `true` | `HORON_TUI_TRANSCRIPT_MARKDOWN` |
 | `transcript.turn_usage` | boolean | `false` | `HORON_TUI_TRANSCRIPT_TURN_USAGE` |
+| `transcript.work_notes` | boolean | `false` | `HORON_TUI_TRANSCRIPT_WORK_NOTES` |
 | `transcript.visual_blocks` | boolean | `true` | `HORON_TUI_TRANSCRIPT_VISUAL_BLOCKS` |
 | `models.shortlist` | array of model IDs | `[]` | `HORON_TUI_MODELS_SHORTLIST` |
 
@@ -116,6 +120,8 @@ The table follows the settings registry (`crates/tui/src/settings/registry.rs`),
 `statusline.separator` can keep the glyph preset, draw a middle dot (`·`), or draw a bar (`|`). Set `statusline.background = "terminal"` to use the terminal's own background beneath the status line.
 
 `editor.submit_on_enter = false` disconnects the send key, so pressing it starts a new line in the draft instead of sending. `transcript.tool_output_lines` is how many rows of a finished tool call's output are kept under its line: `0` hides the preview, and a value above `40` is capped. `transcript.mouse_scroll` is on by default: the client captures the mouse and the wheel scrolls the transcript. Turning it off releases the capture, so the terminal keeps its own text selection and the wheel does what the terminal does; most terminals also bypass a captured mouse while a selection modifier is held, such as Shift-drag. `transcript.markdown = false` draws the model's text with its Markdown markers as typed.
+
+Set `transcript.work_notes = true` for up to four live work notes during each turn and a final count of tool calls, completed background jobs and omitted notes. These notes stay in the TUI.
 
 `motion.preset` controls the indicator beside `running`. `full` cycles its glyphs, `reduced` holds the first glyph and `static` hides the indicator. `motion.spinner_interval` sets the minimum time a glyph stays visible, from `40` to `2000` milliseconds. `motion.max_fps` caps automatic redraws due to incoming text or spinner ticks in all presets, from `1` to `240` frames per second. At `max_fps = 4`, automatic redraws are at least 250 milliseconds apart. Input, resize and other events that need immediate feedback can redraw sooner. Out-of-range values are rejected with a warning that names the default in use.
 
@@ -245,6 +251,7 @@ Read $1 and review it against the rules in AGENTS.md. Extra context: $ARGUMENTS
 | `app.cycle_model_back` | `ctrl+alt+p` | Move backward through the model shortlist |
 | `app.repaint` | `ctrl+l` | Clear and redraw the terminal while keeping the draft, selection and scroll position |
 | `app.toggle_thinking` | `ctrl+t` | Show or hide the model's reasoning for this session |
+| `app.plan_mode` | `alt+m` | Put this session in read-only plan mode, like `/plan on` |
 | `editor.backspace` | `backspace` | Delete the grapheme cluster before the cursor |
 | `editor.delete` | `delete` | Delete the grapheme cluster at the cursor |
 | `editor.left` | `left`, `ctrl+b` | Move the cursor one grapheme cluster left |
@@ -303,7 +310,7 @@ A tool call is drawn as one head row and the rows under it. The head carries the
 
 Results are matched to calls by call id, so two calls that ran in parallel cannot swap their results, and a result whose start this client never saw gets a row of its own instead of being attached to another call's. A finished call keeps a preview of its output under the head: three rows by default, each cut to 160 cells, and `+N lines` for the rows the preview does not show. A failure puts its message on its own row instead of in the head, because the message is usually longer than the pane and would push the argument and the duration off the right edge.
 
-The marker of the newest call whose preview hides something names the key that shows the rest: `+N lines · ctrl+o expands`, where the key is the one the map in force gives `app.expand_tool`. The key draws that call's whole output and puts the preview back on the next press, and it moves the view to the end of the conversation, where the block it changed usually is. With nothing kept to show it says `no tool output to expand`. The whole text is kept for the sixteen most recent cut calls, at most 64 KiB of each; longer output stops on a character boundary and its last kept line reads `… output truncated`. A call cut only at the right edge of a row counts as cut and carries `cut` instead of a row count, and a call whose text has fallen out of the window stops naming the key rather than promising a view that is gone.
+The marker of the selected kept call whose preview hides something names the key that shows the rest: `+N lines · ctrl+o expands`, where the key is the one the map in force gives `app.expand_tool`. That selection follows the newest kept call while the view follows the end, or moves to the retained call visible in a scrolled-back view. The key draws that call's whole output and puts the preview back on the next press, reflowing a held view in place rather than jumping to the end of the conversation. With nothing kept to show it says `no tool output to expand`. The whole text is kept for the sixteen most recent cut calls, at most 64 KiB of each; longer output stops on a character boundary and its last kept line reads `… output truncated`. A call cut only at the right edge of a row counts as cut and carries `cut` instead of a row count, and a call whose text has fallen out of the window stops naming the key rather than promising a view that is gone.
 
 A call the approval gate refused is drawn with one short label rather than the daemon's whole sentence, because the prompt beside it already asks the question, and the label follows the request: while the decision is pending the head row says `◐ needs approval`; once it is answered the row states the answer, `• allowed`, `• allowed always`, `✕ denied` for `n` or `esc`, or `✕ not answered` for a prompt that went away unanswered (a lost connection, a cancelled turn). None of those three says `failed`, because the call never ran: the gate held it and the model has to issue it again. Answering that prompt does not run the call: the decision is recorded and the model has to call the tool again, and the transcript says so.
 
@@ -367,7 +374,7 @@ Typing `/` opens a list of the commands the typed letters match: the same comman
 
 ## Pickers
 
-The model, effort, session, skill, link and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
+The model, effort, session, skill, link, tool and draft lists share a picker. It shows a title, a filter line, one row per choice and the selected row's position. Enter chooses a row, Esc closes the list, the arrow or page keys move, and Backspace edits the filter. Text typed while the picker is open goes into its filter.
 
 The filter is the subsequence match the slash popup uses, over a row's name and its second column and, for a session, over the conversation lines its preview carries. Those lines are searchable and a preview's header line is not, because the header names the directory and the time every row of one directory shares. Matches are ranked, and rows that rank the same keep the order the list gave them, so an empty filter shows the list in its own order. A filter that leaves nothing says `nothing matches that filter`.
 
@@ -376,6 +383,10 @@ The panel grows by a preview pane for the selected row: a rule line and up to ei
 The model list has the model in force marked `(current)` and the selected row carrying the input line's own marker (`❯` in the Unicode preset). Typing filters the list, `enter` picks the row and `esc` closes it. Its preview names the model and the provider, says whether the row is the model in force, and says what `enter` does. Picking sends the switch to the daemon, and the status line changes only when the daemon confirms it with the session's identity, so a refused switch leaves the old model showing.
 
 `/model <name>` switches without the list.
+
+Use `/modelpreset` to list names, `/modelpreset preview <name>` to inspect the choices, or `/modelpreset apply <name>` to apply them to the current session. The [model preset settings](../provider/MODEL.md#session-model-presets) define how to write a preset. If a turn is running, retry the command after it ends.
+
+`/trim` shortens old tool results in the requests a session sends, without touching its stored history. `/trim preview [max_chars]` shows how many results and characters a limit would remove. `/trim apply [max_chars]` turns it on for later requests, and `/trim off` turns it off. The limit is 200 to 1,000,000 characters and defaults to 4,000. A result over the limit keeps its first 400 characters and a note pointing at `history://current`. The newest six messages and every error result are kept whole, and each tool call keeps its result with the same id. A limit outside the range is refused and the current setting stays.
 
 The effort list is the ladder the client offers, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `max`, with the level in force marked `(current)` and one preview line per row saying what the level asks of the model. The cursor and the preview open on the marked row, so `enter` confirms the level in force instead of dropping to `none`; a session that reports no level, or one the ladder does not hold, opens on the first row. The rows are the client's own, so the list is complete the moment it opens.
 
@@ -428,11 +439,15 @@ The `model` segment carries the reasoning effort the daemon reported for the mod
 
 `usage` and `cost` are opt-in: no preset draws them, and only a custom `statusline.left` or `statusline.right` array can. Both read what the runtime reported, so a metric nobody recorded draws nothing rather than a zero: a provider that omitted cache accounting gets `Σ↑in ↓out` with no cache column, and a daemon without a price table publishes no estimate, which is why `cost` is hidden on this build. Neither one causes a request per frame: the report is read when the client moves to a session and again when the model moves.
 
+Use `/stats` to show the attached session's recorded input, output and cache tokens, request count, and estimated cost in the transcript. The command reads the same harness report as the status line. Missing figures are shown as `unknown`.
+
 When the line does not fit the terminal, the least important segment is dropped first. Priority runs from `time` (dropped first), `session`, `tokens`, `cost`, `context_pct`, `usage`, `path`, `pending`, `status`, to `model` (dropped last). The last remaining segment stays even when it is wider than the pane, because a clipped model is more useful than an empty line, and what it gives up first is the effort, so the cut lands inside the model name instead of after a separator that names nothing.
 
 ## Commands
 
-A line starting with `/` is resolved in this order: a built-in command, a `skill:` address, a command file, a harness command, then a bare skill name. A built-in owns its name outright, so a command file with that name is listed with the built-in winning and never runs. An unknown name is an error that points at `/help`, and a line starting with `//` is sent as the literal message with one slash removed.
+A line starting with `/` is resolved in this order: a built-in command, a `skill:` address, a command file, a harness command, a bare skill name, then a command an installed package supplies. The `//` escape is read before any of them: such a line is sent as the literal message with one slash removed. A built-in owns its name outright, so a command file with that name is listed with the built-in winning and never runs. An unknown name is an error that points at `/help`.
+
+A package command answers as `/id:command`, where `id` is the package id and `command` is the name the package declared. It is resolved last, so an installed package never takes over a name a built-in, a command file or a harness command already answers to. The client reads the list when it attaches to a session and again after a session switch, and does not refresh it during the session, so a package installed while it is attached appears once it attaches again. `/help` lists these names under the harness commands, by the `/id:command` name. A template's text arrives from the harness already expanded and is submitted as an ordinary user message, drawn as the line that was typed and queued like typed text while a turn runs; an executable command has already run on the daemon under the tool policy, so its answer is drawn as a notice and nothing is sent. A harness without the `package_commands_v1` capability yields no package commands, and everything else in this section works as it did.
 
 | Command | Effect |
 | --- | --- |
@@ -440,10 +455,13 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/artifact [id]` | List retained artifacts for this local session or open a private copy |
 | `/clear` | Clear only the transcript pane |
 | `/clear-context` | Start a fresh context for the model in the current session and keep the saved conversation |
+| `/commit <message>` | Review staged changes before an explicit local commit |
 | `/compact` | Ask the configured model to summarize older context in place and keep the saved conversation |
 | `/copy` | Choose which text to copy |
+| `/diff [staged\|unstaged]` | Inspect staged and unstaged changes in the attached local worktree |
 | `/effort [level]` | Set the reasoning effort, or pick one from the ladder |
 | `/exit` | Leave, the same as `/quit` |
+| `/export <path>` | Write this session's transcript to a standalone offline HTML report |
 | `/help [command]` | List the commands, where each one comes from, and the keys in force, or describe one command |
 | `/jobs` | Inspect the current session's background work and cancel a selected terminal job |
 | `/keys` | List the keys in force and what each does |
@@ -462,18 +480,23 @@ A line starting with `/` is resolved in this order: a built-in command, a `skill
 | `/retry` | Continue the latest eligible failed turn in the attached session |
 | `/settings` | Open the settings screen |
 | `/skills` | List the skills the harness reports, and put one in the draft |
+| `/stats` | Show the attached session's recorded token usage |
 | `/swarm` | Browse the attached session's direct children and return to a parent |
 | `/switch [id]` | Move to another stored session, or pick one from the list |
+| `/tools` | Browse the current session's enabled tools without running them |
 | `/unpin [id]` | Remove a session from the pinned group |
 | `/voice` | Dictate to the draft or play text on this device |
 
 `/retry` resumes the most recent eligible failed request in the attached session. It keeps one visible user message and uses the work already completed during that request. The daemon refuses to retry if the request was superseded, completed, or already resumed.
+Use `/diff` to see staged and unstaged changes separately. `/commit <message>` displays the staged files and the content identifier it will commit. `/commit --yes` commits that exact content to the reviewed branch if its previous commit is still current. `/commit --cancel` discards the review. Any change to staging requires a new review. The command works on an attached local branch and performs a local commit only.
+
+If a repository has a commit or reference-transaction hook configured, use `git commit` in the terminal after reviewing the changes. The TUI preserves Git's signing settings. If a checkout races with confirmation, only the reviewed branch can receive the commit.
 
 Use `/voice consent` in the attached session before recording. Press Ctrl+Space or run `/voice` to start or stop. `/voice cancel` discards the recording and `/voice forget` withdraws consent. Recognized text goes into the draft and only goes to the model if you submit it. `/voice say <text>` and `/voice read` play text on this device.
 
 Dictation needs a local `whisper-cli` executable and a `ggml-*.bin` model under `$HORON_HOME/models/`. On macOS it uses `ffmpeg` for capture and `say` for playback. On Linux it uses `arecord` and `espeak-ng` or `espeak`. `/voice status` lists missing requirements. Install any required programs or models yourself. Text input works on systems without these programs.
 
-The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty commands the client answers itself, in name order.
+The table is the built-in command list (`Local` in `crates/tui/src/commands/mod.rs`): thirty-five commands the client answers itself, in name order. `/tools` uses the daemon's effective tool list and labels the loading tier `unknown` when the daemon's tool definitions leave it out.
 
 In `/queue`, Enter moves the selected message into the composer, Delete removes it, and Alt+Up or Alt+Down moves it in the queue. A message already being sent is outside the list. The edited draft can be sent again when ready.
 
@@ -487,6 +510,8 @@ Enter `!command` to run a shell command in the TUI process's working directory. 
 
 `/record` starts a private local recording of submitted messages, completed replies and tool outcomes. `stop` ends the recording. The file omits unsent drafts, approval answers, reasoning and tool output, and has a 2 MiB limit. `/replay` opens a recording without submitting any recorded input: the playback is local only, so nothing it shows is sent to the harness. Space pauses, the arrow keys seek, `+` and `-` change speed and Esc returns to the live conversation.
 
+`/export <path>` writes the attached session's transcript as one HTML file that opens without a connection: the harness renders it from the same redacted projection `horon export` prints, every transcript character is escaped so stored markup stays text, the stylesheet is inline, and a Content-Security-Policy forbids any network load. The path is used as typed, so a relative one lands in the directory the client runs in, and a file that already exists is refused rather than replaced.
+
 The harness commands run in the attached runtime and never reach the model as a prompt. `/help` draws one row per command with its description in one aligned column: the built-in commands first, then the harness names in name order, then the command files, then the skills the harness reported, then the keys. The transcript draws the whole listing as a single notice, so its first row carries the notice's bullet and every later row is padded by two cells; the excerpt below is the listing without that pad.
 
 ```text
@@ -495,10 +520,13 @@ built-in commands:
   /artifact            open a retained artifact of this session by id in $VISUAL or $EDITOR, as a private copy
   /clear               clear only the transcript pane
   /clear-context       start fresh model context and keep the saved conversation
+  /commit              review a staged commit, confirm with --yes, or cancel with --cancel
   /compact             summarize older model context and keep the saved conversation
   /copy                copy a recent answer or code block to the terminal clipboard, or list them
+  /diff                show staged and unstaged changes in the attached local worktree
   /effort              set the reasoning effort, or pick one from the ladder
   /exit                leave, the same as /quit
+  /export              write this session's transcript as a standalone offline HTML report (/export <path>)
   /help                list the commands and the keys in force
   /jobs                list the background work this session is running, and cancel a terminal
   /keys                list the keys in force and what each does
@@ -517,15 +545,19 @@ built-in commands:
   /retry               continue the last failed turn of this session, keeping its one prompt
   /settings            open the settings screen
   /skills              list the skills the harness reports, and put one in the draft
+  /stats               show the attached session's recorded token usage
   /swarm               list this session's swarm children and the parent it returns to, and attach to one
   /switch              move to another stored session, or pick one from the list
+  /tools               browse the current session's enabled tools without running them
   /unpin               take a session out of the pinned group
   /voice               dictate to the draft or play text on this device
 harness commands:
   /agents              list the agent models, and switch one for this session or every session
 ```
 
-Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page.
+Which harness names appear, and how many, is whatever the attached build answers to: the list comes from the daemon on the other end of the socket, not from this page. The commands an installed package supplies sit in that same section under their `/id:command` name, and the section simply has no such rows when the session's packages supply none.
+
+`/observations [show|on|off|clear]` manages the daemon's in-memory observation notes for the attached session. Recording starts off. After `/observations on`, it keeps up to 24 recent work and hook rows, folds adjacent repeats, and counts omitted rows. `/observations clear` empties the summary and keeps the recording setting. These notes do not enter model context or saved conversation history.
 
 Command files appear in `/help` with their argument hint and description. With no command files at all, `/help` says where to put one.
 
@@ -593,7 +625,7 @@ The archive is optional at every step, and a copy that cannot be verified never 
 - A turn the daemon starts by itself sends this client no start event, so the `esc` delivery marker does not move: messages sent with `esc` stay drawn as sent into the turn that ended.
 - Starting with `--session <id>` attaches without drawing the stored conversation; `/resume <id>` replays it.
 - With the popup closed, Tab completes built-in, harness and command-file names and can complete local workspace paths. Choose a skill from the popup or `/skills`.
-- Only the newest kept tool call expands. Expanding moves the view to the end of the conversation, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
+- Only one kept tool call is expanded at a time (the retained call in view when scrolled back, or the newest kept call while following the end). Expanding or folding keeps a held view in place instead of jumping to the end, a copy longer than 64 KiB is cut with `… output truncated`, and the `ctrl+o expands` label is left out when the marker cannot hold it on one row, which happens below 29 columns for a three-digit row count.
 - A second `/new` typed before the first answer arrives reports its session as resumed, because the client holds one flag for the session it is starting.
 - The session list asks the daemon once or twice for every session it shows, so a directory with many sessions delays the list and the events behind it while they load.
 - The session preview reads the newest twenty stored messages, leaves out injected `<system-reminder>` messages, and shows its head line alone for a session the daemon cannot read back.

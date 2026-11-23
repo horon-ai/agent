@@ -73,6 +73,13 @@ impl App {
     /// A message the harness refused holds the queue until the next turn ends
     /// or the user submits again, so a refused send cannot loop.
     pub fn take_queued(&mut self) -> Option<Action> {
+        // A package command's expansion was drawn and marked as a turn the
+        // moment its answer arrived, exactly as a typed message is; only its
+        // send was left for this pass, because the delivery that produced it
+        // holds no command sender.
+        if let Some(action) = self.package_send.take() {
+            return Some(action);
+        }
         if self.pending_turn || self.disconnected {
             return None;
         }
@@ -333,6 +340,26 @@ impl App {
                 }
                 Some(Action::Runtime { command, arguments })
             }
+            // A package command is asked of the harness, which decides whether
+            // it expands into a message or runs as its own command. The typed
+            // line travels with the request so the expansion is drawn as it.
+            Invocation::Package {
+                package_id,
+                command,
+                arguments,
+                display,
+            } => {
+                if self.disconnected {
+                    self.refuse(text);
+                    return None;
+                }
+                Some(Action::PackageCommand {
+                    package_id,
+                    command,
+                    arguments,
+                    display,
+                })
+            }
             Invocation::Error(message) => {
                 self.warn(message);
                 None
@@ -382,7 +409,7 @@ impl App {
     /// processing a message", which loses the text and shows the user an
     /// error for doing something ordinary. The message is kept instead and
     /// sent when the turn ends.
-    fn send_or_queue(&mut self, text: String, display: Option<String>) -> Option<Action> {
+    pub(crate) fn send_or_queue(&mut self, text: String, display: Option<String>) -> Option<Action> {
         // An explicit submit is the user asking again, so a refusal that was
         // holding the queue back no longer blocks this message.
         self.resend_held = false;

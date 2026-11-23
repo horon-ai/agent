@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod tool_done;
+
 /// Server event sent to client
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -1173,24 +1175,16 @@ pub enum ServerEvent {
     /// same message, so a client can add the row it did not see arrive.
     #[serde(rename = "soft_interrupt_stored")]
     SoftInterruptStored { message_id: String, content: String },
-}
 
-impl ServerEvent {
-    /// A `ToolDone` whose verdict no layer recorded. Producing the event this
-    /// way keeps the absent verdict explicit at the call site instead of
-    /// leaving a field for a later reader to misread as "not considered".
-    pub fn tool_done(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        output: impl Into<String>,
-        error: Option<String>,
-    ) -> Self {
-        Self::ToolDone {
-            id: id.into(),
-            name: name.into(),
-            output: output.into(),
-            error,
-            verdict: None,
-        }
-    }
+    /// Reply to [`Request::PackageControl`], after the resulting catalog
+    /// generation is on disk and published to subscribers.
+    ///
+    /// The receipt carries that generation and the complete catalog at it, so a
+    /// client that lost the answer can retry with the same operation id and
+    /// learn the outcome instead of guessing.
+    #[serde(rename = "package_control_result")]
+    PackageControlResult {
+        id: u64,
+        receipt: horon_agent_extension_types::control::PackageControlReceipt,
+    },
 }

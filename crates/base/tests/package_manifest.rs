@@ -178,6 +178,8 @@ fn rejects_path_escape_and_reserved_windows_paths_on_every_runner() {
         "C:/child.exe",
         "bin//child",
         "bin/CON.exe",
+        "bin/COM1.exe",
+        "bin/lpt9.exe",
     ] {
         fs::write(
             root.path().join("extension.toml"),
@@ -186,6 +188,15 @@ fn rejects_path_escape_and_reserved_windows_paths_on_every_runner() {
         .unwrap();
         rejected(root.path(), "invalid package-relative path");
     }
+    let allowed_name = "bin/COM10.exe";
+    fs::copy(std::env::current_exe().unwrap(), root.path().join(allowed_name)).unwrap();
+    fs::write(
+        root.path().join("extension.toml"),
+        extension("", "1.2.3", allowed_name, host_target()),
+    )
+    .unwrap();
+    let validated = validate_package(root.path()).expect("COM10 is not a reserved Windows device name");
+    assert_eq!(validated.executable, Path::new(allowed_name));
 }
 
 #[test]
@@ -258,4 +269,52 @@ fn rejects_nonportable_path_spellings_before_installation() {
     rejected(root.path(), "case-insensitive package path collision");
     plugin(root.path(), "rules = ['règles.md']", "1.2.3-beta.1+local.007");
     rejected(root.path(), "invalid package-relative path");
+}
+
+#[test]
+fn accepts_a_plugin_hook_file_that_subscribes_to_an_event() {
+    let (root, _) = fixture(true);
+    fs::write(root.path().join("hook.json"), r#"{"events": ["tool.after"]}"#).unwrap();
+    plugin(root.path(), "hooks = ['hook.json']", "1.2.3-beta.1+local.007");
+    let validated = validate_package(root.path()).unwrap();
+    assert_eq!(validated.resources.hooks, ["hook.json"]);
+}
+
+#[test]
+fn rejects_a_hook_file_that_repeats_a_declared_event() {
+    let (root, _) = fixture(true);
+    fs::write(
+        root.path().join("native/extension.toml"),
+        extension(
+            r#"events = ["turn.start"]"#,
+            "1.2.3-beta.1+local.007",
+            binary_name(),
+            host_target(),
+        ),
+    )
+    .unwrap();
+    fs::write(root.path().join("hook.json"), r#"{"events": ["turn.start"]}"#).unwrap();
+    plugin(root.path(), "hooks = ['hook.json']", "1.2.3-beta.1+local.007");
+    rejected(root.path(), "declared in extension.toml");
+}
+
+#[test]
+fn rejects_two_hook_files_that_name_the_same_event() {
+    let (root, _) = fixture(true);
+    fs::write(root.path().join("first.json"), r#"{"events": ["turn.end"]}"#).unwrap();
+    fs::write(root.path().join("second.json"), r#"{"events": ["turn.end"]}"#).unwrap();
+    plugin(
+        root.path(),
+        "hooks = ['first.json', 'second.json']",
+        "1.2.3-beta.1+local.007",
+    );
+    rejected(root.path(), "duplicate package event");
+}
+
+#[test]
+fn rejects_a_hook_file_with_an_unknown_event() {
+    let (root, _) = fixture(true);
+    fs::write(root.path().join("hook.json"), r#"{"events": ["prompt.read"]}"#).unwrap();
+    plugin(root.path(), "hooks = ['hook.json']", "1.2.3-beta.1+local.007");
+    rejected(root.path(), "parse hook.json");
 }

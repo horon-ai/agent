@@ -26,7 +26,6 @@
     "crates/base/src/config.rs": 1250,
     "crates/base/src/import.rs": 1413,
     "crates/base/src/mcp/manager.rs": 1423,
-    "crates/base/src/memory.rs": 1292,
     "crates/base/src/prompt.rs": 1205,
     "crates/base/src/provider/mod.rs": 1340,
     "crates/base/src/provider_catalog.rs": 1280,

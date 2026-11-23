@@ -8,11 +8,11 @@ use super::args::{
     AmbientCommand, ApprovalVerdictArg, ApprovalsCommand, Args, Command, MemoryCommand, ModelCommand, ProviderCommand,
     ServerCommand, SessionCommand,
 };
-use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
-
 use super::{acp, commands, debug, hot_exec, output, provider_init, rpc, terminal};
+use crate::{agent, auth, build, provider_catalog, server, session, startup_profile};
 use provider_init::ProviderChoice;
 
+mod compact_text;
 mod continue_latest;
 mod one_shot;
 #[cfg(test)]
@@ -31,8 +31,7 @@ fn arm_debug_client_parent_death_signal() {
     if !is_file_controlled_debug_client() {
         return;
     }
-    // The platform arms its parent-death behaviour and re-checks the parent
-    // afterwards, because the launcher can exit before the signal is armed.
+    // The platform arms parent-death behaviour and re-checks the parent, as the launcher can exit first.
     if horon_agent_platform::process::bind_process_lifetime_to_parent() {
         std::process::exit(0);
     }
@@ -40,22 +39,23 @@ fn arm_debug_client_parent_death_signal() {
 
 pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     arm_debug_client_parent_death_signal();
+    if (args.goal.is_some() || args.plan) && !matches!(args.command, None | Some(Command::Run { .. })) {
+        anyhow::bail!("--goal and --plan only apply when opening the terminal client or running one message");
+    }
+    super::add_dir::canonical_add_dirs(&mut args)?;
     if args.ssh.is_some() {
-        // A remote session ID and working directory belong to the remote host.
-        // Do not run local resume lookup or provider bootstrap.
+        // A remote host owns its session ID and cwd: skip local resume lookup and provider bootstrap.
         return super::ssh::run(args).await;
     }
-    // Explicit MCP management is independent of provider profiles, sessions,
-    // and the daemon. In particular, list must remain offline and scriptable.
-    if matches!(args.command, Some(Command::Mcp { .. })) {
-        let Some(Command::Mcp { action }) = args.command else {
-            unreachable!("MCP command checked above");
-        };
+    match commands::run_early_command(&args.command).await? {
+        commands::Early::Done => return Ok(()),
+        commands::Early::Rewrite(next) => args.command = Some(*next),
+        commands::Early::Pass => {}
+    }
+    // MCP management is independent of providers and the daemon; list stays offline.
+    if let Some(Command::Mcp { action }) = args.command {
         return super::mcp::run(action).await;
     }
-    // Release installation is a standalone filesystem operation. Installers run
-    // it on machines with no configuration yet, and it must not load provider
-    // profiles, migrate config, or start the daemon before it installs.
     if let Some(Command::InstallRelease { .. }) = &args.command {
         let Some(Command::InstallRelease {
             assets,
@@ -67,6 +67,10 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         };
         return super::install_release::run(assets, agent_version, source_binary).await;
     }
+    apply_tool_launch_flags(&args);
+    if let Some(Command::Config { ref command }) = args.command {
+        return commands::config_cli::run(command);
+    }
     continue_latest::resolve(&mut args)?;
 
     // One-time config migration: users whose config.toml still carries the old
@@ -74,6 +78,14 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
     // current `inline` default. Cheap (single file read, marker-gated), and it
     // must run before the config cache is first populated.
     crate::config::Config::migrate_legacy_swarm_spawn_mode_once();
+
+    // Per-run config overlays must layer before --provider-profile, role/prewalk
+    // validation, and default tool-profile fallback read the effective config.
+    if let Some(Command::Run { model_overrides, .. }) = &args.command
+        && !model_overrides.config_overlay.is_empty()
+    {
+        crate::config::Config::set_run_overlays(&model_overrides.config_overlay)?;
+    }
 
     if let Some(profile_name) = args
         .provider_profile
@@ -86,36 +98,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         crate::env::set_var("HORON_AGENT_PROVIDER_PROFILE_ACTIVE", "1");
         args.provider = provider_choice_for_named_profile(profile_name);
     }
-
-    if let Some(tool_profile) = args.tool_profile.as_deref() {
-        crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
-        crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
-    }
-    if let Some(tools) = args.tools.as_deref() {
-        crate::env::set_var("HORON_AGENT_TOOLS", tools);
-    }
-    if let Some(disabled_tools) = args.disabled_tools.as_deref() {
-        crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", disabled_tools);
-    }
-    if args.disable_base_tools {
-        crate::env::set_var("HORON_AGENT_DISABLE_BASE_TOOLS", "1");
-    }
-    if let Some(mcp_tools) = args.mcp_tools.as_deref() {
-        crate::env::set_var("HORON_AGENT_MCP_TOOLS", mcp_tools);
-        crate::effective_settings::record_launch_flag("HORON_AGENT_MCP_TOOLS", "--mcp-tools");
-    }
-    if let Some(threshold) = args.mcp_tools_token_threshold {
-        crate::env::set_var("HORON_AGENT_MCP_TOOLS_TOKEN_THRESHOLD", threshold.to_string());
-    }
-    if args.tool_profile.is_some()
-        || args.tools.is_some()
-        || args.disabled_tools.is_some()
-        || args.disable_base_tools
-        || args.mcp_tools.is_some()
-        || args.mcp_tools_token_threshold.is_some()
-    {
-        crate::config::invalidate_config_cache();
-    }
+    super::launch_overrides::apply(&mut args)?;
 
     // Headless default tool profile. A plain `serve`/`run`/`api-bridge` launch
     // (or the bare no-subcommand run) that selects no profile exposes only the
@@ -173,57 +156,25 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             )
             .await?;
         }
-        Some(Command::ApiBridge { api_socket, stdio }) => {
-            if stdio {
-                // The stdio transport pairs the bridge with an in-process
-                // socket, which only the Unix adapter provides. Windows clients
-                // reach the same API through the named pipe instead, so the
-                // flag is refused there rather than silently starting a
-                // listener nobody asked for.
-                #[cfg(unix)]
-                {
-                    crate::env::set_var("HORON_AGENT_NON_INTERACTIVE", "1");
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(30),
-                        spawn_server(&args.provider, args.model.as_deref(), args.provider_profile.as_deref()),
-                    )
-                    .await
-                    .map_err(|_| anyhow::anyhow!("api --stdio: timed out starting the horon-agent server"))??;
-                    horon_agent_harness_api_server::run_bridge_stdio(
-                        horon_agent_harness_api_server::legacy_socket_path(),
-                    )
-                    .await?;
-                    return Ok(());
-                }
-                #[cfg(not(unix))]
-                anyhow::bail!(
-                    "api-bridge --stdio is Unix only; connect to the API socket instead (a named pipe on Windows)"
-                );
-            }
-            // The daemon must be up for the bridge to translate onto, and a
-            // user running this to try the SDK has usually never started one.
-            // Starting it here turns "connection refused, good luck" into a
-            // working socket.
-            //
-            // Best-effort on purpose: a spawn can legitimately fail while a
-            // usable daemon exists (another build already holds the runtime
-            // dir, say). Aborting then would leave the SDK with no endpoint
-            // over a daemon that was fine, so report and listen anyway. If the
-            // daemon really is absent, per-client dials fail with a message
-            // naming the socket, which is the smaller and more accurate error.
-            if let Err(error) =
-                spawn_server(&args.provider, args.model.as_deref(), args.provider_profile.as_deref()).await
-            {
-                eprintln!("api-bridge: could not start the horon-agent server: {error:#}");
-                eprintln!("api-bridge: continuing; an already-running server will still be used");
-            }
-            let api_socket = api_socket
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(horon_agent_harness_api_server::api_socket_path);
-            // The global `--socket` (and `HORON_AGENT_SOCKET`) already selects the
-            // daemon socket; `set_socket_path` exported it during startup.
-            let legacy_socket = horon_agent_harness_api_server::legacy_socket_path();
-            horon_agent_harness_api_server::run_bridge(api_socket, legacy_socket).await?;
+        Some(Command::ApiBridge {
+            api_socket,
+            stdio,
+            api_bind,
+            api_insecure_behind_proxy,
+        }) => {
+            let launch = super::api_bridge::Launch {
+                api_socket,
+                stdio,
+                api_bind,
+                api_insecure_behind_proxy,
+            };
+            super::api_bridge::run(
+                &args.provider,
+                args.model.as_deref(),
+                args.provider_profile.as_deref(),
+                launch,
+            )
+            .await?;
         }
         Some(Command::Server { action }) => match action {
             #[cfg(unix)]
@@ -268,14 +219,8 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 commands::run_server_stop_command(force, json).await?;
             }
         },
-        Some(Command::Run {
-            ref message,
-            json,
-            ndjson,
-            no_pty,
-            max_time,
-            ref model_overrides,
-        }) => one_shot::run(&args, message, json, ndjson, no_pty, model_overrides, max_time).await?,
+        Some(Command::Run { .. }) => one_shot::run(&args).await?,
+        Some(Command::CompactText { source, max_tokens }) => compact_text::run(&source, max_tokens).await?,
         Some(Command::Repl) => {
             let (provider, registry) =
                 provider_init::init_provider_and_registry(&args.provider, args.model.as_deref()).await?;
@@ -287,12 +232,21 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
             tokio::task::spawn_blocking(hot_exec::run_update).await??;
         }
         Some(Command::InstallRelease { .. } | Command::Package { .. }) => unreachable!("handled before bootstrap"),
-        Some(Command::Completions { .. } | Command::StreamRules { .. }) => unreachable!("handled by startup"),
+        Some(Command::Completions { .. } | Command::StreamRules { .. } | Command::Tokens { .. }) => {
+            unreachable!("handled by startup")
+        }
+        Some(Command::Changelog { .. }) => unreachable!("handled by startup"),
+        Some(Command::Agents | Command::Images(_)) => unreachable!("handled by startup"),
         Some(Command::Version { json }) => {
             commands::run_version_command(json)?;
         }
         Some(Command::Usage { json }) => {
             commands::run_usage_command(json).await?;
+        }
+        Some(
+            Command::Stats { .. } | Command::Preview { .. } | Command::Diagnostics { .. } | Command::Config { .. },
+        ) => {
+            unreachable!("handled before bootstrap")
         }
         Some(Command::RuntimeState(command)) => super::runtime_state::run(command)?,
         Some(Command::Debug {
@@ -304,13 +258,15 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         }) => {
             debug::run_debug_command(&command, &arg, session, socket, wait).await?;
         }
+        Some(Command::Skills(subcmd)) => commands::run_skills_command(subcmd).await?,
         Some(Command::Provider(subcmd)) => match subcmd {
-            ProviderCommand::List { json } => {
-                commands::run_provider_list_command(json)?;
-            }
+            ProviderCommand::List { json } => commands::run_provider_list_command(json)?,
             ProviderCommand::Current { json } => {
                 commands::run_provider_current_command(&args.provider, args.model.as_deref(), json).await?;
             }
+            ProviderCommand::Failover { json } => commands::run_provider_failover_command(json)?,
+            ProviderCommand::Diagnose { check, json } => commands::run_provider_diagnose_command(check, json).await?,
+            ProviderCommand::Status { .. } => unreachable!("handled by startup"),
             ProviderCommand::Add {
                 name,
                 base_url,
@@ -354,17 +310,21 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Memory(subcmd)) => {
             commands::run_memory_command(map_memory_subcommand(subcmd)).await?;
         }
+        Some(Command::Volume(_)) => unreachable!("handled by startup"),
         Some(Command::Session(subcmd)) => match subcmd {
-            // `delete` talks to the daemon, so it cannot go through the
-            // synchronous session dispatcher that handles every other
-            // subcommand.
+            // `delete` talks to the daemon, so it cannot use the synchronous session dispatcher.
             SessionCommand::Delete { session, yes, json } => {
                 commands::run_session_delete_command(&session, yes, json).await?;
             }
             other => commands::run_session_command(other)?,
         },
-        Some(Command::Export { session, out, json }) => {
-            super::sessions::export_markdown(&session, out.as_deref(), json)?;
+        Some(Command::Export {
+            session,
+            out,
+            json,
+            html,
+        }) => {
+            super::sessions::export_transcript(&session, out.as_deref(), json, html)?;
         }
         Some(Command::Ambient(subcmd)) => {
             commands::run_ambient_command(map_ambient_subcommand(subcmd)).await?;
@@ -372,12 +332,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Cloud(subcmd)) => {
             super::cloud_move::run_cli(subcmd)?;
         }
-        Some(Command::Pair { list, revoke }) => {
-            commands::run_pair_command(list, revoke)?;
-        }
+        Some(Command::Pair { list, revoke }) => commands::run_pair_command(list, revoke)?,
         Some(Command::Permissions) => {
-            anyhow::bail!("the interactive permissions editor is unavailable in this headless build");
+            anyhow::bail!("the interactive permissions editor is unavailable in this headless build")
         }
+        Some(Command::ApiCredentials(args)) => super::api_credentials::run(args.action)?,
         Some(Command::Approvals { action }) => match action {
             ApprovalsCommand::Resolve {
                 request_id,
@@ -388,10 +347,11 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
                 let store = crate::ambient::BlockedApprovalStore::open_default()?;
                 resolve_blocked_approval(&store, &request_id, &tool_call_id, verdict, note.as_deref())?;
             }
+            ApprovalsCommand::Grants(_) => unreachable!("handled by startup"),
         },
         Some(Command::Model(subcmd)) => match subcmd {
-            ModelCommand::List { json, verbose } => {
-                commands::run_model_command(&args.provider, args.model.as_deref(), json, verbose).await?;
+            ModelCommand::List { json, verbose, filter } => {
+                commands::run_model_command(&args.provider, args.model.as_deref(), json, verbose, &filter).await?;
             }
         },
         None => run_default_command(args).await?,
@@ -418,6 +378,39 @@ fn default_tool_profile_for_launch(
         None
     } else {
         Some(crate::config::CORE_TOOL_PROFILE)
+    }
+}
+
+/// Export tool/MCP launch flags to process env and invalidate the config cache.
+fn apply_tool_launch_flags(args: &Args) {
+    if let Some(tool_profile) = args.tool_profile.as_deref() {
+        crate::env::set_var("HORON_AGENT_TOOL_PROFILE", tool_profile);
+        crate::effective_settings::record_launch_flag("HORON_AGENT_TOOL_PROFILE", "--tool-profile");
+    }
+    if let Some(tools) = args.tools.as_deref() {
+        crate::env::set_var("HORON_AGENT_TOOLS", tools);
+    }
+    if let Some(disabled_tools) = args.disabled_tools.as_deref() {
+        crate::env::set_var("HORON_AGENT_DISABLED_TOOLS", disabled_tools);
+    }
+    if args.disable_base_tools {
+        crate::env::set_var("HORON_AGENT_DISABLE_BASE_TOOLS", "1");
+    }
+    if let Some(mcp_tools) = args.mcp_tools.as_deref() {
+        crate::env::set_var("HORON_AGENT_MCP_TOOLS", mcp_tools);
+        crate::effective_settings::record_launch_flag("HORON_AGENT_MCP_TOOLS", "--mcp-tools");
+    }
+    if let Some(threshold) = args.mcp_tools_token_threshold {
+        crate::env::set_var("HORON_AGENT_MCP_TOOLS_TOKEN_THRESHOLD", threshold.to_string());
+    }
+    if args.tool_profile.is_some()
+        || args.tools.is_some()
+        || args.disabled_tools.is_some()
+        || args.disable_base_tools
+        || args.mcp_tools.is_some()
+        || args.mcp_tools_token_threshold.is_some()
+    {
+        crate::config::invalidate_config_cache();
     }
 }
 
@@ -448,8 +441,7 @@ fn apply_default_tool_profile(flag_profile: Option<&str>) {
 /// carries the profile's base URL, auth and model.
 fn provider_choice_for_named_profile(_profile_name: &str) -> ProviderChoice {
     // Deliberately independent of the profile's `type`: the runtime identity is
-    // `openai-compatible[:profile]` for every wire, so no config lookup happens
-    // here.
+    // `openai-compatible[:profile]` for every wire, so no config lookup happens here.
     ProviderChoice::OpenaiCompatible
 }
 
@@ -600,7 +592,13 @@ async fn run_default_command(args: Args) -> Result<()> {
     // installed beside this executable, this process becomes that client, with
     // a resumed session passed along; every other shape (a pipe, `HORON_NO_TUI`,
     // no sibling) keeps the headless message so scripts and CI still see it.
-    super::tui_handoff::run(super::tui_handoff::decide_for_process(), args.resume.as_deref())
+    super::tui_handoff::run(
+        super::tui_handoff::decide_for_process(),
+        args.resume.as_deref(),
+        args.goal.as_deref().zip(args.goal_budget),
+        &args.add_dir,
+        args.plan,
+    )
 }
 
 pub(crate) async fn server_is_running() -> bool {
@@ -1129,9 +1127,8 @@ fn resolve_blocked_approval(
     let message = human_verdict_message(verdict, tool_call_id, note);
     match system.record_decision(request_id, approved, outcome, Some(message)) {
         Ok(crate::safety::RecordDecisionOutcome::Recorded(decision)) => {
-            // A corrupt history records a denial whatever was asked for, so the
-            // waiter must be told what it will actually receive rather than
-            // what this command asked for.
+            // A corrupt history records a denial whatever was asked for, so the waiter
+            // must be told what it will actually receive rather than what was asked.
             if decision.approved != approved {
                 crate::logging::warn(&format!(
                     "human verdict for request {request_id} was recorded as a denial in the decision history ({})",

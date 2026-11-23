@@ -66,6 +66,8 @@ pub mod ids {
     pub const APP_TOGGLE_THINKING: &str = "app.toggle_thinking";
     /// Continue the last failed turn of this session.
     pub const APP_RETRY_TURN: &str = "app.retry_turn";
+    /// Put this session in read-only plan mode.
+    pub const APP_PLAN_MODE: &str = "app.plan_mode";
     /// Start or finish on-device voice input.
     pub const APP_VOICE: &str = "app.voice";
     /// Delete the character before the cursor.
@@ -212,6 +214,8 @@ pub const ACTIONS: &[ActionSpec] = &[
     // failed, so it takes a key rather than a command alone. `alt+r` is
     // unclaimed by the rest of the map and is the letter for a retry.
     ActionSpec::new(ids::APP_RETRY_TURN, Scope::App, &["alt+r"]),
+    // Read-only plan mode, the same as `/plan on`. `alt+m` is free in the shipped map.
+    ActionSpec::new(ids::APP_PLAN_MODE, Scope::App, &["alt+m"]),
     // On-device voice input. `ctrl+space` is free in the shipped map; a
     // terminal that does not report it leaves `/voice` as the entry point, and
     // the key can be rebound in `keybindings.toml`.

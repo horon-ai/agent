@@ -599,6 +599,20 @@ impl Agent {
         true
     }
 
+    /// This session's own advisor choice; `None` follows `[advisor] enabled`.
+    pub fn advisor_enabled(&self) -> Option<bool> {
+        self.advisor_enabled
+    }
+
+    /// Turning the advisor off drops its worker, so no new advisor work starts
+    /// for this session. Other sessions keep following their own setting.
+    pub fn set_advisor_enabled(&mut self, enabled: bool) {
+        self.advisor_enabled = Some(enabled);
+        if !enabled {
+            self.advisor = None;
+        }
+    }
+
     /// Feed the advisor this round's transcript and deliver the notes that are
     /// ready to the current turn.
     ///
@@ -609,7 +623,7 @@ impl Agent {
         if is_advisor_session(&self.session.id) {
             return;
         }
-        if !config.enabled {
+        if !self.advisor_enabled.unwrap_or(config.enabled) {
             self.advisor = None;
             return;
         }

@@ -300,10 +300,21 @@ fn manager_scope_active_filter_and_storage_failures() {
             ["global"]
         );
         assert_eq!(collect_scoped(&manager, MemoryScope::All).unwrap().len(), 2);
-        std::fs::write(home.path().join("memory/test/test_global.json"), "not json").unwrap();
-        assert!(collect_scoped(&manager, MemoryScope::Global).is_err());
-        assert!(collect_scoped(&manager, MemoryScope::All).is_err());
-        assert!(collect_scoped(&manager, MemoryScope::Project).is_ok());
+
+        // A store that cannot be read is an error, never an empty store. The
+        // pre-wiki JSON is read as a migration source on a store's first use in
+        // this process, so the corrupt file is planted in a fresh home that no
+        // manager has opened yet: the migration refuses it and the failure
+        // surfaces instead of reading as "no memories".
+        let corrupt = home.path().join("corrupt-home");
+        std::fs::create_dir_all(corrupt.join("memory/test")).unwrap();
+        std::fs::write(corrupt.join("memory/test/test_global.json"), "not json").unwrap();
+        crate::env::set_var("HORON_HOME", &corrupt);
+        let fresh = MemoryManager::new_test().with_skills(false);
+        assert!(collect_scoped(&fresh, MemoryScope::Project).is_ok());
+        assert!(collect_scoped(&fresh, MemoryScope::Global).is_err());
+        assert!(collect_scoped(&fresh, MemoryScope::All).is_err());
+        crate::env::set_var("HORON_HOME", home.path());
     });
     match old {
         Some(value) => crate::env::set_var("HORON_HOME", value),

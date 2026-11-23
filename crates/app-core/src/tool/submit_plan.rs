@@ -217,6 +217,15 @@ impl Tool for SubmitPlanTool {
                 files: input.files.clone(),
             },
         );
+        if let Some(plan) = plan_mode::approve_if_opted_in(&ctx.session_id)? {
+            return Ok(ToolOutput::new(format!(
+                "The plan was approved by the caller's --approve-plan, so writes are open. {} characters are pinned \
+                 as this session's execution context.",
+                plan.text.chars().count()
+            ))
+            .with_title("Plan approved")
+            .with_metadata(json!({"request_id": request_id, "state": PlanState::Approved.as_str()})));
+        }
 
         let metadata = json!({
             "request_id": request_id,

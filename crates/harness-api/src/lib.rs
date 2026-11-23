@@ -30,7 +30,10 @@ pub use handoff::*;
 pub mod replication;
 mod requests;
 mod runtime_commands;
-pub use runtime_commands::{RuntimeCommand, RuntimeCommandOutput};
+pub use runtime_commands::{
+    PackageCommandInfo, PackageCommandKind, PackageCommandList, PackageCommandOutcome, RuntimeCommand,
+    RuntimeCommandOutput,
+};
 pub mod degradation;
 mod sockets;
 mod swarm_metadata;
@@ -73,10 +76,19 @@ mod optional_field_tests;
 #[path = "harness_api_tests/tool_done_verdict.rs"]
 mod tool_done_verdict_tests;
 
+/// The package-management request and receipt a client exchanges with the
+/// daemon's catalog. Defined once, beside the manifest declarations the
+/// installer validates, so the daemon, the bridge, both SDKs and the CLI cannot
+/// drift apart.
+pub use horon_agent_extension_types::control::{
+    PackageControlOperation, PackageControlReceipt, PackageControlRequest, PackageControlScope, PackageControlState,
+    PackageInboxSkip, PackageSummary,
+};
+
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 25;
+pub const API_VERSION_MINOR: u32 = 27;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -126,6 +138,25 @@ pub const CAPABILITY_LIVE_TODO_V1: &str = "live_todo_v1";
 /// all. The reply never carries a value outside the allow-list, so no credential
 /// and no raw file text can travel however the config file is written.
 pub const CAPABILITY_EFFECTIVE_SETTINGS_V1: &str = "effective_settings_v1";
+/// A client can manage the daemon's package catalog: install, disable, enable,
+/// remove, sync the inbox and read the published generation. Gates
+/// `package_control` and the `package_control` reply.
+///
+/// Advertised only when the daemon answered its capability probe with
+/// `package_control`, because the daemon owns the catalog: a bridge alone cannot
+/// serve the request, and forwarding it to a daemon that predates the request
+/// would park the client until its own timeout.
+pub const CAPABILITY_PACKAGE_CONTROL_V1: &str = "package_control_v1";
+/// A client can list and run the slash commands installed packages supply.
+/// Gates `runtime_command` with the `package_commands` and `package_command`
+/// values and the matching `runtime_command_result` payloads.
+///
+/// The commands ride the runtime-command request rather than a request of their
+/// own, so an older client never sends one and keeps its existing surface. The
+/// bridge advertises this only when the daemon reported `runtime_commands`:
+/// without that, the daemon answers the request with an error no client can
+/// correlate, which reads as a timeout.
+pub const CAPABILITY_PACKAGE_COMMANDS_V1: &str = "package_commands_v1";
 
 /// A `send_message` carrying `expected_run_id` continues the run it names, and
 /// the daemon decides under the session lock whether that run may still be
@@ -167,6 +198,11 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
     (CAPABILITY_BACKGROUND_OUTPUT_V1, &["background_output"]),
     (CAPABILITY_LIVE_TODO_V1, &["todo_changed"]),
     (CAPABILITY_EFFECTIVE_SETTINGS_V1, &["get_effective_settings"]),
+    (CAPABILITY_PACKAGE_CONTROL_V1, &["package_control"]),
+    (
+        CAPABILITY_PACKAGE_COMMANDS_V1,
+        &["runtime_command.package_commands", "runtime_command.package_command"],
+    ),
     (CAPABILITY_TURN_RETRY_V1, &["send_message.expected_run_id"]),
 ];
 
@@ -180,6 +216,8 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_BACKGROUND_OUTPUT_V1,
     CAPABILITY_LIVE_TODO_V1,
     CAPABILITY_EFFECTIVE_SETTINGS_V1,
+    CAPABILITY_PACKAGE_CONTROL_V1,
+    CAPABILITY_PACKAGE_COMMANDS_V1,
     CAPABILITY_TURN_RETRY_V1,
 ];
 

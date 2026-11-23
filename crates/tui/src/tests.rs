@@ -112,6 +112,27 @@ fn args_parse_repeated_config_files() {
 }
 
 #[test]
+fn args_parse_repeated_add_dir_directories() {
+    let parsed = Args::parse([
+        "--add-dir".to_string(),
+        "/work/library".to_string(),
+        "--add-dir=/work/tests".to_string(),
+    ]);
+    match parsed {
+        Ok(args) => assert_eq!(
+            args.add_dirs,
+            vec![
+                std::path::PathBuf::from("/work/library"),
+                std::path::PathBuf::from("/work/tests")
+            ]
+        ),
+        Err(message) => panic!("expected a parse: {message}"),
+    }
+    assert!(Args::parse(["--add-dir".to_string()]).is_err());
+    assert!(Args::parse(["--add-dir=".to_string()]).is_err());
+}
+
+#[test]
 fn args_parse_motion_flags_with_both_spellings() {
     let parsed = Args::parse([
         "--motion".to_string(),

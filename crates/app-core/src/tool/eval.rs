@@ -65,13 +65,18 @@ struct SessionKernel {
 static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<SessionKernel>>>> = OnceLock::new();
 
 fn get_session(session_id: &str) -> Arc<SessionKernel> {
-    SESSIONS
+    let mut sessions = SESSIONS
         .get_or_init(Mutex::default)
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entry(session_id.to_owned())
-        .or_default()
-        .clone()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // A cell usually reuses its session, so look it up before paying for the
+    // owned key the map would only need on the first cell.
+    if let Some(session) = sessions.get(session_id) {
+        return Arc::clone(session);
+    }
+    let session = Arc::new(SessionKernel::default());
+    sessions.insert(session_id.to_owned(), Arc::clone(&session));
+    session
 }
 
 pub(crate) fn forget_session(session_id: &str) {

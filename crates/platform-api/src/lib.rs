@@ -17,6 +17,7 @@ use rustls::ClientConfig;
 
 mod fs;
 pub mod log;
+pub mod package_child;
 mod power;
 mod process;
 pub mod resources;
@@ -505,8 +506,9 @@ pub trait PlatformAdapter {
     /// and returns at once. Unix asks `waitid` with `WNOWAIT`, which leaves the
     /// child waitable: its process-group id stays reserved, so a descendant that
     /// outlived it can still be signalled before the caller reaps it. A platform
-    /// without that primitive reports `Unsupported`; Windows package children are
-    /// refused until the Job Object supervisor of issue #644 owns them.
+    /// without that primitive reports `Unsupported`; Windows package children do
+    /// not need it, because their Job Object, not a reserved group id, is what
+    /// reaches a descendant after the leader exits.
     ///
     /// The caller must not have reaped the child already: `Child::wait` releases
     /// the wait state this call reports on.

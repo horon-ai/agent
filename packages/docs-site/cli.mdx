@@ -46,7 +46,13 @@ layout, the heads, the archive state and any damage.
 
 `horon export <session> [--out FILE]` prints a Markdown transcript.
 Secrets are redacted and tool results over 4 KiB are truncated; the output matches
-the `export_session_markdown` harness API reply. `horon session export <session>
+the `export_session_markdown` harness API reply.
+`horon export <session> --html [--out FILE]` writes the same redacted projection
+as a standalone offline HTML report instead: every transcript character is
+escaped, the stylesheet is inline, and a Content-Security-Policy forbids any
+network load, so the saved file opens without a connection. Unlike the Markdown
+form, an `--out` path that already exists is refused.
+`horon session export <session>
 --output <dir>` is a different command: it writes the original events and blobs
 as a bundle into a directory that must not exist yet, and `horon session import`
 reads that bundle back.

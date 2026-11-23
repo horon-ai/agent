@@ -144,6 +144,7 @@ mod errors;
 mod export;
 mod handoff;
 mod launch;
+mod launch_hosted;
 mod message_modes;
 pub mod process;
 mod reports;
@@ -177,6 +178,10 @@ pub use horon_agent_todo_policy as todo;
 pub use launch::{
     LaunchOptions, LaunchedInstance, WakeMode, ensure_runtime, inherit_credentials, launch_instance, socket_accepts,
     user_app_config_dir, user_horon_agent_home, wait_for_socket,
+};
+pub use launch_hosted::{
+    HostedLaunchOptions, HostedTenantPaths, delete_hosted_instance, launch_hosted_instance, stop_hosted_instance,
+    tenant_paths,
 };
 pub use reports::UsageReport;
 pub use ssh::SshConnectOptions;

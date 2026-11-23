@@ -5,23 +5,35 @@ use serde::Serialize;
 use std::io::Write;
 use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use crate::{gateway, memory, storage};
 
+pub(super) mod config_cli;
+mod early_commands;
+mod failover_preview;
 mod provider_setup;
 mod report_info;
 mod run_deadline;
 mod session_delete;
+mod session_move;
 mod session_rename;
+mod skills_cli;
+mod thoughts;
+mod tool_preview;
 
 pub(crate) use session_delete::run_session_delete_command;
+pub(crate) use session_move::run_session_move_command;
 pub(crate) use session_rename::run_session_rename_command;
 
 pub(crate) use super::sessions::run_session_command;
 pub(super) use run_deadline::{RunDeadlineExceeded, parse_run_duration};
 
-pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command};
+pub(crate) use config_cli::ConfigCommand;
+pub(crate) use early_commands::{Early, run_early_command};
+pub(crate) use failover_preview::run_provider_failover_command;
+pub(crate) use provider_setup::{ProviderAddOptions, run_provider_add_command, run_provider_diagnose_command};
+pub(crate) use skills_cli::run_skills_command;
+pub(crate) use tool_preview::run_preview_command;
 
 pub enum AmbientSubcommand {
     Status,
@@ -61,6 +73,9 @@ pub enum MemorySubcommand {
     },
     Stats,
     ClearTest,
+    Migrate {
+        dry_run: bool,
+    },
 }
 
 pub async fn run_memory_command(cmd: MemorySubcommand) -> Result<()> {
@@ -299,6 +314,8 @@ async fn run_memory_command_for_dir(cmd: MemorySubcommand, project_dir: Option<s
                 println!("Test memory storage is already empty");
             }
         }
+
+        MemorySubcommand::Migrate { dry_run } => super::memory_migrate::run(dry_run)?,
     }
 
     Ok(())
@@ -415,6 +432,8 @@ struct RunCommandReport {
     model: String,
     text: String,
     usage: crate::agent::TokenUsage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background_jobs: Option<Vec<run_jobs::JobReport>>,
 }
 
 #[derive(Debug, Default)]
@@ -446,6 +465,16 @@ pub fn run_version_command(emit_json: bool) -> Result<()> {
 
 pub async fn run_usage_command(emit_json: bool) -> Result<()> {
     report_info::run_usage_command(emit_json).await
+}
+
+pub(super) fn run_stats_command(from: Option<&str>, through: Option<&str>, json: bool) -> Result<()> {
+    let report = horon_agent_harness_api_server::translate::local_usage(&storage::horon_agent_dir()?, from, through)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{report}");
+    }
+    Ok(())
 }
 
 /// Explicitly pin the daemon's shared-server channel to an installed build.
@@ -862,57 +891,15 @@ fn run_report_provider_name(provider: &dyn crate::provider::Provider, session_pr
     name.to_string()
 }
 
-pub(super) async fn run_single_message_with_agent(
-    agent: &mut crate::agent::Agent,
-    provider: std::sync::Arc<dyn crate::provider::Provider>,
-    message: &str,
-    emit_json: bool,
-    emit_ndjson: bool,
-    max_time: Option<Duration>,
-) -> Result<()> {
-    let elapsed = AtomicBool::new(false);
-    let deadline = max_time.map(|duration| (duration, agent.graceful_shutdown_signal()));
-    let run = async {
-        if emit_json {
-            let text = run_single_message_command_capture_with_auto_poke(agent, message).await?;
-            if elapsed.load(Ordering::Relaxed) {
-                return Ok(());
-            }
-            let report = RunCommandReport {
-                session_id: agent.session_id().to_string(),
-                provider: run_report_provider_name(provider.as_ref(), agent.session_provider_key().as_deref()),
-                model: provider.model(),
-                text,
-                usage: agent.last_usage().clone(),
-            };
-            println!("{}", serde_json::to_string_pretty(&report)?);
-        } else if emit_ndjson {
-            run_single_message_command_ndjson(agent, provider, message, &elapsed).await?;
-        } else {
-            run_single_message_command_plain_with_auto_poke(agent, message).await?;
-        }
-        Ok(())
-    };
-    let result = match deadline {
-        Some((duration, cancel)) => run_deadline::run_with_deadline(duration, &elapsed, || cancel.fire(), run).await,
-        None => run.await,
-    };
+mod run_jobs;
+pub(super) use run_jobs::{RunLimits, run_single_message_with_agent};
 
-    // `Agent::new` and session restore both register this process as the active
-    // owner. Unlike the interactive lifecycle, `horon-agent run` has no later quit
-    // path to close the session. Finalize after output has been emitted, while
-    // returning the original command result unchanged. This prevents a normal
-    // one-shot exit from looking like a stale-PID crash on the next startup
-    // (issue #988).
-    agent.mark_closed();
-    if let Some(error) = result
-        .as_ref()
-        .err()
-        .and_then(|error| error.downcast_ref::<RunDeadlineExceeded>())
-    {
-        error.report(agent.session_id(), emit_json, emit_ndjson)?;
+/// A positive, finite US dollar amount for `run --warn-cost` and `--max-cost`.
+pub(super) fn parse_run_cost(raw: &str) -> Result<f64, &'static str> {
+    match raw.parse::<f64>() {
+        Ok(usd) if usd.is_finite() && usd > 0.0 => Ok(usd),
+        _ => Err("expected a positive amount in US dollars"),
     }
-    result
 }
 
 fn run_command_auto_poke_enabled() -> bool {
@@ -1159,14 +1146,18 @@ fn build_run_todo_validation_message(
     }
 }
 
-async fn run_single_message_command_plain_with_auto_poke(agent: &mut crate::agent::Agent, message: &str) -> Result<()> {
+async fn run_single_message_command_plain_with_auto_poke(
+    agent: &mut crate::agent::Agent,
+    message: &str,
+    print_thoughts: bool,
+) -> Result<()> {
     let mut next_message = message.to_string();
     let max_turns = run_command_auto_poke_max_turns();
     let mut turns_completed = 0usize;
     let mut confidence_spike_challenged = false;
     let mut gate_digest_delivered = false;
     loop {
-        agent.run_once(&next_message).await?;
+        thoughts::run_plain_turn(agent, &next_message, print_thoughts).await?;
         turns_completed += 1;
         if !run_command_auto_poke_enabled() {
             break;
@@ -1317,6 +1308,7 @@ async fn run_single_message_command_ndjson(
     provider: std::sync::Arc<dyn crate::provider::Provider>,
     message: &str,
     deadline_elapsed: &AtomicBool,
+    jobs: Option<&mut run_jobs::OwnedJobs<'_>>,
 ) -> Result<()> {
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
     let session_id = agent.session_id().to_string();
@@ -1465,6 +1457,18 @@ async fn run_single_message_command_ndjson(
 
     match result {
         Ok(()) => {
+            if let Some(jobs) = jobs {
+                let statuses = jobs.settle(&session_id).await;
+                if deadline_elapsed.load(Ordering::Relaxed) {
+                    return Ok(());
+                }
+                for job in statuses {
+                    write_json_line(
+                        &mut stdout,
+                        &serde_json::json!({"type":"background_job", "session_id":session_id, "job":job}),
+                    )?;
+                }
+            }
             write_json_line(
                 &mut stdout,
                 &serde_json::json!({
@@ -1701,19 +1705,17 @@ fn write_json_line(stdout: &mut impl Write, value: &impl Serialize) -> Result<()
     Ok(())
 }
 
-pub async fn run_model_command(
+pub(super) async fn run_model_command(
     choice: &super::provider_init::ProviderChoice,
     model: Option<&str>,
     emit_json: bool,
     verbose: bool,
+    filter: &super::args::ModelListFilter,
 ) -> Result<()> {
-    let provider = super::provider_init::init_provider_quiet(choice, model).await?;
-
-    if let Err(err) = provider.prefetch_models().await
-        && !super::output::quiet_enabled()
-    {
-        eprintln!("Warning: failed to refresh dynamic model list: {}", err);
+    if filter.refresh || filter.profile.is_some() || filter.search.is_some() {
+        return model_catalog::run(filter, emit_json).await;
     }
+    let provider = super::provider_init::init_provider_quiet(choice, model).await?;
 
     let routes = provider.model_routes();
     let filtered_routes = filter_cli_model_routes_for_choice(choice, &routes);
@@ -1765,6 +1767,7 @@ pub async fn run_model_command(
     Ok(())
 }
 
+mod model_catalog;
 mod model_routes;
 use model_routes::*;
 

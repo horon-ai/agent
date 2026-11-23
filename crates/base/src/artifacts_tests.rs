@@ -107,3 +107,19 @@ fn spill_reports_a_failed_save_without_losing_the_clipped_text() {
     assert!(spilled.contains("line-1"));
     assert!(spilled.contains("line-5000"));
 }
+
+#[test]
+fn save_with_file_cap_truncates_oversized_output_to_cap() {
+    let _home = TempHome::new();
+    let text = format!("{}\n{}", "a".repeat(700 * 1024), "b".repeat(700 * 1024));
+    let id = save_with_file_cap("session-cap", "bash", &text, Some(1)).expect("save capped");
+    let saved = std::fs::read_to_string(path("session-cap", id).expect("path")).expect("read");
+    assert!(saved.len() <= 1024 * 1024, "saved len {}", saved.len());
+    assert!(saved.starts_with("aaaa"));
+    assert!(saved.ends_with("bbbb"));
+    assert!(
+        saved.contains(&format!("[ARTIFACT TRUNCATED: {} bytes total, ", text.len())),
+        "missing capped truncation header"
+    );
+    assert!(saved.contains("elided from the middle]"));
+}

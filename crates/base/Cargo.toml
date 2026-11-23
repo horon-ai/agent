@@ -15,6 +15,22 @@ publish = false
 name = "horon_agent_base"
 path = "src/lib.rs"
 
+[[bench]]
+name = "opt_round2"
+harness = false
+
+[[bench]]
+name = "opt_r3_memory"
+harness = false
+
+[[bench]]
+name = "opt_r3_config"
+harness = false
+
+[[bench]]
+name = "opt_r3_gaps"
+harness = false
+
 [dependencies]
 # Memory allocator (reduces fragmentation for long-running server)
 tikv-jemalloc-ctl = { git = "https://github.com/tikv/jemallocator", rev = "66b124bdf4f1c65f154135f4e9d4b25206540091", optional = true }
@@ -107,6 +123,12 @@ horon-agent-tool-types = { path = "../tool-types" }
 
 # Temporary files and directories for provider import helpers.
 tempfile = "3"
+
+# The volume export tar and the archive reader an import must not hand-roll:
+# `tar` is already in the lockfile through `horon-agent-app-core`, and reading a
+# hostile archive with a hand-written parser is where a path bug becomes an
+# escape. Adding the edge here pulls in no new package.
+tar = "0.4"
 
 [features]
 default = []
