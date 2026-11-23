@@ -62,9 +62,20 @@ DOC_PATTERNS = (
 EMBEDDED_PATTERNS = ("README*.md", "docs/*")
 
 DOCS_SITE_PATTERNS = (
+    "docs/*",
+    "PHILOSOPHY*.md",
+    "packages/sdk/typescript/README.md",
+    "packages/sdk/python/README.md",
+    "packages/npm/horon/README.md",
     "packages/docs-site/*",
     "scripts/ci/*docs_site*",
     ".github/workflows/docs-site-deploy.yml",
+)
+
+DOCS_SCRIPT_PATTERNS = (
+    "scripts/ci/check_docs_*.py",
+    "scripts/ci/test_check_docs_pairs.py",
+    "scripts/ci/test_docs_install_claims.py",
 )
 
 TS_SDK_PATTERNS = (
@@ -116,7 +127,7 @@ WORKFLOW_PATTERNS = (
 )
 
 # Paths outside DOC_PATTERNS whose changes are verified by dedicated non-Rust
-# jobs (SDK, docs-site, workflow-lint, release-automation, install-friction)
+# jobs (SDK, docs, docs-site, workflow-lint, release-automation, install-friction)
 # and do not compile or alter Rust crates/scripts used inside Build & Test.
 NON_RUST_CODE_PATTERNS = (
     "packages/docs-site/*",
@@ -142,10 +153,8 @@ NON_RUST_CODE_PATTERNS = (
     "scripts/release/test_*.py",
     "scripts/ci/classify_changes.py",
     "scripts/ci/test_classify_changes.py",
-    "scripts/ci/*docs*",
-    "scripts/ci/*issue_refs*",
-    "scripts/ci/package_compat.py",
-    "scripts/ci/test_package_compat.py",
+    "scripts/ci/*docs_site*",
+    *DOCS_SCRIPT_PATTERNS,
     "scripts/ci/install_justrust.sh",
     "tests/*release*.py",
     "tests/test_ci_workflow_guards.py",
@@ -253,13 +262,20 @@ def classify(
 
     code = any(not matches(path, DOC_PATTERNS) for path in files)
     docs = any(matches(path, EMBEDDED_PATTERNS) for path in files)
+    docs_site = any(matches(path, DOCS_SITE_PATTERNS) for path in files)
+    label_set = set(labels or ())
+    if event == "pull_request" and (label_set & FORCE_ALL_OS_LABELS):
+        forced = dict(FULL_RUN)
+        forced["docs"] = docs
+        return forced
+
     if not code:
         return {
             "code": False,
             "docs": docs or not code,
             "docs_only": True,
             "rust": False,
-            "docs_site": docs,
+            "docs_site": docs_site,
             "ts_sdk": False,
             "py_sdk": False,
             "npm_pkg": False,
@@ -272,13 +288,7 @@ def classify(
             "full_matrix": False,
         }
 
-    label_set = set(labels or ())
-    if event == "pull_request" and (label_set & FORCE_ALL_OS_LABELS):
-        forced = dict(FULL_RUN)
-        forced["docs"] = docs
-        return forced
-
-    docs_site = docs or any(matches(path, DOCS_SITE_PATTERNS) for path in files)
+    docs = docs or any(matches(path, DOCS_SCRIPT_PATTERNS) for path in files)
     ts_sdk = any(matches(path, TS_SDK_PATTERNS) for path in files)
     py_sdk = any(matches(path, PY_SDK_PATTERNS) for path in files)
     npm_pkg = any(matches(path, NPM_PKG_PATTERNS) for path in files)

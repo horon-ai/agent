@@ -166,6 +166,27 @@ class ClassifyChangesTests(unittest.TestCase):
 
         labeled = pr("packages/docs-site/guides/intro.mdx", labels={"ci:all-os"})
         self.assertEqual(labeled, FULL)
+        labeled_docs = pr("docs/runtime/TOOLS.md", labels={"ci:all-os"})
+        self.assertEqual(labeled_docs, dict(FULL, docs=True))
+
+        philosophy = pr("PHILOSOPHY.md")
+        self.assertTrue(philosophy["docs_site"])
+        self.assertTrue(philosophy["docs_only"])
+
+        for readme in (
+            "packages/sdk/typescript/README.md",
+            "packages/sdk/python/README.md",
+            "packages/npm/horon/README.md",
+        ):
+            self.assertTrue(pr(readme)["docs_site"], readme)
+            self.assertTrue(push([readme])["docs_site"], readme)
+
+        docs_script = pr("scripts/ci/check_docs_pairs.py")
+        self.assertFalse(docs_script["rust"])
+        self.assertTrue(docs_script["docs"])
+
+        for quality_script in ("scripts/ci/check_issue_refs.py", "scripts/ci/package_compat.py"):
+            self.assertTrue(pr(quality_script)["rust"], quality_script)
 
     def test_empty_or_unknown_diff_runs_everything(self):
         self.assertEqual(classify("pull_request", []), FULL)
