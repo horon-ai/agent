@@ -346,6 +346,10 @@ impl App {
                 return None;
             }
             Some(keys::ids::APP_PLAN_MODE) => {
+                if self.disconnected {
+                    self.warn("the harness connection is gone; plan mode cannot change");
+                    return None;
+                }
                 return Some(Action::Runtime {
                     command: horon_agent_sdk::RuntimeCommand::Plan,
                     arguments: vec!["on".into()],

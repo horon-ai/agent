@@ -83,15 +83,20 @@ impl App {
     /// the bare name, not the whole command.
     pub(crate) fn run_swarm(&mut self, arguments: &str) -> Option<Action> {
         let arguments = arguments.trim();
+        if self.disconnected {
+            let reason = if arguments.is_empty() {
+                "the harness connection is gone; there are no swarm children to list"
+            } else {
+                "the harness connection is gone; swarm commands cannot run"
+            };
+            self.warn(reason);
+            return None;
+        }
         if !arguments.is_empty() {
             return Some(Action::Runtime {
                 command: RuntimeCommand::Swarm,
                 arguments: arguments.split_whitespace().map(str::to_string).collect(),
             });
-        }
-        if self.disconnected {
-            self.warn("the harness connection is gone; there are no swarm children to list");
-            return None;
         }
         self.picker = Some(Picker::loading(Kind::Swarm, SWARM_TITLE, NO_SWARM));
         Some(Action::Swarm)

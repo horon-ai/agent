@@ -284,3 +284,42 @@ fn a_long_turn_draws_minutes_and_short_counts() {
     let text = rows.iter().map(|row| line_text(row.line())).collect::<String>();
     assert_eq!(text, "1m 05s · ↑1.2k ↓56");
 }
+
+#[test]
+fn args_parse_goal_flag_accepts_space_and_equals_forms() {
+    let spaced = crate::Args::parse([
+        "--goal".to_string(),
+        "Ship".to_string(),
+        "--goal-budget".to_string(),
+        "1200".to_string(),
+    ])
+    .expect("space-separated goal flags parse");
+    assert_eq!(spaced.goal.as_deref(), Some("Ship"));
+    assert_eq!(spaced.goal_budget, Some(1200));
+
+    let equals = crate::Args::parse(["--goal=Ship=v2".to_string(), "--goal-budget=1200".to_string()])
+        .expect("equals-form goal flags parse");
+    assert_eq!(equals.goal.as_deref(), Some("Ship=v2"));
+    assert_eq!(equals.goal_budget, Some(1200));
+
+    assert_eq!(
+        crate::Args::parse(["--goal=".to_string(), "--goal-budget=1200".to_string()]),
+        Err("--goal needs a nonempty objective".to_string())
+    );
+    assert_eq!(
+        crate::Args::parse(["--goal=   ".to_string(), "--goal-budget=1200".to_string()]),
+        Err("--goal needs a nonempty objective".to_string())
+    );
+    assert_eq!(
+        crate::Args::parse(["--goal=Ship".to_string(), "--goal-budget=0".to_string()]),
+        Err("--goal-budget needs a positive token count".to_string())
+    );
+    assert_eq!(
+        crate::Args::parse(["--goal=Ship".to_string(), "--goal-budget=abc".to_string()]),
+        Err("--goal-budget needs a positive token count".to_string())
+    );
+    assert_eq!(
+        crate::Args::parse(["--goal=Ship".to_string()]),
+        Err("--goal and --goal-budget must be used together".to_string())
+    );
+}

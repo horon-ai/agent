@@ -859,3 +859,32 @@ fn alt_m_asks_the_harness_for_read_only_plan_mode() {
     };
     assert_eq!(app.on_key(key), Some(plan));
 }
+
+#[test]
+fn usage_covers_launch_flags_keys_and_builtin_commands() {
+    for needle in [
+        "--plan",
+        "--goal <objective>",
+        "--goal-budget <tokens>",
+        "selected cut tool call",
+        "Alt-T",
+        "Alt-M",
+        "Ctrl-P",
+        "Ctrl-Alt-P",
+        "Ctrl-Right",
+        "Ctrl-G",
+        "/commit",
+        "/diff",
+        "/export",
+        "/note",
+        "/queue",
+        "/stats",
+        "/swarm",
+    ] {
+        assert!(help::USAGE.contains(needle), "`{needle}` missing from help::USAGE");
+    }
+    assert!(
+        !help::USAGE.contains("newest cut tool call"),
+        "stale Ctrl-O description remained in help::USAGE"
+    );
+}

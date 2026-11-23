@@ -532,3 +532,50 @@ fn a_detached_head_has_no_branch_to_commit_to() {
     assert_eq!(fixture.head(), before);
     assert_eq!(fixture.staged(), "a.txt");
 }
+
+#[test]
+fn switching_sessions_in_the_same_directory_clears_an_open_commit_review() {
+    let mut fixture = fixture();
+    let before = fixture.head();
+    write(fixture.path(), "a.txt", "one\ntwo\n");
+    git(fixture.path(), &["add", "--", "a.txt"]);
+
+    assert_eq!(type_line(&mut fixture.app, "/commit old msg"), None);
+    assert!(fixture.app.commit_review.is_some());
+
+    let same_dir = fixture.path().display().to_string();
+    fixture.app.attach_session(
+        crate::sdk_bridge::AttachedSession {
+            description: "socket · session_b".to_string(),
+            session_id: "session_b".to_string(),
+            status: "idle".to_string(),
+            model: None,
+            effort: None,
+            history: Vec::new(),
+            title: None,
+        },
+        true,
+    );
+    fixture.app.apply_session_directory(Some(&same_dir));
+
+    assert!(
+        fixture.app.commit_review.is_none(),
+        "switching sessions in the same cwd kept the previous session's commit review"
+    );
+    assert_eq!(type_line(&mut fixture.app, "/commit --yes"), None);
+    assert!(
+        last_line(&fixture.app).contains("no staged set was reviewed"),
+        "expected refusal after session switch, got: {}",
+        last_line(&fixture.app)
+    );
+    assert_eq!(fixture.head(), before);
+
+    assert_eq!(type_line(&mut fixture.app, "/commit fresh msg"), None);
+    assert!(
+        last_line(&fixture.app).contains("nothing was committed yet"),
+        "expected fresh review to open, got: {}",
+        last_line(&fixture.app)
+    );
+    assert_eq!(type_line(&mut fixture.app, "/commit --yes"), None);
+    assert_eq!(git(fixture.path(), &["log", "-1", "--format=%s"]), "fresh msg");
+}

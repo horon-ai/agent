@@ -230,23 +230,9 @@ impl Args {
                     Some(session) if !session.is_empty() => parsed.session = Some(session),
                     _ => return Err("--session needs a session id".to_string()),
                 },
-                "--goal" => match arguments.next() {
-                    Some(title) if !title.trim().is_empty() => parsed.goal = Some(title),
-                    _ => return Err("--goal needs a nonempty objective".into()),
-                },
+                "--goal" => parsed.goal = Some(parse_goal(arguments.next().as_deref())?),
                 "--plan" => parsed.plan = true,
-                "--goal-budget" => {
-                    let Some(value) = arguments.next() else {
-                        return Err("--goal-budget needs a positive token count".into());
-                    };
-                    let budget = value
-                        .parse::<u64>()
-                        .map_err(|_| "--goal-budget needs a positive token count")?;
-                    if budget == 0 {
-                        return Err("--goal-budget needs a positive token count".into());
-                    }
-                    parsed.goal_budget = Some(budget);
-                }
+                "--goal-budget" => parsed.goal_budget = Some(parse_goal_budget(arguments.next().as_deref())?),
                 "--cwd" => match arguments.next() {
                     Some(path) => parsed.cwd = Some(path.into()),
                     None => return Err("--cwd needs a directory".to_string()),
@@ -269,6 +255,10 @@ impl Args {
                     Some(("--gallery", scene)) => parsed.gallery = Some(scene.to_string()),
                     Some(("--socket", path)) => parsed.socket = Some(path.into()),
                     Some(("--session", session)) => parsed.session = Some(session.to_string()),
+                    Some(("--goal", title)) => parsed.goal = Some(parse_goal(Some(title))?),
+                    Some(("--goal-budget", budget)) => {
+                        parsed.goal_budget = Some(parse_goal_budget(Some(budget))?);
+                    }
                     Some(("--cwd", path)) => parsed.cwd = Some(path.into()),
                     Some(("--add-dir", "")) => {
                         return Err("--add-dir needs a value".to_string());
@@ -309,6 +299,25 @@ pub fn connect_options(socket: Option<std::path::PathBuf>) -> horon_agent_sdk::C
         supports_ask_requests: true,
         ..horon_agent_sdk::ConnectOptions::default()
     }
+}
+
+fn parse_goal(value: Option<&str>) -> Result<String, String> {
+    match value {
+        Some(title) if !title.trim().is_empty() => Ok(title.to_string()),
+        _ => Err("--goal needs a nonempty objective".into()),
+    }
+}
+
+fn parse_goal_budget(value: Option<&str>) -> Result<u64, String> {
+    let message = "--goal-budget needs a positive token count";
+    let Some(raw) = value else {
+        return Err(message.into());
+    };
+    let budget = raw.parse::<u64>().map_err(|_| message)?;
+    if budget == 0 {
+        return Err(message.into());
+    }
+    Ok(budget)
 }
 
 /// Run the client and return the process exit code.
