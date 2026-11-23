@@ -14,6 +14,7 @@ pub mod install_release;
 pub mod launch_overrides;
 pub mod launch_profile;
 pub mod mcp;
+mod memory_migrate;
 pub mod output;
 pub mod packages;
 pub mod proctitle;

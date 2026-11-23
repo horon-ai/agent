@@ -507,9 +507,9 @@ impl Tool for MemoryTool {
                     action: "tag".into(),
                     detail: format!("{} +{}", truncate_for_widget(&id, 20), tags.join(",")),
                 });
-                for tag in &tags {
-                    manager.tag_memory(&id, tag)?;
-                }
+                // One write for the whole list: N sequential file writes used to
+                // leave the store inconsistent if a later tag failed.
+                manager.tag_memories(&id, &tags)?;
                 let tags_str = tags.join(", ");
                 memory::add_event(MemoryEventKind::ToolTagged {
                     id: id.clone(),

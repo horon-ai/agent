@@ -58,9 +58,13 @@ enum Scope {
 
 impl Scope {
     fn label(self) -> &'static str {
+        self.store_scope().as_str()
+    }
+
+    fn store_scope(self) -> StoreScope {
         match self {
-            Self::Project => "project",
-            Self::Global => "global",
+            Self::Project => StoreScope::Project,
+            Self::Global => StoreScope::Global,
         }
     }
 }
@@ -137,56 +141,40 @@ struct ConsolidationState {
     /// it (a forget, an update, a tag), the digest is rebuilt from the graph
     /// instead of being injected stale.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    summary_source: Option<FileStamp>,
+    summary_source: Option<StoreStamp>,
 }
 
-/// Cheap identity for the memory file a summary was derived from.
+/// Identity of the store state a summary was derived from.
+///
+/// The store keeps a revision that moves inside every write transaction, so this
+/// is the signal a summary needs: a forget, an update, a tag or another writer
+/// moves the revision, and the next read of the summary rebuilds it from the
+/// graph instead of injecting text that describes memories that are gone. A
+/// length or modification time of one file could not do that, because a scope is
+/// now many page files behind one index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct FileStamp {
-    len: u64,
-    /// Seconds and nanoseconds since the Unix epoch; `None` when the platform
-    /// does not report one, in which case only the length is compared.
-    modified_secs: Option<i64>,
-    modified_nanos: Option<u32>,
+struct StoreStamp {
+    revision: u64,
 }
 
-impl FileStamp {
-    fn read(path: &Path) -> Option<Self> {
-        let meta = match std::fs::metadata(path) {
-            Ok(meta) => meta,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(err) => {
-                crate::logging::debug(&format!("Memory consolidation cannot stamp {}: {err}", path.display()));
-                return None;
-            }
-        };
-        // A file whose modification time is unreadable is still comparable by
-        // length alone; the pass rewrites the whole graph, so a length change is
-        // the common signal.
-        let since_epoch = match meta.modified() {
-            Ok(modified) => match modified.duration_since(std::time::UNIX_EPOCH) {
-                Ok(since) => Some(since),
+impl StoreStamp {
+    fn read(manager: &MemoryManager, scope: StoreScope) -> Option<Self> {
+        match manager.store() {
+            Ok(store) => match store.revision() {
+                Ok(revision) => Some(Self { revision }),
                 Err(err) => {
                     crate::logging::debug(&format!(
-                        "Memory consolidation mtime of {} predates the epoch: {err}",
-                        path.display()
+                        "Memory consolidation cannot read the {} store revision: {err}",
+                        scope.as_str()
                     ));
                     None
                 }
             },
             Err(err) => {
-                crate::logging::debug(&format!(
-                    "Memory consolidation cannot read the mtime of {}: {err}",
-                    path.display()
-                ));
+                crate::logging::debug(&format!("Memory consolidation cannot open the memory store: {err}"));
                 None
             }
-        };
-        Some(Self {
-            len: meta.len(),
-            modified_secs: since_epoch.map(|since| since.as_secs() as i64),
-            modified_nanos: since_epoch.map(|since| since.subsec_nanos()),
-        })
+        }
     }
 }
 
@@ -263,20 +251,21 @@ impl MemoryManager {
 fn summary_with_limits(manager: &MemoryManager, max_bytes: usize) -> Result<Option<(String, usize)>> {
     let limits = ConsolidationLimits::from_config();
     let mut sections: Vec<ScopeSummary> = Vec::new();
-    if let Some(path) = manager.project_memory_path()? {
+    if let Some(state_path) = state_path_for(manager, Scope::Project)? {
         sections.push(current_scope_summary(
             manager,
             Scope::Project,
-            &path,
+            &state_path,
             limits,
             max_bytes,
         )?);
     }
-    let global_path = manager.global_memory_path()?;
+    let global_state = state_path_for(manager, Scope::Global)?
+        .ok_or_else(|| anyhow::anyhow!("the global memory store has no consolidation state path"))?;
     sections.push(current_scope_summary(
         manager,
         Scope::Global,
-        &global_path,
+        &global_state,
         limits,
         max_bytes,
     )?);
@@ -294,13 +283,12 @@ fn summary_with_limits(manager: &MemoryManager, max_bytes: usize) -> Result<Opti
 fn current_scope_summary(
     manager: &MemoryManager,
     scope: Scope,
-    memory_path: &Path,
+    state_path: &Path,
     limits: ConsolidationLimits,
     max_bytes: usize,
 ) -> Result<ScopeSummary> {
-    let state_path = state_path_for(memory_path);
-    let state = load_state(&state_path);
-    if state.summary.is_empty() || state.summary_source == FileStamp::read(memory_path) {
+    let state = load_state(state_path);
+    if state.summary.is_empty() || state.summary_source == StoreStamp::read(manager, scope.store_scope()) {
         return Ok(scope_summary(state));
     }
     let graph = match scope {
@@ -334,12 +322,11 @@ fn run_scope(
     limits: ConsolidationLimits,
     report: &mut ConsolidationReport,
 ) -> Result<ScopeSummary> {
-    let Some(memory_path) = memory_path_for(manager, scope)? else {
+    let Some(state_path) = state_path_for(manager, scope)? else {
         // The project store needs a working directory; without one there is
         // nothing to consolidate and nothing to inject.
         return Ok(ScopeSummary::default());
     };
-    let state_path = state_path_for(&memory_path);
     let mut state = load_state(&state_path);
     let mut graph = match scope {
         Scope::Project => manager.load_project_graph()?,
@@ -354,7 +341,10 @@ fn run_scope(
         let (summary, entries) = build_summary(&graph, limits.summary_bytes);
         state.summary = summary;
         state.summary_entries = entries;
-        state.summary_source = FileStamp::read(&memory_path);
+        state.summary_source = StoreStamp::read(manager, scope.store_scope());
+        if let Some(parent) = state_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         storage::write_json(&state_path, &state)?;
         match scope {
             Scope::Project => report.project_ran = true,
@@ -365,13 +355,6 @@ fn run_scope(
     Ok(scope_summary(state))
 }
 
-fn memory_path_for(manager: &MemoryManager, scope: Scope) -> Result<Option<PathBuf>> {
-    match scope {
-        Scope::Project => manager.project_memory_path(),
-        Scope::Global => manager.global_memory_path().map(Some),
-    }
-}
-
 fn save_graph(manager: &MemoryManager, scope: Scope, graph: &MemoryGraph) -> Result<()> {
     match scope {
         Scope::Project => manager.save_project_graph(graph),
@@ -379,10 +362,12 @@ fn save_graph(manager: &MemoryManager, scope: Scope, graph: &MemoryGraph) -> Res
     }
 }
 
-/// The state file sits next to the memory file it describes, so the test
-/// storage and the real storage stay separate without a second path rule.
-fn state_path_for(memory_path: &Path) -> PathBuf {
-    memory_path.with_extension("consolidation.json")
+/// The consolidation state file of one scope.
+///
+/// It lives under `memory/state/` in the store the manager addresses, so test
+/// storage and a user's own memory stay apart without a second path rule.
+fn state_path_for(manager: &MemoryManager, scope: Scope) -> Result<Option<PathBuf>> {
+    manager.store()?.state_path_opt(scope.store_scope())
 }
 
 fn load_state(path: &Path) -> ConsolidationState {
