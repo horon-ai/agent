@@ -310,6 +310,7 @@ pub(crate) async fn run_main(mut args: Args) -> Result<()> {
         Some(Command::Memory(subcmd)) => {
             commands::run_memory_command(map_memory_subcommand(subcmd)).await?;
         }
+        Some(Command::Volume(_)) => unreachable!("handled by startup"),
         Some(Command::Session(subcmd)) => match subcmd {
             // `delete` talks to the daemon, so it cannot use the synchronous session dispatcher.
             SessionCommand::Delete { session, yes, json } => {

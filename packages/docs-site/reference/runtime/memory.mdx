@@ -256,6 +256,71 @@ reads them exactly as before. No state outside `memory/` is involved.
 **What is not migrated:** embeddings (derived, and re-derivable), and anything a
 store-level merge would change — none of the entry fields or edges are dropped.
 
+## Exporting, importing and deleting a volume
+
+A hosted user owns one volume whose root is `HORON_HOME`, and the memory wiki
+under `memory/` is the part an operator backs up, moves and destroys. The
+`horon volume` commands do that; the control plane delivers the tar and owns the
+Fly API calls, and the agent produces and consumes the file.
+
+| Command | What it does |
+| --- | --- |
+| `horon volume export <path>` | Writes a tar of `wiki/`, `metadata.jsonl` and `manifest.json` to `<path>` under the store's writer lock, so the tar is one revision |
+| `horon volume import <path>` | Unpacks into a **new, empty** store, verifies every file against the manifest, and rebuilds `index.sqlite` from the markdown |
+| `horon volume quiesce` | Checkpoints the index log, fsyncs the page files and the index, and fences further writes |
+| `horon volume resume` | Lifts the write fence |
+| `horon volume key create`/`show`/`revoke` | Creates, shows or revokes the user data key record, and wipes any staged key material on revoke |
+| `horon volume delete-user <user_id>` | Runs the deletion step machine: fence writes, revoke the key, wipe the store, delete every snapshot, destroy the Machine and volume, then mark the central row `deleted` |
+| `horon volume deletion-status` | Prints the persisted job and its steps |
+
+**The tar.** `wiki/` holds the page files byte for byte. `metadata.jsonl` holds
+one JSON object per page with identity, kind, category, project, tags, entities,
+dates, counts, trust and the body's size — never the body, because the body is
+already the page file and duplicating it would put memory text in an artefact a
+catalog or a support ticket can carry. `manifest.json` holds the format version,
+the store revision, the encryption field (`none` today) and a `\{path, bytes,
+sha256\}` row per file. There is no key, token or signed URL in it.
+
+**The import refuses what it cannot prove.** A page file that is missing from
+the manifest, whose size or SHA-256 differs, or that decodes to a different page
+id than its metadata line names is refused before any file is written. A path
+that is absolute, escapes with `..`, or is a symlink, hardlink, device or fifo is
+refused. The archive's entry count and expanded size are bounded. The index is
+rebuilt from the markdown, so nothing derived from the source volume is trusted,
+and the imported page count must equal the manifest's.
+
+**Quiescing before a snapshot.** A Volume snapshot is at best crash-consistent;
+the platform documents no filesystem freeze. `quiesce` takes the writer lock,
+checkpoints the SQLite write-ahead log with `TRUNCATE`, fsyncs the page files and
+the index, and writes `memory/.write-fence.json`, which makes every store write
+refuse until `resume`. The data-loss window is explicit: a snapshot taken without
+quiescing may miss the last seconds of acknowledged writes and may need a full
+reindex on first open.
+
+**Deleting a user.** The job file at `<HORON_HOME>/volume-state/deletion-job.json`
+records each step as it finishes and lives outside the store, so the step that
+deletes the store cannot lose the record. The order is the contract: writes stop,
+the key is revoked (so any escaped copy is unreadable before it is destroyed),
+snapshots are deleted, the volume is destroyed, and `deleted` is written last. A
+failed step is recorded with its reason and stays retryable; `deleted` is
+reported only after every step finished.
+
+**The key contract, and the gap.** The volume carries a key record — `key_id`,
+algorithm id, `created_at`, `revoked_at` — and no key material: the control
+plane's key service owns that and the agent asks it through a provider interface.
+A revoked key makes the volume fail closed. Envelope encryption of the page files
+and the tar is not implemented, because the authenticated-encryption crate it
+needs is not in the lockfile; the manifest's `encryption: none` states that, and
+an importer refuses any other value instead of installing ciphertext.
+
+**The central metadata carries no memory body.** The client posts only
+identifiers, states, timestamps, key ids, snapshot ids and object keys against
+the draft `horon-ai/server#28` contract. The request types have no body, text,
+title, tag or path field, and a test drives every request through a loopback
+server and asserts that a marker body never appears in a request byte. The
+contract is a draft: no endpoint or schema is frozen, and every central call sits
+behind one trait so the control plane can replace the transport.
+
 ## Limits
 
 - No embeddings and no vector search. Retrieval is lexical, entity and link based; a paraphrase that shares no word, entity or link is not found.
@@ -263,4 +328,4 @@ store-level merge would change — none of the entry fields or edges are dropped
 - Versions are index data. Deleting `index.sqlite` loses the history, keeping the current body.
 - No git history inside a user volume, by design: a deletion request must not leave old versions in a repository.
 - Physical erasure stops at what SQLite itself allocated; see the deletion section.
-- The store is not wired into the `memory` tool yet, and export, import and whole-volume deletion belong to the neighbouring work. Until then the JSON store remains the tool's backing store.
+- Export, import and whole-volume deletion rebuild the index from the markdown; a version history in the source volume is lost, because versions are index data.

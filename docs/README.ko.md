@@ -28,7 +28,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | `diagram/` | [`README.ko.md`](diagram/README.ko.md) | 손으로 그린 SVG 그림 여덟 장과 각 그림이 그리는 코드 경로: 시스템 개요, 실행 모드, 턴 수명 주기, 프로바이더 방식, ACP 협상, 세션 저장, 도구 로딩, 브랜치·릴리스 흐름 |
 | `architecture/` | [`SERVER.ko.md`](architecture/SERVER.ko.md) | 서버·세션·소켓 구조 |
 | | [`CRATES.ko.md`](architecture/CRATES.ko.md) | 크레이트 소유권 경계, 플랫폼 어댑터, 저장 내구성과 TLS 신뢰 집합 |
-| | [`HOSTING.ko.md`](architecture/HOSTING.ko.md) | 사용자별 호스팅 경계: `HORON_AGENT_HOSTING_MODE` 계약, 컨테이너 이미지와 볼륨 배치, 컨트롤 플레인 라우팅 계약, 정지와 깨우기, 테넌트 삭제 |
+| | [`HOSTING.ko.md`](architecture/HOSTING.ko.md) | 사용자별 호스팅 경계: `HORON_AGENT_HOSTING_MODE` 계약, 컨테이너 이미지와 볼륨 배치, 컨트롤 플레인 라우팅 계약, quiesce 요구를 포함한 Fly Machines·Volume 수명 주기, 정지와 깨우기, 테넌트 삭제 |
 | `protocol/` | [`ACP.ko.md`](protocol/ACP.ko.md) | ACP v1·v2 어댑터, 에디터 연결과 stdio 계약 |
 | | [`HARNESS_API.ko.md`](protocol/HARNESS_API.ko.md) | 하네스 API 자격 증명 설정, 선택적 인증 TCP 노출, 요청·이벤트 표면 |
 | | [`SESSION_STORE.ko.md`](protocol/SESSION_STORE.ko.md) | 세션 이벤트 저장 형식, 전송 계약, writer 풀, 영속 런타임 저널 |
@@ -36,7 +36,7 @@ horon agent는 같은 엔진·데몬·세션·도구·설정을 쓰는 두 모�
 | | [`RPC.ko.md`](protocol/RPC.ko.md) | stdio JSONL RPC 모드: 명령, 프레임, omp 대조 표 |
 | | [`SHARING.ko.md`](protocol/SHARING.ko.md) | 암호화된 세션 공유와 폐기 설계 제안 |
 | `runtime/` | [`TOOLS.ko.md`](runtime/TOOLS.ko.md) | 도구 로딩, 효과와 승인 등급, 편집 안전 장치, 상위 `AGENTS.md`, `skill://`·`memory://` 읽기와 MCP 설정 출처, 보조 호출 |
-| | [`MEMORY.ko.md`](runtime/MEMORY.ko.md) | 기억 위키: 정본인 마크다운 페이지, 파생 SQLite 인덱스와 스키마, 검색 스트림과 융합, 삭제와 secure-delete 순서, 재생성, 한국어 평가와 측정된 recall |
+| | [`MEMORY.ko.md`](runtime/MEMORY.ko.md) | 기억 위키: 정본인 마크다운 페이지, 파생 SQLite 인덱스와 스키마, 검색 스트림과 융합, 삭제와 secure-delete 순서, 재생성, 한국어 평가와 측정된 recall, 볼륨 내보내기·가져오기·quiesce·키 계약·`delete_user` 단계 기계 |
 | | [`EDIT_DIAGNOSTICS.ko.md`](runtime/EDIT_DIAGNOSTICS.ko.md) | 편집 후 언어 서버 진단 설계 제안 |
 | | [`TOOL_SCHEDULING.ko.md`](runtime/TOOL_SCHEDULING.ko.md) | 도구 스케줄링과 반복 방지 |
 | | [`TURNS.ko.md`](runtime/TURNS.ko.md) | 턴 복구, 실행 중 메시지 삽입, `[prewalk]` 계획→실행 모델 인계, 목표 계속과 토큰 예산, 런타임 명령, `--resume` |

@@ -32,7 +32,9 @@ mod session_cache;
 pub(crate) use run_options::RunModelOverrides;
 mod images;
 pub(crate) use images::ImagesArgs;
+mod volume;
 pub(crate) use session_cache::CacheArgs;
+pub(crate) use volume::{VolumeCommand, VolumeKeyCommand};
 
 impl Command {
     /// A plain `run` of `message`, as if typed on the command line with no other flags.
@@ -493,6 +495,10 @@ pub(crate) enum Command {
     /// Memory management commands
     #[command(subcommand)]
     Memory(MemoryCommand),
+
+    /// Back up, restore and delete this user's volume
+    #[command(subcommand)]
+    Volume(VolumeCommand),
 
     /// Session management commands
     #[command(subcommand, alias = "sessions")]

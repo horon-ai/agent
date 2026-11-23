@@ -914,10 +914,13 @@ jobs:
         # tests plus the config-template documentation test) bring it to 1690.
         # The memory integration (#665) adds fifteen: fourteen store-backend
         # cases and one that keeps the memory event log inside HORON_HOME, for
-        # 1705.
+        # 1705. The volume lifecycle (#666) adds thirty-one: export and import,
+        # the archive's hostile-entry refusals, the write fence and its
+        # checkpoint, the key contract, the control-plane client with its
+        # no-body property, and the deletion step machine, for 1736.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1705 --timeout 1200
+            --package horon-agent-base --min-passed 1736 --timeout 1200
 
       - name: Run horon-agent-base lib tests (macOS)
         if: runner.os == 'macOS'
@@ -929,10 +932,11 @@ jobs:
         # to 1598. The fifty memory wiki store cases (#664) bring it to 1648, the
         # thirteen hosted MCP and child-process gate tests (#668) bring it to
         # 1661, and the fifteen harness API exposure cases bring it to 1676.
-        # The memory integration (#665) adds fifteen, for 1691.
+        # The memory integration (#665) adds fifteen, for 1691. The volume
+        # lifecycle (#666) adds thirty-one, for 1722.
         run: |
           python3 scripts/ci/run_lib_tests.py --artifacts "$TEST_ARTIFACTS" \
-            --package horon-agent-base --min-passed 1691 --timeout 1200
+            --package horon-agent-base --min-passed 1722 --timeout 1200
 
       - name: Remove the reflink filesystem (Linux)
         if: always() && runner.os == 'Linux' && env.HORON_AGENT_CLONE_TEST_ROOT != ''

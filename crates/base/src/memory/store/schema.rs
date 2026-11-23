@@ -178,6 +178,26 @@ impl Index {
         })
     }
 
+    /// The index file this handle opened.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// fsync the database file, after a checkpoint closed the log.
+    ///
+    /// A quiesce calls this so the bytes reach the device before a snapshot is
+    /// taken. SQLite's own `synchronous=NORMAL` makes WAL commits durable at
+    /// checkpoint time, which is why the checkpoint runs first.
+    pub fn sync_to_disk(&self) -> Result<()> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .open(&self.path)
+            .with_context(|| format!("cannot reopen the index {}", self.path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("cannot flush the index {}", self.path.display()))?;
+        Ok(())
+    }
+
     /// The connection, for the modules that query it.
     pub fn conn(&self) -> &Connection {
         &self.conn

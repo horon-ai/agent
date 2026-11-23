@@ -68,6 +68,7 @@ pub use delete::{DeleteOutcome, safe_join};
 pub use document::{MAX_BODY_BYTES, PAGE_SCHEMA};
 pub use index::{FileStamp, IndexCounts, LinkRow, PageRow, VersionRow};
 pub use reindex::{ReindexReport, SkippedPage};
+pub use schema::INDEX_FILE_NAME;
 pub use search::{DEFAULT_LIMIT, SearchHit, SearchQuery, SearchResults, StreamRanks};
 
 use anyhow::{Context, Result, anyhow};
@@ -118,6 +119,10 @@ impl MemoryWiki {
     /// damaged file cannot lock the user out of the rest of the wiki.
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
+        // A revoked user data key closes the volume: refuse to open the store at
+        // all, so a deletion that revoked the key cannot be undone by starting
+        // the process again.
+        super::export::key::ensure_open_at(&root)?;
         let wiki = root.join("wiki");
         ensure_private_dir(&root)?;
         ensure_private_dir(&wiki)?;
@@ -174,6 +179,7 @@ impl MemoryWiki {
     /// whose kind or project changes moves to the new path, and the old file is
     /// removed after the new one is indexed.
     pub fn write_page(&mut self, page: &MemoryPage) -> Result<WriteOutcome> {
+        super::export::fence::ensure_writable(&self.root)?;
         document::validate(page)?;
         let relative = relative_slash(&document::relative_path(page)?)?;
         let text = document::encode(page)?;
@@ -207,6 +213,7 @@ impl MemoryWiki {
 
     /// Delete one page: the file first, then every index row, then a vacuum.
     pub fn delete_page(&mut self, id: &PageId) -> Result<DeleteOutcome> {
+        super::export::fence::ensure_writable(&self.root)?;
         let wiki = self.wiki_root();
         delete::delete_page(&mut self.index, &wiki, id.as_str())
     }
@@ -384,4 +391,73 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         return Err(anyhow!(cleanup).context(format!("cannot remove the temp file {}", temp.display())));
     }
     result
+}
+
+/// `path` relative to the store root with `/` separators, when it is inside.
+///
+/// Used by the volume export to name a page file inside the tar. A path that
+/// leaves the store root, or that is not valid UTF-8, has no name and is
+/// reported as `None` instead of being written into an archive.
+pub fn relative_page_path(store_root: &Path, path: &Path) -> Option<String> {
+    let relative = match path.strip_prefix(store_root) {
+        Ok(relative) => relative,
+        Err(_) => return None,
+    };
+    // A path that leaves the store root is reported as unnamed rather than
+    // written into an archive, so the caller refuses it.
+    let Ok(relative) = relative_slash(relative) else {
+        return None;
+    };
+    Some(relative)
+}
+
+/// Parse one page file's text as a page.
+///
+/// `file_stem` is the file's name without `.md`, the id a hand-written page
+/// without frontmatter `id` takes. The volume import decodes every page before
+/// it writes it, so an archive cannot install a file the store would refuse to
+/// index.
+pub fn decode_page(text: &str, file_stem: &str) -> Result<MemoryPage> {
+    document::decode(text, file_stem, Timestamp::UNIX_EPOCH)
+}
+
+/// Every page file under `wiki_root`, as the reindex scan sees them.
+pub fn scan_wiki(wiki_root: &Path) -> Result<Vec<reindex::ScannedFile>> {
+    reindex::scan(wiki_root)
+}
+
+/// A handle to an existing index file, for the quiesce checkpoint.
+///
+/// Opening through the store would reconcile the whole wiki, which a quiesce
+/// must not do: it only needs the log checkpointed and the revision read.
+pub struct IndexHandle {
+    index: schema::Index,
+}
+
+impl IndexHandle {
+    /// Open the index at `path` without reconciling it.
+    pub fn open_existing(path: &Path) -> Result<Self> {
+        Ok(Self {
+            index: schema::Index::open(path)?,
+        })
+    }
+
+    /// `PRAGMA wal_checkpoint(TRUNCATE)`, so no committed page text is left in
+    /// the write-ahead log.
+    pub fn checkpoint_truncate(&self) -> Result<()> {
+        self.index
+            .conn()
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .with_context(|| format!("cannot truncate the index log of {}", self.index.path().display()))
+    }
+
+    /// fsync the index file.
+    pub fn sync(&self) -> Result<()> {
+        self.index.sync_to_disk()
+    }
+
+    /// The store revision the index carries.
+    pub fn revision(&self) -> Result<u64> {
+        self.index.revision()
+    }
 }
