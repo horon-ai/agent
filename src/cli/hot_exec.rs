@@ -172,7 +172,15 @@ pub fn run_auto_update() -> Result<()> {
 /// Explicit updates follow the configured channel for release and dev builds alike.
 /// Source rebuilds belong to /rebuild, not the stable update path.
 pub fn run_update() -> Result<()> {
-    let current_exe = std::env::current_exe().ok();
+    let current_exe = match std::env::current_exe() {
+        Ok(path) => Some(path),
+        Err(error) => {
+            crate::logging::warn(&format!(
+                "update: cannot resolve the running binary ({error}); skipping npm-install and PATH checks"
+            ));
+            None
+        }
+    };
     if let Some(hint) = npm_managed_install_hint(current_exe.as_deref()) {
         anyhow::bail!("{hint}");
     }
