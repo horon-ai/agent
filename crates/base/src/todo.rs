@@ -32,6 +32,40 @@ pub fn save_todos(session_id: &str, todos: &[TodoItem]) -> Result<()> {
     Ok(())
 }
 
+/// Hold the per-session todo write lock for a whole read-modify-write.
+///
+/// The todo tool, an operator edit and the RPC host all take this lock around
+/// reading the list, changing it and saving it, so a revision checked by one
+/// writer cannot be invalidated and overwritten by another between its check
+/// and its write. Dropping the guard releases it.
+pub fn lock_todos(session_id: &str) -> Result<std::fs::File> {
+    Ok(horon_agent_todo_policy::store::lock_todos(
+        &storage::horon_agent_dir()?,
+        session_id,
+    )?)
+}
+
+/// Change one item's status only if the list is still `expected_revision`.
+///
+/// The comparison, the change and the write happen under [`lock_todos`], so the
+/// tool and this path cannot both pass on one revision. Refusals leave the list
+/// untouched and carry the current list and revision for the caller to show.
+pub fn apply_todo_status_edit(
+    session_id: &str,
+    expected_revision: &str,
+    id: &str,
+    status: &str,
+) -> Result<horon_agent_todo_policy::store::TodoEditOutcome> {
+    Ok(horon_agent_todo_policy::store::apply_todo_status_edit_with(
+        &storage::horon_agent_dir()?,
+        session_id,
+        expected_revision,
+        id,
+        status,
+        |todos| save_todos(session_id, todos).map_err(std::io::Error::other),
+    )?)
+}
+
 fn todo_path(session_id: &str) -> Result<PathBuf> {
     todo_state_path(session_id, TodoFile::Todos)
 }

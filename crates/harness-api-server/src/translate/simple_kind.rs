@@ -39,6 +39,8 @@ pub(crate) enum SimpleKind {
     RuntimeState,
     /// Awaiting `effective_settings`.
     EffectiveSettings,
+    /// Awaiting `todo_edit_result` for one revision-checked status change.
+    TodoEdit,
     /// Awaiting `control_receipt`.
     ControlReceipt,
     /// Awaiting `snapshot_result`.

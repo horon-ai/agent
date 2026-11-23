@@ -148,6 +148,7 @@ pub mod process;
 mod reports;
 mod ssh;
 mod structured;
+mod todo_client;
 pub mod turn_retry;
 pub mod worktrees;
 
@@ -189,6 +190,7 @@ pub use structured::{
     RunStructuredError, RunStructuredOptions, StructuredEventCallback, StructuredOutputAttempt, StructuredOutputError,
     StructuredOutputSchema, StructuredSchemaError, StructuredTurnResult, StructuredValidationIssue,
 };
+pub use todo_client::TodoEdit;
 pub use turn_retry::{FailureKind, RetryDecision, RetryPolicy, TurnRetry, classify_failure};
 
 /// Filesystem primitives for a file the client owns, re-exported from the

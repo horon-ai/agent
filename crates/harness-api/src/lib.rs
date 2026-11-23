@@ -61,6 +61,10 @@ mod message_modes_snapshot_tests;
 mod schema_snapshot_tests;
 
 #[cfg(test)]
+#[path = "harness_api_tests/todo_edit_snapshot.rs"]
+mod todo_edit_snapshot_tests;
+
+#[cfg(test)]
 #[path = "harness_api_tests/cancellable_work_snapshot.rs"]
 mod cancellable_work_snapshot_tests;
 
@@ -88,7 +92,7 @@ pub use horon_agent_extension_types::control::{
 /// Protocol major version. Breaking changes only.
 pub const API_VERSION_MAJOR: u32 = 1;
 /// Protocol minor version. Additive changes.
-pub const API_VERSION_MINOR: u32 = 28;
+pub const API_VERSION_MINOR: u32 = 29;
 
 /// The session's durable runtime journal survives a restart: queued input,
 /// runs, control operations, and monitor checkpoints are readable afterwards.
@@ -166,6 +170,15 @@ pub const CAPABILITY_PACKAGE_COMMANDS_V1: &str = "package_commands_v1";
 /// unconditionally; a daemon that cannot serve it is refused with a structured
 /// `unsupported` reply naming this capability.
 pub const CAPABILITY_SESSION_FORK_AT_V1: &str = "session_fork_at_v1";
+/// Change one todo item's status in the attached session's stored list, with
+/// the revision the client last read checked before the write. Gates
+/// `set_todo_status`.
+///
+/// The write is the stored list itself, not a message to the agent: no turn
+/// starts and no model prompt is injected. A server that does not advertise
+/// this leaves the list readable and uneditable, which is what an older bridge
+/// serves.
+pub const CAPABILITY_TODO_EDIT_V1: &str = "todo_edit_v1";
 
 /// Every capability this protocol version defines, with the API surfaces each
 /// one gates.
@@ -203,6 +216,7 @@ pub const CAPABILITY_SURFACES: &[(&str, &[&str])] = &[
         &["runtime_command.package_commands", "runtime_command.package_command"],
     ),
     (CAPABILITY_SESSION_FORK_AT_V1, &["fork_session_at"]),
+    (CAPABILITY_TODO_EDIT_V1, &["set_todo_status"]),
 ];
 
 /// Every capability this protocol version defines, in advertisement order.
@@ -218,6 +232,7 @@ pub const ADVERTISED_CAPABILITIES: &[&str] = &[
     CAPABILITY_PACKAGE_CONTROL_V1,
     CAPABILITY_PACKAGE_COMMANDS_V1,
     CAPABILITY_SESSION_FORK_AT_V1,
+    CAPABILITY_TODO_EDIT_V1,
 ];
 
 /// The event capabilities a connection opts into at handshake.

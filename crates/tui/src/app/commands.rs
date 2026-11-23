@@ -171,6 +171,10 @@ impl App {
             // `/queue` opens the list of messages waiting for the running turn
             // to end; nothing about them is sent from here.
             Local::Queue => self.open_queue(),
+            // `/todo` opens the complete stored list of the attached session.
+            // It reads what the passive panel already holds; no request leaves
+            // the client until a key asks to change an item.
+            Local::Todo => self.open_todos(),
             // `/diff` and `/commit` describe this machine's git state for the
             // session's workspace. Both refuse a session that works elsewhere,
             // and the commit needs a review of the staged set before it runs.

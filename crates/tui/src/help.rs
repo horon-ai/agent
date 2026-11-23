@@ -316,6 +316,7 @@ pub(crate) fn local_description(name: &str) -> &'static str {
         "pin" => "keep a session at the top of the list, or pin the attached one",
         "unpin" => "take a session out of the pinned group",
         "queue" => "edit, remove or reorder the messages waiting for the turn to end",
+        "todo" => "show every todo in the session and mark one done, open or cancelled",
         "quit" => "leave",
         "record" => "record the conversation to a local file, or stop (stop, status)",
         "rename" => "save a title for the current session",

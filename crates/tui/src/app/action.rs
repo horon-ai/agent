@@ -103,6 +103,8 @@ pub enum Action {
     Export(String),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
+    /// Commit one revision-checked todo status change for the attached session.
+    TodoStatus(crate::todo_panel::TodoStatusRequest),
     /// Leave.
     Quit,
 }

@@ -6,9 +6,9 @@
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/fork`, `/mcp`, `/new`, `/note`, `/pin`,
-//!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/tools`,
-//!    `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/diff`, `/commit`,
-//!    `/swarm` and `/voice`.
+//!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/todo`,
+//!    `/tools`, `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/diff`,
+//!    `/commit`, `/swarm` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
 //!    `RuntimeCommand::Review`: a project that writes a command file has said
@@ -148,6 +148,8 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Show the attached session's todo list and change an item's status.
+    Todo,
     /// Show the staged and unstaged changes in the session's workspace.
     Diff,
     /// Review the staged set, and commit exactly it after a second line.
@@ -199,6 +201,7 @@ impl Local {
             "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "todo" | "todos" => Some(Self::Todo),
             "diff" => Some(Self::Diff),
             "commit" => Some(Self::Commit),
             "swarm" => Some(Self::Swarm),
@@ -245,6 +248,7 @@ impl Local {
             Self::Export => "export",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Todo => "todo",
             Self::Diff => "diff",
             Self::Commit => "commit",
             Self::Swarm => "swarm",
@@ -845,6 +849,7 @@ const LOCAL_NAMES: &[&str] = &[
     "stats",
     "swarm",
     "switch",
+    "todo",
     "tools",
     "unpin",
     "voice",

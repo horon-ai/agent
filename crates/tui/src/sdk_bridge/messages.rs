@@ -116,6 +116,18 @@ pub enum Command {
     /// itself, so there is nothing here for a caller to name: the session the
     /// worker follows is the one asked about.
     DaemonSettings,
+    /// Change one todo item's status only if the stored list is still the
+    /// revision the user saw.
+    ///
+    /// The session travels with it because the answer belongs to the list it
+    /// named: a command that outlived an attach must not edit the session the
+    /// worker moved to.
+    SetTodoStatus {
+        session_id: String,
+        expected_revision: String,
+        id: String,
+        status: String,
+    },
     /// List the swarm children of the session the worker follows, and the
     /// parent it reports back to.
     ///
@@ -139,6 +151,22 @@ pub enum Incoming {
     Todos {
         session_id: String,
         items: Vec<horon_agent_sdk::todo::TodoItem>,
+        /// The revision of the stored list these items came from, absent on a
+        /// harness that does not report one.
+        revision: Option<String>,
+    },
+    /// The answer to one revision-checked todo status change.
+    ///
+    /// The list and revision travel with it whether or not the write landed, so
+    /// a stale editor refreshes from this one frame instead of asking again.
+    TodoEdit {
+        session_id: String,
+        applied: bool,
+        refusal: Option<horon_agent_sdk::todo::TodoEditRefusal>,
+        items: Vec<horon_agent_sdk::todo::TodoItem>,
+        revision: String,
+        id: String,
+        status: String,
     },
     /// A message the harness did not take: the text, the sentence saying why,
     /// and whether the connection itself is gone. The text travels with the

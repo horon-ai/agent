@@ -40,7 +40,9 @@ pub enum ServerEvent {
     /// The session's committed todo list changed.
     #[serde(rename = "todo_changed")]
     TodoChanged { session_id: String },
-
+    /// Reply to `set_todo_status`.
+    #[serde(rename = "todo_edit_result")]
+    TodoEditResult(TodoEditResultEvent),
     /// Acknowledgment of request
     #[serde(rename = "ack")]
     Ack { id: u64 },

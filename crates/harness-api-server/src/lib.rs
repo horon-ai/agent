@@ -148,6 +148,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // Advertised unconditionally and forwarded; older daemons return `unsupported`
     // naming this capability.
     horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
+    horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
