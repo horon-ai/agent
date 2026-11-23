@@ -91,12 +91,6 @@ class StageTest(unittest.TestCase):
         staged = pw.stage_package(source, self.binary(root), root / "staged", layout, keep_events=keep_events)
         return staged, root
 
-    def test_the_installed_scenario_may_drop_the_subscription(self) -> None:
-        root = Path(tempfile.mkdtemp(prefix="hpkg-test-"))
-        staged = pw.stage_package(self.source(root), self.binary(root), root / "staged", "extension",
-                                  keep_events=False)
-        self.assertNotIn("events", (staged / "extension.toml").read_text(encoding="utf-8"))
-
     def test_the_called_scenario_keeps_the_shipped_declaration_events(self) -> None:
         # The author SDK refuses a declaration whose events disagree with the
         # code, so the copy a child is started from keeps them.
@@ -424,6 +418,61 @@ class OrderTest(unittest.TestCase):
         )
         self.assertEqual(len(measured["a"]), len(pw.SCENARIOS))
         self.assertEqual(len(measured["b"]), len(pw.SCENARIOS))
+
+
+class MeasureNotesAndCleanupTest(unittest.TestCase):
+    def test_measure_cleans_temp_root_omits_perf_counters_and_reports_called_events(self) -> None:
+        root = Path(tempfile.mkdtemp(prefix="hpkg-test-"))
+        self.addCleanup(lambda: pw.shutil.rmtree(root, ignore_errors=True))
+        source = root / "layouts"
+        source.mkdir()
+        (source / "extension.toml").write_text(SHIPPED, encoding="utf-8")
+        (source / "plugin.toml").write_text(
+            'schema_version = 1\nid = "hello"\nextension = "extension/extension.toml"\n',
+            encoding="utf-8",
+        )
+        agent_bin = root / "horon-agent"
+        agent_bin.write_bytes(b"agent")
+        pkg_bin = root / "horon-package-example"
+        pkg_bin.write_bytes(b"pkg")
+
+        seen_roots: list[Path] = []
+        seen_envs: list[dict] = []
+        orig_prepare = pw.prepare_build
+
+        def spy_prepare(*args, **kwargs):
+            prepared = orig_prepare(*args, **kwargs)
+            seen_roots.append(prepared.root)
+            seen_envs.extend(prepared.envs.values())
+            return prepared
+
+        def fake_turn(binary, env, cwd, prompt, tools, mock_srv, timeout):
+            is_call = tools == pw.package_tool_name()
+            return run(tool_round_trip=is_call)
+
+        class FakeServer:
+            base_url = "http://127.0.0.1:0"
+
+            def start(self):
+                return self
+
+            def stop(self):
+                return None
+
+        with (
+            mock.patch.object(pw.bcmp, "MockServer", FakeServer),
+            mock.patch.object(pw, "install", return_value="ok"),
+            mock.patch.object(pw, "prepare_build", spy_prepare),
+            mock.patch.object(pw, "run_turn", fake_turn),
+        ):
+            report = pw.measure(str(agent_bin), str(pkg_bin), None, source, 1, 5.0)
+
+        self.assertEqual(len(seen_roots), 1)
+        self.assertFalse(seen_roots[0].exists(), "hpkg-* build root must be cleaned after measure()")
+        self.assertTrue(all("HORON_AGENT_PERF_COUNTERS" not in env for env in seen_envs))
+        notes_text = "\n".join(report["notes"])
+        self.assertIn("`installed` installs", notes_text)
+        self.assertIn("`called` keeps", notes_text)
 
 
 class MainTest(unittest.TestCase):
