@@ -379,13 +379,18 @@ fn git_in(
     }
     let deadline = Instant::now() + timeout;
     let mut timed_out = false;
+    let mut poll = Duration::from_micros(250);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             Ok(None) => {
-                timed_out = true;
-                break None;
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    timed_out = true;
+                    break None;
+                }
+                std::thread::sleep(poll.min(remaining));
+                poll = (poll * 2).min(Duration::from_millis(10));
             }
             Err(problem) => {
                 process::kill_process_group(pid);
@@ -596,7 +601,7 @@ impl Repo {
         if captured.truncated {
             return Err(Refusal::TooLarge);
         }
-        Ok(parse_status(&captured.out))
+        Ok(parse_status(&captured.out, false))
     }
 
     /// The index entries as bytes, which is what a review is verified against.
@@ -629,6 +634,14 @@ impl Repo {
     /// One side of `/diff`.
     fn section(&self, cached: bool) -> Result<Section, Refusal> {
         let files = self.changes(cached)?;
+        if files.is_empty() {
+            return Ok(Section {
+                files,
+                summary: "0 file(s)".to_string(),
+                patch: String::new(),
+                truncated: false,
+            });
+        }
         let mut patch_args = vec!["diff"];
         let mut summary_args = vec!["diff"];
         if cached {
@@ -707,7 +720,7 @@ impl Repo {
         if captured.truncated {
             return Err(Refusal::TooLarge);
         }
-        Ok(parse_status(&captured.out))
+        Ok(parse_status(&captured.out, false))
     }
 
     /// The tree the index names, which is exactly what a commit would store.
@@ -929,14 +942,14 @@ pub(crate) fn review(directory: &Path, message: &str) -> Result<Review, Refusal>
         return Err(Refusal::NotABranch(reference.clone()));
     };
     let head = repo.head()?;
-    let files = repo.changes(true)?;
+    let index = repo.index_entries()?;
+    let files = parse_status(&index, true);
     if files.is_empty() {
         return Err(Refusal::NothingStaged);
     }
     if files.len() > REVIEW_FILES {
         return Err(Refusal::TooManyFiles(files.len()));
     }
-    let index = repo.index_entries()?;
     let tree = repo.write_tree()?;
     let id = fingerprint(&index, head.as_deref(), Some(branch.as_str()));
     Ok(Review {
@@ -1038,22 +1051,30 @@ fn stale(review: &Review, moved: &'static str) -> Refusal {
 /// The object name a reference that does not exist yet is expected at.
 const ZERO_OID: &str = "0000000000000000000000000000000000000000";
 
-/// Read `--name-status -z` output into changes.
+/// Read `--name-status -z` or `--raw -z --no-renames` output into changes.
 ///
-/// The NUL-separated pairs are status and path, in that order, with no quoting
-/// to undo: a path may hold a space, a newline or a leading dash and still be
-/// exactly the bytes git wrote.
-fn parse_status(bytes: &[u8]) -> Vec<Change> {
+/// The NUL-separated pairs are status (or raw metadata ending with status) and
+/// path, in that order, with no quoting to undo: a path may hold a space, a
+/// newline or a leading dash and still be exactly the bytes git wrote.
+fn parse_status(bytes: &[u8], raw: bool) -> Vec<Change> {
     let mut fields = bytes.split(|byte| *byte == 0);
     let mut changes = Vec::new();
-    while let Some(status) = fields.next() {
-        if status.is_empty() {
+    while let Some(meta) = fields.next() {
+        if meta.is_empty() {
             continue;
         }
         let Some(path) = fields.next() else {
             break;
         };
-        let status = String::from_utf8_lossy(status);
+        let status_bytes = if raw {
+            meta.iter()
+                .rposition(|byte| *byte == b' ')
+                .and_then(|space| meta.get(space + 1..))
+                .unwrap_or(b"?")
+        } else {
+            meta
+        };
+        let status = String::from_utf8_lossy(status_bytes);
         changes.push(Change {
             status: status.chars().next().unwrap_or('?'),
             path: String::from_utf8_lossy(path).into_owned(),
