@@ -31,6 +31,8 @@ use std::time::Duration;
 // budget; re-exported here so every path that named it keeps working.
 pub use crate::connect_options::ConnectOptions;
 
+mod session_fork;
+
 /// Options fixed when a session is created.
 #[derive(Clone, Debug, Default)]
 pub struct CreateSessionOptions {
@@ -1149,18 +1151,6 @@ impl HoronAgentClient {
         match self
             .request_ok(ApiRequest::TransferSession {
                 session_id: session_id.into(),
-            })?
-            .event
-        {
-            ApiEvent::SessionForked { session } => Ok(session),
-            other => Err(unexpected("session_forked", &other)),
-        }
-    }
-
-    pub fn fork_session(&self, session_id: &str) -> Result<SessionInfo> {
-        match self
-            .request_ok(ApiRequest::ForkSession {
-                session_id: session_id.to_string(),
             })?
             .event
         {

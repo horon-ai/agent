@@ -9,6 +9,7 @@ pub(crate) mod package_control;
 mod runtime_identity;
 mod search_artifacts;
 mod session_delete;
+mod session_fork;
 mod simple_kind;
 mod support;
 mod usage_report;
@@ -63,6 +64,7 @@ const REQUIRES_ATTACH: &[&str] = &[
     "get_effective_settings",
     "get_runtime_info",
     "fork_session",
+    "fork_session_at",
     "transfer_session",
     "read_file",
     "find_files",
@@ -116,6 +118,8 @@ pub struct BridgeState {
     pub runtime_commands_supported: bool,
     /// Set only after a safe legacy ping capability probe succeeds.
     pub session_tools_supported: bool,
+    /// The daemon answers `split_at`; used to refuse `fork_session_at` locally.
+    pub session_fork_at_supported: bool,
     /// The daemon accepts soft interrupt ids and per-id cancellation, and
     /// replies to `background_tool` with a result.
     pub soft_interrupt_ids_supported: bool,
@@ -671,15 +675,8 @@ impl BridgeState {
                 }
                 vec![Outbound::Legacy(message)]
             }
-            "fork_session" => {
-                let id = self.legacy_id();
-                self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "split", "id": id}))]
-            }
-            "transfer_session" => {
-                let id = self.legacy_id();
-                self.pending_fork_id = Some((id, api_id));
-                vec![Outbound::Legacy(json!({"type": "transfer", "id": id}))]
+            "fork_session" | "fork_session_at" | "transfer_session" => {
+                session_fork::request(self, request, api_id, req)
             }
             "cancel" => {
                 let id = self.legacy_id();

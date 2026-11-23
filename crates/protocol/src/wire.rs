@@ -456,6 +456,16 @@ pub enum Request {
     #[serde(rename = "split")]
     Split { id: u64 },
 
+    /// Fork the current session from a recorded boundary.
+    ///
+    /// The child holds every message the parent recorded before
+    /// `boundary_message_id` and none of the boundary or what follows, so one
+    /// past turn can be continued differently while the parent keeps its
+    /// complete transcript. A boundary the parent no longer records is refused
+    /// without creating a session.
+    #[serde(rename = "split_at")]
+    SplitAt { id: u64, boundary_message_id: String },
+
     /// Transfer the current session into a compacted handoff session
     #[serde(rename = "transfer")]
     Transfer { id: u64 },

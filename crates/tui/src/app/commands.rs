@@ -85,6 +85,9 @@ impl App {
             // is in; nothing is claimed on screen until the daemon answers,
             // because a create can be refused.
             Local::New => self.start_new_session(),
+            // `/fork` lists the recorded messages this session can branch
+            // from; the daemon does the fork and the client follows the child.
+            Local::Fork => self.open_forks(),
             // `/skills` shows the list the harness reports: the rows it already
             // knows are drawn at once, and the answer to this request replaces
             // them when it comes.

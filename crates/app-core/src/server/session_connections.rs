@@ -58,6 +58,11 @@ pub(super) async fn connection_presence_pong(
             // would answer an unknown request with an uncorrelated error frame,
             // so a forwarding bridge would wait out the client's timeout.
             "effective_settings_api".into(),
+            // The daemon answers `split_at`, forking a session from a recorded
+            // message boundary. The bridge advertises the matching API
+            // capability only when this is present: an older daemon answers the
+            // unknown request with an uncorrelated error frame.
+            "session_fork_at_api".into(),
             "background_output_v1".into(),
             "live_todo_v1".into(),
             // The daemon owns the package catalog: it validates the catalog and

@@ -630,6 +630,7 @@ impl Request {
             Request::DeleteSession { id, .. } => *id,
             Request::SetSessionSaved { id, .. } => *id,
             Request::Split { id } => *id,
+            Request::SplitAt { id, .. } => *id,
             Request::Transfer { id } => *id,
             Request::Compact { id, .. } => *id,
             Request::NotifyAuthChanged { id, .. } => *id,
