@@ -108,6 +108,12 @@ horon-agent-tool-types = { path = "../tool-types" }
 # Temporary files and directories for provider import helpers.
 tempfile = "3"
 
+# The volume export tar and the archive reader an import must not hand-roll:
+# `tar` is already in the lockfile through `horon-agent-app-core`, and reading a
+# hostile archive with a hand-written parser is where a path bug becomes an
+# escape. Adding the edge here pulls in no new package.
+tar = "0.4"
+
 [features]
 default = []
 # Compiles the in-crate test helpers (storage::lock_test_env,
