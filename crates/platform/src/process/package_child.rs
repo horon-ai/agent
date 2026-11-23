@@ -231,7 +231,8 @@ impl Drop for PackageChild {
 
 /// Exact environment a package child receives.
 fn activation_environment(spec: &PackageChildSpec<'_>) -> Vec<(OsString, OsString)> {
-    let mut environment: Vec<(OsString, OsString)> = Vec::new();
+    // Inherited host keys + 4 package variables + up to 4 home/temp variables.
+    let mut environment: Vec<(OsString, OsString)> = Vec::with_capacity(INHERITED_ENVIRONMENT.len() + 8);
     for key in INHERITED_ENVIRONMENT {
         if let Some(value) = std::env::var_os(key) {
             environment.push((OsString::from(key), value));
@@ -241,30 +242,26 @@ fn activation_environment(spec: &PackageChildSpec<'_>) -> Vec<(OsString, OsStrin
     environment.push((OsString::from(PACKAGE_KIND_ENV), OsString::from(spec.kind)));
     environment.push((OsString::from(PACKAGE_ROOT_ENV), spec.root.as_os_str().to_owned()));
     environment.push((OsString::from(PACKAGE_STATE_ENV), spec.state_dir.as_os_str().to_owned()));
-    environment.extend(package_home_environment(spec.state_dir));
+    push_package_home_environment(&mut environment, spec.state_dir);
     environment
 }
 
 /// The home and temporary directory a package sees: its own state directory.
 #[cfg(unix)]
-fn package_home_environment(state_dir: &Path) -> Vec<(OsString, OsString)> {
-    vec![
-        (OsString::from("HOME"), state_dir.as_os_str().to_owned()),
-        (OsString::from("TMPDIR"), state_dir.join("tmp").into_os_string()),
-    ]
+fn push_package_home_environment(environment: &mut Vec<(OsString, OsString)>, state_dir: &Path) {
+    environment.push((OsString::from("HOME"), state_dir.as_os_str().to_owned()));
+    environment.push((OsString::from("TMPDIR"), state_dir.join("tmp").into_os_string()));
 }
 
 /// The Windows equivalents: the profile the child sees is its state directory,
 /// and both temporary-directory variables point inside it.
 #[cfg(windows)]
-fn package_home_environment(state_dir: &Path) -> Vec<(OsString, OsString)> {
+fn push_package_home_environment(environment: &mut Vec<(OsString, OsString)>, state_dir: &Path) {
     let temporary = state_dir.join("tmp").into_os_string();
-    vec![
-        (OsString::from("USERPROFILE"), state_dir.as_os_str().to_owned()),
-        (OsString::from("HOME"), state_dir.as_os_str().to_owned()),
-        (OsString::from("TEMP"), temporary.clone()),
-        (OsString::from("TMP"), temporary),
-    ]
+    environment.push((OsString::from("USERPROFILE"), state_dir.as_os_str().to_owned()));
+    environment.push((OsString::from("HOME"), state_dir.as_os_str().to_owned()));
+    environment.push((OsString::from("TEMP"), temporary.clone()));
+    environment.push((OsString::from("TMP"), temporary));
 }
 
 /// `ESRCH` is 3 on every supported Unix and is the only error that means the
@@ -418,10 +415,9 @@ impl PackageChildProcess for UnixPackageChild {
         }
         // The leader is still unreaped, so its group id is reserved and the kill
         // reaches every member, including a descendant that ignored the request.
+        // Because `SIGKILL` is delivered synchronously to the whole group,
+        // `child.wait()` reaps the leader directly without an extra `waitid(WNOWAIT)`.
         self.kill_group(pid)?;
-        // The kill is immediate, so this reports as soon as the leader's exit is
-        // waitable; the leader is still not reaped, so no signal follows the reap.
-        super::wait_child_exit(pid, false)?;
         let status = self.child.wait()?;
         self.status = Some(status);
         Ok(status)
