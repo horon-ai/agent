@@ -509,10 +509,20 @@ impl MemoryManager {
         Ok(all)
     }
 
+    /// Forget one memory, project scope first.
+    ///
+    /// The scope that holds the id is read before either is written, so a
+    /// forget in the global store does not rewrite the project store first.
+    /// A manager with no working directory has no project scope to read and
+    /// goes straight to the global store, the same refusal-free read the rest
+    /// of the manager uses.
     pub fn forget(&self, id: &str) -> Result<bool> {
         let store = self.store()?;
-        if store.update(StoreScope::Project, |graph| Ok(graph.remove_memory(id).is_some()))? {
-            return Ok(true);
+        let in_project = store
+            .read(StoreScope::Project)
+            .is_ok_and(|graph| graph.memories.contains_key(id));
+        if in_project {
+            return store.update(StoreScope::Project, |graph| Ok(graph.remove_memory(id).is_some()));
         }
         store.update(StoreScope::Global, |graph| Ok(graph.remove_memory(id).is_some()))
     }
