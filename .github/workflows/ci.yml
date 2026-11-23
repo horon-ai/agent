@@ -11,6 +11,12 @@ on:
   # runs the same gates on any ref for diagnosis, but it is never accepted as that
   # evidence.
   workflow_dispatch:
+    inputs:
+      tui_smoke_repeats:
+        description: Consecutive Linux TUI PTY smoke iterations for flake verification (1 on normal runs)
+        required: false
+        default: "1"
+        type: string
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -265,6 +271,7 @@ jobs:
           python3 -m unittest -v scripts/npm/test_release_npm_version.py
           python3 -m unittest -v scripts/sdk/test_sdk_release.py
           python3 -m unittest -v scripts/sdk/test_python_platform_wheel.py
+          python3 -m unittest -v scripts/test/test_tui_pty_smoke.py
           python3 scripts/sdk/sdk_release.py check-committed
           placeholders="$(mktemp -d)"
           bash scripts/npm/prepare_placeholders.sh "$placeholders" >/dev/null
@@ -694,13 +701,30 @@ jobs:
         # without `--release` above, next to the release daemon.
         if: runner.os != 'Windows'
         shell: bash
+        env:
+          TUI_SMOKE_REPEATS: ${{ github.event_name == 'workflow_dispatch' && runner.os == 'Linux' && inputs.tui_smoke_repeats || '1' }}
         run: |
+          repeats="$TUI_SMOKE_REPEATS"
+          if ! [[ "$repeats" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::tui_smoke_repeats must be a positive integer, got '$repeats'"
+            exit 1
+          fi
           python3 scripts/test/tui_pty_smoke.py \
             --agent target/${{ matrix.target }}/release/horon-agent \
             --tui target/${{ matrix.target }}/debug/horon-tui \
             --transcript "$RUNNER_TEMP/tui-pty-transcript.txt"
           echo "--- transcript ---"
           cat "$RUNNER_TEMP/tui-pty-transcript.txt"
+          if [ "$repeats" -gt 1 ]; then
+            echo "[tui-pty] repeat 1/$repeats passed (all cases)"
+            for i in $(seq 2 "$repeats"); do
+              python3 scripts/test/tui_pty_smoke.py \
+                --cases 1 \
+                --agent target/${{ matrix.target }}/release/horon-agent \
+                --tui target/${{ matrix.target }}/debug/horon-tui
+              echo "[tui-pty] repeat $i/$repeats passed (case 1)"
+            done
+          fi
 
       - name: Installed layout TUI smoke
         # Release packaging runs only in the release workflow, after the change
