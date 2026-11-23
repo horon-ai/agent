@@ -7,8 +7,8 @@ baseline_file="$repo_root/scripts/ci/warning_budget.txt"
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ci/check_warnings.sh            # fail if warnings exceed baseline
-  scripts/ci/check_warnings.sh --update   # update baseline to current warning count
+  scripts/ci/check_warnings.sh [--target TRIPLE]            # fail if warnings exceed baseline
+  scripts/ci/check_warnings.sh [--target TRIPLE] --update   # update baseline to current warning count
 
 Notes:
   - Counts Rust compiler lines that begin with "warning:" from `cargo check -q`
@@ -16,10 +16,40 @@ Notes:
 USAGE
 }
 
-if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-  usage
-  exit 0
-fi
+update=0
+target=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --update)
+      update=1
+      shift
+      ;;
+    --target)
+      if [[ $# -lt 2 || -z "${2:-}" || "${2}" == -* ]]; then
+        echo "error: --target requires a non-empty target triple" >&2
+        exit 2
+      fi
+      target=$2
+      shift 2
+      ;;
+    --target=*)
+      target=${1#*=}
+      if [[ -z "$target" || "$target" == -* ]]; then
+        echo "error: --target requires a non-empty target triple" >&2
+        exit 2
+      fi
+      shift
+      ;;
+    *)
+      echo "error: unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if [[ ! -f "$baseline_file" ]]; then
   echo "error: missing baseline file: $baseline_file" >&2
@@ -40,8 +70,16 @@ if ! command -v "$cargo_bin" > /dev/null 2>&1; then
   echo "error: cargo not found" >&2
   exit 1
 fi
+cargo_args=(check -q)
+if [[ -f "$repo_root/Cargo.lock" ]]; then
+  cargo_args+=(--locked)
+fi
+if [[ -n "$target" ]]; then
+  cargo_args+=(--target "$target")
+fi
+
 cargo_status=0
-cargo_output=$(cd "$repo_root" && CARGO_TERM_COLOR=never "$cargo_bin" check -q 2>&1) || cargo_status=$?
+cargo_output=$(cd "$repo_root" && CARGO_TERM_COLOR=never "$cargo_bin" "${cargo_args[@]}" 2>&1) || cargo_status=$?
 if (( cargo_status != 0 )); then
   printf '%s\n' "$cargo_output" >&2
   echo "error: cargo check failed (exit $cargo_status); warning budget not evaluated" >&2
@@ -57,7 +95,7 @@ fi
 current=$(printf '%s' "${current:-0}" | tr -d '[:space:]')
 baseline=$(tr -d '[:space:]' < "$baseline_file")
 
-if [[ "${1:-}" == "--update" ]]; then
+if (( update == 1 )); then
   printf '%s\n' "$current" > "$baseline_file"
   echo "Updated warning baseline: $baseline"
   echo "New warning baseline: $current"

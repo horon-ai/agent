@@ -292,6 +292,40 @@ class WorkflowGuardTests(unittest.TestCase):
         sp_block = (ROOT / '.github/workflows/structural-perf.yml').read_text().split(
             '\n  structural-perf-required:\n', 1)[1]
         self.assertIn('[ "$perf_result" != success ] && [ "$perf_result" != skipped ]', sp_block)
+
+    def test_macos_target_reuse_and_cached_tools(self):
+        ci_text = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertIn('scripts/ci/check_warnings.sh --target ${{ matrix.target }}', ci_text)
+        self.assertIn(
+            'cargo test --locked --target ${{ matrix.target }} -p horon-package-example --test extension_layouts',
+            ci_text,
+        )
+        for cache_key in (
+            'actionlint-${{ runner.os }}-v1.7.12',
+            'bun-${{ runner.os }}-ts-sdk-',
+            'bun-${{ runner.os }}-docs-site-',
+            'uv-${{ runner.os }}-py${{ matrix.python }}-',
+            'minilm-l6-v2-${{ runner.os }}-v1',
+            'direnv-linux-amd64-v2.38.2-148820a187930d36',
+            'justrust-${{ runner.os }}-',
+            'windows-pip-pywinpty-v1',
+        ):
+            with self.subTest(cache_key=cache_key):
+                self.assertIn(cache_key, ci_text)
+
+    def test_ci_required_gate_rejects_abandoned_result(self):
+        # Simulate the exact jq filter used by ci-required to ensure queue-evicted
+        # matrix legs (`abandoned`) never count as a green gate.
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        match = re.search(r"bad=\"\$\(echo \"\$NEEDS\" \| jq -r '([^']+)'\)\"", workflow)
+        self.assertIsNotNone(match, 'missing strict allowlist filter in ci-required')
+        jq_filter = match.group(1)
+        out = subprocess.check_output(
+            ['jq', '-r', jq_filter],
+            input='{"changes":{"result":"success"},"build":{"result":"abandoned"},"docs":{"result":"skipped"}}',
+            text=True,
+        ).strip()
+        self.assertEqual(out, 'build:abandoned')
         # A push to main, a tag, a dispatch and a re-run are never classified,
         # because release evidence needs every mandatory job to have run.
         import importlib.util
