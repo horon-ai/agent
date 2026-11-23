@@ -1514,8 +1514,9 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.send("\r")
             terminal.read_until("attaching to", STEP_TIMEOUT, "return to the parent", since=parent_start)
             terminal.read_until(f"resumed {parent_session}", STEP_TIMEOUT, "parent session reattached", since=parent_start)
-
-        terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
+            terminal.read_until_live(SESSION_READY, STEP_TIMEOUT, "parent session ready before archiving", since=parent_start)
+        else:
+            terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before archiving", since=reply_start)
         archive_picker_start = len(terminal.transcript)
         terminal.send("/resume\r")
         terminal.read_until(archive_label, STEP_TIMEOUT, "saved session in recent list", since=archive_picker_start)
