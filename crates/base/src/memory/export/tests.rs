@@ -45,10 +45,6 @@ impl TempVolume {
     fn layout(&self) -> VolumeLayout {
         VolumeLayout::for_home(&self.path)
     }
-
-    fn store_root(&self) -> PathBuf {
-        self.path.join("memory")
-    }
 }
 
 impl Drop for TempVolume {
