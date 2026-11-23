@@ -131,10 +131,12 @@ reinforcements: []\n\
 // ---------------------------------------------------------------------------
 
 /// A mock control plane that answers every draft path and records each request.
+///
+/// The server thread runs until the test process exits; it holds no state the
+/// test needs after the assertions, so nothing joins it.
 struct MockControlPlane {
     endpoint: String,
     requests: Arc<Mutex<Vec<(String, String)>>>,
-    handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl MockControlPlane {
@@ -184,24 +186,17 @@ impl MockControlPlane {
                 let _ = stream.write_all(&payload);
             }
         });
+        // Dropping a `JoinHandle` detaches the thread; the accept loop keeps the
+        // listener alive until the test process exits.
+        drop(handle);
         Self {
             endpoint: format!("http://127.0.0.1:{port}"),
             requests,
-            handle: Some(handle),
         }
     }
 
     fn requests(&self) -> Vec<(String, String)> {
         self.requests.lock().expect("lock").clone()
-    }
-
-    fn stop(&mut self) {
-        if let Some(handle) = self.handle.take() {
-            // The server thread blocks in `accept`; a connection wakes it once
-            // and the loop ends when the listener is closed by dropping the
-            // process, so the join here is best effort and not asserted on.
-            drop(handle);
-        }
     }
 }
 
@@ -329,7 +324,7 @@ fn a_created_key_is_shown_and_a_revoked_key_closes_the_volume() {
 
 #[test]
 fn delete_user_finishes_every_step_before_reporting_deleted() {
-    let mut control = MockControlPlane::start();
+    let control = MockControlPlane::start();
     let fixture = Fixture::new();
     let home = fixture.home();
     seed_page(
@@ -382,12 +377,11 @@ fn delete_user_finishes_every_step_before_reporting_deleted() {
     for (path, body) in &requests {
         assert!(!body.contains("ZZ-none-should-leak"), "request {path} carried the body");
     }
-    control.stop();
 }
 
 #[test]
 fn a_retried_delete_user_reports_the_failed_step_and_stays_retryable() {
-    let mut control = MockControlPlane::start();
+    let control = MockControlPlane::start();
     let fixture = Fixture::new();
     let home = fixture.home();
     seed_page(
@@ -422,7 +416,6 @@ fn a_retried_delete_user_reports_the_failed_step_and_stays_retryable() {
     let stdout = assert_success("deletion status", &status);
     let value: serde_json::Value = serde_json::from_str(stdout.trim()).expect("JSON");
     assert_eq!(value["job"], serde_json::json!(null));
-    control.stop();
 }
 
 #[test]
