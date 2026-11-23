@@ -110,6 +110,15 @@ pub enum Command {
     /// reads them mid-turn; the answer echoes the text so the client settles
     /// exactly the messages it held.
     Steer(String),
+    /// Continue the last failed run of the attached session.
+    ///
+    /// The run id is not carried here: only the daemon knows which run ended
+    /// last and whether it may still be continued, so the bridge reads
+    /// `last_stop` from the runtime state and asks it to continue that. A
+    /// client-side id would be a guess, and the guess is exactly what a
+    /// repeated click would turn into a second turn.
+    Retry,
+
     /// Read the daemon values the settings screen displays.
     ///
     /// The rows are the daemon's answer to a request this client never composes
@@ -219,6 +228,12 @@ pub enum Incoming {
     ArchivedSessions(Vec<SessionRow>),
     /// Noted sessions that no longer exist, and how many could not be checked.
     SessionsChecked { gone: Vec<String>, unverified: usize },
+    /// A requested retry ran nothing, and the sentence saying why.
+    ///
+    /// Separate from a notice because the press already claimed the turn on
+    /// screen: the refusal has to give that claim back, or the client would keep
+    /// saying a turn runs while nothing does.
+    RetryRefused(String),
     /// The skills the harness reports for the session it serves.
     Skills(Vec<SkillRow>),
     /// The slash commands the installed packages supply for that session.

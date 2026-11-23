@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any, Literal, TypeAlias, TypedDict
 
 API_VERSION_MAJOR = 1
-API_VERSION_MINOR = 29
+API_VERSION_MINOR = 30
 
 CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("durable_runtime_v1", ("get_runtime_state", "apply_control", "get_control_receipt")),
@@ -42,6 +42,7 @@ CAPABILITY_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("session_fork_at_v1", ("fork_session_at",)),
     ("todo_edit_v1", ("set_todo_status",)),
+    ("turn_retry_v1", ("send_message.expected_run_id",)),
 )
 
 """Additive capabilities this protocol version defines, with the surfaces each

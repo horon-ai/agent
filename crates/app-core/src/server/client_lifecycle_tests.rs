@@ -1210,7 +1210,6 @@ fn reload_starting_rejects_new_turn_without_spawning_processing_task() {
         let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
         let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (swarm_event_tx, _) = broadcast::channel(8);
-
         start_processing_message(
             ProcessingMessage {
                 id: 42,
@@ -1219,6 +1218,7 @@ fn reload_starting_rejects_new_turn_without_spawning_processing_task() {
                 system_reminder: None,
                 active_skill: None,
                 v2: None,
+                expected_run_id: None,
             },
             "session_guard",
             None,
@@ -1314,7 +1314,6 @@ async fn client_initiated_turn_fans_out_stream_and_terminal_events_to_live_attac
     let mut processing_message_id = None;
     let mut processing_session_id = None;
     let mut processing_task = None;
-
     start_processing_message(
         ProcessingMessage {
             id: 479,
@@ -1323,6 +1322,7 @@ async fn client_initiated_turn_fans_out_stream_and_terminal_events_to_live_attac
             system_reminder: None,
             active_skill: None,
             v2: None,
+            expected_run_id: None,
         },
         session_id,
         None,
@@ -1430,7 +1430,6 @@ fn accepted_reload_recovery_continuation_marks_intent_delivered() -> anyhow::Res
         let event_history = Arc::new(RwLock::new(std::collections::VecDeque::new()));
         let event_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let (swarm_event_tx, _) = broadcast::channel(8);
-
         start_processing_message(
             ProcessingMessage {
                 id: 77,
@@ -1439,6 +1438,7 @@ fn accepted_reload_recovery_continuation_marks_intent_delivered() -> anyhow::Res
                 system_reminder: Some(continuation.to_string()),
                 active_skill: None,
                 v2: None,
+                expected_run_id: None,
             },
             session_id,
             None,
@@ -1528,7 +1528,6 @@ fn reload_starting_rejects_new_turns_for_multiple_sessions() {
             let mut processing_message_id = None;
             let mut processing_session_id = None;
             let mut processing_task = None;
-
             start_processing_message(
                 ProcessingMessage {
                     id: message_id,
@@ -1537,6 +1536,7 @@ fn reload_starting_rejects_new_turns_for_multiple_sessions() {
                     system_reminder: None,
                     active_skill: None,
                     v2: None,
+                    expected_run_id: None,
                 },
                 session_id,
                 None,

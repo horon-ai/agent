@@ -409,6 +409,8 @@ unknown rather than assuming the defaults. The SDKs expose the call as
 
 For a text-only tool attempt, `soft_interrupt_injected` carries `point: "native_tool_retry"` and an optional `notice` for display. The notice describes the upcoming retry. Interrupts without a display notice omit that field.
 
+A daemon advertising `turn_retry_v1` checks `expected_run_id` on a `send_message` request that continues a failed turn. The check and the start share the same session lock. If another request has already continued or replaced the run, the daemon refuses it before adding any message.
+
 ## Tool verdict (protocol 1.19)
 
 The harness API keeps major version 1 and moved from minor version 18 to 19.

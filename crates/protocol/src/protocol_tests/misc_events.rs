@@ -237,6 +237,7 @@ fn test_message_request_roundtrip_preserves_images_and_system_reminder() -> Resu
         system_reminder: Some("be concise".to_string()),
         active_skill: Some("verification".to_string()),
         no_reply: true,
+        expected_run_id: None,
     };
     let json = serde_json::to_string(&req)?;
     let decoded = parse_request_json(&json)?;
@@ -247,6 +248,7 @@ fn test_message_request_roundtrip_preserves_images_and_system_reminder() -> Resu
         system_reminder,
         active_skill,
         no_reply,
+        expected_run_id,
     } = decoded
     else {
         return Err(anyhow!("expected Message"));
@@ -259,6 +261,7 @@ fn test_message_request_roundtrip_preserves_images_and_system_reminder() -> Resu
     assert_eq!(system_reminder.as_deref(), Some("be concise"));
     assert_eq!(active_skill.as_deref(), Some("verification"));
     assert!(no_reply);
+    assert_eq!(expected_run_id, None);
     Ok(())
 }
 

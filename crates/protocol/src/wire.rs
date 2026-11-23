@@ -147,6 +147,15 @@ pub enum Request {
         /// acknowledges it without starting a model turn.
         #[serde(default, skip_serializing_if = "is_false")]
         no_reply: bool,
+        /// Continue the run the client names instead of starting unrelated work.
+        ///
+        /// The daemon decides while it holds the session: a run that already
+        /// moved on, never stopped, or stopped for a reason no retry can fix is
+        /// answered with an error and no turn runs. That decision is what makes
+        /// a second click, or a second attached client asking for the same run,
+        /// harmless. Omitted by clients that do not continue a run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_run_id: Option<String>,
     },
 
     /// Ask the daemon to drop a queued `message` request before the agent has

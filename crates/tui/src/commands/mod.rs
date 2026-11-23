@@ -7,7 +7,7 @@
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
 //!    `/compact`, `/jobs`, `/model`, `/effort`, `/fork`, `/mcp`, `/new`, `/note`, `/pin`,
 //!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/todo`,
-//!    `/tools`, `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/diff`,
+//!    `/tools`, `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/retry`, `/diff`,
 //!    `/commit`, `/swarm` and `/voice`.
 //! 2. Command files outrank the harness's own commands. `/review src` must run
 //!    the project's `.horon/commands/review.md`, which is why a file wins over
@@ -148,6 +148,8 @@ pub enum Local {
     Replay,
     /// List the messages waiting for the running turn to end.
     Queue,
+    /// Continue the last failed turn of this session.
+    Retry,
     /// Show the attached session's todo list and change an item's status.
     Todo,
     /// Show the staged and unstaged changes in the session's workspace.
@@ -201,6 +203,7 @@ impl Local {
             "export" => Some(Self::Export),
             "replay" => Some(Self::Replay),
             "queue" => Some(Self::Queue),
+            "retry" => Some(Self::Retry),
             "todo" | "todos" => Some(Self::Todo),
             "diff" => Some(Self::Diff),
             "commit" => Some(Self::Commit),
@@ -248,6 +251,7 @@ impl Local {
             Self::Export => "export",
             Self::Replay => "replay",
             Self::Queue => "queue",
+            Self::Retry => "retry",
             Self::Todo => "todo",
             Self::Diff => "diff",
             Self::Commit => "commit",
@@ -844,6 +848,7 @@ const LOCAL_NAMES: &[&str] = &[
     "rename",
     "replay",
     "resume",
+    "retry",
     "settings",
     "skills",
     "stats",

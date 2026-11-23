@@ -1034,6 +1034,40 @@ def happy_path(launch: Launch, case_root: str, base_url: str) -> str:
         raise Failure(f"{failure}\n--- daemon log ---\n{daemon_log_tail(launch.home)}") from failure
 
 
+def retry_turn_smoke(terminal: Terminal, home: str, base_url: str) -> None:
+    from pathlib import Path
+    from urllib.request import Request, urlopen
+
+    def set_fixture(ready: bool) -> None:
+        request = Request(base_url + "/__retry_fixture", data=json.dumps({"ready": ready}).encode(),
+                          headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=5) as response:
+            if not json.load(response)["ok"]:
+                raise Failure("could not change the retry fixture state")
+
+    prompt = "[tui:retry-proof] count this user prompt once"
+    set_fixture(False)
+    start = len(terminal.transcript)
+    terminal.send(f"{prompt}\r")
+    terminal.read_until("TUI retry fixture provider failure", STEP_TIMEOUT, "provider refused the first attempt",
+                        since=start)
+    time.sleep(0.15)
+    set_fixture(True)
+    start = len(terminal.transcript)
+    terminal.send("/retry\r")
+    terminal.read_until("retry-fixture-recovered", STEP_TIMEOUT, "continued the failed request", since=start)
+    terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "retry turn settled", since=start)
+    start = len(terminal.transcript)
+    terminal.send("/retry\r")
+    terminal.read_until("nothing was started", STEP_TIMEOUT, "completed work is not retried", since=start)
+
+    matching = [line for path in Path(home).glob("sessions/*/events.jsonl")
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if '"kind":"message_appended"' in line and prompt in line]
+    if len(matching) != 1:
+        raise Failure(f"expected one stored user prompt across retry, found {len(matching)}")
+
+
 def todo_edit_smoke(terminal: Terminal, home: str) -> None:
     from pathlib import Path
 
@@ -1079,6 +1113,9 @@ def todo_edit_smoke(terminal: Terminal, home: str) -> None:
     if updated["status"] != "completed" or updated["content"] != "externally updated todo":
         raise Failure(f"the refreshed edit did not preserve the updated todo: {updated!r}")
     terminal.send("\x1b")
+
+
+
 def git(root: str, env: dict[str, str], *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=root, env=env, text=True, timeout=STEP_TIMEOUT)
 
@@ -1487,6 +1524,7 @@ def _happy_path(launch: Launch, case_root: str, base_url: str) -> str:
             terminal.read_until("turn_end", STEP_TIMEOUT, "the current session reports its turn-end hook", since=observations_start)
             terminal.read_until_live(IDLE_STATUS, STEP_TIMEOUT, "turn ended before seeding the todo list", since=reply_start)
             todo_edit_smoke(terminal, home)
+            retry_turn_smoke(terminal, home, base_url)
             # The swarm smoke finds the parent by the approved tool call, so it
             # runs before the fork below: a branch inherits that call, and two
             # sessions holding it would make the parent ambiguous.

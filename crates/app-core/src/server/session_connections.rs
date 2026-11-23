@@ -40,6 +40,7 @@ pub(super) async fn connection_presence_pong(
             "soft_interrupt_ids".into(),
             "runtime_commands".into(),
             "session_connections".into(),
+            "turn_retry_v1".into(),
             // The daemon answers the stable API's durable runtime requests
             // (`get_runtime_state`, `apply_control`, `get_control_receipt`).
             // The bridge checks this before forwarding: an older daemon would

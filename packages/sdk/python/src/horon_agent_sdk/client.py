@@ -1696,6 +1696,23 @@ class HoronAgentClient:
             }
         )
 
+    async def continue_run(self, session_id: str, expected_run_id: str) -> None:
+        """Continue the named failed run after the daemon accepts it."""
+        self._require_capability("turn_retry_v1", "continue_run")
+        if not expected_run_id.strip():
+            raise HarnessError("invalid_option", "continue_run requires the failed run ID")
+        await self._request_ok(
+            {
+                "req": "send_message",
+                "session_id": session_id,
+                "content": "",
+                "system_reminder": (
+                    "Continue the failed task from where it left off. Do not repeat completed tool calls or edits."
+                ),
+                "expected_run_id": expected_run_id,
+            }
+        )
+
     async def send_context_message(self, session_id: str, content: str) -> None:
         """Persist a user message as context without starting a model turn."""
         await self._request_ok({"req": "send_message", "session_id": session_id, "content": content, "no_reply": True})

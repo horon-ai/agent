@@ -8,7 +8,7 @@
  */
 
 export const API_VERSION_MAJOR = 1;
-export const API_VERSION_MINOR = 29;
+export const API_VERSION_MINOR = 30;
 
 /**
  * Additive capabilities this protocol version defines, with the surfaces each
@@ -34,6 +34,7 @@ export const CAPABILITY_SURFACES: ReadonlyArray<readonly [string, readonly strin
   ["package_commands_v1", ["runtime_command.package_commands", "runtime_command.package_command"]],
   ["session_fork_at_v1", ["fork_session_at"]],
   ["todo_edit_v1", ["set_todo_status"]],
+  ["turn_retry_v1", ["send_message.expected_run_id"]],
 ];
 
 /** Every capability this protocol version defines, in advertisement order. */
@@ -759,6 +760,7 @@ export type ApiRequest =
       images?: ImageAttachment[];
       no_reply?: boolean;
       system_reminder?: string;
+      expected_run_id?: string;
     }
   | { req: "cancel"; session_id: string }
   | {

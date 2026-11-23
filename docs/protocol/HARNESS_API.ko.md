@@ -423,6 +423,8 @@ TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다
 
 텍스트 도구 호출을 재시도할 때 `soft_interrupt_injected`는 `point: "native_tool_retry"`와 화면에 표시할 선택 필드 `notice`를 보냅니다. 안내는 이어질 재시도를 설명합니다. 표시할 안내가 없는 인터럽트는 이 필드를 생략합니다.
 
+`turn_retry_v1`을 제공하는 데몬은 실패한 턴을 이어가는 `send_message` 요청에서 `expected_run_id`를 검사합니다. 같은 세션 잠금에서 검증과 실행을 시작합니다. 다른 요청이 이미 실패한 턴을 이어가거나 새 턴을 시작했다면 메시지를 추가하기 전에 거부합니다.
+
 ## 도구 판정(프로토콜 1.19)
 
 하네스 API는 주 버전 1을 유지하고 부 버전 18에서 19로 옮겼습니다. 아래 내용은 모두

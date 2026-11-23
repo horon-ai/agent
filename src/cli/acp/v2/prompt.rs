@@ -173,6 +173,7 @@ impl AcpRuntime {
             system_reminder: None,
             active_skill: None,
             no_reply: false,
+            expected_run_id: None,
         };
         {
             let _gate = v2.submit_gate.lock().await;

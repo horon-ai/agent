@@ -149,6 +149,7 @@ pub const BRIDGE_CAPABILITIES: &[&str] = &[
     // naming this capability.
     horon_agent_harness_api::CAPABILITY_SESSION_FORK_AT_V1,
     horon_agent_harness_api::CAPABILITY_TODO_EDIT_V1,
+    horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1,
 ];
 
 /// Capabilities the native daemon advertises in its ping reply. Empty when
@@ -386,6 +387,8 @@ where
     let durable_runtime_api_supported = daemon_caps.iter().any(|cap| cap == "durable_runtime_api");
     let cancellable_work_api_supported = daemon_caps.iter().any(|cap| cap == "cancellable_work_api");
     let effective_settings_api_supported = daemon_caps.iter().any(|cap| cap == "effective_settings_api");
+    let retry_capability = horon_agent_harness_api::CAPABILITY_TURN_RETRY_V1;
+    let retry_supported = daemon_caps.iter().any(|cap| cap == retry_capability);
     let session_fork_at_supported = daemon_caps.iter().any(|cap| cap == "session_fork_at_api");
     // The daemon owns the package catalog. The bridge advertises the matching
     // API capability only when the daemon can serve it, and forwards nothing
@@ -409,6 +412,7 @@ where
                 .iter()
                 .copied()
                 .filter(|cap| !OPT_IN_EVENT_CAPABILITIES.contains(cap) || event_capabilities.contains(&Some(*cap)))
+                .filter(|cap| retry_supported || *cap != retry_capability)
                 // The package commands ride the runtime-command request, so a
                 // daemon without that surface cannot answer them at all. The
                 // bridge cannot see which variants a daemon's enum holds; the
@@ -647,6 +651,10 @@ where
                         // than session state, so the bridge answers them here and
                         // the daemon never sees the request.
                         if let Some(frame) = message_modes::reply(&request) {
+                            send_frame!('translate, frame);
+                            continue;
+                        }
+                        if let Some(frame) = translate::refuse_unsupported_retry(&request, retry_supported) {
                             send_frame!('translate, frame);
                             continue;
                         }
@@ -1123,78 +1131,5 @@ mod socket_permission_tests {
 }
 
 #[cfg(test)]
-mod fragmented_reply_tests {
-    use super::*;
-    use horon_agent_platform::ipc::Listener;
-    use serde_json::json;
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn concurrent_history_replies_survive_api_requests_between_fragments() {
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            let path = std::env::temp_dir().join(format!("horon-agent-fragments-{}-{}.sock", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-            let mut listener = Listener::bind(&path).unwrap();
-            let (client, bridge) = tokio::io::duplex(4 * 1024 * 1024);
-            let (bridge_read, bridge_write) = tokio::io::split(bridge);
-            let task = tokio::spawn(run_bridge_stream(bridge_read, bridge_write, path.clone()));
-            let (client_read, mut client_write) = tokio::io::split(client);
-            let mut replies = BufReader::new(client_read).lines();
-            write_json_line(&mut client_write, &json!({"v":1,"id":1,"req":"hello","min_version":1,"max_version":1})).await.unwrap();
-            let (daemon, _) = listener.accept().await.unwrap();
-            let (daemon_read, mut daemon_write) = daemon.into_split();
-            let mut requests = BufReader::new(daemon_read).lines();
-            assert_eq!(serde_json::from_str::<Value>(&replies.next_line().await.unwrap().unwrap()).unwrap()["ev"], "hello_ok");
-            write_json_line(&mut client_write, &json!({"v":1,"id":2,"req":"attach_session","session_id":"fragment-session"})).await.unwrap();
-            for _ in 0..3 {
-                let request: Value = serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
-                if request["type"] == "state" {
-                    write_json_line(&mut daemon_write, &json!({"type":"state","id":request["id"],"session_id":"fragment-session"})).await.unwrap();
-                }
-            }
-            loop {
-                let frame: Value = serde_json::from_str(&replies.next_line().await.unwrap().unwrap()).unwrap();
-                if frame["ev"] == "attached" { break; }
-            }
-            for id in 3..6 {
-                write_json_line(&mut client_write, &json!({"v":1,"id":id,"req":"get_history","session_id":"fragment-session"})).await.unwrap();
-            }
-            let mut history_ids = Vec::new();
-            for _ in 0..3 {
-                let request: Value = serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
-                assert_eq!(request["type"], "get_history");
-                history_ids.push(request["id"].clone());
-            }
-            for (index, id) in history_ids.into_iter().enumerate() {
-                // Larger than the socket send buffer, forcing the bridge to
-                // consume an unterminated prefix before API activity cancels it.
-                let text = "x".repeat(1024 * 1024);
-                let prefix = format!("{{\"type\":\"history\",\"id\":{id},\"session_id\":\"fragment-session\",\"messages\":[{{\"role\":\"assistant\",\"content\":\"{text}");
-                daemon_write.write_all(prefix.as_bytes()).await.unwrap();
-                let ping_id = 20 + index;
-                write_json_line(&mut client_write, &json!({"v":1,"id":ping_id,"req":"ping"})).await.unwrap();
-                let ping: Value = serde_json::from_str(&requests.next_line().await.unwrap().unwrap()).unwrap();
-                assert_eq!(ping["type"], "ping");
-                daemon_write.write_all(b"\"}]}\n").await.unwrap();
-                write_json_line(&mut daemon_write, &json!({"type":"pong","id":ping["id"]})).await.unwrap();
-                let mut history_seen = false;
-                let mut pong_seen = false;
-                while !history_seen || !pong_seen {
-                    let reply: Value = serde_json::from_str(&replies.next_line().await.unwrap().unwrap()).unwrap();
-                    if reply["reply_to"] == index + 3 {
-                        assert_eq!(reply["ev"], "history");
-                        assert_eq!(reply["messages"][0]["content"], text);
-                        history_seen = true;
-                    }
-                    if reply["reply_to"] == ping_id {
-                        assert_eq!(reply["ev"], "pong");
-                        pong_seen = true;
-                    }
-                }
-            }
-            drop(client_write);
-            drop(replies);
-            task.await.unwrap().unwrap();
-            drop(listener);
-            std::fs::remove_file(path).unwrap();
-        }).await.expect("fragmented history requests must all receive correlated replies");
-    }
-}
+#[path = "fragmented_reply_tests.rs"]
+mod fragmented_reply_tests;

@@ -33,7 +33,10 @@ pub enum Action {
         always: bool,
     },
     /// Answer a structured question.
-    Ask { ask_id: String, answers: Vec<AskSelection> },
+    Ask {
+        ask_id: String,
+        answers: Vec<AskSelection>,
+    },
     /// Ask the harness to run one of its own commands.
     Runtime {
         command: horon_agent_sdk::RuntimeCommand,
@@ -96,6 +99,7 @@ pub enum Action {
     EditDraft,
     /// Give the terminal to the editor with a private copy of a resolved artifact.
     OpenArtifact(std::path::PathBuf),
+    Retry,
     /// Write the attached session's transcript as a standalone HTML report.
     ///
     /// The path is the destination the reader typed, kept exactly as typed so
