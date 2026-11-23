@@ -73,6 +73,7 @@ pub(crate) fn drain_events(app: &mut App) -> Redraw {
                 {
                     changed = Redraw::Stream;
                 }
+                app.note_work(&event);
                 app.apply_event(&event);
             }
             Incoming::Notice(message) => app.warn(message),

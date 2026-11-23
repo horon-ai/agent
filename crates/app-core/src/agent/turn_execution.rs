@@ -273,27 +273,6 @@ impl Agent {
         input_id
     }
 
-    /// Fire the `turn_start` observer hook when a turn begins, before the model
-    /// starts generating (and before the first `pre_tool`). This lets external
-    /// integrations (terminal multiplexers, status bars) detect that the agent
-    /// is actively working during the otherwise-invisible window between prompt
-    /// submission and the first tool call. No-op (without building the payload)
-    /// when the hook is not configured.
-    fn fire_turn_start_hook(&self, source: &str) {
-        crate::extensions::observer::turn_started(&self.session.id, source);
-        if !crate::hooks::hook_configured("turn_start") {
-            return;
-        }
-        let mut event = crate::hooks::HookEvent::new("turn_start")
-            .session_id(self.session.id.clone())
-            .field("MODEL", self.provider_model())
-            .field("SOURCE", source.to_string());
-        if let Some(cwd) = self.working_dir() {
-            event = event.cwd(cwd);
-        }
-        crate::hooks::dispatch_observer(event);
-    }
-
     /// Fire the `turn_end` observer hook with turn outcome metadata.
     /// No-op (without building the payload) when the hook is not configured.
     fn fire_turn_end_hook(&self, result: &Result<()>, started_at: Instant, start_message_index: usize) {
@@ -302,6 +281,7 @@ impl Agent {
             return;
         }
         let status = if result.is_ok() { "ok" } else { "error" };
+        crate::server::session_notes::note_hook(self.session_id(), "turn_end", Some(status));
         let mut event = crate::hooks::HookEvent::new("turn_end")
             .session_id(self.session.id.clone())
             .field("STATUS", status)

@@ -1521,6 +1521,10 @@ jobs:
             -- server::runtime_commands::tests::runtime_commands_read_actual_state_without_inference
           python3 scripts/ci/run_lib_tests.py \
             --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 1 \
+            -- server::session_notes::tests::
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
             --timeout 60 --min-passed 1 \
             -- agent::provider::model_preset::tests::
 

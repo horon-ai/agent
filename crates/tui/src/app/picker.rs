@@ -566,6 +566,7 @@ impl App {
         // The candidates were read from the directory of the session being
         // left; the next Tab reads the directory this session reported.
         self.path_cycle = None;
+        self.work_notes.reset();
         self.transcript.clear();
         for message in &session.history {
             match message.role.as_str() {

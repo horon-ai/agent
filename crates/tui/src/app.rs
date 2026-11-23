@@ -187,6 +187,7 @@ pub struct App {
     /// Read here and acted on where the title is written, which also knows
     /// whether the terminal keeps a title worth adding to.
     pub title_state: bool,
+    pub(crate) work_notes: crate::work_notes::WorkNotes,
     /// What the client is attached to, for the status line.
     pub description: String,
     /// Events from the bridge thread.
@@ -450,6 +451,7 @@ impl App {
             // Off unless a settings layer asks for it: a window named after its
             // session is what every setup saw before the key existed.
             title_state: false,
+            work_notes: crate::work_notes::WorkNotes::default(),
             description,
             events,
             model: None,
@@ -545,6 +547,7 @@ impl App {
             // Off unless a settings layer asks for it: a window named after its
             // session is what every setup saw before the key existed.
             title_state: false,
+            work_notes: crate::work_notes::WorkNotes::default(),
             description: "not connected".to_string(),
             events: receiver,
             model: None,

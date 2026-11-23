@@ -397,6 +397,7 @@ pub(crate) fn harness_description(name: &str) -> &'static str {
         "trim" => "preview or apply a request-only trim of old tool results",
         "overnight" => "run the overnight work queue",
         "plan" => "enter or leave plan mode",
+        "observations" => "show, enable, disable or clear work and hook notes for this session",
         "productivity" => "generate the productivity report",
         "refresh_model_list" => "re-read the provider's model catalog",
         "remote" => "show or change the remote access settings",

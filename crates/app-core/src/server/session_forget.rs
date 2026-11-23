@@ -86,6 +86,7 @@ pub(crate) fn forget_removed_session(session_id: &str, retired_sink: Option<&mps
     crate::extensions::observer::forget_session(session_id);
     horon_agent_provider_core::degradation::forget_session(session_id);
     crate::server::session_observation::forget_session(session_id);
+    crate::server::session_notes::forget_session(session_id);
     crate::durable_input_runtime::forget_session(session_id);
     crate::server::control_receipts::forget_session(session_id);
     crate::agent::hosted_notice::clear_session(session_id);

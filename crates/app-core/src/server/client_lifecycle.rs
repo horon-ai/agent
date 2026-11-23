@@ -2547,6 +2547,12 @@ pub(super) async fn handle_client(
                             "swarm_id": member.and_then(|m| m.swarm_id.as_deref()), "role": member.map(|m| &m.role)});
                         return Ok((data.clone(), serde_json::to_string_pretty(&data)?));
                     }
+                    // A per-session status view must answer while the turn that
+                    // it describes still holds the agent lock, so it comes from
+                    // the notes registry instead of the agent.
+                    if parsed == horon_agent_harness_api::RuntimeCommand::Observations {
+                        return super::session_notes::command(&client_session_id, &args);
+                    }
                     let mut guard = agent.try_lock().map_err(|_| anyhow::anyhow!("Session is busy. Retry this runtime command after the current turn."))?;
                     super::runtime_commands::execute(&mut guard, parsed, &args, swarm_enabled, serde_json::Value::Null).await
                 }.await;
