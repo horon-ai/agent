@@ -1,0 +1,162 @@
+{
+  "note": "Synthetic Korean assistant memories and keyword/entity queries. Expectations list every page that answers the query; a hit counts when one of them is in the top k.",
+  "pages": [
+    {
+      "id": "mem_1001_a",
+      "kind": "preference",
+      "category": "preference",
+      "title": "민열님은 아침 회의를 선호",
+      "body": "민열님은 아침 9시 이전 회의를 선호하고 오후 늦은 회의는 피한다.",
+      "tags": ["schedule", "meeting"],
+      "entities": ["민열"],
+      "project": null
+    },
+    {
+      "id": "mem_1002_b",
+      "kind": "person",
+      "category": "entity",
+      "title": "김서연 디자인 리드",
+      "body": "김서연은 SURI 디자인 리드이고 슬랙 핸들은 seoyeon이다.",
+      "tags": [],
+      "entities": ["김서연", "SURI"],
+      "project": null
+    },
+    {
+      "id": "mem_1003_c",
+      "kind": "event",
+      "category": "fact",
+      "title": "11월 24일 디자인 리뷰",
+      "body": "디자인 리뷰 회의가 11월 24일 오후 2시에 열린다.",
+      "tags": ["schedule"],
+      "entities": ["SURI"],
+      "project": null
+    },
+    {
+      "id": "mem_1004_d",
+      "kind": "fact",
+      "category": "fact",
+      "title": "SURI 배포 창구",
+      "body": "SURI 프로덕션 배포는 화요일과 목요일 저녁에만 한다.",
+      "tags": ["deploy"],
+      "entities": ["SURI"],
+      "project": null
+    },
+    {
+      "id": "mem_1005_e",
+      "kind": "procedure",
+      "category": "lesson",
+      "title": "릴리스 체크리스트",
+      "body": "릴리스 전에 CI 경고 0과 벤치마크 기준선을 확인한다.",
+      "tags": ["release"],
+      "entities": [],
+      "project": null
+    },
+    {
+      "id": "mem_1006_f",
+      "kind": "preference",
+      "category": "preference",
+      "title": "커피는 아메리카노",
+      "body": "민열님은 우유가 들어간 커피를 마시지 않는다.",
+      "tags": [],
+      "entities": ["민열"],
+      "project": null
+    },
+    {
+      "id": "mem_1007_g",
+      "kind": "entity",
+      "category": "entity",
+      "title": "호론 에이전트 프로젝트",
+      "body": "호론 에이전트는 러스트 워크스페이스이고 기본 브랜치는 dev다.",
+      "tags": ["project"],
+      "entities": ["호론"],
+      "project": null
+    },
+    {
+      "id": "mem_1008_h",
+      "kind": "fact",
+      "category": "fact",
+      "title": "테스트는 격리 홈에서",
+      "body": "카고 테스트는 HOME과 HORON_HOME을 임시 경로로 바꿔 실행한다.",
+      "tags": ["test"],
+      "entities": [],
+      "project": null
+    },
+    {
+      "id": "mem_1009_i",
+      "kind": "person",
+      "category": "entity",
+      "title": "박준호 백엔드",
+      "body": "박준호는 결제 서비스 백엔드를 맡고 있다.",
+      "tags": [],
+      "entities": ["박준호"],
+      "project": null
+    },
+    {
+      "id": "mem_1010_j",
+      "kind": "event",
+      "category": "fact",
+      "title": "12월 2일 분기 계획",
+      "body": "분기 계획 회의는 12월 2일 오전 10시에 열린다.",
+      "tags": ["schedule"],
+      "entities": [],
+      "project": null
+    },
+    {
+      "id": "mem_1011_k",
+      "kind": "preference",
+      "category": "preference",
+      "title": "보고는 짧게",
+      "body": "보고는 결과와 근거를 먼저 쓰고 구현 세부는 뒤에 둔다.",
+      "tags": [],
+      "entities": ["민열"],
+      "project": null
+    },
+    {
+      "id": "mem_1012_l",
+      "kind": "lesson",
+      "category": "lesson",
+      "title": "빌드 잠금",
+      "body": "무거운 빌드는 build-lock으로 한 번에 하나만 돌린다.",
+      "tags": ["build"],
+      "entities": [],
+      "project": null
+    },
+    {
+      "id": "mem_1013_m",
+      "kind": "fact",
+      "category": "fact",
+      "title": "SQLite FTS5",
+      "body": "FTS5는 BM25 순위와 trigram 토크나이저를 제공한다.",
+      "tags": ["sqlite"],
+      "entities": [],
+      "project": null
+    },
+    {
+      "id": "mem_1014_n",
+      "kind": "correction",
+      "category": "correction",
+      "title": "배포 요일 정정",
+      "body": "배포는 화요일과 목요일이 아니라 수요일과 금요일이다.",
+      "tags": ["deploy"],
+      "entities": [],
+      "project": null
+    }
+  ],
+  "queries": [
+    {"text": "아침회의선호", "expect": ["mem_1001_a"]},
+    {"text": "김서연", "expect": ["mem_1002_b"]},
+    {"text": "디자인 리뷰 일정", "expect": ["mem_1003_c"]},
+    {"text": "배포는 언제 하나", "expect": ["mem_1004_d", "mem_1014_n"]},
+    {"text": "릴리스 체크리스트", "expect": ["mem_1005_e"]},
+    {"text": "커피 취향", "expect": ["mem_1006_f"]},
+    {"text": "기본 브랜치", "expect": ["mem_1007_g"]},
+    {"text": "테스트격리", "expect": ["mem_1008_h"]},
+    {"text": "박준호", "expect": ["mem_1009_i"]},
+    {"text": "분기계획회의", "expect": ["mem_1010_j"]},
+    {"text": "보고는짧게", "expect": ["mem_1011_k"]},
+    {"text": "빌드잠금", "expect": ["mem_1012_l"]},
+    {"text": "trigram 토크나이저", "expect": ["mem_1013_m"]},
+    {"text": "배포 요일 정정", "expect": ["mem_1014_n"]},
+    {"text": "SURI 프로덕션 배포", "expect": ["mem_1004_d"]}
+  ]
+}

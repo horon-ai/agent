@@ -26,6 +26,14 @@ impl Agent {
         agent
     }
 
+    /// Build an Agent for `horon-agent run --no-session`: nothing this run
+    /// does is saved, journaled or left to resume.
+    pub fn for_memory_only_run(provider: Arc<dyn Provider>, registry: Registry) -> Self {
+        let mut agent = Self::new(provider, registry);
+        agent.session.set_memory_only(true);
+        agent
+    }
+
     /// Restore a stored session for a one-shot run, keeping the cache deferral.
     ///
     /// A restore swaps in a freshly loaded session, so the flag set by

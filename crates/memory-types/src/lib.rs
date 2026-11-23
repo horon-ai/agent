@@ -1,5 +1,7 @@
 pub mod graph;
+pub mod page;
 pub use graph::{ClusterEntry, Edge, EdgeKind, GRAPH_VERSION, GraphMetadata, MemoryGraph, TagEntry};
+pub use page::{MemoryPage, PageId, PageIdError, PageKind, PageLink, PageLinkKind, ProjectSlugError};
 
 use std::time::Instant;
 
@@ -221,7 +223,7 @@ pub enum TrustLevel {
 }
 
 /// A reinforcement breadcrumb tracking when/where a memory was reinforced
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reinforcement {
     pub session_id: String,
     pub message_index: usize,
@@ -1048,3 +1050,7 @@ mod lesson_category_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "page_tests.rs"]
+mod page_tests;

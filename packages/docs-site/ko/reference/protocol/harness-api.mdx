@@ -33,6 +33,60 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 프로파일로만 나가므로, 이 빌드에는 OAuth로 인증하는 모델 런타임이 없다. `openai-oauth:`
 접두사는 남아 있지만 그 런타임이 없어 호출 전에 실패한다(`docs/provider/MODEL.ko.md`).
 
+## 로컬 소켓 밖 노출
+
+기본 엔드포인트는 로컬에 머문다. Unix 소켓, Windows의 네임드 파이프, 또는 stdio 연결 하나다. 브리지는 같은 프레임을 TCP로도 서비스할 수 있으며, TLS 종료 프록시나 SSH 포워딩, 다른 기기가 이 경로로 접속한다. 로컬 소켓의 핸드셰이크는 바이트 단위로 그대로이므로 기존 클라이언트는 영향을 받지 않는다.
+
+| 스위치 | 위치 | 의미 |
+| --- | --- | --- |
+| `--api-bind IP:PORT` | `horon-agent api-bridge` | 로컬 소켓과 함께 그 TCP 주소에서 API를 서비스한다 |
+| `HORON_AGENT_API_BIND` | 환경 변수 | 같은 주소. 컨테이너 진입점이나 슈퍼바이저가 쓴다 |
+| `[harness_api] bind` | `config.toml` | 같은 주소. 항상 한 주소를 노출하는 설치가 쓴다 |
+| `--api-insecure-behind-proxy` | `horon-agent api-bridge` | TLS 종료 프록시가 앞에 있다는 것을 확인한다 |
+| `HORON_AGENT_API_INSECURE_BEHIND_PROXY` | 환경 변수 | 같은 확인. `1` 또는 `true` |
+| `[harness_api] insecure_behind_proxy` | `config.toml` | 같은 확인 |
+
+플래그가 환경 변수를 이기고, 둘 다 파일보다 우선한다. bind 값은 `127.0.0.1:7946`이나 `[::1]:7946`처럼 리터럴 `IP:PORT`다. 호스트 이름은 거부한다. 바인드 시점의 이름 해석이 리스너가 루프백인지 결정하게 두면 안 되기 때문이다.
+
+주소를 허용하는 규칙은 둘이다.
+
+- **모든 TCP 연결이 인증한다.** 첫 줄은 `Authorization: Bearer <token>`이어야 하고, 이후 평소의 `hello`와 나머지 프레임은 그대로 이어진다. 토큰이 없거나, 형식이 틀렸거나, 1 KiB를 넘거나, 10초를 넘겨 늦게 오거나, 값이 틀렸거나, 폐기된 경우 연결은 데몬 접속과 요청 읽기 전에 닫히고 브리지는 아무것도 쓰지 않는다.
+- **루프백이 아닌 주소는 프록시 확인도 필요하다.** 내장 TLS가 없으므로, 루프백이 아닌 바인드는 운영자가 TLS가 앞단에서 종료됨을 확인하고 자격 증명이 하나 이상 있을 때만 시작한다. 루프백 TCP 바인드는 자격 증명만 필요하고 확인은 필요 없다.
+
+`--api-bind`로 시작한 브리지는 터미널 소유가 아니다. 노출된 엔드포인트에는 소속 터미널이 없으므로, 부모 프로세스가 끝나거나 유휴 시간이 지나도 종료하지 않는다. 슈퍼바이저나 `docker stop`, SIGTERM으로 멈춘다.
+
+bind 값은 리터럴 주소로 해석하며 이름을 조회하지 않는다. 루프백은 `127.0.0.0/8`과 `::1`뿐이다. `0.0.0.0`, `[::]`, 그리고 Fly 6PN의 `fdaa::/16`처럼 사설인 IPv6 주소를 포함한 나머지 리터럴은 모두 루프백이 아니며 자격 증명과 프록시 확인을 둘 다 요구한다. 듀얼 스택 리스너는 `[::]:PORT`에 바인드하고, 프로세스에 IPv4로 라우팅하는 플랫폼은 `0.0.0.0:PORT`를 쓴다. `localhost:7946` 같은 호스트 이름은 거부하므로 이름 해석이 어떤 규칙을 적용할지 결정하지 못한다.
+
+### 두 네트워크 경로와 서로 다른 보장
+
+네트워크 주소의 리스너에 닿는 길은 둘이고, 둘은 같지 않다.
+
+| 경로 | TLS | 닿을 수 있는 주체 | 증명하는 것 |
+| --- | --- | --- | --- |
+| 플랫폼 프록시를 거치는 공개 포트 | 프록시가 종료하고, 프로바이더의 사설 메시를 통해 평문으로 프로세스에 전달 | 프록시가 라우팅하는 누구나. 앱에 공개 IP가 없으면 공개되지 않는다 | 베어러 토큰뿐 |
+| 프로바이더 사설 네트워크 | 설계상 없음 | 조직 사설 네트워크의 모든 것. 내부 주소로 접근 | 베어러 토큰뿐 |
+
+어느 경로도 *사용자*를 인증하지 않는다. 사설 네트워크는 다른 조직을 막지만 그 위의 모든 프로세스는 동등하게 신뢰되며, 공개 포트는 공개다. 그래서 두 경로 모두 모든 TCP 연결이 토큰을 제시해야 하고, 프록시 확인은 TLS가 어디서 끝나는지만 밝히며 인증을 대신하지 않는다. 리스너는 전달 헤더를 신뢰하지 않으므로 `Fly-Client-IP`나 다른 프록시 헤더가 누구를 받아들일지에 영향을 주지 않는다.
+
+`docs/architecture/HOSTING.md`의 호스팅 대상인 Fly.io에서 공개 경로는 `fly.toml`(또는 Machine 설정)의 `services` 항목이고 `internal_port`가 `--api-bind`와 같아야 한다. Fly Proxy가 443에서 TLS를 종료하고 WireGuard 메시를 통해 평문을 프로세스로 전달하므로 그 경로는 `--api-insecure-behind-proxy`를 쓴다. 사설 경로는 조직의 6PN이다. 서비스가 IPv6 와일드카드(`[::]:PORT`)나 `fly-local-6pn`에 바인드하면 그곳에서 닿을 수 있고, `services` 항목도 앱 IP도 필요 없다. 6PN 주소는 `fdaa::/16` ULA의 IPv6 리터럴이므로 `[fdaa:…]:PORT`와 `[::]:PORT` 모두 루프백이 아닌 바인드이고 프록시 확인과 자격 증명이 필요하다. 정지되거나 유휴 상태인 Fly Machine에는 실행 중인 프로세스가 없으므로 리스너, 소켓, 메모리의 세션이 사라진다. 자격 증명 파일은 볼륨에 남아 다음 시작 뒤에도 동작한다. 그래서 리스너는 유휴 시간이나 시작 프로세스 종료로 스스로 끝나지 않으며(위 참조), 컨트롤 플레인의 autostop 정책이 이를 끝낸다. 이런 플랫폼 세부는 Fly.io 문서(`docs.fly.io/networking/tls-termination`, `docs.fly.io/networking/app-services`)가 설명한다. 이 저장소는 Fly API 호출도, 프록시 헤더 처리도, autostop도 구현하지 않는다.
+
+### 자격 증명 발급, 회전, 폐기
+
+| 명령 | 효과 |
+| --- | --- |
+| `horon-agent api-credentials issue --label NAME` | 자격 증명 하나를 만들고 토큰을 한 번만 출력한다 |
+| `horon-agent api-credentials rotate ID` | 자격 증명 하나의 토큰을 바꾸고 새 토큰을 한 번만 출력한다 |
+| `horon-agent api-credentials revoke ID` | 자격 증명 하나를 지운다. 그 토큰으로 오는 다음 연결은 거부된다 |
+| `horon-agent api-credentials list` | id, 레이블, 시각을 출력한다. 토큰은 절대 출력하지 않는다 |
+
+저장소는 `$HORON_HOME/harness-api/credentials.json`이며 `0700` 디렉터리 안의 `0600` 파일이고 `sha256:<hex>` 다이제스트만 담는다. 토큰 평문은 `issue`와 `rotate`의 출력에만 존재한다. 브리지는 연결마다 파일을 다시 읽으므로 회전과 폐기가 재시작 없이 적용된다. 저장소가 심볼릭 링크가 되었거나 소유자가 바뀌었거나 소유자 전용 권한을 잃으면 인증을 신뢰하지 않고 전부 거부한다. 사용자별 컨테이너에서 이 파일은 그 테넌트의 `HORON_HOME`에 있으므로 자격 증명은 구조적으로 사용자별이고, `list`는 테넌트를 네임스페이스로 표시한다.
+
+다른 기기의 클라이언트는 자기 전송을 준비한다. 앞단 프록시에서 TLS를 종료하고 `--api-bind` 주소로 평문을 전달하며, `hello` 앞에 인증 줄을 보낸다. 두 SDK 모두 내장 TCP 전송이 없고 이 빌드는 그것을 추가하지 않는다. 따라서 로컬 소켓으로의 SSH 포워딩이나 `--api-bind` 앞단 프록시가 지원 경로다. 그 프록시에서의 클라이언트 인증서가 지원되는 상호 인증 경로이며, 내장 mTLS는 조용히 빠진 기능이 아니라 의도적으로 뒤로 미룬 후속 작업이다.
+
+## 세션 목표
+
+`runtime_command`에 명령 `goal`과 인자 `["1200", "Ship a fix"]`를 보내 선택한 세션에 목표를 연결합니다. 첫 인자는 양수인 토큰 상한입니다. 응답에는 저장한 목표와 표시할 메시지가 들어 있습니다. 이미 활성 목표가 있으면 그대로 두고 새 요청에 오류를 반환합니다.
+
 ## 내구성 런타임 API(프로토콜 1.14)
 
 주 버전은 `1`에 머물고 부 버전이 13에서 14로 올랐다. 아래 표면은 모두 추가형이다.
@@ -109,6 +163,61 @@ OAuth 토큰은 SDK가 발급하거나 갱신하지 않는다. 런치 옵션 `in
 네 요청은 모두 실제로 처리된다. 데몬이 `pong`에서 `durable_runtime_api`를 알리고(`crates/app-core/src/server/session_connections.rs`) 세션과 취소 신호, 제어 원장을 소유하므로, 브리지는 요청을 데몬의 프레임으로 번역하고 응답을 되번역할 뿐이다(`crates/harness-api-server/src/translate.rs`). 데몬은 이 요청을 `crates/app-core/src/server/client_lifecycle.rs`에서 분기하고, 스냅샷은 세션의 관측 소유자로 만든다(`crates/app-core/src/server/runtime_state_api.rs`).
 
 그래서 `unsupported`는 **이 데몬이 구버전이라는 뜻**이지, 기능이 구현되지 않았다는 뜻이 아니다. 브리지는 접속한 데몬이 `durable_runtime_api`를 알리지 않았을 때만 `durable_runtime_v1`을 지목한 이 응답을 돌려준다. 구버전 데몬은 모르는 요청에 id가 없는 오류 프레임으로 답하므로 그대로 전달하면 클라이언트가 자기 타임아웃만큼 기다린다. 클라이언트 입장에서는 다른 기능이 없을 때와 같은 "이 서버가 제공하지 않는다"는 응답이므로 분기 처리는 달라지지 않는다.
+
+## 패키지 카탈로그 제어(프로토콜 1.26)
+
+데몬이 `pong`에 `package_control`을 알리면 브리지는 `package_control_v1`을 광고한다.
+`package_control` 요청은 `operation_id`와 `operation`을 담는다. 성공 응답에는 게시한
+세대와 그 카탈로그가 들어 있다. 카탈로그에는 패키지별 범위와 제거 이력이 포함된다.
+데몬은 독립 CLI와 같은 저장소 잠금으로 변경을 직렬화한다. 구버전 데몬에서도 기존
+프로토콜을 사용할 수 있다. 패키지 제어 요청에는 광고된 기능이 필요하다.
+
+데몬은 시작할 때와 파일 변경을 확인할 때 수신함에서 완성된 폴더를 찾는다.
+상태 요청은 데몬이 게시한 스냅샷을 읽는다. 구독자는 중간 알림을 놓쳐도 최신
+카탈로그 전체를 받는다. 변경 요청을 보낸 뒤 통신 오류가 발생하면 다시 요청하기
+전에 게시된 상태를 확인한다.
+
+## 패키지 명령(프로토콜 1.27)
+
+하네스 API는 주 버전 1을 유지하고 부 버전 26에서 27로 옮겼습니다. 여기 있는 것은 모두
+추가형입니다. 패키지 명령을 조회하지 않는 클라이언트는 이전과 같은 프레임을 읽습니다.
+
+브리지는 데몬이 `runtime_commands`를 보고했을 때만 `package_commands_v1`을 광고합니다.
+이 두 값은 별도 요청이 아니라 그 요청에 실려 가기 때문입니다. 클라이언트는 보내기 전에
+기능을 확인하고, 세 SDK 모두 기능이 없으면 프로세스 안에서 호출을 거부하므로 구버전
+서버는 답할 수 없는 값을 받지 않습니다.
+
+| 값 | `args` | `runtime_command_result`의 `data` |
+| --- | --- | --- |
+| `package_commands` | 비어 있음 | `PackageCommandList`: 세대와 이름순으로 정렬한 명령 |
+| `package_command` | `[package_id, command, …인자 단어]` | `PackageCommandOutcome`: 펼친 글 또는 자식의 답 |
+
+항목 하나는 입력할 이름, 선언한 패키지, 선언한 명령 이름, 방식, 설명 한 줄, 그리고
+자원이 선언했을 때의 `argument_hint`를 담습니다. `kind`는 사용자 메시지로 펼쳐지는
+Markdown 자원이면 `template`, 패키지의 자식이 통신 계약으로 답하는 명령이면
+`executable`입니다.
+
+```json
+{"v":1,"id":9,"req":"runtime_command","session_id":"s-1","command":"package_commands"}
+{"v":1,"reply_to":9,"ev":"runtime_command_result","session_id":"s-1","command":"package_commands","data":{"generation":7,"commands":[{"name":"hello:greet","package_id":"hello","command":"greet","kind":"executable","description":"Report the arguments this executable command was called with."},{"name":"hello:review","package_id":"hello","command":"review","kind":"template","description":"Review a file","argument_hint":"<path>"}]},"message":"..."}
+```
+
+결과는 `text`와 `output` 가운데 하나만 채웁니다. 템플릿은 클라이언트가 제출할 메시지인
+`text`를, 실행형 명령은 자식의 값을 글자로 그린 `output`과 그리지 않은 같은 값을 담은
+`data`를 설정합니다. 결과 프레임의 `message`는 설정된 쪽을 그대로 다시 담으므로,
+메시지만 인쇄하는 클라이언트는 새로 해석할 것이 없습니다.
+
+두 값 모두 세션이 턴 경계에서 고정한 패키지 세대를 읽습니다. 조회는 그 세대를 이름 짓고,
+실행은 그 세대에서 빠진 패키지의 항목을 파일을 읽거나 자식을 시작하기 전에 거부하며,
+오류는 그 항목이 오래됐다고 말합니다. 실행형 명령은 계획 모드, 승인 모드, 세션의 비활성
+이름과 `pre_tool` 훅을 확인하고, 도구 허용 목록은 확인하지 않습니다. 허용 목록은 모델이
+부를 수 있는 도구를 이름 짓고 사용자가 입력하는 명령은 다르기 때문입니다. 정책 이름은
+`ext__<package id>__<command>`입니다.
+
+세 SDK는 이 쌍을 Rust와 Python에서 `list_package_commands`와 `run_package_command`로,
+TypeScript에서 `listPackageCommands`와 `runPackageCommand`로 노출합니다. ACP v1과 v2는
+바뀌지 않습니다. `available_commands_update`는 여전히 클라이언트 자체의 `/model`,
+`/models`, `/effort`를 싣습니다. 패키지 명령은 하네스 API 표면이고 ACP 표면이 아닙니다.
 
 ## 핸드오프 압축
 
@@ -677,6 +786,27 @@ id를 지정하므로, 이미 끝난 턴과 경쟁에서 진 취소가 다음 �
 세션에는 다른 읽기와 같은 `unknown_session` 오류로 답한다.
 `horon export <session-id> [--out <path>]`는 두 경로가 같은 렌더러를 쓰므로
 같은 바이트를 쓴다.
+
+### HTML 보고서 (프로토콜 1.27)
+
+`export_session_html`은 `session_id`를 받아 독립 실행 문서를 `html`에 담은
+`session_html` 이벤트로 응답한다. `export_session_markdown`과 같은 가림 처리된
+투영을 렌더하므로 비밀 값과 잘린 도구 결과가 두 형식에서 같다. 다른 것은 표현이다.
+각 턴은 역할을 적은 `<h2>`를 가진 `<section>`이고, 본문은 줄바꿈을 유지하는
+`pre-wrap` 블록에, 도구 호출과 결과는 `<pre>` 블록에 들어간다.
+
+이 문서는 저장해 두었다가 연결 없이 여는 것을 목적으로 한다. 대화록의 모든 글자를
+이스케이프하므로 마크업처럼 보이는 저장 텍스트는 노드가 아니라 글자로 표시된다.
+스타일시트는 문서 안에 있고 글꼴, 이미지, 스크립트를 참조하지 않으며, 헤드에
+`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">`를
+넣어 브라우저가 나중에 생길 수 있는 네트워크 요청도 거부하게 한다.
+`session_replication_v1` 기능을 요구하고, 저장소에 없는 id에는 `unknown_session`으로
+답한다.
+
+`horon export <session-id> --html [--out <path>]`는 같은 바이트를 쓰고, `--json`은
+`{"session_id": ..., "html": ...}`로 감싼다. Markdown 형식과 달리 이미 있는
+`--out` 경로는 덮어쓰지 않고 거절한다. 보고서의 목적지는 사용자가 직접 지목한
+파일이기 때문이다.
 
 클라이언트가 어겨서는 안 되는 규칙 두 가지:
 

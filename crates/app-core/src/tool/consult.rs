@@ -5,7 +5,7 @@
 //! session, but it cannot widen a consult for the whole stored life of the
 //! session.
 
-use super::{SESSION_TOOL_POLICIES, SessionToolPolicy};
+use super::SESSION_TOOL_POLICIES;
 use std::sync::Arc;
 
 /// Mark an existing policy as a consult child's.
@@ -29,9 +29,4 @@ pub(crate) fn session_is_consult(session_id: &str) -> bool {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(session_id)
         .is_some_and(|policy| policy.consult)
-}
-
-/// Whether a stored policy belongs to a consult child, so no overlay may widen it.
-pub(super) fn is_stored_consult(policy: &SessionToolPolicy) -> bool {
-    policy.consult
 }

@@ -12,6 +12,9 @@
 
 use horon_agent_message_types::Message;
 
+#[path = "tool_result_trim.rs"]
+pub mod tool_result_trim;
+
 /// Project `messages` for one provider request.
 ///
 /// Takes the request's facts instead of the agent so the turn loop can call it
@@ -31,13 +34,24 @@ pub(super) async fn project(
         record_request_extra_clone(messages);
     }
     let base = masked.as_deref().unwrap_or(messages);
-    // The hook sees the masked text and nothing raw, and an unset hook returns
-    // before the payload is built.
+    // An explicit `/trim` shortens old tool results for this request only; the
+    // stored transcript keeps the originals.
+    let trimmed =
+        tool_result_trim::policy_for(context.session_id).and_then(|policy| tool_result_trim::apply(base, policy));
+    if trimmed.is_some() {
+        record_request_extra_clone(base);
+    }
+    let base = trimmed.as_deref().unwrap_or(base);
+    // The hook sees the masked, trimmed text and nothing raw, and an unset hook
+    // returns before the payload is built.
+    if crate::hooks::hook_configured("pre_request") {
+        crate::server::session_notes::note_hook(context.session_id, "pre_request", None);
+    }
     let rewritten = crate::hooks::pre_request::rewrite(context, base).await;
     if rewritten.is_some() {
         record_request_extra_clone(base);
     }
-    Ok(rewritten.or(masked))
+    Ok(rewritten.or(trimmed).or(masked))
 }
 
 /// Append an owned suffix to a borrowed transcript prefix.

@@ -9,10 +9,22 @@
       "reason": "Both tests are #[ignore]d: they assert on the JSON report of the external acp-tck suite, which scripts/test/acp_tck.sh clones and runs (a first run downloads it and takes minutes). The two tests would report `0 passed, 2 ignored` under the normal cohort, so running them here would only be noise."
     },
     {
+      "package": "horon-agent",
+      "target": "package_end_to_end",
+      "path": "tests/package_end_to_end.rs",
+      "reason": "Requires HORON_E2E_EXAMPLE_BIN (the built horon-package-example executable) and HORON_E2E_REPORT to run real package installs and child processes; without HORON_E2E_EXAMPLE_BIN it returns early with a skip line and reports a vacuous pass in ci.yml. .github/workflows/package-compat.yml builds horon-package-example natively across all six release targets and gates on a non-empty JSON report."
+    },
+    {
       "package": "horon-agent-base",
       "target": "header_cost_probe",
       "path": "crates/base/tests/header_cost_probe.rs",
       "reason": "Measurement harness, not a pass/fail assertion: the single test is #[ignore]d and prints header cost samples on the developer's hardware so the TTL-vs-signature tradeoff stays grounded in measured numbers."
+    },
+    {
+      "package": "horon-agent-base",
+      "target": "package_spawn_windows",
+      "path": "crates/base/tests/package_spawn_windows.rs",
+      "reason": "Native Windows only: the package child's lifetime owner is a Job Object there, and these scenarios start real children and grandchildren on windows-latest (x64) and windows-11-arm (arm64), which neither the Linux nor the macOS cohort can build or run. .github/workflows/package-windows.yml runs this target on both runners and fails when fewer than the five expected tests pass."
     },
     {
       "package": "horon-agent-logging",

@@ -37,6 +37,10 @@ import {
   type ImageAttachment,
   type MessageModes,
   type ModelRouteInfo,
+  type PackageCommandList,
+  type PackageCommandOutcome,
+  type PackageControlOperation,
+  type PackageControlReceipt,
   type PayloadRef,
   type PermissionDecision,
   type RenderedImage,
@@ -875,6 +879,18 @@ export class HoronAgentClient extends EventEmitter {
       .settings;
   }
 
+  /**
+   * Apply one package-management operation to the daemon's catalog. Requires
+   * `package_control_v1`; the receipt names the generation the daemon published.
+   */
+  async packageControl(request: {
+    operation_id: string;
+    operation: PackageControlOperation;
+  }): Promise<PackageControlReceipt> {
+    this.requireCapability("package_control_v1", "packageControl");
+    return (await this.expectReply({ req: "package_control", ...request }, "package_control")).receipt;
+  }
+
   /** Low-level response API for applications handling tool_call events themselves. */
   async submitToolResult(sessionId: string, callId: string, result: string | ToolResult): Promise<void> {
     const value = typeof result === "string" ? { output: result } : result;
@@ -1274,6 +1290,38 @@ export class HoronAgentClient extends EventEmitter {
       "runtime_command_result",
     );
     return { session_id: frame.session_id, command: frame.command, data: frame.data, message: frame.message };
+  }
+
+  /**
+   * List the package slash commands this session provides.
+   *
+   * The entries belong to the package generation the session observes, and
+   * `generation` says which one.
+   */
+  async listPackageCommands(sessionId: string): Promise<PackageCommandList> {
+    this.requireCapability("package_commands_v1", "listPackageCommands");
+    const frame = await this.runtimeCommand(sessionId, "package_commands");
+    return frame.data as PackageCommandList;
+  }
+
+  /**
+   * Run one package command and return what the daemon answered.
+   *
+   * A template sets `text`, the user message it expands to; an executable
+   * command sets `output` and the child's `data` after the tool policy allowed
+   * the call. A command whose package left the generation is refused with a
+   * stale-entry error.
+   */
+  async runPackageCommand(
+    sessionId: string,
+    packageId: string,
+    command: string,
+    argumentsText = "",
+  ): Promise<PackageCommandOutcome> {
+    this.requireCapability("package_commands_v1", "runPackageCommand");
+    const words = argumentsText.trim() === "" ? [] : argumentsText.trim().split(/\s+/);
+    const frame = await this.runtimeCommand(sessionId, "package_command", [packageId, command, ...words]);
+    return frame.data as PackageCommandOutcome;
   }
 
   async transferSession(sessionId: string): Promise<SessionInfo> {
@@ -1819,6 +1867,22 @@ export class HoronAgentClient extends EventEmitter {
       "session_markdown",
     );
     return frame.markdown ?? "";
+  }
+
+  /** Export the conversation as a standalone offline HTML report.
+   *
+   * Requires `session_replication_v1`. Returns one self-contained document
+   * rendered from the same redacted projection as `exportSessionMarkdown`:
+   * every transcript character is escaped, the stylesheet is inline, and the
+   * page loads nothing from the network.
+   */
+  async exportSessionHtml(sessionId: string): Promise<string> {
+    this.requireCapability("session_replication_v1", "exportSessionHtml");
+    const frame = await this.expectReply(
+      { req: "export_session_html", session_id: sessionId },
+      "session_html",
+    );
+    return frame.html ?? "";
   }
 
   /** Import one validated page. Identical retransmissions are idempotent. */

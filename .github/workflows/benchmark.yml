@@ -53,7 +53,7 @@ on:
         required: false
         default: all
       suites:
-        description: "Comma-separated suites; `all` means every regular suite and never install, which must be named explicitly"
+        description: "Comma-separated suites; `all` means every regular suite and never install, which must be named explicitly. `compare` also measures `packages`, the cost of no package, an installed one and one call"
         type: string
         required: false
         default: all
@@ -75,7 +75,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref built beside the measured commit and compared as a second horon row (compare) or a second daemon (tools)"
+        description: "Optional ref built beside the measured commit and compared as a second horon row (compare), run through the same package scenarios (packages) or started as a second daemon (tools)"
         type: string
         required: false
         default: ""
@@ -100,7 +100,7 @@ on:
         required: false
         default: all
       suites:
-        description: "Comma-separated suites: compare, startup, loading, tools, reload, tui, compile, install, or all. `all` covers every regular suite and never install; name install to opt in"
+        description: "Comma-separated suites: compare, packages, startup, loading, tools, reload, tui, compile, install, or all. `all` covers every regular suite and never install; name install to opt in. compare measures packages too"
         required: false
         default: all
       competitors:
@@ -120,7 +120,7 @@ on:
         required: false
         default: "5"
       baseline_ref:
-        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row (compare) or a second daemon (tools); empty measures one build"
+        description: "Optional ref (usually the merge base with dev) built beside the measured commit and compared as a second horon row (compare), run through the same package scenarios (packages) or started as a second daemon (tools); empty measures one build"
         required: false
         default: ""
       features:

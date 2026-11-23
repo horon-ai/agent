@@ -5,7 +5,7 @@
 /// The trust set and protocol list live in the platform adapter. A client built
 /// without this configuration has no trusted roots at all, which is what keeps
 /// an accidental plain builder from reaching the network.
-pub(crate) fn with_platform_tls(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+pub fn with_platform_tls(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
     builder.use_preconfigured_tls(horon_agent_platform::tls_client_config().as_ref().clone())
 }
 

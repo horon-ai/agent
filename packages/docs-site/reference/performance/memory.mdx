@@ -46,6 +46,24 @@ Main sources in the code:
 - `crates/base/src/runtime_memory_log.rs`
 - `crates/app-core/src/server/debug_server_state.rs`
 
+### User-installed packages
+
+A package adds memory only after something asks for it. A home with no package area
+keeps no catalog, no snapshot and no reference directory, so a session start and every
+turn on that home pay nothing: the structural gate checks that two turns read no package
+file, scan no directory, write nothing and start no child
+(`python3 scripts/perf/check_structural.py --only packages`). An installed package is not
+loaded into memory either until a turn captures the catalog generation: the turn keeps one
+snapshot (the records it may load, sorted by ID) and one lease that pins the copies it
+captured, and those live only as long as the turns that hold them. A child process is
+memory of its own and exists only after a call or an observation the package subscribed
+to.
+
+The measured memory of the three situations is the peak process-tree RSS in
+`python3 scripts/perf/package_workloads.py` (nothing installed, installed and never
+called, one real call), recorded per OS beside the turn time. Read the ratio within one
+OS, never an absolute across OSes.
+
 Terminal UI surfaces such as `:debug memory` and `:debug markdown:memory` do not exist in this build. The terminal client
 `horon-tui` renders the assistant's Markdown while it draws and keeps no cache of rendered rows, sources, highlights or
 images, so the caps that hung off those caches have no counterpart here and were lowered in this document for the same

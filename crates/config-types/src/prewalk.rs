@@ -20,6 +20,11 @@ pub struct PrewalkConfig {
     /// The execution model: a bare model id, or `role:<name>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub into: Option<String>,
+    /// The planning model a new session starts on: a bare model id or
+    /// `role:<name>`. Unset keeps the session's own model for planning. It has
+    /// no effect unless the section is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub planning: Option<String>,
     /// Only switch when the session currently runs this model.
     ///
     /// Unlike omp's `from`, this is an applicability condition: it never names
@@ -29,6 +34,16 @@ pub struct PrewalkConfig {
 }
 
 impl PrewalkConfig {
+    /// Environment key that turns the handoff on or off for one launch.
+    ///
+    /// `--no-prewalk` writes `0` and `--prewalk <into>` writes `1`, so the
+    /// override covers a config file that enabled the section. The value is
+    /// read by the config loader and never written back to the file.
+    pub const ENABLED_ENV: &'static str = "HORON_AGENT_PREWALK_ENABLED";
+
+    /// Environment key that overrides `prewalk.into` for one launch.
+    pub const INTO_ENV: &'static str = "HORON_AGENT_PREWALK_INTO";
+
     /// Whether the session hands off to [`Self::into`].
     pub fn is_active(&self) -> bool {
         self.enabled && self.into_model().is_some()
@@ -37,6 +52,11 @@ impl PrewalkConfig {
     /// The trimmed `into` value, if one was configured.
     pub fn into_model(&self) -> Option<&str> {
         trimmed(self.into.as_deref())
+    }
+
+    /// The trimmed `planning` value, if one was configured.
+    pub fn planning_model(&self) -> Option<&str> {
+        trimmed(self.planning.as_deref())
     }
 
     /// The trimmed `from` value, if one was configured.

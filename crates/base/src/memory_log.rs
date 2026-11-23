@@ -1,7 +1,8 @@
 //! Persistent memory event log for post-session analysis.
 //!
-//! Writes structured JSONL (one JSON object per line) to:
-//!   `~/.horon/logs/memory-events-YYYY-MM-DD.jsonl`
+//! Writes structured JSONL (one JSON object per line) to the agent home's log
+//! directory — `$HORON_HOME/logs/memory-events-YYYY-MM-DD.jsonl`, or
+//! `~/.horon/logs/...` without `HORON_HOME`.
 //!
 //! Every memory pipeline event - embedding search, sidecar verification,
 //! injection, extraction, maintenance, tool actions - is captured with
@@ -45,8 +46,21 @@ impl MemoryLogger {
     }
 }
 
+/// The log directory of the agent home this process is using.
+///
+/// It goes through the storage home, so a hosted tenant whose volume is mounted
+/// as `HORON_HOME` keeps its memory event log inside that volume instead of the
+/// machine's `~/.horon`.
 fn log_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".horon").join("logs"))
+    match crate::storage::logs_dir() {
+        Ok(dir) => Some(dir),
+        Err(error) => {
+            // A memory event is a diagnostic: a home that cannot be resolved
+            // must not turn into a failed turn. Say why once and move on.
+            crate::logging::debug(&format!("memory event log has no directory: {error}"));
+            None
+        }
+    }
 }
 
 fn ensure_logger(date: &str) -> bool {
@@ -416,6 +430,50 @@ fn cleanup_old_memory_logs_in(dir: &std::path::Path, now: OffsetDateTime) {
 mod tests {
     use super::*;
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn the_memory_log_is_written_inside_horon_home_not_the_machine_home() {
+        let _guard = crate::storage::lock_test_env();
+        let home = tempfile::tempdir().expect("home");
+        let previous = std::env::var_os("HORON_HOME");
+        crate::env::set_var("HORON_HOME", home.path());
+
+        // The logger is process-global and caches the directory it opened, so a
+        // test that ran first would otherwise keep writing to its own home.
+        if let Ok(mut guard) = MEMORY_LOGGER.lock() {
+            *guard = None;
+        }
+        let result = std::panic::catch_unwind(|| {
+            // A logged event creates the day's file under the configured home.
+            log_marked_known("log-home-session", &["mem_1".to_string()], "test");
+            if let Ok(mut guard) = MEMORY_LOGGER.lock() {
+                // Drop the cached file handle so the next test opens its own
+                // directory rather than appending to this one.
+                *guard = None;
+            }
+
+            let logs = home.path().join("logs");
+            let files: Vec<String> = std::fs::read_dir(&logs)
+                .expect("the log directory exists under HORON_HOME")
+                .flatten()
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect();
+            assert!(
+                files
+                    .iter()
+                    .any(|name| name.starts_with("memory-events-") && name.ends_with(".jsonl")),
+                "the event log must live under HORON_HOME/logs, found {files:?}"
+            );
+        });
+
+        match previous {
+            Some(value) => crate::env::set_var("HORON_HOME", value),
+            None => crate::env::remove_var("HORON_HOME"),
+        }
+        if let Err(error) = result {
+            std::panic::resume_unwind(error);
+        }
+    }
 
     #[test]
     fn memory_log_cleanup_respects_14_day_window() {

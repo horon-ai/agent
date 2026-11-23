@@ -78,11 +78,13 @@ stable identity that clients can address. An optional `HORON_AGENT_SERVER_DISPLA
 prefer a display name. CLI input beats environment input. Names are normalized to a lowercase label that is safe for the registry, so
 `mount-cloud/fabian` shows up as `mount-cloud-fabian`.
 
+A hosted process runs the same server; the only difference is a startup check. When `HORON_AGENT_HOSTING_MODE` selects `per-user-container`, `Server::run` confirms the hosted boundary before it binds a socket and exits with a message unless the home volume, runtime directory, gateway state and tenant id are acceptable. With the variable absent the check is a no-op. [`HOSTING.md`](/reference/architecture/hosting) states the contract, the image and volume layout, and the deletion procedure.
+
 ### Server shutdown
 
 The server exits in these cases.
 - **Idle deadline:** five minutes pass with no clients and no live unattended swarm workers (sessions the code marks `is_headless`). The shared-server deadline is fixed at 300 seconds (`IDLE_TIMEOUT_SECS` in `crates/app-core/src/server.rs`) and `[server]` cannot change it. The watcher checks every 10 seconds, so shutdown can land slightly after five minutes.
-- **Manual:** you kill the server process
+- **Graceful signal (`SIGTERM` or `SIGINT` on Linux and macOS):** the daemon runs one shutdown sequence once: cancel background compaction, drain in-flight session saves (bounded at 5 seconds), unregister from `servers.json`, remove the main and debug sockets, temporary metadata, build-hash sidecar and held daemon lock, and exit with status `0`. A second signal arriving while the drain runs does not interrupt or re-run cleanup. Windows has no POSIX termination signal, so its signal watcher stays pending.
 - **Reload:** the server execs into a new binary (the socket path stays the same)
 
 The debug control server turns the shared-server idle watcher off. Temporary servers use their own lifetime policy.

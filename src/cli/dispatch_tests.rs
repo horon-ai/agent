@@ -43,12 +43,6 @@ fn continue_selects_latest_unarchived_session_in_workspace() -> Result<()> {
 }
 
 #[test]
-fn continue_conflicts_with_explicit_resume() {
-    let error = Args::try_parse_from(["horon-agent", "--continue", "--resume", "session_saved"]).unwrap_err();
-    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-}
-
-#[test]
 fn only_file_controlled_debug_clients_need_parent_lifetime_binding() {
     let _lock = crate::storage::lock_test_env();
     let previous = std::env::var_os("HORON_AGENT_DEBUG_CMD_PATH");

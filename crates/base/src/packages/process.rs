@@ -34,7 +34,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, ErrorKind, Read};
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout, ExitStatus};
 use std::time::Duration;
@@ -43,7 +43,6 @@ use anyhow::{Context, Result, ensure};
 use horon_agent_extension_types::PackageKind;
 use horon_agent_platform::fs::{create_private_dir, is_executable, is_path_link, set_dir_permissions_owner_only};
 use horon_agent_platform::process::package_child::{self, DEFAULT_GRACE, PackageChild, PackageChildSpec};
-use sha2::{Digest, Sha256};
 
 use super::catalog::{PackageLease, PackageRecord, PackageState, PackageStore};
 use super::manifest::open_package_file;
@@ -71,10 +70,7 @@ impl PackageStore {
             .pin_package(&mut lease, id)
             .with_context(|| format!("read the package catalog for {id}"))?;
         let generation = view.generation();
-        let record = view
-            .get(id)
-            .with_context(|| format!("package {id} is not in the catalog"))?
-            .clone();
+        let record = view.into_record(id)?;
         ensure!(
             record.state == PackageState::Installed,
             "package {id} is {}; only an installed package starts",
@@ -82,14 +78,14 @@ impl PackageStore {
         );
         let digest = record
             .digest
-            .clone()
+            .as_deref()
             .with_context(|| format!("package {id} has no published copy"))?;
         let executable = record
             .executable
-            .clone()
+            .as_deref()
             .with_context(|| format!("package {id} has no recorded executable"))?;
         let layout = Layout::new(self.root());
-        let root = store::digest_dir(&layout, &digest)?;
+        let root = store::digest_dir(&layout, digest)?;
         ensure!(
             root.is_dir(),
             "the installed copy {digest} of package {id} is missing: {}",
@@ -97,11 +93,63 @@ impl PackageStore {
         );
         verify_executable(&root, &record)?;
         let state_dir = private_state_dir(self.root(), id)?;
+        let executable = root.join(executable);
         Ok(PackageExecutable {
             lease,
             id: id.to_owned(),
             record,
             generation,
+            executable,
+            root,
+            state_dir,
+            grace: DEFAULT_GRACE,
+        })
+    }
+
+    /// Verify the exact copy `record` names and pin it for one launch.
+    ///
+    /// This is the launch a session makes from a catalog generation it already
+    /// captured: the record is the one the turn pinned, so a replacement install
+    /// that landed after the turn began cannot redirect the child to new bytes.
+    /// The copy's recorded length and SHA-256 are checked against the published
+    /// file before anything starts, exactly as [`PackageStore::prepare_executable`]
+    /// checks the catalog's current record, and the lease the caller supplies is
+    /// the one that keeps the copy alive.
+    pub fn prepare_record_executable(
+        &self,
+        mut lease: PackageLease,
+        record: &PackageRecord,
+    ) -> Result<PackageExecutable> {
+        ensure!(
+            record.state == PackageState::Installed,
+            "package {} is {}; only an installed package starts",
+            record.id,
+            state_name(record.state),
+        );
+        let digest = record
+            .digest
+            .clone()
+            .with_context(|| format!("package {} has no published copy", record.id))?;
+        let executable = record
+            .executable
+            .clone()
+            .with_context(|| format!("package {} has no recorded executable", record.id))?;
+        self.pin_recorded_copy(&mut lease, &digest)?;
+        let layout = Layout::new(self.root());
+        let root = store::digest_dir(&layout, &digest)?;
+        ensure!(
+            root.is_dir(),
+            "the installed copy {digest} of package {} is missing: {}",
+            record.id,
+            root.display(),
+        );
+        verify_executable(&root, record)?;
+        let state_dir = private_state_dir(self.root(), &record.id)?;
+        Ok(PackageExecutable {
+            lease,
+            id: record.id.clone(),
+            record: record.clone(),
+            generation: record.generation,
             executable: root.join(Path::new(&executable)),
             root,
             state_dir,
@@ -196,6 +244,10 @@ impl PackageExecutable {
     /// step, and a process that can rewrite the published copy can rewrite this
     /// host's files as well, so the check is integrity, not isolation.
     pub fn start_with_arguments(self, extra: &[OsString]) -> Result<PackageProcess> {
+        // A hosted process refuses here, before the bytes are checked and before
+        // any process exists: this is the one path a package's MCP server, its
+        // extension child, its commands and its observers all take.
+        super::child_gate::ensure(&self.id)?;
         // Verify again: the catalog record was read before this call, and the
         // bytes that run are the ones checked here.
         verify_executable(&self.root, &self.record)?;
@@ -300,20 +352,11 @@ fn verify_executable(root: &Path, record: &PackageRecord) -> Result<()> {
         .with_context(|| format!("package {} has no recorded executable {relative}", record.id))?;
     let mut file = open_package_file(root, Path::new(relative))
         .with_context(|| format!("open the executable of package {}", record.id))?;
-    let mut hasher = Sha256::new();
-    let mut len = 0u64;
     let mut buffer = vec![0u8; HASH_BUFFER_BYTES];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .with_context(|| format!("read the executable of package {}", record.id))?;
-        if read == 0 {
-            break;
-        }
-        len += u64::try_from(read).context("the executable chunk length overflowed")?;
-        hasher.update(&buffer[..read]);
-    }
-    let sha256 = hex::encode(hasher.finalize());
+    let (len, digest) = store::hash_open_file(&mut file, &mut buffer, || {
+        format!("read the executable of package {}", record.id)
+    })?;
+    let sha256 = hex::encode(digest);
     ensure!(
         len == recorded.len && sha256 == recorded.sha256,
         "the installed executable of package {} is {len} bytes with sha256 {sha256}, recorded {} bytes with {}",

@@ -80,6 +80,8 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("Message", Covered),
     ("NotifyAuthChanged", Covered),
     ("PermissionDecision", Covered),
+    // Package management: the daemon owns the catalog, so the bridge only forwards.
+    ("PackageControl", Covered),
     ("Ping", Covered),
     // ACP's graceful disconnect handshake; API clients use detach_session.
     ("PrepareDisconnect", ClientInternal),
@@ -95,6 +97,7 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("SoftInterrupt", Covered),
     ("Split", Covered),
     ("Subscribe", Covered),
+    ("ToolResult", Covered),
     ("Transfer", Covered),
     // ACP retracts a queued prompt before the model sees it; the API exposes
     // cancel and soft_interrupt instead.
@@ -275,6 +278,9 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "background_output_v1",
         "live_todo_v1",
         "effective_settings_v1",
+        "package_control_v1",
+        "package_commands_v1",
+        "consult_fork_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(

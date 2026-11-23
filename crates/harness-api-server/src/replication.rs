@@ -203,20 +203,41 @@ fn dispatch(request: ApiRequest) -> Result<ApiEvent, store::StoreError> {
             record_blob_status(&paths, &id, reference)
         }
         ApiRequest::ExportSessionMarkdown { session_id } => {
-            // Validates the id and that an event log exists under this home, so an
-            // unknown session is the same typed error the other reads return.
-            existing_session(&paths, &session_id)?;
-            let session = horon_agent_app_core::session::Session::load(&session_id)
-                .map_err(|e| store::StoreError::internal(store::StoreErrorCode::Internal, e.to_string()))?;
-            let markdown = horon_agent_app_core::session_export::export_session_markdown(&session)
-                .map_err(|e| store::StoreError::internal(store::StoreErrorCode::Internal, e.to_string()))?;
+            let markdown = render_export(
+                &paths,
+                &session_id,
+                horon_agent_app_core::session_export::export_session_markdown,
+            )?;
             Ok(ApiEvent::SessionMarkdown { session_id, markdown })
+        }
+        ApiRequest::ExportSessionHtml { session_id } => {
+            let html = render_export(
+                &paths,
+                &session_id,
+                horon_agent_app_core::session_export_html::export_session_html,
+            )?;
+            Ok(ApiEvent::SessionHtml { session_id, html })
         }
         _ => Err(store::StoreError::internal(
             store::StoreErrorCode::Internal,
             "replication dispatcher received another request",
         )),
     }
+}
+
+/// Load one session under this home and render it as an export document.
+///
+/// Validating the id first keeps an unknown session the same typed error the
+/// other stored-session reads return, rather than a store failure from `load`.
+fn render_export(
+    paths: &store::SessionPaths,
+    session_id: &str,
+    render: fn(&horon_agent_app_core::session::Session) -> anyhow::Result<String>,
+) -> Result<String, store::StoreError> {
+    let (_, id) = existing_session(paths, session_id)?;
+    let session = horon_agent_app_core::session::Session::load(id.as_str())
+        .map_err(|e| store::StoreError::internal(store::StoreErrorCode::Internal, e.to_string()))?;
+    render(&session).map_err(|e| store::StoreError::internal(store::StoreErrorCode::Internal, e.to_string()))
 }
 
 fn home_paths() -> Result<store::SessionPaths, store::StoreError> {
@@ -237,12 +258,19 @@ fn home_paths() -> Result<store::SessionPaths, store::StoreError> {
         .with_sync_mode(horon_agent_base::config::config().storage_sync_mode()))
 }
 
+fn missing_sessions_root(paths: &store::SessionPaths) -> bool {
+    matches!(
+        std::fs::symlink_metadata(paths.root()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
 fn existing_session(
     paths: &store::SessionPaths,
     session_id: &str,
 ) -> Result<(store::SessionPaths, store::SessionId), store::StoreError> {
     let (paths, id) = parse_session(paths, session_id)?;
-    if !paths.events_log(&id)?.is_file() {
+    if missing_sessions_root(&paths) || !paths.events_log(&id)?.is_file() {
         return Err(store::StoreError::unknown_session("session has no event log"));
     }
     Ok((paths, id))
@@ -253,7 +281,7 @@ fn existing_session_dir(
     session_id: &str,
 ) -> Result<(store::SessionPaths, store::SessionId), store::StoreError> {
     let (paths, id) = parse_session(paths, session_id)?;
-    if !paths.session_dir(&id)?.is_dir() {
+    if missing_sessions_root(&paths) || !paths.session_dir(&id)?.is_dir() {
         return Err(store::StoreError::unknown_session("session has no local replica"));
     }
     Ok((paths, id))

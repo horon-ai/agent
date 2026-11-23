@@ -40,6 +40,18 @@ pub enum Action {
         command: horon_agent_sdk::RuntimeCommand,
         arguments: Vec<String>,
     },
+    /// Ask the harness to run one command an installed package supplies.
+    ///
+    /// `display` is the line the user typed: a template's expansion is drawn as
+    /// that line, and an executable command's report needs no line at all.
+    PackageCommand {
+        package_id: String,
+        command: String,
+        arguments: String,
+        display: String,
+    },
+    /// Read the attached session's token usage.
+    Stats,
     /// Clear or compact the model context on the daemon.
     Context(crate::commands::ContextCommand),
     /// Switch to the model named.
@@ -76,6 +88,8 @@ pub enum Action {
     Rename(String),
     /// Ask the harness for the skills it reports for the session.
     Skills,
+    /// Ask the harness for the tools enabled for the session.
+    Tools,
     /// Ask for the background work this session is still running.
     BackgroundJobs,
     /// Ask which noted sessions were deleted, including checks for archived sessions.
@@ -85,6 +99,11 @@ pub enum Action {
     EditDraft,
     /// Give the terminal to the editor with a private copy of a resolved artifact.
     OpenArtifact(std::path::PathBuf),
+    /// Write the attached session's transcript as a standalone HTML report.
+    ///
+    /// The path is the destination the reader typed, kept exactly as typed so
+    /// a relative one resolves against the directory the client runs in.
+    Export(String),
     /// Ask the daemon for the values the settings screen displays.
     DaemonSettings,
     /// Leave.

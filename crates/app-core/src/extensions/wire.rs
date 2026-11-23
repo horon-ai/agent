@@ -535,13 +535,8 @@ impl ExtensionWire {
                     return Err(WireError::UnexpectedRequest(notification.method));
                 }
                 self.require_capability(Capability::ObserverNotify, notification.method)?;
-                let sender = self
-                    .observation_sender
-                    .lock()
-                    .map_err(|_| WireError::Closed)?
-                    .as_ref()
-                    .cloned()
-                    .ok_or(WireError::Closed)?;
+                let observations = self.observation_sender.lock().map_err(|_| WireError::Closed)?;
+                let sender = observations.as_ref().ok_or(WireError::Closed)?;
                 // A bounded channel: when the caller is not draining
                 // observations fast enough the event is dropped, never buffered
                 // without bound.
@@ -640,14 +635,14 @@ impl ExtensionWire {
         if self.is_closed() {
             return Err(WireError::Closed);
         }
-        match self.negotiated() {
-            Some(negotiated) => match method.capability() {
+        match &*self.lock_lifecycle() {
+            Lifecycle::Ready(negotiated) => match method.capability() {
                 Some(capability) if !negotiated.capabilities.contains(&capability) => {
                     Err(WireError::CapabilityUnavailable(method))
                 }
                 _ => Ok(()),
             },
-            None => Err(WireError::NotInitialized),
+            Lifecycle::New | Lifecycle::Initializing | Lifecycle::Finished => Err(WireError::NotInitialized),
         }
     }
 
@@ -684,14 +679,16 @@ impl ExtensionWire {
             return;
         }
         *self.lock_lifecycle() = Lifecycle::Finished;
-        let drained: Vec<PendingRequest> = self.lock_pending().drain().map(|(_id, request)| request).collect();
-        if !drained.is_empty() {
+        let mut pending = self.lock_pending();
+        let waiting = std::mem::take(&mut *pending);
+        drop(pending);
+        if !waiting.is_empty() {
             crate::logging::debug(&format!(
                 "extension wire: closed with {} request(s) still waiting",
-                drained.len()
+                waiting.len()
             ));
         }
-        for request in drained {
+        for request in waiting.into_values() {
             match request.outcome.send(Err(WireError::Closed)) {
                 Ok(()) => {}
                 Err(_gone) => {

@@ -17,6 +17,7 @@
 //! elapsed milliseconds, it answers the events that became due, and it holds a
 //! paused flag, a speed and a seek position.
 
+use std::borrow::Cow;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -236,7 +237,7 @@ impl Recording {
             if line.trim().is_empty() {
                 continue;
             }
-            let value: serde_json::Value = serde_json::from_str(line).map_err(|error| ReplayError::Line {
+            let mut value: serde_json::Value = serde_json::from_str(line).map_err(|error| ReplayError::Line {
                 line: number,
                 problem: format!("not JSON: {error}"),
             })?;
@@ -253,7 +254,7 @@ impl Recording {
                     problem: "the timestamp is earlier than the line before it".to_string(),
                 });
             }
-            let event = decode(&value).map_err(|problem| ReplayError::Line {
+            let event = decode(&mut value).map_err(|problem| ReplayError::Line {
                 line: number,
                 problem: problem.0,
             })?;
@@ -276,19 +277,51 @@ const VERSION: u64 = 1;
 /// Text is scrubbed of terminal control sequences here, at the one place every
 /// event is written: a pasted escape sequence is not conversation, and a file is
 /// read back and drawn long after the terminal that produced it is gone.
-fn encode(at_ms: u64, event: &Event) -> String {
-    let value = match event {
-        Event::User(text) => serde_json::json!({"at": at_ms, "kind": "user", "text": scrub(text)}),
-        Event::Assistant(text) => serde_json::json!({"at": at_ms, "kind": "assistant", "text": scrub(text)}),
-        Event::Warning => serde_json::json!({"at": at_ms, "kind": "warning"}),
-        Event::Tool { name, outcome } => serde_json::json!({
-            "at": at_ms,
-            "kind": "tool",
-            "name": scrub(name),
-            "outcome": outcome.as_str(),
-        }),
-    };
-    value.to_string()
+fn encode_line(buf: &mut Vec<u8>, at_ms: u64, event: &Event) -> std::io::Result<()> {
+    buf.clear();
+    match event {
+        Event::User(text) => {
+            write!(buf, "{{\"at\":{at_ms},\"kind\":\"user\",\"text\":")?;
+            let clean = scrub_cow(text);
+            serde_json::to_writer(&mut *buf, clean.as_ref()).map_err(std::io::Error::other)?;
+            buf.extend_from_slice(b"}\n");
+        }
+        Event::Assistant(text) => {
+            write!(buf, "{{\"at\":{at_ms},\"kind\":\"assistant\",\"text\":")?;
+            let clean = scrub_cow(text);
+            serde_json::to_writer(&mut *buf, clean.as_ref()).map_err(std::io::Error::other)?;
+            buf.extend_from_slice(b"}\n");
+        }
+        Event::Warning => {
+            writeln!(buf, "{{\"at\":{at_ms},\"kind\":\"warning\"}}")?;
+        }
+        Event::Tool { name, outcome } => {
+            write!(buf, "{{\"at\":{at_ms},\"kind\":\"tool\",\"name\":")?;
+            let clean = scrub_cow(name);
+            serde_json::to_writer(&mut *buf, clean.as_ref()).map_err(std::io::Error::other)?;
+            writeln!(buf, ",\"outcome\":\"{}\"}}", outcome.as_str())?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `text` contains any control character that [`scrub`] would remove.
+fn needs_scrub(text: &str) -> bool {
+    if text.is_ascii() {
+        text.bytes()
+            .any(|byte| (byte < 0x20 && byte != b'\n' && byte != b'\t') || byte == 0x7f)
+    } else {
+        text.chars().any(|ch| ch != '\n' && ch != '\t' && ch.is_control())
+    }
+}
+
+/// Borrow `text` when it already carries no control sequences; otherwise scrub it.
+fn scrub_cow(text: &str) -> Cow<'_, str> {
+    if needs_scrub(text) {
+        Cow::Owned(scrub(text))
+    } else {
+        Cow::Borrowed(text)
+    }
 }
 
 /// The printable text of `text`, with terminal control sequences removed.
@@ -346,32 +379,44 @@ impl Problem {
 }
 
 /// One file line as an event, or the reason it is not one.
-fn decode(value: &serde_json::Value) -> Result<Event, Problem> {
-    let text = |field: &str| -> Result<String, Problem> {
-        value
-            .get(field)
-            .and_then(|value| value.as_str())
-            .map(scrub)
-            .ok_or_else(|| Problem::new(format!("no `{field}` text")))
+fn take_scrubbed_text(value: &mut serde_json::Value, field: &str) -> Result<String, Problem> {
+    let Some(serde_json::Value::String(text)) = value.as_object_mut().and_then(|map| map.remove(field)) else {
+        return Err(Problem::new(format!("no `{field}` text")));
     };
-    match value.get("kind").and_then(|value| value.as_str()) {
-        Some("user") => Ok(Event::User(text("text")?)),
-        Some("assistant") => Ok(Event::Assistant(text("text")?)),
+    if needs_scrub(&text) { Ok(scrub(&text)) } else { Ok(text) }
+}
+
+fn decode(value: &mut serde_json::Value) -> Result<Event, Problem> {
+    enum Kind {
+        User,
+        Assistant,
+        Warning,
+        Tool,
+    }
+    let kind = match value.get("kind").and_then(|value| value.as_str()) {
+        Some("user") => Kind::User,
+        Some("assistant") => Kind::Assistant,
+        Some("warning") => Kind::Warning,
+        Some("tool") => Kind::Tool,
+        Some(other) => return Err(Problem::new(format!("unknown event kind `{other}`"))),
+        None => return Err(Problem::new("no `kind`")),
+    };
+    match kind {
+        Kind::User => Ok(Event::User(take_scrubbed_text(value, "text")?)),
+        Kind::Assistant => Ok(Event::Assistant(take_scrubbed_text(value, "text")?)),
         // The line itself is not kept, so an event carrying one adds nothing.
-        Some("warning") => Ok(Event::Warning),
-        Some("tool") => {
+        Kind::Warning => Ok(Event::Warning),
+        Kind::Tool => {
             let outcome = value
                 .get("outcome")
                 .and_then(|value| value.as_str())
                 .and_then(Outcome::parse)
                 .ok_or_else(|| Problem::new("a tool line needs outcome `done` or `failed`"))?;
             Ok(Event::Tool {
-                name: text("name")?,
+                name: take_scrubbed_text(value, "name")?,
                 outcome,
             })
         }
-        Some(other) => Err(Problem::new(format!("unknown event kind `{other}`"))),
-        None => Err(Problem::new("no `kind`")),
     }
 }
 
@@ -384,6 +429,7 @@ pub struct Recorder {
     bytes: u64,
     limit: u64,
     events: usize,
+    buf: Vec<u8>,
 }
 
 impl Recorder {
@@ -421,6 +467,7 @@ impl Recorder {
             bytes: 0,
             limit,
             events: 0,
+            buf: Vec::with_capacity(256),
         };
         let header = serde_json::json!({"format": FORMAT, "version": VERSION}).to_string();
         recorder
@@ -435,13 +482,16 @@ impl Recorder {
     /// recording and says so, so a truncated event never reaches the file.
     pub fn push(&mut self, event: &Event) -> Result<(), RecordError> {
         let at_ms = self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        let line = encode(at_ms, event);
-        let needed = line.len() as u64 + 1;
+        encode_line(&mut self.buf, at_ms, event)
+            .map_err(|error| RecordError::Io(format!("{}: {error}", self.path.display())))?;
+        let needed = self.buf.len() as u64;
         if self.bytes.saturating_add(needed) > self.limit {
             return Err(RecordError::Full(self.limit));
         }
-        self.write_line(&line)
+        self.file
+            .write_all(&self.buf)
             .map_err(|error| RecordError::Io(format!("{}: {error}", self.path.display())))?;
+        self.bytes += needed;
         self.events += 1;
         Ok(())
     }
@@ -655,6 +705,22 @@ mod tests {
         assert_eq!(scrub("\u{1b}[31mred\u{1b}[0m and \u{7}bell"), "red and bell");
         assert_eq!(scrub("two\nlines\tkept"), "two\nlines\tkept");
         assert_eq!(scrub("\u{1b}]0;a title\u{7}text"), "text");
+        assert_eq!(scrub_cow("한글\u{85}본문"), "한글본문");
+        assert_eq!(scrub_cow("plain 한국어\nline\t2"), "plain 한국어\nline\t2");
+        let mut line = Vec::new();
+        encode_line(
+            &mut line,
+            42,
+            &Event::Tool {
+                name: "apply_patch".into(),
+                outcome: Outcome::Done,
+            },
+        )
+        .expect("encode tool line");
+        assert_eq!(
+            String::from_utf8(line).expect("utf8"),
+            "{\"at\":42,\"kind\":\"tool\",\"name\":\"apply_patch\",\"outcome\":\"done\"}\n"
+        );
     }
 
     #[test]

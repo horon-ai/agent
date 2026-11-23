@@ -17,6 +17,8 @@ use std::time::{Duration, SystemTime};
 mod activation;
 mod digest;
 mod release_asset;
+mod release_notes;
+pub use release_notes::{ReleaseNotes, fetch_release_notes_blocking, normalize_tag, release_url};
 
 #[path = "update_dev_guard.rs"]
 mod update_dev_guard;

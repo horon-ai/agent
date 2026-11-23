@@ -281,15 +281,20 @@ impl Scroll {
         // row added since then would otherwise read as growth below the view.
         let baseline = !self.held_frame;
         // A change the caller made on purpose moves the offset against the
-        // height it found, even though the recount below is a rebuild. The
-        // tally it was drawn against is kept for that move.
+        // height it found, even though the recount below is a rebuild.
         let anchored = std::mem::take(&mut self.anchor);
         let recount = std::mem::take(&mut self.recount);
-        let previous_tally = if anchored { self.tally.clone() } else { None };
         let rebuilt = match &self.tally {
             Some(tally) => recount || tally.width != width || tally.items.len() > items,
             None => true,
         };
+        // The comparison the anchor makes is against the tally the view was
+        // drawn with, so that list is moved out rather than copied: the rebuild
+        // below replaces it in the same call, and a clone would copy one row
+        // count per item of the conversation on the frame a tool call opened.
+        // Only `reflow` sets the anchor, and `reflow` always asks for the
+        // rebuild, so an anchored frame is always a rebuilding one.
+        let previous_tally = if rebuilt && anchored { self.tally.take() } else { None };
         if rebuilt {
             let mut heights = Vec::with_capacity(items);
             for index in 0..items {

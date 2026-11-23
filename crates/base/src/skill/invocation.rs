@@ -86,6 +86,10 @@ impl SkillRegistry {
 
     /// The longest registered, addressable name at the start of `invocation`.
     fn resolve_registered<'a>(&self, invocation: &'a str) -> Option<SkillInvocation<'a>> {
+        let filter = super::filter::SkillFilter::from_env();
+        if filter.is_disabled() {
+            return None;
+        }
         let boundaries = std::iter::once(invocation.len()).chain(
             invocation
                 .char_indices()
@@ -95,7 +99,13 @@ impl SkillRegistry {
 
         for end in boundaries {
             let name = &invocation[..end];
-            if name.is_empty() || !is_addressable(name) || !self.skills.contains_key(name) {
+            if name.is_empty()
+                || !is_addressable(name)
+                || !self
+                    .skills
+                    .get(name)
+                    .is_some_and(|skill| filter.allows(name, &skill.name))
+            {
                 continue;
             }
             return Some(SkillInvocation {

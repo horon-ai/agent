@@ -42,19 +42,24 @@ impl App {
         }
     }
 
-    /// The ghost suffix the editor draws after the caret, when one applies.
-    ///
-    /// The suffix belongs to the exact draft it completes, so it is looked up
-    /// against the text on screen rather than trusted from the last answer.
-    pub fn suggestion_text(&self) -> Option<String> {
+    /// Borrowed ghost suffix for the draft on screen, without allocating.
+    pub(crate) fn ghost_suffix(&self) -> Option<&str> {
         if self.prompt.is_some() || self.overlay.is_some() || self.picker.is_some() || self.side.is_some() {
             return None;
         }
         if !self.suggestions.pending() || !self.input.is_at_end() {
             return None;
         }
-        let text = self.input.text();
-        self.suggestions.visible(&text).map(str::to_string)
+        self.suggestions
+            .visible_if(|expected| self.input.matches_text(expected))
+    }
+
+    /// The ghost suffix the editor draws after the caret, when one applies.
+    ///
+    /// The suffix belongs to the exact draft it completes, so it is looked up
+    /// against the text on screen rather than trusted from the last answer.
+    pub fn suggestion_text(&self) -> Option<String> {
+        self.ghost_suffix().map(str::to_string)
     }
 
     /// Accept the suggestion for the draft on screen.
@@ -65,21 +70,22 @@ impl App {
         if !self.input.is_at_end() {
             return false;
         }
-        let text = self.input.text();
-        let Some(full) = self.suggestions.accept(&text) else {
+        let Self {
+            input,
+            suggestions,
+            history,
+            ..
+        } = self;
+        let Some(suffix) = suggestions.accept_suffix(|expected| input.matches_text(expected)) else {
             return false;
         };
-        self.history.reset();
-        self.input.set_text(&full);
+        history.reset();
+        input.insert_text(&suffix);
         true
     }
 
     /// Whether a suggestion for the draft on screen can take the next key.
     pub(super) fn suggestion_available(&self) -> bool {
-        if !self.suggestions.pending() || !self.input.is_at_end() {
-            return false;
-        }
-        let text = self.input.text();
-        self.suggestions.visible(&text).is_some()
+        self.ghost_suffix().is_some()
     }
 }
