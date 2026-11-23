@@ -162,9 +162,10 @@ impl Store {
     /// as empty rather than as an error, which is what every reader has always
     /// done: `remember` is the call that refuses, not a read.
     pub(crate) fn read(&self, scope: StoreScope) -> Result<MemoryGraph> {
-        let Some(project) = self.project_of(scope).ok() else {
+        if scope == StoreScope::Project && self.project.is_none() {
             return Ok(MemoryGraph::new());
-        };
+        }
+        let project = self.project_of(scope)?;
         if reconciled(self, scope) {
             return self.read_current(project);
         }
@@ -358,7 +359,7 @@ impl Store {
         if notes.entries.is_empty() {
             return Ok(());
         }
-        let graph = snapshot_from_pages(wiki.scope_pages(Some(&self.project_key()?.to_string()))?).graph;
+        let graph = snapshot_from_pages(wiki.scope_pages(Some(self.project_key()?))?).graph;
         let mut added = 0;
         for note in notes.entries {
             if graph.memories.contains_key(&note.id) {

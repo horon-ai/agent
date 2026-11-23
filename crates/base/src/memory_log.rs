@@ -54,7 +54,12 @@ impl MemoryLogger {
 fn log_dir() -> Option<PathBuf> {
     match crate::storage::logs_dir() {
         Ok(dir) => Some(dir),
-        Err(_) => None,
+        Err(error) => {
+            // A memory event is a diagnostic: a home that cannot be resolved
+            // must not turn into a failed turn. Say why once and move on.
+            crate::logging::debug(&format!("memory event log has no directory: {error}"));
+            None
+        }
     }
 }
 
