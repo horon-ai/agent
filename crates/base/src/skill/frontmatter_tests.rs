@@ -15,6 +15,7 @@ fn write_skill(dir: &Path, name: &str, body: &str) {
 
 #[test]
 fn catalog_reads_frontmatter_only() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     let body = "b".repeat(8 * 1024);
@@ -55,6 +56,9 @@ fn catalog_reads_frontmatter_only() {
 /// is monotone, so a parallel test can only add to it.
 #[test]
 fn discovery_records_the_global_counter() {
+    // Acquire the env lock before the counter lock (matching sources_tests.rs)
+    // to prevent lock-order deadlocks.
+    let _env_guard = crate::storage::lock_test_env();
     // The only test in this module that reads the process-wide counter, so it
     // holds the lock the later request-boundary tests will also take.
     let _guard = super::test_support::counter_lock();
@@ -81,6 +85,7 @@ fn discovery_records_the_global_counter() {
 #[cfg(unix)]
 #[test]
 fn edited_body_is_reread() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     write_skill(&skills_dir, "live", "first-body");
@@ -108,6 +113,7 @@ fn edited_body_is_reread() {
 
 #[test]
 fn oversized_frontmatter_falls_back() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     let skill_dir = skills_dir.join("huge-head");
@@ -132,6 +138,7 @@ fn oversized_frontmatter_falls_back() {
 
 #[test]
 fn unclosed_frontmatter_errors() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     let skill_dir = skills_dir.join("unclosed");
@@ -169,6 +176,7 @@ fn invalid_yaml_still_counts_the_bytes_read() {
 
 #[test]
 fn nbsp_led_frontmatter_stays_in_the_first_chunk() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     let skill_dir = skills_dir.join("nbsp-led");
@@ -200,6 +208,7 @@ fn nbsp_led_frontmatter_stays_in_the_first_chunk() {
 
 #[test]
 fn invalid_utf8_body_listed_and_errors_lazily() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     let skill_dir = skills_dir.join("bad-utf8");
@@ -225,6 +234,7 @@ fn invalid_utf8_body_listed_and_errors_lazily() {
 
 #[test]
 fn deleted_file_errors() {
+    let _env_guard = crate::storage::lock_test_env();
     let temp = tempfile::tempdir().expect("tempdir");
     let skills_dir = temp.path().join("skills");
     write_skill(&skills_dir, "gone", "body");
