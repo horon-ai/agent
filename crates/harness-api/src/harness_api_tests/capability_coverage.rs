@@ -96,6 +96,9 @@ const LEDGER: &[(&str, Disposition)] = &[
     ("SetSessionSaved", Covered),
     ("SoftInterrupt", Covered),
     ("Split", Covered),
+    // Forking from a recorded boundary. The API serves it as `fork_session_at`
+    // and the daemon resolves the boundary against the source's head.
+    ("SplitAt", Covered),
     ("Subscribe", Covered),
     ("ToolResult", Covered),
     ("Transfer", Covered),
@@ -280,6 +283,7 @@ fn the_advertised_capabilities_are_exactly_the_reviewed_set() {
         "effective_settings_v1",
         "package_control_v1",
         "package_commands_v1",
+        "session_fork_at_v1",
     ];
     let advertised: Vec<&str> = ADVERTISED_CAPABILITIES.to_vec();
     assert_eq!(
@@ -339,6 +343,10 @@ fn every_gated_request_names_a_defined_capability() {
         ApiRequest::GetEffectiveSettings {
             session_id: "s1".into(),
         },
+        ApiRequest::ForkSessionAt {
+            session_id: "s1".into(),
+            boundary_message_id: "message-1".into(),
+        },
     ];
     let mut gated = 0;
     for request in requests {
@@ -350,7 +358,7 @@ fn every_gated_request_names_a_defined_capability() {
         gated += 1;
     }
     assert_eq!(
-        gated, 10,
+        gated, 11,
         "the scan must cover every new request, not silently skip one"
     );
 

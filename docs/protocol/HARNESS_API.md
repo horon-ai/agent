@@ -790,6 +790,14 @@ call as `get_effective_settings` (Rust, Python) and `getEffectiveSettings`
 (TypeScript); each refuses it before sending when the capability was not
 advertised. The TUI's `Daemon` tab is the shipped consumer.
 
+## Forking before a stored message (protocol 1.28)
+
+The harness API keeps major version 1 and moved from minor version 27 to 28.
+Everything here is additive: a client that never sends the request reads the
+same frames it did before.
+
+`session_fork_at_v1` enables `fork_session_at`. Pass the attached `session_id` and a `boundary_message_id` read from `get_history`. The daemon saves a new session containing the history before that user message and returns `session_forked`. The original retains its full history. If the message is no longer a boundary on the active history, the request fails and the client stays attached to the original.
+
 ## Session event store and replication (protocol 1.12)
 
 The harness API keeps major version 1 and moved from minor version 11 to 12. Everything below is additive. A client that sends only the requests it already sent keeps working, and reading the conversation history still needs no new request.

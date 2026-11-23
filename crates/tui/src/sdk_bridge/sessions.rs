@@ -12,7 +12,7 @@ use std::time::Duration;
 use horon_agent_sdk::api::ApiEvent;
 use horon_agent_sdk::{ConnectOptions, Error, EventStream, HistoryMessage, HoronAgentClient, SessionInfo};
 
-use super::{AttachedSession, cut, detail, runtime};
+use super::{AttachedSession, ForkRow, cut, detail, runtime};
 
 /// How to reach the harness, kept after the first connection took the options.
 ///
@@ -357,6 +357,84 @@ pub(super) fn first_user_text(messages: &[HistoryMessage]) -> Option<String> {
                 .find(|line| !line.is_empty())
                 .map(cut)
         })
+}
+
+/// The recorded boundaries of one conversation, newest first.
+///
+/// A boundary is a user message the daemon stored with an id: forking from it
+/// keeps every message recorded before it and leaves the message itself for the
+/// branch to replace. Injected context rows are not boundaries, because the
+/// user never wrote them and could not have chosen to branch there.
+pub(super) fn boundaries(messages: &[HistoryMessage]) -> Vec<ForkRow> {
+    let mut rows = Vec::new();
+    let mut ordinal = 0usize;
+    for (kept, message) in messages.iter().enumerate() {
+        if message.role != "user" || injected(message) {
+            continue;
+        }
+        let Some(boundary) = message.message_id.clone() else {
+            // A daemon that never negotiated stored ids cannot name a stable
+            // boundary; an index here would fork the wrong message after an
+            // edit, so it is skipped rather than guessed.
+            continue;
+        };
+        ordinal += 1;
+        let text = single_line(&message.content);
+        let label = if text.is_empty() {
+            "(message with no text)".to_string()
+        } else {
+            cut(&text)
+        };
+        rows.push(ForkRow {
+            boundary,
+            label,
+            detail: format!("#{ordinal}"),
+            preview: vec![
+                "fork before this recorded message".to_string(),
+                if text.is_empty() {
+                    "you: (no text)".to_string()
+                } else {
+                    format!("you: {text}")
+                },
+                format!("the branch keeps the {kept} stored messages before it"),
+                "the original session keeps every message".to_string(),
+            ],
+        });
+    }
+    rows.reverse();
+    rows
+}
+
+/// Fork off a recorded boundary and follow the child.
+///
+/// The boundary is resolved by the daemon against the source's selected head,
+/// so a stale row is refused before anything moves: the worker stays on the
+/// source and the caller shows the refusal. Once the fork lands, the child is
+/// attached on the same connection and the caller's id and stream move with
+/// it. A fork the daemon accepted but could not attach is reported with the
+/// branch id, because the branch is persisted and `/switch` can still open it.
+pub(super) fn forked(
+    client: &HoronAgentClient,
+    boundary: &str,
+    session_id: &mut String,
+    stream: &mut EventStream,
+    socket: &str,
+) -> Result<(AttachedSession, Option<String>), Error> {
+    let branch = client.fork_session_at(session_id.as_str(), boundary)?;
+    let next = client.events(None);
+    match resumed(client, &branch.session_id, socket) {
+        Ok((attached, directory)) => {
+            follow(&attached, next, session_id, stream);
+            Ok((attached, directory))
+        }
+        Err(error) => Err(Error::new(
+            error.kind.clone(),
+            format!(
+                "branch {} was created but could not be opened: {}",
+                branch.session_id, error.message
+            ),
+        )),
+    }
 }
 
 /// The newest thing the assistant said in a stored conversation, on one line.

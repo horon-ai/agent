@@ -5,7 +5,7 @@
 //!
 //! 1. Built-in UI commands ([`Local`]) are owned by the client: `/quit`,
 //!    `/exit`, `/help`, `/artifact`, `/archived`, `/copy`, `/keys`, `/clear`, `/clear-context`,
-//!    `/compact`, `/jobs`, `/model`, `/effort`, `/mcp`, `/new`, `/note`, `/pin`,
+//!    `/compact`, `/jobs`, `/model`, `/effort`, `/fork`, `/mcp`, `/new`, `/note`, `/pin`,
 //!    `/rename`, `/settings`, `/resume`, `/skills`, `/stats`, `/switch`, `/tools`,
 //!    `/unpin`, `/links`, `/queue`, `/record`, `/replay`, `/diff`, `/commit`,
 //!    `/swarm` and `/voice`.
@@ -106,6 +106,8 @@ pub enum Local {
     Effort,
     /// Start a new session in this working directory.
     New,
+    /// Fork a new session from a recorded message boundary.
+    Fork,
     /// Open the settings screen.
     Settings,
     /// Rename the attached session.
@@ -178,6 +180,7 @@ impl Local {
             "model" => Some(Self::Model),
             "effort" => Some(Self::Effort),
             "new" => Some(Self::New),
+            "fork" | "branch" => Some(Self::Fork),
             "settings" => Some(Self::Settings),
             "rename" => Some(Self::Rename),
             "resume" => Some(Self::Resume),
@@ -218,6 +221,7 @@ impl Local {
             Self::Model => "model",
             Self::Effort => "effort",
             Self::New => "new",
+            Self::Fork => "fork",
             Self::Settings => "settings",
             Self::Rename => "rename",
             Self::Resume => "resume",
@@ -820,6 +824,7 @@ const LOCAL_NAMES: &[&str] = &[
     "effort",
     "exit",
     "export",
+    "fork",
     "help",
     "jobs",
     "keys",
