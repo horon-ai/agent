@@ -26,13 +26,13 @@ fn layout() -> Result<VolumeLayout> {
 }
 
 /// Run one `volume` subcommand.
-pub(crate) fn run(command: VolumeCommand) -> Result<()> {
+pub(crate) fn run(command: &VolumeCommand) -> Result<()> {
     let layout = layout()?;
     match command {
-        VolumeCommand::Export { output, json } => export(&layout, &output, json),
-        VolumeCommand::Import { input, json } => import(&layout, &input, json),
-        VolumeCommand::Quiesce { json } => quiesce(&layout, json),
-        VolumeCommand::Resume { json } => resume(&layout, json),
+        VolumeCommand::Export { output, json } => export(&layout, output, *json),
+        VolumeCommand::Import { input, json } => import(&layout, input, *json),
+        VolumeCommand::Quiesce { json } => quiesce(&layout, *json),
+        VolumeCommand::Resume { json } => resume(&layout, *json),
         VolumeCommand::Key(action) => key_command(&layout, action),
         VolumeCommand::DeleteUser {
             user_id,
@@ -41,8 +41,8 @@ pub(crate) fn run(command: VolumeCommand) -> Result<()> {
             token_file,
             status,
             json,
-        } => delete_user(&layout, &user_id, endpoint, token_env, token_file, status, json),
-        VolumeCommand::DeletionStatus { json } => deletion_status(&layout, json),
+        } => delete_user(&layout, user_id, endpoint, token_env, token_file, *status, *json),
+        VolumeCommand::DeletionStatus { json } => deletion_status(&layout, *json),
     }
 }
 
@@ -103,10 +103,10 @@ fn resume(layout: &VolumeLayout, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn key_command(layout: &VolumeLayout, action: VolumeKeyCommand) -> Result<()> {
+fn key_command(layout: &VolumeLayout, action: &VolumeKeyCommand) -> Result<()> {
     match action {
         VolumeKeyCommand::Create { key_id, algorithm } => {
-            let record = key::create_key(layout, &key_id, &algorithm)?;
+            let record = key::create_key(layout, key_id, algorithm)?;
             println!("{}", serde_json::to_string_pretty(&record)?);
         }
         VolumeKeyCommand::Show => match key::read_key(layout)? {
@@ -131,16 +131,16 @@ fn key_command(layout: &VolumeLayout, action: VolumeKeyCommand) -> Result<()> {
 fn delete_user(
     layout: &VolumeLayout,
     user_id: &str,
-    endpoint: Option<String>,
-    token_env: Option<String>,
-    token_file: Option<std::path::PathBuf>,
+    endpoint: &Option<String>,
+    token_env: &Option<String>,
+    token_file: &Option<std::path::PathBuf>,
     status: bool,
     json: bool,
 ) -> Result<()> {
     if status {
         return deletion_status(layout, json);
     }
-    let endpoint = endpoint.unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
+    let endpoint = endpoint.clone().unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
     let token = Secret::resolve(token_env.as_deref(), token_file.as_ref())?;
     let control = HttpControlPlane::new(endpoint, token)?;
     let report = delete::delete_user(layout, &control, user_id)?;

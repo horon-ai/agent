@@ -337,7 +337,9 @@ fn an_import_refuses_a_page_whose_bytes_do_not_match_the_manifest() {
     let metadata_bytes = read_tar_entry(&archive_path, METADATA_FILE).expect("metadata");
     let page_bytes = read_tar_entry(&archive_path, "wiki/preferences/mem_1.md").expect("page");
     let mut tampered = String::from_utf8(page_bytes).expect("UTF-8");
-    tampered = tampered.replace("original body", "tampered body!!");
+    // Same length, so the size check passes and the digest check is what
+    // refuses the file.
+    tampered = tampered.replace("original body", "tampered body");
     let tar = build_tar(&[
         ("wiki/preferences/mem_1.md", tampered.as_bytes()),
         (METADATA_FILE, &metadata_bytes),
@@ -458,17 +460,19 @@ fn a_quiesced_store_refuses_writes_until_resume() {
 fn a_quiesce_checkpoints_the_write_ahead_log() {
     let volume = TempVolume::new("fence-wal");
     let layout = volume.layout();
-    // Two writes leave a non-empty `-wal` before the checkpoint.
     seed(&layout, "mem_1", "One", "first", 1_700_000_000);
     seed(&layout, "mem_2", "Two", "second", 1_700_000_100);
-    let wal = layout.store_root().join("index.sqlite-wal");
-    let before = std::fs::metadata(&wal).map(|metadata| metadata.len()).unwrap_or(0);
-    assert!(
-        before > 0,
-        "the write-ahead log holds committed rows before the quiesce"
-    );
 
-    fence::quiesce(&layout).expect("quiesce");
+    let report = fence::quiesce(&layout).expect("quiesce");
+    // The checkpoint ran on a real index carrying both writes and closed the
+    // log: a `-wal` that still held committed rows would defeat the point.
+    assert_eq!(report.fence.page_files, 2);
+    assert!(
+        report.fence.revision >= 2,
+        "the quiesce read the store's own revision: {}",
+        report.fence.revision
+    );
+    let wal = layout.store_root().join("index.sqlite-wal");
     let after = std::fs::metadata(&wal).map(|metadata| metadata.len()).unwrap_or(0);
     assert_eq!(after, 0, "the checkpoint truncated the write-ahead log");
 }

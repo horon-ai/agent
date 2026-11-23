@@ -109,7 +109,7 @@ pub fn export(layout: &VolumeLayout, destination: &Path) -> Result<ExportReport>
             bail!("the page file {} is not inside the wiki root", absolute.display());
         };
         let path = format!("{WIKI_PREFIX}{relative}");
-        lines.push(metadata_for(&page, &path, bytes.len() as u64));
+        lines.push(metadata_for(&page, &path));
         files.push((path, bytes));
     }
     drop(lock);
@@ -394,7 +394,7 @@ fn create_private_dir(path: &Path) -> Result<()> {
 
 /// Everything about `page` that a metadata line carries, with the body left
 /// out and only its size reported.
-fn metadata_for(page: &horon_agent_memory_types::MemoryPage, path: &str, body_bytes: u64) -> PageMetadata {
+fn metadata_for(page: &horon_agent_memory_types::MemoryPage, path: &str) -> PageMetadata {
     PageMetadata {
         id: page.id.as_str().to_string(),
         path: path.to_string(),
@@ -415,6 +415,6 @@ fn metadata_for(page: &horon_agent_memory_types::MemoryPage, path: &str, body_by
         valid_to: page.valid_to.clone(),
         confidence: page.confidence,
         source: page.source.clone(),
-        body_bytes,
+        body_bytes: page.body.len() as u64,
     }
 }

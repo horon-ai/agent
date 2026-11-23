@@ -434,10 +434,12 @@ pub fn relative_page_path(store_root: &Path, path: &Path) -> Option<String> {
         Ok(relative) => relative,
         Err(_) => return None,
     };
-    match relative_slash(relative) {
-        Ok(relative) => Some(relative),
-        Err(_) => None,
-    }
+    // A path that leaves the store root is reported as unnamed rather than
+    // written into an archive, so the caller refuses it.
+    let Ok(relative) = relative_slash(relative) else {
+        return None;
+    };
+    Some(relative)
 }
 
 /// Parse one page file's text as a page.

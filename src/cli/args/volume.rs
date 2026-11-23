@@ -45,8 +45,8 @@ pub(crate) enum VolumeCommand {
     DeleteUser {
         /// The user whose volume this is
         user_id: String,
-        /// The control-plane endpoint
-        #[arg(long, env = "HORON_AGENT_CONTROL_PLANE_ENDPOINT")]
+        /// The control-plane endpoint (defaults to 127.0.0.1:8080)
+        #[arg(long)]
         endpoint: Option<String>,
         /// The environment variable that holds the bearer token
         #[arg(long)]

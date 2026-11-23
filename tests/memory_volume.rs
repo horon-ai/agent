@@ -69,10 +69,6 @@ impl Fixture {
         }
         command.args(args).output().expect("the CLI runs")
     }
-
-    fn stdout(&self, output: &Output) -> String {
-        String::from_utf8_lossy(&output.stdout).to_string()
-    }
 }
 
 fn set_private(path: &Path) {

@@ -127,9 +127,7 @@ impl KeyMaterial {
     }
 
     fn wipe(&mut self) {
-        for byte in &mut self.bytes {
-            *byte = 0;
-        }
+        self.bytes.fill(0);
         std::hint::black_box(&mut self.bytes);
         self.bytes.clear();
     }
