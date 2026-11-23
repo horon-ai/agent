@@ -93,6 +93,12 @@ impl Agent {
                     ContentBlock::OpenAICompaction { .. } => {
                         transcript.push_str("[OpenAI native compaction]\n");
                     }
+                    a2ui @ ContentBlock::A2ui { .. } => {
+                        if let Some(card) = a2ui.a2ui_text_card() {
+                            transcript.push_str(&card);
+                            transcript.push('\n');
+                        }
+                    }
                 }
             }
             transcript.push('\n');
@@ -109,12 +115,10 @@ impl Agent {
             .map(|msg| {
                 msg.content
                     .iter()
-                    .filter_map(|c| {
-                        if let ContentBlock::Text { text, .. } = c {
-                            Some(text.clone())
-                        } else {
-                            None
-                        }
+                    .filter_map(|c| match c {
+                        ContentBlock::Text { text, .. } => Some(text.clone()),
+                        ContentBlock::A2ui { .. } => c.a2ui_text_card(),
+                        _ => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -139,7 +143,8 @@ impl Agent {
                 .content
                 .iter()
                 .filter_map(|block| match block {
-                    ContentBlock::Text { text, .. } => Some(text.as_str()),
+                    ContentBlock::Text { text, .. } => Some(text.clone()),
+                    ContentBlock::A2ui { .. } => block.a2ui_text_card(),
                     _ => None,
                 })
                 .collect::<Vec<_>>()

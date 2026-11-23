@@ -1,3 +1,4 @@
+mod a2ui;
 mod available_models_cache;
 mod available_models_dedup;
 mod await_members_state;
@@ -11,6 +12,7 @@ mod client_comm_message;
 mod client_comm_swarms;
 mod client_disconnect_cleanup;
 mod client_lifecycle;
+mod client_lifecycle_acks;
 // Alt+B handler, reachable from the agent-side tests only.
 #[cfg(test)]
 pub(crate) use self::client_lifecycle_tool_move::move_tool_to_background;

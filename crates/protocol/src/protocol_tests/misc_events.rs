@@ -96,6 +96,7 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         terminal_env: vec![("ZELLIJ_SESSION_NAME".to_string(), "sessionB".to_string())],
         acp: None,
         history_message_ids: false,
+        a2ui: None,
     };
     let json = serde_json::to_string(&req)?;
     assert!(json.contains("\"type\":\"subscribe\""));
@@ -115,6 +116,7 @@ fn test_subscribe_request_roundtrip_preserves_session_takeover_flags() -> Result
         terminal_env,
         acp: _,
         history_message_ids: _,
+        a2ui: _,
     } = decoded
     else {
         return Err(anyhow!("expected Subscribe"));
@@ -155,6 +157,7 @@ fn test_subscribe_request_defaults_optional_flags() -> Result<()> {
         terminal_env,
         acp: _,
         history_message_ids: _,
+        a2ui: _,
     } = decoded
     else {
         return Err(anyhow!("expected Subscribe"));

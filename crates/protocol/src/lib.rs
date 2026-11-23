@@ -640,7 +640,9 @@ impl Request {
             Request::PermissionDecision { id, .. } | Request::AskResponse { id, .. } => *id,
             Request::ClientResponse { id, .. }
             | Request::ConfigureSessionMcp { id, .. }
-            | Request::SetSessionApprovalMode { id, .. } => *id,
+            | Request::SetSessionApprovalMode { id, .. }
+            | Request::ConfigureA2ui { id, .. }
+            | Request::A2uiEvent { id, .. } => *id,
             Request::GetRuntimeState { id }
             | Request::ApplyControl { id, .. }
             | Request::GetControlReceipt { id, .. }
@@ -787,6 +789,8 @@ fn decode_legacy_set_route_model(line: &str) -> Option<Request> {
     Some(Request::SetModel { id, model })
 }
 
+#[cfg(test)]
+mod a2ui_wire_tests;
 #[cfg(test)]
 #[path = "protocol_tests.rs"]
 mod tests;

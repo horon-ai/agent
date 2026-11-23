@@ -20,21 +20,7 @@ const USER_INTERRUPT_SKIP: &str = "[Skipped: user interrupted]";
 /// Result text for a call skipped because the server is reloading.
 const RELOAD_SKIP: &str = "[Skipped - server reloading]";
 
-/// Called only after automatic continuations have been exhausted.
-fn incomplete_turn_stop(stop_reason: Option<&str>) -> Option<ServerEvent> {
-    let reason = stop_reason?;
-    if Agent::should_continue_after_stop_reason(reason) || Agent::is_stranded_tool_use_stop(Some(reason)) {
-        Some(ServerEvent::TurnStopped {
-            reason: crate::protocol::TurnStopReason::LimitReached,
-            message: format!(
-                "The provider stopped with {reason} after automatic continuation attempts were exhausted. Output may be incomplete."
-            ),
-            provider_stop_reason: Some(reason.to_string()),
-        })
-    } else {
-        None
-    }
-}
+use run::incomplete_turn_stop;
 
 impl Agent {
     async fn run_turn_streaming_mpsc_inner(
@@ -61,6 +47,7 @@ impl Agent {
             &self.session.stream_rule_ledger,
             super::stream_rules::user_turn_index(&self.session),
         );
+        self.reset_a2ui_turn();
 
         loop {
             // Never open a new provider request after a cancel. Several paths
@@ -80,6 +67,7 @@ impl Agent {
                 break;
             }
             self.prepare_child_request(&event_tx)?;
+            self.reset_a2ui_stream_attempt();
             let repaired = self.repair_missing_tool_outputs();
             if repaired > 0 {
                 logging::warn(&format!(
@@ -775,6 +763,7 @@ impl Agent {
                         });
                         tool_id_to_name.insert(id.clone(), name.clone());
                         current_tool = Some(id.clone());
+                        self.register_a2ui_stream_tool(&id, &name);
                         streaming_tools.entry(id.clone()).or_insert_with(|| {
                             (
                                 ToolCall {
@@ -796,6 +785,7 @@ impl Agent {
                         if let Some((_, input)) = input_tool_id.as_ref().and_then(|id| streaming_tools.get_mut(id)) {
                             input.push_str(&delta);
                         }
+                        self.feed_a2ui_stream_delta(input_tool_id.as_deref(), &delta, &event_tx);
                     }
                     StreamEvent::ToolUseEnd | StreamEvent::ToolUseEndFor { .. } => {
                         if let Some((mut tool, current_tool_input)) =
@@ -980,6 +970,7 @@ impl Agent {
                             guard.reset_all();
                         }
                         saw_message_end = false;
+                        self.reset_a2ui_stream_attempt();
                         stop_reason = None;
                         let _ = event_tx.send(ServerEvent::RetryRollback { attempt, max });
                         let _ = event_tx.send(ServerEvent::ConnectionPhase {
@@ -1483,6 +1474,7 @@ impl Agent {
                                 message: notice,
                             });
                         }
+                        self.flush_deferred_a2ui_blocks()?;
                         self.turn_state.set_final_text(&text_content);
                         let outcome = if self.is_graceful_shutdown() {
                             TurnOutcome::Aborted
@@ -1758,6 +1750,7 @@ impl Agent {
                     | None => {}
                     Some(super::loop_guard::LoopGuardVerdict::Refuse(message)) => {
                         self.write_loop_guard_result(tc, &message, &event_tx);
+                        self.note_a2ui_round_failure();
                         tool_results_dirty = true;
                         continue;
                     }
@@ -1793,6 +1786,7 @@ impl Agent {
                             }],
                         );
                         tool_results_dirty = true;
+                        self.note_a2ui_round_failure();
                         stream_rule_state.flush_ledger(&mut self.session.stream_rule_ledger);
                         continue;
                     }
@@ -1901,6 +1895,7 @@ impl Agent {
                                     error: None,
                                     verdict: output.verdict,
                                 });
+                                self.collect_a2ui_tool_output(&tc.id, &tc.name, &output, Some(&event_tx));
 
                                 let side_pane_images =
                                     tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
@@ -1941,6 +1936,7 @@ impl Agent {
                                     break;
                                 }
                                 let error_msg = format!("Error: {}", e);
+                                self.note_a2ui_round_failure();
                                 let verdict = tool_failure_verdict(&e);
                                 let _ = event_tx.send(ServerEvent::ToolDone {
                                     id: tc.id.clone(),
@@ -2124,6 +2120,9 @@ impl Agent {
 
             if tool_results_dirty {
                 self.save_session()?;
+            }
+            if self.finalize_a2ui_round()? {
+                break;
             }
 
             // A `todo` write in this round is the planning handoff point, so the
@@ -2624,6 +2623,7 @@ impl Agent {
                                 error: None,
                                 verdict: output.verdict,
                             });
+                            self.collect_a2ui_tool_output(&tc.id, &tc.name, &output, Some(event_tx));
 
                             let side_pane_images = tool_output_side_pane_images(&tc.id, &tc.name, &tc.input, &output);
                             if !side_pane_images.is_empty() {
@@ -2646,6 +2646,7 @@ impl Agent {
                         }
                         Some(Err(e)) => {
                             let error_msg = format!("Error: {}", e);
+                            self.note_a2ui_round_failure();
                             let verdict = tool_failure_verdict(&e);
                             let _ = event_tx.send(ServerEvent::ToolDone {
                                 id: tc.id.clone(),
@@ -2675,6 +2676,7 @@ impl Agent {
                             // every `tool_use` keeps exactly one `tool_result`
                             // whatever the members did.
                             skipped_members += 1;
+                            self.note_a2ui_round_failure();
                             let (skipped, error) = if matches!(stopped, Some(super::tool_round::GroupStop::Interrupt)) {
                                 (USER_INTERRUPT_SKIP.to_string(), "interrupted by user".to_string())
                             } else {

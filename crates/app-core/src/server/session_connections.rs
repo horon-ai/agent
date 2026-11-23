@@ -58,6 +58,7 @@ pub(super) async fn connection_presence_pong(
             // capability only when this is present, because the work is done
             // here and not in the bridge.
             "cancellable_work_api".into(),
+            "a2ui_v1".into(),
             // The daemon answers `get_effective_settings` from its own loaded
             // config, its own environment and its own launch record. The bridge
             // forwards the request only when this is present: an older daemon

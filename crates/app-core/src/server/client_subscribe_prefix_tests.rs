@@ -30,6 +30,7 @@ fn subscribe_to(target: &str) -> Request {
         terminal_env: Vec::new(),
         acp: None,
         history_message_ids: false,
+        a2ui: None,
     }
 }
 

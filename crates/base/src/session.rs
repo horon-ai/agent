@@ -42,6 +42,7 @@ mod purge;
 #[path = "session/purge_tests.rs"]
 mod purge_tests;
 mod render;
+use render::redact_json_value;
 mod resume_marker;
 mod storage_paths;
 mod streaming_guard;
@@ -1165,9 +1166,16 @@ request in this new forked session, using the inherited conversation only as con
                         *content = crate::message::redact_secrets(content);
                     }
                     ContentBlock::ToolUse { input, .. } => redact_json_value(input),
-                    // Export copy only: the stored item stays verbatim for
-                    // replay, but queries can carry pasted credentials.
                     ContentBlock::ProviderNative { item, .. } => redact_json_value(item),
+                    ContentBlock::A2ui {
+                        envelopes,
+                        fallback_text,
+                    } => {
+                        envelopes.iter_mut().for_each(redact_json_value);
+                        if let Some(t) = fallback_text {
+                            *t = crate::message::redact_secrets(t);
+                        }
+                    }
                     ContentBlock::Image { .. } | ContentBlock::Audio { .. } => {}
                     ContentBlock::OpenAICompaction { .. } | ContentBlock::ToolReference { .. } => {}
                 }
@@ -1778,45 +1786,6 @@ fn aggregate_usage<'a>(
             .saturating_add(usage.cache_creation_input_tokens.unwrap_or(0));
     }
     totals
-}
-
-fn redact_json_value(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::String(s) => {
-            *s = crate::message::redact_secrets(s);
-        }
-        serde_json::Value::Array(values) => {
-            for entry in values {
-                redact_json_value(entry);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for (key, entry) in map.iter_mut() {
-                if is_sensitive_json_key(key) {
-                    *entry = serde_json::Value::String("[REDACTED_SECRET]".to_string());
-                } else {
-                    redact_json_value(entry);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn is_sensitive_json_key(key: &str) -> bool {
-    let normalized = key
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect::<String>();
-    normalized.contains("apikey")
-        || normalized.ends_with("token")
-        || normalized.ends_with("secret")
-        || normalized.contains("password")
-        || matches!(
-            normalized.as_str(),
-            "authorization" | "cookie" | "setcookie" | "privatekey" | "clientsecret"
-        )
 }
 
 /// The lineage root a freshly created session starts with: a new UUID for a root, and

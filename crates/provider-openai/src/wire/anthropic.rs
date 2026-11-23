@@ -169,6 +169,9 @@ fn convert_block(block: &ContentBlock, role: &Role, native_tag: &str) -> Option<
                 );
             replayed.then(|| item.clone())
         }
+        a2ui @ ContentBlock::A2ui { .. } => a2ui
+            .a2ui_model_summary()
+            .map(|summary| json!({ "type": "text", "text": summary })),
         ContentBlock::Reasoning { .. }
         | ContentBlock::ReasoningTrace { .. }
         | ContentBlock::AnthropicThinking { .. }

@@ -151,6 +151,11 @@ fn convert_parts(message: &Message, names: &HashMap<String, String>) -> Vec<Valu
                 }
                 parts.push(json!({ "text": text }));
             }
+            a2ui @ ContentBlock::A2ui { .. } => {
+                if let Some(summary) = a2ui.a2ui_model_summary() {
+                    parts.push(json!({ "text": summary }));
+                }
+            }
             ContentBlock::Image { media_type, data } => {
                 parts.push(json!({ "inlineData": { "mimeType": media_type, "data": data } }));
             }

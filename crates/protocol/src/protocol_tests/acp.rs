@@ -14,6 +14,7 @@ fn plain_subscribe(id: u64) -> Request {
         terminal_env: Vec::new(),
         acp: None,
         history_message_ids: false,
+        a2ui: None,
     }
 }
 
@@ -50,6 +51,7 @@ fn acp_subscribe(id: u64, acp: AcpSubscribeOptions) -> Request {
         terminal_env,
         acp: Some(acp),
         history_message_ids: false,
+        a2ui: None,
     }
 }
 

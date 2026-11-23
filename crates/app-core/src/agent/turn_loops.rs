@@ -528,6 +528,7 @@ impl Agent {
             &self.session.stream_rule_ledger,
             super::stream_rules::user_turn_index(&self.session),
         );
+        self.reset_a2ui_turn();
 
         loop {
             // Do not start another provider request once a cancel has been
@@ -1505,6 +1506,7 @@ impl Agent {
                 if print_output {
                     println!();
                 }
+                self.flush_deferred_a2ui_blocks()?;
                 self.turn_state.set_final_text(&text_content);
                 let outcome = if self.is_graceful_shutdown() {
                     TurnOutcome::Aborted
@@ -1947,6 +1949,7 @@ impl Agent {
                                         println!("{}", preview.lines().next().unwrap_or("(done)"));
                                     }
 
+                                    self.collect_a2ui_tool_output(&tc.id, &tc.name, &output, None);
                                     let blocks = tool_output_to_history_blocks(tc.id.clone(), output, &self.session.id);
                                     self.add_message_with_duration(
                                         Role::User,
@@ -1983,6 +1986,7 @@ impl Agent {
                                     }));
 
                                     let error_msg = format!("Error: {}", e);
+                                    self.note_a2ui_round_failure();
                                     if trace {
                                         eprintln!(
                                             "[trace] tool_exec_error name={} id={} {}",
@@ -2065,6 +2069,9 @@ impl Agent {
 
             if tool_results_dirty {
                 self.save_session()?;
+            }
+            if self.finalize_a2ui_round()? {
+                break;
             }
 
             // A `todo` write in this round is the planning handoff point, so the

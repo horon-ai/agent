@@ -592,6 +592,7 @@ pub(super) async fn handle_client(
     let mut model_usage_updates_enabled = false;
     let mut supports_user_response = false;
     let mut supports_ask_requests = false;
+    let mut a2ui_capabilities: Option<horon_agent_tool_types::a2ui::A2uiSessionCapabilities> = None;
     let mut ask_installation: Option<(String, u64)> = None;
     let mut acp_installation: Option<(String, u64)> = None;
     // Set by a Subscribe whose ACP options negotiated protocol v2. The event
@@ -1270,6 +1271,13 @@ pub(super) async fn handle_client(
             }
         }
 
+        if matches!(
+            super::a2ui::preprocess_a2ui_request(&mut request, &agent, client_is_processing, &client_event_tx).await,
+            super::a2ui::A2uiPreprocess::Handled
+        ) {
+            continue;
+        }
+
         // Legacy/direct clients can send a prompt without Subscribe. Their
         // first session action commits ownership, but inspection/attach does not.
         if provisional_session
@@ -1290,7 +1298,11 @@ pub(super) async fn handle_client(
         let sdk_session_before_request = client_session_id.clone();
         match request {
             Request::ConfigureTools { .. } | Request::ListTools { .. } | Request::ToolResult { .. } => unreachable!("SDK controls dispatched before acknowledgment"),
-            Request::ClientResponse { .. } | Request::DeleteSession { .. } | Request::PackageControl { .. } => {
+            Request::ClientResponse { .. }
+            | Request::DeleteSession { .. }
+            | Request::PackageControl { .. }
+            | Request::ConfigureA2ui { .. }
+            | Request::A2uiEvent { .. } => {
                 unreachable!("dispatched earlier")
             }
             Request::Message {
@@ -1745,6 +1757,7 @@ pub(super) async fn handle_client(
                 terminal_env,
                 acp: acp_options,
                 history_message_ids: requested_history_message_ids,
+                a2ui: requested_a2ui,
             } => {
                 if let Err(message) =
                     validated_subscribe_working_dir(
@@ -1780,6 +1793,7 @@ pub(super) async fn handle_client(
                 continue_on_disconnect = requested_continuation;
                 supports_user_response = requested_user_response;
                 supports_ask_requests = requested_ask_requests;
+                a2ui_capabilities = requested_a2ui;
                 // Read before the attach below writes History, which carries
                 // stored message ids only for a connection that asked for them.
                 acp_v2.store(
@@ -1967,6 +1981,7 @@ pub(super) async fn handle_client(
                     supports_user_response,
                 )
                 .await;
+                super::a2ui::apply_or_defer_a2ui_capabilities(&agent, a2ui_capabilities.clone()).await;
                 // The installation follows the session this connection is
                 // attached to now, not the one it had before a re-subscribe.
                 if let Some((session, token)) = ask_installation.take() {
@@ -2169,6 +2184,7 @@ pub(super) async fn handle_client(
                     supports_user_response,
                 )
                 .await;
+                super::a2ui::apply_or_defer_a2ui_capabilities(&agent, a2ui_capabilities.clone()).await;
                 session_control = refresh_session_control_handle(
                     &client_session_id,
                     &agent,
@@ -4382,87 +4398,7 @@ pub(super) async fn process_locked_message_streaming_mpsc(
     result
 }
 
-/// Clear the durable `pending_event` of the approval a client just acked.
-///
-/// A record that is already gone is success, not an error: the ack can arrive
-/// after the runner cleaned the record up, and failing the client would only
-/// make it retry an ack that has nothing left to clear. Only `pending_event`
-/// changes; the decision fields the resume classifier reads stay untouched.
-fn handle_approval_ack(id: u64, request_id: String, client_event_tx: &mpsc::UnboundedSender<ServerEvent>) {
-    let cleared = crate::ambient::BlockedApprovalStore::open_default()
-        .and_then(|store| store.update_with(&request_id, |record| record.pending_event = None));
-    match cleared {
-        Ok(record_found) => {
-            crate::logging::event_info(
-                "server_approval_ack",
-                vec![
-                    ("id", id.to_string()),
-                    ("request_id", request_id),
-                    ("record_found", record_found.to_string()),
-                ],
-            );
-            let _ = client_event_tx.send(ServerEvent::Ack { id });
-        }
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "approval ack for request {request_id} could not be applied: {error}"
-            ));
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: format!("approval ack could not be applied: {error}"),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
-
-/// Drop the durable failover announcement a client just acked.
-///
-/// The announcement is scoped to the attached session, and the whole switch key
-/// has to match: an ack naming a different chain, route or attempt leaves every
-/// entry in place. A clear that genuinely could not run (the lock stayed held,
-/// or the rewrite failed) is answered with `Error`, never with `Ack`: an `Ack`
-/// tells the client to stop retrying, which would leave the entry on disk and
-/// re-deliver it on every attach and restart. `Ok(0)` — nothing matched — is
-/// still success, because retrying an ack with nothing left to clear cannot help.
-fn handle_failover_ack(
-    id: u64,
-    session_id: &str,
-    chain_id: String,
-    from: String,
-    to: String,
-    attempt: u32,
-    client_event_tx: &mpsc::UnboundedSender<ServerEvent>,
-) {
-    let cleared = super::state::try_clear_acked_failover_event(session_id, &chain_id, &from, &to, attempt);
-    match cleared {
-        Ok(removed) => {
-            crate::logging::event_info(
-                "server_failover_ack",
-                vec![
-                    ("id", id.to_string()),
-                    ("session_id", session_id.to_string()),
-                    ("chain_id", chain_id),
-                    ("from", from),
-                    ("to", to),
-                    ("attempt", attempt.to_string()),
-                    ("removed", removed.to_string()),
-                ],
-            );
-            let _ = client_event_tx.send(ServerEvent::Ack { id });
-        }
-        Err(error) => {
-            crate::logging::warn(&format!(
-                "failover ack for chain {chain_id} attempt {attempt} could not be applied: {error}"
-            ));
-            let _ = client_event_tx.send(ServerEvent::Error {
-                id,
-                message: format!("failover ack could not be applied: {error}"),
-                retry_after_secs: None,
-            });
-        }
-    }
-}
+use super::client_lifecycle_acks::{handle_approval_ack, handle_failover_ack};
 
 #[cfg(test)]
 #[path = "client_lifecycle_ack_tests.rs"]
@@ -4482,3 +4418,7 @@ mod tests;
 #[cfg(test)]
 #[path = "client_target_attach_tests.rs"]
 mod target_attach_tests;
+
+#[cfg(test)]
+#[path = "client_lifecycle_tests/a2ui.rs"]
+mod a2ui_tests;

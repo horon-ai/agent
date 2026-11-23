@@ -342,6 +342,7 @@ impl WsTestClient {
             terminal_env: Vec::new(),
             acp: None,
             history_message_ids: false,
+            a2ui: None,
         })
         .await
     }

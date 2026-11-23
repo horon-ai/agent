@@ -74,6 +74,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             terminal_env: Vec::new(),
             acp: None,
             history_message_ids: false,
+            a2ui: None,
         };
         let decoded = parse_request_json(&serde_json::to_string(&req)?)?;
         let Request::Subscribe {
@@ -91,6 +92,7 @@ fn test_protocol_request_roundtrip_randomized_samples() -> Result<()> {
             terminal_env: _,
             acp: _,
             history_message_ids: _,
+            a2ui: _,
         } = decoded
         else {
             return Err(anyhow!("expected randomized Subscribe"));
