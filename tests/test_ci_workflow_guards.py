@@ -265,7 +265,23 @@ class WorkflowGuardTests(unittest.TestCase):
             'classify_changes', ROOT / 'scripts/ci/classify_changes.py')
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        full = {'code': True, 'docs': False, 'docs_only': False}
+        full = {
+            'code': True,
+            'docs': False,
+            'docs_only': False,
+            'rust': True,
+            'docs_site': True,
+            'ts_sdk': True,
+            'py_sdk': True,
+            'npm_pkg': True,
+            'install_scripts': True,
+            'release_scripts': True,
+            'workflows': True,
+            'tui_only': False,
+            'platform_windows': True,
+            'platform_macos': True,
+            'full_matrix': True,
+        }
         for event, ref, attempt in (('push', 'refs/heads/main', 1),
                                     ('push', 'refs/tags/v1.0.0', 1),
                                     ('workflow_dispatch', 'refs/heads/dev', 1),
