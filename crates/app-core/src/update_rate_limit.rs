@@ -20,13 +20,10 @@ pub(super) const RATE_LIMIT_BACKOFF_MAX: Duration = Duration::from_secs(6 * 60 *
 /// present the situation as "checked too often" rather than a real failure.
 pub const RATE_LIMIT_ERROR_PREFIX: &str = "GitHub API rate limit reached";
 
-/// Detect a GitHub API rate-limit rejection, record a shared backoff window,
-/// and return a recognizable error.
-///
-/// GitHub answers an exhausted bucket with 403 (or 429) plus
-/// `x-ratelimit-remaining: 0`, so we distinguish it from a genuine
-/// authorization failure and avoid hammering the API from every new session.
-pub(super) fn rate_limit_error(response: &reqwest::blocking::Response) -> Option<anyhow::Error> {
+/// Detect a GitHub API rate-limit rejection and return its backoff window
+/// without recording it yet, so callers with a public fallback can recover
+/// before suppressing future checks.
+pub(super) fn detect_rate_limit_backoff(response: &reqwest::blocking::Response) -> Option<Duration> {
     let status = response.status();
     let headers = response.headers();
     let header_num = |name: &str| -> Option<u64> {
@@ -35,13 +32,23 @@ pub(super) fn rate_limit_error(response: &reqwest::blocking::Response) -> Option
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok())
     };
-    let backoff = rate_limit_backoff(
+    rate_limit_backoff(
         status.as_u16(),
         header_num("x-ratelimit-remaining"),
         header_num("retry-after"),
         header_num("x-ratelimit-reset"),
         SystemTime::now(),
-    )?;
+    )
+}
+
+/// Detect a GitHub API rate-limit rejection, record a shared backoff window,
+/// and return a recognizable error.
+///
+/// GitHub answers an exhausted bucket with 403 (or 429) plus
+/// `x-ratelimit-remaining: 0`, so we distinguish it from a genuine
+/// authorization failure and avoid hammering the API from every new session.
+pub(super) fn rate_limit_error(response: &reqwest::blocking::Response) -> Option<anyhow::Error> {
+    let backoff = detect_rate_limit_backoff(response)?;
     record_rate_limit_backoff(backoff);
     // Keep this to one short line: it can surface in a status notice. The
     // remediation hint (GH_TOKEN / `gh auth login`) goes to the log instead.
@@ -85,7 +92,7 @@ fn rate_limit_backoff(
 
 /// Persist the backoff window so every horon-agent process on this machine stops
 /// checking, not just the one that saw the 403.
-fn record_rate_limit_backoff(backoff: Duration) {
+pub(super) fn record_rate_limit_backoff(backoff: Duration) {
     let until = SystemTime::now() + backoff;
     if let Ok(mut metadata) = UpdateMetadata::load() {
         metadata.rate_limited_until = Some(until);

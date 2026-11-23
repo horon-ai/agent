@@ -6,7 +6,8 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use super::{GITHUB_REPO, github_api_request, updater_client};
+use super::github_fetch::send_github_api_get;
+use super::{GITHUB_REPO, updater_client};
 
 /// The notes of one published release.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,7 +50,8 @@ pub fn normalize_tag(version: &str) -> Result<String> {
 pub fn fetch_release_notes_blocking(tag: &str) -> Result<ReleaseNotes> {
     let tag = normalize_tag(tag)?;
     let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{tag}");
-    let response = github_api_request(updater_client()?, &url).send().map_err(|error| {
+    let token = horon_agent_base::github::github_public_api_token();
+    let response = send_github_api_get(updater_client()?, &url, token.as_deref(), None).map_err(|error| {
         anyhow::anyhow!(if error.is_timeout() {
             "GitHub did not answer in time"
         } else {

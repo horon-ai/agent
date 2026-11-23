@@ -19,11 +19,7 @@ fn asset<'a>(release: &'a super::GitHubRelease, name: &str) -> Result<&'a super:
 }
 
 fn download(client: &reqwest::blocking::Client, asset: &super::GitHubAsset) -> Result<Vec<u8>> {
-    Ok(super::asset_request(client, asset)
-        .send()?
-        .error_for_status()?
-        .bytes()?
-        .to_vec())
+    super::download_small_asset(client, asset)
 }
 
 pub(super) fn binary_asset(release: &super::GitHubRelease) -> Result<&super::GitHubAsset> {
