@@ -10,7 +10,6 @@ use std::sync::mpsc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{Action, App};
-use crate::commands::Local;
 use crate::sdk_bridge::AttachedSession;
 use crate::transcript::Item;
 use crate::voice::{self, Capability, Event, Outcome, Phase, Voice};
@@ -39,8 +38,15 @@ fn last_notice(app: &App) -> String {
 
 #[test]
 fn voice_command_is_registered() {
-    assert_eq!(Local::from_name("voice"), Some(Local::Voice));
-    assert_eq!(Local::Voice.name(), "voice");
+    let mut app = app();
+    for ch in "/voice".chars() {
+        assert_eq!(app.on_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)), None);
+    }
+    assert_eq!(app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), None);
+    assert_eq!(
+        last_notice(&app),
+        "voice: local speech uses this device's microphone and programs installed on this computer. Audio and recognized text stay on this device: nothing is sent to the harness, the model or the network, and the system may ask for microphone access. Denying that leaves text input unchanged. Type /voice consent to allow capture for this session."
+    );
 }
 
 #[test]

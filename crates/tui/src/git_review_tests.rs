@@ -13,7 +13,6 @@ use std::process::Command;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
-use crate::commands::{Invocation, Local};
 use crate::transcript::Item;
 
 /// A work tree this test owns, and an app attached to it.
@@ -145,34 +144,6 @@ fn last_line(app: &App) -> String {
         Some(Item::Notice(text)) | Some(Item::Warning(text)) => text.clone(),
         other => panic!("expected a notice or a warning, got {other:?}"),
     }
-}
-
-#[test]
-fn diff_and_commit_resolve_to_the_local_commands() {
-    let (_sender, receiver) = std::sync::mpsc::channel();
-    let app = App::new("test".to_string(), receiver);
-    assert_eq!(
-        app.commands.resolve("/diff"),
-        Invocation::Local {
-            command: Local::Diff,
-            arguments: String::new()
-        }
-    );
-    assert_eq!(
-        app.commands.resolve("/commit fix the parser"),
-        Invocation::Local {
-            command: Local::Commit,
-            arguments: "fix the parser".to_string()
-        }
-    );
-    // `/diff staged` keeps its word for the handler, which is what reads it.
-    assert_eq!(
-        app.commands.resolve("/diff staged"),
-        Invocation::Local {
-            command: Local::Diff,
-            arguments: "staged".to_string()
-        }
-    );
 }
 
 #[test]
