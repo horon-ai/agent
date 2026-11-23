@@ -51,7 +51,7 @@ class WorkflowGuardTests(unittest.TestCase):
         self.assertIn('if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }', arm64)
         self.assertNotIn('continue-on-error:', arm64)
         conditions = [line.strip() for line in arm64.splitlines() if line.strip().startswith('if:')]
-        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.code == 'true' }}"])
+        self.assertEqual(conditions, ["if: ${{ needs.changes.outputs.rust == 'true' }}"])
 
     def test_workflows_do_not_select_self_hosted_runners(self):
         for path in (ROOT / '.github/workflows').iterdir():

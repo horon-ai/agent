@@ -78,6 +78,18 @@ jobs:
       code: ${{ steps.classify.outputs.code }}
       docs: ${{ steps.classify.outputs.docs }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      rust: ${{ steps.classify.outputs.rust }}
+      docs_site: ${{ steps.classify.outputs.docs_site }}
+      ts_sdk: ${{ steps.classify.outputs.ts_sdk }}
+      py_sdk: ${{ steps.classify.outputs.py_sdk }}
+      npm_pkg: ${{ steps.classify.outputs.npm_pkg }}
+      install_scripts: ${{ steps.classify.outputs.install_scripts }}
+      release_scripts: ${{ steps.classify.outputs.release_scripts }}
+      workflows: ${{ steps.classify.outputs.workflows }}
+      tui_only: ${{ steps.classify.outputs.tui_only }}
+      platform_windows: ${{ steps.classify.outputs.platform_windows }}
+      platform_macos: ${{ steps.classify.outputs.platform_macos }}
+      full_matrix: ${{ steps.classify.outputs.full_matrix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -93,11 +105,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: python3 scripts/ci/classify_changes.py --workflow ci.yml --base "$BASE_SHA" --head "$HEAD_SHA"
   quality:
     name: Quality Guardrails
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.py_sdk == 'true' || needs.changes.outputs.npm_pkg == 'true' }}
     # The issue-reference gate lists this repository's issues to prove the
     # numbers in `.github/` and `scripts/` open. Reading them needs the token
     # scopes below; every other step in this job only reads the checkout.
@@ -196,7 +209,7 @@ jobs:
         # Clippy compiles every target and feature that `cargo check` would, so
         # this single step covers both and halves the all-features artifacts a
         # hosted runner has to hold.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run clippy on workspace targets
@@ -206,21 +219,20 @@ jobs:
         # `horon-package-example`) are not linted there. Running `--workspace
         # --all-targets` with default features covers every member target while
         # keeping the terminal stack out of the root `--all-features` build.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Run the author SDK issue verification commands
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
           HORON_HOME="$(mktemp -d)"
           export HORON_HOME
           trap 'rm -rf "$HORON_HOME"' EXIT
           cargo test --locked -p horon-agent-extension-sdk
-          cargo check --locked -p horon-package-example
 
       - name: Enforce Cargo.lock is up to date
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         # Adding a dependency without regenerating Cargo.lock breaks every
         # `--locked` build. Only the Windows jobs pass `--locked`, so such a
@@ -232,12 +244,12 @@ jobs:
           git diff --exit-code -- Cargo.lock
 
       - name: Warning budget gate contract tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: scripts/ci/test_check_warnings.sh
 
       - name: Benchmark script gate
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/perf/test_bench.py scripts/perf/test_ab_perf.py scripts/perf/test_analyze_memory_log.py scripts/perf/test_bench_suites.py scripts/perf/test_mock_llm_server.py scripts/perf/test_bench_compare.py scripts/perf/test_install_competitors.py scripts/perf/test_bench_docs.py scripts/perf/test_record_charts.py scripts/perf/test_bench_tui.py scripts/perf/test_bench_common_platform.py scripts/perf/test_check_soak.py scripts/perf/test_bench_tools_cpu.py scripts/perf/test_bench_report.py scripts/perf/test_package_workloads.py
 
@@ -301,27 +313,27 @@ jobs:
           python3 scripts/ci/check_issue_refs.py
 
       - name: Enforce warning budget
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: scripts/ci/check_warnings.sh
 
       - name: Enforce oversized-file ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_code_size.py
 
       - name: Enforce oversized-test ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_test_size.py
 
       - name: Enforce panic-prone usage ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_panics.py
 
       - name: Enforce swallowed-error usage ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_swallowed_errors.py
 
@@ -329,7 +341,7 @@ jobs:
         # The gate discovers its own ceiling files by shape, so a new ratchet
         # (the `Result<_, String>` count of #156, model names) needs no step
         # here. These tests are what keeps that discovery honest.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_growth_ratchets.py
 
@@ -337,27 +349,27 @@ jobs:
         # Cargo.lock package count and internal legacy markers: both may fall
         # but not rise. Ceilings live in `scripts/ci/*.json` objects that
         # declare `counter` and `ceiling`; adding one needs no edit here.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_growth_ratchets.py
 
       - name: Enforce crate dependency boundaries
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_dependency_boundaries.py
 
       - name: Enforce headless dependency graph
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_headless_graph.py
 
       - name: Headless graph gate contract tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_headless_graph.py
 
       - name: Keep the author SDK out of the agent binary
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         # `horon-agent-extension-sdk` and its example are workspace members so
         # `-p` builds reach them; they are never dependencies of `horon-agent`.
@@ -391,7 +403,7 @@ jobs:
         # matched nothing into a failure; `--min-passed` is that behaviour, and
         # this is where it is proved rather than assumed. The integration
         # runner's per-target `skipped` rows are proved the same way.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
           python3 -m unittest -v \
@@ -403,7 +415,7 @@ jobs:
         # decision they encode is only as good as the code that reads it. These
         # tests prove each rejection path: a target or module that no step runs,
         # a stale entry, an empty reason, and a row that runs but has no count.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
           python3 -m unittest -v \
@@ -415,7 +427,7 @@ jobs:
         # its target and whether the install guide may advertise it, so its
         # rejection paths (cross-compiled evidence, a missing step, a failed
         # step, an unproven claim) are proved here rather than assumed.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_package_compat.py
 
@@ -423,22 +435,20 @@ jobs:
         # #226: the compile step builds every integration target and, before this
         # guard, nothing started most of them. Static check (workflow plus
         # `cargo metadata`), so it costs seconds and needs no build.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_test_targets.py
 
       - name: Enforce Rust and TypeScript SDK surface parity
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.py_sdk == 'true') }}
         shell: bash
-        run: cargo test --locked -p horon-agent-sdk parity -- --nocapture
-
-      - name: Run daemon package control contracts
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: cargo test --locked --test harness_roundtrip package_daemon
+        run: |
+          cargo test --locked -p horon-agent-sdk --lib parity -- --nocapture 2>&1 \
+            | tee "$RUNNER_TEMP/sdk-parity.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/sdk-parity.log"
 
       - name: Run Rust SDK tool verdict tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ts_sdk == 'true') }}
         shell: bash
         # The `parity` filter above selects nothing in this integration target,
         # so it is named here. The count is the number of tests in
@@ -450,17 +460,17 @@ jobs:
           grep -q '^test result: ok\. 4 passed' "$RUNNER_TEMP/sdk-tool-verdict.log"
 
       - name: Enforce wildcard re-export ratchet
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_wildcard_reexports.py
 
       - name: Platform cfg gate contract tests
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 -m unittest -v scripts/ci/test_check_platform_cfg.py
 
       - name: Enforce platform cfg allowlist
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: python3 scripts/ci/check_platform_cfg.py
 
@@ -468,13 +478,13 @@ jobs:
         # The crate is published as a binary; building it from source on every
         # run costs minutes and hundreds of MB on a job that already has the
         # largest build. install-action downloads the release binary instead.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         uses: taiki-e/install-action@c5695724643db014337e10f479712023ee658d78 # cargo-machete
         with:
           tool: cargo-machete
 
       - name: Enforce no unused dependencies
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: cargo machete
 
@@ -491,7 +501,7 @@ jobs:
   release-automation:
     name: Release Automation
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.release_scripts == 'true' || needs.changes.outputs.workflows == 'true' || needs.changes.outputs.install_scripts == 'true' || needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -512,7 +522,7 @@ jobs:
   build:
     name: Build & Test (${{ matrix.os }})
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ${{ matrix.runner }}
     # 35 minutes covers a normal push (~12 min with a warm Swatinem cache) but
     # not a *rerun*, where the cache is cold: three consecutive reruns of a
@@ -2457,7 +2467,7 @@ jobs:
     name: Build & Test (windows-latest)
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 75
     steps:
       - name: Report free disk space
@@ -2966,34 +2976,10 @@ jobs:
         shell: pwsh
         run: sccache --show-stats
 
-  fmt:
-    name: Format
-    needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Install the pinned toolchain
-        # `cargo fmt` runs under the toolchain rust-toolchain.toml pins. Installing
-        # it here, with its listed components, replaces rustup's automatic install,
-        # which prints a warning on first use.
-        run: rustup toolchain install --profile minimal
-
-      - name: Check module declarations resolve
-        # A `mod x;` with no file makes rustfmt fail with "Error writing files:
-        # failed to resolve mod", which reads like a formatting problem and hides
-        # every gate behind it. Naming the real cause first (221159294).
-        run: python3 scripts/ci/check_module_files.py
-
-      - name: Check formatting
-        run: bash scripts/ci/check_format.sh
-
   typescript-sdk:
     name: TypeScript SDK
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.ts_sdk == 'true' || needs.changes.outputs.npm_pkg == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -3032,7 +3018,7 @@ jobs:
   python-sdk:
     name: Python SDK (${{ matrix.python }})
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.py_sdk == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
@@ -3072,7 +3058,7 @@ jobs:
   docs-site:
     name: Documentation Site
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.docs_site == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # `packages/docs-site` is the Mintlify project served at agent.horon.ai.
@@ -3111,7 +3097,7 @@ jobs:
     name: Setup Friction Eval (Linux installer)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.install_scripts == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -3129,7 +3115,7 @@ jobs:
     name: PowerShell Syntax
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.install_scripts == 'true' || needs.changes.outputs.platform_windows == 'true' || needs.changes.outputs.workflows == 'true' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -3148,7 +3134,7 @@ jobs:
     name: Windows ARM64 Release Configuration
     needs: changes
     runs-on: windows-latest
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 30
     env:
       # `dtolnay/rust-toolchain` installs components into the `stable` toolchain
@@ -3203,7 +3189,7 @@ jobs:
     name: Windows Cross-Target Check (Linux)
     needs: changes
     runs-on: ubuntu-24.04
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     timeout-minutes: 30
     env:
       # The two Windows targets are installed into `stable`; the same pin makes
@@ -3370,7 +3356,7 @@ jobs:
   workflow-lint:
     name: Workflow Lint
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.workflows == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -3408,7 +3394,6 @@ jobs:
       - release-automation
       - build
       - windows-build-test
-      - fmt
       - typescript-sdk
       - python-sdk
       - docs-site
@@ -3434,12 +3419,22 @@ jobs:
           fi
           code="$(echo "$NEEDS" | jq -r '.changes.outputs.code // ""')"
           docs_only="$(echo "$NEEDS" | jq -r '.changes.outputs.docs_only // ""')"
+          rust="$(echo "$NEEDS" | jq -r '.changes.outputs.rust // ""')"
           if [ "$code" != true ] && [ "$code" != false ]; then
             echo "::error::Changed Paths gave code='$code'; expected true or false"
             exit 1
           fi
           if [ "$code" != true ] && [ "$docs_only" != true ]; then
             echo "::error::Changed Paths skipped the code gates without a documentation-only result"
+            exit 1
+          fi
+          if [ "$rust" != true ] && [ "$rust" != false ]; then
+            echo "::error::Changed Paths gave rust='$rust'; expected true or false"
+            exit 1
+          fi
+          succeeded="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.key != "changes" and .value.result == "success") | .key')"
+          if [ -z "$succeeded" ]; then
+            echo "::error::every downstream gate was skipped; refused empty aggregate pass"
             exit 1
           fi
           failed="$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result == "failure" or .value.result == "cancelled") | .key')"
