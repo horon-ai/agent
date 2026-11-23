@@ -1201,6 +1201,34 @@ jobs:
             --timeout 600 --min-passed 2 \
             -- update::release_notes::tests:: --nocapture
 
+      - name: Run self-update cohorts
+        shell: bash
+        run: |
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- update::github_fetch::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 31 \
+            -- update::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 3 \
+            -- update::update_metadata::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 4 \
+            -- update::update_rate_limit::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent-app-core \
+            --timeout 600 --min-passed 2 \
+            -- update::activation::tests:: --nocapture
+          python3 scripts/ci/run_lib_tests.py \
+            --artifacts "$TEST_ARTIFACTS" --package horon-agent \
+            --timeout 600 --min-passed 3 \
+            -- cli::hot_exec::tests:: --nocapture
+
       - name: Run session forget cleanup cohort
         shell: bash
         run: |
